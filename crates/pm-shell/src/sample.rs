@@ -125,6 +125,7 @@ pub fn sample_workspace() -> Workspace {
         adder: None,
         picker: None,
         sample: false,
+        ..Workspace::default()
     }
 }
 
@@ -231,6 +232,7 @@ fn extension(name: &str, about: &str, installed: bool, standing: &str, tone: Ton
             .map(str::to_owned)
             .collect(),
         names: Vec::new(),
+        capabilities: Vec::new(),
     }
 }
 

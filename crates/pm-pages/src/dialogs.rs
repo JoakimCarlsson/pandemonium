@@ -27,6 +27,9 @@ pub fn dialogs(workspace: &Workspace, actions: &Actions) {
     if workspace.closing.is_some() {
         discard_dialog(actions);
     }
+    if let Some(preview) = &workspace.extension_preview {
+        crate::extensions::extension_preview_dialog(preview, actions);
+    }
     if let Some(working) = workspace.quitting {
         quit_dialog(working, actions);
     }

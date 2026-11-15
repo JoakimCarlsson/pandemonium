@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use pm_harness::{Agent, Chat, Event};
 use pm_protocol::{ServerMessage, SessionInfo};
@@ -134,6 +134,8 @@ pub(crate) struct Session {
     pub(crate) handoff: Option<crate::handoff::Handoff>,
     /// The requests waiting for the agent's answer about the files of a turn, the one asked first first; the agent answers them in the order they were asked.
     pub(crate) file_waiters: VecDeque<Sender<pm_harness::FileNews>>,
+    /// When the turn on now was handed to the agent, by the server's clock, or nothing when no turn has started since the server did.
+    pub(crate) began: Option<Instant>,
 }
 
 impl Session {
@@ -158,6 +160,7 @@ impl Session {
             resume_before: None,
             handoff: None,
             file_waiters: VecDeque::new(),
+            began: None,
         }
     }
 
@@ -218,10 +221,11 @@ impl Session {
             return Told::new();
         }
         self.busy = false;
-        let told = [Event::Halted, Event::Finished(Some(reason.to_owned()))]
+        let mut told: Told = [Event::Halted, Event::Finished(Some(reason.to_owned()))]
             .into_iter()
             .map(|event| (number, self.note(number, &event), event))
             .collect();
+        told.extend(self.took(number));
         self.settle_handoff();
         told
     }
@@ -256,6 +260,12 @@ impl Session {
             told.push((number, self.note(number, &Event::Halted), Event::Halted));
         }
         told.push((number, self.note(number, &event), event.clone()));
+        if matches!(
+            event,
+            Event::Finished(_) | Event::SignedOut { .. } | Event::Failed(_)
+        ) {
+            told.extend(self.took(number));
+        }
         if let Event::SignedOut { reason, .. } = &event {
             self.fail_handoff(reason);
         }
@@ -294,11 +304,24 @@ impl Session {
         }
     }
 
+    /// Notes in the log of this session, numbered `number`, how long the turn that just ended took, and returns what it noted; nothing when the server did not see the turn start.
+    pub(crate) fn took(&mut self, number: u64) -> Told {
+        let Some(began) = self.began.take() else {
+            return Told::new();
+        };
+        let millis = u64::try_from(began.elapsed().as_millis()).unwrap_or(u64::MAX);
+        let event = Event::Took(millis);
+        vec![(number, self.note(number, &event), event)]
+    }
+
     /// Adds `event` to the log of this session, numbered `number`, keeps it on disk and returns the number it got.
     pub(crate) fn note(&mut self, number: u64, event: &Event) -> u64 {
         let seq = self.next_seq();
         self.log.push((seq, event.clone()));
         sessions::append(number, seq, event);
+        if matches!(event, Event::Prompted { .. }) {
+            self.began = Some(Instant::now());
+        }
         if let Event::Titled(title) = event {
             self.meta.title = title.clone();
             sessions::save_meta(number, &self.meta);

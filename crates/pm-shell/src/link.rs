@@ -22,7 +22,7 @@ use pm_harness::Event;
 use pm_protocol::{Request, Response, SessionInfo};
 
 use crate::composer::ComposerState;
-use crate::conversation::Extras;
+use crate::conversation::{Block, Extras};
 use crate::dialog::{SignInCode, UpdateOffer, UpdateRun};
 use crate::dock::{Dock, DockAsk};
 use crate::dock_model::DebugCommand;
@@ -98,8 +98,8 @@ enum Ask {
     ToolSets,
     /// The newest release.
     LatestRelease,
-    /// The pull request of the open session's branch.
-    PullRequest,
+    /// The pull request of the branch of the session the window numbers so.
+    PullRequest(u64),
     /// Downloading a newer release.
     Update,
     /// Something the Git panel asked.
@@ -146,8 +146,20 @@ enum Ask {
     Discover(String),
     /// The branches of the repository at this folder, for the welcome page.
     StartBranches(String),
-    /// Whether the folder has a dev container set up, for the welcome page.
+    /// Whether the folder at this path holds a dev container, for the welcome page.
     StartContainer(String),
+    /// The GitHub accounts the machine with this host, or this one, is signed in to, for the clone form.
+    Owners(Option<String>),
+    /// The GitHub repositories of this owner, as the machine with this host, or this one, lists them, for the clone form.
+    Repositories(Option<String>, String),
+    /// What the extension in the folder at this path carries and asks, to show before it is installed.
+    Inspect(String),
+    /// Running a command an extension brings, typed behind a slash.
+    ExtensionCommand,
+    /// The branches of the project at this folder, to continue the open chat in it.
+    ContinueBranches(String),
+    /// A prompt sent to a session, whose attachments, kept under this number in [`Link::unsent`], go back into the composer when it fails.
+    Prompt(u64),
     /// Nothing that needs handling but a failure, which the status bar shows.
     Nothing,
 }
@@ -173,7 +185,6 @@ impl Ask {
             | Request::CreateCustomization { .. } => Self::Form,
             Request::SaveModelServer { .. } => Self::ModelServers,
             Request::SignIn { .. } => Self::SignIn,
-            Request::PullRequest { .. } | Request::PullRequestAction { .. } => Self::PullRequest,
             _ => Self::Nothing,
         }
     }
@@ -251,6 +262,10 @@ pub struct Link {
         std::collections::BTreeMap<String, Vec<String>>,
         pm_editor::Keymap,
     )>,
+    /// What prompts the server has yet to take held, each under the number its request's [`Ask::Prompt`] names, so a prompt that fails gives them back.
+    unsent: HashMap<u64, composer_requests::Unsent>,
+    /// The number the next prompt sent is kept under in [`Link::unsent`].
+    next_unsent: u64,
 }
 
 impl Link {
@@ -316,6 +331,8 @@ impl Link {
             release_asked: None,
             outcomes: Vec::new(),
             keymap: None,
+            unsent: HashMap::new(),
+            next_unsent: 0,
         }
     }
 
@@ -649,6 +666,67 @@ impl Link {
         self.ask(request, Ask::Nothing);
     }
 
+    /// Does what the reader asked about extensions beyond a row's button: picking a folder to install from, allowing capabilities, and installing or giving up the folder picked.
+    pub fn extension_do(&mut self, order: crate::extensions::ExtensionDo) {
+        use crate::extensions::ExtensionDo;
+        match order {
+            ExtensionDo::InstallFromFolder => {
+                self.project_action(crate::projects::ProjectAction::Picker(
+                    crate::projects::PickerAction::OpenForExtension,
+                ));
+            }
+            ExtensionDo::Grant(id, capability, granted) => self.ask(
+                Request::GrantExtension {
+                    id,
+                    capability,
+                    granted,
+                },
+                Ask::Nothing,
+            ),
+            ExtensionDo::PreviewGrant(capability, granted) => {
+                let held = self
+                    .workspace
+                    .extension_preview
+                    .as_mut()
+                    .and_then(|preview| preview.extension.as_mut());
+                for asked in held.into_iter().flat_map(|held| &mut held.capabilities) {
+                    if asked.id == capability {
+                        asked.granted = granted;
+                    }
+                }
+            }
+            ExtensionDo::InstallPreview => {
+                let Some(preview) = self.workspace.extension_preview.take() else {
+                    return;
+                };
+                if preview.extension.is_none() {
+                    return;
+                }
+                let grants = preview.grants();
+                self.ask(
+                    Request::InstallExtension {
+                        path: preview.path,
+                        grants,
+                    },
+                    Ask::Nothing,
+                );
+            }
+            ExtensionDo::CancelPreview => self.workspace.extension_preview = None,
+        }
+    }
+
+    /// Asks the server what the extension in the folder at `path` carries and asks to be allowed, showing it before it is installed.
+    fn inspect_extension(&mut self, path: String) {
+        self.workspace.extension_preview = Some(crate::extensions::ExtensionPreview {
+            path: path.clone(),
+            ..Default::default()
+        });
+        self.ask(
+            Request::InspectExtension { path: path.clone() },
+            Ask::Inspect(path),
+        );
+    }
+
     /// Shows the welcome page for a new session in the project or submodule
     /// at index path `at`.
     pub fn new_session(&mut self, at: Vec<usize>) {
@@ -731,7 +809,7 @@ impl Link {
     }
 
     /// The project folder and submodule a session started at index path `at` works in.
-    fn placement(&self, at: &[usize]) -> Option<(String, Option<String>)> {
+    pub(super) fn placement(&self, at: &[usize]) -> Option<(String, Option<String>)> {
         let path = self.paths.get(*at.first()?)?;
         let submodule = match at.get(1) {
             Some(index) => Some(self.submodules.get(path)?.get(*index)?.clone()),
@@ -780,11 +858,14 @@ impl Link {
             self.workspace.title = info.title.clone();
         }
         self.workspace.branch = info
+            .filter(|info| !info.chat)
             .and_then(|info| info.branch.clone())
-            .unwrap_or_else(|| "main".to_owned());
+            .unwrap_or_default();
         self.workspace.agent = info.map(|info| info.agent.clone()).unwrap_or_default();
-        self.workspace.account = info.and_then(|info| info.login.clone()).unwrap_or_default();
         self.workspace.starting = None;
+        self.workspace.continuing = Default::default();
+        self.workspace.sending = self.unsent.values().any(|held| held.session == id);
+        self.workspace.machine = self.routes.remote(id).map(|(host, _)| host.to_owned());
         self.workspace.extras = Default::default();
         self.workspace.extras.chat = info.is_some_and(|info| info.chat);
         self.watched = Some(id);
@@ -805,6 +886,7 @@ impl Link {
             self.workspace.read_through.insert(id, thread.seq);
         }
         show_thread(&mut self.workspace, thread);
+        self.show_accounts();
         let agent = self.workspace.agent.clone();
         let login = info.and_then(|info| info.login.clone());
         self.ask_composer(id, agent, login);
@@ -945,11 +1027,12 @@ impl Link {
                 self.ask(Request::Projects, Ask::Projects);
                 self.ask(Request::Sessions, Ask::Sessions);
                 self.send(Request::MachineSettings);
+                self.send(Request::Accounts);
+                self.send(Request::ExtensionAssets);
                 if self.settings.window.general.check_updates {
                     self.release_asked = Some(std::time::Instant::now());
                     self.send(release_request(self.settings.window.general.channel));
                 }
-                self.send(Request::ExtensionAssets);
                 self.change_dock(Dock::connected);
                 self.reopen_for_server();
             }
@@ -1058,16 +1141,31 @@ impl Link {
                 ask @ (Ask::Files(_) | Ask::Entry | Ask::Search(_) | Ask::Quick(_) | Ask::Branches),
                 response,
             ) => self.answer_browse(ask, response),
-            (Ask::PullRequest, Response::PullRequest { request, .. })
-            | (Ask::PullRequest, Response::PullRequestActed { request, .. }) => {
-                self.show_pull_request(request);
-            }
+            (Ask::PullRequest(session), response) => self.answer_pull_request(session, response),
             (Ask::Projects, Response::Projects { paths, saved }) => {
                 self.note_saved(saved);
                 self.set_projects(paths);
             }
             (Ask::Folders(host), response) => self.answer_folders(host, response),
             (Ask::Cloned, response) => self.answer_clone(response),
+            (Ask::Inspect(path), response) => {
+                if let Some(preview) = self
+                    .workspace
+                    .extension_preview
+                    .as_mut()
+                    .filter(|preview| preview.path == path)
+                {
+                    match response {
+                        Response::ExtensionPreview { extension } => preview.read(&extension),
+                        Response::Failed { message } => preview.problem = Some(message),
+                        _ => {}
+                    }
+                }
+            }
+            (Ask::Owners(machine), response) => self.answer_owners(machine, response),
+            (Ask::Repositories(machine, owner), response) => {
+                self.answer_repositories(machine, owner, response)
+            }
             (Ask::Sessions, Response::Sessions { sessions }) => {
                 for info in &sessions {
                     self.follow(info);
@@ -1087,11 +1185,16 @@ impl Link {
                     None => directory,
                 };
                 self.hand_over(session, &directory);
-                self.threads.insert(session, Thread::default());
+                self.threads.entry(session).or_default();
                 self.watch(session);
                 self.navigate(Page::Session(session));
             }
             (Ask::Start, Response::Failed { message }) => self.workspace.status = Some(message),
+            (Ask::Prompt(kept), response) => self.answer_prompt(kept, response),
+            (Ask::ExtensionCommand, response) => self.answer_extension_command(response),
+            (Ask::ContinueBranches(directory), response) => {
+                self.answer_continue_branches(directory, response)
+            }
             (Ask::Fork, response) => self.answer_fork(response),
             (Ask::Close(session), response) => self.answer_close(session, response),
             (Ask::Submodules(path), Response::Submodules { paths }) => {
@@ -1109,6 +1212,11 @@ impl Link {
                 }
             }
             (Ask::ExtensionAssets, Response::ExtensionAssets(assets)) => {
+                self.workspace.extension_commands = assets
+                    .commands
+                    .iter()
+                    .map(|command| (command.id.clone(), command.description.clone()))
+                    .collect();
                 self.settings.assets = assets;
             }
             (Ask::Log(path), Response::Log { commits })
@@ -1203,6 +1311,7 @@ impl Link {
                 for request in settings.take_form_answer(response) {
                     self.send(request);
                 }
+                self.show_accounts();
             }
             (Ask::Update, Response::UpdateStaged { path }) => {
                 if let Some(offer) = &mut self.workspace.update {
@@ -1453,6 +1562,16 @@ const COMMITS_SHOWN: usize = 8;
 /// How many characters of a commit's name the overview shows.
 const SHORT_ID: usize = 7;
 
+/// Writes the paths in the titles of `step` and the steps under it from the session's folder, which `prefix` names with a slash after it.
+fn relative_titles(step: &mut crate::conversation::ToolStep, prefix: &str) {
+    if step.title.contains(prefix) {
+        step.title = step.title.replace(prefix, "");
+    }
+    for child in &mut step.children {
+        relative_titles(child, prefix);
+    }
+}
+
 /// Puts what `thread` knows of the open session into `workspace`.
 fn show_thread(workspace: &mut Workspace, thread: &Thread) {
     if let Some(title) = &thread.title {
@@ -1461,11 +1580,23 @@ fn show_thread(workspace: &mut Workspace, thread: &Thread) {
     workspace.model = thread.model.clone().unwrap_or_default();
     workspace.permissions = thread.mode.clone().unwrap_or_default();
     workspace.conversation = thread.messages.clone();
+    let folder = workspace.git.folder.trim_end_matches('/').to_owned();
+    if !folder.is_empty() {
+        let prefix = format!("{folder}/");
+        for message in &mut workspace.conversation {
+            for block in &mut message.blocks {
+                if let Block::Tool(step) = block {
+                    relative_titles(step, &prefix);
+                }
+            }
+        }
+    }
     let kept = std::mem::take(&mut workspace.extras);
     workspace.extras = Extras {
         pull_request: kept.pull_request,
         chat: kept.chat,
         prefill: kept.prefill,
+        prefills: kept.prefills,
         composer: ComposerState {
             files: kept.composer.files,
             elements: kept.composer.elements,

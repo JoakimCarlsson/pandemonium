@@ -175,12 +175,11 @@ impl Step {
                             .size(self.size)
                             .show();
                     }
-                    let (mark, tint) = match self.variant {
-                        StepVariant::Running => (phosphor::CIRCLE_NOTCH, scheme.primary),
-                        StepVariant::Done => (phosphor::CHECK, scheme.on_surface_variant),
-                        StepVariant::Failed => (phosphor::X, scheme.error),
-                    };
-                    icon(mark, 12.0, tint);
+                    match self.variant {
+                        StepVariant::Running => circular_progress_indicator_indeterminate(10.0),
+                        StepVariant::Done => icon(phosphor::CHECK, 12.0, scheme.on_surface_variant),
+                        StepVariant::Failed => icon(phosphor::X, 12.0, scheme.error),
+                    }
                     if has_output {
                         icon(
                             if open.get() {
@@ -207,7 +206,8 @@ impl Step {
                 );
             }
             if let (true, Some(output)) = (open.get(), &self.output) {
-                let output = output.clone();
+                let output = capped(output);
+                let scroll = remember_scroll_state();
                 column_with(
                     Modifier::new()
                         .fill_max_width()
@@ -216,6 +216,8 @@ impl Step {
                         column_with(
                             Modifier::new()
                                 .fill_max_width()
+                                .height_in(0.0, OUTPUT_HEIGHT)
+                                .vertical_scroll(&scroll)
                                 .background_rounded(scheme.surface_container, 6.0)
                                 .padding_xy(10.0, 8.0),
                             move || {
@@ -231,6 +233,26 @@ impl Step {
             }
         });
     }
+}
+
+/// How tall a step's output grows before it scrolls, in logical pixels.
+const OUTPUT_HEIGHT: f32 = 320.0;
+
+/// How many of its last lines a step's output keeps.
+const OUTPUT_LINES: usize = 400;
+
+/// `output` cut to its last [`OUTPUT_LINES`] lines, after a line saying how many earlier ones were left out.
+fn capped(output: &str) -> String {
+    let count = output.lines().count();
+    if count <= OUTPUT_LINES {
+        return output.to_owned();
+    }
+    let kept: Vec<&str> = output.lines().skip(count - OUTPUT_LINES).collect();
+    format!(
+        "… {} earlier lines\n{}",
+        count - OUTPUT_LINES,
+        kept.join("\n")
+    )
 }
 
 /// What the agent thought, folded to one line until opened.

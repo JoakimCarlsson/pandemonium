@@ -83,6 +83,7 @@ mod terminal_keys;
 mod terminal_view;
 mod text_area;
 mod text_input;
+mod text_menu;
 mod theme_family;
 mod tile;
 mod tip;
@@ -174,6 +175,7 @@ pub use terminal_keys::{TerminalCommand, TerminalShortcut, key_bytes, terminal_s
 pub use terminal_view::{TerminalSelection, TerminalView, TerminalViewVariant};
 pub use text_area::{TextArea, TextAreaVariant};
 pub use text_input::{TextInput, TextInputVariant};
+pub use text_menu::TextMenu;
 pub use theme_family::{DEFAULT_FAMILY, Palette, ThemeFamily, family_named, shipped_families};
 pub use tile::{Leading, Tile, TileVariant};
 pub use tip::tip;

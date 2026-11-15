@@ -190,7 +190,20 @@ pub enum ComposerAction {
     Mention,
     /// Move the agent to the next value of its mode.
     CycleMode,
+    /// Have the open session run as the login with this id, or as the agent's own when nothing.
+    Account(Option<String>),
+    /// Open the settings at the open session's agent, to add or sign in an account.
+    ManageAccounts,
 }
+
+/// The id the account chip goes by in the composer's toolbar, which no setting of an agent's has.
+pub const ACCOUNT_CHOICE: &str = "pandemonium.account";
+
+/// The value of the account chip's entry for the agent's own login.
+pub const OWN_ACCOUNT: &str = "";
+
+/// The value of the account chip's entry that opens the settings to add an account.
+pub const ADD_ACCOUNT: &str = "pandemonium.add-account";
 
 /// What the composer shows besides the text being written.
 #[derive(Clone, Debug, Default, PartialEq)]

@@ -10,7 +10,8 @@ use pm_protocol::{Request, Response};
 use super::remote::Standing;
 use super::{Ask, Link};
 use crate::projects::{
-    Adder, FolderPicker, PickerAction, ProjectAction, Reach, clone_address, moved, reordered,
+    AddStep, Adder, FolderPicker, GithubRepository, PickerAction, ProjectAction, Reach,
+    clone_address, moved, reordered,
 };
 use crate::sample::sample_projects;
 
@@ -49,11 +50,15 @@ impl Link {
                     machine: servers.default_target().map(pm_config::KnownServer::host),
                     ..Adder::default()
                 };
+                let cloning = step == Some(AddStep::Clone);
                 self.workspace.adder = step.map(|step| Adder {
                     step,
                     machines,
                     ..self.workspace.adder.clone().unwrap_or(first)
                 });
+                if cloning {
+                    self.ask_owners();
+                }
             }
             ProjectAction::CloneUnder(under) => {
                 let adder = self.workspace.adder.get_or_insert_with(Adder::default);
@@ -64,7 +69,12 @@ impl Link {
                 let adder = self.workspace.adder.get_or_insert_with(Adder::default);
                 adder.machine = machine;
                 adder.error = None;
+                adder.owners = None;
+                adder.owner = None;
+                adder.repositories = None;
+                self.ask_owners();
             }
+            ProjectAction::CloneOwner(owner) => self.ask_repositories(owner),
             ProjectAction::CloneUrl(url) => {
                 let adder = self.workspace.adder.get_or_insert_with(Adder::default);
                 adder.url = url;
@@ -112,6 +122,116 @@ impl Link {
         }
     }
 
+    /// Asks the machine the clone form clones on for the GitHub accounts it is signed in to.
+    fn ask_owners(&mut self) {
+        let Some(adder) = &mut self.workspace.adder else {
+            return;
+        };
+        adder.github_error = None;
+        let machine = adder.machine.clone();
+        self.ask_on(machine.clone(), Request::Owners, Ask::Owners(machine));
+    }
+
+    /// Lists in the clone form the GitHub repositories of the account or organization `owner`.
+    fn ask_repositories(&mut self, owner: String) {
+        let Some(adder) = &mut self.workspace.adder else {
+            return;
+        };
+        let organization = adder
+            .owners
+            .iter()
+            .flatten()
+            .any(|(login, organization)| *login == owner && *organization);
+        adder.owner = Some(owner.clone());
+        adder.repositories = None;
+        adder.github_error = None;
+        let machine = adder.machine.clone();
+        self.ask_on(
+            machine.clone(),
+            Request::Repositories {
+                owner: owner.clone(),
+                organization,
+            },
+            Ask::Repositories(machine, owner),
+        );
+    }
+
+    /// Sends `request` for `ask` to the server of the machine with host `machine`, or of this one when nothing.
+    fn ask_on(&mut self, machine: Option<String>, request: Request, ask: Ask) {
+        match machine {
+            Some(host) => self.ask_remote(&host, request, ask),
+            None => self.ask(request, ask),
+        }
+    }
+
+    /// Takes the answer of the machine with host `machine` about the GitHub accounts it is signed in to, and lists the repositories of the first.
+    pub(super) fn answer_owners(&mut self, machine: Option<String>, response: Response) {
+        let Some(adder) = self
+            .workspace
+            .adder
+            .as_mut()
+            .filter(|adder| adder.machine == machine)
+        else {
+            return;
+        };
+        match response {
+            Response::Owners { owners } => {
+                let first = owners.first().map(|owner| owner.login.clone());
+                adder.owners = Some(
+                    owners
+                        .into_iter()
+                        .map(|owner| (owner.login, owner.organization))
+                        .collect(),
+                );
+                if let Some(first) = first {
+                    self.ask_repositories(first);
+                }
+            }
+            Response::Failed { message } => {
+                adder.owners = Some(Vec::new());
+                adder.github_error = Some(message);
+            }
+            _ => {}
+        }
+    }
+
+    /// Takes the answer of the machine with host `machine` about the repositories of `owner`.
+    pub(super) fn answer_repositories(
+        &mut self,
+        machine: Option<String>,
+        owner: String,
+        response: Response,
+    ) {
+        let Some(adder) = self
+            .workspace
+            .adder
+            .as_mut()
+            .filter(|adder| adder.machine == machine && adder.owner.as_ref() == Some(&owner))
+        else {
+            return;
+        };
+        match response {
+            Response::Repositories { repositories } => {
+                adder.repositories = Some(
+                    repositories
+                        .into_iter()
+                        .map(|repository| GithubRepository {
+                            name: repository.name,
+                            description: repository.description,
+                            private: repository.private,
+                            url: repository.url,
+                        })
+                        .collect(),
+                );
+            }
+            Response::Failed { message } => {
+                adder.repositories = Some(Vec::new());
+                adder.github_error = Some(message);
+            }
+            _ => {}
+        }
+    }
+
     /// Takes the server's answer to a clone, adding the clone as a project on the machine it was made on.
     pub(super) fn answer_clone(&mut self, response: Response) {
         match response {
@@ -142,6 +262,13 @@ impl Link {
                 self.workspace.picker = Some(FolderPicker::open(host, &known));
                 self.list_folders("~".to_owned());
             }
+            PickerAction::OpenForExtension => {
+                self.workspace.adder = None;
+                let mut picker = FolderPicker::open(None, &[]);
+                picker.for_extension = true;
+                self.workspace.picker = Some(picker);
+                self.list_folders("~".to_owned());
+            }
             PickerAction::Close => self.workspace.picker = None,
             PickerAction::Filter(text) => {
                 if let Some(picker) = &mut self.workspace.picker {
@@ -150,7 +277,10 @@ impl Link {
             }
             PickerAction::Choose => {
                 if let Some(picker) = self.workspace.picker.take() {
-                    self.add_project(picker.address());
+                    match picker.for_extension {
+                        true => self.inspect_extension(picker.path),
+                        false => self.add_project(picker.address()),
+                    }
                 }
             }
             action => {

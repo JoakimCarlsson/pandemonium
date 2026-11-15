@@ -14,6 +14,20 @@ use crate::composer::{
 };
 use crate::open_files::is_picture;
 
+/// A prompt sent and not yet taken by the server: what it was sent to, what the reader typed and what was attached, given back to the composer when it fails.
+pub(super) struct Unsent {
+    /// The session it was sent to.
+    pub(super) session: u64,
+    /// What the reader typed.
+    text: String,
+    /// The files attached.
+    files: Vec<PromptFile>,
+    /// The browser elements attached.
+    elements: Vec<PickedElement>,
+    /// The browser captures attached.
+    captures: Vec<Capture>,
+}
+
 impl Link {
     /// Does what the reader did in the composer, `action`.
     pub fn composer_action(&mut self, action: ComposerAction) {
@@ -41,6 +55,8 @@ impl Link {
                     self.load_files();
                 }
             }
+            ComposerAction::Account(login) => self.choose_account(login),
+            ComposerAction::ManageAccounts => self.manage_accounts(),
             ComposerAction::CycleMode => {
                 if let Some((setting, value)) =
                     crate::composer::next_mode(&self.workspace.extras.composer.settings)
@@ -56,11 +72,15 @@ impl Link {
     /// queued behind the one it is on.
     pub fn prompt(&mut self, text: String, now: bool) {
         let Some(session) = self.watched else {
-            self.workspace.extras.prefill = Some(text);
+            self.prefill(text);
             return;
         };
+        if self.run_extension_command(session, &text) {
+            return;
+        }
         self.workspace.extras.prefill = None;
         let composer = &mut self.workspace.extras.composer;
+        let typed = text.clone();
         let text = prompt_text(&text, &composer.elements, &composer.captures);
         let mut attachments: Vec<Attachment> =
             composer.files.iter().filter_map(attachment_of).collect();
@@ -75,9 +95,17 @@ impl Link {
                     data: capture.data.clone(),
                 }),
         );
-        composer.files.clear();
-        composer.elements.clear();
-        composer.captures.clear();
+        let unsent = Unsent {
+            session,
+            text: typed,
+            files: std::mem::take(&mut composer.files),
+            elements: std::mem::take(&mut composer.elements),
+            captures: std::mem::take(&mut composer.captures),
+        };
+        let kept = self.next_unsent;
+        self.next_unsent += 1;
+        self.unsent.insert(kept, unsent);
+        self.workspace.sending = true;
         self.ask(
             Request::Prompt {
                 session,
@@ -85,8 +113,149 @@ impl Link {
                 attachments,
                 now,
             },
-            Ask::Nothing,
+            Ask::Prompt(kept),
         );
+    }
+
+    /// Runs the command an extension brings that `text` names after a slash, with what follows its name, in the folder of `session`, and says whether it named one; a session of another machine runs none, since its extensions are that machine's, and a command of the agent's own goes first.
+    fn run_extension_command(&mut self, session: u64, text: &str) -> bool {
+        let Some(typed) = text.trim_start().strip_prefix('/') else {
+            return false;
+        };
+        let (name, argument) = typed.split_once(char::is_whitespace).unwrap_or((typed, ""));
+        let agents = &self.workspace.extras.composer.commands;
+        if self.routes.remote(session).is_some() || agents.iter().any(|known| known.name == name) {
+            return false;
+        }
+        let Some(command) = self
+            .settings
+            .assets
+            .commands
+            .iter()
+            .find(|command| command.id == name)
+            .cloned()
+        else {
+            return false;
+        };
+        let directory = self
+            .session_info(session)
+            .map(|info| info.directory)
+            .filter(|directory| !directory.is_empty());
+        self.ask(
+            Request::RunExtensionCommand {
+                extension: command.extension,
+                command: command.id,
+                argument: argument.trim().to_owned(),
+                directory,
+            },
+            Ask::ExtensionCommand,
+        );
+        true
+    }
+
+    /// Takes what a command an extension brings came to: its text goes in the composer, its line in the status bar.
+    pub(super) fn answer_extension_command(&mut self, response: Response) {
+        match response {
+            Response::ExtensionCommand { prompt, message } => {
+                if let Some(text) = prompt {
+                    self.prefill(text);
+                }
+                if let Some(line) = message {
+                    self.workspace.status = Some(line);
+                }
+            }
+            Response::Failed { message } => self.workspace.status = Some(message),
+            _ => {}
+        }
+    }
+
+    /// Puts `text` in the open composer, even when it is what was put there last.
+    pub(super) fn prefill(&mut self, text: String) {
+        self.workspace.extras.prefill = Some(text);
+        self.workspace.extras.prefills += 1;
+    }
+
+    /// Takes the server's `response` to the prompt whose attachments are kept under `kept`: forgets them once it was taken, and otherwise shows why it failed and, while its session is still open, puts its text and attachments back into the composer.
+    pub(super) fn answer_prompt(&mut self, kept: u64, response: Response) {
+        let Some(unsent) = self.unsent.remove(&kept) else {
+            return;
+        };
+        self.workspace.sending = self
+            .unsent
+            .values()
+            .any(|held| Some(held.session) == self.watched);
+        let Response::Failed { message } = response else {
+            return;
+        };
+        self.workspace.status = Some(message);
+        if self.watched != Some(unsent.session) {
+            return;
+        }
+        let composer = &mut self.workspace.extras.composer;
+        composer.files.splice(0..0, unsent.files);
+        composer.elements.splice(0..0, unsent.elements);
+        composer.captures.splice(0..0, unsent.captures);
+        self.prefill(unsent.text);
+    }
+
+    /// Puts the login the open session runs as into the account chip, with the named logins of its agent it offers; a session of another machine offers none, since its logins are that machine's.
+    pub(super) fn show_accounts(&mut self) {
+        let Some(session) = self.watched else {
+            return;
+        };
+        let info = self.session_info(session);
+        let login = info.as_ref().and_then(|info| info.login.clone());
+        let agent = info.map(|info| info.agent).unwrap_or_default();
+        let accounts: Vec<(String, String)> = if self.routes.remote(session).is_some() {
+            Vec::new()
+        } else {
+            self.settings
+                .forms
+                .logins
+                .iter()
+                .filter(|held| held.agent == agent)
+                .map(|held| (held.id.clone(), held.name.clone()))
+                .collect()
+        };
+        self.workspace.account = match &login {
+            Some(id) => accounts
+                .iter()
+                .find(|(held, _)| held == id)
+                .map_or_else(|| id.clone(), |(_, name)| name.clone()),
+            None if accounts.is_empty() => String::new(),
+            None => "Default account".to_owned(),
+        };
+        self.workspace.login = login;
+        self.workspace.accounts = accounts;
+    }
+
+    /// Has the open session run as the login `login`, or as its agent's own when nothing.
+    pub fn choose_account(&mut self, login: Option<String>) {
+        let Some(session) = self.watched else {
+            return;
+        };
+        if let Some(info) = self
+            .sessions
+            .iter_mut()
+            .find(|info| info.session == session)
+        {
+            info.login = login.clone();
+        }
+        self.ask(Request::SetSessionAccount { session, login }, Ask::Nothing);
+        self.show_accounts();
+    }
+
+    /// Readies the settings window on the open session's agent, its keys, sign-in and accounts, for the reader to add an account.
+    pub fn manage_accounts(&mut self) {
+        let agent = self
+            .watched
+            .and_then(|session| self.session_info(session))
+            .map(|info| info.agent);
+        self.settings.page.section = crate::settings_section::Section::AgentServers;
+        let change = crate::settings_forms::FormChange::OpenAgent(agent);
+        for request in self.settings.take_form(change) {
+            self.ask(request, Ask::Form);
+        }
     }
 
     /// Stops the turn the open session's agent is on and drops the prompts queued behind it.

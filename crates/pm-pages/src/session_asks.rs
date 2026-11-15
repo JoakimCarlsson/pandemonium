@@ -152,7 +152,9 @@ fn inquiry_card(inquiry: &InquiryForm, actions: &Actions) {
 
 /// The card asking to trust the project `trust` names.
 fn trust_card(trust: &TrustAsk, actions: &Actions) {
-    let mut card = TrustCard::new(trust.root.clone()).reason(trust.reason.clone());
+    let mut card = TrustCard::new(trust.root.clone())
+        .title(trust.title.clone())
+        .reason(trust.reason.clone());
     for (kind, name) in &trust.skipped {
         card = card.skipped(kind.clone(), name.clone());
     }

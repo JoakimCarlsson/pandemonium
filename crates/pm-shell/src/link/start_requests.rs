@@ -218,7 +218,7 @@ impl Link {
                 if let Some(start) = &mut self.workspace.starting
                     && current.as_deref() == Some(directory.as_str())
                 {
-                    start.has_container = configured;
+                    start.container_offered = configured;
                 }
             }
             _ => {}

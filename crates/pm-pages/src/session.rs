@@ -10,8 +10,8 @@ use pm_components::{
     PullRequestVariant, Sash, SashVariant, Size, SpendStrip, extended_colors,
 };
 use pm_shell::{
-    ActivityKind, PANE_SHARE_MIN, Pane, Project, PullRequestInfo, SessionTab, SpendSummary,
-    TabAction, Unsaved, Workspace,
+    ActivityKind, PANE_SHARE_MIN, Pane, Project, PullRequestInfo, SessionStatus, SessionTab,
+    SpendSummary, TabAction, Unsaved, Workspace,
 };
 
 use crate::actions::Actions;
@@ -326,7 +326,7 @@ fn chat(workspace: &Workspace, actions: &Actions) {
         pull_request_bar(request, actions);
     }
     if workspace.extras.chat {
-        continue_bar(&workspace.projects, actions);
+        continue_bar(workspace, actions);
     }
     conversation(&workspace.conversation, actions);
     below_conversation(workspace, actions);
@@ -350,7 +350,6 @@ fn diff_placeholder() {
 /// The header naming the session, its branch, its agent and its account.
 fn session_header(workspace: &Workspace) {
     let scheme = color_scheme();
-    let extended = extended_colors();
     row_arranged(
         Modifier::new()
             .fill_max_width()
@@ -360,16 +359,21 @@ fn session_header(workspace: &Workspace) {
         Arrangement::SpacedBy(pm_components::spacing(8.0)),
         Alignment::Center,
         || {
-            spacer(
-                Modifier::new()
-                    .size(7.0, 7.0)
-                    .border(1.0, extended.subtle, 3.5),
-            );
+            let status = workspace
+                .open
+                .as_ref()
+                .and_then(|at| pm_shell::session_at(&workspace.projects, at))
+                .map(|session| session.status)
+                .unwrap_or_default();
+            status_dot(status);
             Label::new(workspace.title.clone())
                 .modifier(Modifier::new().weight(1.0))
                 .show();
             if !workspace.branch.is_empty() {
                 header_chip(phosphor::GIT_BRANCH, &workspace.branch);
+            }
+            if !workspace.model.is_empty() {
+                header_chip(phosphor::SPARKLE, &workspace.model);
             }
             if !workspace.agent.is_empty() {
                 Label::new(workspace.agent.clone())
@@ -382,6 +386,34 @@ fn session_header(workspace: &Workspace) {
             }
         },
     );
+}
+
+/// Emits the mark of the header saying how the open session stands as `status` says: turning while its agent works, filled in the accent when something is unread, in the danger tone when it failed, in the warning tone when it waits on the reader, broken when its server is out of reach, and an outline when it is idle.
+fn status_dot(status: SessionStatus) {
+    let scheme = color_scheme();
+    let extended = extended_colors();
+    let fill = match status {
+        SessionStatus::Working => {
+            circular_progress_indicator_indeterminate(9.0);
+            return;
+        }
+        SessionStatus::OutOfReach => {
+            icon(phosphor::LINK_BREAK, 12.0, scheme.on_surface_variant);
+            return;
+        }
+        SessionStatus::Unread => scheme.primary,
+        SessionStatus::Error => scheme.error,
+        SessionStatus::NeedsInput => extended.warning,
+        SessionStatus::Idle => {
+            spacer(
+                Modifier::new()
+                    .size(7.0, 7.0)
+                    .border(1.0, extended.subtle, 3.5),
+            );
+            return;
+        }
+    };
+    spacer(Modifier::new().size(7.0, 7.0).background_rounded(fill, 3.5));
 }
 
 /// Emits a small rounded chip of the header showing `glyph` and `text`.
@@ -418,6 +450,11 @@ fn pull_request_bar(request: &PullRequestInfo, actions: &Actions) {
     let url = request.url.clone();
     PullRequestBar::new(request.number, request.title.clone())
         .variant(variant)
+        .noun(request.noun.clone())
+        .supported(request.supported)
+        .ahead(request.ahead)
+        .busy(request.busy.clone())
+        .error(request.error.clone())
         .review(request.review.clone())
         .checks(passed, failed, pending)
         .on_action(move |action| {
@@ -430,28 +467,48 @@ fn pull_request_bar(request: &PullRequestInfo, actions: &Actions) {
         .show();
 }
 
-/// The bar offering to continue the open chat in one of `projects`.
-fn continue_bar(projects: &[Project], actions: &Actions) {
+/// The bar offering to continue the open chat of `workspace` in one of the projects on the chat's own machine, from a branch of the one picked; switched off while the agent works or prompts wait for it.
+fn continue_bar(workspace: &Workspace, actions: &Actions) {
     let mut offered = Vec::new();
-    flatten(projects, Vec::new(), &mut offered);
-    let names = offered.iter().map(|(name, _)| name.clone()).collect();
+    flatten(&workspace.projects, Vec::new(), &mut offered);
+    offered.retain(|(_, _, machine)| machine.as_deref() == workspace.machine.as_deref());
+    let names = offered.iter().map(|(name, _, _)| name.clone()).collect();
+    let chosen = workspace
+        .continuing
+        .project
+        .as_ref()
+        .and_then(|picked| offered.iter().position(|(_, at, _)| at == picked));
+    let composer = &workspace.extras.composer;
+    let busy = composer.working || !composer.queued.is_empty();
+    let pick = actions.continue_project.clone();
     let carry = actions.continue_chat.clone();
     ContinueChat::new(names)
+        .chosen(chosen, workspace.continuing.branches.clone())
+        .disabled(busy)
         .on_pick(move |index| {
-            if let Some((_, at)) = offered.get(index) {
-                carry(at.clone());
+            if let Some((_, at, _)) = offered.get(index) {
+                pick(at.clone());
             }
         })
+        .on_branch(move |base| carry(base))
         .show();
 }
 
 /// Puts every project among `projects` under `prefix`, nested ones after
-/// their parent, into `offered` with its index path.
-fn flatten(projects: &[Project], prefix: Vec<usize>, offered: &mut Vec<(String, Vec<usize>)>) {
+/// their parent, into `offered` with its index path and the machine it lives on.
+fn flatten(
+    projects: &[Project],
+    prefix: Vec<usize>,
+    offered: &mut Vec<(String, Vec<usize>, Option<String>)>,
+) {
     for (index, project) in projects.iter().enumerate() {
         let mut at = prefix.clone();
         at.push(index);
-        offered.push((project.name.clone(), at.clone()));
+        offered.push((
+            project.name.clone(),
+            at.clone(),
+            project.machine().map(str::to_owned),
+        ));
         flatten(&project.children, at, offered);
     }
 }
@@ -469,6 +526,7 @@ fn below_conversation(workspace: &Workspace, actions: &Actions) {
                 Arrangement::SpacedBy(pm_components::spacing(8.0)),
                 Alignment::Start,
                 || {
+                    status_line(workspace);
                     waiting_cards(&workspace.extras, actions);
                     let mut chips = Activity::new();
                     for activity in &workspace.extras.activity {
@@ -498,14 +556,57 @@ fn below_conversation(workspace: &Workspace, actions: &Actions) {
     );
 }
 
+/// What the open session's agent is doing while nothing waits on the reader: that its server is out of reach, that the prompt is being sent, or that it is thinking; nothing while it is idle or asks something.
+fn status_line(workspace: &Workspace) {
+    let extras = &workspace.extras;
+    let out_of_reach = workspace
+        .open
+        .as_ref()
+        .and_then(|at| pm_shell::session_at(&workspace.projects, at))
+        .is_some_and(|session| session.status == SessionStatus::OutOfReach);
+    let asking = extras.approval.is_some()
+        || extras.inquiry.is_some()
+        || extras.trust.is_some()
+        || extras.signed_out.is_some()
+        || extras.container.is_some();
+    let label = if out_of_reach {
+        "The server is out of reach. Waiting for the connection to come back…"
+    } else if asking {
+        return;
+    } else if workspace.sending {
+        "Sending prompt…"
+    } else if extras.composer.working {
+        "Thinking…"
+    } else {
+        return;
+    };
+    let scheme = color_scheme();
+    row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(pm_components::spacing(8.0)),
+        Alignment::Center,
+        move || {
+            if out_of_reach {
+                icon(phosphor::LINK_BREAK, 14.0, scheme.on_surface_variant);
+            } else {
+                circular_progress_indicator_indeterminate(12.0);
+            }
+            Label::new(label)
+                .variant(LabelVariant::Muted)
+                .size(Size::Xs)
+                .show();
+        },
+    );
+}
+
 /// The strip saying what the conversation cost.
 fn spend_strip(spend: &SpendSummary) {
     let dollars = |cost: Option<f64>| match cost {
-        Some(cost) => format!("${cost:.2}"),
+        Some(cost) => cents(cost),
         None => "unpriced".to_owned(),
     };
     let total = match (spend.cost, spend.partial) {
-        (Some(cost), true) => format!("at least ${cost:.2}"),
+        (Some(cost), true) => format!("at least {}", cents(cost)),
         (cost, _) => dollars(cost),
     };
     let mut strip = SpendStrip::new(total).detail(format!(
@@ -521,6 +622,15 @@ fn spend_strip(spend: &SpendSummary) {
         );
     }
     strip.show();
+}
+
+/// `cost` in dollars to the cent, such as `$1.20`, or `<$0.01` for a cost above nothing that rounds to no cent.
+fn cents(cost: f64) -> String {
+    if cost > 0.0 && cost < 0.005 {
+        "<$0.01".to_owned()
+    } else {
+        format!("${cost:.2}")
+    }
 }
 
 /// `count` shortened with `k` or `M`, such as `412k`.

@@ -5,9 +5,9 @@ use std::rc::Rc;
 use pm_components::ServerAsk;
 use pm_components::{TerminalCommand, TerminalSelection};
 use pm_shell::{
-    BrowserAction, ComposerAction, ConversationCommand, DebugCommand, DockTab, FileAction,
-    GitAction, InquiryReply, ProjectAction, QuickAction, RightTab, SearchAction, SessionCommand,
-    TabAction, TreeAction, TrustVerdict,
+    BrowserAction, ComposerAction, ConversationCommand, DebugCommand, DockTab, ExtensionDo,
+    FileAction, GitAction, InquiryReply, ProjectAction, QuickAction, RightTab, SearchAction,
+    SessionCommand, TabAction, TreeAction, TrustVerdict,
 };
 
 /// The callbacks the pages call; the shell decides what each does.
@@ -69,6 +69,8 @@ pub struct Actions {
     pub reopen_session: Rc<dyn Fn(u64)>,
     /// Installs, updates or uninstalls the extension with the given id.
     pub press_extension: Rc<dyn Fn(String)>,
+    /// Does what the reader asked about extensions beyond a row's button.
+    pub extension: Rc<dyn Fn(ExtensionDo)>,
     /// Answers the open session's permission with the given ticket by the choice with the given id.
     pub choose: Rc<dyn Fn(u64, String)>,
     /// Answers the open session's form of questions with the given ticket, or abandons it when nothing.
@@ -79,8 +81,10 @@ pub struct Actions {
     pub pull_request: Rc<dyn Fn(String)>,
     /// Carries out a conversation command on the open session.
     pub conversation: Rc<dyn Fn(ConversationCommand)>,
-    /// Continues the open chat as a session in the project at the given index path.
-    pub continue_chat: Rc<dyn Fn(Vec<usize>)>,
+    /// Picks the project at the given index path to continue the open chat in, which lists its branches.
+    pub continue_project: Rc<dyn Fn(Vec<usize>)>,
+    /// Continues the open chat as a session in the project picked, its worktree made from the given branch.
+    pub continue_chat: Rc<dyn Fn(String)>,
     /// Opens a web address in the reader's browser.
     pub open_address: Rc<dyn Fn(String)>,
     /// Does what the browser pane asks.
@@ -224,11 +228,13 @@ impl Actions {
             open_overview: Rc::new(|_| {}),
             reopen_session: Rc::new(|_| {}),
             press_extension: Rc::new(|_| {}),
+            extension: Rc::new(|_| {}),
             choose: Rc::new(|_, _| {}),
             answer_inquiry: Rc::new(|_, _| {}),
             trust: Rc::new(|_, _| {}),
             pull_request: Rc::new(|_| {}),
             conversation: Rc::new(|_| {}),
+            continue_project: Rc::new(|_| {}),
             continue_chat: Rc::new(|_| {}),
             open_address: Rc::new(|_| {}),
             browser: Rc::new(|_| {}),

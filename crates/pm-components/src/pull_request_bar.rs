@@ -46,6 +46,16 @@ pub struct PullRequestBar {
     on_action: Option<Rc<dyn Fn(String)>>,
     /// Its text size.
     size: Size,
+    /// What the code host calls a review, in lower case.
+    noun: String,
+    /// Whether the code host's reviews can be acted on; only pushing is offered when not.
+    supported: bool,
+    /// Whether the branch has commits its remote has not.
+    ahead: bool,
+    /// What is under way, such as `Pushing…`, which replaces the buttons.
+    busy: Option<String>,
+    /// Why the last action failed.
+    error: Option<String>,
 }
 
 impl PullRequestBar {
@@ -59,7 +69,45 @@ impl PullRequestBar {
             checks: (0, 0, 0),
             on_action: None,
             size: Size::Xs,
+            noun: "pull request".to_owned(),
+            supported: true,
+            ahead: false,
+            busy: None,
+            error: None,
         }
+    }
+
+    /// The bar calling a review `noun`, in lower case, as the code host does.
+    pub fn noun(mut self, noun: impl Into<String>) -> Self {
+        let noun = noun.into();
+        if !noun.is_empty() {
+            self.noun = noun;
+        }
+        self
+    }
+
+    /// The bar offering only to push while the code host's reviews are not `supported`.
+    pub fn supported(mut self, supported: bool) -> Self {
+        self.supported = supported;
+        self
+    }
+
+    /// The bar offering to push while the branch is `ahead` of its remote.
+    pub fn ahead(mut self, ahead: bool) -> Self {
+        self.ahead = ahead;
+        self
+    }
+
+    /// The bar saying `busy` in place of its buttons while something is under way.
+    pub fn busy(mut self, busy: Option<String>) -> Self {
+        self.busy = busy;
+        self
+    }
+
+    /// The bar saying why the last action failed.
+    pub fn error(mut self, error: Option<String>) -> Self {
+        self.error = error;
+        self
     }
 
     /// The bar with `variant`.
@@ -106,17 +154,57 @@ impl PullRequestBar {
             PullRequestVariant::Merged => (scheme.primary, "Merged"),
             PullRequestVariant::Closed => (scheme.error, "Closed"),
         };
-        let actions: &[(&str, &str)] = match self.variant {
-            PullRequestVariant::None => &[
-                ("Push", "push"),
-                ("Draft", "create_draft"),
-                ("Create pull request", "create"),
-            ],
-            PullRequestVariant::Open => &[("Squash", "squash"), ("Merge", "merge")],
-            PullRequestVariant::Draft => &[("Ready for review", "ready")],
-            PullRequestVariant::Merged => &[("Delete branch", "delete_branch")],
-            PullRequestVariant::Closed => &[("Reopen", "reopen")],
-        };
+        let mut actions: Vec<(String, &str, &str)> = Vec::new();
+        let open = matches!(
+            self.variant,
+            PullRequestVariant::Open | PullRequestVariant::Draft
+        );
+        if !self.supported || (open && self.ahead) {
+            actions.push(("Push".to_owned(), "push", "Push the branch"));
+        }
+        if self.supported {
+            match self.variant {
+                PullRequestVariant::None => {
+                    actions.push((
+                        "Create draft".to_owned(),
+                        "create_draft",
+                        "Push and open a draft",
+                    ));
+                    actions.push((
+                        format!("Create {}", self.noun),
+                        "create",
+                        "Push and open it for review",
+                    ));
+                }
+                PullRequestVariant::Open | PullRequestVariant::Draft => {
+                    actions.push((
+                        "Update".to_owned(),
+                        "update",
+                        "Push and redraft the description",
+                    ));
+                    if self.variant == PullRequestVariant::Draft {
+                        actions.push(("Ready".to_owned(), "ready", "Ready for review"));
+                    } else {
+                        actions.push(("Merge".to_owned(), "merge", "Squash and merge"));
+                    }
+                }
+                PullRequestVariant::Closed => {
+                    actions.push((
+                        "Delete branch".to_owned(),
+                        "delete_branch",
+                        "Delete the branch from its remote",
+                    ));
+                    actions.push(("Reopen".to_owned(), "reopen", "Reopen it"));
+                }
+                PullRequestVariant::Merged => {
+                    actions.push((
+                        "Delete branch".to_owned(),
+                        "delete_branch",
+                        "Delete the branch from its remote",
+                    ));
+                }
+            }
+        }
         row_arranged(
             Modifier::new()
                 .fill_max_width()
@@ -128,7 +216,7 @@ impl PullRequestBar {
             move || {
                 icon(phosphor::GIT_PULL_REQUEST, 14.0, tint);
                 if self.variant == PullRequestVariant::None {
-                    Label::new("No pull request for this branch yet")
+                    Label::new(format!("No {} for this branch yet", self.noun))
                         .variant(LabelVariant::Muted)
                         .size(self.size)
                         .modifier(Modifier::new().weight(1.0))
@@ -159,11 +247,25 @@ impl PullRequestBar {
                             .show();
                     }
                 }
-                for (index, (label, action)) in actions.iter().enumerate() {
+                if let Some(error) = &self.error {
+                    crate::tip::tip(error, || {
+                        icon(phosphor::WARNING, 14.0, scheme.error);
+                    });
+                }
+                if let Some(busy) = &self.busy {
+                    circular_progress_indicator_indeterminate(10.0);
+                    Label::new(busy.clone())
+                        .variant(LabelVariant::Muted)
+                        .size(self.size)
+                        .show();
+                    return;
+                }
+                let count = actions.len();
+                for (index, (label, action, tip)) in actions.into_iter().enumerate() {
                     let on_action = self.on_action.clone();
-                    let action = (*action).to_owned();
-                    Button::new(*label)
-                        .variant(if index + 1 == actions.len() {
+                    let action = action.to_owned();
+                    let button = Button::new(label)
+                        .variant(if index + 1 == count {
                             ButtonVariant::Primary
                         } else {
                             ButtonVariant::Secondary
@@ -173,8 +275,8 @@ impl PullRequestBar {
                             if let Some(on_action) = &on_action {
                                 on_action(action.clone());
                             }
-                        })
-                        .show();
+                        });
+                    crate::tip::tip(tip, move || button.show());
                 }
                 if self.variant != PullRequestVariant::None {
                     let on_action = self.on_action.clone();

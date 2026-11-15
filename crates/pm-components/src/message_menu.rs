@@ -59,6 +59,12 @@ impl MessageMenu {
         self
     }
 
+    /// The menu with the entries of `other` after its own.
+    pub fn extend(mut self, other: MessageMenu) -> Self {
+        self.entries.extend(other.entries);
+        self
+    }
+
     /// The menu with an entry `label` that copies `text` to the clipboard.
     pub fn copy(self, label: impl Into<String>, text: String) -> Self {
         self.item(label, move || {
@@ -88,9 +94,7 @@ impl MessageMenu {
         column_with(
             Modifier::new()
                 .fill_max_width()
-                .on_secondary_click(move |event| {
-                    open.set(Some((event.position.x, event.position.y)))
-                }),
+                .on_context_menu(move |event| open.set(Some((event.position.x, event.position.y)))),
             move || {
                 if let Some((across, down)) = at.get() {
                     let dismiss = at.clone();

@@ -27,6 +27,14 @@ pub struct ContinueChat {
     projects: Vec<String>,
     /// What picking a project does, given its position.
     on_pick: Option<Rc<dyn Fn(usize)>>,
+    /// The project picked, by position, whose branches are offered.
+    chosen: Option<usize>,
+    /// The branches of the project picked, once its machine listed them; none of them for a folder that holds no repository.
+    branches: Option<Vec<String>>,
+    /// What picking the branch the session's worktree is made from does, given the branch.
+    on_branch: Option<Rc<dyn Fn(String)>>,
+    /// Whether the chat cannot be continued now, as while its agent works.
+    disabled: bool,
     /// Its visual treatment.
     variant: ContinueChatVariant,
     /// Its text size.
@@ -39,6 +47,10 @@ impl ContinueChat {
         Self {
             projects,
             on_pick: None,
+            chosen: None,
+            branches: None,
+            on_branch: None,
+            disabled: false,
             variant: ContinueChatVariant::Band,
             size: Size::Xs,
         }
@@ -47,6 +59,25 @@ impl ContinueChat {
     /// The bar running `on_pick` with the position of the project picked.
     pub fn on_pick(mut self, on_pick: impl Fn(usize) + 'static) -> Self {
         self.on_pick = Some(Rc::new(on_pick));
+        self
+    }
+
+    /// The bar with the project at `chosen` picked, offering `branches` to make the session's worktree from once they are known.
+    pub fn chosen(mut self, chosen: Option<usize>, branches: Option<Vec<String>>) -> Self {
+        self.chosen = chosen;
+        self.branches = branches;
+        self
+    }
+
+    /// The bar running `on_branch` with the branch picked, which continues the chat in the project picked.
+    pub fn on_branch(mut self, on_branch: impl Fn(String) + 'static) -> Self {
+        self.on_branch = Some(Rc::new(on_branch));
+        self
+    }
+
+    /// The bar with its button switched off while `disabled`, as while the agent works.
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 
@@ -86,7 +117,11 @@ impl ContinueChat {
             Alignment::Center,
             move || {
                 icon(phosphor::CHAT_CIRCLE, 14.0, scheme.on_surface_variant);
-                Label::new("This chat belongs to no project. Continue it as a session in one.")
+                Label::new(if self.disabled {
+                    "This chat belongs to no project. It can be continued in one once the agent is done."
+                } else {
+                    "This chat belongs to no project. Continue it as a session in one."
+                })
                     .variant(LabelVariant::Muted)
                     .size(self.size)
                     .modifier(Modifier::new().weight(1.0))
@@ -97,22 +132,58 @@ impl ContinueChat {
                         .trailing_icon(phosphor::CARET_DOWN)
                         .variant(ButtonVariant::Secondary)
                         .size(Size::Xs)
+                        .disabled(self.disabled)
                         .on_click(move || toggle.set(!toggle.get()))
                         .show();
                     let close = open.clone();
                     dropdown_menu(
-                        open.get(),
+                        open.get() && !self.disabled,
                         move || dismiss.set(false),
                         move || {
                             for (index, name) in self.projects.iter().enumerate() {
                                 let on_pick = self.on_pick.clone();
-                                let close = close.clone();
-                                dropdown_menu_item(name, move || {
-                                    close.set(false);
+                                let label = if self.chosen == Some(index) {
+                                    format!("✓ {name}")
+                                } else {
+                                    name.clone()
+                                };
+                                dropdown_menu_item(&label, move || {
                                     if let Some(on_pick) = &on_pick {
                                         on_pick(index);
                                     }
                                 });
+                            }
+                            if self.chosen.is_none() {
+                                return;
+                            }
+                            match &self.branches {
+                                None => dropdown_menu_item("Reading its branches…", || {}),
+                                Some(branches) if branches.is_empty() => {
+                                    let on_branch = self.on_branch.clone();
+                                    let close = close.clone();
+                                    dropdown_menu_item("Continue here", move || {
+                                        close.set(false);
+                                        if let Some(on_branch) = &on_branch {
+                                            on_branch("HEAD".to_owned());
+                                        }
+                                    });
+                                }
+                                Some(branches) => {
+                                    for branch in branches {
+                                        let on_branch = self.on_branch.clone();
+                                        let close = close.clone();
+                                        let picked = branch.clone();
+                                        dropdown_menu_item(
+                                            &format!("Branch from {branch}"),
+                                            move || {
+                                                close.set(false);
+                                                if let Some(on_branch) = &on_branch {
+                                                    on_branch(picked.clone());
+                                                }
+                                            },
+                                        );
+                                    }
+                                }
                             }
                         },
                     );

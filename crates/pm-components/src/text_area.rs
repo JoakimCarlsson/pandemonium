@@ -2,11 +2,12 @@
 //! which follows the value it is given, tells what is typed and submits on
 //! Ctrl+Enter.
 
+use crate::text_menu::TextMenu;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use rustle::prelude::*;
-use rustle::{Key, basic_text_area};
+use rustle::{Key, TextFieldOptions, basic_text_field_in, remember_focus};
 
 use crate::label::{Label, LabelVariant};
 use crate::size::Size;
@@ -146,7 +147,9 @@ impl TextArea {
         let placeholder = self.placeholder;
         let style = Label::new("").size(self.size).wrap().style();
         let size = self.size;
-        stack_with(modifier.clip(), move || {
+        let focus = remember_focus();
+        let menu = TextMenu::new(&state).focus(&focus);
+        menu.around(modifier.clip(), BoxAlignment::TopStart, move || {
             if empty {
                 Label::new(placeholder)
                     .variant(LabelVariant::Subtle)
@@ -154,7 +157,16 @@ impl TextArea {
                     .show();
             }
             LOCAL_TEXT_STYLE.provide(style, || {
-                basic_text_area(Modifier::new().fill_max_size(), &state);
+                basic_text_field_in(
+                    Modifier::new().fill_max_size().clip(),
+                    Modifier::new(),
+                    &state,
+                    &focus,
+                    TextFieldOptions {
+                        multiline: true,
+                        ..TextFieldOptions::default()
+                    },
+                );
             });
         });
     }

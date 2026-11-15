@@ -6,16 +6,26 @@
 use rustle::prelude::*;
 
 use pm_components::{
-    Button, ButtonVariant, FilterField, ItemRow, Label, LabelVariant, PageBody, PageHeader,
-    Section, Size,
+    Button, ButtonVariant, Dialog, FilterField, ItemRow, Label, LabelVariant, Notice,
+    NoticeVariant, PageBody, PageHeader, Section, Size, Switch,
 };
-use pm_shell::{Extension, ExtensionAction, Tone, Workspace};
+use pm_shell::{
+    Capability, Extension, ExtensionAction, ExtensionDo, ExtensionPreview, Tone, Workspace,
+};
 
 use crate::actions::Actions;
 
 /// Emits the extensions page for `workspace`.
 pub fn extensions_page(workspace: &Workspace, actions: &Actions) {
-    PageHeader::new("Extensions").show(|| {});
+    let from_folder = actions.extension.clone();
+    PageHeader::new("Extensions").show(move || {
+        Button::new("Install from folder…")
+            .icon(phosphor::FOLDER_OPEN)
+            .variant(ButtonVariant::Secondary)
+            .size(Size::Sm)
+            .on_click(move || from_folder(ExtensionDo::InstallFromFolder))
+            .show();
+    });
     PageBody::new().show(|| {
         let needle = FilterField::new("Search extensions")
             .size(Size::Lg)
@@ -41,12 +51,129 @@ pub fn extensions_page(workspace: &Workspace, actions: &Actions) {
             .into_iter()
             .partition(|extension| extension.installed);
         Section::new("Installed on this machine").show(installed.len(), |index| {
-            extension_row(installed[index], actions)
+            extension_row(installed[index], actions);
+            let extension = installed[index];
+            let grant = actions.extension.clone();
+            let id = extension.id.clone();
+            capability_switches(&extension.capabilities, move |capability, granted| {
+                grant(ExtensionDo::Grant(id.clone(), capability, granted))
+            });
         });
         Section::new("Available").show(available.len(), |index| {
             extension_row(available[index], actions)
         });
     });
+}
+
+/// Emits a switch for each of `capabilities` an extension asks, saying what it lets the extension do, calling `on_change` with the capability's name and whether it is now allowed.
+pub(crate) fn capability_switches(
+    capabilities: &[Capability],
+    on_change: impl Fn(String, bool) + Clone + 'static,
+) {
+    for capability in capabilities {
+        let change = on_change.clone();
+        let id = capability.id.clone();
+        key(capability.id.clone(), || {
+            row_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .padding_each(40.0, 2.0, 12.0, 2.0),
+                Arrangement::SpacedBy(pm_components::spacing(8.0)),
+                Alignment::Center,
+                || {
+                    Label::new(capability.about.clone())
+                        .variant(LabelVariant::Muted)
+                        .size(Size::Xs)
+                        .modifier(Modifier::new().weight(1.0))
+                        .show();
+                    Switch::new(capability.granted)
+                        .size(Size::Xs)
+                        .on_change(move |granted| change(id.clone(), granted))
+                        .show();
+                },
+            );
+        });
+    }
+}
+
+/// Emits the dialog showing the extension in the folder `preview` holds before it is installed: what it carries and asks to be allowed, with a switch for each, and the buttons that install it or give up.
+pub fn extension_preview_dialog(preview: &ExtensionPreview, actions: &Actions) {
+    let (cancel, install, grant) = (
+        actions.extension.clone(),
+        actions.extension.clone(),
+        actions.extension.clone(),
+    );
+    let dismiss = cancel.clone();
+    Dialog::new("Install extension")
+        .size(Size::Sm)
+        .on_dismiss(move || dismiss(ExtensionDo::CancelPreview))
+        .show(|| {
+            Label::new(preview.path.clone())
+                .variant(LabelVariant::Subtle)
+                .size(Size::Xs)
+                .show();
+            if let Some(problem) = &preview.problem {
+                Notice::new("This folder can't be installed")
+                    .detail(problem.clone())
+                    .variant(NoticeVariant::Danger)
+                    .size(Size::Sm)
+                    .show();
+            }
+            match &preview.extension {
+                None if preview.problem.is_none() => Label::new("Reading the folder…")
+                    .variant(LabelVariant::Subtle)
+                    .show(),
+                None => {}
+                Some(extension) => {
+                    Label::new(match extension.version.is_empty() {
+                        true => extension.name.clone(),
+                        false => format!("{} {}", extension.name, extension.version),
+                    })
+                    .size(Size::Md)
+                    .show();
+                    if !extension.about.is_empty() {
+                        Label::new(extension.about.clone())
+                            .variant(LabelVariant::Muted)
+                            .size(Size::Sm)
+                            .show();
+                    }
+                    for line in &extension.provides {
+                        Label::new(line.clone())
+                            .variant(LabelVariant::Subtle)
+                            .size(Size::Xs)
+                            .show();
+                    }
+                    if !extension.capabilities.is_empty() {
+                        Label::new("It asks to be allowed to:")
+                            .size(Size::Sm)
+                            .show();
+                        capability_switches(&extension.capabilities, move |capability, granted| {
+                            grant(ExtensionDo::PreviewGrant(capability, granted))
+                        });
+                    }
+                }
+            }
+            row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::End,
+                Alignment::Center,
+                || {
+                    Button::new("Cancel")
+                        .variant(ButtonVariant::Secondary)
+                        .size(Size::Sm)
+                        .on_click(move || cancel(ExtensionDo::CancelPreview))
+                        .show();
+                    spacer(Modifier::new().width(pm_components::spacing(8.0)));
+                    Button::new("Install")
+                        .icon(phosphor::DOWNLOAD_SIMPLE)
+                        .variant(ButtonVariant::Primary)
+                        .size(Size::Sm)
+                        .disabled(preview.extension.is_none())
+                        .on_click(move || install(ExtensionDo::InstallPreview))
+                        .show();
+                },
+            );
+        });
 }
 
 /// Emits the row of `extension`: its mark, name and version over what it is

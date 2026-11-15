@@ -86,25 +86,38 @@ impl SpendStrip {
         if self.variant == SpendVariant::Filled {
             modifier = modifier.background_rounded(scheme.surface_container_high, 10.0);
         }
+        let breakdown = self
+            .models
+            .iter()
+            .map(|(name, cost, tokens)| format!("{name}: {cost}, {tokens}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         column_with(Modifier::new(), move || {
-            row_arranged(
-                modifier,
-                Arrangement::SpacedBy(crate::spacing(6.0)),
-                Alignment::Center,
-                || {
-                    icon(phosphor::COINS, 12.0, scheme.on_surface_variant);
-                    Label::new(self.total.clone())
-                        .variant(LabelVariant::Muted)
-                        .size(self.size)
-                        .show();
-                    if !self.detail.is_empty() {
-                        Label::new(self.detail.clone())
-                            .variant(LabelVariant::Subtle)
+            let row = || {
+                row_arranged(
+                    modifier,
+                    Arrangement::SpacedBy(crate::spacing(6.0)),
+                    Alignment::Center,
+                    || {
+                        icon(phosphor::COINS, 12.0, scheme.on_surface_variant);
+                        Label::new(self.total.clone())
+                            .variant(LabelVariant::Muted)
                             .size(self.size)
                             .show();
-                    }
-                },
-            );
+                        if !self.detail.is_empty() {
+                            Label::new(self.detail.clone())
+                                .variant(LabelVariant::Subtle)
+                                .size(self.size)
+                                .show();
+                        }
+                    },
+                )
+            };
+            if breakdown.is_empty() || open.get() {
+                row();
+            } else {
+                crate::tip::tip(&breakdown, row);
+            }
             if open.get() {
                 for (name, cost, tokens) in &self.models {
                     row_arranged(

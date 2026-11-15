@@ -146,7 +146,11 @@ fn welcome_composer(workspace: &Workspace, start: &Start, actions: &Actions) {
         }
     }
     composer = with_attachments(composer, &workspace.extras.composer, actions);
-    with_attaching(composer, actions).show();
+    let mention = actions.composer.clone();
+    with_attaching(composer, actions)
+        .mentions(workspace.tree.paths.clone())
+        .on_mention(move || mention(ComposerAction::Mention))
+        .show();
 }
 
 /// The choice of the branch the worktree of the work `start` describes is made from.
@@ -207,7 +211,13 @@ fn place_choice(start: &Start) -> ComposerChoice {
         current: current.to_owned(),
         picks: PLACES
             .iter()
-            .filter(|(value, _, _)| *value != "container" || start.has_container || start.container)
+            .filter(|(value, _, _)| match *value {
+                "worktree" => !start.branches.is_empty(),
+                "container" => {
+                    start.container || (start.container_offered && !start.branches.is_empty())
+                }
+                _ => true,
+            })
             .map(|(value, name, description)| ComposerPick {
                 value: (*value).to_owned(),
                 name: (*name).to_owned(),

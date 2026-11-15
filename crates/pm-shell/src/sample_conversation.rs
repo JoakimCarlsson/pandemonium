@@ -162,7 +162,7 @@ pub fn conversation() -> Vec<Message> {
                 }),
                 Block::Notice(Notice {
                     kind: NoticeKind::Fallback,
-                    title: "Switched main from Opus 5.5 to its backup Sonnet 5".to_owned(),
+                    title: "Switched to Sonnet 5: Opus 5.5 was overloaded".to_owned(),
                     detail: "overloaded_error: the model is under heavy load".to_owned(),
                 }),
                 Block::markdown(RICH_REPLY),
@@ -244,6 +244,11 @@ pub fn extras() -> Extras {
             review: "Review required".to_owned(),
             checks: (4, 1, 1),
             url: "https://github.com/void/void/pull/42".to_owned(),
+            noun: "pull request".to_owned(),
+            supported: true,
+            ahead: true,
+            busy: None,
+            error: None,
         }),
         ..Extras::default()
     }
@@ -322,10 +327,11 @@ pub fn sample_ask(extras: &mut Extras, ask: SampleAsk) {
             extras.trust = Some(TrustAsk {
                 ticket: 3,
                 root: "~/repos/void".to_owned(),
-                reason: "This project has not been trusted yet.".to_owned(),
+                title: "Trust void?".to_owned(),
+                reason: "This session is not using its hooks, instructions and skills until you trust the project. Its hooks run commands on this machine, so only trust a project whose files you know.".to_owned(),
                 skipped: vec![
                     ("Hook".to_owned(), "pre-commit fmt".to_owned()),
-                    ("Instruction".to_owned(), "AGENTS.md".to_owned()),
+                    ("Instructions".to_owned(), "AGENTS.md".to_owned()),
                     ("Skill".to_owned(), "release".to_owned()),
                 ],
             });

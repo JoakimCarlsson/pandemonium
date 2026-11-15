@@ -55,7 +55,7 @@ impl Leading {
                     move || {
                         let dot = Modifier::new().size(6.0, 6.0);
                         if filled {
-                            spacer(dot.background_rounded(scheme.on_surface, 3.0));
+                            spacer(dot.background_rounded(scheme.primary, 3.0));
                         } else {
                             spacer(dot.border(1.0, extended.subtle, 3.0));
                         }
@@ -70,21 +70,15 @@ impl Leading {
                 );
             }
             Leading::Attention | Leading::Failed => {
-                let colour = if matches!(self, Leading::Attention) {
-                    extended.warning
+                let (glyph, colour) = if matches!(self, Leading::Attention) {
+                    (phosphor::CHAT_CIRCLE_DOTS, extended.warning)
                 } else {
-                    scheme.error
+                    (phosphor::X_CIRCLE, scheme.error)
                 };
                 stack_aligned(
                     Modifier::new().size(14.0, 14.0),
                     BoxAlignment::Center,
-                    move || {
-                        spacer(
-                            Modifier::new()
-                                .size(6.0, 6.0)
-                                .background_rounded(colour, 3.0),
-                        )
-                    },
+                    move || icon(glyph, 13.0, colour),
                 );
             }
             Leading::Custom(content) => content(),
@@ -111,6 +105,8 @@ pub struct Tile {
     label: String,
     /// What it leads with.
     leading: Leading,
+    /// What the leading mark means, shown while the pointer is over it.
+    leading_tooltip: Option<String>,
     /// Faint text at the end, such as an age.
     trailing: Option<String>,
     /// How it reads.
@@ -137,6 +133,7 @@ impl Tile {
         Self {
             label: label.into(),
             leading: Leading::None,
+            leading_tooltip: None,
             trailing: None,
             variant: TileVariant::Plain,
             size: Size::Sm,
@@ -152,6 +149,12 @@ impl Tile {
     /// The tile calling `on_menu` when right-clicked.
     pub fn on_menu(mut self, on_menu: impl Fn() + 'static) -> Self {
         self.on_menu = Some(Rc::new(on_menu));
+        self
+    }
+
+    /// The tile saying what its leading mark means with `tooltip` while the pointer is over the mark.
+    pub fn leading_tooltip(mut self, tooltip: impl Into<String>) -> Self {
+        self.leading_tooltip = Some(tooltip.into());
         self
     }
 
@@ -260,7 +263,10 @@ impl Tile {
             Arrangement::SpacedBy(crate::spacing(8.0)),
             Alignment::Center,
             move || {
-                self.leading.show();
+                match &self.leading_tooltip {
+                    Some(tip) => crate::tip::tip(tip, || self.leading.show()),
+                    None => self.leading.show(),
+                }
                 Label::new(self.label.clone())
                     .variant(label_variant)
                     .size(label_size)

@@ -94,6 +94,31 @@ fn agent_stopping_mid_turn_ends_the_turn_with_an_error() {
     assert!(held.chat.is_none());
 }
 
+/// A turn the server saw start is followed, once it ends, by how long it took; one it did not see start gets none.
+#[test]
+fn an_ended_turn_says_how_long_it_took() {
+    let _forget = Forget;
+    let mut held = session(Vec::new());
+    held.take_in(
+        NUMBER,
+        Event::Prompted {
+            text: "work".to_owned(),
+            files: Vec::new(),
+            checkpoint: false,
+            turn: 1,
+            saved: None,
+        },
+    );
+    let told = held.take_in(NUMBER, Event::Finished(None));
+    assert!(matches!(told.last(), Some((_, _, Event::Took(_)))));
+    let again = held.take_in(NUMBER, Event::Finished(None));
+    assert!(
+        !again
+            .iter()
+            .any(|(_, _, event)| matches!(event, Event::Took(_)))
+    );
+}
+
 /// A turn id never repeats one the log holds, even when the log was rebuilt with fewer events than its ids reach.
 #[test]
 fn next_turn_id_stays_above_every_id_in_the_log() {

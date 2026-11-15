@@ -212,6 +212,7 @@ impl Link {
             return;
         };
         let folder = self.workspace.git.folder.clone();
+        self.workspace.git.menu = None;
         self.workspace.git.revision = Some(Revision {
             title: format!("Turn {}", turn + 1),
             restore: Some(RevisionRestore::Turn { session, turn }),

@@ -64,6 +64,8 @@ pub struct Menu {
     above: bool,
     /// Whether it takes the keyboard as it opens, to be driven by the arrows and Enter.
     keyboard: bool,
+    /// The command the keys point at, counted among the commands only, drawn as if the pointer were over it.
+    highlighted: Option<usize>,
 }
 
 impl Menu {
@@ -78,6 +80,7 @@ impl Menu {
             on_dismiss: None,
             above: false,
             keyboard: true,
+            highlighted: None,
         }
     }
 
@@ -90,6 +93,12 @@ impl Menu {
     /// The menu opening upward from where it is emitted when `above`, for a field near the bottom of the window.
     pub fn above(mut self, above: bool) -> Self {
         self.above = above;
+        self
+    }
+
+    /// The menu drawing its command at `place`, counted among the commands only, as if the pointer were over it, for lists stepped through with the arrow keys.
+    pub fn highlighted(mut self, place: Option<usize>) -> Self {
+        self.highlighted = place;
         self
     }
 
@@ -264,7 +273,11 @@ impl Menu {
                 })
             }
         };
-        let highlighted = active.get();
+        let active_place = active.get();
+        let highlighted_place = self
+            .highlighted
+            .and_then(|command| choosable_place(&entries, command));
+        let highlighted = active_place.or(highlighted_place);
         let rows = move || {
             column_with(
                 Modifier::new().fill_max_width().focusable(&focus, keyed),
@@ -344,6 +357,16 @@ fn menu_key(
     }
 }
 
+/// The position among `entries` of the command at `command`, counted among the commands only.
+fn choosable_place(entries: &[Entry], command: usize) -> Option<usize> {
+    entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| matches!(entry, Entry::Item { .. }))
+        .nth(command)
+        .map(|(place, _)| place)
+}
+
 /// Emits `entry` `height` tall, marked as the row the keys point at when `lit`, calling `dismiss` after a command is chosen.
 #[track_caller]
 fn entry_row(entry: Entry, height: f32, dismiss: Option<Rc<dyn Fn()>>, lit: bool) {
@@ -408,16 +431,26 @@ fn entry_row(entry: Entry, height: f32, dismiss: Option<Rc<dyn Fn()>>, lit: bool
                         Some(glyph) => icon(glyph, 14.0, tone),
                         None => spacer(Modifier::new().width(13.0)),
                     }
-                    Label::new(label)
-                        .colour(tone)
-                        .size(Size::Xs)
-                        .modifier(Modifier::new().weight(1.0))
-                        .show();
-                    if let Some(hint) = hint {
-                        Label::new(hint)
-                            .variant(LabelVariant::Subtle)
+                    match hint {
+                        Some(hint) => {
+                            Label::new(label).colour(tone).size(Size::Xs).show();
+                            row_arranged(
+                                Modifier::new().weight(1.0).clip(),
+                                Arrangement::End,
+                                Alignment::Center,
+                                || {
+                                    Label::new(hint)
+                                        .variant(LabelVariant::Subtle)
+                                        .size(Size::Xs)
+                                        .show();
+                                },
+                            );
+                        }
+                        None => Label::new(label)
+                            .colour(tone)
                             .size(Size::Xs)
-                            .show();
+                            .modifier(Modifier::new().weight(1.0))
+                            .show(),
                     }
                 },
             );

@@ -56,17 +56,17 @@ polish.
 | 13 | **FIXED.** the dock asks `Terminals` on first connect, adopts the shells and replays them with `watch_terminal`; the client re-attaches on reconnect. Verified by `shells_of_the_server_are_taken_up`. **Shells are lost on reconnect or restart.** `Terminals` and `AttachTerminal` are never sent, `watch_terminal` is never called, shells are never adopted or closed, and missed output is never caught up. This breaks the AGENTS.md reconnect rule. | `pm-shell/src/dock.rs:136-141` | `old: dock.rs:509-520`, `work.rs:2121-2143` |
 | 14 | **FIXED.** `link/remote.rs` passes every message on and `machines.rs` renumbers browser calls, diagnostics, folder changes, served pages and continued chats; unreachable machines' sessions show an out-of-reach mark. Verified by build and the existing remote tests. **Remote machines lose most server messages.** `link/remote.rs` passes on only six message kinds. BrowserCall (a remote agent's browser tool hangs), Diagnostics, FolderChanged, ExtensionsChanged and ChatContinued are dropped. Remote sessions also show no "out of reach" state; they keep spinning as Working. | `pm-shell/src/link/remote.rs:202`, `model.rs` (`SessionStatus`) | `old: work.rs:1752-1843`, `reach.rs:12-32` |
 | 15 | **FIXED.** the clone form has a folder and machine, the machines form a token field, and the library's tool sets and withheld keys go to the open project's machine; verified by the `clone` and `settings-servers` snapshots. **Customizations, clone and the machines form ignore remote machines.** The library and `SaveWithheld` always go to the local server. Clone has no destination or machine. The machines form has no token field, so token-protected servers can't be reached. | `link.rs:359`, `settings_change.rs:110-119,240-274`, `link/projects.rs:80-98` | `old: settings_library.rs:137-174`, `settings_machines.rs:243-250`, `adder.rs:540-604` |
-| 16 | **PARTLY FIXED** (`gap/conversation`): the sidebar's session and chat menus and the message right-click menu are back, and `Tile` has `on_menu`; the editor and text-field menus remain. **Context menus are missing.** The editor menu (18 commands), the text-field menu outside the composer, the session and chat menus in the sidebar (rename, close, copy path or branch, mark unread, open folder, remove chat), and the right-click menu on chat messages are all gone. `Tile` has no secondary-click hook. | `code_editor.rs`, `text_input.rs`, `pm-components/src/tile.rs:206-284` | `old: context_menu.rs:156-336`, `arrange.rs:17-36,142-204`, `message_menu.rs:45-102` |
+| 16 | **PARTLY FIXED** (`gap/conversation`, `gap2/conversation`): the sidebar's session and chat menus and the message right-click menu are back, `Tile` has `on_menu`, and every text field (`TextInput`, `TextArea`, `FilterField`, the composer) opens Cut, Copy, Paste and Select all through `TextMenu`, verified live; the editor menu remains. **Context menus are missing.** The editor menu (18 commands), the text-field menu outside the composer, the session and chat menus in the sidebar (rename, close, copy path or branch, mark unread, open folder, remove chat), and the right-click menu on chat messages are all gone. `Tile` has no secondary-click hook. | `code_editor.rs`, `text_input.rs`, `pm-components/src/tile.rs:206-284` | `old: context_menu.rs:156-336`, `arrange.rs:17-36,142-204`, `message_menu.rs:45-102` |
 | 17 | **FIXED.** the session menu in the sidebar renames, closes (asking before discarding uncommitted changes), copies and opens folders; forks open at once. Verified by `closing_with_changes_asks_first`, `forks_open_at_once`, `renaming_changes_the_title` and the `session-menu`, `rename`, `discard` snapshots. **Sessions can't be closed or renamed.** `CloseSession` and `RenameSession` are never sent. A fork made in this window doesn't appear until a reconnect, because the `Started` reply is dropped (`Ask::Nothing`). | `pm-pages/src/actions.rs`, `link/conversation_requests.rs:161` | `old: work.rs:819-852,998` |
 | 18 | **PARTLY FIXED.** `IconButton::tooltip` exists and the title bar uses it; tooltips and menus are kept inside the window (`pm-components/src/window_area.rs`, `tip.rs`), verified live: Close's tooltip stays inside the right edge and the last project's menu opens upward. Tooltips elsewhere are still missing. **Tooltips are almost all gone.** The new code has one `tooltip(` call (`usage_ring.rs:94`), and `IconButton` has no tooltip API. The title bar, git panel, browser, find bar, file header, debug controls, sidebar status marks and agent chips all lost theirs. | `pm-components/src/icon_button.rs:22-37` | `old: pm-ui/src/tooltip.rs`; title bar alone had 11 |
 | 19 | **FIXED** (`gap2/window`). Buttons, icon buttons, checkboxes, switches and selects take focus with Tab, show a ring and press on Enter/Space (selects also open on Down); steppers step on the arrows; menus take the keyboard as they open and move with the arrows, Home and End and choose on Enter; option lists move with the arrows and pick on Enter; the folder picker moves with the arrows, goes in on Enter, goes up on Backspace and Alt+Up, back and forward on Alt+Left/Right, and closes on Escape. Verified live: Space flips a switch reached by Tab, Down and Enter choose Overview in a project menu. **There is no keyboard focus ring and no keyboard operation of controls.** Buttons, checkboxes, switches, segmented controls, selects, steppers and menus can't be focused or driven by keys. `Dialog` and `ConfirmDialog` don't close on Escape. The folder picker and adder have no arrow or Enter keys. | `button.rs:131-144`, `menu.rs:269-298`, `dialog.rs:82-111`, `confirm_dialog.rs` | `old: button.rs:253-313`, `settings.rs:20-92`, `folder_picker.rs:308-348` |
 | 20 | **PARTLY FIXED.** **Typing behaviour ignores its settings, and features are missing.** Typing ignores tab size, hard tabs, auto-close, auto-indent and comment extension. Format on save, code actions on save, auto save, snippets and Emmet on Tab, folding, multi-caret (Ctrl+D, Alt+click, column select), case and sort commands, and the line-copy fallback are gone. *Now honoured: tab size, hard tabs, auto-close, auto-surround, auto-indent, comment extension, format on save and on type, auto save, snippets and Emmet on Tab, folding, Ctrl+D, Ctrl+Shift+L, Ctrl+Alt+Up/Down and Alt+click. Still missing: code actions on save, column select, case and sort commands and the line-copy fallback.* | `code_editor.rs:669-855`, `link/code.rs:100-117`, `code_text.rs:14` | `old: editor.rs:353-684`, `line_edits.rs:20-157`, `app/code.rs:165-199` |
-| 21 | **FIXED** (`gap/conversation`), except the account chip's menu. **The composer is reduced.** The `+`, `@` and `/` toolbar buttons do nothing. `@` file mentions are gone. A prompt made only of attachments can't be sent. The box doesn't grow past one line. Signed-out sessions show no "Sign in again" bar. Account and Goal chips are inert. Shift+Tab mode cycling is gone. | `pm-components/src/composer.rs:294-320,471-477`, `prompt_box.rs:116`, `thread.rs:156` | `old: composer.rs:353-412,592-631`, `input.rs:254-354`, `choices.rs:784-968` |
+| 21 | **FIXED** (`gap/conversation`, `gap2/conversation`: the account chip's menu). **The composer is reduced.** The `+`, `@` and `/` toolbar buttons do nothing. `@` file mentions are gone. A prompt made only of attachments can't be sent. The box doesn't grow past one line. Signed-out sessions show no "Sign in again" bar. Account and Goal chips are inert. Shift+Tab mode cycling is gone. | `pm-components/src/composer.rs:294-320,471-477`, `prompt_box.rs:116`, `thread.rs:156` | `old: composer.rs:353-412,592-631`, `input.rs:254-354`, `choices.rs:784-968` |
 | 22 | **FIXED** (`gap/conversation`). **The start page drops what you chose.** `StartSession` sends empty `settings` and `attachments` and `base: "HEAD"`. The welcome composer can't take attachments. Agents aren't filtered to visible, signed-in ones. | `pm-shell/src/link.rs:524-537`, `pm-pages/src/welcome.rs:85,99-116` | `old: choices.rs:523-535,757-761`, `agent_list.rs:106-126` |
 | 23 | **PARTLY FIXED.** **Folder watches are mostly lost, and diffs go stale or loop.** `WatchFolders` holds only the session folder. The tree and open files don't reload on outside edits. Kept diffs are never refetched. Empty or failed diffs re-request on every recomposition and show "Loading the diff…" forever. *Diffs are now refetched after each change and never re-requested once answered, and open files without unsaved changes follow outside edits. `WatchFolders` still holds only the session folder and the tree does not reload.* | `link/git.rs:61-66,193-223,522-529`, `changes_page.rs:99-109` | `old: work/watch.rs:39-114`, `lazy_diffs.rs:46-131` |
 | 24 | **FIXED.** **Git workflows are missing.** You can't continue, skip or abort a merge, rebase or cherry-pick (Commit just sends a plain commit). Stash is gone. The submodule picker is gone. Commit readiness ignores conflicts. Partly staged files are mishandled, and conflicted rows can be staged. *Continue, Skip and Abort show while a merge, rebase or cherry-pick is stopped; stashes can be made, applied, popped and dropped; a submodule picker points the panel at a submodule; conflicts block committing; partly staged files list under both groups; conflicted rows have no stage box.* | `pm-pages/src/git_panel.rs:176-190,534-604`, `pm-shell/src/git.rs:89-145,394-398` | `old: git_controls.rs:543-616,815-905`, `git_menus.rs:239-265,414-424` |
-| 25 | **FIXED** (`gap/conversation`), except "Show what this turn changed". **Restore files and Undo turn are gone.** The "Restore files to before this turn" action, Undo turn and turn changes are missing. `Restored`, `Undone`, `ToolSignIn`, `Limits`, `Goal`, `Slots` and `Container` events are dropped. | `pm-shell/src/thread.rs:254` | `old: chat.rs:63-123`, `hearing.rs:113-115,303-363` |
-| 26 | **FIXED** (`gap/conversation`), except the duration in "Worked for Ns", which the events do not carry. **Subagents are flattened into ordinary rows.** The subagent card, per-subagent Stop (`StopSubagent`), the worktree/merge chip and nesting through `parent` are gone. Back-to-back thinking or text blocks overwrite each other. The "Worked for Ns · N steps" fold is gone. Edit steps lose their diff. | `pm-shell/src/translate.rs:24-65`, `thread.rs:71-96,285`, `pm-components/src/steps.rs` | `old: steps.rs:43-465,591-616`, `hearing.rs:185-220,407-418,541-594` |
+| 25 | **FIXED** (`gap/conversation`; "Show what this turn changed" in `gap2/conversation`, verified live). **Restore files and Undo turn are gone.** The "Restore files to before this turn" action, Undo turn and turn changes are missing. `Restored`, `Undone`, `ToolSignIn`, `Limits`, `Goal`, `Slots` and `Container` events are dropped. | `pm-shell/src/thread.rs:254` | `old: chat.rs:63-123`, `hearing.rs:113-115,303-363` |
+| 26 | **FIXED** (`gap/conversation`; the duration in `gap2/conversation` from the new `Took` event, verified live as "Failed for 2s"). **Subagents are flattened into ordinary rows.** The subagent card, per-subagent Stop (`StopSubagent`), the worktree/merge chip and nesting through `parent` are gone. Back-to-back thinking or text blocks overwrite each other. The "Worked for Ns · N steps" fold is gone. Edit steps lose their diff. | `pm-shell/src/translate.rs:24-65`, `thread.rs:71-96,285`, `pm-components/src/steps.rs` | `old: steps.rs:43-465,591-616`, `hearing.rs:185-220,407-418,541-594` |
 | 27 | **PARTLY FIXED** (`gap/panels`): `>` lists every window-wide keymap action with the keys the keymap binds, the recently used first; `:` goes to a line, `?` lists the prefixes, recently opened files lead, and Run Task, Start Debugging and Select Toolchain open their pickers. Still missing: compare-with-file, chat search, Ctrl+Enter, outline without the language server. **Quick input is reduced.** It has a fixed table of 25 commands, with hard-coded key labels that ignore the keymap. `:` go to line, `?` help, recents, Compare-with-file mode, chat search, Ctrl+Enter to start a new session and the debug, task and toolchain pickers are gone. Outline needs the language server plus typing. | `pm-shell/src/quick.rs:179-244,291`, `link/quick_input.rs:173-252` | `old: listing.rs:166-1279`, `quick_choices.rs:148-446`, `quick_sessions.rs:10-188` |
 | 28 | **PARTLY FIXED** (`gap/panels`): F2, Delete, Ctrl+X, Ctrl+C and Ctrl+V work on the entries chosen, Ctrl and Shift clicks choose several, dropped folders are imported whole, imports and moves take free names (`name copy.ext`), and names are validated. Still missing: the menu on empty space and per-frame row rebuilding. **The file tree is reduced.** There are no key shortcuts (the menu still shows F2 and Delete hints), no cut, copy or paste, and no multi-select. Dropping a folder fails, and imports overwrite files with the same name. Names aren't validated, there is no menu on empty space, and every row is rebuilt each frame. | `pm-pages/src/files_panel.rs:180-296`, `pm-shell/src/file_tree.rs:28-226`, `link/browse.rs:171-222` | `old: app/tree.rs:47-103`, `tree_actions.rs:239-748`, `work/import.rs:28-104` |
 | 29 | **PARTLY FIXED** (`gap/panels`): the divider between panes drags, tabs can be pinned (kept first, left open by Close others and Close all), the session and dock tab strips scroll sideways, file tabs show their file-type icon, and the right pane keeps its file after a close. Still missing: up/down splits, drop-zone highlight, drag ghost, per-session open files. **Panes and tabs are simplified.** The pane tree became one fixed 50/50 left/right split with no draggable divider, no up/down splits, no drop-zone highlight and no drag ghost. Tabs have no pinning, a cut-down tab menu, generic file icons, and no overflow handling (shell tabs in the dock run off the edge in every new render). Open files are no longer per session. | `pm-shell/src/open_files.rs:276-343`, `pm-pages/src/session.rs:59-115`, `session_tabs.rs:28-254`, `pm-pages/src/dock.rs:99-127` | `old: pm-components/src/panes.rs:91-1026`, `pm-pages/src/panes.rs:75-585`, `open_files.rs:291-345` |
@@ -329,31 +329,37 @@ reads the value.
 
 **P1**
 - **FIXED** (`gap/conversation`): **The session and chat context menu is gone** (top 30, #16).
-- **There is no "Server out of reach" status.** Remote sessions keep spinning
-  as Working (`link/machines.rs:165-180`).
+- **FIXED** (`gap2/conversation`): **There is no "Server out of reach" status.** Remote sessions keep spinning
+  as Working (`link/machines.rs:165-180`). The sidebar mark, the header mark and a
+  line over the composer now say so.
 - **FIXED** (`gap/conversation`; kept per local session in the saved view): **Read receipts are memory-only.** Replayed events are all marked read, so
   anything that finished while the window was away shows as Idle, not Unread
   (`link.rs:1154-1156`, `thread.rs:44`).
-- **The adder can't clone from GitHub through the account and repository
+- **FIXED** (`gap2/conversation`): **The adder can't clone from GitHub through the account and repository
   pickers.** It also has no clone destination and no clone onto another
-  machine (`pm-pages/src/adder.rs:47-107`, `link/projects.rs:80-98`).
-- **Extensions:** "Install Extension…" from a folder and the per-capability
+  machine (`pm-pages/src/adder.rs:47-107`, `link/projects.rs:80-98`). The clone
+  form lists the chosen machine's GitHub accounts (`Owners`) and their
+  repositories (`Repositories`), filtered by the address field; verified live
+  that a machine without `gh` says why.
+- **FIXED** (`gap2/conversation`): **Extensions:** "Install Extension…" from a folder and the per-capability
   grant switches are gone. `InspectExtension`, `InstallExtension` and
-  `GrantExtension` are never sent.
+  `GrantExtension` are never sent. "Install from folder…" picks a folder, shows
+  what it carries and asks with a switch per capability, and installed packages
+  keep their switches; verified live.
 - **FIXED** (`gap/conversation`): **Welcome page agent chips are unfiltered and reset to the first agent**
   (`welcome.rs:85`, `start.rs:34,44`).
 
 **P2**
 - A session is marked read as soon as it opens, whatever the focus or scroll.
 - **FIXED** (`gap/conversation`): "Mark unread" is gone.
-- Status marks are plain coloured dots with no glyphs and no tooltips.
+- **FIXED** (`gap2/conversation`): Status marks are plain coloured dots with no glyphs and no tooltips.
 - The overview is missing its Repository section (branch, ahead/behind,
   uncommitted count) and its agent icons and tallies per row.
 - **FIXED** (`gap/conversation`): "New chat" is never highlighted.
 - The adder has no keyboard navigation and ignores a remote default machine.
 - **FIXED** (`gap/conversation`), except the glyph: History groups days in UTC (`pm-shell/src/history.rs:35-41`) and always
   shows `SPARKLE` with the raw agent id.
-- Extensions lost their own icons, matching by file ending, and the reason a
+- **PARTLY FIXED** (`gap2/conversation`) (the reason a folder install failed shows in its dialog): Extensions lost their own icons, matching by file ending, and the reason a
   folder install failed.
 - Drag reordering has no live preview or dimming. Reordering sample projects
   is offered but does nothing.
@@ -382,47 +388,48 @@ reads the value.
 - **FIXED** (`gap/conversation`): Back-to-back blocks of the same kind overwrite each other: two thinking
   blocks, or two text blocks, become one (`thread.rs:71-96,308-314`; the old
   test `each_thinking_block_is_one_thought` expected two).
-- **PARTLY FIXED** (`gap/conversation`; it says Worked, Failed or Stopped with the step count): The turn footer always says "Worked", with no duration and no step fold.
+- **PARTLY FIXED** (`gap/conversation`; it says Worked, Failed or Stopped with the step count, and `gap2/conversation` adds the duration from `Took`): The turn footer always says "Worked", with no duration and no step fold.
   "Thought for Ns" became "Thought".
 - **FIXED** (`gap/conversation`): Edit steps lose their diff, and the +/− counts are miscounted with a
   HashSet.
-- Steps lost relative paths, file icons, a live timer, the spinner and output
+- **PARTLY FIXED** (`gap2/conversation`) (relative paths, the spinner and output caps of 400 lines in a 320 px scroll): Steps lost relative paths, file icons, a live timer, the spinner and output
   caps, so large outputs expand without limit.
-- **PARTLY FIXED** (`gap/conversation`; the container step and `Event::Container` are shown): The "Thinking…" status line is gone, along with "Sending prompt…", the
+- **FIXED** (`gap/conversation`; `gap2/conversation` brings back "Thinking…", "Sending prompt…" and "server out of reach" over the composer): The "Thinking…" status line is gone, along with "Sending prompt…", the
   container step, "server out of reach" and the handling of `Event::Container`.
-- **FIXED** (`gap/conversation`), except Select all: The right-click message menu is gone (Copy reply as Markdown, Select all).
+- **FIXED** (`gap/conversation`; Select all and Copy selection in `gap2/conversation`, and the menu now opens on a right click, verified live): The right-click message menu is gone (Copy reply as Markdown, Select all).
   Multi-click and Shift-click selection are unverified.
-- **PARTLY FIXED** (`gap/conversation`; rewind drops the cards): "Show what this turn changed" is gone. Rewind leaves the approval and
+- **FIXED** (`gap/conversation`; rewind drops the cards, and `gap2/conversation` shows the turn's files in the Diff tab through `TurnChanges`, verified live): "Show what this turn changed" is gone. Rewind leaves the approval and
   inquiry cards up.
 - **FIXED** (`gap/conversation`), for sent files: Sent files and element chips are missing from user messages.
   `Event::Answered` keeps no record of the answers.
 - Markdown links can't be clicked. Images by URL or repository path don't
   load. Diagrams and formulas are drawn on the UI thread with an uncapped
   cache.
-- **Inquiry:** "Skip" abandons the whole form. Number-key picks and stepping
+- **FIXED** (`gap2/conversation`): **Inquiry:** "Skip" abandons the whole form. Number-key picks and stepping
   one question at a time are gone. "Send answers" is enabled even when nothing
   is answered.
 - **Plan:** the resizable side panel and "Revise…" are gone.
 - **Activity chips** are plain labels, with no popovers for approvals, tasks,
   subagents or shells.
-- **The pull request bar** shows for any branch, including main. Its action
+- **FIXED** (`gap2/conversation`): **The pull request bar** shows for any branch, including main. Its action
   set is wrong: it has Squash and Merge, and lacks Push, Update and Delete
   branch. It has no busy state or error reporting. Replies go to whichever
   session is open. It doesn't use the code host's own noun. It never works for
   remote sessions (`conversation_requests.rs:104-141`).
-- **Continue chat** hard-codes base `HEAD`, offers remote projects, and isn't
-  disabled while the agent is working.
-- **The trust card** lost its per-standing wording and its hooks warning, and
+- **FIXED** (`gap2/conversation`): **Continue chat** hard-codes base `HEAD`, offers remote projects, and isn't
+  disabled while the agent is working. It offers the projects on the chat's
+  machine, then the branches of the one picked.
+- **FIXED** (`gap2/conversation`): **The trust card** lost its per-standing wording and its hooks warning, and
   prints kinds with `{:?}`.
-- **The session header status dot is static.**
+- **FIXED** (`gap2/conversation`): **The session header status dot is static.**
 - **Each streamed chunk re-parses the whole reply,** and every event clones
   every message (`thread.rs:84`, `link.rs:1183`).
 
 **P3**
-- Spend shows costs under a cent as $0.00 and lost its tooltip breakdown.
-- The header doesn't show the model, and chats get a made-up "main" branch.
-- The fallback notice wording is raw.
-- Side answers are plain text instead of markdown.
+- **FIXED** (`gap2/conversation`): Spend shows costs under a cent as $0.00 and lost its tooltip breakdown.
+- **FIXED** (`gap2/conversation`): The header doesn't show the model, and chats get a made-up "main" branch.
+- **FIXED** (`gap2/conversation`): The fallback notice wording is raw.
+- **FIXED** (`gap2/conversation`): Side answers are plain text instead of markdown.
 - Message actions are always visible instead of on hover.
 
 ---
@@ -442,17 +449,19 @@ reads the value.
   composer can't take files.**
 
 **P2**
-- The slash menu has no arrow keys; Enter takes the first match. Extension
-  commands are gone.
+- **FIXED** (`gap2/conversation`): The slash menu has no arrow keys; Enter takes the first match. Extension
+  commands are gone. Up and Down step through the slash and mention lists,
+  which scroll to keep the pick in view, Enter or Tab take it and Escape
+  closes them; extension commands are offered and run. Verified live.
 - **FIXED** (`gap/conversation`): Shift+Tab mode cycling is gone.
-- **PARTLY FIXED** (`gap/conversation`; the Goal chip is back): The account chip has no menu and the Goal chip is gone.
-- The model menu has no filter, effort stepper or agent switch.
+- **FIXED** (`gap/conversation`; the Goal chip is back, and `gap2/conversation` gives the account chip its menu of logins and "Add account…"): The account chip has no menu and the Goal chip is gone.
+- **PARTLY FIXED** (`gap2/conversation`) (menus of more than eight values have a filter): The model menu has no filter, effort stepper or agent switch.
 - Usage rings: one context ring plus one allowance ring, with no reset times.
-- **PARTLY FIXED** (`gap/conversation`; "Branch from" is back): The "Run in" menu lists all three places unconditionally and has no "Branch
+- **FIXED** (`gap/conversation`; "Branch from" is back, and `gap2/conversation` offers a worktree only in a repository and the dev container only where one is configured): The "Run in" menu lists all three places unconditionally and has no "Branch
   from".
 - **FIXED** (`gap/conversation`): The text is cleared even when nothing was sent because no session is
   watched (`composer.rs:316`, `composer_requests.rs:44-46`).
-- The `focused` state is never written, so the card is never highlighted on
+- **FIXED** (`gap2/conversation`): The `focused` state is never written, so the card is never highlighted on
   focus (`composer.rs:362`).
 - The draft lives only in the widget and is likely lost on navigation.
 - **FIXED** (`gap/conversation`): **Element and console text is fenced with fixed backticks and no "page
@@ -466,12 +475,12 @@ reads the value.
 
 **P3**
 - No attachment thumbnails.
-- Queued rows: first line only, no tooltips, and empty edits are allowed.
-- The "Send now" icon has no label.
-- "(recommended)" is no longer stripped from labels.
-- The slash list caps at 8 entries with no scroll.
+- **FIXED** (`gap2/conversation`): Queued rows: first line only, no tooltips, and empty edits are allowed.
+- **FIXED** (`gap2/conversation`): The "Send now" icon has no label.
+- **FIXED** (`gap2/conversation`): "(recommended)" is no longer stripped from labels.
+- **FIXED** (`gap2/conversation`): The slash list caps at 8 entries with no scroll.
 - `on_hover(|_| {})` is a no-op (`composer.rs:347`).
-- The same prefill twice in a row isn't applied again.
+- **FIXED** (`gap2/conversation`): The same prefill twice in a row isn't applied again.
 
 ---
 
@@ -841,22 +850,22 @@ prompts, zoom, clear data, per-session scoping and restore.
 - FIXED: **`Workspace.status` has no reader,** so about 25 error paths are
   invisible. The status bar shows it (`status` snapshot).
 - FIXED: **Catch-alls drop `Response::Failed`** for every `Ask::Nothing` request
-  (verified by `failures_reach_the_status_bar`); attachments are still cleared
-  before the send. Was:
+  (verified by `failures_reach_the_status_bar`); a prompt that fails now gives
+  its text and attachments back to the composer (`gap2/conversation`). Was:
   Prompt, Cancel, Set, the queue actions, Choose, Answer, Trust, Rewind, Fork,
   ContinueChat, SaveProjects and WatchFolders (`link.rs:153,981`). Prompt
   attachments are also cleared before the send, so they are lost if it fails.
 - **Requests never sent:**
   - FIXED: CloseSession, RenameSession (session tests and snapshots)
-  - Restore, UndoTurn, TurnChanges, StopSubagent
-  - SetSessionAccount, SignInSession, Identity, Discover, SaveChoices
+  - FIXED: Restore, UndoTurn, TurnChanges, StopSubagent
+  - FIXED: SetSessionAccount, SignInSession, Identity, Discover; SaveChoices is not
   - FIXED: Stash, Step, Stashes and SubmoduleHeads are sent; CherryPick from the
     graph's commit menu; DevContainer by the welcome page, which offers the dev
     container only where one is set up
-  - Owners, Repositories
+  - FIXED: Owners, Repositories (the clone form)
   - FIXED: Terminals, AttachTerminal (`shells_of_the_server_are_taken_up`)
-  - InspectExtension, InstallExtension, GrantExtension, RunExtensionCommand,
-    ExtensionAssets
+  - FIXED: InspectExtension, InstallExtension, GrantExtension,
+    RunExtensionCommand, ExtensionAssets
   - Blame, Problems, FoldingRanges, LinkedRanges, DocumentLinks, ResolveLink,
     InlineValues, FormatOnType, Permalink, FileHistory
   - RunnableTasks, RunRunnable, Toolchains, SelectToolchain

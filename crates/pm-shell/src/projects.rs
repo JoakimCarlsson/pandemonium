@@ -28,6 +28,8 @@ pub enum ProjectAction {
     CloneUnder(String),
     /// Chooses the machine the clone form clones on, by host, or this one when nothing.
     CloneOn(Option<String>),
+    /// Lists in the clone form the GitHub repositories of the account or organization with this login.
+    CloneOwner(String),
     /// Does something in the folder picker.
     Picker(PickerAction),
 }
@@ -59,6 +61,40 @@ pub struct Adder {
     pub machine: Option<String>,
     /// The machines a clone can be made on, this one first.
     pub machines: Vec<Machine>,
+    /// The GitHub accounts the chosen machine is signed in to, the account first and then its organizations, as login and whether it is an organization; nothing until it answered.
+    pub owners: Option<Vec<(String, bool)>>,
+    /// The login of the GitHub account or organization whose repositories are listed.
+    pub owner: Option<String>,
+    /// The repositories of that owner, once listed.
+    pub repositories: Option<Vec<GithubRepository>>,
+    /// Why the GitHub accounts or repositories could not be listed, such as `gh` not being signed in.
+    pub github_error: Option<String>,
+}
+
+/// A GitHub repository the clone form offers.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GithubRepository {
+    /// The owner and the name, as `owner/name`.
+    pub name: String,
+    /// What its owner wrote about it.
+    pub description: String,
+    /// Whether it is private.
+    pub private: bool,
+    /// The address to clone it from.
+    pub url: String,
+}
+
+impl Adder {
+    /// The repositories listed whose name holds what the address field holds, all of them while it holds an address of its own.
+    pub fn matching_repositories(&self) -> Vec<&GithubRepository> {
+        let typed = self.url.trim().to_lowercase();
+        let filtering = !typed.contains("://") && !typed.starts_with("git@");
+        self.repositories
+            .iter()
+            .flatten()
+            .filter(|repository| !filtering || repository.name.to_lowercase().contains(&typed))
+            .collect()
+    }
 }
 
 /// Something the reader does in the folder picker.
@@ -66,6 +102,8 @@ pub struct Adder {
 pub enum PickerAction {
     /// Opens the picker on the machine with this host, or this one when nothing.
     Open(Option<String>),
+    /// Opens the picker on this machine to choose a folder to install an extension from.
+    OpenForExtension,
     /// Looks inside the folder at this absolute path.
     Go(String),
     /// Looks inside the folder of this name within the one shown.
@@ -124,6 +162,8 @@ pub struct FolderPicker {
     pub forward: Vec<String>,
     /// How it stands with the machine.
     pub reach: Reach,
+    /// Whether the folder chosen is an extension to install rather than a project to add.
+    pub for_extension: bool,
 }
 
 impl FolderPicker {

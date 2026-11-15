@@ -5,6 +5,7 @@
 use std::rc::Rc;
 
 use rustle::prelude::*;
+use rustle::{SelectionState, remember_selection_state, selection_container_with};
 
 use pm_components::{
     Card, CardVariant, Chip, Label, LabelVariant, Markdown, MessageMenu, Notice, NoticeVariant,
@@ -24,41 +25,56 @@ pub fn conversation(messages: &[Message], actions: &Actions) {
     list.set_stick_to_end(true);
     let messages = Rc::new(messages.to_vec());
     let actions = actions.clone();
-    selection_container(Modifier::new().fill_max_width().weight(1.0), move || {
-        let count = messages.len();
-        lazy_list_keyed(
-            Modifier::new().fill_max_size(),
-            &list,
-            count,
-            |index| index,
-            move |index| {
-                let message = messages[index].clone();
-                let last = index + 1 == messages.len();
-                let actions = actions.clone();
-                row_arranged(
-                    Modifier::new().fill_max_width().padding_each(
-                        0.0,
-                        if index == 0 { 16.0 } else { 0.0 },
-                        0.0,
-                        18.0,
-                    ),
-                    Arrangement::Center,
-                    Alignment::Start,
-                    move || {
-                        column_with(Modifier::new().width(READING_WIDTH), || {
-                            message_view(&message, last, &actions)
-                        });
-                    },
-                );
-            },
-        );
-    });
+    let selection = remember_selection_state();
+    let held = selection.clone();
+    selection_container_with(
+        Modifier::new().fill_max_width().weight(1.0),
+        &held,
+        move || {
+            let count = messages.len();
+            lazy_list_keyed(
+                Modifier::new().fill_max_size(),
+                &list,
+                count,
+                |index| index,
+                move |index| {
+                    let message = messages[index].clone();
+                    let last = index + 1 == messages.len();
+                    let actions = actions.clone();
+                    let selection = selection.clone();
+                    row_arranged(
+                        Modifier::new().fill_max_width().padding_each(
+                            0.0,
+                            if index == 0 { 16.0 } else { 0.0 },
+                            0.0,
+                            18.0,
+                        ),
+                        Arrangement::Center,
+                        Alignment::Start,
+                        move || {
+                            column_with(Modifier::new().width(READING_WIDTH), || {
+                                message_view(&message, last, &actions, &selection)
+                            });
+                        },
+                    );
+                },
+            );
+        },
+    );
 }
 
 /// Emits one message: a bubble on the right for the person, the agent's
 /// blocks in a column otherwise, then its footer and menu.
-fn message_view(message: &Message, last: bool, actions: &Actions) {
-    menu(message, last, actions).around(|| message_body(message, last, actions));
+fn message_view(message: &Message, last: bool, actions: &Actions, selection: &SelectionState) {
+    let selected = selection.clone();
+    let all = selection.clone();
+    let mut menu = MessageMenu::new();
+    if let Some(text) = selected.selected_text().filter(|text| !text.is_empty()) {
+        menu = menu.copy("Copy selection", text);
+    }
+    menu.extend(self::menu(message, last, actions))
+        .item("Select all", move || all.select_all())
+        .around(|| message_body(message, last, actions));
 }
 
 /// Emits the body of `message`: its bubble or blocks, its footer and its menu button.
@@ -224,6 +240,10 @@ fn menu(message: &Message, last: bool, actions: &Actions) -> MessageMenu {
                 .item("Rewind to here", command(ConversationCommand::Rewind(turn)))
                 .item("Branch off here", command(ConversationCommand::Fork(turn)));
             if message.checkpoint {
+                menu = menu.item(
+                    "Show what this turn changed",
+                    command(ConversationCommand::TurnChanges(turn)),
+                );
                 menu = menu.item(
                     "Restore files to before this turn",
                     command(ConversationCommand::Restore(turn)),

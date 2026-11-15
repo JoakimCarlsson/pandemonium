@@ -146,6 +146,8 @@ pub struct Composer {
     callbacks: ComposerCallbacks,
     /// Text put into the composer once each time it changes, such as a command to finish.
     prefill: Option<String>,
+    /// A number that, each time it changes, puts [`Composer::prefill`] into the composer again, even when the text is the same.
+    prefill_request: u64,
     /// A number that, each time it changes, puts the keyboard in the composer.
     focus_request: u64,
     /// A number that, each time it changes, opens the menu given with [`Composer::menu`] again.
@@ -170,6 +172,7 @@ impl Composer {
             modifier: Modifier::new(),
             callbacks: ComposerCallbacks::default(),
             prefill: None,
+            prefill_request: 0,
             mentions: Rc::new(Vec::new()),
             focus_request: 0,
             menu_request: 0,
@@ -209,6 +212,12 @@ impl Composer {
     /// The composer calling `on_cycle_mode` when Shift+Tab is pressed in it.
     pub fn on_cycle_mode(mut self, on_cycle_mode: impl Fn() + 'static) -> Self {
         self.callbacks.on_cycle_mode = Some(Rc::new(on_cycle_mode));
+        self
+    }
+
+    /// The composer filling in its prefill again whenever `request` differs from the number it was last given.
+    pub fn prefill_request(mut self, request: u64) -> Self {
+        self.prefill_request = request;
         self
     }
 
@@ -340,12 +349,13 @@ impl Composer {
     pub fn show(self) {
         let scheme = color_scheme();
         let state = remember_text_field_state("");
-        let filled = remember(|| None::<String>);
-        if self.prefill != filled.get() {
+        let filled = remember(|| (None::<String>, 0u64));
+        let asked_fill = (self.prefill.clone(), self.prefill_request);
+        if asked_fill != filled.get() {
             if let Some(text) = &self.prefill {
                 state.set_text(text.clone());
             }
-            filled.set(self.prefill.clone());
+            filled.set(asked_fill);
         }
         let initial = self.menu.clone();
         let menu = remember(move || initial);
@@ -362,7 +372,6 @@ impl Composer {
             focus.request_focus();
         }
         let slash_closed = remember(|| None::<String>);
-        let focused = remember(|| false);
         let least = match self.variant {
             ComposerVariant::Reply => 22.0,
             ComposerVariant::Start => 54.0,
@@ -395,7 +404,12 @@ impl Composer {
         let height = (lines as f32 * LINE_HEIGHT).max(least);
         let matching = CommandMenu::matching(&self.commands, &text);
         let slash_open = !matching.is_empty() && slash_closed.get().as_deref() != Some(&text);
-        let first_command = matching.first().map(|command| command.name.clone());
+        let picked = remember(|| 0usize);
+        let picked_for = remember(String::new);
+        if picked_for.get() != text {
+            picked_for.set(text.clone());
+            picked.set(0);
+        }
         let mention = mention_query(&text);
         let mentioned = remember(|| false);
         if mention.is_some() != mentioned.get() {
@@ -411,7 +425,19 @@ impl Composer {
         let mention_open = !mention_matches.is_empty()
             && !slash_open
             && slash_closed.get().as_deref() != Some(&text);
-        let first_mention = mention_matches.first().cloned();
+        let listed = if slash_open {
+            matching.len()
+        } else if mention_open {
+            mention_matches.len()
+        } else {
+            0
+        };
+        let place = picked.get().min(listed.saturating_sub(1));
+        let chosen_command = matching.get(place).map(|command| command.name.clone());
+        let chosen_mention = mention_matches.get(place).cloned();
+        let key_picked = picked.clone();
+        let key_closed = slash_closed.clone();
+        let key_text = text.clone();
         let key_send = send.clone();
         let key_state = state.clone();
         let key_callbacks = callbacks.clone();
@@ -430,9 +456,27 @@ impl Composer {
                 }
                 return true;
             }
-            let enter = event.key == Key::Enter && !event.modifiers.shift;
+            if listed > 0 {
+                match event.key {
+                    Key::ArrowDown => {
+                        key_picked.set((place + 1) % listed);
+                        return true;
+                    }
+                    Key::ArrowUp => {
+                        key_picked.set((place + listed - 1) % listed);
+                        return true;
+                    }
+                    Key::Escape => {
+                        key_closed.set(Some(key_text.clone()));
+                        return true;
+                    }
+                    _ => {}
+                }
+            }
+            let enter = (event.key == Key::Enter || (event.key == Key::Tab && listed > 0))
+                && !event.modifiers.shift;
             if enter {
-                match (&first_command, slash_open, &first_mention, mention_open) {
+                match (&chosen_command, slash_open, &chosen_mention, mention_open) {
                     (Some(name), true, _, _) => key_state.set_text(format!("/{name} ")),
                     (_, _, Some(path), true) => {
                         key_state.set_text(with_mention(&key_state.text(), path))
@@ -453,19 +497,22 @@ impl Composer {
         let field_menu = menu.clone();
         let field_state = state.clone();
         let field_callbacks = callbacks.clone();
+        let field_focus = focus.clone();
         let mention_state = state.clone();
         let mention_closed = slash_closed.clone();
         let toolbar_state = state.clone();
+        let toolbar_focus = focus.clone();
         Card::new()
             .variant(CardVariant::Outlined)
             .size(Size::Md)
-            .focused(focused.get() || !empty)
+            .focused(focus.is_focused() || !empty)
             .modifier(modifier)
             .show(move || {
                 if slash_open {
                     let typed = text.clone();
                     CommandMenu {
                         commands: matching,
+                        highlighted: place,
                         on_pick: Rc::new(move |name: String| {
                             commands_state.set_text(format!("/{name} "))
                         }),
@@ -477,6 +524,7 @@ impl Composer {
                     let typed = text.clone();
                     MentionMenu {
                         paths: mention_matches,
+                        highlighted: place,
                         on_pick: Rc::new(move |path: String| {
                             mention_state.set_text(with_mention(&mention_state.text(), &path))
                         }),
@@ -524,6 +572,7 @@ impl Composer {
                                 callbacks: field_callbacks.clone(),
                                 at: (across, down),
                                 on_dismiss: Rc::new(move || closer.set(None)),
+                                focus: field_focus.clone(),
                             }
                             .show();
                         }
@@ -537,6 +586,7 @@ impl Composer {
                     &callbacks,
                     &send,
                     &toolbar_state,
+                    &toolbar_focus,
                     empty && !has_attached,
                     working,
                     scheme,
@@ -580,7 +630,8 @@ fn attached_chips(attached: Vec<Attached>) {
 /// Emits the toolbar: attaching, the `choices` with the menu `menu` names
 /// open, the `rings`, and the buttons that send with `send` or stop the turn
 /// through `callbacks`, drawn for an `empty` prompt and an agent `working` or
-/// not in `scheme`.
+/// not in `scheme`; the `@` and `/` buttons type into the field `state` holds
+/// and give it the keyboard through `focus`.
 #[track_caller]
 #[allow(clippy::too_many_arguments)]
 fn toolbar(
@@ -590,6 +641,7 @@ fn toolbar(
     callbacks: &ComposerCallbacks,
     send: &Rc<dyn Fn(bool)>,
     state: &TextFieldState,
+    focus: &rustle::Focus,
     empty: bool,
     working: bool,
     scheme: ColorScheme,
@@ -601,6 +653,7 @@ fn toolbar(
         || {
             let browse = callbacks.on_browse.clone();
             IconButton::new(phosphor::PLUS)
+                .tooltip("Attach files")
                 .size(Size::Xs)
                 .on_click(move || {
                     if let Some(browse) = &browse {
@@ -609,11 +662,17 @@ fn toolbar(
                 })
                 .show();
             let at = state.clone();
+            let at_focus = focus.clone();
             IconButton::new(phosphor::AT)
+                .tooltip("Mention a file")
                 .size(Size::Xs)
-                .on_click(move || at.set_text(with_trigger(&at.text(), '@')))
+                .on_click(move || {
+                    at.set_text(with_trigger(&at.text(), '@'));
+                    at_focus.request_focus();
+                })
                 .show();
             let slash = state.clone();
+            let slash_focus = focus.clone();
             stack_aligned(
                 Modifier::new()
                     .size(20.0, 20.0)
@@ -622,6 +681,7 @@ fn toolbar(
                         if slash.text().trim().is_empty() {
                             slash.set_text("/".to_owned());
                         }
+                        slash_focus.request_focus();
                     }),
                 BoxAlignment::Center,
                 || Label::new("/").variant(LabelVariant::Muted).show(),
@@ -693,6 +753,7 @@ fn send_buttons(
     if working && empty {
         let stop = callbacks.on_stop.clone();
         IconButton::new(phosphor::STOP)
+            .tooltip("Stop the turn")
             .variant(IconButtonVariant::Primary)
             .size(Size::Xs)
             .tint(scheme.background)
@@ -707,6 +768,7 @@ fn send_buttons(
     if working && callbacks.on_send_now.is_some() {
         let now = send.clone();
         IconButton::new(phosphor::LIGHTNING)
+            .tooltip("Send now, stopping the turn")
             .size(Size::Xs)
             .on_click(move || now(true))
             .show();
@@ -716,6 +778,11 @@ fn send_buttons(
         phosphor::QUEUE
     } else {
         phosphor::ARROW_UP
+    })
+    .tooltip(if working {
+        "Queue behind the turn"
+    } else {
+        "Send"
     })
     .variant(IconButtonVariant::Primary)
     .size(Size::Xs)

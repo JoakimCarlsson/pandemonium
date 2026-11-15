@@ -358,13 +358,21 @@ fn footer(picker: &FolderPicker, actions: &PickerActions) {
                 .size(Size::Sm)
                 .on_click(doing(actions, PickerAction::Close))
                 .show();
-            Button::new("Add project")
-                .icon(phosphor::FOLDER_PLUS)
-                .variant(ButtonVariant::Primary)
-                .size(Size::Sm)
-                .disabled(picker.reach != Reach::Reached)
-                .on_click(doing(actions, PickerAction::Choose))
-                .show();
+            Button::new(if picker.for_extension {
+                "Install extension"
+            } else {
+                "Add project"
+            })
+            .icon(if picker.for_extension {
+                phosphor::PLUG
+            } else {
+                phosphor::FOLDER_PLUS
+            })
+            .variant(ButtonVariant::Primary)
+            .size(Size::Sm)
+            .disabled(picker.reach != Reach::Reached)
+            .on_click(doing(actions, PickerAction::Choose))
+            .show();
         },
     );
 }

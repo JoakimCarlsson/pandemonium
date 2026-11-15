@@ -1,8 +1,8 @@
 //! Turning what the harness reports into the plain data the pages show.
 
 use pm_harness::{
-    Inquiry, Kind, Permission, PlanStep, Progress, Spent, Standing, Tool, ToolState, TrustRequest,
-    Verdict,
+    Input, Inquiry, Kind, Permission, PlanStep, Progress, Spent, Standing, Tool, ToolState,
+    TrustRequest, Verdict,
 };
 use pm_harness::{Merge, Worktree};
 
@@ -153,21 +153,72 @@ pub fn inquiry(inquiry: &Inquiry) -> InquiryForm {
     }
 }
 
-/// The trust card `request` shows.
+/// The kinds of input in the order the trust card lists them: hooks first, since they run commands.
+const TRUST_KINDS: [Input; 4] = [Input::Hook, Input::Instruction, Input::Skill, Input::Agent];
+
+/// What one input of `kind` is called on the trust card, and what several are called in a sentence.
+fn input_words(kind: Input) -> (&'static str, &'static str) {
+    match kind {
+        Input::Hook => ("Hook", "hooks"),
+        Input::Instruction => ("Instructions", "instructions"),
+        Input::Skill => ("Skill", "skills"),
+        Input::Agent => ("Agent", "agents"),
+    }
+}
+
+/// The words of `items` run together as a list: `a`, `a and b`, `a, b and c`.
+fn run_together(items: &[&str]) -> String {
+    match items {
+        [] => String::new(),
+        [only] => (*only).to_owned(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    }
+}
+
+/// The trust card `request` shows: a heading and a sentence saying where the project's trust stands and what the agent goes without, warning that hooks run commands, then what was left out, hooks first.
 pub fn trust(request: &TrustRequest) -> TrustAsk {
+    let name = request.root.file_name().map_or_else(
+        || request.root.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let kinds: Vec<&str> = TRUST_KINDS
+        .into_iter()
+        .filter(|kind| request.skipped.iter().any(|skipped| skipped.kind == *kind))
+        .map(|kind| input_words(kind).1)
+        .collect();
+    let missing = run_together(&kinds);
+    let hooks = request
+        .skipped
+        .iter()
+        .any(|skipped| skipped.kind == Input::Hook);
+    let (title, reason) = match request.standing {
+        Standing::Changed => (
+            format!("The hooks of {name} changed since you trusted it"),
+            "Hooks were added or changed since trust was granted, so they are not run until you trust the project again. Its instructions, skills and agents are still used.".to_owned(),
+        ),
+        Standing::Declined => (
+            format!("You chose not to trust {name}"),
+            format!("This session is not using its {missing}. Trust the project to use them from the next turn."),
+        ),
+        Standing::Unknown if hooks => (
+            format!("Trust {name}?"),
+            format!("This session is not using its {missing} until you trust the project. Its hooks run commands on this machine, so only trust a project whose files you know."),
+        ),
+        Standing::Unknown => (
+            format!("Trust {name}?"),
+            format!("This session is not using its {missing} until you trust the project."),
+        ),
+    };
+    let mut skipped: Vec<_> = request.skipped.iter().collect();
+    skipped.sort_by_key(|item| TRUST_KINDS.iter().position(|kind| *kind == item.kind));
     TrustAsk {
         ticket: request.ticket,
         root: request.root.display().to_string(),
-        reason: match request.standing {
-            Standing::Unknown => "This project has not been trusted yet.",
-            Standing::Changed => "What this project brings changed since it was trusted.",
-            Standing::Declined => "Trusting this project was declined before.",
-        }
-        .to_owned(),
-        skipped: request
-            .skipped
-            .iter()
-            .map(|skipped| (format!("{:?}", skipped.kind), skipped.name.clone()))
+        title,
+        reason,
+        skipped: skipped
+            .into_iter()
+            .map(|item| (input_words(item.kind).0.to_owned(), item.name.clone()))
             .collect(),
     }
 }
