@@ -184,6 +184,12 @@ pub enum ComposerAction {
     EditQueued(u64, String),
     /// Run new work in a worktree of its own when the first is true, and in the dev container when the second is.
     Place(bool, bool),
+    /// Ask the desktop for files to attach.
+    Browse,
+    /// List the files of the session's folder, for mentioning one after an `@`.
+    Mention,
+    /// Move the agent to the next value of its mode.
+    CycleMode,
 }
 
 /// What the composer shows besides the text being written.
@@ -312,6 +318,18 @@ pub fn with_slot_picks(settings: &mut [ConversationSetting], slots: &[SlotInfo])
                 }),
         );
     }
+}
+
+/// The id of the mode setting among `settings` and the value after its current one, wrapping round.
+pub fn next_mode(settings: &[ConversationSetting]) -> Option<(String, String)> {
+    let mode = settings.iter().find(|setting| setting.category == "mode")?;
+    let at = mode
+        .picks
+        .iter()
+        .position(|pick| pick.value == mode.current)
+        .map_or(0, |at| at + 1);
+    let next = mode.picks.get(at % mode.picks.len().max(1))?;
+    Some((mode.id.clone(), next.value.clone()))
 }
 
 /// The ring of how full the context is after `usage`, or nothing while its size is unknown.

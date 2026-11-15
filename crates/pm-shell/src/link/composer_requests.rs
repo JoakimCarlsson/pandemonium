@@ -33,6 +33,21 @@ impl Link {
             ComposerAction::HoldQueue(held) => self.hold_queue(held),
             ComposerAction::EditQueued(queued, text) => self.edit_queued(queued, text),
             ComposerAction::Place(worktree, container) => self.choose_place(worktree, container),
+            ComposerAction::Browse => {}
+            ComposerAction::Mention => {
+                if !self.workspace.tree.loaded
+                    || self.browse_root().as_deref() != Some(self.workspace.tree.root.as_str())
+                {
+                    self.load_files();
+                }
+            }
+            ComposerAction::CycleMode => {
+                if let Some((setting, value)) =
+                    crate::composer::next_mode(&self.workspace.extras.composer.settings)
+                {
+                    self.set_agent_setting(setting, value);
+                }
+            }
         }
     }
 

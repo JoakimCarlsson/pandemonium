@@ -88,7 +88,12 @@ pub fn prompt_box(workspace: &Workspace, actions: &Actions, width: f32) {
         act.clone(),
         act.clone(),
     );
+    let (browse, mention, cycle) = (act.clone(), act.clone(), act.clone());
     prompt
+        .mentions(workspace.tree.paths.clone())
+        .on_browse(move || browse(ComposerAction::Browse))
+        .on_mention(move || mention(ComposerAction::Mention))
+        .on_cycle_mode(move || cycle(ComposerAction::CycleMode))
         .on_send(move |text| send(text))
         .on_send_now(move |text| now(ComposerAction::SendNow(text)))
         .on_stop(move || stop(ComposerAction::Stop))

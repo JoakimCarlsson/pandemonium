@@ -125,7 +125,7 @@ pub use sample::{
     sample_workspace,
 };
 pub use sample_code::{COLOUR_SAMPLE, CodeSample, RIGHT_TO_LEFT_SAMPLE, sample_code};
-pub use sample_composer::{SampleComposer, sample_composer};
+pub use sample_composer::{SampleComposer, sample_composer, sample_mentions};
 pub use sample_conversation::{SampleAsk, sample_ask};
 pub use sample_files::{sample_changes, sample_files, sample_quick, sample_search};
 pub use search::{

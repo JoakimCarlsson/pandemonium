@@ -126,6 +126,7 @@ const WORDS: &[&str] = &[
     "composer-queued",
     "composer-attached",
     "composer-field",
+    "composer-mention",
     "welcome-place",
     "settings-<section>[-narrow]",
 ];
@@ -196,6 +197,9 @@ pub fn run(arguments: &[String]) -> i32 {
         pm_shell::sample_ask(&mut workspace.extras, ask);
     }
     if !live && let Some(sample) = composer_named(&words) {
+        if sample == pm_shell::SampleComposer::Mention {
+            workspace.tree.paths = pm_shell::sample_mentions();
+        }
         pm_shell::sample_composer(&mut workspace.extras, sample);
     }
     let start = if words.contains(&"welcome") || words.contains(&"welcome-place") {
@@ -529,6 +533,7 @@ fn composer_named(words: &[&str]) -> Option<pm_shell::SampleComposer> {
         "composer-slash" => Some(pm_shell::SampleComposer::Slash),
         "composer-queued" => Some(pm_shell::SampleComposer::Queued),
         "composer-attached" => Some(pm_shell::SampleComposer::Attached),
+        "composer-mention" => Some(pm_shell::SampleComposer::Mention),
         "composer-field" => Some(pm_shell::SampleComposer::Field),
         _ => None,
     })

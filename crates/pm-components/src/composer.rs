@@ -5,12 +5,15 @@
 use std::rc::Rc;
 
 use rustle::prelude::*;
-use rustle::{Key, basic_text_area};
+use rustle::{Key, TextFieldState, basic_text_area};
 
 use crate::button::{Button, ButtonVariant};
 use crate::card::{Card, CardVariant};
 use crate::chip::Chip;
-use crate::composer_menus::{CommandMenu, FieldMenu, SettingMenu, paste_attachments};
+use crate::composer_menus::{
+    CommandMenu, FieldMenu, MentionMenu, SettingMenu, mention_query, paste_attachments,
+    with_mention,
+};
 use crate::icon_button::{IconButton, IconButtonVariant};
 use crate::label::{Label, LabelVariant};
 use crate::size::Size;
@@ -102,7 +105,19 @@ pub(crate) struct ComposerCallbacks {
     pub(crate) on_attach: Option<Rc<dyn Fn(Vec<String>)>>,
     /// What pasting a picture does with its width, height and RGBA rows.
     pub(crate) on_picture: Option<PictureHandler>,
+    /// What the `+` button does: ask the desktop for files to attach.
+    pub(crate) on_browse: Option<Rc<dyn Fn()>>,
+    /// What starting to mention a file does, such as listing the files that can be mentioned.
+    pub(crate) on_mention: Option<Rc<dyn Fn()>>,
+    /// What Shift+Tab does: move the agent to its next mode.
+    pub(crate) on_cycle_mode: Option<Rc<dyn Fn()>>,
 }
+
+/// How many lines the text area grows to before it scrolls.
+const MOST_LINES: usize = 10;
+
+/// How tall one line of the text area is, in logical pixels.
+const LINE_HEIGHT: f32 = 20.0;
 
 /// The composer with a variant and a size.
 #[derive(Clone)]
@@ -131,6 +146,8 @@ pub struct Composer {
     callbacks: ComposerCallbacks,
     /// Text put into the composer once each time it changes, such as a command to finish.
     prefill: Option<String>,
+    /// The paths of the files an `@` can mention.
+    mentions: Rc<Vec<String>>,
 }
 
 impl Composer {
@@ -149,7 +166,32 @@ impl Composer {
             modifier: Modifier::new(),
             callbacks: ComposerCallbacks::default(),
             prefill: None,
+            mentions: Rc::new(Vec::new()),
         }
+    }
+
+    /// The composer offering `paths` to mention after an `@`.
+    pub fn mentions(mut self, paths: Vec<String>) -> Self {
+        self.mentions = Rc::new(paths);
+        self
+    }
+
+    /// The composer calling `on_browse` when its `+` button is pressed, to pick files to attach.
+    pub fn on_browse(mut self, on_browse: impl Fn() + 'static) -> Self {
+        self.callbacks.on_browse = Some(Rc::new(on_browse));
+        self
+    }
+
+    /// The composer calling `on_mention` when an `@` starts a mention, so the files can be listed.
+    pub fn on_mention(mut self, on_mention: impl Fn() + 'static) -> Self {
+        self.callbacks.on_mention = Some(Rc::new(on_mention));
+        self
+    }
+
+    /// The composer calling `on_cycle_mode` when Shift+Tab is pressed in it.
+    pub fn on_cycle_mode(mut self, on_cycle_mode: impl Fn() + 'static) -> Self {
+        self.callbacks.on_cycle_mode = Some(Rc::new(on_cycle_mode));
+        self
     }
 
     /// The composer filled with `prefill` whenever it is given anew.
@@ -291,18 +333,19 @@ impl Composer {
         let menu = remember(move || initial);
         let slash_closed = remember(|| None::<String>);
         let focused = remember(|| false);
-        let height = match self.variant {
+        let least = match self.variant {
             ComposerVariant::Reply => 22.0,
             ComposerVariant::Start => 54.0,
         };
         let callbacks = self.callbacks.clone();
         let working = self.working;
+        let has_attached = !self.attached.is_empty();
         let send: Rc<dyn Fn(bool)> = {
             let state = state.clone();
             let callbacks = callbacks.clone();
             Rc::new(move |now| {
                 let text = state.text();
-                if text.trim().is_empty() {
+                if text.trim().is_empty() && !has_attached {
                     return;
                 }
                 let target = if now {
@@ -318,9 +361,27 @@ impl Composer {
         };
         let text = state.text();
         let empty = text.is_empty();
+        let lines = text.split('\n').count().clamp(1, MOST_LINES);
+        let height = (lines as f32 * LINE_HEIGHT).max(least);
         let matching = CommandMenu::matching(&self.commands, &text);
         let slash_open = !matching.is_empty() && slash_closed.get().as_deref() != Some(&text);
         let first_command = matching.first().map(|command| command.name.clone());
+        let mention = mention_query(&text);
+        let mentioned = remember(|| false);
+        if mention.is_some() != mentioned.get() {
+            mentioned.set(mention.is_some());
+            if let (true, Some(on_mention)) = (mention.is_some(), &callbacks.on_mention) {
+                on_mention();
+            }
+        }
+        let mention_matches = mention
+            .as_deref()
+            .map(|query| MentionMenu::matching(&self.mentions, query))
+            .unwrap_or_default();
+        let mention_open = !mention_matches.is_empty()
+            && !slash_open
+            && slash_closed.get().as_deref() != Some(&text);
+        let first_mention = mention_matches.first().cloned();
         let key_send = send.clone();
         let key_state = state.clone();
         let key_callbacks = callbacks.clone();
@@ -335,16 +396,24 @@ impl Composer {
                 if paste {
                     return paste_attachments(&key_callbacks);
                 }
+                if event.key == Key::Tab && event.modifiers.shift {
+                    if let Some(cycle) = &key_callbacks.on_cycle_mode {
+                        cycle();
+                    }
+                    return true;
+                }
                 let enter = event.key == Key::Enter && !event.modifiers.shift;
                 if enter {
-                    match (&first_command, slash_open) {
-                        (Some(name), true) => key_state.set_text(format!("/{name} ")),
+                    match (&first_command, slash_open, &first_mention, mention_open) {
+                        (Some(name), true, _, _) => key_state.set_text(format!("/{name} ")),
+                        (_, _, Some(path), true) => {
+                            key_state.set_text(with_mention(&key_state.text(), path))
+                        }
                         _ => key_send(event.modifiers.ctrl && working),
                     }
                 }
                 enter
-            })
-            .on_hover(move |_| {});
+            });
         let drop_callbacks = callbacks.clone();
         let modifier = match drop_callbacks.on_attach.clone() {
             Some(on_attach) => modifier
@@ -356,6 +425,9 @@ impl Composer {
         let field_menu = menu.clone();
         let field_state = state.clone();
         let field_callbacks = callbacks.clone();
+        let mention_state = state.clone();
+        let mention_closed = slash_closed.clone();
+        let toolbar_state = state.clone();
         Card::new()
             .variant(CardVariant::Outlined)
             .size(Size::Md)
@@ -370,6 +442,17 @@ impl Composer {
                             commands_state.set_text(format!("/{name} "))
                         }),
                         on_dismiss: Rc::new(move || commands_closed.set(Some(typed.clone()))),
+                    }
+                    .show();
+                }
+                if mention_open {
+                    let typed = text.clone();
+                    MentionMenu {
+                        paths: mention_matches,
+                        on_pick: Rc::new(move |path: String| {
+                            mention_state.set_text(with_mention(&mention_state.text(), &path))
+                        }),
+                        on_dismiss: Rc::new(move || mention_closed.set(Some(typed.clone()))),
                     }
                     .show();
                 }
@@ -416,11 +499,21 @@ impl Composer {
                     &menu,
                     &callbacks,
                     &send,
-                    empty,
+                    &toolbar_state,
+                    empty && !has_attached,
                     working,
                     scheme,
                 );
             });
+    }
+}
+
+/// `text` with `trigger` typed at its end, after a space unless it is empty or already ends in one.
+fn with_trigger(text: &str, trigger: char) -> String {
+    if text.is_empty() || text.ends_with(char::is_whitespace) {
+        format!("{text}{trigger}")
+    } else {
+        format!("{text} {trigger}")
     }
 }
 
@@ -459,6 +552,7 @@ fn toolbar(
     menu: &State<Option<ComposerMenu>>,
     callbacks: &ComposerCallbacks,
     send: &Rc<dyn Fn(bool)>,
+    state: &TextFieldState,
     empty: bool,
     working: bool,
     scheme: ColorScheme,
@@ -468,10 +562,30 @@ fn toolbar(
         Arrangement::SpacedBy(crate::spacing(2.0)),
         Alignment::Center,
         || {
-            IconButton::new(phosphor::PLUS).size(Size::Xs).show();
-            IconButton::new(phosphor::AT).size(Size::Xs).show();
+            let browse = callbacks.on_browse.clone();
+            IconButton::new(phosphor::PLUS)
+                .size(Size::Xs)
+                .on_click(move || {
+                    if let Some(browse) = &browse {
+                        browse();
+                    }
+                })
+                .show();
+            let at = state.clone();
+            IconButton::new(phosphor::AT)
+                .size(Size::Xs)
+                .on_click(move || at.set_text(with_trigger(&at.text(), '@')))
+                .show();
+            let slash = state.clone();
             stack_aligned(
-                Modifier::new().size(20.0, 20.0),
+                Modifier::new()
+                    .size(20.0, 20.0)
+                    .cursor(CursorIcon::Pointer)
+                    .clickable(move || {
+                        if slash.text().trim().is_empty() {
+                            slash.set_text("/".to_owned());
+                        }
+                    }),
                 BoxAlignment::Center,
                 || Label::new("/").variant(LabelVariant::Muted).show(),
             );
