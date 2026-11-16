@@ -21,6 +21,7 @@ pub(super) struct Outside {
     /// When to stop waiting for the pointer to say where they were let go.
     due: Option<Instant>,
     /// Whether listening on Wayland has been tried.
+    #[cfg(target_os = "linux")]
     tried: bool,
     /// What follows drags over the window on Wayland, when the window is on it.
     #[cfg(target_os = "linux")]

@@ -110,6 +110,7 @@ impl App {
     }
 
     /// Shows where files held over the window at `at` would land in the project's files; they are held nowhere when they left the window.
+    #[cfg(target_os = "linux")]
     pub(super) fn files_hovered(&mut self, at: Option<(f32, f32)>) {
         let over = at.and_then(|at| self.tree_row_at(at));
         self.model.update(|state| {
