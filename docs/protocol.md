@@ -554,12 +554,19 @@ everything said of them, its submodules' paths written from `directory`.
   asks a model for (`main`, `fast`, `plan`, `subagent`, `review`, `vision` and
   any the reader adds), and its presets. With `change` it first makes that
   change, one of `{"set": {name, scope, model, backups, provider}}`,
-  `{"clear": {name, scope, provider}}`, `{"save_preset": {name, effort}}`,
+  `{"clear": {name, scope, provider}}`,
+  `{"describe": {name, scope, description, prompt}}`,
+  `{"save_preset": {name, effort}}`,
   `{"apply_preset": {name, scope}}` or `{"delete_preset": {name}}`, where
   `scope` is `User` or `Project` and `model` and each backup is a selector such
   as `claude/haiku:low`. `provider`, optional, names the provider id whose
   assignment changes, such as `codex`; left out or null, the change is to the
-  assignment every provider without its own uses. With the `session` of a running agent it goes through
+  assignment every provider without its own uses. `describe` sets what the
+  slot says it is for and the text added to the system prompt of a subagent
+  started in it as a work category to exactly `description` and `prompt`,
+  leaving its model and backups alone; either left out or null is cleared.
+  Every slot other than the six job slots above is a category, which the agent
+  picks from when the conversation setting `orchestrator` is `on`. With the `session` of a running agent it goes through
   that agent's conversation, which also sees the trusted project's file, and the
   agent then sends a `Slots` event; otherwise only the user's file and the
   environment are seen and a `Project` change answers `failed`. Answers
@@ -628,14 +635,16 @@ everything said of them, its submodules' paths written from `directory`.
   time it is written with `write_file`, how many days it keeps it and how many
   megabytes of states one project may take up (30 days and 256 megabytes when
   not set). `agents` is
-  `{default_agent, permission_mode, hidden, effort, memory, checkpoints, cache, cache_warming, plan_model, plan_autosave}`,
+  `{default_agent, permission_mode, hidden, effort, memory, checkpoints, cache, cache_warming, plan_model, plan_autosave, orchestrator}`,
   each optional: the agent a client offers
   first for new work, by id, the mode new sessions start in, and the ids of the
   agents a client leaves out when a new session is started; a hidden agent still
   runs its sessions and keeps its accounts. `effort` (`low`, `medium`, `high`,
   `xhigh` or `max`; the harness's own when not set), `memory` (default `true`),
-  `checkpoints` (default `true`), `cache` (`5m` or `1h`, default `5m`) and
-  `cache_warming` (default `true`) and `plan_autosave` (default `false`)
+  `checkpoints` (default `true`), `cache` (`5m` or `1h`, default `5m`),
+  `cache_warming` (default `true`), `plan_autosave` (default `false`) and
+  `orchestrator` (default `false`; on, the agent leads and hands work to
+  subagents by work category, each on the model slot of that category)
   are the settings every agent's conversation
   starts with; a choice saved with a conversation wins over them. `plan_model`
   is no longer used and is ignored. `shell` is
@@ -1095,7 +1104,7 @@ embedded context, and anything else as a link to the stored file.
 | `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled, extension}]`          |
 | `model_servers` | `servers`: `[{id, label, base_url, wire, api_key_env, api_key, has_api_key, headers, default_model, models, replay_reasoning}]`, `api_key` always null |
 | `found_models` | `models`: `[string]` in the server's order, `error`: why the server could not be asked, or null |
-| `model_slots` | `slots`: `[{name, model, backups, resolved, source, inherited, suggested, providers}]`, built-in slots first; `model` and `backups` are the any-provider assignment, `resolved` and `source` are for the conversation's provider, and `source` is `Environment`, `Project`, `User` or `Main`; `providers`: `[{provider, model, backups, suggested}]`, one per signed-in provider and per provider with an assignment of its own; `presets`: `[{name, slots: [{name, model, backups, providers}], effort}]` |
+| `model_slots` | `slots`: `[{name, model, backups, resolved, source, inherited, suggested, providers, description, prompt, category}]`, built-in slots first; `description` and `prompt`, left out when unset, are what the slot is for and what it adds to a subagent's system prompt, and `category` is true for every slot other than the six job slots; `model` and `backups` are the any-provider assignment, `resolved` and `source` are for the conversation's provider, and `source` is `Environment`, `Project`, `User` or `Main`; `providers`: `[{provider, model, backups, suggested}]`, one per signed-in provider and per provider with an assignment of its own; `presets`: `[{name, slots: [{name, model, backups, providers}], effort}]` |
 | `library`    | `product`, `items`, `withheld`, as described under `library` above |
 | `tool_sets`  | `product`, `sets`, `withheld`, as described under `library` above |
 | `machine_settings` | `settings`: `{git, history, agents, shell, languages, extensions, servers}`, as `save_machine_settings` takes them |
@@ -1265,7 +1274,7 @@ Events use serde's default form, one key naming the type.
 | `{"Thought": "text"}`         | More of the agent's reasoning. Append it.                                                                 |
 | `{"Tool": Tool}`              | A tool the agent is using. Later events with the same `id` update it.                                     |
 | `{"Background": {id, label, running}}` | A command or task went on running beyond its call (`running` true), or ended (false). `id` is the handle the agent knows it by; for a command left running by a turn it is the `id` of its `Tool`. The agent is still at work while any runs, though the turn is over. |
-| `{"Subagent": {id, call, agent, label, model, background, state}}` | A subagent started (`state` is `Running`), or ended (`Finished`, `Failed` or `Stopped`). `id` names it for `stop_subagent`; `call` is the `id` of the `Tool` of the call that started it. When that call started several, `id` ends in `/` and its place, and its own `Tool` is `call`, `:` and that place. A subagent in the background, such as a long-lived one an `agent_spawn` call started, outlives its call: show the call as at work until the subagent ends. Not kept on disk, so it is not replayed after the server restarts. |
+| `{"Subagent": {id, call, agent, label, model, category, background, state}}` | A subagent started (`state` is `Running`), or ended (`Finished`, `Failed` or `Stopped`). `id` names it for `stop_subagent`; `call` is the `id` of the `Tool` of the call that started it. When that call started several, `id` ends in `/` and its place, and its own `Tool` is `call`, `:` and that place. A subagent in the background, such as a long-lived one an `agent_spawn` call started, outlives its call: show the call as at work until the subagent ends. `model` is what the model it asks is called, when that is known, and `category`, left out when it has none, is the work category it was started in while the conversation setting `orchestrator` was `on`, whose slot decided that model; show the two on the subagent's row. Not kept on disk, so it is not replayed after the server restarts. |
 | `{"Halted": null}`            | The turn was stopped or failed: nothing the agent had running goes on. A `Finished`, `SignedOut` or `Failed` follows.              |
 | `{"Plan": [PlanStep]}`        | The agent's plan, whole. Replaces the earlier one.                                                        |
 | `{"Ask": Permission}`         | The agent waits for an answer: send `choose` with the `ticket` and the `id` of a choice.                  |

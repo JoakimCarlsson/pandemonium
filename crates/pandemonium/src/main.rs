@@ -273,6 +273,7 @@ fn main() {
             Some("goal-menu") => Shot::GoalMenu,
             Some("aside") => Shot::Aside,
             Some("model-fallback") => Shot::ModelFallback,
+            Some("composer-orchestrating") => Shot::Orchestrating,
             Some("allowances") => Shot::Allowances,
             Some("kept") => Shot::Kept,
             Some("long-line") => Shot::LongLine,

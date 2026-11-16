@@ -18,7 +18,7 @@ const PATIENCE: Duration = Duration::from_secs(10);
 /// How long one look at the harness waits for an event.
 const GLANCE: Duration = Duration::from_millis(20);
 
-/// The slots built into the harness, in the order it lists them, with what asks each one's model.
+/// The job slots built into the harness, in the order it lists them, with what asks each one's model; every other slot is a work category.
 pub const BUILT_IN_SLOTS: [(&str, &str); 6] = [
     ("main", "The conversation's own turns."),
     (
@@ -76,6 +76,19 @@ pub enum SlotChange {
         #[serde(default)]
         provider: Option<String>,
     },
+    /// Sets what the slot `name` says it is for and what it adds to a subagent's system prompt in the file of `scope` to exactly `description` and `prompt`, leaving its model and backups alone; nothing clears either.
+    Describe {
+        /// The slot.
+        name: String,
+        /// The file written.
+        scope: SlotScope,
+        /// What kind of work the slot is for, in a sentence or two; nothing clears it.
+        #[serde(default)]
+        description: Option<String>,
+        /// The text added to the system prompt of a subagent started in the slot as a category; nothing clears it.
+        #[serde(default)]
+        prompt: Option<String>,
+    },
     /// Saves every slot as it stands as the preset `name`, with `effort` or the conversation's.
     SavePreset {
         /// The preset.
@@ -122,6 +135,17 @@ impl SlotChange {
                 name,
                 scope,
                 provider,
+            },
+            Self::Describe {
+                name,
+                scope,
+                description,
+                prompt,
+            } => Command::DescribeSlot {
+                name,
+                scope,
+                description,
+                prompt,
             },
             Self::SavePreset { name, effort } => Command::SavePreset { name, effort },
             Self::ApplyPreset { name, scope } => Command::ApplyPreset { name, scope },
@@ -251,6 +275,32 @@ mod tests {
                 model: Some("claude/haiku:low".to_owned()),
                 backups: vec!["openai/gpt-5-mini".to_owned()],
                 provider: Some("claude".to_owned()),
+            }
+        );
+        let describe = SlotChange::Describe {
+            name: "deep".to_owned(),
+            scope: SlotScope::User,
+            description: Some("Hard problems.".to_owned()),
+            prompt: None,
+        };
+        assert_eq!(
+            describe.command(),
+            Command::DescribeSlot {
+                name: "deep".to_owned(),
+                scope: SlotScope::User,
+                description: Some("Hard problems.".to_owned()),
+                prompt: None,
+            }
+        );
+        let read: SlotChange =
+            serde_json::from_str(r#"{"describe":{"name":"deep","scope":"User"}}"#).unwrap();
+        assert_eq!(
+            read,
+            SlotChange::Describe {
+                name: "deep".to_owned(),
+                scope: SlotScope::User,
+                description: None,
+                prompt: None,
             }
         );
         assert_eq!(

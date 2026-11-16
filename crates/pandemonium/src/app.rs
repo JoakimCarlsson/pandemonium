@@ -226,6 +226,8 @@ pub struct App {
     autofocused: bool,
     /// Whether the tree was asking for a name when the last frame was drawn.
     naming: bool,
+    /// What held keyboard focus when the event loop last came to rest, for telling the screen which text field the reader left.
+    focus_before: Option<FocusId>,
     /// The last press that activated a control, for noticing a file pressed twice.
     last_activation: Option<(FocusId, Instant)>,
     /// When the title bar was last pressed, for noticing it pressed twice.
@@ -406,6 +408,7 @@ impl App {
             work,
             autofocused: false,
             naming: false,
+            focus_before: None,
             last_activation: None,
             title_press: None,
             edge_cursor: None,
@@ -1930,6 +1933,19 @@ impl App {
         }
     }
 
+    /// Tells the screen which text field the reader left, when keyboard focus moved off one since the event loop last came to rest, so a field that saves on leaving does.
+    fn tell_field_left(&mut self) {
+        let focused = self.focus.current();
+        if focused == self.focus_before {
+            return;
+        }
+        if let Some(left) = self.focus_before.filter(|id| Screen::saves_on_leaving(*id)) {
+            self.model
+                .update(|state| *state = std::mem::take(state).field_left(left));
+        }
+        self.focus_before = focused;
+    }
+
     /// Scrolls the file shown just far enough to show its caret.
     fn show_editor_caret(&mut self) {
         let drawn = self
@@ -2373,6 +2389,7 @@ impl ApplicationHandler for App {
             event_loop.exit();
         }
         self.sync_asides(event_loop);
+        self.tell_field_left();
         if self.dirty.replace(false)
             && let Some(window) = self.window.as_ref()
         {

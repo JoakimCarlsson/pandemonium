@@ -9,10 +9,10 @@ use crate::elements::{ELEMENT_BASE, ELEMENT_REMOVE_BASE, MOST_ELEMENTS};
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, APPROVALS_CHIP, ATTACHED_BASE, Activity, BRANCH_BASE,
     DETAILS_BASE, EFFORT_BASE, GOAL_BASE, GOAL_CHIP, GOAL_COMMANDS, LOCATION, Location, MENTION,
-    MENU_BODY, MENU_FILTER, MENU_FILTER_PICK, MENU_PICK_BASE, MENU_PICK_ROOM, Outgoing, PICK_BASE,
-    PLACE_BASE, PLAN_CHIP, Page, Picker, SETTING_BASE, SHELLS_CHIP, SLASH_BASE, SLASH_BUTTON,
-    STEP_BASE, SUBAGENT_STOP_BASE, SUBAGENT_STOP_ROOM, SUBAGENTS_CHIP, WorkspaceState,
-    prompt_field,
+    MENU_BODY, MENU_FILTER, MENU_FILTER_PICK, MENU_PICK_BASE, MENU_PICK_ROOM, ORCHESTRATE,
+    Outgoing, PICK_BASE, PLACE_BASE, PLAN_CHIP, Page, Picker, SETTING_BASE, SHELLS_CHIP,
+    SLASH_BASE, SLASH_BUTTON, STEP_BASE, SUBAGENT_STOP_BASE, SUBAGENT_STOP_ROOM, SUBAGENTS_CHIP,
+    WorkspaceState, prompt_field,
 };
 
 /// How tall one value of a menu is, in logical pixels.
@@ -29,6 +29,15 @@ pub const PRESSABLE_LIST_ROWS: usize = 50;
 
 /// The categories of settings shown as buttons in the prompt box, in the order they are shown.
 const SHOWN: [&str; 2] = ["model", "mode"];
+
+/// The id of the agent's setting that turns orchestrator mode on and off.
+const ORCHESTRATOR: &str = "orchestrator";
+
+/// What is typed behind a slash to switch the conversation in or out of orchestrator mode; the window answers it itself.
+pub const ORCHESTRATE_COMMAND: &str = "orchestrate";
+
+/// How many categories the orchestrate chip names at most when the pointer rests on it.
+const MOST_CATEGORIES_TOLD: usize = 6;
 
 /// A server listing retained by machine and directory while another page is open.
 #[derive(Clone, Debug, PartialEq)]
@@ -152,9 +161,19 @@ impl WorkspaceState {
                 name: format!("{}:{}", command.extension, command.id),
                 description: command.description,
             });
+        let own = self.orchestrating().map(|on| Slash {
+            name: ORCHESTRATE_COMMAND.to_owned(),
+            description: if on {
+                "Leave orchestrator mode: the agent does the work itself"
+            } else {
+                "Enter orchestrator mode: the agent leads and hands work to subagents by category"
+            }
+            .to_owned(),
+        });
         source
             .iter()
             .cloned()
+            .chain(own)
             .chain(brought)
             .filter(|command| command.name.to_lowercase().starts_with(&rest))
             .collect()
@@ -433,6 +452,16 @@ impl WorkspaceState {
             return;
         }
         let taken = self.slash_matches().get(index).cloned();
+        if taken
+            .as_ref()
+            .is_some_and(|command| command.name == ORCHESTRATE_COMMAND)
+            && self.orchestrating().is_some()
+        {
+            self.prompt = prompt_field("");
+            self.reset_slash();
+            self.toggle_orchestrator();
+            return;
+        }
         if let Some(command) = &taken
             && let Some((host, brought)) = self.extension_command_named(&command.name)
         {
@@ -470,10 +499,94 @@ impl WorkspaceState {
         self
     }
 
+    /// Whether the conversation the prompt is for is in orchestrator mode, when its agent offers the mode: what the open session's agent last said, or, for new work, what the reader chose on this page, else what new conversations start with.
+    pub fn orchestrating(&self) -> Option<bool> {
+        let setting = self
+            .settings_now()
+            .iter()
+            .find(|setting| setting.id == ORCHESTRATOR)?;
+        let chosen = self.open().is_some()
+            || self
+                .touched
+                .contains(&(self.agent, ORCHESTRATOR.to_owned()));
+        Some(if chosen {
+            setting.current == "on"
+        } else {
+            self.machine.agents.orchestrator
+        })
+    }
+
+    /// Switches the conversation the prompt is for in or out of orchestrator mode, when its agent offers the mode: at once for an open session, whose agent then says how it stands, and at the start of the work when there is none yet.
+    pub(crate) fn toggle_orchestrator(&mut self) {
+        if let Some(on) = self.orchestrating() {
+            self.apply(ORCHESTRATOR, if on { "off" } else { "on" });
+        }
+    }
+
+    /// Whether what is written in the prompt is the command that switches orchestrator mode and nothing else, for an agent that offers the mode; the window then answers it in place of the agent.
+    pub(crate) fn orchestrate_typed(&self) -> bool {
+        self.orchestrating().is_some()
+            && self.prompt.text().trim().strip_prefix('/') == Some(ORCHESTRATE_COMMAND)
+    }
+
+    /// The work categories the agent the prompt is for hands work to, each with the model its subagents ask when it sets one, as far as the slots are known: the open session's, else those last told to the settings.
+    pub fn categories_now(&self) -> Vec<(String, Option<String>)> {
+        let slots = match self.open() {
+            Some(session) if !session.slots.is_empty() => &session.slots,
+            _ => &self.settings_page.slots.slots,
+        };
+        slots
+            .iter()
+            .filter(|slot| slot.category)
+            .map(|slot| {
+                let model = slot
+                    .resolved
+                    .clone()
+                    .filter(|_| !slot.inherited)
+                    .or_else(|| slot.model.clone());
+                (slot.name.clone(), model)
+            })
+            .collect()
+    }
+
+    /// What the orchestrate chip says while the pointer rests on it: what the mode does, then up to six categories with their models when the slots are known.
+    pub fn orchestrate_hint(&self) -> String {
+        let mut said = vec![
+            "Orchestrator mode: the agent leads and hands each piece of work to a subagent by category."
+                .to_owned(),
+        ];
+        let categories = self.categories_now();
+        for (name, model) in categories.iter().take(MOST_CATEGORIES_TOLD) {
+            said.push(format!(
+                "{name} · {}",
+                model.as_deref().unwrap_or("same as lead")
+            ));
+        }
+        if categories.len() > MOST_CATEGORIES_TOLD {
+            said.push(format!(
+                "and {} more",
+                categories.len() - MOST_CATEGORIES_TOLD
+            ));
+        }
+        said.join("\n")
+    }
+
     /// Gives the setting `id` the value `value`, for now as the reader sees
     /// it, and then for the agent: at once when there is one, and at the
-    /// start of the work when there is not yet.
+    /// start of the work when there is not yet. The choice is also kept
+    /// for the agent's next conversations.
     fn change(&mut self, id: &str, value: &str) {
+        if self.apply(id, value) {
+            let agent = self.agent_now();
+            self.remember(agent, id, value);
+        }
+    }
+
+    /// Gives the setting `id` the value `value` for this conversation only,
+    /// for now as the reader sees it, and then for the agent: at once when
+    /// there is one, and at the start of the work when there is not yet.
+    /// Says whether the agent offers the setting.
+    fn apply(&mut self, id: &str, value: &str) -> bool {
         let open = self.open_index();
         let held = match open {
             Some(session) => self
@@ -484,11 +597,9 @@ impl WorkspaceState {
         };
         let Some(setting) = held.and_then(|held| held.iter_mut().find(|setting| setting.id == id))
         else {
-            return;
+            return false;
         };
         setting.current = value.to_owned();
-        let agent = self.agent_now();
-        self.remember(agent, id, value);
         match open {
             Some(session) => self.outbox.push(Outgoing::Set {
                 session,
@@ -502,6 +613,7 @@ impl WorkspaceState {
                 }
             }
         }
+        true
     }
 
     /// Keeps `value` as what the reader chose for the setting `id` of the agent at `agent`.
@@ -803,6 +915,9 @@ impl WorkspaceState {
             self.pick_account(index);
         } else if id == GOAL_CHIP.0 {
             self.picker = (self.picker != Some(Picker::Goal)).then_some(Picker::Goal);
+        } else if id == ORCHESTRATE.0 {
+            self.picker = None;
+            self.toggle_orchestrator();
         } else if let Some(index) = within(GOAL_BASE, GOAL_COMMANDS.len()) {
             self.command_goal(index);
         } else if id == PLAN_CHIP.0 {
@@ -1431,6 +1546,177 @@ mod tests {
         assert_eq!(state.settings_now()[0].current, "qwen/model-141");
         state = state.after(opened).after(FocusId(MENU_PICK_BASE + 120));
         assert_eq!(state.settings_now()[0].current, "openai/model-120");
+    }
+
+    /// The orchestrator setting as an agent offers it, standing at `current`.
+    fn orchestrator(current: &str) -> Setting {
+        let pick = |value: &str| pm_harness::Pick {
+            value: value.to_owned(),
+            name: value.to_owned(),
+            description: String::new(),
+        };
+        Setting {
+            id: ORCHESTRATOR.to_owned(),
+            category: ORCHESTRATOR.to_owned(),
+            name: "Orchestrator mode".to_owned(),
+            current: current.to_owned(),
+            picks: vec![pick("off"), pick("on")],
+        }
+    }
+
+    /// What was sent to set the orchestrator setting of a session's agent since the outbox was last taken, as the session and the value.
+    fn orchestrator_sets(state: &mut WorkspaceState) -> Vec<(usize, String)> {
+        state
+            .take_outbox()
+            .into_iter()
+            .filter_map(|outgoing| match outgoing {
+                Outgoing::Set {
+                    session,
+                    setting,
+                    value,
+                } if setting == ORCHESTRATOR => Some((session, value)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// In a live conversation the chip sends the setting, on then off, shows the choice at once and then whatever the agent reports back; an agent that does not offer the mode has no chip to press.
+    #[test]
+    fn the_orchestrate_chip_sets_a_live_conversation() {
+        let mut state = conversation();
+        assert_eq!(state.orchestrating(), None);
+        let mut state = {
+            state.take_outbox();
+            state.after(ORCHESTRATE)
+        };
+        assert!(orchestrator_sets(&mut state).is_empty());
+        let mut state = state.heard(0, pm_harness::Event::Settings(vec![orchestrator("off")]));
+        assert_eq!(state.orchestrating(), Some(false));
+        state.take_outbox();
+        let mut state = state.after(ORCHESTRATE);
+        assert_eq!(orchestrator_sets(&mut state), [(0, "on".to_owned())]);
+        assert_eq!(state.orchestrating(), Some(true));
+        let state = state.heard(0, pm_harness::Event::Settings(vec![orchestrator("off")]));
+        assert_eq!(state.orchestrating(), Some(false));
+        let mut state = state
+            .heard(0, pm_harness::Event::Settings(vec![orchestrator("on")]))
+            .after(ORCHESTRATE);
+        assert_eq!(orchestrator_sets(&mut state), [(0, "off".to_owned())]);
+        assert_eq!(state.orchestrating(), Some(false));
+    }
+
+    /// The window on the page that starts work in its first project, with an agent that offers orchestrator mode, off.
+    fn starting() -> WorkspaceState {
+        let state = WorkspaceState::sample();
+        let agent = state.offered_agents().into_iter().next().unwrap();
+        let mut state = state.with_discovery(
+            agent,
+            Discovery {
+                settings: vec![orchestrator("off")],
+                commands: Vec::new(),
+            },
+        );
+        state.agent = agent;
+        state.page = Page::New(0);
+        state.take_outbox();
+        state
+    }
+
+    /// The settings the first message of new work was started with, once it was sent.
+    fn started_with(state: WorkspaceState) -> Vec<(String, String)> {
+        let mut state = state
+            .edited(crate::state::PROMPT, pm_text::Edit::Paste("Go".to_owned()))
+            .after(crate::state::SEND);
+        state
+            .take_outbox()
+            .into_iter()
+            .find_map(|outgoing| match outgoing {
+                Outgoing::Start { settings, .. } => Some(settings),
+                _ => None,
+            })
+            .expect("the work was started")
+    }
+
+    /// Before a conversation exists the chip shows what new conversations start with; left alone nothing is sent, so the server's default applies, and a choice made on the page is carried into the conversation the first message starts.
+    #[test]
+    fn a_new_conversation_starts_with_the_chosen_mode() {
+        let state = starting();
+        assert_eq!(state.orchestrating(), Some(false));
+        assert!(started_with(state).is_empty());
+        let chosen = starting().after(ORCHESTRATE);
+        assert_eq!(chosen.orchestrating(), Some(true));
+        assert_eq!(
+            started_with(chosen),
+            [(ORCHESTRATOR.to_owned(), "on".to_owned())]
+        );
+        let mut preferring = starting();
+        preferring.machine.agents.orchestrator = true;
+        assert_eq!(preferring.orchestrating(), Some(true));
+        assert!(started_with(preferring.clone()).is_empty());
+        let declined = preferring.after(ORCHESTRATE);
+        assert_eq!(declined.orchestrating(), Some(false));
+        assert_eq!(
+            started_with(declined),
+            [(ORCHESTRATOR.to_owned(), "off".to_owned())]
+        );
+    }
+
+    /// The command behind a slash is offered where the mode is, toggles it when taken from the list or sent as typed, and is never handed to the agent.
+    #[test]
+    fn the_orchestrate_command_toggles_the_mode() {
+        let typed = |state: WorkspaceState, words: &str| {
+            state.edited(crate::state::PROMPT, pm_text::Edit::Paste(words.to_owned()))
+        };
+        let state = typed(starting(), "/orch");
+        let offered: Vec<String> = state
+            .slash_matches()
+            .into_iter()
+            .map(|command| command.name)
+            .collect();
+        assert_eq!(offered, [ORCHESTRATE_COMMAND]);
+        let state = state.slash_taken();
+        assert_eq!(state.orchestrating(), Some(true));
+        assert_eq!(state.prompt.text(), "");
+        let mut state = typed(state, "/orchestrate").after(crate::state::SEND);
+        assert_eq!(state.orchestrating(), Some(false));
+        assert_eq!(state.prompt.text(), "");
+        assert!(
+            !state.take_outbox().iter().any(|outgoing| matches!(
+                outgoing,
+                Outgoing::Start { .. } | Outgoing::Prompt { .. }
+            ))
+        );
+        assert!(typed(conversation(), "/orch").slash_matches().is_empty());
+    }
+
+    /// The hint of the chip says what the mode does and names at most six categories with their models.
+    #[test]
+    fn the_orchestrate_hint_names_the_categories() {
+        let category = |place: usize| pm_harness::SlotInfo {
+            name: format!("kind-{place}"),
+            model: (place == 0).then(|| "claude/opus:high".to_owned()),
+            backups: Vec::new(),
+            resolved: None,
+            source: pm_harness::SlotSource::Main,
+            inherited: place != 0,
+            suggested: None,
+            providers: Vec::new(),
+            description: None,
+            prompt: None,
+            category: place != 7,
+        };
+        let state = starting();
+        assert_eq!(state.orchestrate_hint().lines().count(), 1);
+        let state = state.with_model_slots(pm_harness::SlotBook {
+            slots: (0..8).map(category).collect(),
+            presets: Vec::new(),
+        });
+        let hint = state.orchestrate_hint();
+        let lines: Vec<&str> = hint.lines().collect();
+        assert_eq!(lines.len(), 8);
+        assert_eq!(lines[1], "kind-0 · claude/opus:high");
+        assert_eq!(lines[2], "kind-1 · same as lead");
+        assert_eq!(lines[7], "and 1 more");
     }
 
     /// A restored conversation whose agent has announced no commands yet.

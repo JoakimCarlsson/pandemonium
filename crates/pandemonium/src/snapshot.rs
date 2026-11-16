@@ -60,7 +60,7 @@ const NARROW_WIDTH: u32 = 640;
 const NARROW_HEIGHT: u32 = 420;
 
 /// The name of the shot of each section of the settings window, after `settings-`.
-pub const SETTINGS_SHOTS: [(&str, Section); 27] = [
+pub const SETTINGS_SHOTS: [(&str, Section); 28] = [
     ("general", Section::General),
     ("appearance", Section::Appearance),
     ("editor", Section::Editor),
@@ -81,6 +81,7 @@ pub const SETTINGS_SHOTS: [(&str, Section); 27] = [
     ("mcp-servers", Section::McpServers),
     ("model-servers", Section::ModelServers),
     ("models", Section::ModelSlots),
+    ("orchestration", Section::Orchestration),
     ("customizations", Section::Customizations),
     ("skills", Section::Skills),
     ("instructions", Section::Instructions),
@@ -403,6 +404,10 @@ pub enum Shot {
     SettingsModelServers(bool),
     /// The settings panel on the model slots inside Agents, with slots set, inherited and suggested, backups and one preset, scrolled down to the suggestion, the slot of the reader's own and the preset; at its narrowest when the flag is set, from the top.
     SettingsModelSlots(bool),
+    /// The settings panel on orchestration inside Agents with orchestrator mode off, so the lead and the closed cards are dimmed, and the card of a category with a model, a description and a prompt addition opened into its editor; at its narrowest when the flag is set.
+    SettingsOrchestrationOpen(bool),
+    /// The page for starting work with orchestrator mode switched on in the prompt box: the chip in the accent and the model named as the lead.
+    Orchestrating,
     /// A conversation whose turn moved to a backup model when its own was overloaded, with the notice in the chat.
     ModelFallback,
     /// The page for starting work on a declared model server, with the menu of the models it offers open.
@@ -2627,6 +2632,7 @@ impl Shot {
                 | Self::SettingsMcp
                 | Self::SettingsModelServers(_)
                 | Self::SettingsModelSlots(_)
+                | Self::SettingsOrchestrationOpen(_)
                 | Self::SettingsDraft(_)
                 | Self::SettingsForm
                 | Self::SettingsAccounts(_)
@@ -2649,6 +2655,7 @@ impl Shot {
                 | Self::SettingsDraft(true)
                 | Self::SettingsModelServers(true)
                 | Self::SettingsModelSlots(true)
+                | Self::SettingsOrchestrationOpen(true)
                 | Self::SettingsCompact(true)
                 | Self::SettingsAccounts(true)
                 | Self::SettingsAccountsCloud(true)
@@ -2679,6 +2686,7 @@ impl Shot {
             "mcp" => Some(Self::SettingsMcp),
             "model-servers-found" => Some(Self::SettingsModelServers(narrow)),
             "model-slots" => Some(Self::SettingsModelSlots(narrow)),
+            "orchestration-open" => Some(Self::SettingsOrchestrationOpen(narrow)),
             "skills-new" => Some(Self::SettingsDraft(narrow)),
             slug => SETTINGS_SHOTS
                 .iter()
@@ -3569,7 +3577,8 @@ impl Shot {
                             call: id,
                             agent: "scout".to_owned(),
                             label: "Look".to_owned(),
-                            model: None,
+                            model: Some("claude-haiku-4-5".to_owned()),
+                            category: Some("quick".to_owned()),
                             background: true,
                             state: pm_harness::SubagentState::Running,
                         }),
@@ -3817,6 +3826,9 @@ impl Shot {
                 let state = browser_settings_sample(Section::Browser);
                 Screen::Workspace(state.scrolled_settings(if narrow { 900.0 } else { 420.0 }, 2000.0))
             }
+            Self::SettingsPage(Section::Orchestration, _) => {
+                Screen::Workspace(orchestration_sample(true))
+            }
             Self::SettingsPage(section, _) => Screen::Workspace(browser_settings_sample(section)),
             Self::SettingsSearch(_) => Screen::Workspace(
                 settings_sample().edited(SETTINGS_FIND, Edit::Paste("font".to_owned())),
@@ -3899,6 +3911,14 @@ impl Shot {
                     .with_model_slots(model_slots())
                     .scrolled_settings(0.0, 2000.0),
             ),
+            Self::SettingsOrchestrationOpen(narrow) => Screen::Workspace(
+                orchestration_sample(false)
+                    .after(pm_components::settings_slots::card_id(7).unwrap_or(SETTINGS_FIND))
+                    .scrolled_settings(if narrow { 400.0 } else { 150.0 }, 4000.0),
+            ),
+            Self::Orchestrating => {
+                Screen::Workspace(welcome().after(pm_components::state::ORCHESTRATE))
+            }
             Self::ModelFallback => Screen::Workspace(model_fallback()),
             Self::ServerModels => Screen::Workspace(server_models().after(FocusId(4200))),
             Self::SettingsMcp => Screen::Workspace(
@@ -4355,7 +4375,7 @@ fn claude_discovery() -> Discovery {
     }
 }
 
-/// What Claude Code lets the reader change, as it reports it.
+/// What the agent lets the reader change, as it reports it: its mode, model and effort, and orchestrator mode, off.
 fn claude_settings() -> Vec<Setting> {
     let pick = |value: &str, name: &str, description: &str| Pick {
         value: value.to_owned(),
@@ -4407,6 +4427,16 @@ fn claude_settings() -> Vec<Setting> {
                 pick("default", "Default", ""),
                 pick("low", "Low", ""),
                 pick("high", "High", ""),
+            ],
+        ),
+        setting(
+            "orchestrator",
+            "orchestrator",
+            "Orchestrator mode",
+            "off",
+            vec![
+                pick("off", "Off", "The agent does the work itself"),
+                pick("on", "On", "The agent leads and hands work to subagents"),
             ],
         ),
     ]
@@ -4484,7 +4514,18 @@ enum Turn {
     Isolated,
 }
 
-/// The model slots and presets the models page shows: `main` inheriting with a backup, `fast` set from the user's file with backups, `plan` set by the project, `vision` inheriting with a suggestion, `subagent` and `review` inheriting, a slot of the reader's own from the environment, and one preset.
+/// The settings window on the orchestration page with the slots of [`model_slots`] told, and orchestrator mode for new conversations `on` or off.
+fn orchestration_sample(on: bool) -> WorkspaceState {
+    let state = welcome().after(SETTINGS);
+    let mut machine = state.machine.clone();
+    machine.agents.orchestrator = on;
+    state
+        .with_machine_settings(machine)
+        .after(Section::Orchestration.id())
+        .with_model_slots(model_slots())
+}
+
+/// The model slots and presets the models and orchestration pages show: `main` inheriting with a backup, `fast` set from the user's file with backups, `plan` set by the project, `vision` inheriting with a suggestion, `subagent` and `review` inheriting, then the categories: `quick` with only its description, `deep` with a model and effort of one provider's own, a description and a prompt addition, `docs` set by the environment and not described, `frontend` with only a long description, and `research` with a model, an effort and a description; and one preset.
 fn model_slots() -> pm_harness::SlotBook {
     use pm_harness::SlotSource::{Environment, Main, Project, User};
     let slot = |name: &str,
@@ -4500,6 +4541,19 @@ fn model_slots() -> pm_harness::SlotBook {
         inherited: model.is_none(),
         suggested: suggested.map(str::to_owned),
         providers: Vec::new(),
+        description: None,
+        prompt: None,
+        category: false,
+    };
+    let category = |name: &str,
+                    model: Option<&str>,
+                    source: pm_harness::SlotSource,
+                    description: Option<&str>,
+                    prompt: Option<&str>| pm_harness::SlotInfo {
+        description: description.map(str::to_owned),
+        prompt: prompt.map(str::to_owned),
+        category: true,
+        ..slot(name, model, &[], source, None)
     };
     let assigned =
         |provider: &str, model: Option<&str>, backups: &[&str], suggested: Option<&str>| {
@@ -4523,8 +4577,46 @@ fn model_slots() -> pm_harness::SlotBook {
         slot("subagent", None, &[], Main, None),
         slot("review", None, &[], Main, None),
         slot("vision", None, &[], Main, Some("openai/gpt-5-mini")),
-        slot("docs", Some("claude/sonnet-4-5"), &[], Environment, None),
+        category(
+            "quick",
+            None,
+            Main,
+            Some("Small, well-defined changes: a typo, a rename, a one-file fix."),
+            None,
+        ),
+        category(
+            "deep",
+            Some("claude/opus-4-5:high"),
+            User,
+            Some("Hard problems that need a thorough look across many files before changing any."),
+            Some(
+                "Read every caller before you change a signature.\nSay what you checked and what you left alone.",
+            ),
+        ),
+        category("docs", Some("claude/sonnet-4-5"), Environment, None, None),
+        category(
+            "frontend",
+            None,
+            Main,
+            Some(
+                "Interface work: components, layout and styling, checked in the browser at more than one width before it is called done.",
+            ),
+            None,
+        ),
+        category(
+            "research",
+            Some("openai/gpt-5:medium"),
+            User,
+            Some("Reading documentation and comparing libraries; changes no files."),
+            None,
+        ),
     ];
+    slots[7].providers = vec![assigned(
+        "claude",
+        Some("claude/opus-4-5:high"),
+        &["claude/sonnet-4-5"],
+        None,
+    )];
     slots[1].providers = vec![
         assigned(
             "claude",

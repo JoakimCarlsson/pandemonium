@@ -187,6 +187,8 @@ impl Session {
     /// The call is the one the subagent's events are filed under: the `task` call that started it, or, when that call started several, its step of the call, which the harness numbers as the id does after its last `/`.
     ///
     /// A subagent in the background, such as a long-lived one an `agent_spawn` call started, keeps its call at work after the call itself returned, so it stays listed among the subagents until it ends; its ending ends the call and what the call was still doing.
+    ///
+    /// The category and the model the subagent says it runs as are kept on the call, for its row to show.
     fn subagent(&mut self, subagent: &pm_harness::Subagent) {
         let own = subagent.id.rsplit(':').next().unwrap_or(&subagent.id);
         let shown = match own.rsplit_once('/') {
@@ -194,8 +196,12 @@ impl Session {
             None => subagent.call.clone(),
         };
         let running = subagent.state == pm_harness::SubagentState::Running;
+        let runs_as = runs_as(subagent);
         let mut settled = None;
         for tool in self.tools_mut().filter(|tool| tool.id == shown) {
+            if runs_as.is_some() {
+                tool.runs_as.clone_from(&runs_as);
+            }
             if !running && tool.outlasts_the_turn() && tool.state == ToolState::Running {
                 tool.state = ToolState::Done;
                 tool.seconds = Some(tool.started.elapsed().as_secs());
@@ -491,6 +497,7 @@ impl Session {
                 agent: tool.agent,
                 worktree: tool.worktree,
                 stop: None,
+                runs_as: None,
             })),
         }
         if let Some(state) = ended {
@@ -584,6 +591,15 @@ impl Session {
     }
 }
 
+/// What `subagent` says it runs as, for its row: the work category it was started in and the model it asks, the model alone when it was started without a category, or nothing when it says neither.
+fn runs_as(subagent: &pm_harness::Subagent) -> Option<String> {
+    match (subagent.category.as_deref(), subagent.model.as_deref()) {
+        (Some(category), Some(model)) => Some(format!("{category} · {model}")),
+        (Some(only), None) | (None, Some(only)) => Some(only.to_owned()),
+        (None, None) => None,
+    }
+}
+
 /// How long a turn took, in words: `Worked for 4m 12s`.
 fn worked(seconds: u64) -> String {
     if seconds >= 60 {
@@ -622,6 +638,7 @@ mod tests {
             agent: "scout".to_owned(),
             label: "Look".to_owned(),
             model: None,
+            category: None,
             background: false,
             state,
         })
@@ -634,6 +651,45 @@ mod tests {
             .into_iter()
             .filter_map(|(_, _, tool)| Some((tool.id.as_str(), tool.stoppable()?)))
             .collect()
+    }
+
+    /// A subagent started in a work category shows the category and the model on its row, one started without a category the model alone, and one saying neither nothing; what it showed stays once it has ended.
+    #[test]
+    fn a_subagent_shows_its_category_and_model() {
+        use pm_harness::SubagentState::{Finished, Running};
+        let told = |id: &str, category: Option<&str>, model: Option<&str>, state| {
+            Event::Subagent(pm_harness::Subagent {
+                id: id.to_owned(),
+                call: id.to_owned(),
+                agent: "task".to_owned(),
+                label: "Look".to_owned(),
+                model: model.map(str::to_owned),
+                category: category.map(str::to_owned),
+                background: false,
+                state,
+            })
+        };
+        let mut session = Session::started("Test", 0, "Hello");
+        for id in ["t1", "t2", "t3"] {
+            session.hear(spawned(id, None, "task"));
+        }
+        session.hear(told("t1", Some("quick"), Some("claude-haiku-4-5"), Running));
+        session.hear(told("t2", None, Some("claude-opus-4-5"), Running));
+        session.hear(told("t3", None, None, Running));
+        session.hear(told("t1", None, None, Finished));
+        let shown: Vec<Option<&str>> = session
+            .subagents()
+            .into_iter()
+            .map(|(_, _, tool)| tool.runs_as.as_deref())
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                Some("quick · claude-haiku-4-5"),
+                Some("claude-opus-4-5"),
+                None
+            ]
+        );
     }
 
     /// A subagent that starts gives the call showing it the id it is stopped by, whether it is the call's only one, one of several or started by another subagent; ending takes the id away, and so does the agent going.
@@ -685,6 +741,7 @@ mod tests {
             agent: "scout".to_owned(),
             label: "Look".to_owned(),
             model: None,
+            category: None,
             background: true,
             state: pm_harness::SubagentState::Running,
         }));
@@ -878,6 +935,7 @@ mod tests {
                 agent: "tester".to_owned(),
                 label: "Test every change".to_owned(),
                 model: None,
+                category: None,
                 background: true,
                 state,
             })
@@ -947,6 +1005,9 @@ mod tests {
             inherited: false,
             suggested: None,
             providers: Vec::new(),
+            description: None,
+            prompt: None,
+            category: false,
         }]));
         assert_eq!(session.settings[0].picks[0].value, "@fast");
         assert_eq!(

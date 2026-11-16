@@ -386,6 +386,7 @@ impl Setting {
             ),
             Self::Memory => Control::Switch(machine.agents.memory),
             Self::Checkpoints => Control::Switch(machine.agents.checkpoints),
+            Self::Orchestrator => Control::Switch(machine.agents.orchestrator),
             Self::PromptCache => {
                 Control::Choice(CACHES, place_of(&CACHE_IDS, &machine.agents.cache.as_str()))
             }
@@ -657,6 +658,7 @@ impl Setting {
             }
             Self::Memory => machine.agents.memory ^= true,
             Self::Checkpoints => machine.agents.checkpoints ^= true,
+            Self::Orchestrator => machine.agents.orchestrator ^= true,
             Self::PromptCache => machine.agents.cache = chosen(&CACHE_IDS, option).to_owned(),
             Self::CacheWarming => machine.agents.cache_warming ^= true,
             Self::PlanAutosave => machine.agents.plan_autosave ^= true,
@@ -1139,6 +1141,7 @@ impl Setting {
             Self::Effort => machine.agents.effort.clone_from(&kept.agents.effort),
             Self::Memory => machine.agents.memory = kept.agents.memory,
             Self::Checkpoints => machine.agents.checkpoints = kept.agents.checkpoints,
+            Self::Orchestrator => machine.agents.orchestrator = kept.agents.orchestrator,
             Self::PromptCache => machine.agents.cache.clone_from(&kept.agents.cache),
             Self::CacheWarming => machine.agents.cache_warming = kept.agents.cache_warming,
             Self::PlanAutosave => machine.agents.plan_autosave = kept.agents.plan_autosave,

@@ -115,13 +115,15 @@ pub struct AgentPreferences {
     pub plan_model: String,
     /// Whether each plan an agent submits is also saved as markdown in the project.
     pub plan_autosave: bool,
+    /// Whether the agent leads and hands work to subagents by category, each on the model slot of that category.
+    pub orchestrator: bool,
 }
 
 /// The prompt cache lifetime a new conversation starts with.
 pub const CACHE_SHORT: &str = "5m";
 
 impl Default for AgentPreferences {
-    /// No default agent or mode, memory, checkpoints and cache warming on, the short cache, and plans kept with the conversation only.
+    /// No default agent or mode, memory, checkpoints and cache warming on, the short cache, plans kept with the conversation only, and orchestrator mode off.
     fn default() -> Self {
         Self {
             default_agent: None,
@@ -134,6 +136,7 @@ impl Default for AgentPreferences {
             cache_warming: true,
             plan_model: String::new(),
             plan_autosave: false,
+            orchestrator: false,
         }
     }
 }
@@ -148,6 +151,7 @@ impl AgentPreferences {
             ("cache".to_owned(), self.cache.clone()),
             ("cache_warming".to_owned(), switch(self.cache_warming)),
             ("plan_autosave".to_owned(), switch(self.plan_autosave)),
+            ("orchestrator".to_owned(), switch(self.orchestrator)),
         ];
         if let Some(effort) = &self.effort {
             defaults.push(("effort".to_owned(), effort.clone()));
@@ -316,7 +320,7 @@ impl MachineSettings {
 mod tests {
     use super::*;
 
-    /// Settings saved before the conversation defaults existed read with memory, checkpoints and warming on, the short cache and no effort, and say so to the harness.
+    /// Settings saved before the conversation defaults existed read with memory, checkpoints and warming on, the short cache, no effort and orchestrator mode off, and say so to the harness.
     #[test]
     fn older_agent_settings_keep_the_defaults() {
         let read: AgentPreferences = serde_json::from_str(r#"{"permission_mode":"plan"}"#).unwrap();
@@ -329,17 +333,20 @@ mod tests {
                 ("cache", "5m"),
                 ("cache_warming", "on"),
                 ("plan_autosave", "off"),
+                ("orchestrator", "off"),
             ]
             .map(|(id, value)| (id.to_owned(), value.to_owned()))
         );
         let chosen = AgentPreferences {
             effort: Some("high".to_owned()),
             memory: false,
+            orchestrator: true,
             plan_model: " anthropic/claude-opus-5-5 ".to_owned(),
             ..read
         };
         let defaults = chosen.conversation_defaults();
         assert!(defaults.contains(&("memory".to_owned(), "off".to_owned())));
+        assert!(defaults.contains(&("orchestrator".to_owned(), "on".to_owned())));
         assert!(defaults.contains(&("effort".to_owned(), "high".to_owned())));
         assert!(defaults.iter().all(|(id, _)| id != "plan_model"));
     }

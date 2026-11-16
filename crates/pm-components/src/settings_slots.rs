@@ -1,17 +1,17 @@
-//! The models page of the settings window: the model slots the harness asks a model for, such as `fast` for summaries and `plan` for plan mode, each with its model, effort and backups, the file a change is saved to, and the presets that set every slot at once.
+//! The model slots of the settings window: the models page, with the job slots the harness asks a model for, such as `fast` for summaries and `plan` for plan mode, each with its model, effort and backups, the file a change is saved to, and the presets that set every slot at once; and what the orchestration page shares with it, the work categories the agent hands work to in orchestrator mode, each also with its description and prompt addition.
 
 use pm_harness::{PresetInfo, SlotChange, SlotInfo, SlotScope, SlotSource};
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, border, border_color, flex, flex_1, flex_col, flex_none, flex_wrap, gap,
-    items_center, justify_between, min_w_px, pl, px, py, rounded,
+    Radius, Role, bg, border, border_color, flex, flex_1, flex_col, flex_none, flex_wrap, gap,
+    items_center, justify_between, min_w_px, pl, px, py, rounded, w_full,
 };
-use pm_text::{Edit, Field};
+use pm_text::{Edit, Field, Shaper};
 use pm_ui::{Node, node};
 
 use crate::button::Variant;
-use crate::input::Input;
+use crate::input::{self, Input};
 use crate::parts::{clipped, line};
 use crate::settings::SETTINGS_PICK_FILTER;
 use crate::settings_ids::{BACKUP_CONTROLS, PICKS, PRESET_CONTROLS, SINGLES, SLOT_CONTROLS};
@@ -42,14 +42,20 @@ pub const PRESET_SAVE: FocusId = SINGLES.at(26);
 /// Opens the list of providers whose assignments the page shows.
 pub const SLOTS_PROVIDER: FocusId = SINGLES.at(27);
 
+/// The box a category of the reader's own is named in, on the orchestration page.
+pub const CATEGORY_NEW_NAME: FocusId = SINGLES.at(98);
+
+/// Adds the category named in [`CATEGORY_NEW_NAME`].
+pub const CATEGORY_ADD: FocusId = SINGLES.at(99);
+
 /// What the provider list calls the any-provider assignments.
 const ALL_PROVIDERS: &str = "All providers";
 
 /// How wide the provider picker is, in logical pixels.
 const PROVIDER_PICKER_WIDTH: f32 = 160.0;
 
-/// How many controls each slot has in [`SLOT_CONTROLS`]: its model picker, its suggestion, its clear button, its backup picker, then one for each effort.
-pub const SLOT_COLUMNS: usize = 10;
+/// How many controls each slot has in [`SLOT_CONTROLS`]: its model picker, its suggestion, its clear button, its backup picker, one for each effort, then a category's description box, its prompt box, what Enter in either presses, and its card on the orchestration page.
+pub const SLOT_COLUMNS: usize = 14;
 
 /// The column of a slot's model picker.
 const MODEL_COLUMN: usize = 0;
@@ -65,6 +71,24 @@ const BACKUP_COLUMN: usize = 3;
 
 /// The column of a slot's first effort choice.
 const EFFORT_COLUMN: usize = 4;
+
+/// The column of a category's box for what it is for.
+pub(crate) const DESCRIPTION_COLUMN: usize = EFFORT_COLUMN + EFFORT_NAMES.len();
+
+/// The column of a category's box for what it adds to a subagent's system prompt.
+const PROMPT_COLUMN: usize = DESCRIPTION_COLUMN + 1;
+
+/// The column Enter in either box of a category presses, which saves what is written in them.
+const DESCRIBE_COLUMN: usize = PROMPT_COLUMN + 1;
+
+/// The column of a category's card on the orchestration page, which opens and closes its editor.
+const CARD_COLUMN: usize = DESCRIBE_COLUMN + 1;
+
+/// How many lines tall a category's prompt box is at least.
+const PROMPT_ROWS: u32 = 3;
+
+/// How much narrower than the page the boxes of a row are, in logical pixels: the row's padding and the outline around the rows.
+const ROW_INSET: f32 = 26.0;
 
 /// How many backups of a slot have controls.
 pub const MOST_BACKUPS: usize = 16;
@@ -122,25 +146,73 @@ pub struct SlotRow {
     pub source: Option<SlotSource>,
     /// What its model picker says when the assignment sets no model: what applies instead.
     pub unset: String,
+    /// Whether it is a work category, which the agent picks from in orchestrator mode, and not one of the job slots.
+    pub category: bool,
+    /// What kind of work it is for, as the harness holds it, when it says.
+    pub description: Option<String>,
 }
 
-/// What the models page keeps: the slots and presets as the harness told them, the slots added here and not saved yet, where changes go, the list open, the boxes, and why the last change failed.
+/// What is written in the boxes of one category: what it is for and what it adds to a subagent's system prompt.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SlotNotes {
+    /// The category's name.
+    pub name: String,
+    /// The box for what kind of work the category is for, on one line.
+    pub description: Field,
+    /// The box for the text added to the system prompt of a subagent started in the category, on several lines.
+    pub prompt: Field,
+    /// Whether either box was changed since it was last saved.
+    pub edited: bool,
+}
+
+impl SlotNotes {
+    /// The boxes of the category `name`, holding `description` and `prompt` as the harness holds them.
+    fn told(name: &str, description: Option<&str>, prompt: Option<&str>) -> Self {
+        Self {
+            name: name.to_owned(),
+            description: Field::new(description.unwrap_or_default()),
+            prompt: Field::new(prompt.unwrap_or_default()).multiline(true),
+            edited: false,
+        }
+    }
+
+    /// Whether the boxes hold `description` and `prompt`.
+    fn holds(&self, description: Option<&str>, prompt: Option<&str>) -> bool {
+        self.description.text() == description.unwrap_or_default()
+            && self.prompt.text() == prompt.unwrap_or_default()
+    }
+}
+
+/// What is written in `field` with the space around it taken off, or nothing when that is empty.
+fn written(field: &Field) -> Option<String> {
+    Some(field.text().trim().to_owned()).filter(|text| !text.is_empty())
+}
+
+/// What the models and orchestration pages keep: the slots and presets as the harness told them, the slots added here and not saved yet, where changes go, the list open, the category whose editor is open, the boxes, and why the last change failed.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ModelSlots {
     /// Every slot, as the harness last told them.
     pub slots: Vec<SlotInfo>,
     /// Every preset, by name.
     pub presets: Vec<PresetInfo>,
-    /// The slots the reader added and gave no model yet, which the harness does not keep until they are set.
+    /// The categories the reader added on the orchestration page and gave no model yet, which the harness does not keep until they are set or described.
     pub added: Vec<String>,
+    /// The slots the reader added on the models page and gave no model yet, which the harness does not keep until they are set; the models page lists them until then.
+    pub plain: Vec<String>,
+    /// The boxes of every category, in the order the orchestration page shows them.
+    pub notes: Vec<SlotNotes>,
+    /// The category whose editor is open on the orchestration page, by name, while one is.
+    pub expanded: Option<String>,
     /// The file changes are saved to.
     pub scope: SlotScope,
     /// Whose assignments are shown and edited.
     pub view: SlotView,
     /// The list of models open, while one is.
     pub picking: Option<SlotPicking>,
-    /// The box a new slot is named in.
+    /// The box a new slot is named in, on the models page.
     pub new_slot: Field,
+    /// The box a new category is named in, on the orchestration page.
+    pub new_category: Field,
     /// The box a new preset is named in.
     pub preset_name: Field,
     /// Why the slots could not be read or changed, when the last attempt failed.
@@ -148,17 +220,82 @@ pub struct ModelSlots {
 }
 
 impl ModelSlots {
-    /// Every slot the page shows, the harness's then the ones added here, as it stands for `provider`, or for any provider when it is nothing; `session` is the provider of the conversation the harness resolved the slots for, when one is open.
+    /// Every slot the pages show, the harness's, then the categories added here, then the slots added on the models page, as it stands for `provider`, or for any provider when it is nothing; `session` is the provider of the conversation the harness resolved the slots for, when one is open.
     pub fn rows(&self, provider: Option<&str>, session: Option<&str>) -> Vec<SlotRow> {
+        let pending = |name: &String, category: bool| SlotRow {
+            name: name.clone(),
+            unset: "Same as main".to_owned(),
+            category,
+            ..SlotRow::default()
+        };
         self.slots
             .iter()
             .map(|slot| slot_row_of(slot, provider, session))
-            .chain(self.added.iter().map(|name| SlotRow {
-                name: name.clone(),
-                unset: "Same as main".to_owned(),
-                ..SlotRow::default()
-            }))
+            .chain(self.added.iter().map(|name| pending(name, true)))
+            .chain(self.plain.iter().map(|name| pending(name, false)))
             .collect()
+    }
+
+    /// The name of the slot at `row` of [`ModelSlots::rows`]: the harness's first, then the categories added here, then the slots added on the models page.
+    fn name_at(&self, row: usize) -> Option<&str> {
+        self.slots
+            .iter()
+            .map(|slot| slot.name.as_str())
+            .chain(self.added.iter().map(String::as_str))
+            .chain(self.plain.iter().map(String::as_str))
+            .nth(row)
+    }
+
+    /// The boxes of the category `name`, when it is one.
+    pub fn notes_of(&self, name: &str) -> Option<&SlotNotes> {
+        self.notes.iter().find(|notes| notes.name == name)
+    }
+
+    /// Gives every category its boxes, holding what the harness holds for it; boxes the reader changed and has not saved, and boxes that already say the same, are kept as they are.
+    fn sync_notes(&mut self) {
+        let held = std::mem::take(&mut self.notes);
+        let told = self
+            .slots
+            .iter()
+            .filter(|slot| slot.category)
+            .map(|slot| {
+                (
+                    slot.name.as_str(),
+                    slot.description.as_deref(),
+                    slot.prompt.as_deref(),
+                )
+            })
+            .chain(self.added.iter().map(|name| (name.as_str(), None, None)));
+        self.notes = told
+            .map(|(name, description, prompt)| {
+                held.iter()
+                    .find(|notes| {
+                        notes.name == name && (notes.edited || notes.holds(description, prompt))
+                    })
+                    .cloned()
+                    .unwrap_or_else(|| SlotNotes::told(name, description, prompt))
+            })
+            .collect();
+    }
+
+    /// Writes `edit` into the box in `column` of the category at `row`, and marks its boxes as changed when the words did.
+    fn edit_notes(&mut self, row: usize, column: usize, edit: Edit) {
+        let Some(name) = self.name_at(row).map(str::to_owned) else {
+            return;
+        };
+        let Some(notes) = self.notes.iter_mut().find(|notes| notes.name == name) else {
+            return;
+        };
+        let field = if column == DESCRIPTION_COLUMN {
+            &mut notes.description
+        } else {
+            &mut notes.prompt
+        };
+        let before = field.text().to_owned();
+        field.apply(edit);
+        if field.text() != before {
+            notes.edited = true;
+        }
     }
 }
 
@@ -205,6 +342,8 @@ fn slot_row_of(slot: &SlotInfo, provider: Option<&str>, session: Option<&str>) -
         name: slot.name.clone(),
         source: applies.then_some(slot.source),
         unset: unset_of(slot, provider, session),
+        category: slot.category,
+        description: slot.description.clone(),
         model,
         backups,
         suggested,
@@ -235,29 +374,59 @@ fn valid_name(name: &str) -> bool {
             .all(|letter| letter.is_ascii_alphanumeric() || letter == '-' || letter == '_')
 }
 
-/// Whether `id` names a box of the page.
-pub(crate) fn is_slot_field(id: FocusId) -> bool {
-    id == SLOT_NEW_NAME || id == PRESET_NAME
+/// The row and the column `id` names, when it names the description or the prompt box of a category.
+fn notes_cell(id: FocusId) -> Option<(usize, usize)> {
+    SLOT_CONTROLS
+        .cell_of(id, SLOT_COLUMNS)
+        .filter(|(_, column)| matches!(*column, DESCRIPTION_COLUMN | PROMPT_COLUMN))
 }
 
-/// What Enter in the box `id` of the page presses.
+/// Whether the box `id` saves what was written in it when the reader leaves it: the description and the prompt box of a category.
+pub(crate) fn saves_on_leaving(id: FocusId) -> bool {
+    notes_cell(id).is_some()
+}
+
+/// Whether `id` names a box of the models or the orchestration page.
+pub(crate) fn is_slot_field(id: FocusId) -> bool {
+    id == SLOT_NEW_NAME || id == CATEGORY_NEW_NAME || id == PRESET_NAME || notes_cell(id).is_some()
+}
+
+/// What Enter in the box `id` of the models or the orchestration page presses.
 pub(crate) fn slot_submit(id: FocusId) -> FocusId {
-    if id == PRESET_NAME {
+    if let Some((row, _)) = notes_cell(id) {
+        SLOT_CONTROLS
+            .cell(row, DESCRIBE_COLUMN, SLOT_COLUMNS)
+            .unwrap_or(id)
+    } else if id == PRESET_NAME {
         PRESET_SAVE
+    } else if id == CATEGORY_NEW_NAME {
+        CATEGORY_ADD
     } else {
         SLOT_ADD
     }
 }
 
+/// The name of the card of the category at `row` of the slots, which opens and closes its editor.
+pub fn card_id(row: usize) -> Option<FocusId> {
+    SLOT_CONTROLS.cell(row, CARD_COLUMN, SLOT_COLUMNS)
+}
+
 impl WorkspaceState {
-    /// The state with the slots and presets of `book`, as the harness holds them now; a slot added here that the harness now keeps is no longer held apart.
+    /// The state with the slots and presets of `book`, as the harness holds them now; a slot added here that the harness now keeps is no longer held apart, and the editor of a category that is gone is closed.
     pub fn with_model_slots(mut self, book: pm_harness::SlotBook) -> Self {
         let page = &mut self.settings_page.slots;
-        page.added
-            .retain(|name| !book.slots.iter().any(|slot| slot.name == *name));
+        let kept = |name: &String| !book.slots.iter().any(|slot| slot.name == *name);
+        page.added.retain(kept);
+        page.plain.retain(kept);
         page.slots = book.slots;
         page.presets = book.presets;
         page.error = None;
+        page.sync_notes();
+        if let Some(open) = &page.expanded
+            && page.notes_of(open).is_none()
+        {
+            page.expanded = None;
+        }
         self
     }
 
@@ -282,6 +451,37 @@ impl WorkspaceState {
             session: self.open_index(),
             change: Some(change),
         });
+    }
+
+    /// Has the harness save the boxes of every category the reader changed, both of them as they stand, in the file changes go to; an empty box clears what it held.
+    fn send_descriptions(&mut self) {
+        let scope = self.settings_page.slots.scope;
+        let changes: Vec<SlotChange> = self
+            .settings_page
+            .slots
+            .notes
+            .iter_mut()
+            .filter(|notes| notes.edited)
+            .map(|notes| {
+                notes.edited = false;
+                SlotChange::Describe {
+                    name: notes.name.clone(),
+                    scope,
+                    description: written(&notes.description),
+                    prompt: written(&notes.prompt),
+                }
+            })
+            .collect();
+        for change in changes {
+            self.change_slots(change);
+        }
+    }
+
+    /// Saves what was written in the box `id` of the page when the reader leaves it, when it is a box of a category.
+    pub(crate) fn slot_field_left(&mut self, id: FocusId) {
+        if saves_on_leaving(id) {
+            self.send_descriptions();
+        }
     }
 
     /// The provider id of the agent at `index`: the harness provider a built-in agent runs on, or a declared server's own id.
@@ -341,7 +541,16 @@ impl WorkspaceState {
         }
     }
 
-    /// Every slot the page shows, for the provider viewed.
+    /// The slots the models page lists, each with its place among [`WorkspaceState::slot_rows`]: the job slots, then the slots added on that page; the work categories are on the orchestration page.
+    pub fn model_rows(&self) -> Vec<(usize, SlotRow)> {
+        self.slot_rows()
+            .into_iter()
+            .enumerate()
+            .filter(|(_, slot)| !slot.category)
+            .collect()
+    }
+
+    /// Every slot the pages show, for the provider viewed.
     pub fn slot_rows(&self) -> Vec<SlotRow> {
         self.settings_page.slots.rows(
             self.slot_provider().as_deref(),
@@ -395,8 +604,12 @@ impl WorkspaceState {
         found
     }
 
-    /// Carries out pressing `id` on the models page, and says whether it was something of it.
+    /// Carries out pressing `id` on the models page, and says whether it was something of it; pressing anything but a box of a category first saves the boxes the reader changed.
     pub(crate) fn slots_pressed(&mut self, id: FocusId) -> bool {
+        if notes_cell(id).is_some() {
+            return true;
+        }
+        self.send_descriptions();
         if let Some(picking) = self.settings_page.slots.picking {
             let row = if id == crate::settings::SETTINGS_PICK_FIRST {
                 Some(0)
@@ -422,6 +635,7 @@ impl WorkspaceState {
                 self.settings_page.filter = Field::default();
             }
             SLOT_ADD => self.add_slot(),
+            CATEGORY_ADD => self.add_category(),
             PRESET_SAVE => self.save_preset(),
             _ if let Some((row, column)) = SLOT_CONTROLS.cell_of(id, SLOT_COLUMNS) => {
                 self.slot_control(row, column);
@@ -460,26 +674,29 @@ impl WorkspaceState {
                 }
             }
             CLEAR_COLUMN => {
-                self.settings_page
-                    .slots
-                    .added
-                    .retain(|name| *name != slot.name);
-                if self
-                    .settings_page
-                    .slots
-                    .slots
-                    .iter()
-                    .any(|held| held.name == slot.name)
-                {
+                let page = &mut self.settings_page.slots;
+                page.added.retain(|name| *name != slot.name);
+                page.plain.retain(|name| *name != slot.name);
+                page.sync_notes();
+                if page.slots.iter().any(|held| held.name == slot.name) {
                     let provider = self.slot_provider();
                     self.change_slots(SlotChange::Clear {
                         name: slot.name,
                         scope,
                         provider,
                     });
+                } else if page.expanded.as_deref() == Some(slot.name.as_str()) {
+                    page.expanded = None;
                 }
             }
-            effort if effort >= EFFORT_COLUMN => {
+            CARD_COLUMN if slot.category => {
+                let page = &mut self.settings_page.slots;
+                page.expanded =
+                    (page.expanded.as_deref() != Some(slot.name.as_str())).then_some(slot.name);
+                page.picking = None;
+                self.settings_page.filter = Field::default();
+            }
+            effort if (EFFORT_COLUMN..DESCRIPTION_COLUMN).contains(&effort) => {
                 let Some(model) = slot.model.as_deref() else {
                     return;
                 };
@@ -610,16 +827,34 @@ impl WorkspaceState {
         });
     }
 
-    /// Adds the slot named in the box as a row to give a model, when the name is valid and not taken, and empties the box.
+    /// The name written in `field` with the space around it taken off, when it can name a slot and no slot the pages show has it.
+    fn new_name(&self, field: &Field) -> Option<String> {
+        let name = field.text().trim().to_owned();
+        (valid_name(&name) && !self.slot_rows().iter().any(|slot| slot.name == name))
+            .then_some(name)
+    }
+
+    /// Adds the slot named in the box of the models page as a row to give a model, when the name is valid and not taken, and empties the box.
     fn add_slot(&mut self) {
-        let taken = self.slot_rows();
-        let page = &mut self.settings_page.slots;
-        let name = page.new_slot.text().trim().to_owned();
-        if !valid_name(&name) || taken.iter().any(|slot| slot.name == name) {
+        let Some(name) = self.new_name(&self.settings_page.slots.new_slot) else {
             return;
-        }
-        page.added.push(name);
+        };
+        let page = &mut self.settings_page.slots;
+        page.plain.push(name);
         page.new_slot = Field::default();
+    }
+
+    /// Adds the category named in the box of the orchestration page with its editor open, to describe and give a model, when the name is valid and not taken, and empties the box.
+    fn add_category(&mut self) {
+        let Some(name) = self.new_name(&self.settings_page.slots.new_category) else {
+            return;
+        };
+        let page = &mut self.settings_page.slots;
+        page.added.push(name.clone());
+        page.new_category = Field::default();
+        page.expanded = Some(name);
+        page.picking = None;
+        page.sync_notes();
     }
 
     /// Saves the slots as they stand as the preset named in the box, when the name is valid, and empties the box.
@@ -643,8 +878,13 @@ impl WorkspaceState {
         let page = &mut self.settings_page.slots;
         match id {
             SLOT_NEW_NAME => page.new_slot.apply(edit),
+            CATEGORY_NEW_NAME => page.new_category.apply(edit),
             PRESET_NAME => page.preset_name.apply(edit),
-            _ => {}
+            _ => {
+                if let Some((row, column)) = notes_cell(id) {
+                    page.edit_notes(row, column, edit);
+                }
+            }
         }
     }
 
@@ -653,8 +893,17 @@ impl WorkspaceState {
         let page = &self.settings_page.slots;
         match id {
             SLOT_NEW_NAME => Some(&page.new_slot),
+            CATEGORY_NEW_NAME => Some(&page.new_category),
             PRESET_NAME => Some(&page.preset_name),
-            _ => None,
+            _ => {
+                let (row, column) = notes_cell(id)?;
+                let notes = page.notes_of(page.name_at(row)?)?;
+                Some(if column == DESCRIPTION_COLUMN {
+                    &notes.description
+                } else {
+                    &notes.prompt
+                })
+            }
         }
     }
 }
@@ -757,13 +1006,69 @@ fn backups_node(state: &WorkspaceState, row: usize, slot: &SlotRow) -> Node {
         .children(open_list(state, row, SlotPicking::Backup(row)))
 }
 
-/// The row of the slot at `row`: its name, where its model comes from and what it is for, its suggestion and clear buttons, its model with its effort, and its backups.
-fn slot_row(state: &WorkspaceState, row: usize, slot: &SlotRow) -> Node {
+/// A box of a category under what it is called, the two as wide as the row.
+fn labelled(label: &str, field: Node) -> Node {
+    node()
+        .styles([flex(), flex_col(), gap(1), w_full(), min_w_px(0)])
+        .child(line(label, 12, 1.4, Role::Muted))
+        .child(field)
+}
+
+/// The boxes of the category at `row`, each `room` logical pixels across: what it is for on one line, then what it adds to a subagent's system prompt on several.
+fn notes_node(row: usize, notes: &SlotNotes, room: f32, shaper: &mut Shaper) -> Node {
     let id = |column: usize| SLOT_CONTROLS.cell(row, column, SLOT_COLUMNS);
-    let source = slot
-        .source
+    let description = id(DESCRIPTION_COLUMN).map(|id| {
+        labelled(
+            "Description",
+            Input::new(&notes.description, id)
+                .variant(input::Variant::Bordered)
+                .size(Size::Sm)
+                .placeholder("What kind of work this category is for")
+                .build(),
+        )
+    });
+    let prompt = id(PROMPT_COLUMN).map(|id| {
+        labelled(
+            "Prompt addition",
+            node()
+                .styles([
+                    flex(),
+                    flex_col(),
+                    w_full(),
+                    min_w_px(0),
+                    rounded(Radius::Md),
+                    border(),
+                    border_color(Role::Border),
+                    border_color(Role::Accent).focus(),
+                    bg(Role::Background),
+                ])
+                .focused_with(id)
+                .child(
+                    Input::new(&notes.prompt, id)
+                        .variant(input::Variant::Multiline)
+                        .placeholder("Added to a subagent's system prompt")
+                        .rows(PROMPT_ROWS)
+                        .wrap(input::inner_width(room), shaper)
+                        .build(),
+                ),
+        )
+    });
+    node()
+        .styles([flex(), flex_col(), gap(2), w_full(), min_w_px(0)])
+        .children(description)
+        .children(prompt)
+}
+
+/// The badge saying which file or variable the model of `slot` comes from, when it is not the conversation's own.
+pub(crate) fn source_badge(slot: &SlotRow) -> Option<Node> {
+    slot.source
         .filter(|source| *source != SlotSource::Main)
-        .map(|source| Badge::new(source_name(source)).build());
+        .map(|source| Badge::new(source_name(source)).build())
+}
+
+/// The buttons of the slot at `row`, side by side, each only when it applies: one that takes its suggested model and one that clears it.
+pub(crate) fn slot_actions(state: &WorkspaceState, row: usize, slot: &SlotRow) -> Node {
+    let id = |column: usize| SLOT_CONTROLS.cell(row, column, SLOT_COLUMNS);
     let suggest = slot
         .suggested
         .as_ref()
@@ -776,9 +1081,11 @@ fn slot_row(state: &WorkspaceState, row: usize, slot: &SlotRow) -> Node {
                     .build()
             })
         });
+    let page = &state.settings_page.slots;
     let clear = (slot.model.is_some()
         || !slot.backups.is_empty()
-        || state.settings_page.slots.added.contains(&slot.name))
+        || page.added.contains(&slot.name)
+        || page.plain.contains(&slot.name))
     .then(|| id(CLEAR_COLUMN))
     .flatten()
     .map(|button| {
@@ -787,6 +1094,56 @@ fn slot_row(state: &WorkspaceState, row: usize, slot: &SlotRow) -> Node {
             .size(Size::Sm)
             .build()
     });
+    node()
+        .styles([flex(), items_center(), gap(1), flex_none()])
+        .children(suggest)
+        .children(clear)
+}
+
+/// The controls of the slot at `row`, with `room` logical pixels across for its boxes: its model with its effort, the list of models while it is open, its backups, and for a category its boxes.
+pub(crate) fn slot_controls(
+    state: &WorkspaceState,
+    row: usize,
+    slot: &SlotRow,
+    room: f32,
+    shaper: &mut Shaper,
+) -> Node {
+    let id = |column: usize| SLOT_CONTROLS.cell(row, column, SLOT_COLUMNS);
+    let notes = state
+        .settings_page
+        .slots
+        .notes_of(&slot.name)
+        .filter(|_| slot.category)
+        .map(|notes| notes_node(row, notes, room, shaper));
+    let open = state.settings_page.slots.picking == Some(SlotPicking::Model(row));
+    let effort = slot.model.as_deref().map(|model| {
+        let picked = split_effort(model)
+            .1
+            .and_then(|effort| EFFORTS.iter().position(|held| *held == effort))
+            .map_or(0, |place| place + 1);
+        choices(&EFFORT_NAMES, picked, |option| id(EFFORT_COLUMN + option))
+    });
+    let width = (PICKER_WIDTH * 1.4).min(room);
+    let model = node()
+        .styles([flex(), items_center(), gap(2), flex_wrap()])
+        .children(id(MODEL_COLUMN).map(|button| picker(&model_shown(slot), width, button, open)))
+        .children(effort);
+    node()
+        .styles([flex(), flex_col(), gap(2), w_full(), min_w_px(0)])
+        .child(model)
+        .children(open_list(state, row, SlotPicking::Model(row)))
+        .child(backups_node(state, row, slot))
+        .children(notes)
+}
+
+/// The row of the slot at `row` on the models and orchestration pages, `room` logical pixels across: its name, where its model comes from and, for a job slot, what it is for, its suggestion and clear buttons, then its controls.
+pub(crate) fn slot_row(
+    state: &WorkspaceState,
+    row: usize,
+    slot: &SlotRow,
+    room: f32,
+    shaper: &mut Shaper,
+) -> Node {
     let heading = node()
         .styles([
             flex(),
@@ -802,40 +1159,17 @@ fn slot_row(state: &WorkspaceState, row: usize, slot: &SlotRow) -> Node {
                     line(format!("@{}", slot.name), 13, 1.4, Role::Text)
                         .styles([pm_style::font_mono(), pm_style::font_medium()]),
                 )
-                .children(source),
+                .children(source_badge(slot)),
         )
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(1), flex_none()])
-                .children(suggest)
-                .children(clear),
-        );
-    let open = state.settings_page.slots.picking == Some(SlotPicking::Model(row));
-    let effort = slot.model.as_deref().map(|model| {
-        let picked = split_effort(model)
-            .1
-            .and_then(|effort| EFFORTS.iter().position(|held| *held == effort))
-            .map_or(0, |place| place + 1);
-        choices(&EFFORT_NAMES, picked, |option| id(EFFORT_COLUMN + option))
-    });
-    let model = node()
-        .styles([flex(), items_center(), gap(2), flex_wrap()])
-        .children(
-            id(MODEL_COLUMN)
-                .map(|button| picker(&model_shown(slot), PICKER_WIDTH * 1.4, button, open)),
-        )
-        .children(effort);
+        .child(slot_actions(state, row, slot));
     node()
         .styles([flex(), flex_col(), gap(2), px(3), py(3)])
         .child(heading)
-        .child(clipped(
-            pm_harness::slot_purpose(&slot.name),
-            12,
-            Role::Muted,
-        ))
-        .child(model)
-        .children(open_list(state, row, SlotPicking::Model(row)))
-        .child(backups_node(state, row, slot))
+        .children(
+            (!slot.category)
+                .then(|| clipped(pm_harness::slot_purpose(&slot.name), 12, Role::Muted)),
+        )
+        .child(slot_controls(state, row, slot, room - ROW_INSET, shaper))
 }
 
 /// What `preset` sets, in a line: each slot's model, and the effort.
@@ -909,7 +1243,12 @@ fn preset_row(row: usize, preset: &PresetInfo) -> Node {
 }
 
 /// A box and the button beside it that hands in what is written in it.
-fn entry(field: &Field, id: FocusId, placeholder: &str, button: (&str, FocusId)) -> Node {
+pub(crate) fn entry(
+    field: &Field,
+    id: FocusId,
+    placeholder: &str,
+    button: (&str, FocusId),
+) -> Node {
     node()
         .styles([flex(), items_center(), gap(2)])
         .child(
@@ -932,25 +1271,35 @@ fn entry(field: &Field, id: FocusId, placeholder: &str, button: (&str, FocusId))
 /// What the page says about itself under its heading.
 pub(crate) const SUMMARY: &str = "The models agents ask for each kind of work, for each provider. A provider's slot left unset uses the one set for all providers, else the conversation's own model. Name a slot as @name wherever a model is named, such as @fast in an agent definition.";
 
-/// The body of the models page, `room` logical pixels across: what it is for, where changes go, every slot, a box to add one, and the presets.
-pub(crate) fn body(state: &WorkspaceState, page: Node, room: f32) -> Node {
-    let slots = &state.settings_page.slots;
+/// What the models page says under the box that adds a slot.
+const OWN_SLOT_NOTE: &str = "A slot of your own is also a work category: once it has a model it is listed under Orchestration.";
+
+/// The choice of the file changes are saved to, after what it chooses.
+pub(crate) fn scope_choice(state: &WorkspaceState) -> Node {
     let scope = choices(
         &["User", "Project"],
-        usize::from(slots.scope == SlotScope::Project),
+        usize::from(state.settings_page.slots.scope == SlotScope::Project),
         |option| [SLOTS_SCOPE_USER, SLOTS_SCOPE_PROJECT].get(option).copied(),
     );
-    let provider_open = slots.picking == Some(SlotPicking::Provider);
-    let provider = node()
+    node()
+        .styles([flex(), items_center(), gap(2), flex_none()])
+        .child(line("Save changes to", 12, 1.4, Role::Muted))
+        .child(scope)
+}
+
+/// The picker of the provider whose assignments are shown, after what it picks, and the list of providers while it is open.
+pub(crate) fn provider_choice(state: &WorkspaceState) -> (Node, Option<Node>) {
+    let open = state.settings_page.slots.picking == Some(SlotPicking::Provider);
+    let chosen = node()
         .styles([flex(), items_center(), gap(2), flex_wrap(), flex_none()])
         .child(line("Provider", 12, 1.4, Role::Muted))
         .child(picker(
             &state.provider_shown(),
             PROVIDER_PICKER_WIDTH,
             SLOTS_PROVIDER,
-            provider_open,
+            open,
         ));
-    let provider_list = provider_open.then(|| {
+    let list = open.then(|| {
         let options = state.provider_choices();
         let picked = match state.slot_provider() {
             None => Some(0),
@@ -966,39 +1315,46 @@ pub(crate) fn body(state: &WorkspaceState, page: Node, room: f32) -> Node {
             (&state.settings_page.filter, SETTINGS_PICK_FILTER),
         )
     });
+    (chosen, list)
+}
+
+/// The line saying why the slots could not be read or changed, in no more than `room` logical pixels across, when the last attempt failed.
+pub(crate) fn error_note(state: &WorkspaceState, room: f32) -> Option<Node> {
+    state
+        .settings_page
+        .slots
+        .error
+        .as_deref()
+        .map(|reason| wrapped_note(&format!("Could not change the slots: {reason}"), room))
+}
+
+/// The body of the models page, `room` logical pixels across: what it is for, where changes go, the job slots and the slots added here, a box to add one, and the presets; the work categories are on the orchestration page.
+pub(crate) fn body(state: &WorkspaceState, page: Node, room: f32, shaper: &mut Shaper) -> Node {
+    let slots = &state.settings_page.slots;
+    let (provider, provider_list) = provider_choice(state);
     let rows: Vec<Node> = state
-        .slot_rows()
+        .model_rows()
         .iter()
-        .enumerate()
-        .map(|(row, slot)| slot_row(state, row, slot))
+        .map(|(row, slot)| slot_row(state, *row, slot, room, shaper))
         .collect();
-    let mut page =
-        page.child(paragraph(SUMMARY, room))
-            .child(provider)
-            .children(provider_list)
-            .children(
-                slots.error.as_deref().map(|reason| {
-                    wrapped_note(&format!("Could not change the slots: {reason}"), room)
-                }),
-            )
-            .child(
-                node()
-                    .styles([
-                        flex(),
-                        items_center(),
-                        justify_between(),
-                        gap(2),
-                        flex_wrap(),
-                        flex_none(),
-                    ])
-                    .child(heading_only("Slots", rows.len()))
-                    .child(
-                        node()
-                            .styles([flex(), items_center(), gap(2)])
-                            .child(line("Save changes to", 12, 1.4, Role::Muted))
-                            .child(scope),
-                    ),
-            );
+    let mut page = page
+        .child(paragraph(SUMMARY, room))
+        .child(provider)
+        .children(provider_list)
+        .children(error_note(state, room))
+        .child(
+            node()
+                .styles([
+                    flex(),
+                    items_center(),
+                    justify_between(),
+                    gap(2),
+                    flex_wrap(),
+                    flex_none(),
+                ])
+                .child(heading_only("Slots", rows.len()))
+                .child(scope_choice(state)),
+        );
     page = if rows.is_empty() {
         page.child(note("The agent has not told its slots yet."))
     } else {
@@ -1017,6 +1373,7 @@ pub(crate) fn body(state: &WorkspaceState, page: Node, room: f32) -> Node {
             "Add a slot of your own, e.g. docs",
             ("Add Slot", SLOT_ADD),
         ))
+        .child(wrapped_note(OWN_SLOT_NOTE, room))
         .child(heading_only("Presets", presets.len()));
     page = if presets.is_empty() {
         page.child(note("No presets are saved."))
@@ -1031,14 +1388,14 @@ pub(crate) fn body(state: &WorkspaceState, page: Node, room: f32) -> Node {
     ))
 }
 
-/// How many slots set a model of their own, in words, for the page's card on the Agents overview.
+/// How many job slots set a model of their own, in words, for the page's card on the Agents overview.
 pub(crate) fn count(state: &WorkspaceState) -> String {
     let set = state
         .settings_page
         .slots
         .slots
         .iter()
-        .filter(|slot| !slot.inherited)
+        .filter(|slot| !slot.category && !slot.inherited)
         .count();
     format!("{set} set")
 }
@@ -1064,6 +1421,9 @@ mod tests {
             inherited: model.is_none(),
             suggested: suggested.map(str::to_owned),
             providers: Vec::new(),
+            description: None,
+            prompt: None,
+            category: false,
         }
     }
 
@@ -1286,7 +1646,10 @@ mod tests {
     fn a_slot_of_ones_own_is_added() {
         let state = open().edited(SLOT_NEW_NAME, Edit::Paste("docs".to_owned()));
         let state = state.settings_pressed(SLOT_ADD);
-        assert_eq!(state.slot_rows().last().unwrap().name, "docs");
+        let added = state.model_rows().pop().unwrap().1;
+        assert_eq!(added.name, "docs");
+        assert!(!added.category);
+        assert!(state.category_cards().is_empty());
         let state = state
             .edited(SLOT_NEW_NAME, Edit::Paste("fast".to_owned()))
             .settings_pressed(SLOT_ADD);
@@ -1297,7 +1660,7 @@ mod tests {
         };
         book.slots.push(slot("docs", Some("claude/sonnet"), None));
         let state = state.with_model_slots(book);
-        assert!(state.settings_page.slots.added.is_empty());
+        assert!(state.settings_page.slots.plain.is_empty());
         assert_eq!(state.slot_rows().len(), 4);
     }
 
@@ -1329,6 +1692,188 @@ mod tests {
             sent(&mut state),
             SlotChange::DeletePreset {
                 name: "cheap".to_owned()
+            }
+        );
+    }
+
+    /// A category as the harness tells it: inheriting, saying `description` and adding `prompt`.
+    fn category(name: &str, description: Option<&str>, prompt: Option<&str>) -> SlotInfo {
+        SlotInfo {
+            description: description.map(str::to_owned),
+            prompt: prompt.map(str::to_owned),
+            category: true,
+            ..slot(name, None, None)
+        }
+    }
+
+    /// The state of [`open`] with the categories `quick`, described, and `deep`, described and adding to the prompt, after its three job slots, and nothing waiting to be sent.
+    fn with_categories() -> WorkspaceState {
+        let state = open();
+        let mut book = pm_harness::SlotBook {
+            slots: state.settings_page.slots.slots.clone(),
+            presets: Vec::new(),
+        };
+        book.slots
+            .push(category("quick", Some("Small changes."), None));
+        book.slots.push(category(
+            "deep",
+            Some("Hard problems."),
+            Some("Read every caller first."),
+        ));
+        let mut state = state.with_model_slots(book);
+        state.take_outbox();
+        state
+    }
+
+    /// The name of the box in `column` of the slot at `row`.
+    fn cell(row: usize, column: usize) -> FocusId {
+        SLOT_CONTROLS.cell(row, column, SLOT_COLUMNS).unwrap()
+    }
+
+    /// Categories are told apart from the job slots, keep their place among the rows, and have boxes holding what the harness holds; job slots have none. The models page lists only the job slots and the orchestration page only the categories.
+    #[test]
+    fn categories_are_grouped_apart_from_job_slots() {
+        let state = with_categories();
+        let rows = state.slot_rows();
+        let categories: Vec<&str> = rows
+            .iter()
+            .filter(|row| row.category)
+            .map(|row| row.name.as_str())
+            .collect();
+        let jobs: Vec<&str> = rows
+            .iter()
+            .filter(|row| !row.category)
+            .map(|row| row.name.as_str())
+            .collect();
+        assert_eq!(categories, ["quick", "deep"]);
+        assert_eq!(jobs, ["main", "fast", "vision"]);
+        let page = &state.settings_page.slots;
+        assert!(page.notes_of("fast").is_none());
+        assert_eq!(
+            page.notes_of("deep").unwrap().prompt.text(),
+            "Read every caller first."
+        );
+        assert_eq!(
+            state.field(cell(3, DESCRIPTION_COLUMN)).unwrap().text(),
+            "Small changes."
+        );
+        assert!(state.field(cell(4, PROMPT_COLUMN)).unwrap().is_multiline());
+        assert!(state.field(cell(1, DESCRIPTION_COLUMN)).is_none());
+        let listed: Vec<String> = state
+            .model_rows()
+            .into_iter()
+            .map(|(_, row)| row.name)
+            .collect();
+        assert_eq!(listed, jobs);
+        let cards: Vec<String> = state
+            .category_cards()
+            .into_iter()
+            .map(|card| card.name)
+            .collect();
+        assert_eq!(cards, categories);
+    }
+
+    /// Editing a category's description and pressing Enter sends both boxes for the file chosen, and nothing is sent twice.
+    #[test]
+    fn editing_the_description_sends_both_fields() {
+        let description = cell(4, DESCRIPTION_COLUMN);
+        assert!(WorkspaceState::is_field(description));
+        let state = with_categories()
+            .settings_pressed(SLOTS_SCOPE_PROJECT)
+            .edited(description, Edit::Paste(" Slowly.".to_owned()));
+        assert!(state.settings_page.slots.notes_of("deep").unwrap().edited);
+        let mut state = state.settings_pressed(description);
+        assert!(state.take_outbox().is_empty());
+        let mut state = state.settings_pressed(WorkspaceState::submit_of(description));
+        assert_eq!(
+            sent(&mut state),
+            SlotChange::Describe {
+                name: "deep".to_owned(),
+                scope: SlotScope::Project,
+                description: Some("Hard problems. Slowly.".to_owned()),
+                prompt: Some("Read every caller first.".to_owned()),
+            }
+        );
+        let mut state = state.settings_pressed(WorkspaceState::submit_of(description));
+        assert!(state.take_outbox().is_empty());
+    }
+
+    /// Leaving a box that was changed sends it, an emptied box sends nothing for its field, and leaving a box that was not changed sends nothing.
+    #[test]
+    fn clearing_an_input_sends_nothing_for_it() {
+        let prompt = cell(4, PROMPT_COLUMN);
+        assert!(WorkspaceState::saves_on_leaving(prompt));
+        assert!(!WorkspaceState::saves_on_leaving(SLOT_NEW_NAME));
+        let mut state = with_categories().field_left(prompt);
+        assert!(state.take_outbox().is_empty());
+        let mut state = state
+            .edited(prompt, Edit::SelectAll)
+            .edited(prompt, Edit::Backspace)
+            .field_left(prompt);
+        assert_eq!(
+            sent(&mut state),
+            SlotChange::Describe {
+                name: "deep".to_owned(),
+                scope: SlotScope::User,
+                description: Some("Hard problems.".to_owned()),
+                prompt: None,
+            }
+        );
+    }
+
+    /// Boxes the reader changed are kept when the slots are told again, and pressing another control saves them first.
+    #[test]
+    fn changed_boxes_outlast_the_slots_being_told() {
+        let description = cell(3, DESCRIPTION_COLUMN);
+        let state = with_categories().edited(description, Edit::Paste(" Fast.".to_owned()));
+        let book = pm_harness::SlotBook {
+            slots: state.settings_page.slots.slots.clone(),
+            presets: Vec::new(),
+        };
+        let state = state.with_model_slots(book);
+        assert_eq!(
+            state.field(description).unwrap().text(),
+            "Small changes. Fast."
+        );
+        let mut state = state.settings_pressed(SLOTS_SCOPE_PROJECT);
+        assert_eq!(
+            sent(&mut state),
+            SlotChange::Describe {
+                name: "quick".to_owned(),
+                scope: SlotScope::User,
+                description: Some("Small changes. Fast.".to_owned()),
+                prompt: None,
+            }
+        );
+    }
+
+    /// A category added on the orchestration page has empty boxes and its editor open, and describing it sends its name.
+    #[test]
+    fn an_added_category_is_described() {
+        let state = with_categories()
+            .edited(CATEGORY_NEW_NAME, Edit::Paste("docs".to_owned()))
+            .settings_pressed(WorkspaceState::submit_of(CATEGORY_NEW_NAME));
+        let rows = state.slot_rows();
+        let added = rows.last().unwrap();
+        assert_eq!(added.name, "docs");
+        assert!(added.category);
+        assert_eq!(state.settings_page.slots.expanded.as_deref(), Some("docs"));
+        assert_eq!(state.settings_page.slots.new_category.text(), "");
+        let description = cell(rows.len() - 1, DESCRIPTION_COLUMN);
+        assert_eq!(state.field(description).unwrap().text(), "");
+        let mut state = state
+            .edited(
+                description,
+                Edit::Paste("Writing documentation.".to_owned()),
+            )
+            .field_left(description);
+        assert_eq!(
+            sent(&mut state),
+            SlotChange::Describe {
+                name: "docs".to_owned(),
+                scope: SlotScope::User,
+                description: Some("Writing documentation.".to_owned()),
+                prompt: None,
             }
         );
     }

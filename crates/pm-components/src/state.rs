@@ -317,6 +317,9 @@ pub const ACCOUNT_BASE: u64 = 4700;
 /// The chip showing the goal the agent works toward, which opens what can be done with it.
 pub const GOAL_CHIP: FocusId = FocusId(4292);
 
+/// The row of the model menu that switches the conversation in and out of orchestrator mode, in which the agent leads and hands work to subagents by category.
+pub const ORCHESTRATE: FocusId = FocusId(4293);
+
 /// The first of the rows of the goal's menu, pausing, resuming and clearing it, in that order.
 pub const GOAL_BASE: u64 = 4760;
 
@@ -2547,6 +2550,17 @@ impl WorkspaceState {
         self.debug_revealed().problem_revealed()
     }
 
+    /// Whether the field `id` saves what was written in it when the reader leaves it: the boxes of a category on the models page.
+    pub fn saves_on_leaving(id: FocusId) -> bool {
+        crate::settings_slots::saves_on_leaving(id)
+    }
+
+    /// The state after the reader left the field named `id`, with what was written in it saved when it is one that saves on leaving.
+    pub fn field_left(mut self, id: FocusId) -> Self {
+        self.slot_field_left(id);
+        self
+    }
+
     /// The state after `edit` is made to the field named `id`.
     pub fn edited(mut self, id: FocusId, edit: Edit) -> Self {
         match id {
@@ -3350,10 +3364,17 @@ impl WorkspaceState {
     /// the server queues it, or, `now`, stops the turn and hands it over in
     /// its place. A question asked on the side with `/btw` is handed over
     /// as a queued prompt is, shown as nothing until its answer comes. While
-    /// a waiting prompt is being edited, it saves the edit instead.
+    /// a waiting prompt is being edited, it saves the edit instead, and the
+    /// command that switches orchestrator mode is answered here and not sent.
     fn send(&mut self, now: bool) {
         if self.editing_queued.is_some() {
             self.save_queued_edit();
+            return;
+        }
+        if self.orchestrate_typed() {
+            self.prompt = prompt_field("");
+            self.reset_slash();
+            self.toggle_orchestrator();
             return;
         }
         let mut text = self.prompt.text().trim().to_owned();
@@ -4229,6 +4250,7 @@ mod tests {
             agent: "scout".to_owned(),
             label: "Look".to_owned(),
             model: None,
+            category: None,
             background: false,
             state: pm_harness::SubagentState::Running,
         }));

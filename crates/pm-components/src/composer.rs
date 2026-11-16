@@ -22,7 +22,7 @@ use crate::size::Size;
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, ATTACH, ATTACHED_BASE, BRANCH_BASE, EFFORT_BASE,
     GOAL_BASE, GOAL_CHIP, LOCATION, Location, MENTION, MENU_BODY, MENU_FILTER, MENU_PICK_BASE,
-    MENU_SCROLL, PLACE_BASE, PROMPT, Picker, SEND, SEND_NOW, SETTING_BASE, SLASH_BASE,
+    MENU_SCROLL, ORCHESTRATE, PLACE_BASE, PROMPT, Picker, SEND, SEND_NOW, SETTING_BASE, SLASH_BASE,
     SLASH_BUTTON, STOP, WorkspaceState,
 };
 use crate::usage;
@@ -141,7 +141,24 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) -> 
     {
         menu = menu.child(agent_row(agent));
     }
+    if setting.category == "model"
+        && let Some(on) = state.orchestrating()
+    {
+        menu = menu.child(orchestrate_row(on));
+    }
     Some(menu.over_button(MENU_BODY))
+}
+
+/// The row at the foot of the model menu that switches the conversation in and out of orchestrator mode, ticked while it is `on`.
+fn orchestrate_row(on: bool) -> Node {
+    node()
+        .styles([border_t(), border_color(Role::Border), mt(1)])
+        .child(row(
+            "Orchestrate",
+            "Lead, and hand work to subagents by category",
+            on,
+            ORCHESTRATE,
+        ))
 }
 
 /// The menu of where new work is done, and the branch a worktree is made from.
@@ -645,17 +662,12 @@ pub fn composer(
         let setting = &settings[index];
         let icon = (setting.category == "mode").then_some(IconName::Zap);
         let open = state.picker == Some(Picker::Setting(index));
+        let label = setting
+            .current_name()
+            .unwrap_or(&setting.current)
+            .replace(" (recommended)", "");
         strip = strip.child(anchored(
-            chip(
-                setting
-                    .current_name()
-                    .unwrap_or(&setting.current)
-                    .replace(" (recommended)", "")
-                    .as_str(),
-                icon,
-                FocusId(SETTING_BASE + position as u64),
-                open,
-            ),
+            chip(&label, icon, FocusId(SETTING_BASE + position as u64), open),
             open.then(|| setting_menu(state, index, rows, above))
                 .flatten(),
         ));

@@ -276,7 +276,7 @@ pub const RANGES: [IdRange; 36] = [
 ];
 
 /// Every control there is one of, which must each lie in [`SINGLES`] and differ from the others.
-pub const SINGLE_IDS: [FocusId; 61] = [
+pub const SINGLE_IDS: [FocusId; 63] = [
     crate::settings::SETTINGS_CLOSE,
     crate::settings::SETTINGS_ADD,
     crate::settings::SETTINGS_SAVE,
@@ -338,6 +338,8 @@ pub const SINGLE_IDS: [FocusId; 61] = [
     crate::settings_slots::PRESET_NAME,
     crate::settings_slots::PRESET_SAVE,
     crate::settings_slots::SLOTS_PROVIDER,
+    crate::settings_slots::CATEGORY_NEW_NAME,
+    crate::settings_slots::CATEGORY_ADD,
 ];
 
 /// Whether `ranges` start at [`SETTINGS_START`], each where the one before it ends, none empty, and the last ending at [`SETTINGS_END`].

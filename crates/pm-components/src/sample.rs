@@ -426,6 +426,8 @@ pub struct ToolUse {
     pub worktree: Option<Box<Worktree>>,
     /// How the subagent it starts is stopped, while that subagent is at work on a running agent.
     pub stop: Option<Stop>,
+    /// What the subagent it starts runs as, once its agent announced it: the work category it was started in and the model it asks, or the model alone.
+    pub runs_as: Option<String>,
 }
 
 /// How a subagent at work is stopped, as its agent announced it.

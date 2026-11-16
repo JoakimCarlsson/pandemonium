@@ -197,6 +197,9 @@ mod tests {
                 inherited: false,
                 suggested: None,
                 providers: Vec::new(),
+                description: None,
+                prompt: None,
+                category: false,
             }]),
         ] {
             let message = ServerMessage::Event {

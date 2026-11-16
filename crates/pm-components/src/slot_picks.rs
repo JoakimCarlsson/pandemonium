@@ -60,6 +60,9 @@ mod tests {
             inherited: model.is_none(),
             suggested: None,
             providers: Vec::new(),
+            description: None,
+            prompt: None,
+            category: false,
         }
     }
 

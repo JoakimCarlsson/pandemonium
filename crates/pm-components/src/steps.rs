@@ -307,6 +307,24 @@ fn worktree_chip(worktree: &Worktree) -> Node {
         .child(text(label).styles([text_px(12), leading_ratio(1.4), text_color(role)]))
 }
 
+/// A small quiet label on a subagent's row, set as code: the kind of subagent.
+fn quiet_chip(label: String) -> Node {
+    quiet_label(label).styles([font_mono()])
+}
+
+/// A small quiet label on a subagent's row, such as the category and model it runs as.
+fn quiet_label(label: String) -> Node {
+    node()
+        .styles([
+            flex(),
+            flex_none(),
+            px(1.5),
+            rounded(Radius::Md),
+            bg(Role::SurfaceHover),
+        ])
+        .child(text(label).styles([text_px(12), leading_ratio(1.4), text_color(Role::Muted)]))
+}
+
 /// The steps of `all` that are the work of the subagent `parent`.
 fn beneath<'a>(all: &'a [Step], parent: &str) -> Vec<&'a ToolUse> {
     all.iter()
@@ -382,24 +400,13 @@ pub fn subagents(
                 .build()
                 .styles([px(3.5), min_w_px(0)])
                 .child(agent_mark(tool.state))
-                .children((tool.agent.as_deref() != Some("agent")).then(|| {
-                    node()
-                        .styles([
-                            flex(),
-                            flex_none(),
-                            px(1.5),
-                            rounded(Radius::Md),
-                            bg(Role::SurfaceHover),
-                        ])
-                        .child(text(tool.agent.clone().unwrap_or_default()).styles([
-                            text_px(12),
-                            leading_ratio(1.4),
-                            font_mono(),
-                            text_color(Role::Muted),
-                        ]))
-                }))
+                .children(
+                    (tool.agent.as_deref() != Some("agent"))
+                        .then(|| quiet_chip(tool.agent.clone().unwrap_or_default())),
+                )
                 .children(tool.worktree.as_deref().map(worktree_chip))
                 .child(clipped(described, 13, Role::Text))
+                .children(tool.runs_as.clone().map(quiet_label))
                 .child(
                     line(
                         match used.len() {

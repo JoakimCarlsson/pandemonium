@@ -80,6 +80,18 @@ impl Screen {
         }
     }
 
+    /// Whether the field `id` saves what was written in it when the reader leaves it.
+    pub fn saves_on_leaving(id: FocusId) -> bool {
+        WorkspaceState::saves_on_leaving(id)
+    }
+
+    /// The screen after the reader left the field named `id`.
+    pub fn field_left(self, id: FocusId) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.field_left(id)),
+        }
+    }
+
     /// The screen after `edit` is made to the field named `id`.
     pub fn edited(self, id: FocusId, edit: Edit) -> Self {
         match self {
@@ -1483,10 +1495,10 @@ pub fn picker_screen(state: &Screen) -> Option<Node> {
     )
 }
 
-/// What the settings window, `width` logical pixels across, shows for `state` while settings are open.
-pub fn settings_screen(state: &Screen, width: f32) -> Option<Node> {
+/// What the settings window, `width` logical pixels across, shows for `state` while settings are open, with `shaper` measuring the text of its boxes of several lines.
+pub fn settings_screen(state: &Screen, width: f32, shaper: &mut Shaper) -> Option<Node> {
     match state {
-        Screen::Workspace(state) => crate::workspace::settings_window(state, width),
+        Screen::Workspace(state) => crate::workspace::settings_window(state, width, shaper),
     }
 }
 

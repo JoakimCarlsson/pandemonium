@@ -723,6 +723,9 @@ mod tests {
                 inherited: true,
                 suggested: Some("openai/gpt-5-mini".to_owned()),
                 providers: Vec::new(),
+                description: Some("Describing images.".to_owned()),
+                prompt: None,
+                category: false,
             }],
             presets: vec![pm_harness::PresetInfo {
                 name: "cheap".to_owned(),

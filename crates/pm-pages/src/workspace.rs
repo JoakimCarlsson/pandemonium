@@ -221,9 +221,13 @@ fn session_menu(state: &WorkspaceState, open: SessionMenu) -> Node {
     }
 }
 
-/// What the settings window, `width` logical pixels across, shows while settings are open: the title bar that closes it, the sections and the one chosen, the menu of a server and the menu of a field of the window.
-pub(crate) fn settings_window(state: &WorkspaceState, width: f32) -> Option<Node> {
-    let page = settings::settings(state, width)?;
+/// What the settings window, `width` logical pixels across, shows while settings are open: the title bar that closes it, the sections and the one chosen, the menu of a server and the menu of a field of the window; `shaper` measures the text of its boxes of several lines.
+pub(crate) fn settings_window(
+    state: &WorkspaceState,
+    width: f32,
+    shaper: &mut Shaper,
+) -> Option<Node> {
+    let page = settings::settings(state, width, shaper)?;
     Some(
         Window::new()
             .body(page)

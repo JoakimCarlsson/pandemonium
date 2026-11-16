@@ -10,7 +10,7 @@ use pm_style::{
     flex_none, gap, h, items_center, items_start, justify_between, min_h, min_w_px,
     overflow_hidden, p, px, rounded, self_start, w_full,
 };
-use pm_text::{Edit, Field};
+use pm_text::{Edit, Field, Shaper};
 use pm_ui::{Node, node};
 
 use crate::button::Variant;
@@ -597,6 +597,7 @@ fn summary(section: Section) -> &'static str {
         }
         Section::ModelServers => crate::settings_models::SUMMARY,
         Section::ModelSlots => crate::settings_slots::SUMMARY,
+        Section::Orchestration => crate::settings_orchestration::SUMMARY,
         Section::Servers => {
             "The servers the window works with: the one on this machine, and ones reached at their address, over ssh, inside WSL or a dev container, or through a tunnel."
         }
@@ -631,8 +632,13 @@ pub(crate) fn page_title(section: Section) -> Node {
         .child(line(section.title(), 22, 1.3, Role::Text).styles([pm_style::font_medium()]))
 }
 
-/// What the right side of the window holds under the title of `section`: what it is for, then its settings, `room` logical pixels across.
-pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) -> Node {
+/// What the right side of the window holds under the title of `section`: what it is for, then its settings, `room` logical pixels across, with `shaper` measuring the text of its boxes of several lines.
+pub(crate) fn body(
+    state: &WorkspaceState,
+    section: Section,
+    room: f32,
+    shaper: &mut Shaper,
+) -> Node {
     let page = node().styles([
         flex(),
         flex_col(),
@@ -698,6 +704,7 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) -> Node 
                     Section::McpServers,
                     Section::ModelServers,
                     Section::ModelSlots,
+                    Section::Orchestration,
                 ]
                 .map(|part| card(part, count_of(state, part))),
             ),
@@ -707,7 +714,8 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) -> Node 
         Section::AgentServers => crate::settings_agents::body(state, inner, room),
         Section::McpServers => list(state, section, inner, room),
         Section::ModelServers => crate::settings_models::body(state, inner, room),
-        Section::ModelSlots => crate::settings_slots::body(state, inner, room),
+        Section::ModelSlots => crate::settings_slots::body(state, inner, room, shaper),
+        Section::Orchestration => crate::settings_orchestration::body(state, inner, room, shaper),
         Section::Customizations
         | Section::Skills
         | Section::Instructions
@@ -756,6 +764,7 @@ fn count_of(state: &WorkspaceState, section: Section) -> String {
         Section::McpServers => format!("{} installed", state.settings_servers.tools.len()),
         Section::ModelServers => crate::settings_models::count(state),
         Section::ModelSlots => crate::settings_slots::count(state),
+        Section::Orchestration => crate::settings_orchestration::count(state),
         _ => String::new(),
     }
 }
@@ -811,6 +820,7 @@ pub(crate) fn card(section: Section, count: String) -> Node {
                 Section::McpServers => "Tool servers every agent is started with.",
                 Section::ModelServers => "OpenAI-compatible servers offered as agents.",
                 Section::ModelSlots => "The model each kind of work asks, with backups.",
+                Section::Orchestration => "The work categories a lead agent hands work to.",
                 other if crate::settings_library::lists(other) => {
                     crate::settings_library::blurb(other)
                 }

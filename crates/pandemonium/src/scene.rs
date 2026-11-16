@@ -94,7 +94,7 @@ pub fn paint_settings(
 ) -> Output {
     list.clear();
     scale_for(state);
-    let root = settings_screen(state, width);
+    let root = settings_screen(state, width, shaper);
     paint_window(root, width, height, input, theme, shaper, list)
 }
 

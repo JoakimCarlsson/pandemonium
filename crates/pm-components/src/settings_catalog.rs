@@ -222,6 +222,8 @@ pub enum Setting {
     Memory,
     /// Whether agents have the checkpoint and rewind tools.
     Checkpoints,
+    /// Whether the agent of a new conversation leads and hands work to subagents by category; shown on the orchestration page.
+    Orchestrator,
     /// How long the prompt cache lives.
     PromptCache,
     /// Whether the prompt cache is kept warm.
@@ -276,7 +278,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 121] = [
+    pub const ALL: [Self; 122] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -373,6 +375,7 @@ impl Setting {
         Self::Effort,
         Self::Memory,
         Self::Checkpoints,
+        Self::Orchestrator,
         Self::PromptCache,
         Self::CacheWarming,
         Self::PlanAutosave,
@@ -518,6 +521,7 @@ impl Setting {
             | Self::PlanAutosave
             | Self::OnFinish
             | Self::Notification => Section::Agents,
+            Self::Orchestrator => Section::Orchestration,
             Self::DefaultServer => Section::Servers,
             Self::VimMode
             | Self::VimClipboard
@@ -556,6 +560,7 @@ impl Setting {
             | Self::Effort
             | Self::Memory
             | Self::Checkpoints
+            | Self::Orchestrator
             | Self::PromptCache
             | Self::CacheWarming
             | Self::PlanAutosave => Keeper::Machine,
@@ -951,6 +956,10 @@ impl Setting {
             Self::Checkpoints => (
                 "Checkpoints",
                 "Let agents mark a checkpoint and later replace the exploration since it with a report, to keep long conversations short. Files are never restored.",
+            ),
+            Self::Orchestrator => (
+                "Orchestrator mode",
+                "New conversations start with the agent as lead, which delegates each piece of work to a subagent of one of the categories below, on that category's model.",
             ),
             Self::PromptCache => (
                 "Prompt cache",

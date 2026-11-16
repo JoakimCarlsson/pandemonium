@@ -6,6 +6,7 @@ use pm_style::{
     Role, bg, border_color, border_r, flex, flex_1, flex_col, flex_none, gap, h, h_full,
     items_center, min_h, min_w_px, overflow_hidden, p, pb, pl, pr, pt, px, w_full, w_px,
 };
+use pm_text::Shaper;
 use pm_ui::{Node, node};
 
 use crate::input::Input;
@@ -147,6 +148,8 @@ pub enum Section {
     ModelServers,
     /// The model slots: which model each kind of work asks, with backups, and the presets that set them all.
     ModelSlots,
+    /// Orchestrator mode: whether the agent leads, and the work categories it hands work to, each with its model.
+    Orchestration,
     /// How many of each kind of customization agents are given in the project.
     Customizations,
     /// The skills agents are given.
@@ -167,7 +170,7 @@ pub enum Section {
 
 impl Section {
     /// Every section, in the order the list shows them, each followed by the ones inside it.
-    pub const ALL: [Section; 27] = [
+    pub const ALL: [Section; 28] = [
         Section::General,
         Section::Appearance,
         Section::Editor,
@@ -188,6 +191,7 @@ impl Section {
         Section::McpServers,
         Section::ModelServers,
         Section::ModelSlots,
+        Section::Orchestration,
         Section::Customizations,
         Section::Skills,
         Section::Instructions,
@@ -222,6 +226,7 @@ impl Section {
             Self::McpServers => "MCP Servers",
             Self::ModelServers => "Model Servers",
             Self::ModelSlots => "Models",
+            Self::Orchestration => "Orchestration",
             Self::Customizations => "Overview",
             Self::Skills => "Skills",
             Self::Instructions => "Instructions",
@@ -254,6 +259,7 @@ impl Section {
             Self::McpServers => IconName::Plug,
             Self::ModelServers => IconName::Zap,
             Self::ModelSlots => IconName::Sparkles,
+            Self::Orchestration => IconName::Split,
             Self::Customizations
             | Self::Skills
             | Self::Instructions
@@ -270,6 +276,7 @@ impl Section {
             | Self::McpServers
             | Self::ModelServers
             | Self::ModelSlots
+            | Self::Orchestration
             | Self::Customizations
             | Self::Skills
             | Self::Instructions
@@ -443,7 +450,7 @@ impl WorkspaceState {
         if section == Section::ModelServers {
             self.outbox.push(crate::state::Outgoing::ModelServers);
         }
-        if section == Section::ModelSlots {
+        if matches!(section, Section::ModelSlots | Section::Orchestration) {
             self.ask_model_slots();
         }
         if section == Section::AgentServers {
@@ -476,8 +483,8 @@ fn navigation_width(width: f32) -> f32 {
     }
 }
 
-/// The node that fills the settings window, `width` logical pixels across, when settings are open.
-pub fn settings(state: &WorkspaceState, width: f32) -> Option<Node> {
+/// The node that fills the settings window, `width` logical pixels across, when settings are open, with `shaper` measuring the text of its boxes of several lines.
+pub fn settings(state: &WorkspaceState, width: f32, shaper: &mut Shaper) -> Option<Node> {
     let section = state.settings?;
     let folded = state.settings_servers.folded;
     let navigation_width = navigation_width(width);
@@ -494,6 +501,7 @@ pub fn settings(state: &WorkspaceState, width: f32) -> Option<Node> {
                 state,
                 showing,
                 width - navigation_width - 2.0 * PAGE_INSET,
+                shaper,
             )),
     )
 }
@@ -598,8 +606,8 @@ fn entry(section: Section, showing: bool, folded: bool, count: Option<usize>) ->
         .children(count.map(|count| crate::Badge::new(count.to_string()).build()))
 }
 
-/// The settings of `section` under its title, with `room` logical pixels across for them.
-fn content(state: &WorkspaceState, section: Section, room: f32) -> Node {
+/// The settings of `section` under its title, with `room` logical pixels across for them and `shaper` measuring the text of their boxes of several lines.
+fn content(state: &WorkspaceState, section: Section, room: f32, shaper: &mut Shaper) -> Node {
     node()
         .styles([
             flex(),
@@ -621,7 +629,7 @@ fn content(state: &WorkspaceState, section: Section, room: f32) -> Node {
                 ])
                 .child(settings_servers::page_title(section)),
         )
-        .child(settings_servers::body(state, section, room))
+        .child(settings_servers::body(state, section, room, shaper))
 }
 
 #[cfg(test)]

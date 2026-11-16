@@ -436,6 +436,7 @@ mod tests {
             agent: "scout".to_owned(),
             label: "Find the parser".to_owned(),
             model: None,
+            category: None,
             background: false,
             state: SubagentState::Running,
         };
