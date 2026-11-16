@@ -129,13 +129,20 @@ impl Engine {
         let address = listener.local_addr().map_err(|error| fail(&error))?;
         let secret = token().map_err(|error| fail(&error))?;
         let profile = install::profile().ok_or_else(|| fail(&"this machine has no data folder"))?;
-        let mut child = Command::new(&helper)
-            .arg("--control")
-            .arg(address.to_string())
-            .arg("--surfaces")
-            .arg(&folder)
-            .arg("--profile")
-            .arg(&profile)
+        let (launcher, launched) = pm_tools::confined(
+            &helper,
+            &[
+                "--control".to_owned(),
+                address.to_string(),
+                "--surfaces".to_owned(),
+                folder.display().to_string(),
+                "--profile".to_owned(),
+                profile.display().to_string(),
+            ],
+            pm_tools::Confinement::Helper,
+        );
+        let mut child = Command::new(launcher)
+            .args(launched)
             .env("PANDEMONIUM_BROWSER_TOKEN", &secret)
             .stdin(Stdio::null())
             .stdout(Stdio::null())

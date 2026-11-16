@@ -219,3 +219,30 @@ a median of 14.95 ms (up to 17 ms) while the client looked at its orders every
 connection code. The tests are `a_request_after_a_quiet_spell_is_answered_quickly`
 in `pm-client` and `answers_a_request_after_a_quiet_spell_quickly` in
 `pm-server`.
+
+## Memory on Linux
+
+On Linux every heavy process the app starts runs in a memory-capped systemd
+scope of its own, so that running out of memory stops the process that grew
+and never the window:
+
+| Scope | Holds | Cap | Past the cap |
+| --- | --- | --- | --- |
+| `pandemonium-server-<pid>-<n>.scope` | the server and what it starts: agents, their builds and tools, terminals, tasks | 85% of memory | the largest process the server started is killed; the server goes on |
+| `pandemonium-<program>-<pid>-<n>.scope` | one language server, debugger or the browser helper | half of memory | that helper is killed |
+
+Before the server scope reaches its cap, a guard thread in the server kills
+the largest process it started at nine tenths of the cap, and marks every
+process it started as preferred over the server by the kernel's
+out-of-memory killer. A language server that is killed is started again with
+its open files; one killed again within ten minutes is left stopped, and an
+agent asking about it is told why.
+
+An agent's conversation starts language servers only when it first asks
+something of them, and lets go of them after ten minutes without asking, so
+that a server no open file uses stops.
+
+`systemctl --user list-units 'pandemonium-*'` lists the scopes, and
+`journalctl -k | grep 'Killed process'` shows what the kernel stopped. Set
+`PANDEMONIUM_UNCONFINED=1` to start everything without scopes. Machines
+without a user systemd start everything as before.

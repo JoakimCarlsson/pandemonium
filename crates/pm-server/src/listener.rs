@@ -40,6 +40,7 @@ pub fn run(settings: Settings) -> std::io::Result<()> {
         pid: std::process::id(),
         build: Build::current(),
     })?;
+    pm_tools::shield_from_children();
     let core = Core::new();
     let extensions = crate::provider::Extensions::new(&core);
     core.documents.hub.set_provider(extensions.clone());

@@ -101,10 +101,12 @@ impl Session {
             .launch(port)
             .map_err(|reason| io::Error::new(io::ErrorKind::NotFound, reason))?;
 
-        let mut process = Command::new(&program)
+        let (launcher, launched) =
+            pm_tools::confined(&program, &arguments, pm_tools::Confinement::Helper);
+        let mut process = Command::new(launcher)
             .env("PATH", pm_tools::path_beside(&program))
             .envs(&env)
-            .args(arguments)
+            .args(launched)
             .current_dir(root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

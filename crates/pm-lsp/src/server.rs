@@ -686,6 +686,11 @@ impl LanguageServer {
         self.rpc.is_alive()
     }
 
+    /// Why the server stopped, when there is something to say about it.
+    pub(crate) fn why_stopped(&self) -> Option<String> {
+        self.rpc.why_stopped()
+    }
+
     /// The characters after which the server offers completions without being asked.
     pub(crate) fn triggers(&self) -> &[String] {
         &self.triggers

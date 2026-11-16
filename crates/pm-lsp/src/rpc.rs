@@ -82,6 +82,19 @@ fn path_with(
     std::env::join_paths(existing.chain(machine)).ok()
 }
 
+/// Whether a process that ended with `status` was killed outright, by `SIGKILL`, as the out-of-memory killer does.
+#[cfg(unix)]
+fn killed_outright(status: std::process::ExitStatus) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal() == Some(9)
+}
+
+/// Whether a process that ended with `status` was killed outright; never told apart off Unix.
+#[cfg(not(unix))]
+fn killed_outright(_status: std::process::ExitStatus) -> bool {
+    false
+}
+
 impl Rpc {
     /// Starts `program` with `arguments` in `folder`, with the folders `first` put first on its path and the variables `env` set, and talks to it on threads of its own, `handler` answering what it asks and taking in what it tells.
     pub(crate) fn start(
@@ -92,9 +105,11 @@ impl Rpc {
         env: &BTreeMap<String, String>,
         handler: Handler,
     ) -> Result<Arc<Self>, String> {
-        let mut command = Command::new(program);
+        let (launcher, launched) =
+            pm_tools::confined(program, arguments, pm_tools::Confinement::Helper);
+        let mut command = Command::new(launcher);
         command
-            .args(arguments)
+            .args(launched)
             .current_dir(folder)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -255,6 +270,21 @@ impl Rpc {
     /// The last thing the server wrote to its error output, to say why it stopped.
     pub(crate) fn last_words(&self) -> Option<String> {
         self.said.lock().ok()?.back().cloned()
+    }
+
+    /// Why the server's process ended, when it ended in a way worth saying: killed outright, which for a server held to a memory cap almost always means it went past the cap.
+    pub(crate) fn why_stopped(&self) -> Option<String> {
+        let status = self.child.lock().ok()?.try_wait().ok().flatten()?;
+        if !killed_outright(status) {
+            return None;
+        }
+        Some(match pm_tools::helper_limit() {
+            Some(limit) => format!(
+                "it was killed, most likely for using more than its memory limit of {:.1} GB; restart it to try again",
+                limit as f64 / f64::from(1u32 << 30)
+            ),
+            None => "it was killed".to_owned(),
+        })
     }
 
     /// Ends the server's process.

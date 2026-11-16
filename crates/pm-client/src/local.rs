@@ -78,11 +78,20 @@ fn terminate(pid: u32) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-/// Starts this program again in its server mode, on a port of the system's choosing, apart from this process so that it outlives it.
+/// Starts this program again in its server mode, on a port of the system's choosing, apart from this process so that it outlives it, and in a memory-capped scope of its own so that running out of memory in it never takes this window down.
 fn start() -> std::io::Result<()> {
-    let mut command = std::process::Command::new(std::env::current_exe()?);
+    let program = std::env::current_exe()?;
+    let (launcher, launched) = pm_tools::confined(
+        &program,
+        &["--server", "--listen", "127.0.0.1:0"].map(str::to_owned),
+        pm_tools::Confinement::Server,
+    );
+    let mut command = std::process::Command::new(&launcher);
+    if launcher != program {
+        command.env(pm_tools::OWN_SCOPE, "1");
+    }
     command
-        .args(["--server", "--listen", "127.0.0.1:0"])
+        .args(launched)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());

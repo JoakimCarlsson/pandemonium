@@ -165,7 +165,15 @@ pub struct Hub {
     environment: Environment,
     /// The folders besides a project's own its servers work on.
     neighbours: Mutex<Neighbours>,
+    /// When each server, by project and spec id, was last started again after being killed.
+    revived: Mutex<HashMap<(PathBuf, String), Instant>>,
 }
+
+/// How often the servers are looked at for one that was killed.
+const LOOK_FOR_KILLED: Duration = Duration::from_secs(2);
+
+/// How long after a killed server was started again that it is left stopped if it is killed again, so that one that cannot fit in its memory is not started over and over.
+const REVIVE_AGAIN_AFTER: Duration = Duration::from_secs(10 * 60);
 
 /// How well `filter`, what a completion is matched by, matches the word `typed`: lower is better, nothing when it does not match.
 pub fn score(filter: &str, typed: &str) -> Option<u8> {
@@ -244,7 +252,7 @@ fn catch_up(document: &mut Document, uri: &str) -> Option<ServerSpec> {
 impl Hub {
     /// A hub with no files open, handing what servers say is wrong with open files to `sink`.
     pub fn new(sink: Sink, environment: Environment) -> Arc<Self> {
-        Arc::new(Self {
+        let hub = Arc::new(Self {
             documents: Mutex::new(HashMap::new()),
             changed: Condvar::new(),
             servers: Mutex::new(HashMap::new()),
@@ -262,7 +270,64 @@ impl Hub {
             sink,
             environment,
             neighbours: Mutex::new(Arc::new(|_| Vec::new())),
-        })
+            revived: Mutex::new(HashMap::new()),
+        });
+        hub.revive_killed_servers();
+        hub
+    }
+
+    /// Starts a thread that, for as long as the hub lives, starts again each server that was killed, such as for going past its memory cap, moving its open files onto the new one; a server killed again within [`REVIVE_AGAIN_AFTER`] of that is left stopped.
+    fn revive_killed_servers(self: &Arc<Self>) {
+        let hub = Arc::downgrade(self);
+        let _ = std::thread::Builder::new()
+            .name("lsp-revive".to_owned())
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(LOOK_FOR_KILLED);
+                    let Some(hub) = hub.upgrade() else {
+                        return;
+                    };
+                    for (root, id) in hub.killed() {
+                        hub.restart(&root, &[id]);
+                    }
+                }
+            });
+    }
+
+    /// The servers, by project and spec id, that were killed and are to be started again now, each marked as started again.
+    fn killed(&self) -> Vec<(PathBuf, String)> {
+        let killed: Vec<(PathBuf, String)> = self
+            .servers
+            .lock()
+            .map(|servers| {
+                servers
+                    .iter()
+                    .filter(|(_, slot)| {
+                        slot.get()
+                            .and_then(|started| started.as_ref().ok())
+                            .is_some_and(|server| {
+                                !server.is_alive() && server.why_stopped().is_some()
+                            })
+                    })
+                    .map(|(key, _)| key.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        let Ok(mut revived) = self.revived.lock() else {
+            return Vec::new();
+        };
+        killed
+            .into_iter()
+            .filter(|key| {
+                let due = revived
+                    .get(key)
+                    .is_none_or(|when| when.elapsed() >= REVIVE_AGAIN_AFTER);
+                if due {
+                    revived.insert(key.clone(), Instant::now());
+                }
+                due
+            })
+            .collect()
     }
 
     /// The folders `neighbours` names for each project are attached to the workspace of its language servers from now on, and the servers running are told which came and went.
@@ -1894,7 +1959,7 @@ impl Hub {
                 let (state, detail) = match slot.get() {
                     None => ("starting", None),
                     Some(Err(reason)) => ("failed", Some(reason.clone())),
-                    Some(Ok(server)) if !server.is_alive() => ("stopped", None),
+                    Some(Ok(server)) if !server.is_alive() => ("stopped", server.why_stopped()),
                     Some(Ok(server)) if server.load() == Load::Working => ("loading", None),
                     Some(Ok(_)) => ("running", None),
                 };

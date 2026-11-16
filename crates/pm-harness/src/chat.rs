@@ -444,7 +444,7 @@ fn drive(
     harness.send(&Command::Open(opening))?;
     harness.send(&Command::Slots)?;
     if let Some(languages) = &languages {
-        warm(languages.clone());
+        languages.release_when_idle();
     }
     let mut hearing = Hearing {
         languages,
@@ -523,16 +523,6 @@ fn opening(
         defaults: given.defaults,
     };
     (opening, languages)
-}
-
-/// Starts the language servers of the agent's folder on a thread of its own, so that they are ready when it first writes a file.
-fn warm(languages: Arc<HubLanguages>) {
-    let spawned = std::thread::Builder::new()
-        .name("harness-languages".to_owned())
-        .spawn(move || languages.warm());
-    if let Err(error) = spawned {
-        eprintln!("could not start the language servers: {error}");
-    }
 }
 
 /// The command that answers the harness's language `request` from `languages`, which may wait on the servers as long as the request allows.

@@ -32,6 +32,12 @@ const MOST_WARMED: usize = 3;
 /// Folders never looked in for files to start language servers with: build output and dependencies.
 const SKIPPED_FOLDERS: [&str; 5] = ["target", "build", "node_modules", "dist", "vendor"];
 
+/// How long a conversation may leave its language servers unasked before it lets go of them, so that a server no one else uses stops and gives its memory back; the next question starts it again.
+const IDLE: Duration = Duration::from_secs(10 * 60);
+
+/// How often a conversation looks whether it has left its language servers unasked for [`IDLE`].
+const LOOK_FOR_IDLE: Duration = Duration::from_secs(30);
+
 /// How long to wait between looks at what the servers have said.
 const LOOK_AGAIN: Duration = Duration::from_millis(50);
 
@@ -69,6 +75,40 @@ pub(crate) struct HubLanguages {
     opened: Mutex<HashMap<String, Opened>>,
     /// The languages whose servers have been seen to finish loading the project, so that a question about code waits for that only the first time.
     loaded: Mutex<HashSet<String>>,
+    /// When the conversation last asked its language servers anything, and how many of its questions are being answered now.
+    usage: Mutex<Usage>,
+}
+
+/// How a conversation has been using its language servers.
+struct Usage {
+    /// When it last asked them anything or an answer last ended.
+    last: Instant,
+    /// How many of its questions are being answered now.
+    busy: usize,
+}
+
+/// Counts one question being answered for as long as it lives.
+struct Asking<'a>(&'a Mutex<Usage>);
+
+impl<'a> Asking<'a> {
+    /// Counts a question as being answered from now, in `usage`.
+    fn begin(usage: &'a Mutex<Usage>) -> Self {
+        if let Ok(mut held) = usage.lock() {
+            held.busy += 1;
+            held.last = Instant::now();
+        }
+        Self(usage)
+    }
+}
+
+impl Drop for Asking<'_> {
+    /// Counts the question as answered.
+    fn drop(&mut self) {
+        if let Ok(mut held) = self.0.lock() {
+            held.busy = held.busy.saturating_sub(1);
+            held.last = Instant::now();
+        }
+    }
 }
 
 impl HubLanguages {
@@ -79,6 +119,53 @@ impl HubLanguages {
             root,
             opened: Mutex::new(HashMap::new()),
             loaded: Mutex::new(HashSet::new()),
+            usage: Mutex::new(Usage {
+                last: Instant::now(),
+                busy: 0,
+            }),
+        }
+    }
+
+    /// Starts a thread that, for as long as the conversation lives, lets go of its language servers whenever it has left them unasked for [`IDLE`].
+    pub(crate) fn release_when_idle(self: &Arc<Self>) {
+        let languages = Arc::downgrade(self);
+        let spawned = std::thread::Builder::new()
+            .name("harness-languages-idle".to_owned())
+            .spawn(move || {
+                loop {
+                    std::thread::sleep(LOOK_FOR_IDLE);
+                    let Some(languages) = languages.upgrade() else {
+                        return;
+                    };
+                    if languages.is_idle(IDLE) {
+                        languages.release();
+                    }
+                }
+            });
+        if let Err(error) = spawned {
+            eprintln!("could not watch the language servers for idleness: {error}");
+        }
+    }
+
+    /// Whether the conversation has asked nothing of its servers for `idle` and is asking nothing now.
+    fn is_idle(&self, idle: Duration) -> bool {
+        self.usage
+            .lock()
+            .is_ok_and(|held| held.busy == 0 && held.last.elapsed() >= idle)
+    }
+
+    /// Closes the files the conversation opened that nobody has opened again since, which stops the servers no other file uses; the next question opens them again.
+    fn release(&self) {
+        let opened = self
+            .opened
+            .lock()
+            .map(|mut opened| std::mem::take(&mut *opened))
+            .unwrap_or_default();
+        for (path, held) in &opened {
+            self.hub.close_opening(&self.root, path, held.opening);
+        }
+        if let Ok(mut loaded) = self.loaded.lock() {
+            loaded.clear();
         }
     }
 
@@ -134,6 +221,7 @@ impl HubLanguages {
 
     /// Answers `ask`, which can take as long as it says it may wait.
     pub(crate) fn answer(&self, ask: &LanguageAsk) -> LanguageAnswer {
+        let _asking = Asking::begin(&self.usage);
         match ask {
             LanguageAsk::Format { path } => LanguageAnswer::Formatted {
                 text: self.format(path),
@@ -307,14 +395,7 @@ impl HubLanguages {
 impl Drop for HubLanguages {
     /// Closes the files the conversation opened that nobody has opened again since, which stops the servers no other file uses.
     fn drop(&mut self) {
-        let opened = self
-            .opened
-            .lock()
-            .map(|mut opened| std::mem::take(&mut *opened))
-            .unwrap_or_default();
-        for (path, held) in &opened {
-            self.hub.close_opening(&self.root, path, held.opening);
-        }
+        self.release();
     }
 }
 
@@ -524,34 +605,6 @@ mod tests {
         assert!(!hub.is_open(&dir, "src/lib.rs"));
     }
 
-    /// Warming opens one file of each language with a server found in the folder, leaving out build output, dependencies and hidden folders; skipped when Rust is not installed in the app.
-    #[test]
-    fn warming_opens_a_file_of_each_language() {
-        if pm_lsp::language_of("lib.rs").is_none() {
-            eprintln!("skipped: Rust is not installed in the app");
-            return;
-        }
-        let dir =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../build/tests/pm-harness/warm");
-        let _ = std::fs::remove_dir_all(&dir);
-        for folder in ["src", "target/debug", ".hidden"] {
-            std::fs::create_dir_all(dir.join(folder)).unwrap();
-        }
-        std::fs::write(dir.join("target/debug/built.rs"), "").unwrap();
-        std::fs::write(dir.join(".hidden/secret.rs"), "").unwrap();
-        std::fs::write(dir.join("src/lib.rs"), "pub fn a() {}\n").unwrap();
-        std::fs::write(dir.join("src/more.rs"), "pub fn b() {}\n").unwrap();
-        let dir = dir.canonicalize().unwrap();
-        let hub = Hub::new(
-            Arc::new(|_| {}),
-            Arc::new(|_: &Path, _: &str, _: &pm_lsp::ServerSpec| std::collections::BTreeMap::new()),
-        );
-        let languages = HubLanguages::new(hub.clone(), dir.clone());
-        assert_eq!(languages.samples(), [dir.join("src/lib.rs")]);
-        languages.warm();
-        assert!(hub.is_open(&dir, "src/lib.rs"));
-    }
-
     /// A file the conversation opened that the editor opens afterwards is the editor's: the conversation no longer changes it, and leaves it open when it ends; skipped when Rust is not installed in the app.
     #[test]
     fn leaves_a_file_the_editor_opened_since_alone() {
@@ -583,5 +636,117 @@ mod tests {
         assert_eq!(held, "pub fn editor() {}\n");
         drop(languages);
         assert!(hub.is_open(&dir, "src/lib.rs"));
+    }
+    /// Warming opens one file of each language with a server found in the folder, leaving out build output, dependencies and hidden folders; skipped when Rust is not installed in the app.
+    #[test]
+    fn warming_opens_a_file_of_each_language() {
+        if pm_lsp::language_of("lib.rs").is_none() {
+            eprintln!("skipped: Rust is not installed in the app");
+            return;
+        }
+        let dir =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../build/tests/pm-harness/warm");
+        let _ = std::fs::remove_dir_all(&dir);
+        for folder in ["src", "target/debug", ".hidden"] {
+            std::fs::create_dir_all(dir.join(folder)).unwrap();
+        }
+        std::fs::write(dir.join("target/debug/built.rs"), "").unwrap();
+        std::fs::write(dir.join(".hidden/secret.rs"), "").unwrap();
+        std::fs::write(dir.join("src/lib.rs"), "pub fn a() {}\n").unwrap();
+        std::fs::write(dir.join("src/more.rs"), "pub fn b() {}\n").unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let hub = Hub::new(
+            Arc::new(|_| {}),
+            Arc::new(|_: &Path, _: &str, _: &pm_lsp::ServerSpec| std::collections::BTreeMap::new()),
+        );
+        let languages = HubLanguages::new(hub.clone(), dir.clone());
+        assert_eq!(languages.samples(), [dir.join("src/lib.rs")]);
+        languages.warm();
+        assert!(hub.is_open(&dir, "src/lib.rs"));
+    }
+
+    /// How many processes run in the folder `dir`, which the servers of a project are started in.
+    fn servers_in(dir: &Path) -> usize {
+        std::fs::read_dir("/proc")
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|entry| {
+                        std::fs::read_link(entry.path().join("cwd")).is_ok_and(|cwd| cwd == dir)
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
+    /// Whether `holds` comes true within ten seconds.
+    fn eventually(holds: impl Fn() -> bool) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while Instant::now() < deadline {
+            if holds() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        holds()
+    }
+
+    /// A conversation that has left its servers unasked lets go of the files it opened, which stops a server no one else uses, and the next question opens them again; for every language in [`IDLE_LANGUAGES`] installed in the app.
+    #[test]
+    fn idle_conversation_lets_go_of_its_servers() {
+        for (file, text) in IDLE_LANGUAGES {
+            if pm_lsp::language_of(file).is_none() {
+                eprintln!("skipped {file}: its language is not installed in the app");
+                continue;
+            }
+            idle_release_of(file, text);
+        }
+    }
+
+    /// A file of each of several languages, with what it holds, that idle release is tried with.
+    const IDLE_LANGUAGES: [(&str, &str); 4] = [
+        ("src/lib.rs", "pub fn a() {}\n"),
+        ("notes.md", "# Notes\n"),
+        ("script.sh", "echo hi\n"),
+        ("config.toml", "a = 1\n"),
+    ];
+
+    /// Opens `file`, holding `text`, through a conversation, lets the conversation go idle, and checks that its server stopped and comes back on the next question.
+    fn idle_release_of(file: &str, text: &str) {
+        let name = file.replace(['/', '.'], "-");
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../build/tests/pm-harness/idle")
+            .join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join(file);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, text).unwrap();
+        let dir = dir.canonicalize().unwrap();
+        let path = dir.join(file);
+        let hub = Hub::new(
+            Arc::new(|_| {}),
+            Arc::new(|_: &Path, _: &str, _: &pm_lsp::ServerSpec| std::collections::BTreeMap::new()),
+        );
+        let languages = HubLanguages::new(hub.clone(), dir.clone());
+        languages.answer(&LanguageAsk::Format { path: path.clone() });
+        assert!(hub.is_open(&dir, file), "{file}");
+        assert!(
+            eventually(|| servers_in(&dir) > 0),
+            "{file}: no server started"
+        );
+        assert!(!languages.is_idle(Duration::from_secs(60)));
+        assert!(languages.is_idle(Duration::ZERO));
+        languages.release();
+        assert!(!hub.is_open(&dir, file), "{file}");
+        assert!(
+            eventually(|| servers_in(&dir) == 0),
+            "{file}: the server kept running"
+        );
+        languages.answer(&LanguageAsk::Format { path });
+        assert!(hub.is_open(&dir, file), "{file}");
+        assert!(
+            eventually(|| servers_in(&dir) > 0),
+            "{file}: the server did not come back"
+        );
     }
 }
