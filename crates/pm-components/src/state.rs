@@ -4271,6 +4271,7 @@ mod tests {
             category: None,
             background: false,
             state: pm_harness::SubagentState::Running,
+            spent: None,
         }));
         let (reply, position, _) = state.sessions[open].subagents()[0];
         state.activity = Some(Activity::Subagents);

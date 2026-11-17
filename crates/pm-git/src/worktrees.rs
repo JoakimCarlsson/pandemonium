@@ -2,7 +2,7 @@
 //!
 //! The harness runs a subagent that works apart from its agent in a git worktree of its own, made from the session's worktree on a detached head in the harness's cache folder, and removes it when the subagent ends. Those worktrees belong to the session that made them, not to a session of their own, so nothing that lists worktrees counts them.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::run;
 
@@ -61,6 +61,19 @@ pub(crate) fn worktrees(directory: &Path) -> Vec<Listed> {
         .into_iter()
         .filter(|worktree| !worktree.is_harness())
         .collect()
+}
+
+/// The working tree `directory` is in, as a canonical path: the nearest folder holding a `.git` folder or file, which tells each worktree of a repository apart from the others, or `directory` itself when it is in no repository.
+///
+/// Two folders are the same checkout exactly when they have the same working tree, however their paths are written.
+/// Nothing when `directory` cannot be resolved, such as when it does not exist.
+pub fn working_tree(directory: &Path) -> Option<PathBuf> {
+    let resolved = std::fs::canonicalize(directory).ok()?;
+    let root = resolved
+        .ancestors()
+        .find(|folder| folder.join(".git").exists())
+        .map_or_else(|| resolved.clone(), Path::to_path_buf);
+    Some(root)
 }
 
 #[cfg(test)]

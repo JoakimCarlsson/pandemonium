@@ -5,8 +5,8 @@ use serde_json::{Value, json};
 pub use omc_wire::{
     Alternative, Background, Choice, Diff, Goal, GoalState, Input, Inquiry, Kind, Limit, LimitUnit,
     Limits, Merge, ModelSpend, Part, Permission, Pick, PlanStep, Progress, Question, Reply,
-    Setting, Skipped, Slash, Spent, Standing, Subagent, SubagentState, Tool, ToolState,
-    TrustRequest, Usage, Verdict, Worktree, dollars,
+    Setting, Skipped, Slash, Spent, Standing, Subagent, SubagentSpend, SubagentState, Tool,
+    ToolState, TrustRequest, Usage, Verdict, Worktree, dollars,
 };
 pub use omc_wire::{Exhibit, ExhibitKind};
 
@@ -431,7 +431,7 @@ mod tests {
         );
     }
 
-    /// A subagent starting is kept with the id it is stopped by; the harness refusing to stop one that had ended already is dropped, and any other failure is kept.
+    /// A subagent starting is kept with the id it is stopped by, and what it has spent survives being passed on to a client and is left out while there is none; the harness refusing to stop one that had ended already is dropped, and any other failure is kept.
     #[test]
     fn a_subagent_is_kept_and_a_late_stop_is_dropped() {
         let subagent = Subagent {
@@ -443,9 +443,34 @@ mod tests {
             category: None,
             background: false,
             state: SubagentState::Running,
+            spent: None,
         };
         assert_eq!(
             Event::from_harness(omc_wire::Event::Subagent(subagent.clone())),
+            Some(Event::Subagent(subagent.clone()))
+        );
+        let priced = Subagent {
+            spent: Some(SubagentSpend {
+                requests: 3,
+                input: 1200,
+                output: 300,
+                cache_read: 800,
+                cache_write: 100,
+                cost: Some(4_250),
+            }),
+            ..subagent.clone()
+        };
+        let heard = Event::from_harness(omc_wire::Event::Subagent(priced.clone()));
+        assert_eq!(heard, Some(Event::Subagent(priced.clone())));
+        let kept = serde_json::to_string(&heard).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Option<Event>>(&kept).unwrap(),
+            Some(Event::Subagent(priced))
+        );
+        let unpriced = serde_json::to_string(&Some(Event::Subagent(subagent.clone()))).unwrap();
+        assert!(!unpriced.contains("spent"));
+        assert_eq!(
+            serde_json::from_str::<Option<Event>>(&unpriced).unwrap(),
             Some(Event::Subagent(subagent))
         );
         assert_eq!(

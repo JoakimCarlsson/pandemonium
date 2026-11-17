@@ -126,6 +126,7 @@ pub mod settings_slots;
 pub mod settings_state;
 pub mod settings_usage;
 pub mod settings_values;
+pub mod shared_checkout;
 pub mod sidebar;
 pub mod sign_in_code;
 pub mod size;

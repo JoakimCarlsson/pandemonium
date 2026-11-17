@@ -499,6 +499,7 @@ impl Core {
                 login: session.meta.login.clone(),
                 submodule: session.meta.submodule.clone(),
                 chat: session.meta.chat,
+                tree: tree_of(&session.directory),
             })
             .collect();
         infos.sort_by_key(|info| info.session);
@@ -569,6 +570,11 @@ pub(crate) fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| since.as_millis() as u64)
+}
+
+/// The working tree `directory` is in, as the canonical path clients compare to tell which sessions share a checkout, or nothing when it cannot be resolved.
+pub(crate) fn tree_of(directory: &std::path::Path) -> Option<String> {
+    pm_git::working_tree(directory).map(|tree| tree.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]

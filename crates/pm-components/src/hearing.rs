@@ -226,10 +226,14 @@ impl Session {
         };
         let running = subagent.state == pm_harness::SubagentState::Running;
         let runs_as = runs_as(subagent);
+        let cost = subagent.spent.as_ref().and_then(|spent| spent.cost);
         let mut settled = None;
         for tool in self.tools_mut().filter(|tool| tool.id == shown) {
             if runs_as.is_some() {
                 tool.runs_as.clone_from(&runs_as);
+            }
+            if cost.is_some() {
+                tool.cost = cost;
             }
             if !running && tool.outlasts_the_turn() && tool.state == ToolState::Running {
                 tool.state = ToolState::Done;
@@ -541,6 +545,7 @@ impl Session {
                 worktree: tool.worktree,
                 stop: None,
                 runs_as: None,
+                cost: None,
             })),
         }
         if let Some(state) = ended {
@@ -668,6 +673,7 @@ mod tests {
             category: None,
             background: false,
             state,
+            spent: None,
         })
     }
 
@@ -734,6 +740,7 @@ mod tests {
             category: None,
             background: true,
             state: pm_harness::SubagentState::Running,
+            spent: None,
         }));
         session.hear(Event::Finished(None));
         assert!(session.background_running());
@@ -823,6 +830,7 @@ mod tests {
             category: None,
             background: true,
             state: pm_harness::SubagentState::Running,
+            spent: None,
         }));
         session.hear(spawned("back:t", Some("back"), "task"));
         session.hear(called("back:t:g", Some("back:t"), ToolState::Running));
@@ -839,6 +847,7 @@ mod tests {
             category: None,
             background: true,
             state: pm_harness::SubagentState::Finished,
+            spent: None,
         }));
         assert!(running(&session).is_empty());
     }
@@ -857,6 +866,7 @@ mod tests {
                 category: category.map(str::to_owned),
                 background: false,
                 state,
+                spent: None,
             })
         };
         let mut session = Session::started("Test", 0, "Hello");
@@ -880,6 +890,51 @@ mod tests {
                 None
             ]
         );
+    }
+
+    /// A subagent's cost shows once its agent priced a request of it, follows each later figure while it runs, stays when an event says nothing of it and stays once it has ended; an unpriced one shows none.
+    #[test]
+    fn a_subagent_shows_its_running_cost() {
+        use pm_harness::SubagentState::{Finished, Running};
+        let told = |id: &str, cost: Option<Option<u64>>, state| {
+            Event::Subagent(pm_harness::Subagent {
+                id: id.to_owned(),
+                call: id.to_owned(),
+                agent: "task".to_owned(),
+                label: "Look".to_owned(),
+                model: None,
+                category: None,
+                background: false,
+                state,
+                spent: cost.map(|cost| pm_harness::SubagentSpend {
+                    requests: 1,
+                    cost,
+                    ..pm_harness::SubagentSpend::default()
+                }),
+            })
+        };
+        let costs = |session: &Session| -> Vec<Option<u64>> {
+            session
+                .subagents()
+                .into_iter()
+                .map(|(_, _, tool)| tool.cost)
+                .collect()
+        };
+        let mut session = Session::started("Test", 0, "Hello");
+        for id in ["t1", "t2"] {
+            session.hear(spawned(id, None, "task"));
+        }
+        session.hear(told("t1", None, Running));
+        session.hear(told("t2", None, Running));
+        assert_eq!(costs(&session), [None, None]);
+        session.hear(told("t1", Some(Some(12_000)), Running));
+        session.hear(told("t2", Some(None), Running));
+        assert_eq!(costs(&session), [Some(12_000), None]);
+        session.hear(told("t1", Some(Some(30_500)), Running));
+        session.hear(told("t1", None, Running));
+        assert_eq!(costs(&session), [Some(30_500), None]);
+        session.hear(told("t1", Some(Some(41_000)), Finished));
+        assert_eq!(costs(&session), [Some(41_000), None]);
     }
 
     /// A subagent that starts gives the call showing it the id it is stopped by, whether it is the call's only one, one of several or started by another subagent; ending takes the id away, and so does the agent going.
@@ -934,6 +989,7 @@ mod tests {
             category: None,
             background: true,
             state: pm_harness::SubagentState::Running,
+            spent: None,
         }));
 
         session.hear(Event::Halted);
@@ -1128,6 +1184,7 @@ mod tests {
                 category: None,
                 background: true,
                 state,
+                spent: None,
             })
         };
         session.hear(long_lived(pm_harness::SubagentState::Running));

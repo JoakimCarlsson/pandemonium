@@ -39,6 +39,15 @@ starting session when left out. `submodule` and `title` are as for a session
 you start yourself; the title is made from the prompt's first line when left
 out, and it names the worktree and its branch.
 
+Sessions you start or resume yourself are not refused, but the window warns
+about the same overlap. While another session's agent is working on a turn in
+the same checkout as a session, a line above that session's prompt box names
+the other session and suggests a worktree; it goes away when that agent's turn
+ends. Sending is never blocked. Two sessions share a checkout when their server
+reports the same working tree for them on the same machine, compared as
+canonical paths (see `tree` in `SessionInfo` in [protocol.md](protocol.md)), so
+separate worktrees of one repository never share one, and chats are left out.
+
 Two limits keep it from running away: a session an agent started cannot start
 sessions itself, and one session can have at most eight open sessions that it
 started.

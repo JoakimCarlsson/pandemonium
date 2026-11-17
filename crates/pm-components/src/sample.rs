@@ -430,6 +430,8 @@ pub struct ToolUse {
     pub stop: Option<Stop>,
     /// What the subagent it starts runs as, once its agent announced it: the work category it was started in and the model it asks, or the model alone.
     pub runs_as: Option<String>,
+    /// What the subagent it starts has cost so far, in millionths of a US dollar, once its agent priced an answered request of it.
+    pub cost: Option<u64>,
 }
 
 /// How a subagent at work is stopped, as its agent announced it.
@@ -685,6 +687,8 @@ pub struct Session {
     pub pull_busy: Option<&'static str>,
     /// The code host its repository's remote is on, once its server has said.
     pub code_host: Option<pm_git::CodeHost>,
+    /// The working tree its agent works in, as a canonical path on its machine, once its server has said; sessions with the same one write to the same checkout.
+    pub tree: Option<String>,
 }
 
 impl Session {
@@ -754,6 +758,7 @@ impl Session {
             pull_request: None,
             pull_busy: None,
             code_host: None,
+            tree: None,
         }
     }
 

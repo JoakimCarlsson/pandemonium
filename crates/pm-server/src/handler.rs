@@ -435,6 +435,7 @@ pub(crate) fn start_seated(
         skipped,
     } = seated;
     let (branch, head) = (session.meta.branch.clone(), session.meta.head.clone());
+    let tree = crate::core::tree_of(&session.directory);
     session.start_agent(number, &crate::machine::with_mode(settings));
     hold_session_as(core, connection, number, session);
     let first = prompt(number, text, attachments);
@@ -446,6 +447,7 @@ pub(crate) fn start_seated(
         branch,
         head,
         skipped,
+        tree,
     }
 }
 

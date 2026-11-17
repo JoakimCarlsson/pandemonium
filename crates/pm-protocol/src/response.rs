@@ -42,6 +42,9 @@ pub struct SessionInfo {
     /// Whether it is a chat that belongs to no project: `directory` is a scratch folder the server made for it, and `repository` is empty.
     #[serde(default)]
     pub chat: bool,
+    /// The working tree its agent works in, as a canonical path on its server: two sessions with the same one write to the same checkout. Nothing when the server could not resolve it.
+    #[serde(default)]
+    pub tree: Option<String>,
 }
 
 /// What the server knows about one shell.
@@ -176,6 +179,9 @@ pub enum Response {
         /// The submodules its worktree could not check out, each as its path and why; the session started without them.
         #[serde(default)]
         skipped: Vec<(String, String)>,
+        /// The working tree its agent works in, as a canonical path on the server, or nothing when it could not be resolved.
+        #[serde(default)]
+        tree: Option<String>,
     },
     /// The projects the reader has added.
     Projects {

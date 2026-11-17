@@ -53,6 +53,12 @@ const CACHES: &[&str] = &["5 minutes", "1 hour"];
 /// The ids the harness gives the prompt cache lifetimes, in the order of [`CACHES`].
 const CACHE_IDS: [&str; 2] = ["5m", "1h"];
 
+/// The subagent budgets, as the choices name them.
+const BUDGETS: &[&str] = &["Off", "$1", "$2", "$5", "$10", "$25"];
+
+/// The values the harness reads the subagent budgets as, in the order of [`BUDGETS`].
+const BUDGET_IDS: [&str; 6] = [pm_protocol::BUDGET_OFF, "1", "2", "5", "10", "25"];
+
 /// The presets of keys, as the choices name them, in the order of [`Preset::ALL`].
 const PRESETS: &[&str] = &[
     Preset::Pandemonium.title(),
@@ -387,6 +393,10 @@ impl Setting {
             Self::Memory => Control::Switch(machine.agents.memory),
             Self::Checkpoints => Control::Switch(machine.agents.checkpoints),
             Self::Orchestrator => Control::Switch(machine.agents.orchestrator),
+            Self::SubagentBudget => Control::Choice(
+                BUDGETS,
+                place_of(&BUDGET_IDS, &machine.agents.subagent_budget.as_str()),
+            ),
             Self::PromptCache => {
                 Control::Choice(CACHES, place_of(&CACHE_IDS, &machine.agents.cache.as_str()))
             }
@@ -659,6 +669,9 @@ impl Setting {
             Self::Memory => machine.agents.memory ^= true,
             Self::Checkpoints => machine.agents.checkpoints ^= true,
             Self::Orchestrator => machine.agents.orchestrator ^= true,
+            Self::SubagentBudget => {
+                machine.agents.subagent_budget = chosen(&BUDGET_IDS, option).to_owned();
+            }
             Self::PromptCache => machine.agents.cache = chosen(&CACHE_IDS, option).to_owned(),
             Self::CacheWarming => machine.agents.cache_warming ^= true,
             Self::PlanAutosave => machine.agents.plan_autosave ^= true,
@@ -1142,6 +1155,12 @@ impl Setting {
             Self::Memory => machine.agents.memory = kept.agents.memory,
             Self::Checkpoints => machine.agents.checkpoints = kept.agents.checkpoints,
             Self::Orchestrator => machine.agents.orchestrator = kept.agents.orchestrator,
+            Self::SubagentBudget => {
+                machine
+                    .agents
+                    .subagent_budget
+                    .clone_from(&kept.agents.subagent_budget);
+            }
             Self::PromptCache => machine.agents.cache.clone_from(&kept.agents.cache),
             Self::CacheWarming => machine.agents.cache_warming = kept.agents.cache_warming,
             Self::PlanAutosave => machine.agents.plan_autosave = kept.agents.plan_autosave,

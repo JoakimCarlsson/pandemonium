@@ -224,6 +224,8 @@ pub enum Setting {
     Checkpoints,
     /// Whether the agent of a new conversation leads and hands work to subagents by category; shown on the orchestration page.
     Orchestrator,
+    /// What one subagent may cost before it is stopped.
+    SubagentBudget,
     /// How long the prompt cache lives.
     PromptCache,
     /// Whether the prompt cache is kept warm.
@@ -278,7 +280,7 @@ pub enum Setting {
 
 impl Setting {
     /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 122] = [
+    pub const ALL: [Self; 123] = [
         Self::Launch,
         Self::ConfirmClose,
         Self::CheckUpdates,
@@ -376,6 +378,7 @@ impl Setting {
         Self::Memory,
         Self::Checkpoints,
         Self::Orchestrator,
+        Self::SubagentBudget,
         Self::PromptCache,
         Self::CacheWarming,
         Self::PlanAutosave,
@@ -516,6 +519,7 @@ impl Setting {
             | Self::Effort
             | Self::Memory
             | Self::Checkpoints
+            | Self::SubagentBudget
             | Self::PromptCache
             | Self::CacheWarming
             | Self::PlanAutosave
@@ -561,6 +565,7 @@ impl Setting {
             | Self::Memory
             | Self::Checkpoints
             | Self::Orchestrator
+            | Self::SubagentBudget
             | Self::PromptCache
             | Self::CacheWarming
             | Self::PlanAutosave => Keeper::Machine,
@@ -960,6 +965,10 @@ impl Setting {
             Self::Orchestrator => (
                 "Orchestrator mode",
                 "New conversations start with the agent as lead, which delegates each piece of work to a subagent of one of the categories below, on that category's model.",
+            ),
+            Self::SubagentBudget => (
+                "Subagent budget",
+                "Stop a subagent once it, the subagents it started and its follow-ups have cost more than this. Applies to new conversations.",
             ),
             Self::PromptCache => (
                 "Prompt cache",

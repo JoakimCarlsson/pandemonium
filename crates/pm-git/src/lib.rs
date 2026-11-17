@@ -39,7 +39,7 @@ pub use review_host::{MergeStrategy, RemoteAddress, ReviewHost, TemplatePlaces, 
 pub use revision::revision_changes;
 pub use submodule::{populate, submodule_heads, submodules};
 pub use words::{Words, words};
-pub use worktrees::HARNESS_LOCK_REASON;
+pub use worktrees::{HARNESS_LOCK_REASON, working_tree};
 
 /// Where, under a repository, the worktrees made for tasks are kept.
 const WORKTREES: &str = ".pandemonium/worktrees";

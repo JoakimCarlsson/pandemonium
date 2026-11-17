@@ -2363,6 +2363,7 @@ impl Work {
                     branch,
                     head,
                     skipped,
+                    tree,
                 } => {
                     if self.cancelled.remove(&session) {
                         self.ask(
@@ -2388,6 +2389,10 @@ impl Work {
                             branch.as_deref(),
                             head.as_deref(),
                         );
+                        let Screen::Workspace(state) = screen;
+                        if let Some(held) = state.sessions.get_mut(session) {
+                            held.tree = tree.clone();
+                        }
                         for (path, reason) in &skipped {
                             *screen = std::mem::take(screen).noted(
                                 session,

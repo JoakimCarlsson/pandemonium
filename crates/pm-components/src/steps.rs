@@ -325,6 +325,13 @@ fn quiet_label(label: String) -> Node {
         .child(text(label).styles([text_px(12), leading_ratio(1.4), text_color(Role::Muted)]))
 }
 
+/// What a subagent has cost so far, `micros` millionths of a US dollar, as a muted amount that is the first part of its row to be cut short when the row runs out of room.
+fn cost_label(micros: u64) -> Node {
+    node()
+        .styles([flex(), min_w_px(0), overflow_hidden()])
+        .child(line(crate::spend::dollars(micros), 12, 1.4, Role::Subtle).styles([truncate()]))
+}
+
 /// The steps of `all` that are the work of the subagent `parent`.
 fn beneath<'a>(all: &'a [Step], parent: &str) -> Vec<&'a ToolUse> {
     all.iter()
@@ -407,6 +414,7 @@ pub fn subagents(
                 .children(tool.worktree.as_deref().map(worktree_chip))
                 .child(clipped(described, 13, Role::Text))
                 .children(tool.runs_as.clone().map(quiet_label))
+                .children(tool.cost.map(cost_label))
                 .child(
                     line(
                         match used.len() {

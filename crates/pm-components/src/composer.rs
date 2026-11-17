@@ -596,7 +596,8 @@ fn chip(label: &str, icon: Option<IconName>, id: FocusId, open: bool) -> Node {
 
 /// The prompt box for `state`: a few lines to write in, a strip of what
 /// the agent is set to and where the work goes, and a send button that
-/// stops the turn while there is one.
+/// stops the turn while there is one; above it, a notice while the agents
+/// of other sessions are working in the same checkout as `session`.
 pub fn composer(
     state: &WorkspaceState,
     placeholder: &str,
@@ -768,6 +769,7 @@ pub fn composer(
         .child(strip);
     node()
         .styles([flex(), flex_col(), gap(1.5), w_full()])
+        .children(session.and_then(|session| crate::shared_checkout::notice(state, session)))
         .children(place)
         .child(prompt_box)
 }

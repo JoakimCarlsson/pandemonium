@@ -34,8 +34,8 @@ pub use discover::discover;
 pub use event::{
     Allowance, Alternative, Background, Choice, Diff, Discovery, Event, Goal, GoalState, Input,
     Inquiry, Kind, Limit, LimitUnit, Limits, Merge, ModelSpend, Part, Permission, Pick, PlanStep,
-    Progress, Question, Reply, Setting, Skipped, Slash, Spent, Standing, Subagent, SubagentState,
-    Tool, ToolState, TrustRequest, Usage, Verdict, Worktree, dollars,
+    Progress, Question, Reply, Setting, Skipped, Slash, Spent, Standing, Subagent, SubagentSpend,
+    SubagentState, Tool, ToolState, TrustRequest, Usage, Verdict, Worktree, dollars,
 };
 pub use event::{Exhibit, ExhibitKind};
 pub use files::{FileNews, TurnChange};

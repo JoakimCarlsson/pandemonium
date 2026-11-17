@@ -27,6 +27,7 @@ fn listed(session: u64, directory: &str) -> pm_protocol::SessionInfo {
         login: None,
         submodule: None,
         chat: true,
+        tree: None,
     }
 }
 

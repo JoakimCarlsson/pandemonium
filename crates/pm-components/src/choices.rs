@@ -1146,6 +1146,7 @@ impl WorkspaceState {
                 );
                 chat.updated_at = info.updated;
                 chat.login = info.login.clone();
+                chat.tree = info.tree.clone();
                 self.sessions.push(chat);
                 added.push((self.sessions.len() - 1, info.session));
                 continue;
@@ -1174,6 +1175,7 @@ impl WorkspaceState {
                 session.login = info.login.clone();
                 session.submodule = info.submodule.clone();
                 session.directory = session.folder_in(&info.directory);
+                session.tree = info.tree.clone();
             }
             added.push((self.sessions.len() - 1, info.session));
         }

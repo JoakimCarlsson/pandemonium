@@ -435,6 +435,8 @@ pub enum Shot {
     Orchestrating,
     /// A conversation whose turn moved to a backup model when its own was overloaded, with the notice in the chat.
     ModelFallback,
+    /// A finished conversation in the project's own folder while another session's agent is working in the same folder, with the notice above the prompt box naming it.
+    SharedCheckout,
     /// The page for starting work on a declared model server, with the menu of the models it offers open.
     ServerModels,
     /// The settings panel on the Agent Servers inside Agents, with the form for adding one open.
@@ -3642,6 +3644,14 @@ impl Shot {
                             category: Some("quick".to_owned()),
                             background: true,
                             state: pm_harness::SubagentState::Running,
+                            spent: Some(pm_harness::SubagentSpend {
+                                requests: 4,
+                                input: 18_400,
+                                output: 2_100,
+                                cache_read: 12_000,
+                                cache_write: 3_000,
+                                cost: Some(42_300),
+                            }),
                         }),
                     );
                 }
@@ -3984,6 +3994,7 @@ impl Shot {
                 Screen::Workspace(welcome().after(pm_components::state::ORCHESTRATE))
             }
             Self::ModelFallback => Screen::Workspace(model_fallback()),
+            Self::SharedCheckout => Screen::Workspace(shared_checkout()),
             Self::ServerModels => Screen::Workspace(server_models().after(FocusId(4200))),
             Self::SettingsMcp => Screen::Workspace(
                 welcome()
@@ -4761,6 +4772,18 @@ fn model_fallback() -> WorkspaceState {
     .fold(state, |state, event| state.heard(last, event))
 }
 
+/// A finished conversation whose session works in the project's own folder, beside another session whose agent is working in that folder too.
+fn shared_checkout() -> WorkspaceState {
+    let mut state = live(Turn::Finished);
+    let last = state.sessions.len() - 1;
+    state.sessions[last].tree = Some("/home/reader/pandemonium".to_owned());
+    let mut other = state.sessions[last].clone();
+    other.title = "Release notes for 0.4".to_owned();
+    other.status = pm_components::sample::Status::Working;
+    state.sessions.push(other);
+    state
+}
+
 /// A finished conversation in which the reader asked a question on the side, then had the work handed over to a new conversation, which has started on it.
 fn aside() -> WorkspaceState {
     let state = live(Turn::Finished);
@@ -5321,6 +5344,7 @@ fn live(turn: Turn) -> WorkspaceState {
                 category: None,
                 background: true,
                 state: pm_harness::SubagentState::Running,
+                spent: None,
             })
         }));
         events.push(Event::Finished(None));

@@ -664,16 +664,18 @@ everything said of them, its submodules' paths written from `directory`.
   time it is written with `write_file`, how many days it keeps it and how many
   megabytes of states one project may take up (30 days and 256 megabytes when
   not set). `agents` is
-  `{default_agent, permission_mode, hidden, effort, memory, checkpoints, cache, cache_warming, plan_model, plan_autosave, orchestrator}`,
+  `{default_agent, permission_mode, hidden, effort, memory, checkpoints, cache, cache_warming, plan_model, plan_autosave, orchestrator, subagent_budget}`,
   each optional: the agent a client offers
   first for new work, by id, the mode new sessions start in, and the ids of the
   agents a client leaves out when a new session is started; a hidden agent still
   runs its sessions and keeps its accounts. `effort` (`low`, `medium`, `high`,
   `xhigh` or `max`; the harness's own when not set), `memory` (default `true`),
   `checkpoints` (default `true`), `cache` (`5m` or `1h`, default `5m`),
-  `cache_warming` (default `true`), `plan_autosave` (default `false`) and
+  `cache_warming` (default `true`), `plan_autosave` (default `false`),
   `orchestrator` (default `false`; on, the agent leads and hands work to
-  subagents by work category, each on the model slot of that category)
+  subagents by work category, each on the model slot of that category) and
+  `subagent_budget` (`off`, the default, or a dollar amount such as `5`; a
+  subagent whose cost passes it is stopped)
   are the settings every agent's conversation
   starts with; a choice saved with a conversation wins over them. `plan_model`
   is no longer used and is ignored. `shell` is
@@ -1124,7 +1126,7 @@ embedded context, and anything else as a link to the stored file.
 | `file`       | `text`: string or null for a file that is not text, `truncated`: whether it was cut short, `language` (optional): the installed language it is written in |
 | `bytes`      | `bytes` (base64): what a file holds, `truncated`: whether it was cut short |
 | `identity`   | `default`, `selected`: who the agent is signed in as, or null |
-| `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree), `skipped`: `[[path, reason]]` for submodules the worktree could not check out |
+| `started`    | `session`, `directory`, `branch` (always null for now), `head` (null without a worktree), `skipped`: `[[path, reason]]` for submodules the worktree could not check out, `tree`: the working tree as in `SessionInfo` |
 | `standing`   | `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind, remotes}`, `operation`: as in `inspected`, `repositories`: `[{path, branch, head, tracking}]`, `repository`: whether the folder is a repository or holds some |
 | `diffs`      | `files`: `[{path, diff, words}]`, one for each of the files asked for that a repository of the folder holds |
 | `inspected`  | `changes`: `[{path, diff, words, staged, untracked, index, worktree, conflicted, from, submodule, repository, moved, added, removed, lazy}]`, `added` and `removed` the lines the file puts in and takes out, counted over the whole file, and `lazy` true when `diff` and `words` are left out because the file's diff is asked for with `diffs` (an older server leaves `lazy` false and sends them), files inside submodules listed under their paths from the root with `submodule` the submodule's path, files of a folder of repositories listed under their paths from the folder with `repository` the child's folder name and null for one repository, and a submodule checked out at another commit than the one recorded as its own path with `moved`: `{from, to, commits, back}` (abbreviated commits, the subjects between them oldest first, `back` when it went back past them) and an empty `diff`, `commits`: `[string]` or null, `branch`: string or null, `head`: string or null, `tracking`: `{upstream, ahead, behind, remotes}`, `operation`: `Merge`, `Rebase` or `CherryPick` with what git prepared, or null, `repositories` (optional): `[{path, branch, head, tracking}]` for each child of a folder of repositories, empty for one repository; `branch`, `head` and `tracking` then sum up the children: the one branch they are all on or the branches joined by ` · `, the first child's commit, and the commits ahead and behind added up, following something only when every child does |
@@ -1251,7 +1253,7 @@ What an agent does arrives as an `event`, not as a response:
 - A client drops an event whose `seq` it already has, so replays are safe.
 
 A **SessionInfo** is `{session, agent, repository, directory, branch, head,
-base, title, closed, updated, last_seq, running, login, submodule, chat}`. `updated` is milliseconds since the epoch,
+base, title, closed, updated, last_seq, running, login, submodule, chat, tree}`. `updated` is milliseconds since the epoch,
 `last_seq` is the number of the session's latest event, `running` says
 whether its agent is running now, and `login` is the id of the login the
 session runs as, `null` for the agent's own. `submodule` is the path of the
@@ -1260,7 +1262,12 @@ still the folder of the whole worktree. `chat` is `true` for a chat started
 with `scratch`: it belongs to no project, so `repository` is empty,
 `directory` is the scratch folder the server made for it, and `branch`,
 `head`, `base` and `submodule` are `null`. A server that predates chats leaves
-`chat` out, which reads as `false`.
+`chat` out, which reads as `false`. `tree` is the working tree the agent
+works in, as a canonical path on the server: the nearest folder above its
+folder that holds `.git`, or the folder itself outside a repository, so each
+worktree of a repository has its own. Two sessions with the same `tree` write
+to the same checkout. It is `null` when the server could not resolve the
+folder, and a server that predates it leaves it out.
 
 ### Signing in again during a session
 
@@ -1304,7 +1311,7 @@ Events use serde's default form, one key naming the type.
 | `{"Thought": "text"}`         | More of the agent's reasoning. Append it.                                                                 |
 | `{"Tool": Tool}`              | A tool the agent is using. Later events with the same `id` update it.                                     |
 | `{"Background": {id, label, running}}` | A command or task went on running beyond its call (`running` true), or ended (false). `id` is the handle the agent knows it by; for a command left running by a turn it is the `id` of its `Tool`. The agent is still at work while any runs, though the turn is over. |
-| `{"Subagent": {id, call, agent, label, model, category, background, state}}` | A subagent started (`state` is `Running`), or ended (`Finished`, `Failed` or `Stopped`). `id` names it for `stop_subagent`; `call` is the `id` of the `Tool` of the call that started it. When that call started several, `id` ends in `/` and its place, and its own `Tool` is `call`, `:` and that place. A subagent in the background, such as a long-lived one an `agent_spawn` call started, outlives its call: show the call as at work until the subagent ends. `model` is what the model it asks is called, when that is known, and `category`, left out when it has none, is the work category it was started in while the conversation setting `orchestrator` was `on`, whose slot decided that model; show the two on the subagent's row. Not kept on disk, so it is not replayed after the server restarts. |
+| `{"Subagent": {id, call, agent, label, model, category, background, state, spent}}` | A subagent started (`state` is `Running`), was answered again while running (`Running` again, with `spent`), or ended (`Finished`, `Failed` or `Stopped`). `id` names it for `stop_subagent`; `call` is the `id` of the `Tool` of the call that started it. When that call started several, `id` ends in `/` and its place, and its own `Tool` is `call`, `:` and that place. A subagent in the background, such as a long-lived one an `agent_spawn` call started, outlives its call: show the call as at work until the subagent ends. `model` is what the model it asks is called, when that is known, and `category`, left out when it has none, is the work category it was started in while the conversation setting `orchestrator` was `on`, whose slot decided that model; show the two on the subagent's row. `spent`, left out until its first answered request, is `{requests, input, output, cache_read, cache_write, cost}` for the subagent, the subagents below it and its follow-ups, with `cost` in millionths of a US dollar and left out when unpriced; keep the latest for each `id`, and never add it to `Spent`, which already counts it. Not kept on disk, so it is not replayed after the server restarts. |
 | `{"Halted": null}`            | The turn was stopped or failed: nothing the agent had running goes on. A `Finished`, `SignedOut` or `Failed` follows.              |
 | `{"Plan": [PlanStep]}`        | The agent's plan, whole. Replaces the earlier one.                                                        |
 | `{"Ask": Permission}`         | The agent waits for an answer: send `choose` with the `ticket` and the `id` of a choice.                  |
