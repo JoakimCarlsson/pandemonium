@@ -185,3 +185,37 @@ fn a_turn_the_agent_starts_makes_the_session_busy() {
     held.take_in(NUMBER, Event::Finished(None));
     assert!(!held.busy);
 }
+
+/// Hurrying a prompt in a queue a client holds, as for an edit left open, lets go of the hold and puts the prompt first, so that it is handed over at once rather than waiting for the holder.
+#[test]
+fn hurrying_goes_through_a_held_queue() {
+    let _forget = Forget;
+    let mut held = session();
+    held.busy = true;
+    held.submit(NUMBER, prompt("first"), false);
+    held.submit(NUMBER, prompt("second"), false);
+    held.hold_queue(NUMBER, HOLDER, true);
+    held.busy = false;
+    let second = held.queue[1].id;
+
+    assert_eq!(held.put_first(second), Some(false));
+    assert_eq!(held.held_by, None);
+    assert!(!held.busy);
+    assert_eq!(held.queue[0].id, second);
+}
+
+/// Hurrying a prompt in a session taken for busy with no agent to stop takes the session for idle, so the prompt is handed over at once instead of waiting for a turn that never ends.
+#[test]
+fn hurrying_while_busy_without_an_agent_hands_the_prompt_over() {
+    let _forget = Forget;
+    let mut held = session();
+    held.busy = true;
+    held.submit(NUMBER, prompt("first"), false);
+    held.submit(NUMBER, prompt("second"), false);
+    let second = held.queue[1].id;
+
+    assert_eq!(held.put_first(second), Some(false));
+    assert!(!held.busy);
+    assert_eq!(held.queue[0].id, second);
+    assert_eq!(held.put_first(second + 9), None);
+}

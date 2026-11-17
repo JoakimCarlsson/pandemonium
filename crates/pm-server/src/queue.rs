@@ -58,17 +58,28 @@ impl Session {
         vec![(number, self.note(number, &event), event)]
     }
 
-    /// Puts the waiting prompt `id` of this session, numbered `number`, first and stops the turn so it is handed over next. Returns nothing when no prompt waits under `id`.
+    /// Puts the waiting prompt `id` of this session, numbered `number`, first and stops the turn so it is handed over next, or hands it over at once when no turn runs. Returns nothing when no prompt waits under `id`.
     pub(crate) fn hurry(&mut self, number: u64, id: u64) -> Option<Told> {
+        if self.put_first(id)? {
+            self.interrupt();
+            return Some(Told::new());
+        }
+        Some(self.advance(number))
+    }
+
+    /// Moves the waiting prompt `id` to the front of the queue and clears what would keep it from being handed over next, returning whether a running turn must be stopped first, or nothing when no prompt waits under `id`.
+    ///
+    /// A hurry goes through a queue a client holds, as for an edit left open, since the reader asked for this prompt to be sent: the hold is let go. A session taken for busy with no agent to stop is taken for idle, so the prompt is handed over at once instead of waiting for a turn that never ends.
+    fn put_first(&mut self, id: u64) -> Option<bool> {
         let position = self.queue.iter().position(|waiting| waiting.id == id)?;
         let waiting = self.queue.remove(position)?;
         self.queue.push_front(waiting);
-        if self.busy {
-            self.interrupt();
-            Some(Told::new())
-        } else {
-            Some(self.advance(number))
+        self.held_by = None;
+        if self.busy && self.chat.is_some() {
+            return Some(true);
         }
+        self.busy = false;
+        Some(false)
     }
 
     /// Removes the waiting prompt `id` and its uploads, or does nothing if it has already left the queue.

@@ -133,7 +133,7 @@ pub const SEND_NOW: FocusId = FocusId(327);
 pub const SESSION_SIGN_IN: FocusId = FocusId(331);
 
 /// The first of the buttons handing a queued prompt to the agent at once; the rest follow it.
-pub const HURRY_BASE: u64 = 4900;
+pub const HURRY_BASE: u64 = 4_902_000_000_000;
 
 /// The first of the buttons removing a waiting prompt; the rest follow it.
 pub const REMOVE_QUEUED_BASE: u64 = 4_900_000_000_000;
@@ -3327,13 +3327,16 @@ impl WorkspaceState {
         self.open().map_or(0, |session| session.queued.len())
     }
 
-    /// Removes the queued prompt at `index` when `remove` is set, otherwise hands it to the agent next.
+    /// Removes the queued prompt at `index` when `remove` is set, otherwise hands it to the agent next, first giving up an edit of a waiting prompt left open so that the edit neither holds the queue nor outlives the prompts it was about.
     fn act_on_queued(&mut self, index: usize, remove: bool) {
         let Page::Session(session) = self.page else {
             return;
         };
         if let Some(queued) = self.sessions[session].queued.get(index) {
             let queued = queued.id;
+            if !remove {
+                self.give_up_edit_for_hurry(session);
+            }
             self.outbox.push(if remove {
                 Outgoing::RemoveQueued { session, queued }
             } else {

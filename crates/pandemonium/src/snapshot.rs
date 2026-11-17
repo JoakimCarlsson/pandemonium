@@ -323,8 +323,12 @@ pub enum Shot {
     AgentsWorktrees,
     /// A conversation whose agent is on a turn with prompts queued behind it and another being written.
     Queued,
-    /// The same conversation with a long, multi-line prompt waiting, shown in full.
+    /// The same conversation with a long, multi-line prompt waiting, its first lines shown.
     QueuedLong,
+    /// The same conversation with a prompt of dozens of lines waiting among many others, which the prompts waiting must not push the prompt box past.
+    QueuedHuge,
+    /// The same conversation with a prompt waiting that carries elements picked from a web page, shown as chips.
+    QueuedElements,
     /// The same conversation with the first waiting prompt open for editing.
     QueuedEditing,
     /// A conversation with the context ring in the prompt box.
@@ -3763,6 +3767,8 @@ impl Shot {
             }
             Self::Queued => Screen::Workspace(queued()),
             Self::QueuedLong => Screen::Workspace(queued_long()),
+            Self::QueuedHuge => Screen::Workspace(queued_huge()),
+            Self::QueuedElements => Screen::Workspace(queued_elements()),
             Self::QueuedEditing => Screen::Workspace(
                 queued_long().after(FocusId(pm_components::queued::EDIT_QUEUED_BASE)),
             ),
@@ -4845,6 +4851,61 @@ fn queued_long() -> WorkspaceState {
     ]
     .into_iter()
     .fold(state, |state, event| state.heard(session, event))
+}
+
+/// A conversation on a turn with a prompt of dozens of lines waiting first and five short ones behind it.
+fn queued_huge() -> WorkspaceState {
+    let state = live(Turn::Working);
+    let session = state.sessions.len() - 1;
+    let huge = (1..=60)
+        .map(|line| {
+            format!(
+                "Step {line}: check the clamp on the edge it was given and write down what it did."
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::iter::once(huge)
+        .chain((2..=6).map(|id| format!("Short follow-up number {id}")))
+        .enumerate()
+        .fold(state, |state, (index, text)| {
+            state.heard(
+                session,
+                Event::Queued {
+                    id: index as u64 + 1,
+                    text,
+                    files: Vec::new(),
+                },
+            )
+        })
+}
+
+/// A conversation on a turn with a prompt waiting that carries two elements picked from a web page after what the reader typed.
+fn queued_elements() -> WorkspaceState {
+    let state = live(Turn::Working);
+    let session = state.sessions.len() - 1;
+    let picked = |tag: &str, text: &str, selector: &str| pm_components::elements::Element {
+        tag: tag.to_owned(),
+        text: text.to_owned(),
+        selector: selector.to_owned(),
+        width: 120.0,
+        height: 32.0,
+        url: "http://localhost:3000/settings".to_owned(),
+        title: "Settings".to_owned(),
+        ..Default::default()
+    };
+    let section = pm_components::elements::message(&[
+        picked("button", "Save", "main > form > button.primary"),
+        picked("h2", "Profile", "main > h2"),
+    ]);
+    state.heard(
+        session,
+        Event::Queued {
+            id: 1,
+            text: format!("Make the save button match the heading's colour\n\n{section}"),
+            files: Vec::new(),
+        },
+    )
 }
 
 /// A conversation told as the server tells it after a restart, from what the harness saved: the offer first, then each turn with its tools, its context meter and its end, the stopped and the failed turns among them.

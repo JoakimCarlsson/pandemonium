@@ -959,7 +959,9 @@ impl WorkspaceState {
             if self.location == Location::Local && !self.offers_container() {
                 self.picker = None;
             }
-        } else if let Some(index) = within(BRANCH_BASE, self.branches.len()) {
+        } else if let Some(index) = within(BRANCH_BASE, self.branches.len())
+            .filter(|_| self.picker == Some(Picker::Location))
+        {
             self.base = Some(self.branches[index].clone());
             self.location = Location::Worktree;
             self.picker = None;

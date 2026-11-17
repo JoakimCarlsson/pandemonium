@@ -1,17 +1,20 @@
-//! The prompts above the prompt box that wait for the agent's turn to end, each of which can be read in full, edited in the prompt box, sent now or removed.
+//! The prompts above the prompt box that wait for the agent's turn to end, each of which can be edited in the prompt box, sent now or removed.
+//!
+//! Each row shows the first few lines of its prompt, with the elements and captures it carries as chips, and only the first few rows are shown, so that a long prompt or many of them never push the prompt box out of the window; the whole of a prompt is read by editing it.
 
 use pm_icon::IconName;
 use pm_input::FocusId;
 use pm_style::{
-    Radius, Role, bg, border, border_color, flex, flex_1, flex_col, flex_none, gap, items_center,
-    items_start, mb, min_w_px, pl, pr, pt, py, rounded, w_full,
+    Color, Radius, Role, bg, border, border_color, flex, flex_1, flex_col, flex_none, gap, h,
+    items_center, items_start, leading_ratio, mb, min_w_px, pl, pr, pt, py, rounded, text_color,
+    text_px, w_full,
 };
 use pm_text::{Field, Shaper};
-use pm_ui::{Node, node};
+use pm_ui::{Node, node, text};
 
 use crate::Button;
 use crate::button::Variant;
-use crate::parts::{glyph, line, paragraph};
+use crate::parts::{glyph, line};
 use crate::sample::{Queued, Session};
 use crate::size::Size;
 use crate::state::{HURRY_BASE, Outgoing, Page, REMOVE_QUEUED_BASE, WorkspaceState, prompt_field};
@@ -33,6 +36,18 @@ const BESIDE_EDIT: f32 = 100.0;
 
 /// How much of a row's width its border, padding, glyph and gaps take, in logical pixels.
 const CHROME: f32 = 50.0;
+
+/// The most wrapped lines of a waiting prompt's text its row shows; the rest is read by editing it.
+const SHOWN_LINES: usize = 3;
+
+/// The most waiting prompts shown as rows; the others are counted in a line below them.
+const SHOWN_ROWS: usize = 3;
+
+/// How tall the type of a waiting prompt's text is, in logical pixels.
+const TEXT_PIXELS: u32 = 13;
+
+/// The line height of a waiting prompt's text, as a multiple of its type's height.
+const TEXT_LEADING: f32 = 1.5;
 
 /// A waiting prompt whose text is being edited in the prompt box.
 #[derive(Clone, Debug, PartialEq)]
@@ -60,7 +75,8 @@ impl WorkspaceState {
         let Some(queued) = session.queued.get(index) else {
             return;
         };
-        let (scope, id, text) = (session.scope, queued.id, prompt_field(&queued.text));
+        let (scope, id) = (session.scope, queued.id);
+        let text = prompt_field(crate::elements::split(&queued.text).0);
         let draft = std::mem::replace(&mut self.prompt, text);
         self.editing_queued = Some(EditingQueued { scope, id, draft });
         self.outbox.push(Outgoing::HoldQueue {
@@ -80,6 +96,18 @@ impl WorkspaceState {
                 session,
                 held: false,
             });
+        }
+    }
+
+    /// Gives up an edit of a waiting prompt left open before a prompt of the session at `session` is sent now. An edit in that session only ends here, since the server lets go of the queue's hold for the hurry itself and letting go first would hand it the oldest prompt ahead of the hurried one; an edit in another session lets that session's queue go on.
+    pub(crate) fn give_up_edit_for_hurry(&mut self, session: usize) {
+        let Some(scope) = self.editing_queued.as_ref().map(|editing| editing.scope) else {
+            return;
+        };
+        if self.sessions.get(session).map(|held| held.scope) == Some(scope) {
+            self.end_queued_edit();
+        } else {
+            self.cancel_queued_edit();
         }
     }
 
@@ -110,7 +138,7 @@ impl WorkspaceState {
             self.cancel_queued_edit();
             return;
         };
-        let text = self.prompt.text().trim().to_owned();
+        let text = with_selection(self.prompt.text().trim(), &queued.text);
         if text.is_empty() && queued.files.is_empty() {
             return;
         }
@@ -128,6 +156,54 @@ impl WorkspaceState {
             }
         });
     }
+}
+
+/// `typed`, the text of a waiting prompt as edited in the prompt box, followed by the section of picked elements and held captures that `original`, its text before the edit, ends with, which the prompt box never showed, so that an edit keeps them.
+fn with_selection(typed: &str, original: &str) -> String {
+    let kept = crate::elements::split(original).0;
+    let section = original[kept.len()..].trim_start();
+    match (typed.is_empty(), section.is_empty()) {
+        (_, true) => typed.to_owned(),
+        (true, false) => section.to_owned(),
+        (false, false) => format!("{typed}\n\n{section}"),
+    }
+}
+
+/// The first `SHOWN_LINES` lines of `content` wrapped to `width` logical pixels, in `tone`, the last of them ended with an ellipsis when more of it is left out.
+fn clamped(content: &str, tone: Role, width: f32, shaper: &mut Shaper) -> Node {
+    let tone: Color = tone.into();
+    let lines = pm_ui::wrap(
+        shaper,
+        content,
+        [text_px(TEXT_PIXELS), leading_ratio(TEXT_LEADING)],
+        width.max(32.0),
+    );
+    let cut = lines.len() > SHOWN_LINES;
+    let shown = lines.len().min(SHOWN_LINES);
+    node().styles([flex(), flex_col(), min_w_px(0)]).children(
+        lines.into_iter().take(shown).enumerate().map(|(at, part)| {
+            let words = content[part.start..part.end].trim_end();
+            match (cut && at + 1 == shown, words.is_empty()) {
+                (true, _) => line(format!("{words}\u{2026}"), TEXT_PIXELS, TEXT_LEADING, tone),
+                (false, true) => node().styles([h(3)]),
+                (false, false) => text(words).styles([
+                    text_px(TEXT_PIXELS),
+                    leading_ratio(TEXT_LEADING),
+                    text_color(tone),
+                    min_w_px(0),
+                ]),
+            }
+        }),
+    )
+}
+
+/// What a row shows of a waiting prompt's `content` in a column `width` logical pixels wide: the elements and captures it carries as chips, as a sent message shows them, then the first lines of what the reader typed, in `tone`.
+fn body(content: &str, tone: Role, width: f32, shaper: &mut Shaper) -> Node {
+    let (typed, labels) = crate::elements::split(content);
+    node()
+        .styles([flex_1(), min_w_px(0), pt(1), flex(), flex_col(), gap(1.5)])
+        .children((!labels.is_empty()).then(|| crate::elements::sent_chips(&labels)))
+        .children((!typed.is_empty()).then(|| clamped(typed, tone, width, shaper)))
 }
 
 /// A button showing only `icon`, saying what it does with `tooltip`, answering to `id`.
@@ -156,7 +232,7 @@ fn frame() -> Node {
     ])
 }
 
-/// One waiting prompt, at `index`, in a row `width` logical pixels wide: all its text wrapped, how many files go with it and buttons to edit it, send it now or remove it.
+/// One waiting prompt, at `index`, in a row `width` logical pixels wide: the first lines of its text and chips for what it carries, how many files go with it and buttons to edit it, send it now or remove it.
 fn waiting(index: usize, queued: &Queued, width: f32, shaper: &mut Shaper) -> Node {
     let counted = if queued.files.is_empty() {
         0.0
@@ -192,11 +268,7 @@ fn waiting(index: usize, queued: &Queued, width: f32, shaper: &mut Shaper) -> No
                 .styles([pt(1)])
                 .child(glyph(IconName::Progress, 3.5, Role::Muted)),
         )
-        .child(
-            node()
-                .styles([flex_1(), min_w_px(0), pt(1)])
-                .child(paragraph(&queued.text, 13, 1.5, Role::Text, room, shaper)),
-        );
+        .child(body(&queued.text, Role::Text, room, shaper));
     if !queued.files.is_empty() {
         let count = queued.files.len();
         let files = if count == 1 { "file" } else { "files" };
@@ -210,7 +282,7 @@ fn waiting(index: usize, queued: &Queued, width: f32, shaper: &mut Shaper) -> No
     row.child(buttons)
 }
 
-/// The waiting prompt being edited, in a row `width` logical pixels wide: the text it has until the edit is saved, and a button to give the edit up.
+/// The waiting prompt being edited, in a row `width` logical pixels wide: the first lines of the text it has until the edit is saved, which the prompt box holds whole, chips for what it carries, and a button to give the edit up.
 fn editing(queued: &Queued, width: f32, shaper: &mut Shaper) -> Node {
     let room = (width - CHROME - BESIDE_EDIT).max(120.0);
     frame()
@@ -219,11 +291,7 @@ fn editing(queued: &Queued, width: f32, shaper: &mut Shaper) -> Node {
                 .styles([pt(1)])
                 .child(glyph(IconName::Pencil, 3.5, Role::Accent)),
         )
-        .child(
-            node()
-                .styles([flex_1(), min_w_px(0), pt(1)])
-                .child(paragraph(&queued.text, 13, 1.5, Role::Muted, room, shaper)),
-        )
+        .child(body(&queued.text, Role::Muted, room, shaper))
         .child(
             Button::new("Cancel", QUEUED_CANCEL)
                 .variant(Variant::Ghost)
@@ -233,7 +301,7 @@ fn editing(queued: &Queued, width: f32, shaper: &mut Shaper) -> Node {
         )
 }
 
-/// The prompts waiting for `session`'s agent, oldest first, in a column `width` logical pixels wide, or nothing when none waits.
+/// The prompts waiting for `session`'s agent, oldest first, in a column `width` logical pixels wide, or nothing when none waits. Only the first `SHOWN_ROWS` are shown, and the one being edited wherever it is; a line counts the others.
 pub fn queued(
     state: &WorkspaceState,
     session: &Session,
@@ -249,12 +317,27 @@ pub fn queued(
         .filter(|open| open.scope == session.scope)
         .map(|open| open.id);
     let mut rows = node().styles([flex(), flex_col(), gap(1), mb(2)]);
+    let mut hidden = 0;
     for (index, waiting_prompt) in session.queued.iter().enumerate() {
-        rows = rows.child(if editing_id == Some(waiting_prompt.id) {
+        let edited = editing_id == Some(waiting_prompt.id);
+        if index >= SHOWN_ROWS && !edited {
+            hidden += 1;
+            continue;
+        }
+        rows = rows.child(if edited {
             editing(waiting_prompt, width, shaper)
         } else {
             waiting(index, waiting_prompt, width, shaper)
         });
+    }
+    if hidden > 0 {
+        let prompts = if hidden == 1 { "prompt" } else { "prompts" };
+        rows = rows.child(node().styles([pl(3)]).child(line(
+            format!("+{hidden} more {prompts} waiting"),
+            12,
+            1.4,
+            Role::Muted,
+        )));
     }
     Some(rows)
 }
@@ -333,6 +416,86 @@ mod tests {
         assert!(matches!(
             state.take_outbox().last(),
             Some(Outgoing::HoldQueue { held: false, .. })
+        ));
+    }
+
+    /// A state whose open session has one prompt waiting that carries a picked element after what the reader typed.
+    fn selection_state() -> (WorkspaceState, String) {
+        let state = WorkspaceState::sample();
+        let session = state.sessions.len() - 1;
+        let state = state.after(FocusId(crate::state::SESSION_BASE + session as u64));
+        let section = crate::elements::message(&[crate::elements::Element {
+            tag: "button".to_owned(),
+            text: "Save".to_owned(),
+            ..Default::default()
+        }]);
+        let text = format!("fix this\n\n{section}");
+        let state = state
+            .heard(
+                session,
+                Event::Queued {
+                    id: 1,
+                    text: text.clone(),
+                    files: Vec::new(),
+                },
+            )
+            .drained();
+        (state, section)
+    }
+
+    /// Editing a prompt that carries a picked element puts only what the reader typed in the prompt box, and saving it hands the server the edited text with the element's section after it, as before.
+    #[test]
+    fn editing_keeps_the_selected_elements() {
+        let (state, section) = selection_state();
+        let mut state = state.after(FocusId(EDIT_QUEUED_BASE));
+        assert_eq!(state.prompt.text(), "fix this");
+        state.take_outbox();
+        state = state
+            .edited(PROMPT, Edit::Paste(", please".to_owned()))
+            .after(crate::state::SEND);
+        let expected = format!("fix this, please\n\n{section}");
+        assert!(matches!(
+            state.take_outbox().as_slice(),
+            [Outgoing::EditQueued { queued: 1, text, .. }] if *text == expected
+        ));
+    }
+
+    /// Saving an edit of a prompt that carries a picked element without changing what was typed only lets the queue go on.
+    #[test]
+    fn an_unchanged_edit_with_elements_changes_nothing() {
+        let (state, _) = selection_state();
+        let mut state = state.after(FocusId(EDIT_QUEUED_BASE)).drained();
+        state = state.after(crate::state::SEND);
+        assert!(matches!(
+            state.take_outbox().as_slice(),
+            [Outgoing::HoldQueue { held: false, .. }]
+        ));
+    }
+
+    /// Send now is heard however many branches the prompt box has loaded, which number their rows from a base of their own.
+    #[test]
+    fn sending_now_with_many_branches_loaded_hurries_the_prompt() {
+        let mut state = waiting_state();
+        state.branches = (0..500).map(|n| format!("branch-{n}")).collect();
+        let mut state = state.after(FocusId(HURRY_BASE + 1));
+        assert!(matches!(
+            state.take_outbox().as_slice(),
+            [Outgoing::Hurry { queued: 2, .. }]
+        ));
+    }
+
+    /// Sending another prompt now while one is being edited ends the edit, puts the draft back and hurries the prompt without first letting the queue go on.
+    #[test]
+    fn sending_now_while_editing_ends_the_edit() {
+        let mut state = waiting_state()
+            .after(FocusId(EDIT_QUEUED_BASE))
+            .drained()
+            .after(FocusId(HURRY_BASE + 1));
+        assert!(state.editing_queued.is_none());
+        assert_eq!(state.prompt.text(), "my draft");
+        assert!(matches!(
+            state.take_outbox().as_slice(),
+            [Outgoing::Hurry { queued: 2, .. }]
         ));
     }
 }

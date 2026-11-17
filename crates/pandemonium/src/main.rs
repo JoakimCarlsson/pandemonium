@@ -275,6 +275,8 @@ fn main() {
             Some("subagents-worktrees") => Shot::AgentsWorktrees,
             Some("queued") => Shot::Queued,
             Some("queued-long") => Shot::QueuedLong,
+            Some("queued-huge") => Shot::QueuedHuge,
+            Some("queued-elements") => Shot::QueuedElements,
             Some("queued-editing") => Shot::QueuedEditing,
             Some("usage") => Shot::Usage,
             Some("goal") => Shot::Goal,
