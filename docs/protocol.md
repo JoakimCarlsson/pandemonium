@@ -271,6 +271,10 @@ subfolders are included, all marked ignored; a folder inside an ignored folder
 is listed only when the folder holding it is expanded too. It defaults to an
 empty array. These contents do not consume the base listing's `limit`. Clients
 list again when an ignored folder is unfolded and when notified of changes.
+The window asks for every file by sending a `limit` of 4294967295. Whatever
+the `limit`, the server cuts a listing whose paths pass 40 MiB, folders kept
+first, then files, then ignored entries, so the answer stays inside the
+client's message limit.
 
 A `directory` that is no repository but has repositories as direct children
 (each with a `.git` entry, hidden and bulky folders such as `node_modules`,

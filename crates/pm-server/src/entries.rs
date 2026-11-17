@@ -218,10 +218,55 @@ pub(crate) fn unfolded(mut expanded: Vec<String>) -> Vec<String> {
     expanded
 }
 
+/// The most bytes of paths one listing carries, which keeps its message well inside the 64 MiB a client takes.
+const LISTING_BYTES: usize = 40 * 1024 * 1024;
+
+/// Cuts `lists`, taken in order, where the paths kept so far reach `budget` bytes as JSON strings, and empties the lists after that one.
+fn cut_to(budget: usize, lists: [&mut Vec<String>; 3]) {
+    let mut left = budget;
+    for list in lists {
+        let kept = list
+            .iter()
+            .take_while(|path| match left.checked_sub(path.len() + 3) {
+                Some(rest) => {
+                    left = rest;
+                    true
+                }
+                None => {
+                    left = 0;
+                    false
+                }
+            })
+            .count();
+        list.truncate(kept);
+    }
+}
+
+/// Cuts a listing of `folders`, `paths` and `ignored` entries, kept in that order, to what one message can carry; a listing of ordinary size is left whole.
+pub(crate) fn fit_listing(
+    folders: &mut Vec<String>,
+    paths: &mut Vec<String>,
+    ignored: &mut Vec<String>,
+) {
+    cut_to(LISTING_BYTES, [folders, paths, ignored]);
+}
+
 /// Checks shallow ignored listings and their project boundaries.
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A listing is cut where its budget runs out and nothing after the cut is kept.
+    #[test]
+    fn a_listing_is_cut_at_its_budget() {
+        let mut folders = vec!["ab".to_owned()];
+        let mut paths = vec!["abcd".to_owned(), "abcdefgh".to_owned(), "a".to_owned()];
+        let mut ignored = vec!["a".to_owned()];
+        cut_to(12, [&mut folders, &mut paths, &mut ignored]);
+        assert_eq!(folders, ["ab"]);
+        assert_eq!(paths, ["abcd"]);
+        assert!(ignored.is_empty());
+    }
 
     /// Ignored contents are listed one level at a time without consuming the tracked file budget.
     #[test]

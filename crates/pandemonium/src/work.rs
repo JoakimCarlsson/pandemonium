@@ -28,8 +28,8 @@ pub(crate) mod picture;
 mod tasks;
 mod watch;
 
-/// The most files listed for the list behind an `@`.
-const FILE_LIMIT: usize = 20_000;
+/// The count of files asked for in a listing: more than any folder holds, so every file is listed, and small enough for a server of any word size to read.
+const FILE_LIMIT: usize = u32::MAX as usize;
 
 /// What failing to carry out `change` is called.
 fn entry_failure(change: &EntryChange) -> &'static str {

@@ -778,6 +778,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     }
                 }
             }
+            crate::entries::fit_listing(&mut folders, &mut paths, &mut ignored);
             Response::Files {
                 paths,
                 folders,
