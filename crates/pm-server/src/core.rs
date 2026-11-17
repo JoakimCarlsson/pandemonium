@@ -261,6 +261,14 @@ impl Session {
         told
     }
 
+    /// Says again that the session numbered `number` was last worked in at `updated`, on disk as well, for after the server noted something of its own that the reader had no part in.
+    pub(crate) fn keep_updated(&mut self, number: u64, updated: u64) {
+        if self.meta.updated != updated {
+            self.meta.updated = updated;
+            sessions::save_meta(number, &self.meta);
+        }
+    }
+
     /// Takes `event`, which the agent of the session numbered `number` reported, into the log, does what it calls for and returns what it noted.
     ///
     /// A prompt the agent reports is a turn it started itself, toward its goal, so the session is busy until that turn finishes; it says, as a turn the reader hands over does, whether the harness keeps the files around it.
@@ -423,7 +431,7 @@ impl Core {
         self.next_debug.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// Holds again the sessions kept on disk, without their agents, and numbers new ones after them; the commands, turns and trust requests their agents left open are closed, as those agents are gone.
+    /// Holds again the sessions kept on disk, without their agents, and numbers new ones after them; the commands, turns and trust requests their agents left open are closed, as those agents are gone. Closing them leaves when each session was last worked in as it was, so that a server starting does not make an old session look recent.
     pub(crate) fn load(&self) {
         let mut highest = 0;
         if let Ok(mut sessions) = self.sessions.lock() {
@@ -432,10 +440,12 @@ impl Core {
                     continue;
                 };
                 highest = highest.max(number);
+                let updated = meta.updated;
                 let mut session = Session::new(agent, meta.agent_folder(), log, meta);
                 session.forget_queue(number);
                 session.agent_gone(number, INTERRUPTED);
                 session.drop_trust(number);
+                session.keep_updated(number, updated);
                 sessions.insert(number, session);
             }
         }

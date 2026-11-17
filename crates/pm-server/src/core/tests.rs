@@ -67,6 +67,29 @@ fn interrupted_turn_ends_after_what_clients_heard() {
     assert!(held.end_open_turn(NUMBER, INTERRUPTED).is_empty());
 }
 
+/// Ending the turn a stopped server left open does not change when the session was last worked in, once that is said again.
+#[test]
+fn an_interrupted_turn_keeps_when_the_session_was_last_worked_in() {
+    let _forget = Forget;
+    let mut held = session(vec![(
+        1,
+        Event::Prompted {
+            text: "work".to_owned(),
+            files: Vec::new(),
+            checkpoint: false,
+            turn: 1,
+            saved: None,
+        },
+    )]);
+    held.meta.updated = 7;
+
+    held.agent_gone(NUMBER, INTERRUPTED);
+    assert_ne!(held.meta.updated, 7);
+    held.keep_updated(NUMBER, 7);
+
+    assert_eq!(held.meta.updated, 7);
+}
+
 /// An agent that stops in the middle of a turn ends the turn with an error, after noting that what it had running stopped with it.
 #[test]
 fn agent_stopping_mid_turn_ends_the_turn_with_an_error() {
