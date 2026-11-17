@@ -27,7 +27,7 @@ pub struct Drawing {
 
 impl Drawing {
     /// How wide and tall the drawing is at its own size, in logical pixels.
-    fn size(&self) -> (f32, f32) {
+    pub(crate) fn size(&self) -> (f32, f32) {
         (
             self.picture.width as f32 / self.density,
             self.picture.height as f32 / self.density,
@@ -49,6 +49,15 @@ pub enum Wanted {
     File(String),
     /// A picture fetched from the web, by its address.
     Address(String),
+    /// A picture of a document an agent wrote, rendered sealed from the network at a viewport.
+    Prototype {
+        /// The document, as HTML.
+        html: String,
+        /// The viewport's width, in CSS pixels.
+        width: u32,
+        /// The viewport's height, in CSS pixels.
+        height: u32,
+    },
 }
 
 /// Whether a fence naming `language` holds a diagram.
@@ -71,6 +80,11 @@ pub fn diagram_key(source: &str) -> u64 {
 /// The key a formula written in TeX as `source` is kept under.
 pub fn formula_key(source: &str) -> u64 {
     key_of(("formula", source))
+}
+
+/// The key the picture of the document `html`, rendered at a viewport of `width` by `height` CSS pixels, is kept under: the same document at the same viewport has the same key, so it is rendered once however often it is drawn.
+pub fn prototype_key(html: &str, width: u32, height: u32) -> u64 {
+    key_of(("prototype", html, width, height))
 }
 
 /// The key the image at `source`, named by a markdown file at `place` or by text in no file, is kept under.
@@ -259,6 +273,23 @@ impl WorkspaceState {
                 (Wanted::Address(address), _) => Outgoing::FetchFigure { key, address },
                 (Wanted::File(path), Some(session)) => Outgoing::ReadFigure { key, session, path },
                 (Wanted::File(_), None) => continue,
+                (
+                    Wanted::Prototype {
+                        html,
+                        width,
+                        height,
+                    },
+                    _,
+                ) => {
+                    self.figures_asked.insert(key);
+                    self.exhibits.wanted.push(crate::exhibit::PreviewRequest {
+                        key,
+                        html,
+                        width,
+                        height,
+                    });
+                    continue;
+                }
             };
             self.figures_asked.insert(key);
             self.outbox.push(asked);
@@ -294,11 +325,12 @@ impl WorkspaceState {
         self
     }
 
-    /// The state with every figure let go, as when the colours diagrams are drawn in change, and those of the file shown asked for again.
+    /// The state with every figure let go, as when the colours diagrams are drawn in change, and those of the file shown, of the exhibits and of the mockups of open questions asked for again.
     pub fn without_figures(mut self) -> Self {
         self.figures.clear();
         self.figures_asked.clear();
         self.ask_shown_figures();
+        self.ask_all_exhibit_figures();
         self
     }
 }

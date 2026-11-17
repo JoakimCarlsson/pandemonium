@@ -8,6 +8,7 @@ pub use omc_wire::{
     Setting, Skipped, Slash, Spent, Standing, Subagent, SubagentState, Tool, ToolState,
     TrustRequest, Usage, Verdict, Worktree, dollars,
 };
+pub use omc_wire::{Exhibit, ExhibitKind};
 
 /// What an account has used of its allowance, as the event that carries it holds it.
 ///
@@ -159,6 +160,8 @@ pub enum Event {
         /// Why the request failed, as the provider said.
         reason: String,
     },
+    /// The agent put a visual in front of the reader, a diagram or a prototype, without waiting on them. The harness does not tell it again when the conversation is resumed, so the session's log is what keeps it.
+    Show(Exhibit),
 }
 
 /// What an agent says about itself when a conversation is opened.
@@ -274,6 +277,7 @@ impl Event {
             Wire::Plan(plan) => Some(Self::Plan(plan)),
             Wire::Ask(permission) => Some(Self::Ask(permission)),
             Wire::Inquire(inquiry) => Some(Self::Inquire(inquiry)),
+            Wire::Show(exhibit) => Some(Self::Show(exhibit)),
             Wire::Finished(failure) => Some(Self::Finished(failure)),
             Wire::SignedOut { reason, account } => Some(Self::SignedOut { reason, account }),
             Wire::SignedIn => Some(Self::SignedIn),
@@ -476,6 +480,25 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Option<Event>>(&kept).unwrap(),
             Some(Event::Trust(request))
+        );
+    }
+
+    /// An exhibit the agent shows becomes the app's event with its content whole, and survives the trip through the session log's encoding, which is what keeps it once the harness no longer tells it.
+    #[test]
+    fn a_shown_exhibit_is_kept() {
+        let exhibit = Exhibit {
+            id: "call-1".to_owned(),
+            title: "Login flow".to_owned(),
+            kind: ExhibitKind::Prototype,
+            content: "<!doctype html><p>Hello</p>".to_owned(),
+        };
+        let line = omc_wire::encode(&omc_wire::Event::Show(exhibit.clone())).unwrap();
+        let heard = Event::from_harness(omc_wire::decode(&line).unwrap());
+        assert_eq!(heard, Some(Event::Show(exhibit.clone())));
+        let kept = serde_json::to_string(&heard).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Option<Event>>(&kept).unwrap(),
+            Some(Event::Show(exhibit))
         );
     }
 }

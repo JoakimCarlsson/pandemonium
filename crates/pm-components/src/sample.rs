@@ -334,6 +334,8 @@ pub struct Message {
     pub steps: Vec<Step>,
     /// The forms of questions the reader answered during the reply, each with how many steps came before it: every question and its answer, or nothing when skipped.
     pub answers: Vec<(usize, Vec<Answered>)>,
+    /// The diagrams and prototypes the agent showed the reader during the reply, each with how many steps came before it.
+    pub exhibits: Vec<(usize, pm_harness::Exhibit)>,
     /// Whether the steps are shown, when the reader has chosen; otherwise only the latest turn's are.
     pub open: Option<bool>,
     /// How many steps the reply had when its text last grew, to tell when new words follow a step.
@@ -534,6 +536,7 @@ impl Message {
             open: None,
             said_after: 0,
             answers: Vec::new(),
+            exhibits: Vec::new(),
             said: Vec::new(),
             attachments: Vec::new(),
             checkpoint: false,

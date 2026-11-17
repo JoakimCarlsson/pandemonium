@@ -4,6 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::input::{Button, Cursor, Key};
 
+/// The feature a helper announces in [`Event::Features`] when it opens and renders sealed documents, [`Request::OpenHtml`] and [`Request::RenderHtml`]; a helper that does not announce it ignores both.
+pub const SEALED_PAGES: &str = "sealed-pages";
+
 /// What running a tool came to.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -373,6 +376,34 @@ pub enum Request {
         /// Whether to load the page anyway, which holds for that origin until the helper ends; when not, the page goes back.
         proceed: bool,
     },
+    /// Opens the document `html` in a new page that is sealed: it lives in a session of its own kept in memory only, its scripts run, every request it makes but for `data:`, `blob:` and `about:` addresses is cancelled, and it cannot leave its document. The tools of agents do not work on it.
+    OpenHtml {
+        /// The new page.
+        page: u32,
+        /// The document, at most 256 KiB.
+        html: String,
+        /// What the page is called while the document names nothing.
+        title: String,
+        /// Its width in logical pixels.
+        width: u32,
+        /// Its height in logical pixels.
+        height: u32,
+        /// The display scale it is drawn at.
+        scale: f32,
+    },
+    /// Renders the document `html`, sealed as an [`Request::OpenHtml`] page is, offscreen at a viewport of `width` by `height` CSS pixels into the PNG file `path`; the answer is an [`Event::HtmlRendered`] with the same `ticket`. A file that is already there is left as it is and answered at once.
+    RenderHtml {
+        /// The caller's number for the render.
+        ticket: u64,
+        /// The document, at most 256 KiB.
+        html: String,
+        /// The viewport's width in CSS pixels.
+        width: u32,
+        /// The viewport's height in CSS pixels.
+        height: u32,
+        /// Where the picture goes: an absolute path ending in `.png`.
+        path: String,
+    },
 }
 
 /// What the helper reports to the window.
@@ -510,6 +541,20 @@ pub enum Event {
         url: String,
         /// Whether a tool of an agent was running on the page when it asked, so the new tab is the agent's.
         agent: bool,
+    },
+    /// A render asked for with [`Request::RenderHtml`] ended.
+    HtmlRendered {
+        /// The caller's number for the render.
+        ticket: u64,
+        /// Where the picture is; empty when there is none.
+        path: String,
+        /// Why there is no picture; empty when there is one.
+        error: String,
+    },
+    /// What the helper can do beyond what every helper does, such as [`SEALED_PAGES`]; sent once, before [`Event::Ready`]. A helper that sends none has none of them.
+    Features {
+        /// The names of the features.
+        features: Vec<String>,
     },
 }
 

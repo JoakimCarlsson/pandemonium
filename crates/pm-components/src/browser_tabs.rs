@@ -80,6 +80,18 @@ pub fn locked_message(tool: &str, tab: u32) -> String {
     )
 }
 
+/// The address line of a tab that shows a sealed document, which has no address of its own.
+pub const SEALED_ADDRESS: &str = "about:prototype";
+
+/// A document an agent wrote that a tab shows sealed: its scripts run, the network is denied to it, and the tools of agents do not work on it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SealedPage {
+    /// What the tab is called while the document names nothing.
+    pub title: String,
+    /// The document, as HTML.
+    pub html: std::sync::Arc<str>,
+}
+
 /// One tab of the browser: its page, address, history and zoom, and what the reader and the agents may do to it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BrowserTab {
@@ -113,6 +125,8 @@ pub struct BrowserTab {
     pub agent: bool,
     /// Whether the tab is kept from the agents' tools that change a page; never so for a tab an agent opened, which agents always may work in.
     pub locked: bool,
+    /// The document the tab shows sealed from the network in place of an address, when it shows one; agents are told nothing of such a tab and their tools do not work on it.
+    pub sealed: Option<SealedPage>,
 }
 
 impl BrowserTab {
@@ -134,6 +148,7 @@ impl BrowserTab {
             commands: vec![Command::Load(address.to_owned())],
             agent,
             locked: false,
+            sealed: None,
         }
     }
 
@@ -305,12 +320,13 @@ impl Browser {
         (start..start + fit, each(room, fit).min(TAB_WIDTH))
     }
 
-    /// What agents are told of each tab, in the order of the strip.
+    /// What agents are told of each tab, in the order of the strip; a tab that shows a sealed document is left out, so that to agents it is a tab that does not exist.
     pub fn tab_infos(&self) -> Vec<TabInfo> {
         let target = self.agent_target();
         self.tabs
             .iter()
             .enumerate()
+            .filter(|(_, tab)| tab.sealed.is_none())
             .map(|(index, tab)| TabInfo {
                 id: tab.id,
                 title: tab.label(),
@@ -354,6 +370,38 @@ impl WorkspaceState {
             browser.agent_tab = Some(id);
         }
         Some(id)
+    }
+
+    /// Opens the browser if it is not open, then a tab, shown, on the document `html` sealed from the network and called `title`; the tab is locked against agents. Gives the tab's number, or nothing when there are too many tabs.
+    pub fn browser_sealed_tab_opened(&mut self, title: &str, html: &str) -> Option<u32> {
+        let id = self.browser_tab_opened(SEALED_ADDRESS, None, false, true)?;
+        if let Some(tab) = self
+            .browser
+            .as_mut()
+            .and_then(|browser| browser.tab_mut(id))
+        {
+            tab.title = title.to_owned();
+            tab.locked = true;
+            tab.sealed = Some(SealedPage {
+                title: title.to_owned(),
+                html: html.into(),
+            });
+            tab.commands = vec![Command::LoadSealed];
+        }
+        self.tab = Tab::Browser;
+        Some(id)
+    }
+
+    /// Makes the tab numbered `id` an ordinary tab again, as when the reader sends it to an address: it no longer shows a sealed document and is no longer locked for it.
+    pub fn browser_tab_unsealed(&mut self, id: u32) {
+        if let Some(tab) = self
+            .browser
+            .as_mut()
+            .and_then(|browser| browser.tab_mut(id))
+            && tab.sealed.take().is_some()
+        {
+            tab.locked = false;
+        }
     }
 
     /// Shows the browser pane, as opening a tab does.

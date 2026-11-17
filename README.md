@@ -58,6 +58,12 @@ welcome as [issues](https://github.com/JoakimCarlsson/pandemonium/issues).
   lives on `host`. A phone is only another client.
 - **GPU-native.** Rendered with wgpu, windowed with winit, with a UI layer
   written from scratch. No web view, no Electron, no UI framework.
+- **Agents show, not only tell.** An agent can put a Mermaid diagram or a
+  self-contained HTML prototype into the conversation, and give the answers of
+  a question mockups that are shown side by side to compare. Diagrams are drawn
+  by the window itself; prototypes and mockups are rendered by the optional
+  embedded browser, sealed from the network (see
+  [docs/browser.md](docs/browser.md#sealed-pages)).
 
 The protocol between clients and a server is in [docs/protocol.md](docs/protocol.md).
 

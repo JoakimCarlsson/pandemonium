@@ -11,7 +11,7 @@ use crate::sample::Session;
 const CENT: u64 = 10_000;
 
 /// A cost of `micros` millionths of a US dollar, in dollars: to the cent, or to a hundredth of a cent when it is less than a cent.
-fn dollars(micros: u64) -> String {
+pub(crate) fn dollars(micros: u64) -> String {
     let amount = pm_harness::dollars(micros);
     if micros == 0 || micros >= CENT {
         format!("${amount:.2}")
@@ -21,7 +21,7 @@ fn dollars(micros: u64) -> String {
 }
 
 /// A count of tokens, in thousands or millions once it reaches them.
-fn tokens(count: u64) -> String {
+pub(crate) fn tokens(count: u64) -> String {
     match count {
         0..1_000 => count.to_string(),
         1_000..1_000_000 => format!("{}k", count / 1_000),
@@ -30,7 +30,7 @@ fn tokens(count: u64) -> String {
 }
 
 /// A count of requests, in words.
-fn requests(count: u64) -> String {
+pub(crate) fn requests(count: u64) -> String {
     match count {
         1 => "1 request".to_owned(),
         _ => format!("{count} requests"),

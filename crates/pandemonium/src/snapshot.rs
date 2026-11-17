@@ -59,8 +59,14 @@ const NARROW_WIDTH: u32 = 640;
 /// Logical height of a snapshot of the settings window at its smallest.
 const NARROW_HEIGHT: u32 = 420;
 
+/// Logical width of the snapshot of a question whose answers have mockups in a narrow window, where the tiles sit one to a row.
+const MOCKUPS_NARROW_WIDTH: u32 = 760;
+
+/// Logical height of that snapshot, tall enough for three tiles above one another.
+const MOCKUPS_NARROW_HEIGHT: u32 = 1500;
+
 /// The name of the shot of each section of the settings window, after `settings-`.
-pub const SETTINGS_SHOTS: [(&str, Section); 28] = [
+pub const SETTINGS_SHOTS: [(&str, Section); 29] = [
     ("general", Section::General),
     ("appearance", Section::Appearance),
     ("editor", Section::Editor),
@@ -82,6 +88,7 @@ pub const SETTINGS_SHOTS: [(&str, Section); 28] = [
     ("model-servers", Section::ModelServers),
     ("models", Section::ModelSlots),
     ("orchestration", Section::Orchestration),
+    ("usage", Section::Usage),
     ("customizations", Section::Customizations),
     ("skills", Section::Skills),
     ("instructions", Section::Instructions),
@@ -284,6 +291,20 @@ pub enum Shot {
     TrustChanged,
     /// A conversation whose agent waits for the answers to a form of three questions.
     Inquiring,
+    /// A conversation whose agent showed the reader a diagram, drawn in its card.
+    ExhibitDiagram,
+    /// A conversation whose agent showed the reader a prototype, with a sample picture standing in for the one the browser helper renders.
+    ExhibitPrototype,
+    /// The same prototype while the browser helper is not installed, its card offering to install it where the picture would be.
+    ExhibitPrototypeMissing,
+    /// The same prototype while the browser helper that runs is too old to render sealed documents, its card offering to update it and its Open button disabled.
+    ExhibitPrototypeOutdated,
+    /// The same prototype after the helper failed to render it, its card saying why with a button that renders it again.
+    ExhibitPrototypeFailed,
+    /// The same three answers with mockups while the browser helper is not installed, each tile offering to install it where the picture would be.
+    InquiringMockupsMissing,
+    /// A conversation whose agent waits for an answer among three that have mockups, the first recommended and the second picked, with sample pictures standing in for the ones the browser helper renders; in a narrow window with the review panel closed, where the tiles sit one to a row, when the flag is set.
+    InquiringMockups(bool),
     /// A conversation whose reader answered a form of questions.
     Answered,
     /// A conversation whose turn ended while two subagents and a command were still running.
@@ -3556,6 +3577,42 @@ impl Shot {
                 ))
             }
             Self::Inquiring => Screen::Workspace(live(Turn::Inquiring)),
+            Self::ExhibitDiagram => {
+                Screen::Workspace(exhibited(pm_harness::ExhibitKind::Diagram, true))
+            }
+            Self::ExhibitPrototype => {
+                Screen::Workspace(exhibited(pm_harness::ExhibitKind::Prototype, true))
+            }
+            Self::ExhibitPrototypeMissing => Screen::Workspace(without_browser_helper(
+                exhibited(pm_harness::ExhibitKind::Prototype, false),
+            )),
+            Self::ExhibitPrototypeOutdated => Screen::Workspace(with_outdated_browser_helper(
+                exhibited(pm_harness::ExhibitKind::Prototype, false),
+            )),
+            Self::ExhibitPrototypeFailed => {
+                let mut state = exhibited(pm_harness::ExhibitKind::Prototype, false);
+                state.window.general.embedded_browser = true;
+                state.set_browser_helper(pm_components::exhibit::Helper {
+                    supported: true,
+                    installed: true,
+                    ..pm_components::exhibit::Helper::default()
+                });
+                let asked = state.take_preview_requests();
+                Screen::Workspace(asked.into_iter().fold(state, |state, request| {
+                    state.with_figure(
+                        request.key,
+                        Err(pm_browser::render::NO_ANSWER.to_owned()),
+                    )
+                }))
+            }
+            Self::InquiringMockupsMissing => {
+                Screen::Workspace(without_browser_helper(inquiring_mockups(false)))
+            }
+            Self::InquiringMockups(narrow) => {
+                let mut state = inquiring_mockups(true);
+                state.review = !narrow && state.review;
+                Screen::Workspace(state)
+            }
             Self::Background | Self::Floating => Screen::Workspace(live(Turn::Background)),
             Self::Agents => {
                 Screen::Workspace(live(Turn::Background).after(FocusId(SUBAGENTS_CHIP.0)))
@@ -3829,6 +3886,7 @@ impl Shot {
             Self::SettingsPage(Section::Orchestration, _) => {
                 Screen::Workspace(orchestration_sample(true))
             }
+            Self::SettingsPage(Section::Usage, _) => Screen::Workspace(usage_sample()),
             Self::SettingsPage(section, _) => Screen::Workspace(browser_settings_sample(section)),
             Self::SettingsSearch(_) => Screen::Workspace(
                 settings_sample().edited(SETTINGS_FIND, Edit::Paste("font".to_owned())),
@@ -4514,6 +4572,17 @@ enum Turn {
     Isolated,
 }
 
+/// The settings window on the usage page, covering thirty days, with the server of this machine having reported several days of three models and five sessions.
+fn usage_sample() -> WorkspaceState {
+    let state = settings_sample().after(Section::Usage.id());
+    let days = state.settings_page.usage.days;
+    state.with_usage_report(
+        None,
+        days,
+        Ok(pm_components::settings_usage::sample_report(days)),
+    )
+}
+
 /// The settings window on the orchestration page with the slots of [`model_slots`] told, and orchestrator mode for new conversations `on` or off.
 fn orchestration_sample(on: bool) -> WorkspaceState {
     let state = welcome().after(SETTINGS);
@@ -5095,6 +5164,7 @@ fn live(turn: Turn) -> WorkspaceState {
         let alternative = |label: &str, description: &str| Alternative {
             label: label.to_owned(),
             description: description.to_owned(),
+            mockup: None,
         };
         events.push(Event::Inquire(Inquiry {
             ticket: 1,
@@ -5385,7 +5455,12 @@ pub fn write(
         (NARROW_WIDTH, NARROW_HEIGHT)
     } else if shot.in_settings_window() {
         (SETTINGS_WIDTH, SETTINGS_HEIGHT)
-    } else if matches!(shot, Shot::Inquiring) {
+    } else if matches!(shot, Shot::InquiringMockups(true)) {
+        (MOCKUPS_NARROW_WIDTH, MOCKUPS_NARROW_HEIGHT)
+    } else if matches!(
+        shot,
+        Shot::Inquiring | Shot::InquiringMockups(false) | Shot::InquiringMockupsMissing
+    ) {
         (WIDTH, 1000)
     } else if shot.in_picker_window() {
         (PICKER_WIDTH, PICKER_HEIGHT)
@@ -5525,10 +5600,190 @@ fn previewed(path: &str) -> WorkspaceState {
                                 density: 1.0,
                             }),
                         ),
+                        pm_components::figures::Wanted::Prototype { .. } => state,
                     },
                 )
         }
     }
+}
+
+/// A picture standing in for what the browser helper renders of a document: a page `width` by `height` pixels with a bar in `hue` across its top and bands of content under it, so that a card or a tile shows its layout without the helper.
+fn mock_page(width: u32, height: u32, hue: [u8; 3]) -> pm_components::figures::Drawing {
+    let pixels = (0..height)
+        .flat_map(|y| {
+            (0..width).flat_map(move |x| {
+                let bar = y < height / 8;
+                let inside = x > width / 12 && x < width * 11 / 12;
+                let band = !bar && inside && (y * 8 / height) % 2 == 1;
+                let [red, green, blue] = if bar {
+                    hue
+                } else if band {
+                    hue.map(|part| part / 2 + 110)
+                } else {
+                    [246, 247, 249]
+                };
+                [red, green, blue, 255]
+            })
+        })
+        .collect();
+    let [red, green, blue] = hue.map(u64::from);
+    pm_components::figures::Drawing {
+        picture: pm_renderer::Picture {
+            key: 0x5EA1_0000_0000 | red << 16 | green << 8 | blue,
+            width,
+            height,
+            pixels: std::sync::Arc::new(pixels),
+        },
+        density: 1.0,
+    }
+}
+
+/// The conversation of [`live`] with its agent having shown the reader an exhibit of `kind` on the way to its reply: a diagram drawn as the window draws one, or a prototype with a sample picture in place of the one the browser helper renders; without the picture when `pictured` is not set, so that the card shows what it does until one arrives.
+fn exhibited(kind: pm_harness::ExhibitKind, pictured: bool) -> WorkspaceState {
+    let state = live(Turn::Working);
+    let session = state.open_index().unwrap();
+    let (title, content) = match kind {
+        pm_harness::ExhibitKind::Diagram => (
+            "How the scroll offset survives a rebuild",
+            "flowchart LR\n    A[List rebuilt] --> B{Height changed?}\n    B -- yes --> C[Clamp to new height]\n    B -- no --> D[Keep offset]\n    C --> E[Draw]\n    D --> E",
+        ),
+        pm_harness::ExhibitKind::Prototype => (
+            "Sidebar with a sticky header",
+            "<!doctype html><title>Sidebar</title><body><h1>Sidebar</h1><p>A sticky header over a scrolling list.</p></body>",
+        ),
+    };
+    let exhibit = pm_harness::Exhibit {
+        id: "show-1".to_owned(),
+        title: title.to_owned(),
+        kind,
+        content: content.to_owned(),
+    };
+    let (key, wanted) = pm_components::exhibit::wanted_exhibit(&exhibit);
+    let drawn = match wanted {
+        pm_components::figures::Wanted::Diagram(source) => crate::work::picture::diagram(
+            &source,
+            &crate::work::picture::Palette::of(
+                pm_theme::default_family().variant(pm_theme::Appearance::Dark),
+                true,
+            ),
+        ),
+        _ => Ok(mock_page(1024, 640, [79, 110, 247])),
+    };
+    let call = Tool {
+        id: exhibit.id.clone(),
+        title: Some("show".to_owned()),
+        kind: Some(Kind::Other),
+        state: Some(ToolState::Done),
+        target: Some(title.to_owned()),
+        diff: None,
+        output: None,
+        parent: None,
+        agent: None,
+        worktree: None,
+    };
+    let state = [
+        Event::Tool(call),
+        Event::Show(exhibit),
+        Event::Said("That is how the offset is kept across a rebuild.".to_owned()),
+        Event::Finished(None),
+    ]
+    .into_iter()
+    .fold(state, |state, event| state.heard(session, event));
+    if pictured {
+        state.with_figure(key, drawn)
+    } else {
+        state
+    }
+}
+
+/// `state` as the window leaves it on a system whose browser helper is not installed: every picture of a document it asked for answered with the line that says the browser is needed, and the helper known to be missing, so that the placeholders offer to install it.
+fn without_browser_helper(mut state: WorkspaceState) -> WorkspaceState {
+    state.set_browser_helper(pm_components::exhibit::Helper {
+        supported: true,
+        installed: false,
+        downloading: None,
+        failed: None,
+        outdated: false,
+    });
+    let asked = state.take_preview_requests();
+    asked.into_iter().fold(state, |state, request| {
+        state.with_figure(
+            request.key,
+            Err(pm_components::exhibit::PREVIEW_NEEDS_BROWSER.to_owned()),
+        )
+    })
+}
+
+/// `state` as the window leaves it when the browser is on and its helper runs but announced no sealed pages, as a helper older than the window does: every picture of a document it asked for answered with the line that says the browser needs an update, so that the placeholders offer one and the buttons that open documents are disabled.
+fn with_outdated_browser_helper(mut state: WorkspaceState) -> WorkspaceState {
+    state.window.general.embedded_browser = true;
+    state.set_browser_helper(pm_components::exhibit::Helper {
+        supported: true,
+        installed: true,
+        downloading: None,
+        failed: None,
+        outdated: true,
+    });
+    let asked = state.take_preview_requests();
+    asked.into_iter().fold(state, |state, request| {
+        state.with_figure(
+            request.key,
+            Err(pm_components::exhibit::PREVIEW_NEEDS_UPDATE.to_owned()),
+        )
+    })
+}
+
+/// The conversation of [`live`] with its agent waiting for an answer among three that have mockups, the first recommended and the second picked, each with a sample picture in place of the one the browser helper renders, or with none when `pictured` is not set.
+fn inquiring_mockups(pictured: bool) -> WorkspaceState {
+    let state = live(Turn::Working);
+    let session = state.open_index().unwrap();
+    let offered = [
+        (
+            "Sidebar (Recommended)",
+            "Sections listed down the left with the page beside them. Scales to many sections.",
+            [79, 110, 247],
+        ),
+        (
+            "Top tabs",
+            "Sections as tabs across the top. Compact, but crowded past six sections.",
+            [16, 160, 120],
+        ),
+        (
+            "Single page",
+            "Everything on one scrolling page, with no navigation.",
+            [214, 120, 40],
+        ),
+    ];
+    let mockup = |label: &str| format!("<!doctype html><title>{label}</title><h1>{label}</h1>");
+    let inquiry = Inquiry {
+        ticket: 1,
+        questions: vec![Question {
+            header: "Layout".to_owned(),
+            text: "Which layout should the settings window use?".to_owned(),
+            multiple: false,
+            alternatives: offered
+                .iter()
+                .map(|(label, description, _)| Alternative {
+                    label: (*label).to_owned(),
+                    description: (*description).to_owned(),
+                    mockup: Some(mockup(label)),
+                })
+                .collect(),
+        }],
+    };
+    let state = state
+        .heard(session, Event::Inquire(inquiry))
+        .after(FocusId(pm_components::draft::PICK_BASE + 1));
+    if !pictured {
+        return state;
+    }
+    offered.iter().fold(state, |state, (label, _, hue)| {
+        let (key, _) = pm_components::exhibit::wanted_document(
+            &mockup(label),
+            pm_components::exhibit::MOCKUP_VIEWPORT,
+        );
+        state.with_figure(key, Ok(mock_page(640, 400, *hue)))
+    })
 }
 
 /// A picture that fades from red to blue, for a snapshot of a preview.

@@ -218,7 +218,7 @@ async function run(page, kind) {
   const capture = begin(page, kind);
   try {
     if (!page.cdp || !page.recorder) {
-      capture.error = 'Nothing can be taken from developer tools.';
+      capture.error = page.sealed ? 'Nothing can be taken from a sealed page.' : 'Nothing can be taken from developer tools.';
     } else if (kind === 'Console') {
       capture.lines = page.recorder.console.slice(-MOST_LINES).map((text) => line(text, LONGEST_LINE));
     } else if (kind === 'Screenshot') {

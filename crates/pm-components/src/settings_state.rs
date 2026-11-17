@@ -45,6 +45,8 @@ pub struct SettingsPage {
     pub models: crate::settings_models::ModelServers,
     /// The model slots and presets, and what the models page has open.
     pub slots: crate::settings_slots::ModelSlots,
+    /// What the usage page shows: the days it covers and what each server reported.
+    pub usage: crate::settings_usage::UsagePage,
 }
 
 /// The settings the window edits, held together so one setting can be copied from one set to another.

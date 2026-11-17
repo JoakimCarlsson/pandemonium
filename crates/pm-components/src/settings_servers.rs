@@ -598,6 +598,7 @@ fn summary(section: Section) -> &'static str {
         Section::ModelServers => crate::settings_models::SUMMARY,
         Section::ModelSlots => crate::settings_slots::SUMMARY,
         Section::Orchestration => crate::settings_orchestration::SUMMARY,
+        Section::Usage => crate::settings_usage::SUMMARY,
         Section::Servers => {
             "The servers the window works with: the one on this machine, and ones reached at their address, over ssh, inside WSL or a dev container, or through a tunnel."
         }
@@ -705,6 +706,7 @@ pub(crate) fn body(
                     Section::ModelServers,
                     Section::ModelSlots,
                     Section::Orchestration,
+                    Section::Usage,
                 ]
                 .map(|part| card(part, count_of(state, part))),
             ),
@@ -716,6 +718,7 @@ pub(crate) fn body(
         Section::ModelServers => crate::settings_models::body(state, inner, room),
         Section::ModelSlots => crate::settings_slots::body(state, inner, room, shaper),
         Section::Orchestration => crate::settings_orchestration::body(state, inner, room, shaper),
+        Section::Usage => crate::settings_usage::body(state, inner, room),
         Section::Customizations
         | Section::Skills
         | Section::Instructions
@@ -765,6 +768,7 @@ fn count_of(state: &WorkspaceState, section: Section) -> String {
         Section::ModelServers => crate::settings_models::count(state),
         Section::ModelSlots => crate::settings_slots::count(state),
         Section::Orchestration => crate::settings_orchestration::count(state),
+        Section::Usage => crate::settings_usage::count(state),
         _ => String::new(),
     }
 }
@@ -821,6 +825,7 @@ pub(crate) fn card(section: Section, count: String) -> Node {
                 Section::ModelServers => "OpenAI-compatible servers offered as agents.",
                 Section::ModelSlots => "The model each kind of work asks, with backups.",
                 Section::Orchestration => "The work categories a lead agent hands work to.",
+                Section::Usage => "Tokens and spend across every session.",
                 other if crate::settings_library::lists(other) => {
                     crate::settings_library::blurb(other)
                 }

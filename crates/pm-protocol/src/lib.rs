@@ -13,6 +13,7 @@ mod release;
 mod request;
 mod response;
 mod task;
+mod usage;
 
 pub use address::{
     CONTAINER_SCHEME, DIRECT_SCHEME, Route, SSH_SCHEME, TUNNEL_SCHEME, WSL_SCHEME, escape_folder,
@@ -50,6 +51,7 @@ pub use release::ReleaseAsset;
 pub use request::{Attachment, Login, McpServer, Request, ToolListing};
 pub use response::{Response, SessionInfo, TerminalInfo};
 pub use task::{RunnableTask, ToolchainInfo};
+pub use usage::{UsageDay, UsageModel, UsageReport, UsageSession, UsageTotals};
 
 /// The version of the protocol this build speaks; clients and servers refuse each other when they differ.
 pub const VERSION: u32 = 1;

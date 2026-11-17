@@ -109,3 +109,52 @@ fn a_captured_report_is_read() {
     assert_eq!(capture.lines, ["[log] a"]);
     assert!(capture.error.is_empty());
 }
+
+/// The requests for sealed documents are serde's default form, as the helper's `types.js` says, and the report of a render is read as the helper writes it.
+#[test]
+fn sealed_document_messages_have_the_shape_the_helper_uses() {
+    let open = serde_json::to_value(Request::OpenHtml {
+        page: 4,
+        html: "<p>hi</p>".to_owned(),
+        title: "Login".to_owned(),
+        width: 800,
+        height: 600,
+        scale: 1.0,
+    })
+    .unwrap_or_default();
+    assert_eq!(
+        open,
+        serde_json::json!({ "OpenHtml": { "page": 4, "html": "<p>hi</p>", "title": "Login", "width": 800, "height": 600, "scale": 1.0 } })
+    );
+    let render = serde_json::to_value(Request::RenderHtml {
+        ticket: 7,
+        html: "<p>hi</p>".to_owned(),
+        width: 1024,
+        height: 640,
+        path: "/cache/a.png".to_owned(),
+    })
+    .unwrap_or_default();
+    assert_eq!(
+        render,
+        serde_json::json!({ "RenderHtml": { "ticket": 7, "html": "<p>hi</p>", "width": 1024, "height": 640, "path": "/cache/a.png" } })
+    );
+    let rendered: Event =
+        serde_json::from_str(r#"{"HtmlRendered":{"ticket":7,"path":"/cache/a.png","error":""}}"#)
+            .unwrap_or(Event::Ready);
+    assert!(matches!(rendered, Event::HtmlRendered { ticket: 7, .. }));
+}
+
+/// The features the helper announces are read as it writes them, and the bare `Ready` an older helper sends alone is still read.
+#[test]
+fn features_are_read_as_the_helper_writes_them() {
+    let announced: Event = serde_json::from_str(r#"{"Features":{"features":["sealed-pages"]}}"#)
+        .unwrap_or(Event::Ready);
+    let Event::Features { features } = announced else {
+        panic!("not the features");
+    };
+    assert_eq!(features, vec![super::SEALED_PAGES.to_owned()]);
+    assert!(matches!(
+        serde_json::from_str::<Event>(r#""Ready""#),
+        Ok(Event::Ready)
+    ));
+}

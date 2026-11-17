@@ -35,6 +35,16 @@ otherwise; the window copies the pixels out only when it sees the same even
 number before and after. A `Surface` report names the files and a `Painted`
 report says which is newest.
 
+Right after the token the helper sends `Features { features }`, the names of
+what it can do beyond what every helper does, and then `Ready`. The window reads
+both before it hands the engine out (`Engine::start` waits up to ten seconds),
+so it knows at once what the helper supports. A helper that sends only `Ready`,
+as helpers released before a feature existed do, has none of them, and the
+window never sends it a request of a feature it did not announce: such a helper
+would ignore the request and leave the window waiting. Today the one feature is
+`sealed-pages` (`SEALED_PAGES` in `wire.rs`, `src/features.js` in the helper),
+for `OpenHtml` and `RenderHtml`.
+
 `OpenRequested` reports that a page asked for a new window, so that the window
 opens a tab for it (see [Tabs](#tabs)).
 
@@ -334,6 +344,122 @@ ends, and never written to disk.
 The messages for all of this were added to `wire.rs` and `types.js` after the
 existing ones; nothing before them changed.
 
+## Sealed pages
+
+An agent can hand the reader HTML of its own: a prototype it shows in the
+conversation (the `Show` event with kind `Prototype`) and the mockup of an
+answer to a question (`mockup` of an alternative of `Inquire`; see
+[protocol.md](protocol.md#event-types)). That HTML is content an agent wrote,
+possibly from what it read on the web, so it is never trusted. The helper shows
+it in a *sealed page* (`helpers/electron-browser/src/sealed.js`, with the
+decisions that need no engine in `src/sealed-policy.js`), in two ways:
+
+- **`RenderHtml { ticket, html, width, height, path }`** renders the document
+  offscreen at a viewport and writes a PNG to `path`; the answer is
+  `HtmlRendered { ticket, path, error }`. The window uses it for the picture in
+  a prototype's card (1024 by 640) and in the tile of a mockup (640 by 400).
+- **`OpenHtml { page, html, title, width, height, scale }`** opens the document
+  as an interactive page, which the window shows as a tab of the session's
+  browser when the reader presses Open on a prototype's card or the enlarge
+  button of a mockup's tile.
+
+What a sealed page is held to:
+
+- **A session of its own, in memory.** Every sealed page lives in
+  `session.fromPartition('sealed-documents')`, with no `persist:` and the HTTP
+  cache off: it shares no cookies, storage, cache or logins with the pages the
+  reader browses, and nothing of it is written to disk. The document is loaded
+  from a `data:` address, whose origin is opaque, so it has no cookies and no
+  storage of its own either.
+- **No network.** `webRequest.onBeforeRequest` of that session cancels every
+  request whose address is not `data:`, `blob:` or `about:` (`allowed` in
+  `sealed-policy.js`): fetches, images, scripts, styles, fonts, frames, web
+  sockets and beacons. The session is also given a proxy that does not exist,
+  for loopback addresses too, WebRTC is held to proxied connections, and the
+  document gets a content security policy as its first element
+  (`default-src 'none'`, inline scripts and styles only, `form-action 'none'`,
+  `base-uri 'none'`, `webrtc 'block'`), put after the doctype so the page keeps
+  its rendering mode. Each of these alone would stop a request; they are
+  layered.
+- **Scripts run, and reach nothing.** The window is `sandbox: true`,
+  `contextIsolation: true`, without node integration in the page, its frames or
+  its workers, and without the webview tag. A rendered document has no preload.
+  An interactive one has only the preload that draws drop-downs and date
+  pickers (see [Drop-downs and date pickers](#drop-downs-and-date-pickers)),
+  which runs in the isolated world and exposes nothing to the page.
+- **It stays on its document.** New windows are denied and not reported to the
+  window, the top frame's navigations and redirects are cancelled, a frame
+  inside it may go only to `data:`, `blob:` and `about:` addresses, a `Load`
+  request is ignored, and `ClearData` does nothing.
+- **Nothing is asked or saved.** Permission requests and checks are refused
+  without a question, device permissions are refused, and downloads are
+  cancelled.
+- **Agents cannot drive or read it.** A sealed page has no DevTools protocol
+  attached, so the helper refuses every tool on it, as it does for the
+  developer tools. The window leaves a sealed tab out of what `browser_tabs`
+  lists and resolves, so to an agent its number is a tab that does not exist,
+  and the tab is locked. An agent therefore cannot use a prototype to carry
+  data to a page it can read, or the other way.
+- **Renders are bounded.** A document over 256 KiB (the most the harness lets
+  an agent write) is refused, by the window before it asks and by the helper
+  again. A render ends after ten seconds, two run at once and at most 64 wait.
+  The window names the file after the SHA-256 of the viewport and the document
+  (`crates/pm-browser/src/render.rs`), under `sealed-renders` in the user's
+  cache folder, so a document is rendered once: a file that is there is read
+  without asking the helper, even when the helper is not installed, and files
+  older than thirty days are removed. In the window the picture is one of the
+  figures, kept by a key of the document and the viewport, so a redraw never
+  renders.
+- **Nothing waits forever.** The window gives a render fifteen seconds, longer
+  than the helper's own ten so that the helper's answer comes first when there
+  is one, and then shows "The browser did not render the preview within 15
+  seconds." with a Retry button, which asks again for every preview that failed.
+  A sealed page that has not painted fifteen seconds after `OpenHtml` is closed,
+  and its tab says so; reloading the tab opens the document again.
+
+The helper runs on the machine of the window, as for every page: the document
+reaches the window in the session's events, so prototypes and mockups of a
+remote project render the same way, and nothing is asked of the server.
+
+Without the helper (the embedded browser off, not installed, or not built for
+the system) a prototype's card and a mockup's tile say "Install the browser to
+preview" in place of the picture; the title, the labels and the descriptions
+are all there, and every answer can be picked. Where the system has a helper,
+the placeholder has a button (`offer` in `pm-components/src/exhibit.rs`
+decides which): "Install browser" while the helper is missing, which turns
+the setting on and so starts the same download as the switch in Settings,
+under Browser, and "Turn on browser" while it is installed and the setting is
+off. While the download runs the placeholder says what it is doing, and when
+it failed it says why, with the button to download again. In a tile narrower
+than 264 pixels the button stands alone, and under 140 it is only an icon.
+The previews are asked for again once the browser is on and installed.
+
+When the helper runs but did not announce `sealed-pages`, as a helper older
+than the window does, the placeholders say "Update the browser to preview" with
+an "Update browser" button, and the Open button of a card and the enlarge button
+of a tile are disabled with a tooltip that says why. The button closes the
+browser's pages, downloads the helper of the window's version again through the
+same download as the switch, and renders the previews again with the new
+helper. When the helper is still too old after that, as when the release of the
+window's version predates sealed pages, or when `PANDEMONIUM_BROWSER_HELPER`
+names an old helper (which a download never replaces), the placeholder says
+what to do instead: run `make install` or `make run` from the checkout, or
+point the variable at a current helper.
+Diagrams need no helper: the window draws Mermaid itself.
+
+When the reader sends a sealed tab to an address, the window closes the sealed
+page and opens an ordinary one in its place, so a page of the web never runs in
+the sealed session. Sealed tabs are not kept across a restart, since their
+documents are not.
+
+Known limits: `alert` and `confirm` in a sealed page open as native boxes, as
+for a click of the reader's in any page; the tools that add a screenshot or the
+console to the prompt, and picking an element, do nothing on a sealed page,
+since they use the DevTools protocol.
+
+The helper's policy has tests that need no engine: `npm test` in
+`helpers/electron-browser` runs `node --test test/`.
+
 ## Back and forward buttons
 
 The mouse's back and forward buttons go through the history of the page while
@@ -474,7 +600,11 @@ the window in `~/.local/bin`.
 ## Where the window finds the helper
 
 In order: the program named by `PANDEMONIUM_BROWSER_HELPER`; the one the
-download unpacked into the data folder; one beside the window's own program.
+download unpacked into the data folder; one beside the window's own program. A
+build installed from a checkout (the `local` and `preview` channels, which
+`make install` builds) looks beside itself before the download, since
+`make install` puts the helper of the same checkout there and a download of the
+same version number may be an older release.
 
 ## Releases
 

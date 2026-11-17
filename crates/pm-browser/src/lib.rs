@@ -13,6 +13,7 @@ mod frame;
 mod input;
 pub mod install;
 mod link;
+pub mod render;
 pub mod surface;
 mod view;
 pub mod wire;
@@ -22,6 +23,7 @@ pub use error::Error;
 pub use frame::Frame;
 pub use input::{Button, Cursor, Key, Modifiers};
 pub use link::Notice;
+pub use render::Rendered;
 pub use view::View;
 pub use wire::{
     Capture, CaptureKind, CapturedPicture, CertificateInfo, DownloadState, EditAction,

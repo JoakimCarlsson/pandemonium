@@ -864,6 +864,11 @@ pub enum Outgoing {
     },
     /// Asks the server for the agents added by hand and the tool servers every agent is started with.
     LoadServers,
+    /// Asks every connected server what its sessions used over the last `days` days, today included.
+    UsageReport {
+        /// How many days the report covers.
+        days: u32,
+    },
     /// Opens `address` in the reader's browser.
     Open {
         /// The page to open.
@@ -1902,6 +1907,8 @@ pub struct WorkspaceState {
     pub figures: crate::figures::Figures,
     /// The figures asked for, by their key, so none is asked for twice.
     pub figures_asked: std::collections::HashSet<u64>,
+    /// What the window still has to do for the exhibits agents show and the mockups of their questions.
+    pub exhibits: crate::exhibit::Exhibits,
     /// The commit message being written.
     pub message: Field,
     /// What the history page is narrowed to.
@@ -2211,6 +2218,7 @@ impl WorkspaceState {
             previews: std::collections::HashMap::new(),
             figures: crate::figures::Figures::new(),
             figures_asked: std::collections::HashSet::new(),
+            exhibits: crate::exhibit::Exhibits::default(),
             discovery_host: None,
             discovered_elsewhere: std::collections::HashMap::new(),
             files: Vec::new(),
@@ -2867,6 +2875,7 @@ impl WorkspaceState {
             self.plan_scroll = 0.0;
         }
         let finishing = matches!(&event, Event::Finished(_) | Event::Failed(_));
+        let pictured = matches!(&event, Event::Show(_) | Event::Inquire(_));
         if let Some(held) = self.sessions.get_mut(session) {
             held.hear(event);
             let gone = self.editing_queued.as_ref().is_some_and(|editing| {
@@ -2879,6 +2888,9 @@ impl WorkspaceState {
         }
         if finishing {
             self.ask_reply_figures(session);
+        }
+        if pictured {
+            self.ask_exhibit_figures(session);
         }
     }
 
@@ -2961,6 +2973,9 @@ impl WorkspaceState {
     /// The state after one of the rows or chips numbered from a base was pressed.
     fn after_numbered(&mut self, id: u64) {
         if crate::diff::gutter_of(FocusId(id)).is_some() {
+            return;
+        }
+        if self.press_exhibit(FocusId(id)) {
             return;
         }
         if self.press_inquiry(FocusId(id)) {

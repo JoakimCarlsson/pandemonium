@@ -16,6 +16,8 @@ use pm_components::browser_menu::{BROWSER_MENU_HEIGHT, BrowserCommand};
 use pm_components::browser_safety::{Answer, Certificate, Download, Question, Safety, Saving};
 use pm_components::browser_tabs::{TabInfo, changes_page, locked_message};
 use pm_components::elements::Element;
+use pm_components::exhibit::{Helper, PREVIEW_NEEDS_BROWSER, PREVIEW_NEEDS_UPDATE, PreviewRequest};
+use pm_components::figures::Drawing;
 use pm_components::state::PROMPT;
 use pm_editor::{Action, Pressed};
 use pm_input::{Button, FocusId, Key, KeyEvent};
@@ -70,12 +72,26 @@ pub(super) struct Web {
     shown_note: Option<String>,
     /// What was last said of the install once it was no longer running.
     install_note: Option<String>,
+    /// How the helper was when the placeholders of previews were last told.
+    shown_helper: Helper,
     /// Why the helper could not be started, shown whenever a page is asked for.
     reason: Option<String>,
     /// The local port that carries each remote port, by machine and remote port.
     forwards: std::collections::HashMap<(String, u16), u16>,
     /// The restriction on agent browsing and the origins listed, as the helper was last told.
     sent_origins: Option<(bool, Vec<String>)>,
+    /// The number the last render of a sealed document got in this window.
+    next_render: u64,
+    /// The renders of sealed documents the helper is at, by this window's number: the key the picture is kept under and the width of the viewport it is rendered at, in CSS pixels.
+    renders: pm_browser::render::Waiting<(u64, u32)>,
+    /// Whether the helper that runs, or ran last, said it cannot open or render sealed documents.
+    outdated: bool,
+    /// Whether the reader asked for the outdated helper to be downloaded again, which the next turn starts.
+    update_wanted: bool,
+    /// Whether the helper was downloaded again because it was outdated, so that one still outdated after that says why the update did not help.
+    updated: bool,
+    /// Whether the folder of rendered pictures was cleared of old ones since the window started.
+    renders_pruned: bool,
 }
 
 /// The page of one tab and what the window last handed it.
@@ -86,6 +102,30 @@ struct Shown {
     sized: Option<(u32, u32, f32)>,
     /// The newest frame of the page that was handed to the window.
     shown: u64,
+    /// Whether the page shows a sealed document, which is never sent to an address.
+    sealed: bool,
+    /// When a sealed page was opened, until it first painted; one that does not paint within [`pm_browser::render::ANSWER_WITHIN`] is given up on.
+    opened_at: Option<Instant>,
+}
+
+/// What the placeholders of previews say when the helper is still too old for sealed documents after it was downloaded again: what to do instead, which depends on where the helper comes from.
+fn still_outdated() -> String {
+    if pm_browser::install::named() {
+        return "The browser PANDEMONIUM_BROWSER_HELPER names cannot render sealed pages. Point it at helpers/electron-browser/pandemonium-browser-electron in a current checkout.".to_owned();
+    }
+    format!(
+        "The browser released for {} cannot render sealed pages. In a checkout, run make install, or start the window with make run.",
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
+/// The picture the helper rendered of a sealed document into the file at `path`, at a viewport `width` CSS pixels wide, or why it cannot be shown.
+fn preview_drawing(path: &std::path::Path, width: u32) -> Result<Drawing, String> {
+    let bytes =
+        std::fs::read(path).map_err(|error| format!("The preview could not be read: {error}"))?;
+    let picture = crate::work::picture::decode("preview", &bytes, false)?;
+    let density = (picture.width as f32 / width.max(1) as f32).max(1.0);
+    Ok(Drawing { picture, density })
 }
 
 /// Whether an agent may send the browser to `url`: a web address or the blank page, never a local file or an internal page of the browser.
@@ -883,6 +923,11 @@ impl App {
             if self.saved_window.general.embedded_browser {
                 match Engine::start() {
                     Ok(engine) => {
+                        self.web.outdated = !engine.sealed_pages();
+                        if self.web.outdated && self.web.updated {
+                            self.web.install_failed = true;
+                            self.web.install_note = Some(still_outdated());
+                        }
                         self.web.engine = Some(engine);
                         self.web.sent_origins = None;
                         self.browser_origins();
@@ -951,6 +996,7 @@ impl App {
         for (tab, command) in commands {
             match command {
                 Command::Load(address) => self.browser_load(tab, &address, scale),
+                Command::LoadSealed => self.browser_load_sealed(tab, scale),
                 Command::OpenTools => {
                     let (width, height, scale) = self.browser_size(BROWSER_TOOLS_BODY, scale);
                     if let Some(page) = self.web.pages.get(&tab).map(|shown| &shown.view) {
@@ -964,6 +1010,9 @@ impl App {
                     self.web.tools = None;
                     self.web.tools_sized = None;
                     self.web.tools_shown = 0;
+                }
+                Command::Reload | Command::HardReload if self.browser_sealed_without_page(tab) => {
+                    self.browser_load_sealed(tab, scale);
                 }
                 other => {
                     if let Some(page) = self.web.pages.get(&tab).map(|shown| &shown.view) {
@@ -998,9 +1047,19 @@ impl App {
             let Screen::Workspace(state) = screen;
             state.browser_notice_cleared(tab);
         });
-        if let Some(shown) = self.web.pages.get(&tab) {
-            shown.view.load(&address);
-            return;
+        match self.web.pages.get(&tab) {
+            Some(shown) if !shown.sealed => {
+                shown.view.load(&address);
+                return;
+            }
+            Some(_) => {
+                self.web.pages.remove(&tab);
+                self.model.update(|screen| {
+                    let Screen::Workspace(state) = screen;
+                    state.browser_tab_unsealed(tab);
+                });
+            }
+            None => {}
         }
         let size = self.browser_size(BROWSER_BODY, scale);
         let Some(engine) = self.browser_engine() else {
@@ -1014,6 +1073,8 @@ impl App {
                         view,
                         sized: Some(size),
                         shown: 0,
+                        sealed: false,
+                        opened_at: None,
                     },
                 );
             }
@@ -1022,6 +1083,201 @@ impl App {
                 state.browser_tab_notice(tab, &error.to_string());
             }),
         }
+    }
+
+    /// Shows the sealed document the tab `tab` holds in a page of its own, in place of any page the tab had: the helper denies that page the network and the tools of agents.
+    fn browser_load_sealed(&mut self, tab: u32, scale: f32) {
+        let sealed = self.model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state
+                .browser
+                .as_ref()
+                .and_then(|browser| browser.tab(tab))
+                .and_then(|tab| tab.sealed.clone())
+        });
+        let Some(sealed) = sealed else {
+            return;
+        };
+        self.model.update(|screen| {
+            let Screen::Workspace(state) = screen;
+            state.browser_notice_cleared(tab);
+        });
+        self.web.pages.remove(&tab);
+        let size = self.browser_size(BROWSER_BODY, scale);
+        let Some(engine) = self.browser_engine() else {
+            return;
+        };
+        if !engine.sealed_pages() {
+            self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                state.browser_tab_notice(tab, &format!("{PREVIEW_NEEDS_UPDATE}: the installed browser cannot open pages sealed from the network."));
+            });
+            return;
+        }
+        match View::open_html(engine, &sealed.html, &sealed.title, size) {
+            Ok(view) => {
+                self.web.pages.insert(
+                    tab,
+                    Shown {
+                        view,
+                        sized: Some(size),
+                        shown: 0,
+                        sealed: true,
+                        opened_at: Some(Instant::now()),
+                    },
+                );
+            }
+            Err(error) => self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                state.browser_tab_notice(tab, &error.to_string());
+            }),
+        }
+    }
+
+    /// Hands the window the picture of a sealed document kept under `key`, or why there is none.
+    fn browser_previewed(&mut self, key: u64, drawn: Result<Drawing, String>) {
+        self.model
+            .update(|screen| *screen = std::mem::take(screen).with_figure(key, drawn));
+    }
+
+    /// Has the picture `request` asks for made: taken from the folder of rendered pictures when the document was rendered before, and otherwise rendered by the helper, sealed from the network, into that folder. Without the embedded browser the picture is answered with the line that says to install it.
+    fn browser_preview(&mut self, request: PreviewRequest) {
+        let PreviewRequest {
+            key,
+            html,
+            width,
+            height,
+        } = request;
+        if let Some(reason) = pm_browser::render::refusal(&html) {
+            self.browser_previewed(key, Err(reason));
+            return;
+        }
+        let file = pm_browser::render::cache_file(&html, width, height);
+        if let Some(kept) = file.as_deref().filter(|file| file.is_file()) {
+            self.browser_previewed(key, preview_drawing(kept, width));
+            return;
+        }
+        let usable = self.saved_window.general.embedded_browser
+            && pm_browser::install::supported()
+            && pm_browser::install::installed();
+        let (Some(file), true) = (file, usable) else {
+            self.browser_previewed(key, Err(PREVIEW_NEEDS_BROWSER.to_owned()));
+            return;
+        };
+        if !self.web.renders_pruned {
+            self.web.renders_pruned = true;
+            if let Some(folder) = file.parent() {
+                pm_browser::render::prune(folder);
+            }
+        }
+        self.web.next_render += 1;
+        let ticket = self.web.next_render;
+        let Some(engine) = self.browser_engine() else {
+            let reason = self
+                .web
+                .reason
+                .clone()
+                .unwrap_or_else(|| "The embedded browser could not be started.".to_owned());
+            self.browser_previewed(key, Err(reason));
+            return;
+        };
+        if !engine.sealed_pages() {
+            self.browser_previewed(key, Err(PREVIEW_NEEDS_UPDATE.to_owned()));
+            return;
+        }
+        engine.render_html(ticket, &html, width, height, &file);
+        self.web
+            .renders
+            .insert(ticket, (key, width), Instant::now());
+    }
+
+    /// Has the pictures of sealed documents the window asked for made, takes in the ones the helper finished, and says whether any is still being rendered, which wants the loop to turn again soon.
+    fn browser_previews(&mut self) -> bool {
+        let pending = self.model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state.preview_requests_pending()
+        });
+        if pending {
+            let mut asked = Vec::new();
+            self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                asked = state.take_preview_requests();
+            });
+            for request in asked {
+                self.browser_preview(request);
+            }
+        }
+        if self.web.renders.is_empty() {
+            return false;
+        }
+        let rendered = self
+            .web
+            .engine
+            .as_ref()
+            .map(Engine::take_rendered)
+            .unwrap_or_default();
+        for done in rendered {
+            let Some((key, width)) = self.web.renders.answered(done.ticket) else {
+                continue;
+            };
+            let drawn = done.outcome.and_then(|path| preview_drawing(&path, width));
+            self.browser_previewed(key, drawn);
+        }
+        for (key, _) in self.web.renders.overdue(Instant::now()) {
+            self.browser_previewed(key, Err(pm_browser::render::NO_ANSWER.to_owned()));
+        }
+        let stopped = match self.web.engine.as_ref() {
+            Some(engine) => engine.failure(),
+            None => Some("The embedded browser stopped.".to_owned()),
+        };
+        if let Some(reason) = stopped {
+            for (key, _) in self.web.renders.drain() {
+                self.browser_previewed(key, Err(reason.clone()));
+            }
+        }
+        !self.web.renders.is_empty()
+    }
+
+    /// Gives up on the sealed pages that have not painted within [`pm_browser::render::ANSWER_WITHIN`] of being opened: each is closed and its tab says so, and reloading the tab opens it again.
+    fn browser_sealed_overdue(&mut self) {
+        let now = Instant::now();
+        let late: Vec<u32> = self
+            .web
+            .pages
+            .iter_mut()
+            .filter_map(|(tab, shown)| {
+                let opened = shown.opened_at?;
+                if shown.view.painted() {
+                    shown.opened_at = None;
+                    return None;
+                }
+                (now.saturating_duration_since(opened) > pm_browser::render::ANSWER_WITHIN)
+                    .then_some(*tab)
+            })
+            .collect();
+        for tab in late {
+            self.web.pages.remove(&tab);
+            self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                state.browser_tab_notice(
+                    tab,
+                    "The browser did not show this page within 15 seconds. Reload the tab to try again.",
+                );
+            });
+        }
+    }
+
+    /// Whether the tab `tab` holds a sealed document but has no page, as after its page was given up on, so that reloading it opens the document again.
+    fn browser_sealed_without_page(&self, tab: u32) -> bool {
+        !self.web.pages.contains_key(&tab)
+            && self.model.read(|screen| {
+                let Screen::Workspace(state) = screen;
+                state
+                    .browser
+                    .as_ref()
+                    .and_then(|browser| browser.tab(tab))
+                    .is_some_and(|tab| tab.sealed.is_some())
+            })
     }
 
     /// Carries out the command of a page that is open: all the ones that need only the page.
@@ -1057,7 +1313,7 @@ impl App {
                 }
             }
             Command::ClearData => page.clear_data(),
-            Command::Load(_) | Command::OpenTools | Command::CloseTools => {}
+            Command::Load(_) | Command::LoadSealed | Command::OpenTools | Command::CloseTools => {}
         }
     }
 
@@ -1263,8 +1519,57 @@ impl App {
         Some("The embedded browser is installed.".to_owned())
     }
 
-    /// Downloads the browser when the setting is on and it is missing, takes in how the download went, and keeps the General page saying what is happening.
+    /// Forgets that the last download of the browser failed when the reader pressed the button of a preview's placeholder that asks for it again, so that [`Self::browser_install`] starts it as it does when the setting is turned on.
+    fn browser_install_retry(&mut self) {
+        let asked = self.model.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state.browser_install_asked()
+        });
+        if !asked {
+            return;
+        }
+        self.model.update(|screen| {
+            let Screen::Workspace(state) = screen;
+            state.take_browser_install_asked();
+        });
+        if self.web.installing.is_none() {
+            self.web.install_failed = false;
+            self.web.install_note = None;
+            if self.web.outdated {
+                if pm_browser::install::named() {
+                    self.web.install_failed = true;
+                    self.web.install_note = Some(still_outdated());
+                } else {
+                    self.web.update_wanted = true;
+                }
+            }
+        }
+    }
+
+    /// How the helper is now, for the placeholders of previews: whether this system has one, whether it is installed, what its download says while `downloading`, and why the last download failed.
+    fn browser_helper(&self, downloading: bool) -> Helper {
+        Helper {
+            supported: pm_browser::install::supported(),
+            installed: pm_browser::install::installed(),
+            outdated: self.web.outdated,
+            downloading: downloading.then(|| {
+                self.web
+                    .download_note
+                    .lock()
+                    .map(|note| note.clone())
+                    .unwrap_or_default()
+            }),
+            failed: self
+                .web
+                .install_note
+                .clone()
+                .filter(|_| self.web.install_failed),
+        }
+    }
+
+    /// Downloads the browser when the setting is on and it is missing, takes in how the download went, and keeps the General page and the placeholders of previews saying what is happening.
     fn browser_install(&mut self) -> bool {
+        self.browser_install_retry();
         let enabled = self.saved_window.general.embedded_browser;
         if enabled != self.web.was_enabled {
             self.web.was_enabled = enabled;
@@ -1273,6 +1578,10 @@ impl App {
             self.web.reason = None;
             if enabled {
                 self.web.failed = false;
+                self.model.update(|screen| {
+                    let Screen::Workspace(state) = screen;
+                    state.retry_previews();
+                });
             }
         }
         let mut downloading = false;
@@ -1284,6 +1593,9 @@ impl App {
                     self.web.installing = None;
                     self.web.install_failed = outcome.is_err();
                     self.web.failed = outcome.is_err();
+                    if outcome.is_ok() && self.web.updated {
+                        self.web.outdated = false;
+                    }
                     self.web.install_note = Some(match &outcome {
                         Ok(()) => "The embedded browser is installed.".to_owned(),
                         Err(message) => {
@@ -1293,7 +1605,10 @@ impl App {
                     self.model.update(|screen| {
                         let Screen::Workspace(state) = screen;
                         match &outcome {
-                            Ok(()) => state.browser_retry(),
+                            Ok(()) => {
+                                state.browser_retry();
+                                state.retry_previews();
+                            }
                             Err(message) => state.browser_notice(message),
                         }
                     });
@@ -1302,8 +1617,14 @@ impl App {
         } else if enabled
             && !self.web.install_failed
             && pm_browser::install::supported()
-            && !pm_browser::install::installed()
+            && (!pm_browser::install::installed() || self.web.update_wanted)
         {
+            if std::mem::take(&mut self.web.update_wanted) {
+                self.web.updated = true;
+                self.web.engine = None;
+                self.web.pages.clear();
+                self.web.tools = None;
+            }
             let (sender, receiver) = std::sync::mpsc::channel();
             let note = self.web.download_note.clone();
             std::thread::spawn(move || {
@@ -1339,6 +1660,14 @@ impl App {
             self.model.update(|screen| {
                 let Screen::Workspace(state) = screen;
                 state.set_browser_status(status);
+            });
+        }
+        let helper = self.browser_helper(downloading);
+        if helper != self.web.shown_helper {
+            self.web.shown_helper.clone_from(&helper);
+            self.model.update(|screen| {
+                let Screen::Workspace(state) = screen;
+                state.set_browser_helper(helper);
             });
         }
         downloading
@@ -1752,8 +2081,10 @@ impl App {
         self.browser_links();
         self.browser_commands(scale);
         self.browser_sync_tabs();
+        let rendering = self.browser_previews();
+        self.browser_sealed_overdue();
         if self.web.pages.is_empty() {
-            return downloading || calling;
+            return downloading || calling || rendering;
         }
         self.browser_safety();
         self.browser_fit(scale);

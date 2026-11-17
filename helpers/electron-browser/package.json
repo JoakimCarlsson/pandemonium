@@ -4,6 +4,9 @@
   "description": "The browser helper of the Pandemonium window, built on Electron.",
   "main": "main.js",
   "type": "commonjs",
+  "scripts": {
+    "test": "node --test test/"
+  },
   "dependencies": {
     "electron": "^45.0.0"
   },

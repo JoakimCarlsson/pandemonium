@@ -568,6 +568,7 @@ fn fork_session(core: &Core, connection: &Arc<Connection>, source: u64, turn: u6
     };
     let number = core.next_session();
     crate::sessions::copy_history(source, number);
+    crate::ledger::inherit(source, number);
     hold_session_as(core, Some(connection), number, branch);
     announce(core, Some(connection), number);
     match core.info(number) {
@@ -697,6 +698,9 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 }
             }
             None => failed(format!("no agent is called {agent}")),
+        },
+        Request::UsageReport { days } => Response::UsageReport {
+            report: crate::ledger::asked(core, days),
         },
         Request::Library { agent, directory } => match agent_named(&agent) {
             Some(agent) => Response::Library {

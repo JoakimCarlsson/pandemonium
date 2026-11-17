@@ -279,6 +279,9 @@ impl Session {
         if self.repeats(&event) {
             return told;
         }
+        if let Event::Spent(spent) = &event {
+            crate::ledger::heard(number, &self.meta, spent);
+        }
         let event = match event {
             Event::Prompted {
                 text,
@@ -436,6 +439,7 @@ impl Core {
         let mut highest = 0;
         if let Ok(mut sessions) = self.sessions.lock() {
             for (number, meta, log) in sessions::load_all() {
+                crate::ledger::backfill(number, &meta, &log);
                 let Some(agent) = crate::handler::agent_named(&meta.agent) else {
                     continue;
                 };

@@ -8,6 +8,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use pm_text::Shaper;
 use pm_ui::{Node, Picture};
 
+use crate::exhibit::Offer;
 use crate::figures::Figures;
 use crate::sample::{Message, Session, Status, Step};
 use crate::state::WorkspaceState;
@@ -56,6 +57,8 @@ struct Cached {
     unfolded: Vec<(usize, usize, usize)>,
     /// Rendered figures, shared pixel buffers included.
     figures: Figures,
+    /// What the placeholders of its exhibits offer while the embedded browser is missing, when it has exhibits.
+    offer: Option<Offer>,
     /// Attachment thumbnails, shared pixel buffers included.
     previews: HashMap<String, Picture>,
     /// Fonts, width, density, text scale and running-timer second.
@@ -99,6 +102,11 @@ fn source_bytes(message: &Message) -> usize {
             .iter()
             .flat_map(|(_, answers)| answers)
             .map(|(question, answer)| question.len() + optional(answer))
+            .sum::<usize>()
+        + message
+            .exhibits
+            .iter()
+            .map(|(_, exhibit)| exhibit.id.len() + exhibit.title.len() + exhibit.content.len())
             .sum::<usize>()
         + message
             .steps
@@ -252,6 +260,7 @@ pub(super) fn message(
         pm_style::text_scale().to_bits(),
         second,
     );
+    let offer = (!message.exhibits.is_empty()).then(|| state.preview_offer());
     let cached = CACHE.with_borrow_mut(|cache| {
         let cached = cache.take((page, index))?;
         if cached.project == project
@@ -265,6 +274,7 @@ pub(super) fn message(
             && cached.opened == state.opened
             && cached.unfolded == state.unfolded
             && cached.figures == state.figures
+            && cached.offer == offer
             && cached.previews == state.previews
         {
             let node = cached.node.clone();
@@ -315,6 +325,7 @@ pub(super) fn message(
             opened: state.opened.clone(),
             unfolded: state.unfolded.clone(),
             figures: state.figures.clone(),
+            offer,
             previews: state.previews.clone(),
             geometry,
             node: node.clone(),

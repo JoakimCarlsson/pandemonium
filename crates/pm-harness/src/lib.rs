@@ -37,6 +37,7 @@ pub use event::{
     Progress, Question, Reply, Setting, Skipped, Slash, Spent, Standing, Subagent, SubagentState,
     Tool, ToolState, TrustRequest, Usage, Verdict, Worktree, dollars,
 };
+pub use event::{Exhibit, ExhibitKind};
 pub use files::{FileNews, TurnChange};
 pub use history::{import_saved, rename_saved, saved_conversation};
 pub use language::LanguageServers;

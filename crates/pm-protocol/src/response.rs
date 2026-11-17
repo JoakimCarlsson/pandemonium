@@ -75,6 +75,11 @@ pub enum Response {
         /// What the account has used, when the provider said.
         limits: Option<pm_harness::Allowance>,
     },
+    /// What the sessions of the server used over the days asked for.
+    UsageReport {
+        /// The usage, for each day, each model and each session.
+        report: crate::UsageReport,
+    },
     /// The files of a folder.
     Files {
         /// Their paths, from the root of the repository.

@@ -45,6 +45,29 @@ impl View {
         Ok(Self { page, link, state })
     }
 
+    /// Opens the document `html` in a page of `width` by `height` logical pixels shown at display `scale`, sealed from the network: its scripts run, it reaches nothing outside itself and the tools of agents do not work on it. It is called `title` while the document names nothing.
+    pub fn open_html(
+        engine: &Engine,
+        html: &str,
+        title: &str,
+        (width, height, scale): (u32, u32, f32),
+    ) -> Result<Self, Error> {
+        if let Some(failure) = engine.failure() {
+            return Err(Error::Helper(failure));
+        }
+        let link = engine.link();
+        let (page, state) = link.register();
+        link.send(&Request::OpenHtml {
+            page,
+            html: html.to_owned(),
+            title: title.to_owned(),
+            width,
+            height,
+            scale,
+        });
+        Ok(Self { page, link, state })
+    }
+
     /// Opens the developer tools of this page as a page of their own, `width` by `height` logical pixels at `scale`.
     pub fn open_devtools(&self, width: u32, height: u32, scale: f32) -> Self {
         let (page, state) = self.link.register();
@@ -288,6 +311,11 @@ impl View {
     /// The new windows the page asked for since the last call, each the address and whether a tool of an agent was running on the page when it asked.
     pub fn take_opened(&self) -> Vec<(String, bool)> {
         self.state.take_opened()
+    }
+
+    /// Whether the page has painted at least once, which a page that never loads does not.
+    pub fn painted(&self) -> bool {
+        self.state.painted()
     }
 
     /// The newest picture of the page, once it has painted.

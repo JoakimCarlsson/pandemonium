@@ -150,6 +150,8 @@ pub enum Section {
     ModelSlots,
     /// Orchestrator mode: whether the agent leads, and the work categories it hands work to, each with its model.
     Orchestration,
+    /// What the sessions used: tokens, requests and spend for each day, each model and each session.
+    Usage,
     /// How many of each kind of customization agents are given in the project.
     Customizations,
     /// The skills agents are given.
@@ -170,7 +172,7 @@ pub enum Section {
 
 impl Section {
     /// Every section, in the order the list shows them, each followed by the ones inside it.
-    pub const ALL: [Section; 28] = [
+    pub const ALL: [Section; 29] = [
         Section::General,
         Section::Appearance,
         Section::Editor,
@@ -192,6 +194,7 @@ impl Section {
         Section::ModelServers,
         Section::ModelSlots,
         Section::Orchestration,
+        Section::Usage,
         Section::Customizations,
         Section::Skills,
         Section::Instructions,
@@ -227,6 +230,7 @@ impl Section {
             Self::ModelServers => "Model Servers",
             Self::ModelSlots => "Models",
             Self::Orchestration => "Orchestration",
+            Self::Usage => "Usage",
             Self::Customizations => "Overview",
             Self::Skills => "Skills",
             Self::Instructions => "Instructions",
@@ -260,6 +264,7 @@ impl Section {
             Self::ModelServers => IconName::Zap,
             Self::ModelSlots => IconName::Sparkles,
             Self::Orchestration => IconName::Split,
+            Self::Usage => IconName::Progress,
             Self::Customizations
             | Self::Skills
             | Self::Instructions
@@ -277,6 +282,7 @@ impl Section {
             | Self::ModelServers
             | Self::ModelSlots
             | Self::Orchestration
+            | Self::Usage
             | Self::Customizations
             | Self::Skills
             | Self::Instructions
@@ -418,6 +424,7 @@ impl WorkspaceState {
             action if self.keymap_pressed(action) => {}
             action if self.machines_pressed(action) => {}
             action if self.models_pressed(action) => {}
+            action if self.usage_pressed(action) => {}
             action if self.languages_pressed(action) => {}
             action
                 if self.draft_pressed(
@@ -449,6 +456,9 @@ impl WorkspaceState {
         self.section_changed();
         if section == Section::ModelServers {
             self.outbox.push(crate::state::Outgoing::ModelServers);
+        }
+        if section == Section::Usage {
+            self.ask_usage();
         }
         if matches!(section, Section::ModelSlots | Section::Orchestration) {
             self.ask_model_slots();

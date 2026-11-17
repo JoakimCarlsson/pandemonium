@@ -232,11 +232,14 @@ pub const BACKUP_CONTROLS: IdRange = SLOT_CONTROLS.after(
 pub const PRESET_CONTROLS: IdRange =
     BACKUP_CONTROLS.after(200 * crate::settings_slots::PRESET_COLUMNS as u64);
 
+/// The choices of how many days the usage page covers, in the order of [`crate::settings_usage::RANGES`].
+pub const USAGE_RANGES: IdRange = PRESET_CONTROLS.after(8);
+
 /// The names after the last run, left free for runs added later; a new run goes before it.
-pub const SPARE: IdRange = PRESET_CONTROLS.after(SETTINGS_END - PRESET_CONTROLS.end());
+pub const SPARE: IdRange = USAGE_RANGES.after(SETTINGS_END - USAGE_RANGES.end());
 
 /// Every run of the window, in the order they are laid out.
-pub const RANGES: [IdRange; 36] = [
+pub const RANGES: [IdRange; 37] = [
     SINGLES,
     MACHINE_REACHES,
     DRAFT_SCOPES,
@@ -272,6 +275,7 @@ pub const RANGES: [IdRange; 36] = [
     SLOT_CONTROLS,
     BACKUP_CONTROLS,
     PRESET_CONTROLS,
+    USAGE_RANGES,
     SPARE,
 ];
 

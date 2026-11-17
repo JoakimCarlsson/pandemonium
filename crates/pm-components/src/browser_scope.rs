@@ -172,7 +172,7 @@ impl WorkspaceState {
         } else {
             self.browsers.get(&scope)
         }?;
-        Some(saved_parts(browser))
+        Some(saved_parts(browser)).filter(|parts| !parts.0.is_empty())
     }
 
     /// Gives the session at `position` the browser it was left with, unless it already has one.
@@ -202,11 +202,17 @@ impl WorkspaceState {
     }
 }
 
-/// The parts of `browser` that are saved.
+/// The parts of `browser` that are saved. A tab that shows a sealed document is left out, since its document is not kept, and the tab shown is then the nearest one before it that is kept.
 pub(crate) fn saved_parts(browser: &Browser) -> SavedBrowserParts {
+    let active = browser.tabs[..=browser.active.min(browser.tabs.len().saturating_sub(1))]
+        .iter()
+        .filter(|tab| tab.sealed.is_none())
+        .count()
+        .saturating_sub(1);
     let tabs = browser
         .tabs
         .iter()
+        .filter(|tab| tab.sealed.is_none())
         .map(|tab| SavedTab {
             address: tab.address.text().to_owned(),
             host: tab.host.clone(),
@@ -214,7 +220,7 @@ pub(crate) fn saved_parts(browser: &Browser) -> SavedBrowserParts {
             locked: tab.locked,
         })
         .collect();
-    (tabs, browser.active, browser.tools, browser.tools_width)
+    (tabs, active, browser.tools, browser.tools_width)
 }
 
 /// The browsers set aside, by the scope of their session, for state that has none.

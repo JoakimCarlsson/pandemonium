@@ -62,7 +62,12 @@ pub(crate) fn profile() -> Option<PathBuf> {
     pm_store::data_directory().map(|data| data.join("browser-profile"))
 }
 
-/// The helper program: the one named by `PANDEMONIUM_BROWSER_HELPER`, the one downloaded, or one built beside the window's own program, whichever exists first.
+/// Whether this build was installed from a checkout, as the local and preview channels are, which install the helper built from the same checkout beside the window.
+fn from_checkout() -> bool {
+    pm_store::app_name() != "pandemonium"
+}
+
+/// The helper program: the one named by `PANDEMONIUM_BROWSER_HELPER`, then, whichever exists first, the one downloaded for this version and one built beside the window's own program. A build installed from a checkout looks beside itself before the download, since the helper installed with it matches its own code and a download of the same version number need not.
 pub fn helper() -> Option<PathBuf> {
     let name = program("pandemonium-browser");
     let named = std::env::var_os("PANDEMONIUM_BROWSER_HELPER").map(PathBuf::from);
@@ -70,11 +75,23 @@ pub fn helper() -> Option<PathBuf> {
     let beside = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|parent| parent.join(&name)));
+    let (first, second) = if from_checkout() {
+        (beside, downloaded)
+    } else {
+        (downloaded, beside)
+    };
     named
         .into_iter()
-        .chain(downloaded)
-        .chain(beside)
+        .chain(first)
+        .chain(second)
         .find(|path| path.is_file())
+}
+
+/// Whether the helper the window starts is the one `PANDEMONIUM_BROWSER_HELPER` names, which a download does not replace.
+pub fn named() -> bool {
+    std::env::var_os("PANDEMONIUM_BROWSER_HELPER")
+        .map(PathBuf::from)
+        .is_some_and(|path| path.is_file())
 }
 
 /// Whether the browser can be started.

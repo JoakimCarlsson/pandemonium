@@ -18,6 +18,8 @@ const origins = require('./origins');
 const pick = require('./pick');
 const { Recorder } = require('./recorder');
 const { Restriction } = require('./restriction');
+const sealed = require('./sealed');
+const sealedPolicy = require('./sealed-policy');
 const { Surface } = require('./surface');
 
 /** @typedef {import('./types').PageRequest} PageRequest */
@@ -57,6 +59,13 @@ function zoomFrom(action, now) {
 }
 
 /**
+ * A document shown sealed in a page: an agent wrote it, its scripts run and the network is denied to it.
+ * @typedef {object} SealedDocument
+ * @property {string} html The document.
+ * @property {string} title What the page is called while the document names nothing.
+ */
+
+/**
  * Options for a new page.
  * @typedef {object} PageOptions
  * @property {number} id The number the window chose for the page.
@@ -64,7 +73,8 @@ function zoomFrom(action, now) {
  * @property {number} height Its height in logical pixels.
  * @property {string} folder The folder it paints its files into.
  * @property {Send} send Tells the window what the page reports.
- * @property {boolean} inspectable Whether it records its console and answers tools; the developer tools do not.
+ * @property {boolean} inspectable Whether it records its console and answers tools; the developer tools and sealed pages do not.
+ * @property {SealedDocument} [sealed] The document the page shows sealed from the network, in place of an address; such a page is never inspectable.
  */
 
 /**
@@ -75,7 +85,7 @@ class Page {
    * Makes the page and its offscreen window.
    * @param {PageOptions} options What the page is, and where it reports.
    */
-  constructor({ id, width, height, folder, send, inspectable }) {
+  constructor({ id, width, height, folder, send, inspectable, sealed: document }) {
     /** @type {number} The number the window chose for the page. */
     this.id = id;
     /** @type {Send} Tells the window what the page reports. */
@@ -84,6 +94,8 @@ class Page {
     this.pickContext = null;
     /** @type {boolean} Whether the page already listens for what the picker reports. */
     this.pickListening = false;
+    /** @type {SealedDocument | null} The document the page shows sealed from the network, when it shows one. */
+    this.sealed = document || null;
     /** @type {Surface} The files the page paints into. */
     this.surface = new Surface(folder, id, (w, h, paths) => send({ Surface: { page: id, width: w, height: h, paths } }));
     /** @type {import('electron').BrowserWindow} The offscreen window that holds the page. */
@@ -92,14 +104,16 @@ class Page {
       width,
       height,
       useContentSize: true,
-      webPreferences: {
-        sandbox: true,
-        contextIsolation: true,
-        nodeIntegration: false,
-        offscreen: true,
-        preload: path.join(__dirname, 'popups-preload.js'),
-        backgroundThrottling: false,
-      },
+      webPreferences: this.sealed
+        ? sealed.preferences(path.join(__dirname, 'popups-preload.js'))
+        : {
+            sandbox: true,
+            contextIsolation: true,
+            nodeIntegration: false,
+            offscreen: true,
+            preload: path.join(__dirname, 'popups-preload.js'),
+            backgroundThrottling: false,
+          },
     });
     /** @type {import('electron').WebContents} What the window shows. */
     this.contents = this.win.webContents;
@@ -120,31 +134,41 @@ class Page {
     /** @type {{ url: string, origin: string, fingerprint: string } | null} The site whose untrusted certificate kept the page from loading, while the reader has not chosen. */
     this.certificate = null;
     this.contents.setFrameRate(60);
-    this.contents.setWindowOpenHandler(({ url }) => {
-      if (webAddress(url) && !this.guard(url)) send({ OpenRequested: { page: id, url, agent: this.agentBusy() } });
-      return { action: 'deny' };
-    });
-    this.contents.on('will-navigate', (event, url) => {
-      if (!webAddress(url) || this.guard(url)) event.preventDefault();
-    });
-    this.contents.on('will-frame-navigate', (event) => {
-      if (event.isMainFrame ? this.guard(event.url) : this.guard(event.url, true)) event.preventDefault();
-    });
-    this.contents.on('will-redirect', (event) => {
-      if (this.guard(event.url, !event.isMainFrame)) event.preventDefault();
-    });
+    if (this.sealed) {
+      const { title: named } = this.sealed;
+      sealed.guard(this.contents);
+      send({ Title: { page: id, title: named } });
+      this.contents.on('page-title-updated', (_event, title) =>
+        send({ Title: { page: id, title: title.startsWith('data:') || !title.trim() ? named : title } }),
+      );
+      this.contents.on('did-navigate', () => this.reportZoom());
+    } else {
+      this.contents.setWindowOpenHandler(({ url }) => {
+        if (webAddress(url) && !this.guard(url)) send({ OpenRequested: { page: id, url, agent: this.agentBusy() } });
+        return { action: 'deny' };
+      });
+      this.contents.on('will-navigate', (event, url) => {
+        if (!webAddress(url) || this.guard(url)) event.preventDefault();
+      });
+      this.contents.on('will-frame-navigate', (event) => {
+        if (event.isMainFrame ? this.guard(event.url) : this.guard(event.url, true)) event.preventDefault();
+      });
+      this.contents.on('will-redirect', (event) => {
+        if (this.guard(event.url, !event.isMainFrame)) event.preventDefault();
+      });
+      this.contents.on('page-title-updated', (_event, title) => send({ Title: { page: id, title } }));
+      this.contents.on('did-navigate', (_event, url) => {
+        send({ Address: { page: id, url } });
+        this.reportZoom();
+      });
+      this.contents.on('did-navigate-in-page', (_event, url) => send({ Address: { page: id, url } }));
+    }
     this.contents.on('paint', (_event, _dirty, image) => this.paint(image));
-    this.contents.on('page-title-updated', (_event, title) => send({ Title: { page: id, title } }));
-    this.contents.on('did-navigate', (_event, url) => {
-      send({ Address: { page: id, url } });
-      this.reportZoom();
-    });
     this.contents.on('found-in-page', (_event, result) =>
       send({ Found: { page: id, active: result.activeMatchOrdinal, total: result.matches } }),
     );
-    this.contents.on('did-navigate-in-page', (_event, url) => send({ Address: { page: id, url } }));
     this.contents.on('cursor-changed', (_event, type) => send({ Cursor: { page: id, cursor: cursorOf(type) } }));
-    if (inspectable) {
+    if (inspectable && !this.sealed) {
       this.cdp = new Cdp(this.contents);
       this.recorder = new Recorder(this.cdp);
       this.dialogs = new Dialogs(this);
@@ -183,12 +207,24 @@ class Page {
   }
 
   /**
-   * Opens an address.
+   * Opens an address. A sealed page stays on its document: it is not sent anywhere.
    * @param {string} url Where to go.
    * @returns {void}
    */
   load(url) {
+    if (this.sealed) return;
     this.contents.loadURL(url).catch(() => {});
+  }
+
+  /**
+   * Loads the document of a sealed page; a document that may not be shown sealed is replaced by a line that says why.
+   * @returns {void}
+   */
+  showSealed() {
+    if (!this.sealed) return;
+    const refused = sealedPolicy.refusal(this.sealed.html);
+    const html = refused ? `<!doctype html><title>Not shown</title><p style="font: 14px sans-serif">${refused}</p>` : this.sealed.html;
+    this.contents.loadURL(sealedPolicy.address(html)).catch(() => {});
   }
 
   /**
@@ -218,7 +254,7 @@ class Page {
       this.contents.setZoomFactor(zoomFrom(asked.Zoom.action, this.contents.getZoomFactor()));
       this.reportZoom();
     } else if ('ClearData' in asked) {
-      this.clearData();
+      if (!this.sealed) this.clearData();
     } else if ('Resize' in asked) {
       this.win.setContentSize(asked.Resize.width, asked.Resize.height);
       this.holdViewport();
@@ -306,7 +342,10 @@ class Page {
     /** @type {ToolOutcome} */
     let outcome;
     if (!this.cdp) {
-      outcome = { ok: false, text: 'These tools do not work on developer tools.', image: null };
+      const why = this.sealed
+        ? 'This tab shows a document an agent drew for the reader, sealed from the network; the browser tools do not work on it. Open a tab of your own with browser_tabs.'
+        : 'These tools do not work on developer tools.';
+      outcome = { ok: false, text: why, image: null };
     } else {
       /** @type {unknown} */
       let args;

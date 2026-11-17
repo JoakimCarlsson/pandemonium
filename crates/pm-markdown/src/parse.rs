@@ -1,10 +1,27 @@
 //! Reading a markdown source into blocks.
 
+use std::borrow::Cow;
+
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 use crate::block::{Block, Image, Inline, Span};
 
+#[cfg(test)]
+mod tests;
+
+/// The HTML tags whose meaning the blocks keep: a block of HTML made only of these, and comments, is read into text, pictures and folds; a block with any other tag is shown as its source.
+const UNDERSTOOD_TAGS: &[&str] = &[
+    "a", "abbr", "b", "br", "center", "code", "del", "details", "div", "em", "h1", "h2", "h3",
+    "h4", "h5", "h6", "hr", "i", "img", "kbd", "mark", "p", "picture", "s", "small", "source",
+    "span", "strike", "strong", "sub", "summary", "sup", "tt", "u",
+];
+
+/// The HTML tags whose content is never text to read: what is between the opening and the closing tag is left out.
+const UNREAD_TAGS: &[&str] = &["style", "script"];
+
 /// The blocks `source` is made of, with tables, strikethrough, task lists and TeX formulas understood; a formula within running text is set as code.
+///
+/// A whole HTML document in the source, from its `<!doctype html>` or `<html>` line to its `</html>` line, is shown as its source in an `html` code block, as is any block of HTML holding a tag beyond [`UNDERSTOOD_TAGS`]. What `<style>` and `<script>` tags hold within running text is left out.
 ///
 /// A source cut off part way, as a streamed reply is, parses as though every
 /// open block closed where it ends.
@@ -24,13 +41,126 @@ fn read(source: &str) -> Builder {
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_MATH;
     let mut builder = Builder::default();
-    for event in Parser::new_ext(source, options) {
+    let source = fence_documents(source);
+    for event in Parser::new_ext(&source, options) {
         builder.event(event);
     }
     builder.flush_prose();
     builder.close_text();
     builder.fold_details();
     builder
+}
+
+/// `source` with every whole HTML document outside a fenced code block put in a fenced `html` block of its own, so that it parses as one piece of source to show rather than as blocks of HTML and markdown.
+///
+/// A document starts at a line that opens with `<!doctype html` or `<html` and ends at the first line after it holding `</html>`, or at the end of the source.
+fn fence_documents(source: &str) -> Cow<'_, str> {
+    let lines: Vec<&str> = source.split_inclusive('\n').collect();
+    let mut fenced = String::with_capacity(source.len() + 16);
+    let mut changed = false;
+    let mut fence: Option<(char, usize)> = None;
+    let mut at = 0;
+    while at < lines.len() {
+        let line = lines[at];
+        if let Some(open) = fence {
+            if closes_fence(line, open) {
+                fence = None;
+            }
+        } else if let Some(opened) = opens_fence(line) {
+            fence = Some(opened);
+        } else if starts_document(line) {
+            let end = (at..lines.len())
+                .find(|later| lines[*later].to_ascii_lowercase().contains("</html>"))
+                .map_or(lines.len(), |last| last + 1);
+            let document: String = lines[at..end].concat();
+            let ticks = "`".repeat(longest_backtick_run(&document).max(2) + 1);
+            fenced.push_str(&ticks);
+            fenced.push_str("html\n");
+            fenced.push_str(document.trim_end_matches('\n'));
+            fenced.push('\n');
+            fenced.push_str(&ticks);
+            fenced.push('\n');
+            changed = true;
+            at = end;
+            continue;
+        }
+        fenced.push_str(line);
+        at += 1;
+    }
+    match changed {
+        true => Cow::Owned(fenced),
+        false => Cow::Borrowed(source),
+    }
+}
+
+/// Whether `line` starts an HTML document: it opens, after at most three spaces, with `<!doctype html` or an `<html` tag.
+fn starts_document(line: &str) -> bool {
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    let lower = line.trim_start().to_ascii_lowercase();
+    let html_tag = lower
+        .strip_prefix("<html")
+        .is_some_and(|rest| rest.starts_with(['>', ' ', '\t', '\n', '\r']) || rest.is_empty());
+    indent < 4 && (lower.starts_with("<!doctype html") || html_tag)
+}
+
+/// The character and length of the code fence `line` opens, if it opens one.
+fn opens_fence(line: &str) -> Option<(char, usize)> {
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    let rest = line.trim_start_matches(' ');
+    let mark = rest
+        .chars()
+        .next()
+        .filter(|mark| matches!(mark, '`' | '~'))?;
+    let length = rest.len() - rest.trim_start_matches(mark).len();
+    let info = &rest[length..];
+    let valid = indent < 4 && length >= 3 && !(mark == '`' && info.contains('`'));
+    valid.then_some((mark, length))
+}
+
+/// Whether `line` closes the code fence `open`, made of its character repeated its length of times.
+fn closes_fence(line: &str, open: (char, usize)) -> bool {
+    let indent = line.len() - line.trim_start_matches(' ').len();
+    let rest = line.trim_start_matches(' ');
+    let length = rest.len() - rest.trim_start_matches(open.0).len();
+    indent < 4 && length >= open.1 && rest[length..].trim().is_empty()
+}
+
+/// The length of the longest run of backticks in `text`.
+fn longest_backtick_run(text: &str) -> usize {
+    text.split(|character| character != '`')
+        .map(str::len)
+        .max()
+        .unwrap_or(0)
+}
+
+/// The lowercase name of the HTML tag whose words between the angle brackets are `inside`, its closing slash left out; empty for a declaration such as `!doctype`.
+fn tag_name(inside: &str) -> String {
+    inside
+        .trim_start_matches('/')
+        .chars()
+        .take_while(char::is_ascii_alphanumeric)
+        .collect::<String>()
+        .to_ascii_lowercase()
+}
+
+/// Whether the block of HTML `source` holds a tag beyond [`UNDERSTOOD_TAGS`], or a declaration, and so is shown as its source.
+fn foreign_html(source: &str) -> bool {
+    let mut rest = source;
+    while let Some(open) = rest.find('<') {
+        let tag = &rest[open + 1..];
+        if let Some(comment) = tag.strip_prefix("!--") {
+            rest = comment.find("-->").map_or("", |end| &comment[end + 3..]);
+            continue;
+        }
+        let name = tag_name(tag);
+        let is_tag = tag.starts_with(['/', '!'])
+            || tag.starts_with(|first: char| first.is_ascii_alphabetic());
+        if is_tag && !UNDERSTOOD_TAGS.contains(&name.as_str()) {
+            return true;
+        }
+        rest = tag;
+    }
+    false
 }
 
 /// A block that holds other blocks and is still being read.
@@ -115,13 +245,24 @@ struct Builder {
     worded: bool,
     /// For each HTML paragraph or division open, innermost last, whether it sets what it holds in the middle.
     aligned: Vec<bool>,
+    /// The HTML of the block of HTML being read, gathered until it ends, when one is.
+    html_block: Option<String>,
+    /// How many `<style>` or `<script>` tags are open within running text, whose content is left out.
+    unread: u32,
 }
 
 impl Builder {
     /// Takes one event of the parser into the blocks.
     fn event(&mut self, event: Event) {
+        if let (Some(block), Event::Html(text) | Event::Text(text)) = (&mut self.html_block, &event)
+        {
+            return block.push_str(text);
+        }
         if let (Some(image), Event::Text(text) | Event::Code(text)) = (&mut self.image, &event) {
             return image.alt.push_str(text);
+        }
+        if self.unread > 0 && matches!(event, Event::Text(_) | Event::Code(_)) {
+            return;
         }
         if let Event::Text(text) = &event
             && !matches!(self.open, Some(Open::Code(_)))
@@ -222,6 +363,7 @@ impl Builder {
                     height: None,
                 });
             }
+            Tag::HtmlBlock => self.html_block = Some(String::new()),
             _ => {}
         }
     }
@@ -318,6 +460,11 @@ impl Builder {
                     self.add_image(image);
                 }
             }
+            TagEnd::HtmlBlock => {
+                if let Some(source) = self.html_block.take() {
+                    self.html_block_read(&source);
+                }
+            }
             _ => {}
         }
     }
@@ -332,6 +479,18 @@ impl Builder {
             link: self.link > 0,
             target: self.open_links.last().copied().unwrap_or(0),
         }
+    }
+
+    /// Takes a whole block of HTML, `source`: shown as its source in an `html` code block when it holds a tag beyond [`UNDERSTOOD_TAGS`], and otherwise read as [`Self::html`] reads embedded HTML.
+    fn html_block_read(&mut self, source: &str) {
+        if !foreign_html(source) {
+            return self.html(source);
+        }
+        self.close_text();
+        self.push_block(Block::Code {
+            language: "html".to_owned(),
+            text: source.trim_end_matches('\n').to_owned(),
+        });
     }
 
     /// Reads embedded HTML: its tags set the text between them as markdown
@@ -358,6 +517,9 @@ impl Builder {
     /// Adds the text between HTML tags, its line breaks read as spaces, and
     /// keeps the room between tags only inside text already open.
     fn html_text(&mut self, text: &str) {
+        if self.unread > 0 {
+            return;
+        }
         let text = text.replace('\n', " ");
         if text.trim().is_empty() {
             if !text.is_empty() && self.open.is_some() {
@@ -371,18 +533,21 @@ impl Builder {
         };
         self.text(text, self.inline());
     }
-
     /// Takes one HTML tag, the text between its angle brackets: inline tags
     /// set the text they hold, a break breaks the line, a details block holds
+    /// the blocks up to its end under its summary, `<style>` and `<script>` leave
+    /// out what they hold and any other tag ends the text open.
     /// the blocks up to its end under its summary and any other tag ends the text open.
     fn tag(&mut self, inside: &str) {
         let closing = inside.starts_with('/');
-        let name = inside
-            .trim_start_matches('/')
-            .chars()
-            .take_while(char::is_ascii_alphanumeric)
-            .collect::<String>()
-            .to_ascii_lowercase();
+        let name = tag_name(inside);
+        if UNREAD_TAGS.contains(&name.as_str()) {
+            self.unread = match closing {
+                true => self.unread.saturating_sub(1),
+                false => self.unread + 1,
+            };
+            return;
+        }
         let count = match name.as_str() {
             "b" | "strong" => &mut self.strong,
             "i" | "em" => &mut self.emphasis,

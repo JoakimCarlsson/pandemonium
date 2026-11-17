@@ -14,6 +14,8 @@ const { holdNativeBoxes } = require('./src/dialogs');
 const origins = require('./src/origins');
 const { Page } = require('./src/page');
 const safety = require('./src/safety');
+const sealed = require('./src/sealed');
+const features = require('./src/features');
 
 /** @typedef {import('./src/types').Event} Event */
 /** @typedef {import('./src/types').PageBody} PageBody */
@@ -79,6 +81,19 @@ function bodyOf(request) {
 }
 
 /**
+ * Renders a document sealed from the network to a picture and tells the window how it went, as `HtmlRendered` with the ticket of the request.
+ * @param {import('./src/types').RenderHtmlBody} body The document, the viewport and where the picture goes.
+ * @returns {void}
+ */
+function renderHtml(body) {
+  sealed.render(body.html, body.width, body.height, body.path).then(
+    () => send({ HtmlRendered: { ticket: body.ticket, path: body.path, error: '' } }),
+    (error) =>
+      send({ HtmlRendered: { ticket: body.ticket, path: '', error: String(error instanceof Error ? error.message : error) } }),
+  );
+}
+
+/**
  * Carries out one request of the window.
  * @param {Request} request The request.
  * @returns {void}
@@ -101,6 +116,21 @@ function handle(request) {
     pages.set(body.page, page);
     safety.watch(page);
     page.load(body.url);
+  } else if ('OpenHtml' in request) {
+    const body = request.OpenHtml;
+    const page = new Page({
+      id: body.page,
+      width: body.width,
+      height: body.height,
+      folder: surfacesFolder,
+      send,
+      inspectable: false,
+      sealed: { html: body.html, title: body.title },
+    });
+    pages.set(body.page, page);
+    page.showSealed();
+  } else if ('RenderHtml' in request) {
+    renderHtml(request.RenderHtml);
   } else if ('OpenTools' in request) {
     const body = request.OpenTools;
     const inspected = pages.get(body.of);
@@ -148,6 +178,7 @@ app.whenReady().then(() => {
   let pending = '';
   connection.on('connect', () => {
     connection.write(`${controlToken}\n`);
+    send(features.announcement());
     send('Ready');
   });
   connection.on('data', (chunk) => {

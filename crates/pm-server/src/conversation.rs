@@ -201,7 +201,7 @@ fn history(log: &[(u64, Event)]) -> String {
 
 /// The log of a session with its conversation taken from what the harness saved: the turns the harness has, each as the events a live turn would have told, in place of the ones the log holds; what the harness does not know of, such as queued prompts, stays where it was. The choices the harness saved for the settings are put into the last list of settings the log holds, and what the harness says the conversation cost takes the place of what the log says.
 ///
-/// A turn keeps the id the harness saved it under, and whether its files were kept is carried over from the log. A turn the harness dropped, because it was stopped or failed, is gone from the result. The events are numbered again from one.
+/// A turn keeps the id the harness saved it under, and whether its files were kept is carried over from the log. A turn the harness dropped, because it was stopped or failed, is gone from the result. An exhibit the agent showed, which only the log holds, goes straight after the tool call that showed it, and is gone with a turn that is. The events are numbered again from one.
 pub(crate) fn from_saved(
     log: &[(u64, Event)],
     saved: &pm_harness::Conversation,
@@ -228,7 +228,10 @@ pub(crate) fn from_saved(
     let costed = saved.spent.is_some();
     let other = |event: &Event| {
         !conversational(event)
-            && !matches!(event, Event::Prompted { .. } | Event::Rewound { .. })
+            && !matches!(
+                event,
+                Event::Prompted { .. } | Event::Rewound { .. } | Event::Show(_)
+            )
             && !(offered && matches!(event, Event::Settings(_)))
             && !(commanded && matches!(event, Event::Commands(_)))
             && !(measured && matches!(event, Event::Used(_)))
@@ -273,6 +276,7 @@ pub(crate) fn from_saved(
             .filter(|event| other(event))
             .cloned(),
     );
+    place_exhibits(&mut events, log);
     choose_settings(&mut events, &saved.settings);
     (1..).zip(events).collect()
 }
@@ -351,6 +355,21 @@ pub(crate) fn to_import(log: &[(u64, Event)], title: &str) -> Option<pm_harness:
         window,
         turns,
     })
+}
+
+/// Puts each exhibit `log` holds into `events` straight after the last event of the tool call that showed it, in the order they were shown, since the harness saves the call and not the exhibit; an exhibit whose call `events` does not tell, as when its turn was taken back, is left out.
+fn place_exhibits(events: &mut Vec<Event>, log: &[(u64, Event)]) {
+    for (_, event) in log {
+        let Event::Show(exhibit) = event else {
+            continue;
+        };
+        let shown_by = events
+            .iter()
+            .rposition(|held| matches!(held, Event::Tool(tool) if tool.id == exhibit.id));
+        if let Some(at) = shown_by {
+            events.insert(at + 1, event.clone());
+        }
+    }
 }
 
 /// Puts `chosen`, the value the harness saved for each setting, as the current value of that setting in the last list of settings in `events`.
@@ -555,6 +574,12 @@ mod tests {
         assert!(!kept_on_disk(&Event::Spent(pm_harness::Spent::default())));
         assert!(kept_on_disk(&prompted("x", 1, true)));
         assert!(kept_on_disk(&Event::Rewound { turn: 0 }));
+        assert!(kept_on_disk(&Event::Show(pm_harness::Exhibit {
+            id: "call-1".to_owned(),
+            title: "Flow".to_owned(),
+            kind: pm_harness::ExhibitKind::Diagram,
+            content: "graph TD; A-->B".to_owned(),
+        })));
         assert!(kept_on_disk(&Event::Queued {
             id: 1,
             text: String::new(),
@@ -686,5 +711,56 @@ mod tests {
         let told = preface(&log, true);
         assert!(told.contains("Reader:\none") && told.contains("Agent:\na"));
         assert!(!told.contains("because") && !told.contains("carry on"));
+    }
+
+    /// An exhibit the log holds is put back straight after the call that showed it when the conversation is taken from the harness, and one whose call the harness no longer tells is left out.
+    #[test]
+    fn exhibits_follow_the_call_that_showed_them() {
+        let exhibit = |id: &str| {
+            Event::Show(pm_harness::Exhibit {
+                id: id.to_owned(),
+                title: "Flow".to_owned(),
+                kind: pm_harness::ExhibitKind::Diagram,
+                content: "graph TD; A-->B".to_owned(),
+            })
+        };
+        let call = |id: &str| -> pm_harness::WireEvent {
+            serde_json::from_value(serde_json::json!({
+                "Tool": {
+                    "id": id,
+                    "title": "Show",
+                    "kind": null,
+                    "state": null,
+                    "target": null,
+                    "diff": null,
+                    "output": null,
+                }
+            }))
+            .unwrap()
+        };
+        let log: Vec<(u64, Event)> = vec![
+            (1, prompted("one", 1, false)),
+            (2, exhibit("call-1")),
+            (3, Event::Said("a".to_owned())),
+            (4, Event::Finished(None)),
+            (5, prompted("two", 5, false)),
+            (6, exhibit("call-gone")),
+            (7, Event::Finished(None)),
+        ];
+        let saved = pm_harness::Conversation {
+            turns: vec![PastTurn {
+                id: Some("1".to_owned()),
+                prompt: "one".to_owned(),
+                files: Vec::new(),
+                events: vec![call("call-1"), pm_harness::WireEvent::Said("a".to_owned())],
+            }],
+            ..Default::default()
+        };
+        let rebuilt = from_saved(&log, &saved);
+        let events: Vec<&Event> = rebuilt.iter().map(|(_, event)| event).collect();
+        assert!(matches!(events[1], Event::Tool(tool) if tool.id == "call-1"));
+        assert_eq!(events[2], &exhibit("call-1"));
+        assert_eq!(events[3], &Event::Said("a".to_owned()));
+        assert!(!events.contains(&&exhibit("call-gone")));
     }
 }

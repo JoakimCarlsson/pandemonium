@@ -173,3 +173,25 @@ fn commands_carry_their_tab() {
     );
     assert_eq!(state.browser.as_ref().unwrap().active, 0);
 }
+
+/// A tab that shows a sealed document is shown and locked, agents are told nothing of it, it is not saved, and it is an ordinary tab again once unsealed.
+#[test]
+fn a_sealed_tab_is_kept_from_agents_and_not_saved() {
+    let mut state = opened();
+    let id = state
+        .browser_sealed_tab_opened("Login", "<p>hi</p>")
+        .unwrap();
+    let browser = state.browser.as_ref().unwrap();
+    assert_eq!(browser.active_id(), id);
+    assert!(browser.locked && browser.sealed.is_some());
+    assert!(browser.tab_infos().iter().all(|tab| tab.id != id));
+    assert_eq!(
+        state.take_browser_commands().last(),
+        Some(&(id, crate::browser::Command::LoadSealed))
+    );
+    let (saved, active, _, _) = state.browser_saved().unwrap();
+    assert_eq!((saved.len(), active), (1, 0));
+    state.browser_tab_unsealed(id);
+    let browser = state.browser.as_ref().unwrap();
+    assert!(!browser.locked && browser.sealed.is_none());
+}

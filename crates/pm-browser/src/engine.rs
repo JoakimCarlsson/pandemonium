@@ -1,14 +1,18 @@
 //! Starting the browser helper and the connection to it.
 
 use std::io::BufReader;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::sync::Arc;
 
 use crate::error::Error;
 use crate::install;
 use crate::link::Link;
-use crate::wire::Request;
+use crate::render::Rendered;
+use crate::wire::{Request, SEALED_PAGES};
+
+/// How long the helper is given, once connected, to say what it supports and that it is ready; one that says nothing in that time is taken to support nothing beyond what every helper does.
+const READY_WITHIN: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// The running browser helper; pages are opened in it as [`crate::View`]s.
 ///
@@ -149,8 +153,15 @@ impl Engine {
             .stderr(log_file(&profile))
             .spawn()
             .map_err(|error| fail(&error))?;
-        let (stream, reader) = accept_helper(&listener, &secret, &mut child, &folder)?;
-        let link = Link::new(Box::new(stream));
+        let (stream, mut reader) = accept_helper(&listener, &secret, &mut child, &folder)?;
+        let link = Link::new(Box::new(stream.try_clone().map_err(|error| fail(&error))?));
+        stream
+            .set_read_timeout(Some(READY_WITHIN))
+            .map_err(|error| fail(&error))?;
+        link.await_ready(&mut reader);
+        stream
+            .set_read_timeout(None)
+            .map_err(|error| fail(&error))?;
         let listening = link.clone();
         std::thread::spawn(move || listening.listen(Box::new(reader)));
         Ok(Self {
@@ -171,6 +182,27 @@ impl Engine {
             restrict,
             origins: origins.to_vec(),
         });
+    }
+
+    /// Asks the helper to render the document `html`, sealed from the network, at a viewport of `width` by `height` CSS pixels into the PNG file `path`; how it went comes back from [`Engine::take_rendered`] under `ticket`.
+    pub fn render_html(&self, ticket: u64, html: &str, width: u32, height: u32, path: &Path) {
+        self.link.send(&Request::RenderHtml {
+            ticket,
+            html: html.to_owned(),
+            width,
+            height,
+            path: path.display().to_string(),
+        });
+    }
+
+    /// Whether the helper opens and renders sealed documents, as it announced when it started; an older helper does not, and ignores [`Engine::render_html`] and [`crate::View::open_html`].
+    pub fn sealed_pages(&self) -> bool {
+        self.link.supports(SEALED_PAGES).unwrap_or(false)
+    }
+
+    /// The renders asked for with [`Engine::render_html`] that ended since the last call.
+    pub fn take_rendered(&self) -> Vec<Rendered> {
+        self.link.take_rendered()
     }
 
     /// Why the helper failed, if it did.

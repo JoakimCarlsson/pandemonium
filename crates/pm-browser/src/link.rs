@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::frame::Frame;
 use crate::input::Cursor;
+use crate::render::Rendered;
 use crate::surface::SurfaceReader;
 use crate::wire::{
     Capture, CertificateInfo, DownloadState, Event, PickedElement, Request, ToolResult, line,
@@ -116,6 +117,11 @@ impl PageState {
             .unwrap_or_default()
     }
 
+    /// Whether the page has painted at least once.
+    pub(crate) fn painted(&self) -> bool {
+        self.latest.lock().is_ok_and(|latest| latest.is_some())
+    }
+
     /// The newest picture, copied out of the shared files only when the page has painted since the last copy.
     pub(crate) fn frame(&self) -> Option<Frame> {
         let latest = *self.latest.lock().ok()?;
@@ -157,6 +163,12 @@ pub(crate) struct Link {
     failure: Mutex<Option<String>>,
     /// The number the next page gets.
     next_page: AtomicU32,
+    /// The renders of sealed documents that ended since the window last asked.
+    rendered: Mutex<Vec<Rendered>>,
+    /// The features the helper announced, kept once it said it is ready: nothing until then, and an empty list from a helper that announced none.
+    features: Mutex<Option<Vec<String>>>,
+    /// The features announced before the helper said it is ready.
+    announced: Mutex<Vec<String>>,
 }
 
 impl Link {
@@ -167,6 +179,9 @@ impl Link {
             pages: Mutex::new(HashMap::new()),
             failure: Mutex::new(None),
             next_page: AtomicU32::new(1),
+            rendered: Mutex::new(Vec::new()),
+            features: Mutex::new(None),
+            announced: Mutex::new(Vec::new()),
         })
     }
 
@@ -200,6 +215,45 @@ impl Link {
         self.failure.lock().ok()?.clone()
     }
 
+    /// The renders of sealed documents that ended since the last call.
+    pub(crate) fn take_rendered(&self) -> Vec<Rendered> {
+        self.rendered
+            .lock()
+            .map(|mut held| std::mem::take(&mut *held))
+            .unwrap_or_default()
+    }
+
+    /// Whether the helper announced `feature` before it said it is ready; nothing while it has not said so yet.
+    pub(crate) fn supports(&self, feature: &str) -> Option<bool> {
+        self.features
+            .lock()
+            .ok()?
+            .as_ref()
+            .map(|features| features.iter().any(|held| held == feature))
+    }
+
+    /// Whether the helper said it is ready, after which its features are known.
+    fn ready(&self) -> bool {
+        self.features
+            .lock()
+            .is_ok_and(|features| features.is_some())
+    }
+
+    /// Reads what the helper reports from `reader` until it says it is ready, the reader gives out or fails, as when its timeout passes; what it read is taken in as [`Link::listen`] takes it in.
+    pub(crate) fn await_ready(&self, reader: &mut dyn BufRead) {
+        let mut text = String::new();
+        while !self.ready() {
+            text.clear();
+            match reader.read_line(&mut text) {
+                Ok(0) | Err(_) => return,
+                Ok(_) => {}
+            }
+            if let Ok(event) = serde_json::from_str::<Event>(&text) {
+                self.handle(event);
+            }
+        }
+    }
+
     /// The state of `page`, if it is open.
     fn page(&self, page: u32) -> Option<Arc<PageState>> {
         self.pages.lock().ok()?.get(&page).cloned()
@@ -226,7 +280,21 @@ impl Link {
     /// Records one report.
     fn handle(&self, event: Event) {
         match event {
-            Event::Ready => {}
+            Event::Ready => {
+                let announced = self
+                    .announced
+                    .lock()
+                    .map(|mut held| std::mem::take(&mut *held))
+                    .unwrap_or_default();
+                if let Ok(mut features) = self.features.lock() {
+                    features.get_or_insert(announced);
+                }
+            }
+            Event::Features { features } => {
+                if let Ok(mut announced) = self.announced.lock() {
+                    announced.extend(features);
+                }
+            }
             Event::Failed { message } => {
                 if let Ok(mut failure) = self.failure.lock() {
                     *failure = Some(message);
@@ -362,6 +430,70 @@ impl Link {
                     opened.push((url, agent));
                 }
             }
+            Event::HtmlRendered {
+                ticket,
+                path,
+                error,
+            } => {
+                if let Ok(mut rendered) = self.rendered.lock() {
+                    rendered.push(Rendered {
+                        ticket,
+                        outcome: if error.is_empty() && !path.is_empty() {
+                            Ok(path.into())
+                        } else if error.is_empty() {
+                            Err("the helper rendered no picture".to_owned())
+                        } else {
+                            Err(error)
+                        },
+                    });
+                }
+            }
         }
+    }
+}
+
+#[cfg(test)]
+/// Tests for what the connection makes of the features the helper announces.
+mod tests {
+    use super::*;
+    use crate::wire::SEALED_PAGES;
+
+    /// A connection whose requests go nowhere.
+    fn link() -> Arc<Link> {
+        Link::new(Box::new(std::io::sink()))
+    }
+
+    /// Nothing is known of the helper's features before it is ready; a helper that announced sealed pages has them, and one that said only that it is ready, as older helpers do, has none.
+    #[test]
+    fn sealed_pages_are_known_from_what_the_helper_announced() {
+        let current = link();
+        assert_eq!(current.supports(SEALED_PAGES), None);
+        current.handle(Event::Features {
+            features: vec![SEALED_PAGES.to_owned()],
+        });
+        assert_eq!(current.supports(SEALED_PAGES), None);
+        current.handle(Event::Ready);
+        assert_eq!(current.supports(SEALED_PAGES), Some(true));
+        assert_eq!(current.supports("something-else"), Some(false));
+        let older = link();
+        older.handle(Event::Ready);
+        assert_eq!(older.supports(SEALED_PAGES), Some(false));
+    }
+
+    /// Waiting for the helper to be ready reads its announcement and stops at `Ready`, leaving what follows for the listener; a helper that hangs up first leaves the features unknown.
+    #[test]
+    fn waiting_for_ready_reads_the_announcement_and_stops_there() {
+        let current = link();
+        let mut lines = std::io::Cursor::new(
+            b"{\"Features\":{\"features\":[\"sealed-pages\"]}}\n\"Ready\"\n{\"Title\":{\"page\":1,\"title\":\"x\"}}\n".to_vec(),
+        );
+        current.await_ready(&mut lines);
+        assert_eq!(current.supports(SEALED_PAGES), Some(true));
+        let mut rest = String::new();
+        let _ = lines.read_line(&mut rest);
+        assert!(rest.starts_with("{\"Title\""));
+        let silent = link();
+        silent.await_ready(&mut std::io::Cursor::new(Vec::new()));
+        assert_eq!(silent.supports(SEALED_PAGES), None);
     }
 }

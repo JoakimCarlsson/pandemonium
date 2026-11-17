@@ -92,6 +92,11 @@ pub enum Request {
         #[serde(default)]
         login: Option<String>,
     },
+    /// What the sessions of this server used over the last days: tokens, requests and cost for each day, each model and each session.
+    UsageReport {
+        /// How many days the report covers, today included; none reads as one.
+        days: u32,
+    },
     /// The files of a folder, including ignored entries and the immediate contents of expanded ignored folders.
     Files {
         /// The folder.

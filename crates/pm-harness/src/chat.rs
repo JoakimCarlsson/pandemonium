@@ -550,6 +550,7 @@ fn opening(
         keep: None,
         before: given.before,
         defaults: given.defaults,
+        exhibits: true,
     };
     (opening, languages)
 }

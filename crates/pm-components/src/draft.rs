@@ -27,6 +27,12 @@ pub const FOLD: FocusId = FocusId(5294);
 /// Starts typing an answer of the reader's own.
 pub const TYPE_OWN: FocusId = FocusId(5295);
 
+/// The first of the buttons that open the mockup of an answer larger; the answer at `i` is `MOCKUP_OPEN_BASE + i`.
+pub const MOCKUP_OPEN_BASE: u64 = 5240;
+
+/// The most answers of a question that have a button to open their mockup larger, which is what fits between the buttons' first name and the next name taken.
+const MOCKUPS: usize = 40;
+
 /// A form of questions and how far the reader is in answering it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Draft {
@@ -146,6 +152,14 @@ impl WorkspaceState {
             }
             return true;
         }
+        if let Some(index) = number
+            .checked_sub(MOCKUP_OPEN_BASE)
+            .map(|offset| offset as usize)
+            .filter(|index| *index < options.min(MOCKUPS))
+        {
+            self.open_mockup(index);
+            return true;
+        }
         match id {
             NEXT => self.advance(true),
             SKIP => self.advance(false),
@@ -159,6 +173,17 @@ impl WorkspaceState {
             _ => return false,
         }
         true
+    }
+
+    /// Opens the mockup of the answer at `option` of the question being answered, larger and live, in a tab of the session's browser that is sealed from the network; nothing when the answer has none.
+    fn open_mockup(&mut self, option: usize) {
+        let pictured = self.draft().and_then(|draft| {
+            let alternative = draft.question().alternatives.get(option)?;
+            Some((alternative.label.clone(), alternative.mockup.clone()?))
+        });
+        if let Some((label, html)) = pictured {
+            self.open_sealed_document(crate::inquiry::recommended(&label).0, &html);
+        }
     }
 
     /// Moves to the next question, keeping what was answered to this one when `keep`, and hands the answers over after the last.
@@ -203,5 +228,86 @@ impl WorkspaceState {
             ticket: draft.inquiry.ticket,
             replies: answers.then(|| draft.replies()),
         });
+    }
+}
+
+#[cfg(test)]
+/// Tests for answering a form whose answers have mockups.
+mod tests {
+    use pm_harness::{Alternative, Event};
+
+    use super::*;
+    use crate::state::Tab;
+
+    /// The sample workspace with its first session open and waiting on one question with three answers, two of them with mockups, picked one at a time or several as `multiple` says.
+    fn asked(multiple: bool) -> WorkspaceState {
+        let alternative = |label: &str, mockup: Option<&str>| Alternative {
+            label: label.to_owned(),
+            description: String::new(),
+            mockup: mockup.map(str::to_owned),
+        };
+        let mut state = WorkspaceState::sample();
+        state.page = Page::Session(0);
+        state.hear_in_place(
+            0,
+            Event::Inquire(Inquiry {
+                ticket: 4,
+                questions: vec![Question {
+                    header: "Layout".to_owned(),
+                    text: "Which layout?".to_owned(),
+                    multiple,
+                    alternatives: vec![
+                        alternative("Sidebar", Some("<p>a</p>")),
+                        alternative("Tabs", Some("<p>b</p>")),
+                        alternative("Neither", None),
+                    ],
+                }],
+            }),
+        );
+        state
+    }
+
+    /// Pressing a tile picks its answer as pressing a row does: one at a time for a single choice, a second press takes the pick back, and the key for a number presses the same tile.
+    #[test]
+    fn a_tile_picks_one_answer_of_a_single_choice() {
+        let mut state = asked(false);
+        assert!(state.press_inquiry(FocusId(PICK_BASE)));
+        assert!(state.press_inquiry(FocusId(PICK_BASE + 1)));
+        assert_eq!(state.draft().unwrap().picks[0], vec![1]);
+        assert!(state.press_inquiry(FocusId(PICK_BASE + 1)));
+        assert!(state.draft().unwrap().picks[0].is_empty());
+        assert_eq!(state.inquiry_hotkey(2), Some(FocusId(PICK_BASE + 1)));
+        assert_eq!(state.inquiry_hotkey(4), Some(TYPE_OWN));
+    }
+
+    /// A question that takes several answers keeps every tile pressed, and the answers go to the agent by their labels.
+    #[test]
+    fn tiles_of_a_multiple_choice_are_picked_together() {
+        let mut state = asked(true);
+        state.press_inquiry(FocusId(PICK_BASE));
+        state.press_inquiry(FocusId(PICK_BASE + 2));
+        assert_eq!(state.draft().unwrap().picks[0], vec![0, 2]);
+        state.press_inquiry(NEXT);
+        assert!(state.draft().is_none());
+        assert!(state.outbox.iter().any(|asked| matches!(
+            asked,
+            Outgoing::Answer { ticket: 4, replies: Some(replies), .. }
+                if replies[0].picks == ["Sidebar", "Neither"]
+        )));
+    }
+
+    /// The button on a tile opens its mockup in a sealed tab of the browser without picking the answer, and an answer with no mockup has nothing to open.
+    #[test]
+    fn a_mockup_opens_larger_without_picking_its_answer() {
+        let mut state = asked(false);
+        assert!(state.press_inquiry(FocusId(MOCKUP_OPEN_BASE + 1)));
+        assert!(state.draft().unwrap().picks[0].is_empty());
+        let browser = state.browser.as_ref().unwrap();
+        assert_eq!(&*browser.sealed.as_ref().unwrap().html, "<p>b</p>");
+        assert_eq!(state.tab, Tab::Browser);
+        let tabs = browser.tabs.len();
+        assert!(state.press_inquiry(FocusId(MOCKUP_OPEN_BASE + 2)));
+        assert_eq!(state.browser.as_ref().unwrap().tabs.len(), tabs);
+        assert!(!state.press_inquiry(FocusId(MOCKUP_OPEN_BASE + 3)));
     }
 }

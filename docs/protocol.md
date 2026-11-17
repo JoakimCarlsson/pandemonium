@@ -164,6 +164,7 @@ request with exactly one `response` carrying the same `id`.
 | `cancel_update`| none                                                                                              | `done`          |
 | `search_tools` | `query`                                                                                          | `tool_listings` |
 | `accounts`     | none                                                                                             | `accounts`      |
+| `usage_report` | `days`                                                                                           | `usage_report`  |
 | `sessions`     | none                                                                                             | `sessions`      |
 | `stage`        | `directory`, `paths`, `stage`                                                                    | `done`          |
 | `commit`       | `directory`, `message`, `tracked` (optional), `amend` (optional)                                 | `done`          |
@@ -618,6 +619,30 @@ everything said of them, its submodules' paths written from `directory`.
 - **`sessions`:** every session the server holds, running or not, with enough
   to list it. To open one, send `attach` with `after: 0`: the log replays the
   whole conversation.
+- **`usage_report`:** what the sessions of the server used over the last
+  `days` days, today included (0 reads as 1), in the server's time zone. The
+  server keeps a ledger in its data folder, `usage.jsonl`: each time a
+  session's agent reports what its conversation has cost so far, the server
+  adds one line for each model that was asked more since the last report,
+  `{day, at_ms, session, project, model, requests, input, output, cache_read,
+  cache_write, cost, missed}`, holding only what was added. The last report of
+  each session is kept beside it in `usage-baselines.jsonl`, so a report heard
+  again, or after the server started again, adds nothing; one that went down,
+  as after a rewind, only becomes the new starting point. A session that was
+  there before the ledger is entered once from the cost saved with its
+  conversation, on the day it was last worked in. The answer's `report` is
+  `{days, models, sessions, total}`. `days` is `[{day, models}]`, one for every
+  day of the run, oldest first, `day` as `YYYY-MM-DD` and `models` empty when
+  nothing was used. `models` is `[{model, totals}]`, the costliest first.
+  `sessions` is `[{session, title, project, updated, totals}]`, the costliest
+  first and at most fifty: `title` is empty for a session the server no longer
+  holds, `project` is the project's folder and empty for a chat, and `updated`
+  is when it last used something in the run, in milliseconds since the epoch.
+  `total` and every `totals` are `{requests, input, output, cache_read,
+  cache_write, cost, missed}`: counts of requests and tokens, `cost` in
+  millionths of a US dollar at list prices, null when no model asked has known
+  prices, and `missed` the part of it paid for cache misses. A client
+  connected to several servers asks each and adds the reports up itself.
 - **`watch_folders`:** the server tells this connection with `folder_changed`
   whenever a file in one of `directories` changes, or what git keeps about it
   (the index, `HEAD`, the references, also where a worktree keeps them outside
@@ -1106,6 +1131,7 @@ embedded context, and anything else as a link to the stored file.
 | `projects`   | `paths`, `saved`                                          |
 | `choices`    | `choices`: `[[agent, setting, value]]`                    |
 | `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled, extension}]`          |
+| `usage_report` | `report`: `{days: [{day, models}], models: [{model, totals}], sessions: [{session, title, project, updated, totals}], total}`, each `totals` and `total` being `{requests, input, output, cache_read, cache_write, cost, missed}` |
 | `model_servers` | `servers`: `[{id, label, base_url, wire, api_key_env, api_key, has_api_key, headers, default_model, models, replay_reasoning}]`, `api_key` always null |
 | `found_models` | `models`: `[string]` in the server's order, `error`: why the server could not be asked, or null |
 | `model_slots` | `slots`: `[{name, model, backups, resolved, source, inherited, suggested, providers, description, prompt, category}]`, built-in slots first; `description` and `prompt`, left out when unset, are what the slot is for and what it adds to a subagent's system prompt, and `category` is true for every slot other than the six job slots; `model` and `backups` are the any-provider assignment, `resolved` and `source` are for the conversation's provider, and `source` is `Environment`, `Project`, `User` or `Main`; `providers`: `[{provider, model, backups, suggested}]`, one per signed-in provider and per provider with an assignment of its own; `presets`: `[{name, slots: [{name, model, backups, providers}], effort}]` |
@@ -1303,6 +1329,7 @@ Events use serde's default form, one key naming the type.
 | `{"Slots": [slot]}`           | The conversation's model slots as they stand, each as in the `model_slots` answer; sent when the agent starts and after a change made through it. Offer each slot but `main` in the model picker as `@name`. Not kept on disk. |
 | `{"ModelFallback": {slot, from, to, reason}}` | The model `from` of `slot` kept failing in a way another model may not, such as being overloaded, so the rest of the turn asks the slot's backup `to`; `reason` is the provider's first line. Show a small notice in the conversation. Part of the turn it came in. |
 | `{"ToolSignIn": "address"}`   | A tool server the agent uses wants the reader to sign in to it with OAuth. Show the address in the conversation and, when the event is live rather than replayed history, open it in the reader's browser. The server's tools come with the next prompt once signed in. |
+| `{"Show": Exhibit}`          | The agent put a visual in front of the reader with its `show` tool, without waiting on them: show it in the conversation where it came, under its title. The harness does not tell it again when a conversation is resumed, so it is kept on disk, and a log rebuilt from what the harness saved puts it straight after the `Tool` events of the call that showed it (`id`), or drops it when that call's turn is gone. |
 
 Shapes used above:
 
@@ -1336,8 +1363,18 @@ Shapes used above:
   `command` what it runs, `source` the file it is read from, `hash` what Codex
   makes of it as it stands, and `changed` whether it was trusted before and has
   changed since rather than new.
-- **Inquiry:** `{ticket, questions: [{header, text, multiple, alternatives: [{label, description}]}]}`.
-  Send the answers to the questions with `answer`.
+- **Inquiry:** `{ticket, questions: [{header, text, multiple, alternatives: [{label, description, mockup?}]}]}`.
+  Send the answers to the questions with `answer`. `mockup`, absent in older
+  logs and when the agent drew none, is a self-contained HTML document that
+  pictures the alternative: a client may render it, sandboxed and with the
+  network denied, beside those of the other alternatives so the reader can
+  compare them. It is content the agent wrote, never markup to trust.
+- **Exhibit:** `{id, title, kind, content}`. `id` is the id of the tool call
+  that showed it, as in that call's `Tool` events. `kind` is `Diagram`, with
+  Mermaid source in `content`, or `Prototype`, with a self-contained HTML
+  document of at most 256 KiB in `content`, which a client renders sandboxed
+  with the network denied (see [browser.md](browser.md#sealed-pages)). A
+  client that cannot render a prototype still shows its title.
 - **TrustRequest:** `{ticket, root, standing, skipped: [{kind, name, path}]}`.
   `root` is the folder trust is recorded for: the repository's main checkout,
   which its worktrees share, or the folder outside a repository. `standing` is

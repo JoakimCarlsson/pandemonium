@@ -63,6 +63,11 @@ impl Session {
             Event::Plan(plan) => self.plan(plan),
             Event::Ask(question) => self.ask = Some(question),
             Event::Inquire(inquiry) => self.inquiry = Some(Draft::new(inquiry)),
+            Event::Show(exhibit) => {
+                let reply = self.reply();
+                let at = reply.steps.len();
+                reply.exhibits.push((at, exhibit));
+            }
             Event::Answered(answers) => {
                 self.inquiry = None;
                 let reply = self.reply();

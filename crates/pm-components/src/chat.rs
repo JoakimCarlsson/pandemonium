@@ -16,6 +16,9 @@ use crate::Markdown;
 use crate::activity::activity;
 use crate::button::Variant;
 use crate::composer::composer;
+use crate::exhibit::{
+    EXHIBIT_COPY_BASE, EXHIBIT_OPEN_BASE, ExhibitCard, PREVIEW_OFFER_BASE, exhibit_button,
+};
 use crate::input;
 use crate::inquiry::{answered, inquiry};
 use crate::parts::{clipped, glyph, line};
@@ -199,6 +202,22 @@ fn side_note(side: &Side, content: &str, width: f32, shaper: &mut Shaper) -> Nod
         .selectable(CHAT_TEXT)
 }
 
+/// The card of `exhibit`, which the agent showed as the one numbered `number` of the message at `index`, `width` logical pixels wide, with the buttons that open it in the browser pane and copy its source, and the one that installs or turns on the embedded browser while its picture waits for it.
+fn exhibit_card(
+    state: &WorkspaceState,
+    exhibit: &pm_harness::Exhibit,
+    (index, number): (usize, usize),
+    width: f32,
+    shaper: &mut Shaper,
+) -> Node {
+    let offer = state.preview_offer();
+    ExhibitCard::new(exhibit, &state.figures, width)
+        .open(exhibit_button(EXHIBIT_OPEN_BASE, index, number))
+        .copy(exhibit_button(EXHIBIT_COPY_BASE, index, number))
+        .offer(&offer, exhibit_button(PREVIEW_OFFER_BASE, index, number))
+        .build(shaper)
+}
+
 /// A reply from the agent: the steps it took, what it says, the points it lists and how long it took; a note beside the conversation shows as one.
 fn agent_message(
     state: &WorkspaceState,
@@ -278,8 +297,28 @@ fn agent_message(
     };
     let mut shown = 0;
     let mut recorded = 0;
+    let mut exhibited = 0;
     for (number, (before, piece)) in message.chunks().into_iter().enumerate() {
         let before = before.min(message.steps.len());
+        while let Some((at, exhibit)) = message
+            .exhibits
+            .get(exhibited)
+            .filter(|(at, _)| *at <= before)
+        {
+            let at = (*at).min(message.steps.len());
+            if at > shown {
+                reply = reply.child(run(shown, at));
+                shown = at;
+            }
+            reply = reply.child(exhibit_card(
+                state,
+                exhibit,
+                (index, exhibited),
+                width,
+                shaper,
+            ));
+            exhibited += 1;
+        }
         if before > shown {
             reply = reply.child(run(shown, before));
         }
@@ -306,6 +345,14 @@ fn agent_message(
                 .figures(&state.figures, None)
                 .build(shaper),
         );
+    }
+    for (number, (at, exhibit)) in message.exhibits.iter().enumerate().skip(exhibited) {
+        let at = (*at).min(message.steps.len());
+        if at > shown {
+            reply = reply.child(run(shown, at));
+            shown = at;
+        }
+        reply = reply.child(exhibit_card(state, exhibit, (index, number), width, shaper));
     }
     if shown < message.steps.len() {
         reply = reply.child(run(shown, message.steps.len()));
@@ -501,9 +548,13 @@ pub fn chat(
                         .styles([w_full(), max_w_px(COLUMN), px(6)])
                         .children(queued(state, session, column, shaper))
                         .children(session.inquiry.as_ref().map(|draft| {
-                            node()
-                                .styles([w_full(), mb(2)])
-                                .child(inquiry(draft, column, shaper))
+                            node().styles([w_full(), mb(2)]).child(inquiry(
+                                draft,
+                                &state.figures,
+                                &state.preview_offer(),
+                                column,
+                                shaper,
+                            ))
                         }))
                         .children(activity(state, session, column, shaper))
                         .child(composer(

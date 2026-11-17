@@ -174,6 +174,8 @@ pub enum Command {
     OpenExternal,
     /// Throw away the cookies, site storage and cache of the browser, then load the page again.
     ClearData,
+    /// Show the sealed document the tab holds, in a page of its own that the network is denied to.
+    LoadSealed,
 }
 
 /// How the pointer looks over the page, as the page asks.
@@ -433,7 +435,10 @@ impl WorkspaceState {
 
     /// How the browser is to be put back after a restart: its tabs, the index of the one shown, whether its developer tools are open and how wide they are.
     pub fn browser_saved(&self) -> Option<(Vec<SavedTab>, usize, bool, f32)> {
-        self.browser.as_ref().map(crate::browser_scope::saved_parts)
+        self.browser
+            .as_ref()
+            .map(crate::browser_scope::saved_parts)
+            .filter(|parts| !parts.0.is_empty())
     }
 
     /// Shows the developer tools beside the page when they are not shown, as pressing their button does.
@@ -572,7 +577,12 @@ impl WorkspaceState {
         let host = self.current_project_host();
         if let Some(browser) = self.browser.as_mut() {
             for tab in &mut browser.tabs {
-                if tab.notice.take().is_some() {
+                if tab.notice.take().is_none() {
+                    continue;
+                }
+                if tab.sealed.is_some() {
+                    tab.commands.push(Command::LoadSealed);
+                } else {
                     tab.host.clone_from(&host);
                     let address = address_of(tab.address.text());
                     tab.commands.push(Command::Load(address));

@@ -120,6 +120,8 @@ enum Pending {
     Update,
     /// The tool servers every agent is started with.
     McpServers,
+    /// What the sessions of the server on this machine used over this many days.
+    Usage(Host, u32),
     /// The model servers declared on this machine's server, as they stand after a change or as they were asked for.
     ModelServers,
     /// The model slots and presets, after a change to them or not.
@@ -1486,6 +1488,15 @@ impl Work {
                 Outgoing::Open { address } => {
                     self.followed.push(address);
                 }
+                Outgoing::UsageReport { days } => {
+                    for host in self.usage_hosts() {
+                        self.ask(
+                            &host,
+                            Request::UsageReport { days },
+                            Pending::Usage(host.clone(), days),
+                        );
+                    }
+                }
                 Outgoing::LoadServers => {
                     self.ask(&None, Request::McpServers, Pending::McpServers);
                     self.ask(
@@ -2176,6 +2187,13 @@ impl Work {
                     Self::in_workspace(model, |state| state.with_library_failed(reason));
                 }
             },
+            Pending::Usage(host, days) => {
+                let answer = match response {
+                    Response::UsageReport { report } => Ok(report),
+                    other => Err(Self::trouble_of(other)),
+                };
+                Self::in_workspace(model, |state| state.with_usage_report(host, days, answer));
+            }
             Pending::McpServers => {
                 if let Response::McpServers { servers } = response {
                     Self::in_workspace(model, |state| state.with_mcp_servers(servers));
@@ -2988,6 +3006,18 @@ impl Work {
             let Screen::Workspace(state) = screen;
             *state = view.reopen(std::mem::replace(state, WorkspaceState::new(&[])), position);
         });
+    }
+
+    /// The machines whose servers are asked what their sessions used: this one, then every other the window is connected to, in the order of their names.
+    fn usage_hosts(&self) -> Vec<Host> {
+        let mut others: Vec<Host> = self
+            .links
+            .keys()
+            .filter(|host| host.is_some())
+            .cloned()
+            .collect();
+        others.sort();
+        std::iter::once(None).chain(others).collect()
     }
 
     /// Why `response` is not the answer that was waited for.

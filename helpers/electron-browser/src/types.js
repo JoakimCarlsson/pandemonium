@@ -227,6 +227,16 @@
  */
 
 /**
+ * @typedef {PageBody & { html: string, title: string, width: number, height: number, scale: number }} OpenHtmlBody
+ * Opens the document `html` in a new page, sealed from the network, called `title` while the document names nothing.
+ */
+
+/**
+ * @typedef {{ ticket: number, html: string, width: number, height: number, path: string }} RenderHtmlBody
+ * Renders the document `html`, sealed from the network, at a viewport of `width` by `height` CSS pixels into the PNG file `path`; the answer is an `HtmlRendered` report with the same `ticket`.
+ */
+
+/**
  * What the window asks of the helper.
  * @typedef {'Shutdown'
  *   | { Open: OpenBody }
@@ -236,7 +246,9 @@
  *   | InputRequest
  *   | { AgentOrigins: AgentOriginsBody }
  *   | { PermissionAnswer: PermissionAnswerBody }
- *   | { CertificateChoice: CertificateChoiceBody }} Request
+ *   | { CertificateChoice: CertificateChoiceBody }
+ *   | { OpenHtml: OpenHtmlBody }
+ *   | { RenderHtml: RenderHtmlBody }} Request
  */
 
 /**
@@ -273,7 +285,9 @@
  *   | { CertificateCleared: { page: number } }
  *   | { Download: { page: number, name: string, state: DownloadState } }
  *   | { Captured: { page: number, capture: Capture } }
- *   | { OpenRequested: { page: number, url: string, agent: boolean } }} Event
+ *   | { OpenRequested: { page: number, url: string, agent: boolean } }
+ *   | { HtmlRendered: { ticket: number, path: string, error: string } }
+ *   | { Features: { features: string[] } }} Event
  */
 
 /**
