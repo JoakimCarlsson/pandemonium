@@ -5074,14 +5074,23 @@ fn live(turn: Turn) -> WorkspaceState {
             PlanStep {
                 text: "Find where the offset is stored".to_owned(),
                 progress: Progress::Done,
+                id: None,
+                depends_on: Vec::new(),
+                blocked: false,
             },
             PlanStep {
                 text: "Check how it is clamped".to_owned(),
                 progress: Progress::Doing,
+                id: None,
+                depends_on: Vec::new(),
+                blocked: false,
             },
             PlanStep {
                 text: "Write the fix".to_owned(),
                 progress: Progress::Pending,
+                id: None,
+                depends_on: Vec::new(),
+                blocked: false,
             },
         ]),
         Event::Tool(tool(
