@@ -26,15 +26,17 @@ impl Session {
             .ok_or_else(|| format!("no files were kept before turn {}", turn + 1))
     }
 
-    /// Starts the agent of this session, numbered `number`, when it is not running, or runs as another login than the session's, so that it can be asked about files, and returns what that noted.
+    /// Starts the agent of this session, numbered `number`, when it is not running, or runs as another login than the session's, so that it can be asked about files, and returns what that noted, the end of the commands an agent dropped for running as another login left running among it.
     fn ready_agent(&mut self, number: u64) -> Told {
-        if self.running_as != self.meta.login {
-            self.chat = None;
-        }
+        let mut told = if self.running_as != self.meta.login {
+            self.drop_agent(number)
+        } else {
+            Told::new()
+        };
         if self.chat.is_some() {
-            return Told::new();
+            return told;
         }
-        let told = self.drop_trust(number);
+        told.extend(self.drop_trust(number));
         let settings = if crate::sessions::has_history(number) {
             Vec::new()
         } else {
@@ -127,17 +129,17 @@ impl Session {
         told
     }
 
-    /// Takes the conversation of this session, numbered `number`, back to before the reader's turn `turn`: its agent stops, dropping the trust request it waited on, and the next prompt starts one afresh that is told what came before.
+    /// Takes the conversation of this session, numbered `number`, back to before the reader's turn `turn`: its agent stops, noting the end of the commands it left running and dropping the trust request it waited on, and the next prompt starts one afresh that is told what came before.
     pub(crate) fn rewind(&mut self, number: u64, turn: u64) -> Result<Told, String> {
         self.idle()?;
         if turn as usize >= conversation::turns(&self.log).len() {
             return Err(format!("session {number} has no turn {turn}"));
         }
-        self.chat = None;
+        let mut told = self.drop_agent(number);
         let first = conversation::turns(&self.log)
             .get(turn as usize)
             .map(|held| held.saved.clone());
-        let mut told = self.drop_queue(number);
+        told.extend(self.drop_queue(number));
         told.extend(self.drop_trust(number));
         let event = Event::Rewound { turn };
         told.push((number, self.note(number, &event), event));

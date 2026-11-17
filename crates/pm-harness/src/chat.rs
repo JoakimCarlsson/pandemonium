@@ -1,6 +1,7 @@
 //! A conversation with one agent: what the reader says goes in, what the agent does comes out.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -191,7 +192,12 @@ pub struct Chat {
     ending: Arc<Mutex<Ending>>,
     /// The driver thread.
     driver: JoinHandle<()>,
+    /// Whether [`Chat::events`] has told of the agent stopping, so that it is told only once.
+    ended: AtomicBool,
 }
+
+/// Why a chat whose driver thread ended without saying why, or broke down, failed.
+const STOPPED_UNEXPECTEDLY: &str = "the agent stopped unexpectedly";
 
 impl Chat {
     /// Starts `agent` in the folder `directory`, keeping its login in the folder `home` or in the harness's own when there is none, and opens a conversation with it in which it is `given` its tools; `notify` is called whenever the agent has something for [`Chat::events`].
@@ -226,8 +232,17 @@ impl Chat {
                 requests: &received,
                 slot_asks: &asked,
             };
-            if let Err(reason) = drive(agent, directory, home, given, &shared, &inbox, &told) {
-                report(Event::Failed(reason));
+            let driven = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                drive(agent, directory, home, given, &shared, &inbox, &told)
+            }));
+            match driven {
+                Ok(Ok(())) => {}
+                Ok(Err(reason)) => {
+                    report(Event::Failed(reason));
+                }
+                Err(_) => {
+                    report(Event::Failed(STOPPED_UNEXPECTEDLY.to_owned()));
+                }
             }
         });
         Self {
@@ -237,6 +252,7 @@ impl Chat {
             slot_asks,
             ending,
             driver,
+            ended: AtomicBool::new(false),
         }
     }
 
@@ -346,12 +362,25 @@ impl Chat {
     }
 
     /// What the agent has done since the last call.
+    ///
+    /// When the driver thread is gone without having said the agent failed, as when it broke down, a `Failed` saying the agent stopped unexpectedly ends what is found, once.
     pub fn events(&self) -> Vec<Event> {
         let mut found = Vec::new();
         loop {
             match self.events.try_recv() {
-                Ok(event) => found.push(event),
-                Err(TryRecvError::Empty | TryRecvError::Disconnected) => return found,
+                Ok(event) => {
+                    if matches!(event, Event::Failed(_)) {
+                        self.ended.store(true, Ordering::Relaxed);
+                    }
+                    found.push(event);
+                }
+                Err(TryRecvError::Empty) => return found,
+                Err(TryRecvError::Disconnected) => {
+                    if !self.ended.swap(true, Ordering::Relaxed) {
+                        found.push(Event::Failed(STOPPED_UNEXPECTEDLY.to_owned()));
+                    }
+                    return found;
+                }
             }
         }
     }

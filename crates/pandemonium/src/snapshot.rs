@@ -5165,9 +5165,24 @@ fn live(turn: Turn) -> WorkspaceState {
                 call: Some("s1".to_owned()),
             }),
         ]);
-        if turn == Turn::Isolated {
+        let in_background: &[&str] = if turn == Turn::Isolated {
             events.extend(worktrees());
-        }
+            &["a2"]
+        } else {
+            &["a1", "a2"]
+        };
+        events.extend(in_background.iter().map(|id| {
+            Event::Subagent(pm_harness::Subagent {
+                id: (*id).to_owned(),
+                call: (*id).to_owned(),
+                agent: "explore".to_owned(),
+                label: "Look".to_owned(),
+                model: None,
+                category: None,
+                background: true,
+                state: pm_harness::SubagentState::Running,
+            })
+        }));
         events.push(Event::Finished(None));
     }
     let asked = state.sessions.len() - 1;

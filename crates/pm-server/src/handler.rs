@@ -449,11 +449,11 @@ pub(crate) fn start_seated(
     }
 }
 
-/// Stops the agent of session `number` and waits for it to exit, ends the shells that work in its worktree, removes the worktree it made when no other open session works in it, deletes the branch it made there when nothing would be lost, and marks it closed.
+/// Stops the agent of session `number` and waits for it to exit, notes the end of the commands it left running, ends the shells that work in its worktree, removes the worktree it made when no other open session works in it, deletes the branch it made there when nothing would be lost, and marks it closed.
 ///
 /// A worktree with changes that are not committed is kept and the request answered with `Uncommitted`, unless `discard` is set. The scratch folder of a chat is kept, so that the chat can be opened again, unless `discard` is set: then the shells in it are ended and it is removed with everything in it, when no other open session works in it.
 pub(crate) fn close_session(core: &Core, number: u64, discard: bool) -> Response {
-    let (chat, removal, enclosed, scratch) = {
+    let (chat, ended, removal, enclosed, scratch) = {
         let Ok(mut sessions) = core.sessions.lock() else {
             return failed("the server is shutting down");
         };
@@ -486,8 +486,11 @@ pub(crate) fn close_session(core: &Core, number: u64, discard: bool) -> Response
                 held.meta.directory.clone(),
             )
         });
+        let chat = held.chat.take();
+        let ended = held.end_background(number);
         (
-            held.chat.take(),
+            chat,
+            ended,
             removal,
             container.then(|| held.meta.directory.clone()),
             scratch.then(|| held.meta.directory.clone()),
@@ -496,6 +499,7 @@ pub(crate) fn close_session(core: &Core, number: u64, discard: bool) -> Response
     if let Some(chat) = chat {
         chat.stop();
     }
+    core.tell_all(ended);
     if let Some(folder) = enclosed
         && let Err(reason) = pm_transport::remove_session_container(&folder)
     {
@@ -1135,7 +1139,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     chat.cancel();
                     Told::new()
                 }
-                None => held.end_open_turn(session, crate::core::NOT_RUNNING),
+                None => held.agent_gone(session, crate::core::NOT_RUNNING),
             };
             told.extend(held.drop_queue(session));
             told

@@ -73,6 +73,7 @@ impl Session {
                 self.forget_stops();
                 self.turn_started = None;
                 self.finish(None);
+                self.harness_gone();
                 self.signed_out = Some((reason, account));
             }
             Event::SignedIn => self.signed_out = None,
@@ -81,6 +82,7 @@ impl Session {
                 self.forget_stops();
                 self.container = None;
                 self.finish(Some(reason));
+                self.harness_gone();
             }
             Event::Titled(title) => self.title = title,
             Event::Prompted {
@@ -144,19 +146,40 @@ impl Session {
         self.beside(Message::note(side, reason));
     }
 
-    /// Marks where the conversation was handed over to a new one, which starts with `prompt`: the reply that wrote the prompt ends, and the new turn's reply follows the mark.
+    /// Marks where the conversation was handed over to a new one, which starts with `prompt`: the reply that wrote the prompt ends, with the calls it still showed running settled unless they go on past the turn, and the new turn's reply follows the mark.
     fn handed_off(&mut self, prompt: &str) {
+        let carried = self.carried_on();
         if let Some(last) = self
             .messages
             .last_mut()
             .filter(|last| !last.from_user && last.duration.is_none())
         {
             last.duration = Some(String::new());
+            for step in &mut last.steps {
+                if let Step::Tool(tool) = step
+                    && tool.state == ToolState::Running
+                    && !carried.contains(&tool.id)
+                {
+                    tool.state = ToolState::Done;
+                    tool.seconds = Some(tool.started.elapsed().as_secs());
+                }
+            }
         }
         self.messages.push(Message::note(Side::HandedOff, prompt));
     }
 
-    /// Takes in a command or task left running starting, or ending.
+    /// Forgets the commands left running and fails every call still shown running, in every reply, as the harness that ran them is gone: it failed, its account needs signing in again, or the conversation was taken back, which starts it afresh.
+    fn harness_gone(&mut self) {
+        self.shells.clear();
+        for tool in self.tools_mut() {
+            if tool.state == ToolState::Running {
+                tool.state = ToolState::Failed;
+                tool.seconds = Some(tool.started.elapsed().as_secs());
+            }
+        }
+    }
+
+    /// Takes in a command or task left running starting, or ending; an ending settles the call that started it, whether the call is known from the command held or only from the ending itself.
     fn background(&mut self, background: pm_harness::Background) {
         let known = self.shells.iter().position(|held| held.id == background.id);
         if background.running {
@@ -172,7 +195,8 @@ impl Session {
         }
         let call = known
             .map(|at| self.shells.remove(at))
-            .and_then(|shell| shell.call);
+            .and_then(|shell| shell.call)
+            .or(background.call);
         for tool in self.tools_mut() {
             let started_it = tool.id == background.id || call.as_deref() == Some(&tool.id);
             if started_it && tool.state == ToolState::Running {
@@ -225,15 +249,20 @@ impl Session {
         }
     }
 
-    /// The calls of the subagents their agent said run in the background, and of what those are doing: they go on when the turn that started them is stopped or fails.
+    /// The calls of the subagents their agent said run in the background, and of everything nested beneath them however deep: they go on when the turn that started them is stopped or fails.
     fn outlasting(&self) -> Vec<String> {
-        let agents: Vec<&str> = self
+        let agents: Vec<String> = self
             .subagents()
             .into_iter()
             .filter(|(_, _, tool)| tool.is_working_agent() && tool.outlasts_the_turn())
-            .map(|(_, _, tool)| tool.id.as_str())
+            .map(|(_, _, tool)| tool.id.clone())
             .collect();
-        let beneath = self
+        self.with_descendants(agents)
+    }
+
+    /// The calls `roots` together with every call nested beneath them, however deep: a call whose parent is in the set joins it, until no call joins.
+    fn with_descendants(&self, roots: Vec<String>) -> Vec<String> {
+        let calls: Vec<&ToolUse> = self
             .messages
             .iter()
             .flat_map(|message| message.steps.iter())
@@ -241,17 +270,24 @@ impl Session {
                 Step::Tool(tool) => Some(tool),
                 _ => None,
             })
-            .filter(|tool| {
-                tool.parent
-                    .as_deref()
-                    .is_some_and(|parent| agents.contains(&parent))
-            })
-            .map(|tool| tool.id.clone());
-        agents
-            .iter()
-            .map(|id| (*id).to_owned())
-            .chain(beneath)
-            .collect()
+            .collect();
+        let mut found = roots;
+        loop {
+            let joining: Vec<String> = calls
+                .iter()
+                .filter(|tool| !found.contains(&tool.id))
+                .filter(|tool| {
+                    tool.parent
+                        .as_ref()
+                        .is_some_and(|parent| found.contains(parent))
+                })
+                .map(|tool| tool.id.clone())
+                .collect();
+            if joining.is_empty() {
+                return found;
+            }
+            found.extend(joining);
+        }
     }
 
     /// Ends every call that was running, as the turn was stopped; the subagents running in the background and what they are doing go on, as the harness keeps them.
@@ -276,17 +312,18 @@ impl Session {
             })
     }
 
-    /// Ends the tools beneath the subagent `id`, which has ended in `state`, that are still running.
+    /// Ends the tools beneath the subagent `id`, however deeply nested, which has ended in `state`, that are still running.
     fn settle_beneath(&mut self, id: &str, state: ToolState) {
+        let beneath = self.with_descendants(vec![id.to_owned()]);
         for tool in self.tools_mut() {
-            if tool.parent.as_deref() == Some(id) && tool.state == ToolState::Running {
+            if tool.id != id && beneath.contains(&tool.id) && tool.state == ToolState::Running {
                 tool.state = state;
                 tool.seconds = Some(tool.started.elapsed().as_secs());
             }
         }
     }
 
-    /// Drops the reader's turn `turn`, counted from nought, and everything after it.
+    /// Drops the reader's turn `turn`, counted from nought, and everything after it; the harness is started afresh, so nothing it ran is still running.
     fn rewound(&mut self, turn: u64) {
         let at = self
             .messages
@@ -299,6 +336,7 @@ impl Session {
             self.messages.truncate(at);
         }
         self.forget_stops();
+        self.harness_gone();
         self.ask = None;
         self.inquiry = None;
         self.echoes = 0;
@@ -518,33 +556,24 @@ impl Session {
         }
     }
 
-    /// The calls that go on running when the turn ends: the commands left running, the subagents at work and what those are doing.
+    /// The calls that go on running when the turn ends: the commands left running and the calls that started them, and the subagents their agent said run in the background with what those are doing. A subagent never said to run in the background, such as one whose ending was not kept, ends with its turn.
     fn carried_on(&self) -> Vec<String> {
-        let agents: Vec<&str> = self
-            .subagents()
-            .into_iter()
-            .filter(|(_, _, tool)| tool.is_working_agent())
-            .map(|(_, _, tool)| tool.id.as_str())
-            .collect();
-        let mut carried: Vec<String> = self.shells.iter().map(|shell| shell.id.clone()).collect();
-        carried.extend(self.shells.iter().filter_map(|shell| shell.call.clone()));
-        carried.extend(agents.iter().map(|id| (*id).to_owned()));
-        for message in &self.messages {
-            for step in &message.steps {
-                if let Step::Tool(tool) = step
-                    && tool
-                        .parent
-                        .as_deref()
-                        .is_some_and(|parent| agents.contains(&parent))
-                {
-                    carried.push(tool.id.clone());
-                }
-            }
-        }
+        let mut carried = self.outlasting();
+        carried.extend(self.shell_calls());
         carried
     }
 
+    /// The commands left running and the calls that started them.
+    fn shell_calls(&self) -> Vec<String> {
+        self.shells
+            .iter()
+            .flat_map(|shell| std::iter::once(shell.id.clone()).chain(shell.call.clone()))
+            .collect()
+    }
+
     /// Ends the turn that was running, saying what went wrong where something did.
+    ///
+    /// Every call still shown running, in any reply, ends with the turn, except those [`Session::carried_on`] says go on past it.
     fn finish(&mut self, error: Option<String>) {
         let ended = if error.is_some() {
             ToolState::Failed
@@ -563,25 +592,18 @@ impl Session {
             };
             self.say(&format!("{separator}Something went wrong: {reason}"));
         }
-        let carried = if error.is_some() {
-            self.outlasting()
-        } else {
-            self.carried_on()
-        };
+        let carried = self.carried_on();
+        for tool in self.tools_mut() {
+            if tool.state == ToolState::Running && !carried.contains(&tool.id) {
+                tool.state = ended;
+                tool.seconds = Some(tool.started.elapsed().as_secs());
+            }
+        }
         if let Some(reply) = self
             .messages
             .last_mut()
             .filter(|last| !last.from_user && last.duration.is_none())
         {
-            for step in &mut reply.steps {
-                if let Step::Tool(tool) = step
-                    && tool.state == ToolState::Running
-                    && !carried.contains(&tool.id)
-                {
-                    tool.state = ended;
-                    tool.seconds = Some(tool.started.elapsed().as_secs());
-                }
-            }
             reply.duration = Some(took.unwrap_or_default());
         }
         self.ask = None;
@@ -651,6 +673,169 @@ mod tests {
             .into_iter()
             .filter_map(|(_, _, tool)| Some((tool.id.as_str(), tool.stoppable()?)))
             .collect()
+    }
+
+    /// A call `id` the agent made itself, nested in `parent` when it has one, standing as `state` says.
+    fn called(id: &str, parent: Option<&str>, state: ToolState) -> Event {
+        Event::Tool(pm_harness::Tool {
+            id: id.to_owned(),
+            title: Some(id.to_owned()),
+            kind: None,
+            state: Some(state),
+            target: None,
+            diff: None,
+            output: None,
+            parent: parent.map(str::to_owned),
+            agent: None,
+            worktree: None,
+        })
+    }
+
+    /// The command `id`, started by the call `call` when there is one, starting or ending.
+    fn command(id: &str, call: Option<&str>, running: bool) -> Event {
+        Event::Background(pm_harness::Background {
+            id: id.to_owned(),
+            label: "cargo watch".to_owned(),
+            running,
+            call: call.map(str::to_owned),
+        })
+    }
+
+    /// The ids of the calls still shown running, in every reply.
+    fn running(session: &Session) -> Vec<String> {
+        session
+            .messages
+            .iter()
+            .flat_map(|message| message.steps.iter())
+            .filter_map(|step| match step {
+                Step::Tool(tool) if tool.state == ToolState::Running => Some(tool.id.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A session whose turn ended with a command left running and a background subagent at work, which both stay running.
+    fn left_working() -> Session {
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(called("s1", None, ToolState::Running));
+        session.hear(command("s1", Some("s1"), true));
+        session.hear(spawned("back", None, "scout"));
+        session.hear(Event::Subagent(pm_harness::Subagent {
+            id: "back".to_owned(),
+            call: "back".to_owned(),
+            agent: "scout".to_owned(),
+            label: "Look".to_owned(),
+            model: None,
+            category: None,
+            background: true,
+            state: pm_harness::SubagentState::Running,
+        }));
+        session.hear(Event::Finished(None));
+        assert!(session.background_running());
+        assert_eq!(running(&session), ["s1", "back"]);
+        session
+    }
+
+    /// The harness failing, its account needing signing in again or the conversation being taken back leaves no command or call shown running, as the harness that ran them is gone.
+    #[test]
+    fn work_left_running_ends_when_the_harness_is_gone() {
+        let gone = [
+            Event::Failed("gone".to_owned()),
+            Event::SignedOut {
+                reason: "expired".to_owned(),
+                account: None,
+            },
+            Event::Rewound { turn: 1 },
+        ];
+        for event in gone {
+            let mut session = left_working();
+            session.hear(event);
+            assert!(session.shells.is_empty());
+            assert!(running(&session).is_empty());
+            assert!(!session.background_running());
+        }
+    }
+
+    /// A subagent its agent never said runs in the background, as in a turn replayed from history where subagents' endings were not kept, ends with its turn, and so does what it was doing.
+    #[test]
+    fn a_foreground_subagent_ends_with_its_turn() {
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(spawned("t1", None, "task"));
+        session.hear(spawned("t1:g", Some("t1"), "scout"));
+        session.hear(Event::Finished(None));
+        assert!(running(&session).is_empty());
+        assert!(!session.background_running());
+    }
+
+    /// A turn ending settles the calls of every reply, such as a late call filed under a call of an earlier turn, and a hand-over settles the calls of the reply it ends.
+    #[test]
+    fn ending_a_turn_settles_calls_of_earlier_replies() {
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(called("a", None, ToolState::Running));
+        session.hear(called("a", None, ToolState::Done));
+        session.hear(Event::Finished(None));
+        session.hear(Event::Prompted {
+            text: "Go on".to_owned(),
+            files: Vec::new(),
+            checkpoint: false,
+            turn: 1,
+            saved: None,
+        });
+        session.hear(Event::Said("On it".to_owned()));
+        session.hear(called("a:late", Some("a"), ToolState::Running));
+        assert_eq!(running(&session), ["a:late"]);
+        session.hear(Event::Finished(None));
+        assert!(running(&session).is_empty());
+
+        session.hear(called("b", None, ToolState::Running));
+        session.hear(Event::HandedOff {
+            prompt: "Carry on".to_owned(),
+            turn: "handoff-1".to_owned(),
+        });
+        assert!(running(&session).is_empty());
+    }
+
+    /// The end of a command the session never heard start still settles the call it names.
+    #[test]
+    fn an_unknown_command_ending_settles_its_call() {
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(called("s1", None, ToolState::Running));
+        session.hear(command("job-7", Some("s1"), false));
+        assert!(running(&session).is_empty());
+    }
+
+    /// What a background subagent's own foreground subagent is doing, two levels down, goes on past the end of the turn and a stop, and ends when the background subagent ends.
+    #[test]
+    fn work_nested_deep_in_a_background_subagent_outlasts_the_turn() {
+        let mut session = Session::started("Test", 0, "Hello");
+        session.hear(spawned("back", None, "scout"));
+        session.hear(Event::Subagent(pm_harness::Subagent {
+            id: "back".to_owned(),
+            call: "back".to_owned(),
+            agent: "scout".to_owned(),
+            label: "Look".to_owned(),
+            model: None,
+            category: None,
+            background: true,
+            state: pm_harness::SubagentState::Running,
+        }));
+        session.hear(spawned("back:t", Some("back"), "task"));
+        session.hear(called("back:t:g", Some("back:t"), ToolState::Running));
+        session.hear(Event::Halted);
+        session.hear(Event::Finished(None));
+        assert_eq!(running(&session), ["back", "back:t", "back:t:g"]);
+
+        session.hear(Event::Subagent(pm_harness::Subagent {
+            id: "back".to_owned(),
+            call: "back".to_owned(),
+            agent: "scout".to_owned(),
+            label: "Look".to_owned(),
+            model: None,
+            category: None,
+            background: true,
+            state: pm_harness::SubagentState::Finished,
+        }));
+        assert!(running(&session).is_empty());
     }
 
     /// A subagent started in a work category shows the category and the model on its row, one started without a category the model alone, and one saying neither nothing; what it showed stays once it has ended.

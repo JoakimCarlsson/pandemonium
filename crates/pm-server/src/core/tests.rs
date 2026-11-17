@@ -94,6 +94,68 @@ fn agent_stopping_mid_turn_ends_the_turn_with_an_error() {
     assert!(held.chat.is_none());
 }
 
+/// The command `id`, started by the call `call-<id>`, starting or ending as `running` says.
+fn command(id: &str, running: bool) -> Event {
+    Event::Background(pm_harness::Background {
+        id: id.to_owned(),
+        label: "cargo watch".to_owned(),
+        running,
+        call: Some(format!("call-{id}")),
+    })
+}
+
+/// A log of a turn left open with the command `s1` still running and the command `s2` that ended.
+fn left_running() -> Vec<(u64, Event)> {
+    vec![
+        (
+            1,
+            Event::Prompted {
+                text: "work".to_owned(),
+                files: Vec::new(),
+                checkpoint: false,
+                turn: 1,
+                saved: None,
+            },
+        ),
+        (2, command("s1", true)),
+        (3, command("s2", true)),
+        (4, command("s2", false)),
+    ]
+}
+
+/// An agent found gone, as when the server starts again, ends the commands its log leaves running, with the calls that started them, before the turn it left open, and only once.
+#[test]
+fn a_gone_agent_ends_the_commands_it_left_running() {
+    let _forget = Forget;
+    let mut held = session(left_running());
+
+    let told = held.agent_gone(NUMBER, INTERRUPTED);
+
+    let seqs: Vec<u64> = told.iter().map(|(_, seq, _)| *seq).collect();
+    assert_eq!(seqs, [5, 6, 7]);
+    assert_eq!(told[0].2, command("s1", false));
+    assert!(matches!(told[1].2, Event::Halted));
+    assert!(matches!(&told[2].2, Event::Finished(Some(reason)) if reason == INTERRUPTED));
+    assert!(held.agent_gone(NUMBER, INTERRUPTED).is_empty());
+}
+
+/// An agent that fails ends the commands it left running too.
+#[test]
+fn a_failed_agent_ends_the_commands_it_left_running() {
+    let _forget = Forget;
+    let mut held = session(left_running());
+
+    let told = held.take_in(NUMBER, Event::Failed("the agent stopped".to_owned()));
+
+    let ended: Vec<&Event> = told
+        .iter()
+        .map(|(_, _, event)| event)
+        .filter(|event| matches!(event, Event::Background(_)))
+        .collect();
+    assert_eq!(ended, [&command("s1", false)]);
+    assert!(held.end_background(NUMBER).is_empty());
+}
+
 /// A turn id never repeats one the log holds, even when the log was rebuilt with fewer events than its ids reach.
 #[test]
 fn next_turn_id_stays_above_every_id_in_the_log() {

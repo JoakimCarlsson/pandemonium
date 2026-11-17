@@ -181,21 +181,21 @@ impl Session {
 
     /// Opens the session again if it was closed, keeps its files as they are, starts its agent if it is not running and hands it `prompt` as its next turn.
     ///
-    /// An agent started afresh is told the conversation so far, and any agent is told of files put back since its last turn. An agent whose login changed, is started afresh. A trust request left from an agent that stopped is dropped before a new one starts, since the new one asks again.
+    /// An agent started afresh is told the conversation so far, and any agent is told of files put back since its last turn. An agent whose login changed is started afresh, and the end of the commands it left running is noted. A trust request left from an agent that stopped is dropped before a new one starts, since the new one asks again.
     fn hand(&mut self, number: u64, prompt: Prompt) -> Told {
         if self.meta.closed {
             self.meta.closed = false;
             sessions::save_meta(number, &self.meta);
         }
-        if self.running_as != self.meta.login {
-            self.chat = None;
-        }
-        let afresh = self.chat.is_none();
-        let mut told = if afresh {
-            self.drop_trust(number)
+        let mut told = if self.running_as != self.meta.login {
+            self.drop_agent(number)
         } else {
             Told::new()
         };
+        let afresh = self.chat.is_none();
+        if afresh {
+            told.extend(self.drop_trust(number));
+        }
         let preface =
             conversation::preface(&self.log, afresh && !crate::sessions::has_history(number));
         let turn = self.next_turn_id();

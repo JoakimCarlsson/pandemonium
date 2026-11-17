@@ -226,11 +226,46 @@ impl Session {
         told
     }
 
+    /// Notes, for the session numbered `number`, the end of every command or task its log says was left running and never said ended, and returns what it noted; for when the harness that ran them is gone, so that no client, now or replaying the log later, shows them running.
+    pub(crate) fn end_background(&mut self, number: u64) -> Told {
+        let mut open: Vec<pm_harness::Background> = Vec::new();
+        for (_, event) in &self.log {
+            if let Event::Background(background) = event {
+                open.retain(|held| held.id != background.id);
+                if background.running {
+                    open.push(background.clone());
+                }
+            }
+        }
+        open.into_iter()
+            .map(|background| {
+                let event = Event::Background(pm_harness::Background {
+                    running: false,
+                    ..background
+                });
+                (number, self.note(number, &event), event)
+            })
+            .collect()
+    }
+
+    /// Drops the agent of the session numbered `number`, if one runs, and notes the end of every command it left running, as those end with it; returns what it noted.
+    pub(crate) fn drop_agent(&mut self, number: u64) -> Told {
+        self.chat = None;
+        self.end_background(number)
+    }
+
+    /// Drops the agent of the session numbered `number`, if one runs, and notes that what it left running and the turn it left open ended, the turn as stopped for `reason`; returns what it noted.
+    pub(crate) fn agent_gone(&mut self, number: u64, reason: &str) -> Told {
+        let mut told = self.drop_agent(number);
+        told.extend(self.end_open_turn(number, reason));
+        told
+    }
+
     /// Takes `event`, which the agent of the session numbered `number` reported, into the log, does what it calls for and returns what it noted.
     ///
     /// A prompt the agent reports is a turn it started itself, toward its goal, so the session is busy until that turn finishes; it says, as a turn the reader hands over does, whether the harness keeps the files around it.
     ///
-    /// When the agent stopped, what it had running stopped with it, so a `Halted` is noted before the `Failed`, as when a turn is ended for it, and the trust request it waited on is dropped. Nothing is noted when `event` only says again what the log said.
+    /// When the agent stopped, what it had running stopped with it, so a `Halted` is noted before the `Failed`, as when a turn is ended for it, the end of every command it left running is noted, and the trust request it waited on is dropped. Nothing is noted when `event` only says again what the log said.
     pub(crate) fn take_in(&mut self, number: u64, event: Event) -> Told {
         let mut told = Told::new();
         if self.repeats(&event) {
@@ -261,9 +296,9 @@ impl Session {
         }
         match event {
             Event::Failed(_) | Event::SignedOut { .. } => {
-                self.chat = None;
                 self.busy = false;
                 self.settle_handoff();
+                told.extend(self.drop_agent(number));
                 told.extend(self.drop_queue(number));
                 told.extend(self.drop_trust(number));
             }
@@ -388,7 +423,7 @@ impl Core {
         self.next_debug.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// Holds again the sessions kept on disk, without their agents, and numbers new ones after them; the turns and trust requests their agents left open are closed, as those agents are gone.
+    /// Holds again the sessions kept on disk, without their agents, and numbers new ones after them; the commands, turns and trust requests their agents left open are closed, as those agents are gone.
     pub(crate) fn load(&self) {
         let mut highest = 0;
         if let Ok(mut sessions) = self.sessions.lock() {
@@ -399,7 +434,7 @@ impl Core {
                 highest = highest.max(number);
                 let mut session = Session::new(agent, meta.agent_folder(), log, meta);
                 session.forget_queue(number);
-                session.end_open_turn(number, INTERRUPTED);
+                session.agent_gone(number, INTERRUPTED);
                 session.drop_trust(number);
                 sessions.insert(number, session);
             }
