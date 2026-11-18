@@ -10,6 +10,10 @@ use pm_components::diff::gutter_id;
 use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing};
 use pm_components::git_menus::MenuKind;
 use pm_components::git_prompts::Prompt;
+use pm_components::kit::FocusId;
+use pm_components::kit::snapshot::{Shot as Frame, lay_out, write_png};
+use pm_components::kit::theme::{Appearance, default_family};
+use pm_components::kit::{TextPoint, TextSelection};
 use pm_components::open_files::EDITOR_FIELD;
 use pm_components::panes::{Item, SPLIT_RIGHT, Side};
 use pm_components::settings::{SETTINGS_ADD, SETTINGS_FIND, Section};
@@ -21,17 +25,13 @@ use pm_components::state::{
 };
 use pm_components::state::{LOCATION, SETTINGS};
 use pm_components::tree_actions::{TREE_NEW_FOLDER, TreeTarget};
+use pm_field::Edit;
 use pm_harness::{
     Alternative, Background, Choice, Diff, Discovery, Event, Input as Skip, Inquiry, Kind, Merge,
     Permission, Pick, PlanStep, Progress, Question, Setting, Skipped, Slash, Standing, Tool,
     ToolState, TrustRequest, Verdict, Worktree,
 };
-use pm_input::{FocusId, PointerState};
 use pm_pages::{ADD_PROJECT, HISTORY, PROMPT, SEND, Screen, TAB_DIFF, TERMINAL, WorkspaceState};
-use pm_renderer::{DrawList, Renderer};
-use pm_text::Edit;
-use pm_theme::{Appearance, default_family};
-use pm_ui::{Input, TextPoint, TextSelection};
 
 use crate::scene;
 
@@ -803,7 +803,7 @@ fn project_search() -> WorkspaceState {
     };
     let mut state = code().project_search_opened();
     for character in "names".chars() {
-        state = state.project_search_typed(pm_text::Edit::Insert(character));
+        state = state.project_search_typed(pm_field::Edit::Insert(character));
     }
     let session = state.review_index().unwrap_or_default();
     state.with_project_search(
@@ -1878,8 +1878,8 @@ fn browser_finding(tools: bool) -> WorkspaceState {
             pixels.extend_from_slice(&[shade, shade, shade, 255]);
         }
     }
-    let page = pm_renderer::Picture {
-        key: pm_renderer::Picture::live_key(pm_components::browser::PAGE_SURFACE, 1),
+    let page = pm_components::kit::Picture {
+        key: pm_components::kit::Picture::live_key(pm_components::browser::PAGE_SURFACE, 1),
         width,
         height,
         pixels: std::sync::Arc::new(pixels),
@@ -1909,7 +1909,7 @@ fn browser_finding(tools: bool) -> WorkspaceState {
 }
 
 /// The picture of a page with one text field that has the keyboard: a ring round the field, its text selected up to a caret.
-fn input_page(width: u32, height: u32) -> pm_renderer::Picture {
+fn input_page(width: u32, height: u32) -> pm_components::kit::Picture {
     let (left, right, top, bottom) = (40_u32, 400_u32, 60_u32, 100_u32);
     let (selected_to, caret) = (260_u32, 262_u32);
     let mut pixels = Vec::with_capacity((width * height * 4) as usize);
@@ -1932,8 +1932,8 @@ fn input_page(width: u32, height: u32) -> pm_renderer::Picture {
             pixels.extend_from_slice(&pixel);
         }
     }
-    pm_renderer::Picture {
-        key: pm_renderer::Picture::live_key(pm_components::browser::PAGE_SURFACE, 1),
+    pm_components::kit::Picture {
+        key: pm_components::kit::Picture::live_key(pm_components::browser::PAGE_SURFACE, 1),
         width,
         height,
         pixels: std::sync::Arc::new(pixels),
@@ -3168,12 +3168,12 @@ impl Shot {
             Self::InputStress => Screen::Workspace(input_stress(true, true)),
             Self::InputStressScrolled => {
                 let mut state = input_stress(true, true);
-                state.prompt.apply(pm_text::Edit::ScrollTo(700.0));
+                state.prompt.apply(pm_field::Edit::ScrollTo(700.0));
                 Screen::Workspace(state)
             }
             Self::InputStressComposing => {
                 let mut state = input_stress(true, true);
-                state.prompt.apply(pm_text::Edit::Compose("字".to_owned()));
+                state.prompt.apply(pm_field::Edit::Compose("字".to_owned()));
                 Screen::Workspace(state)
             }
             Self::IgnoredFiles => Screen::Workspace(ignored_files()),
@@ -5563,68 +5563,59 @@ pub fn write(
     };
     pm_components::set_floating(matches!(shot, Shot::Floating));
     let band = pm_components::shadow_margin();
-    let target = (width + 2 * band as u32, height + 2 * band as u32);
-    let paint = if shot.in_settings_window() {
-        scene::paint_settings
+    let target = (width as f32 + 2.0 * band, height as f32 + 2.0 * band);
+    let window = if shot.in_settings_window() {
+        Some(scene::SETTINGS_WINDOW)
     } else if shot.in_picker_window() {
-        scene::paint_picker
+        Some(scene::PICKER_WINDOW)
     } else {
-        scene::paint
+        None
     };
-    let mut renderer =
-        Renderer::headless(target.0, target.1, 1.0).map_err(|error| error.to_string())?;
-    renderer.set_band(band);
-    let mut shaper = scene::shaper();
-    let mut list = DrawList::new();
-    let input = Input {
-        pointer: PointerState {
-            position: pointer,
-            ..PointerState::default()
-        },
-        focused,
-        elapsed_ms,
-        selection: shot.selection(),
-        held_bar: None,
-    };
-    let family = default_family();
-    let theme = family.variant(appearance);
     let mut screen = shot.screen();
     let Screen::Workspace(held) = &screen;
     let looks = &held.window.appearance;
-    if !looks.code_font.is_empty() || !looks.interface_font.is_empty() {
-        scene::set_fonts(&mut shaper, &looks.interface_font, &looks.code_font);
-    }
-    shaper.set_ligatures(held.editor.ligatures);
-    let resting = Input {
-        elapsed_ms: 0.0,
-        ..input
-    };
-    let rested = paint(
-        width as f32,
-        height as f32,
-        &screen,
-        &resting,
-        theme,
-        &mut shaper,
-        &mut DrawList::new(),
+    scene::set_fonts(&looks.interface_font, &looks.code_font);
+    pm_components::kit::set_code_ligatures(held.editor.ligatures);
+    let rested = lay_out(
+        target.0,
+        target.1,
+        focused,
+        content(screen.clone(), window, target),
     );
-    if let Some(measured) = screen.diff_resized(&rested.scrollers) {
+    let frame_report = rested.shifted(-band, -band);
+    if let Some(measured) = screen.diff_resized(&frame_report.scrollers) {
         screen = screen.measured_diff(measured);
     }
-    paint(
-        width as f32,
-        height as f32,
-        &screen,
-        &input,
-        theme,
-        &mut shaper,
-        &mut list,
-    );
-    let pixels = renderer
-        .snapshot(&list, &mut shaper, scene::ground(theme))
-        .ok_or("the renderer could not read its frame back")?;
-    image::save_buffer(path, &pixels, target.0, target.1, image::ColorType::Rgba8)
+    let frame = Frame {
+        clock_ms: elapsed_ms,
+        pointer: pointer.map(|(x, y)| (x + band, y + band)),
+        focused,
+        selection: shot.selection(),
+        family: default_family(),
+        appearance,
+        transparent: pm_components::framed(),
+        ..Frame::new(target.0, target.1)
+    };
+    write_png(path, &frame, content(screen, window, target))
+        .map(|_| ())
         .map_err(|error| error.to_string())
+}
+
+/// What a snapshot draws of `screen`: the window beside the main one `window`
+/// names, or the main window's frame inset by the band for its shadow, in a
+/// picture `target` logical pixels across.
+fn content(
+    screen: Screen,
+    window: Option<pm_components::kit::report::WindowKey>,
+    target: (f32, f32),
+) -> impl Fn() + 'static {
+    move || {
+        scene::scale_for(&screen);
+        match window {
+            Some(key) => scene::aside_frame(&screen, key, target.0, target.1),
+            None => scene::main_frame(&screen, target.0, target.1),
+        }
+    }
 }
 
 /// What a markdown file shown rendered in a snapshot says.
@@ -5660,7 +5651,8 @@ fn previewed(path: &str) -> WorkspaceState {
             ),
         _ => {
             let palette = crate::work::picture::Palette::of(
-                pm_theme::default_family().variant(pm_theme::Appearance::Dark),
+                pm_components::kit::theme::default_family()
+                    .variant(pm_components::kit::theme::Appearance::Dark),
                 true,
             );
             pm_components::figures::figures_of(PREVIEW_MARKDOWN, Some(path))
@@ -5722,7 +5714,7 @@ fn mock_page(width: u32, height: u32, hue: [u8; 3]) -> pm_components::figures::D
         .collect();
     let [red, green, blue] = hue.map(u64::from);
     pm_components::figures::Drawing {
-        picture: pm_renderer::Picture {
+        picture: pm_components::kit::Picture {
             key: 0x5EA1_0000_0000 | red << 16 | green << 8 | blue,
             width,
             height,
@@ -5757,7 +5749,8 @@ fn exhibited(kind: pm_harness::ExhibitKind, pictured: bool) -> WorkspaceState {
         pm_components::figures::Wanted::Diagram(source) => crate::work::picture::diagram(
             &source,
             &crate::work::picture::Palette::of(
-                pm_theme::default_family().variant(pm_theme::Appearance::Dark),
+                pm_components::kit::theme::default_family()
+                    .variant(pm_components::kit::theme::Appearance::Dark),
                 true,
             ),
         ),
@@ -5881,7 +5874,7 @@ fn inquiring_mockups(pictured: bool) -> WorkspaceState {
 }
 
 /// A picture that fades from red to blue, for a snapshot of a preview.
-fn gradient() -> pm_renderer::Picture {
+fn gradient() -> pm_components::kit::Picture {
     let (width, height) = (200u32, 120u32);
     let pixels = (0..height)
         .flat_map(|y| {
@@ -5889,7 +5882,7 @@ fn gradient() -> pm_renderer::Picture {
                 .flat_map(move |x| [(255 * x / width) as u8, (255 * y / height) as u8, 200, 255])
         })
         .collect();
-    pm_renderer::Picture {
+    pm_components::kit::Picture {
         key: 1,
         width,
         height,
@@ -5990,17 +5983,23 @@ mod performance_tests {
     #[global_allocator]
     static ALLOCATOR: Counting = Counting;
 
-    /// Measures a long conversation while an agent streams into it: each frame hears one chunk, then builds, lays out and paints.
+    /// Lays the main window out at the snapshot size, with `focused` holding focus, as a frame would.
+    fn laid(screen: &Screen, width: f32, focused: Option<FocusId>) -> pm_components::kit::Report {
+        super::lay_out(
+            width,
+            HEIGHT as f32,
+            focused,
+            super::content(screen.clone(), None, (width, HEIGHT as f32)),
+        )
+    }
+
+    /// Measures a long conversation while an agent streams into it: each frame hears one chunk, then composes and lays out.
     #[test]
     #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_streaming -- --ignored --nocapture --test-threads=1"]
     fn benchmark_streaming() {
         for (long_chat, paragraphs) in [(false, false), (true, false), (false, true)] {
             let state = input_stress(false, long_chat);
             let mut screen = Screen::Workspace(state);
-            let mut shaper = scene::shaper();
-            let mut cached = scene::Cached::default();
-            let theme = default_family().dark;
-            let mut list = DrawList::new();
             let (mut heard, mut painted) = (Vec::new(), Vec::new());
             let live_start = LIVE.load(Ordering::Relaxed);
             let mut live_before = 0;
@@ -6022,16 +6021,7 @@ mod performance_tests {
                     )),
                 );
                 let heard_at = started.elapsed();
-                std::hint::black_box(cached.paint(
-                    version,
-                    WIDTH as f32,
-                    HEIGHT as f32,
-                    &screen,
-                    &Input::default(),
-                    &theme,
-                    &mut shaper,
-                    &mut list,
-                ));
+                std::hint::black_box(laid(&screen, WIDTH as f32, None));
                 if version > 0 {
                     heard.push(heard_at.as_secs_f64() * 1000.0);
                     painted.push((started.elapsed() - heard_at).as_secs_f64() * 1000.0);
@@ -6052,120 +6042,42 @@ mod performance_tests {
         }
     }
 
-    /// Measures rebuilding the same screen against repainting retained geometry, without GPU submission.
+    /// Measures composing and laying out the same screen frame after frame, without GPU submission.
     #[test]
     #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_retained_screen -- --ignored --nocapture"]
     fn benchmark_retained_screen() {
         let screen = Shot::FilesScrolled.screen();
-        let mut shaper = scene::shaper();
-        let mut list = DrawList::new();
-        let theme = default_family().dark;
-        let mut cached = scene::Cached::default();
-        for retained in [false, true] {
-            let mut samples = Vec::new();
-            for frame in 0..61 {
-                let input = Input {
-                    pointer: PointerState {
-                        position: Some((1200.0, 220.0 + (frame % 20) as f32 * 24.0)),
-                        ..PointerState::default()
-                    },
-                    elapsed_ms: frame as f32 * 16.67,
-                    ..Input::default()
-                };
-                let started = std::time::Instant::now();
-                let output = if retained {
-                    cached.paint(
-                        0,
-                        WIDTH as f32,
-                        HEIGHT as f32,
-                        &screen,
-                        &input,
-                        &theme,
-                        &mut shaper,
-                        &mut list,
-                    )
-                } else {
-                    scene::paint(
-                        WIDTH as f32,
-                        HEIGHT as f32,
-                        &screen,
-                        &input,
-                        &theme,
-                        &mut shaper,
-                        &mut list,
-                    )
-                };
-                std::hint::black_box(output);
-                if frame > 0 {
-                    samples.push(started.elapsed().as_secs_f64() * 1000.0);
-                }
+        let mut samples = Vec::new();
+        for frame in 0..61 {
+            let started = std::time::Instant::now();
+            std::hint::black_box(laid(&screen, WIDTH as f32, None));
+            if frame > 0 {
+                samples.push(started.elapsed().as_secs_f64() * 1000.0);
             }
-            samples.sort_by(f64::total_cmp);
-            eprintln!(
-                "screen build+layout+paint retained={retained}: p50={:.2} p95={:.2} p99={:.2} ms",
-                samples[29], samples[56], samples[59]
-            );
         }
+        samples.sort_by(f64::total_cmp);
+        eprintln!(
+            "screen compose+layout: p50={:.2} p95={:.2} p99={:.2} ms",
+            samples[29], samples[56], samples[59]
+        );
     }
 
-    /// Model updates and viewport changes rebuild retained geometry and font changes can clear it.
+    /// Model updates and viewport changes lay the screen out again, and the same screen lays out the same.
     #[test]
     fn retained_screen_invalidates_for_content_and_viewport() {
-        let mut cached = scene::Cached::default();
-        let mut shaper = scene::shaper();
-        let mut list = DrawList::new();
         let mut state = files();
-        let theme = default_family().dark;
-        let input = Input::default();
-        let first = cached.paint(
-            0,
-            WIDTH as f32,
-            HEIGHT as f32,
-            &Screen::Workspace(state.clone()),
-            &input,
-            &theme,
-            &mut shaper,
-            &mut list,
-        );
+        let first = laid(&Screen::Workspace(state.clone()), WIDTH as f32, None);
         state.open_tree.insert("crates".to_owned());
         let screen = Screen::Workspace(state);
-        let changed = cached.paint(
-            1,
-            WIDTH as f32,
-            HEIGHT as f32,
-            &screen,
-            &input,
-            &theme,
-            &mut shaper,
-            &mut list,
-        );
+        let changed = laid(&screen, WIDTH as f32, None);
         assert!(changed.regions.len() > first.regions.len());
-        let resized = cached.paint(
-            1,
-            1000.0,
-            HEIGHT as f32,
-            &screen,
-            &input,
-            &theme,
-            &mut shaper,
-            &mut list,
-        );
+        let resized = laid(&screen, 1000.0, None);
         assert_ne!(changed.regions, resized.regions);
-        cached.clear();
-        let rebuilt = cached.paint(
-            1,
-            1000.0,
-            HEIGHT as f32,
-            &screen,
-            &input,
-            &theme,
-            &mut shaper,
-            &mut list,
-        );
+        let rebuilt = laid(&screen, 1000.0, None);
         assert_eq!(resized.regions, rebuilt.regions);
     }
 
-    /// Measures editing and drawing independently for prompt size and conversation size.
+    /// Measures editing and laying out independently for prompt size and conversation size.
     #[test]
     #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_typing -- --ignored --nocapture"]
     fn benchmark_typing() {
@@ -6173,28 +6085,11 @@ mod performance_tests {
         {
             let state = input_stress(long_prompt, long_chat);
             let mut screen = Screen::Workspace(state);
-            let mut shaper = scene::shaper();
-            let mut cached = scene::Cached::default();
-            let theme = default_family().dark;
-            let mut list = DrawList::new();
             let mut samples = Vec::new();
             for version in 0..21 {
                 let started = std::time::Instant::now();
-                screen = screen.edited(PROMPT, pm_text::Edit::Insert('x'));
-                let input = Input {
-                    focused: Some(PROMPT),
-                    ..Input::default()
-                };
-                std::hint::black_box(cached.paint(
-                    version,
-                    WIDTH as f32,
-                    HEIGHT as f32,
-                    &screen,
-                    &input,
-                    &theme,
-                    &mut shaper,
-                    &mut list,
-                ));
+                screen = screen.edited(PROMPT, pm_field::Edit::Insert('x'));
+                std::hint::black_box(laid(&screen, WIDTH as f32, Some(PROMPT)));
                 if version > 0 {
                     samples.push(started.elapsed().as_secs_f64() * 1000.0);
                 }
@@ -6214,53 +6109,38 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
     use pm_components::browser::{
         BROWSER_BODY, BROWSER_TOOLS_BODY, PAGE_SURFACE, Pointer, TOOLS_SURFACE,
     };
-    use pm_renderer::Picture;
+    use pm_components::kit::Picture;
     use std::time::Duration;
 
-    let (width, height) = (WIDTH, HEIGHT);
-    let theme_family = default_family();
-    let theme = theme_family.variant(Appearance::Dark);
-    let mut shaper = scene::shaper();
-    let mut renderer = Renderer::headless(width, height, 1.0).map_err(|error| error.to_string())?;
-    let mut list = DrawList::new();
-    let input = Input {
-        pointer: PointerState::default(),
-        focused: None,
-        elapsed_ms: 0.0,
-        selection: None,
-        held_bar: None,
-    };
+    let (width, height) = (WIDTH as f32, HEIGHT as f32);
     let mut workspace = workspace_sample();
     workspace.open_browser(url);
     if tools {
         workspace = workspace.browser_tools_shown();
     }
     let mut screen = Screen::Workspace(workspace);
-    let region = |output: &pm_ui::Output, id: FocusId| {
-        output
-            .regions
-            .iter()
-            .find(|region| region.id == id)
-            .map(|region| region.rect)
-    };
-    let output = scene::paint(
-        width as f32,
-        height as f32,
-        &screen,
-        &input,
-        theme,
-        &mut shaper,
-        &mut list,
+    let output = lay_out(
+        width,
+        height,
+        None,
+        content(screen.clone(), None, (width, height)),
     );
-    let body = region(&output, BROWSER_BODY).ok_or("the page has no window")?;
+    let region = |id: FocusId| output.region(id);
+    let body = region(BROWSER_BODY).ok_or("the page has no window")?;
     let engine = Engine::start().map_err(|error| error.to_string())?;
-    let page = View::open(&engine, url, body.width as u32, body.height as u32, 1.0)
-        .map_err(|error| error.to_string())?;
+    let page = View::open(
+        &engine,
+        url,
+        body.size.width as u32,
+        body.size.height as u32,
+        1.0,
+    )
+    .map_err(|error| error.to_string())?;
     let pump = |seconds: f64| std::thread::sleep(Duration::from_secs_f64(seconds));
     let tools_view = if tools {
-        let room = region(&output, BROWSER_TOOLS_BODY).ok_or("the tools have no window")?;
+        let room = region(BROWSER_TOOLS_BODY).ok_or("the tools have no window")?;
         pump(2.0);
-        Some(page.open_devtools(room.width as u32, room.height as u32, 1.0))
+        Some(page.open_devtools(room.size.width as u32, room.size.height as u32, 1.0))
     } else {
         None
     };
@@ -6324,23 +6204,17 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
         }
     }
     println!("title: {title}");
-    scene::paint(
-        width as f32,
-        height as f32,
-        &screen,
-        &input,
-        theme,
-        &mut shaper,
-        &mut list,
-    );
-    let pixels = renderer
-        .snapshot(&list, &mut shaper, scene::ground(theme))
-        .ok_or("the renderer could not read its frame back")?;
+    let frame = Frame {
+        clock_ms: 0.0,
+        family: default_family(),
+        appearance: Appearance::Dark,
+        ..Frame::new(width, height)
+    };
+    let written = write_png(path, &frame, content(screen, None, (width, height)));
     drop(tools_view);
     drop(page);
     drop(engine);
-    image::save_buffer(path, &pixels, width, height, image::ColorType::Rgba8)
-        .map_err(|error| error.to_string())
+    written.map(|_| ()).map_err(|error| error.to_string())
 }
 
 /// `state` with Ollama and OpenRouter hidden from new sessions, as the settings keep it.

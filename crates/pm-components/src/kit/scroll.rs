@@ -113,7 +113,8 @@ impl Scroll {
     }
 }
 
-/// Lays the content out with no bound down its length and moves it up by the offset kept within the room.
+/// Lays the content out with no bound down its length and moves it up by the offset kept within
+/// the room, which is rounded to whole pixels as the edges it is measured between are.
 struct Scrolled {
     /// The box.
     scroll: Scroll,
@@ -146,7 +147,7 @@ impl Layout for Scrolled {
             .width
             .max(constraints.min_width)
             .min(constraints.max_width);
-        let room = (content.height - height).max(0.0);
+        let room = (content.height - height).max(0.0).round();
         let position = self.scroll.position.clamp(0.0, room);
         let offset = match self.scroll.anchor {
             Anchor::Start => position,

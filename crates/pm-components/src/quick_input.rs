@@ -86,8 +86,9 @@ pub fn quick_input(listing: &Listing) {
                             || line(said, 13, 1.4, Role::Muted),
                         );
                     }
-                    for place in first..count.min(first + QUICK_SHOWN) {
-                        quick_row(listing, place, shown[place], place == listing.picked);
+                    let end = count.min(first + QUICK_SHOWN);
+                    for (place, item) in shown.iter().enumerate().take(end).skip(first) {
+                        quick_row(listing, place, *item, place == listing.picked);
                     }
                 },
             );

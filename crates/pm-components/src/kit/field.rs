@@ -164,13 +164,17 @@ impl<'a> FieldText<'a> {
         let modifier = modifier
             .height(height)
             .clip()
-            .on_placed(move |rect, _| {
+            .on_placed_visible(move |rect| {
                 report::record(|report| {
                     report.regions.push(Region {
                         id,
                         rect,
                         focusable: true,
-                    });
+                    })
+                })
+            })
+            .on_placed(move |rect, _| {
+                report::record(|report| {
                     report.fields.push(FieldBox {
                         id,
                         layout: reported.clone(),

@@ -9,7 +9,7 @@ use rustle::Modifier;
 
 use crate::exhibit::Offer;
 use crate::figures::Figures;
-use crate::kit::{Picture, Styled, block, gap_box};
+use crate::kit::{Picture, block, gap_box};
 use crate::sample::{Message, Session, Status, Step};
 use crate::state::WorkspaceState;
 

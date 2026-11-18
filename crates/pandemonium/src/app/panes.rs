@@ -1,7 +1,7 @@
 //! Dragging a tab of a pane to another pane, or to the edge of one to split it.
 
+use pm_components::kit::FocusId;
 use pm_components::panes::{Area, Item, Side, pane_of};
-use pm_input::FocusId;
 
 use super::{App, DRAG_DISTANCE};
 
@@ -27,12 +27,12 @@ impl App {
     fn pane_under(&self, at: (f32, f32)) -> Option<(usize, Side)> {
         self.output.regions.iter().find_map(|region| {
             let index = pane_of(region.id)?;
-            region.rect.contains(at.0, at.1).then(|| {
+            pm_components::kit::report::contains(region.rect, (at.0, at.1)).then(|| {
                 let area = Area {
-                    x: region.rect.x,
-                    y: region.rect.y,
-                    width: region.rect.width,
-                    height: region.rect.height,
+                    x: region.rect.origin.x,
+                    y: region.rect.origin.y,
+                    width: region.rect.size.width,
+                    height: region.rect.size.height,
                 };
                 (index, area.side_at(at))
             })

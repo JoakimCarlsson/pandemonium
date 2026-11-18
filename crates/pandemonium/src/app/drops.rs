@@ -1,6 +1,6 @@
 //! Files dragged onto the window from other programs: over the project's files they are brought into the folder they are let go on, and anywhere else they are attached to the prompt.
 //!
-//! winit reports the files let go but not where, and on Wayland nothing at all. Where winit reports them, the place is taken from the pointer as soon as it is heard of again; on Wayland a data device of our own follows the drag.
+//! The interface reports the files let go on the window, and the place is taken from the pointer as soon as it is heard of again; on Wayland a data device of our own follows the drag and reports the place itself.
 
 #[cfg(target_os = "linux")]
 mod offered;
@@ -53,9 +53,7 @@ impl App {
             return Some(due);
         }
         self.settle_drop();
-        if let Some(window) = self.window.as_ref() {
-            window.request_redraw();
-        }
+        self.recompose = true;
         None
     }
 
@@ -100,9 +98,20 @@ impl App {
                     }
                 }
             }
-            if let Some(window) = self.window.as_ref() {
-                window.request_redraw();
-            }
+            self.recompose = true;
+        }
+    }
+
+    /// Whether files dragged over the window are followed by the app's own data device, which
+    /// then reports their drops itself.
+    pub(super) fn outside_offered(&self) -> bool {
+        #[cfg(target_os = "linux")]
+        {
+            self.outside.offered.is_some()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
         }
     }
 }

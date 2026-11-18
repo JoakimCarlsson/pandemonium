@@ -1,10 +1,9 @@
 //! Turning the window's keyboard events into the app's own.
 
-use pm_input::{Key, KeyEvent, Modifiers};
-use pm_text::{Edit, Motion};
+use pm_components::kit::{Key, KeyEvent, Modifiers};
+use pm_field::{Edit, Motion};
 use winit::event::{ElementState, KeyEvent as WindowKeyEvent};
 use winit::keyboard::{Key as WindowKey, ModifiersState, NamedKey};
-use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
 
 /// The app's modifiers for the window's.
 pub fn modifiers(state: ModifiersState) -> Modifiers {
@@ -12,7 +11,7 @@ pub fn modifiers(state: ModifiersState) -> Modifiers {
         shift: state.shift_key(),
         control: state.control_key(),
         alt: state.alt_key(),
-        logo: state.super_key(),
+        logo: state.meta_key(),
     }
 }
 
@@ -29,7 +28,6 @@ pub fn key_event(event: &WindowKeyEvent, modifiers: Modifiers) -> Option<KeyEven
         WindowKey::Named(NamedKey::End) => Key::End,
         WindowKey::Named(NamedKey::PageUp) => Key::PageUp,
         WindowKey::Named(NamedKey::PageDown) => Key::PageDown,
-        WindowKey::Named(NamedKey::Space) => Key::Space,
         WindowKey::Named(NamedKey::ArrowUp) => Key::ArrowUp,
         WindowKey::Named(NamedKey::ArrowDown) => Key::ArrowDown,
         WindowKey::Named(NamedKey::ArrowLeft) => Key::ArrowLeft,
@@ -46,6 +44,7 @@ pub fn key_event(event: &WindowKeyEvent, modifiers: Modifiers) -> Option<KeyEven
         WindowKey::Named(NamedKey::F10) => Key::Function(10),
         WindowKey::Named(NamedKey::F11) => Key::Function(11),
         WindowKey::Named(NamedKey::F12) => Key::Function(12),
+        WindowKey::Character(text) if text.as_str() == " " => Key::Space,
         WindowKey::Character(text) => Key::Character(text.chars().next()?),
         _ => return None,
     };
@@ -63,9 +62,9 @@ pub fn key_event(event: &WindowKeyEvent, modifiers: Modifiers) -> Option<KeyEven
 fn unspent(event: &WindowKeyEvent, modifiers: Modifiers) -> Modifiers {
     let composed = modifiers.alt
         && matches!(
-            (&event.logical_key, event.key_without_modifiers()),
+            (&event.logical_key, &event.key_without_modifiers),
             (WindowKey::Character(typed), WindowKey::Character(bare))
-                if !typed.eq_ignore_ascii_case(&bare)
+                if !typed.eq_ignore_ascii_case(bare)
         );
     if composed {
         Modifiers {

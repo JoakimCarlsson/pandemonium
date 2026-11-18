@@ -531,7 +531,7 @@ impl<'a> Conflict<'a> {
         }
         let doc_top = top + LABEL;
         let whole = Block::whole();
-        let flex = self.flex.unwrap_or(Flex::new());
+        let flex = self.flex.unwrap_or_default();
         column(
             self.modifier.clone().chain(Modifier::new().grow()),
             flex,

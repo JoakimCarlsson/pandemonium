@@ -14,10 +14,9 @@ Spacers preserve scroll height and offscreen keyboard identities. Tree rows
 have a fixed height at the current density. Inline naming temporarily uses the
 complete list because validation messages have variable heights.
 
-Moving inside the same unpressed tree row skips a redraw when neither the
-model nor the scrollbar hover changes and no animation is running. Moving to
-another row, dragging, crossing the scrollbar grip and other interactions
-still request frames.
+Hover, press and focus styling is resolved when the interface is painted, so
+moving the pointer repaints without composing the screen again; only a model
+change composes it.
 
 ## Measure a running window
 
@@ -25,9 +24,9 @@ still request frames.
 PANDEMONIUM_FRAME_TIMINGS=1 CARGO_TARGET_DIR=build cargo run -p pandemonium
 ```
 
-Every 240 successfully submitted main-window frames, stderr reports p50, p95
-and p99 in milliseconds for CPU scene work, surface acquisition plus encoding
-and submission, pointer movement to successful submission, and key/IME handling
+Every 240 composed main-window frames, stderr reports p50, p95 and p99 in
+milliseconds for composing and laying out the screen, the remaining time to
+the end of the frame, pointer movement to successful submission, and key/IME handling
 to successful submission. Pointer timings
 start at event handling and include coalesced events from the oldest pending
 movement. They exclude OS event delivery, compositor queues, scanout and actual
@@ -35,18 +34,16 @@ display latency. Keyboard timings begin before applying the edit and include
 coalesced input through the next successful submission. These are CPU
 measurements, not GPU timestamp queries.
 
-For a hardware-specific comparison, run the same workload twice:
+Run a workload with the timings on:
 
 ```sh
-PANDEMONIUM_FRAME_TIMINGS=1 PANDEMONIUM_FRAME_LATENCY=2 CARGO_TARGET_DIR=build cargo run -p pandemonium
-PANDEMONIUM_FRAME_TIMINGS=1 PANDEMONIUM_FRAME_LATENCY=1 CARGO_TARGET_DIR=build cargo run -p pandemonium
+PANDEMONIUM_FRAME_TIMINGS=1 CARGO_TARGET_DIR=build cargo run -p pandemonium
 ```
 
-The override accepts only `1` or `2`; the default remains `2`. Keep vsync on.
 Compare slow-frame percentiles while moving across a large expanded tree,
-scrolling, and receiving agent output. A smaller queue can reduce latency but
-can also reduce throughput, so choose it from measurements on the target GPU
-and compositor. Headless snapshots cannot establish this tradeoff.
+scrolling, and receiving agent output. Rustle owns the surface and its frame
+queue, so the queue length is no longer a setting of the app. Headless
+snapshots cannot establish latency tradeoffs.
 
 ## Streaming latency
 

@@ -141,11 +141,15 @@ pub trait Interactive: Sized {
     fn file_drop_id(self, id: FocusId) -> Self;
     /// Keeps `ids`, entries of a long list that were not built, in tab order after the regions: `.virtual_focus(ids)`.
     fn virtual_focus(self, ids: Vec<FocusId>) -> Self;
+    /// Records the area as one box of the selectable text `id`, such as one
+    /// message of a conversation, so the host can tell which box a point is
+    /// in: `.selectable(id)` on the box holding the lines.
+    fn selectable_area(self, id: FocusId) -> Self;
 }
 
 impl Interactive for Modifier {
     fn target(self, id: FocusId) -> Self {
-        self.on_placed(move |rect, _| {
+        self.on_placed_visible(move |rect| {
             report::record(|report| {
                 report.regions.push(Region {
                     id,
@@ -171,7 +175,7 @@ impl Interactive for Modifier {
     }
 
     fn region(self, id: FocusId) -> Self {
-        self.on_placed(move |rect, _| {
+        self.on_placed_visible(move |rect| {
             report::record(|report| {
                 report.regions.push(Region {
                     id,
@@ -204,6 +208,12 @@ impl Interactive for Modifier {
 
     fn file_drop_id(self, id: FocusId) -> Self {
         self.on_file_drop(move |path| send(Action::Dropped { id, path }))
+    }
+
+    fn selectable_area(self, id: FocusId) -> Self {
+        self.on_placed_visible(move |rect| {
+            report::record(|report| report.selectable_areas.push((id, rect)))
+        })
     }
 
     fn virtual_focus(self, ids: Vec<FocusId>) -> Self {

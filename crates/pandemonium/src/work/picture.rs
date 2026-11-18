@@ -4,10 +4,10 @@ use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, LazyLock};
 
-use pm_color::Role;
 use pm_components::figures::Drawing;
+use pm_components::kit::Picture;
+use pm_components::kit::Role;
 use pm_components::preview::VECTOR_DENSITY;
-use pm_renderer::Picture;
 
 /// The longest side a picture is drawn or kept at, in pixels, so its texture fits any GPU.
 const LONGEST_SIDE: u32 = 4096;
@@ -68,9 +68,9 @@ pub(crate) struct Palette {
 
 impl Palette {
     /// The colours of `theme`, a dark one when `dark`.
-    pub(crate) fn of(theme: &pm_theme::Theme, dark: bool) -> Self {
+    pub(crate) fn of(theme: &pm_components::kit::theme::Theme, dark: bool) -> Self {
         let hex = |role: Role| {
-            let [red, green, blue, _] = pm_color::Roles::role(theme, role).to_bytes();
+            let [red, green, blue, _] = pm_components::kit::Roles::role(theme, role).to_bytes();
             format!("#{red:02x}{green:02x}{blue:02x}")
         };
         let variables = [
@@ -101,7 +101,7 @@ impl Palette {
         .into_iter()
         .map(|(name, role)| (name.to_owned(), hex(role)))
         .collect();
-        let [red, green, blue, _] = pm_color::Roles::role(theme, Role::Text).to_bytes();
+        let [red, green, blue, _] = pm_components::kit::Roles::role(theme, Role::Text).to_bytes();
         Self {
             dark,
             variables,

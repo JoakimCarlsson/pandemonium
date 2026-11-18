@@ -9,14 +9,14 @@ use pm_client::{Client, Incoming};
 use pm_components::adder::{Found, Kind};
 use pm_components::figures::Drawing;
 use pm_components::git_controls::GRAPH_LIMIT;
+use pm_components::kit::FocusId;
+use pm_components::kit::Picture;
+use pm_components::kit::State;
 use pm_components::state::SESSION_BASE;
 use pm_components::tree_actions::EntryChange;
 use pm_harness::{Discovery, Event};
-use pm_input::FocusId;
 use pm_pages::{Outgoing, Screen, WorkspaceState};
 use pm_protocol::{Attachment, Login, Request, Response, Target};
-use pm_renderer::Picture;
-use pm_state::State;
 
 use crate::view::View;
 

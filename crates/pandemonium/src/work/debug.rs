@@ -1,8 +1,8 @@
 //! The work behind debugging: asking the server of a session's machine what a folder can be debugged as, starting the program there and doing things to it, and finding a program the server still debugs.
 
+use pm_components::kit::State;
 use pm_pages::{Outgoing, Screen};
 use pm_protocol::{DebugInfo, Request, Response};
-use pm_state::State;
 
 use super::{Host, Pending, Work};
 

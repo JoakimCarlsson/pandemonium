@@ -1,12 +1,12 @@
 //! Where the window was when it was closed, kept on this machine so that the next launch opens on the same page.
 
 use pm_components::browser_tabs::SavedTab;
+use pm_components::kit::FocusId;
 use pm_components::open_files::{Contents, EDITOR_FIELD, Left};
 use pm_components::panes::{Layout, Panes};
 use pm_components::state::{
     PROMPT, Page, ReviewTab, SESSION_BASE, Tab, WorkspaceState, prompt_field,
 };
-use pm_input::FocusId;
 use serde::{Deserialize, Serialize};
 
 mod writer;

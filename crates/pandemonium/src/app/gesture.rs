@@ -1,11 +1,11 @@
 //! The places the pointer selects text, each as a [`Surface`] for the one
 //! press-and-drag gesture: a field, the conversation's text, and the shell.
 
-use pm_input::FocusId;
+use pm_components::kit::FocusId;
+use pm_components::kit::State;
+use pm_components::kit::{Report as Output, TextPoint, TextSelection};
+use pm_field::{Edit, Reach, Surface};
 use pm_pages::Screen;
-use pm_state::State;
-use pm_text::{Edit, Reach, Surface};
-use pm_ui::{Output, TextPoint, TextSelection};
 
 use super::App;
 

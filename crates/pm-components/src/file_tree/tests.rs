@@ -7,7 +7,7 @@ use super::*;
 use crate::kit::report::Report;
 use crate::kit::snapshot::lay_out;
 use crate::kit::theme::set_scales;
-use crate::kit::{Scroll, scroll_area, sp};
+use crate::kit::{Scroll, scroll_area};
 
 /// Makes a large flat tree whose file indices also follow display order.
 fn sample(count: usize) -> WorkspaceState {
@@ -68,7 +68,7 @@ fn paint(state: &WorkspaceState, virtualized: bool, viewport: f32) -> (Report, u
     let held = state.clone();
     let emitted = Rc::new(Cell::new(0));
     let counted = emitted.clone();
-    let report = lay_out(380.0, viewport + sp(8), None, move || {
+    let report = lay_out(380.0, viewport + 8.0 * step_scale(), None, move || {
         list(&held, || {
             counted.set(if virtualized {
                 emit_rows(&held, viewport)

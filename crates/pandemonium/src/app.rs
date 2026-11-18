@@ -16,6 +16,12 @@ use pm_components::folder_picker::{
 };
 use pm_components::git_controls::{GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
 use pm_components::git_menus::{CHANGE_MENU_HEIGHT, MenuKind};
+use pm_components::kit::State;
+use pm_components::kit::theme::{Appearance, ThemeFamily};
+use pm_components::kit::{
+    Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState,
+};
+use pm_components::kit::{Report, SCROLLBAR_GRIP, TextPoint, TextSelection};
 use pm_components::line_edits::LineEdit;
 use pm_components::message_menu::is_message_menu_item;
 use pm_components::minimap::MINIMAP;
@@ -34,21 +40,13 @@ use pm_components::{
     MENU_UNDO, is_menu_item,
 };
 use pm_editor::Action;
-use pm_input::{Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState};
+use pm_field::{Clicks, Edit, Gesture, Reach};
 use pm_pages::{
     ATTACH, DIFF_SCROLL, MENU_SCROLL, PLAN_SCROLL, PROMPT, Screen, TERMINAL_BODY, TREE_SCROLL,
 };
-use pm_renderer::{DrawList, Renderer};
-use pm_state::State;
-
-use pm_text::{Clicks, Edit, Gesture, Reach, Shaper};
-use pm_theme::{Appearance, ThemeFamily};
-use pm_ui::{Cursor, Input, Output, SCROLLBAR_GRIP, TextPoint, TextSelection};
-use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalPosition, LogicalSize};
-use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow};
-use winit::window::{CursorIcon, Window, WindowId};
+use rustle::WindowHandle;
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
+use winit::window::Window;
 
 mod asides;
 mod browser;
@@ -58,11 +56,11 @@ mod drops;
 mod editing;
 mod frame;
 mod gesture;
+mod host;
 mod panes;
 mod paste;
 mod performance;
 mod select;
-mod shadow;
 mod terminal;
 mod tree;
 mod vim;
@@ -70,10 +68,12 @@ mod vim;
 mod wayland;
 
 use self::gesture::FieldText;
+use crate::keys;
 use crate::keys::Clip;
 use crate::view::View;
 use crate::work::Work;
-use crate::{keys, scene};
+
+pub use self::host::Running;
 
 /// How tall the strip of tabs above an open file is, in logical pixels.
 const TABS: f32 = 48.0;
@@ -110,16 +110,16 @@ const RELEASE_RECHECK: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// The window and what draws into it; both exist once the platform is ready.
 pub struct App {
-    /// What casts the shadow of the window outside it, once the window has been drawn; dropped before the window it belongs to.
-    shadow: Option<shadow::Shadow>,
-    /// The window, once it is open.
-    window: Option<Arc<Window>>,
-    /// What draws into the window, once it is open.
-    renderer: Option<Renderer>,
-    /// Shapes the text on screen.
-    shaper: Shaper,
-    /// The main screen and geometry retained across pointer-only frames.
-    scene: scene::Cached,
+    /// The interface on rustle, its windows and what its root reads.
+    shell: host::Shell,
+    /// The window standing as the main one, once it is open.
+    window: Option<Arc<dyn Window>>,
+    /// The handle rustle controls the window standing as the main one by.
+    handle: WindowHandle,
+    /// Whether something changed outside the model that the windows must be composed again for.
+    recompose: bool,
+    /// What the interface made of the event being handled.
+    actions: Vec<pm_components::kit::Action>,
     /// Optional CPU frame timings and pointer response measurements.
     timings: performance::Timings,
     /// The light and the dark theme the window is drawn in.
@@ -132,8 +132,6 @@ pub struct App {
     fonts_applied: (String, String),
     /// The window's own settings as they were last written to disk.
     saved_window: pm_config::WindowSettings,
-    /// The primitives of the frame being drawn, kept to reuse its allocation.
-    list: DrawList,
     /// What the user can change on the screen.
     model: State<Screen>,
     /// Set by the model whenever it changes, so the screen is drawn again.
@@ -144,8 +142,8 @@ pub struct App {
     focus: Focus,
     /// Which modifier keys are held.
     modifiers: Modifiers,
-    /// What the last frame found on screen.
-    output: Output,
+    /// What the last frame painted where, in the frame's coordinates.
+    output: Report,
     /// The element the primary button went down on.
     pressed_on: Option<FocusId>,
     /// The row of the project's files or of the changed files the primary button last went down on, while nothing else was pressed since, so Ctrl+A picks every row of its list.
@@ -166,8 +164,6 @@ pub struct App {
     on_aside: Option<asides::Aside>,
     /// When the application started, which animations run on.
     started: Instant,
-    /// The shape the pointer was last set to.
-    cursor: Cursor,
     /// The system clipboard, once something has needed it.
     clipboard: Option<arboard::Clipboard>,
     /// The field a press began in, while the button is held, so dragging selects.
@@ -200,8 +196,6 @@ pub struct App {
     view_writer: crate::view::Writer,
     /// The next debounced capture of the window state.
     view_save_due: Option<Instant>,
-    /// The GPU being opened on another thread, until the window takes it.
-    opening: Option<pm_renderer::Opening>,
     /// Where the input method was last told the caret is, as x, y, width and height in logical pixels, so that it is told again only when the caret moves.
     ime_area: Option<(f32, f32, f32, f32)>,
     /// When the last frame drawn asked for another although nothing was animating, such as a caret that changes between lit and dark.
@@ -279,7 +273,7 @@ pub struct App {
 
 impl App {
     /// An application with no window yet, whose clock starts now, whose event loop `wake` brings out of its sleep, and whose GPU is being opened as `opening`.
-    pub fn new(wake: pm_client::Wake, opening: pm_renderer::Opening) -> Self {
+    pub fn new(wake: pm_client::Wake, proxy: EventLoopProxy) -> Self {
         let mut work = Work::new(wake);
         crate::startup::mark("app-new-begin");
         let saved = pm_store::load_projects();
@@ -329,10 +323,8 @@ impl App {
             work.ask_release(window_settings.general.channel);
         }
         crate::startup::mark("settings-loaded");
-        let mut shaper = scene::shaper();
-        let (all_fonts, mono_fonts) = shaper.families();
-        scene::set_fonts(
-            &mut shaper,
+        let (all_fonts, mono_fonts) = pm_components::kit::font_families();
+        crate::scene::set_fonts(
             &window_settings.appearance.interface_font,
             &window_settings.appearance.code_font,
         );
@@ -347,27 +339,26 @@ impl App {
         let flag = Rc::clone(&dirty);
         model.subscribe(move |_| flag.set(true));
         Self {
-            shadow: None,
+            shell: host::Shell::new(model.clone(), proxy),
             window: None,
-            renderer: None,
+            handle: WindowHandle::MAIN,
+            recompose: true,
+            actions: Vec::new(),
             fonts_applied: (
                 window_settings.appearance.interface_font.clone(),
                 window_settings.appearance.code_font.clone(),
             ),
             family: chosen_family(&window_settings.appearance),
             saved_window: window_settings,
-            shaper,
-            scene: scene::Cached::default(),
             timings: performance::Timings::default(),
             appearance: Appearance::Dark,
             system_appearance: Appearance::Dark,
-            list: DrawList::new(),
             model,
             dirty,
             pointer: PointerState::default(),
             focus: Focus::new(),
             modifiers: Modifiers::default(),
-            output: Output::default(),
+            output: Report::default(),
             pressed_on: None,
             list_pressed: None,
             bar_drag: None,
@@ -378,7 +369,6 @@ impl App {
             raised_picker: None,
             on_aside: None,
             started: Instant::now(),
-            cursor: Cursor::Default,
             clipboard: None,
             dragging: None,
             field_gesture: Gesture::default(),
@@ -392,7 +382,6 @@ impl App {
             view_writer: crate::view::Writer::default(),
             view_save_due: None,
             frame_due: None,
-            opening: Some(opening),
             ime_area: None,
             view_save_started: None,
             project_press: None,
@@ -437,233 +426,45 @@ impl App {
 }
 
 impl App {
-    /// The attributes the window is opened with, its frame `size` logical pixels across.
-    fn attributes(size: LogicalSize<f32>) -> winit::window::WindowAttributes {
-        let attributes = Window::default_attributes()
-            .with_title("Pandemonium")
-            .with_inner_size(frame::with_band(size));
-        #[cfg(target_os = "macos")]
-        let attributes = {
-            use winit::platform::macos::WindowAttributesExtMacOS;
-
-            attributes
-                .with_titlebar_transparent(true)
-                .with_title_hidden(true)
-                .with_fullsize_content_view(true)
-        };
-        #[cfg(not(target_os = "macos"))]
-        let attributes = attributes.with_decorations(false).with_transparent(true);
-        #[cfg(target_os = "linux")]
-        let attributes = {
-            use winit::platform::wayland::WindowAttributesExtWayland;
-            use winit::platform::x11::WindowAttributesExtX11;
-
-            let app_id = pm_store::app_name();
-            let attributes = WindowAttributesExtWayland::with_name(attributes, app_id, "");
-            WindowAttributesExtX11::with_name(attributes, app_id, app_id)
-        };
-        attributes
-    }
-
     /// How large the frame of the window opens: as large as it was when the window was last closed, or as fits the screen it opens on.
-    fn opening_size(event_loop: &ActiveEventLoop) -> LogicalSize<f32> {
+    fn opening_size(event_loop: &dyn ActiveEventLoop) -> (f32, f32) {
         let saved = pm_store::load_text(WINDOW_SIZE_FILE).and_then(|text| {
             let (width, height) = text.trim().split_once(' ')?;
-            Some(LogicalSize::new(width.parse().ok()?, height.parse().ok()?))
+            Some((width.parse().ok()?, height.parse().ok()?))
         });
         let screen = || {
             let monitor = event_loop
                 .primary_monitor()
                 .or_else(|| event_loop.available_monitors().next())?;
-            let size = monitor.size().to_logical::<f32>(monitor.scale_factor());
-            Some(frame::without_band(LogicalSize::new(
-                size.width,
-                size.height,
-            )))
+            let size = monitor
+                .current_video_mode()?
+                .size()
+                .to_logical::<f32>(monitor.scale_factor());
+            Some(frame::without_band((size.width, size.height)))
         };
         saved
-            .filter(|size: &LogicalSize<f32>| size.width >= MIN_SAVED && size.height >= MIN_SAVED)
+            .filter(|size: &(f32, f32)| size.0 >= MIN_SAVED && size.1 >= MIN_SAVED)
             .or_else(screen)
-            .unwrap_or(LogicalSize::new(WIDTH, HEIGHT))
+            .unwrap_or((WIDTH, HEIGHT))
     }
 
     /// Keeps how large the frame of the window is for the next launch.
-    fn remember_size(window: &Window) {
-        let size = window.inner_size().to_logical::<f32>(window.scale_factor());
+    fn remember_size(window: &dyn Window) {
+        let size = window
+            .surface_size()
+            .to_logical::<f32>(window.scale_factor());
+        let size = (size.width, size.height);
         let size = if frame::floats(window) {
             frame::without_band(size)
         } else {
             size
         };
-        if size.width >= MIN_SAVED && size.height >= MIN_SAVED {
+        if size.0 >= MIN_SAVED && size.1 >= MIN_SAVED {
             let _ = pm_store::save_text(
                 WINDOW_SIZE_FILE,
-                &format!("{} {}", size.width.round(), size.height.round()),
+                &format!("{} {}", size.0.round(), size.1.round()),
             );
         }
-    }
-
-    /// Draws one frame and asks for the next one while anything is moving or
-    /// the frame could not be presented.
-    fn redraw(&mut self) {
-        if let Some(aside) = self.on_aside {
-            self.redraw_aside(aside);
-            return;
-        }
-        let started = self.timings.start();
-        self.sync_floating();
-        self.fit_terminal();
-        let reaching = self.reaching() || self.reaching_terminal_link();
-        let edge = self.frame_edge();
-        let browser_cursor = self.browser_cursor();
-        let (Some(window), Some(renderer)) = (self.window.as_ref(), self.renderer.as_mut()) else {
-            return;
-        };
-        let input = Input {
-            pointer: self.pointer,
-            focused: self.focus.current(),
-            elapsed_ms: self.started.elapsed().as_secs_f32() * 1000.0,
-            selection: self.text_selection,
-            held_bar: self.bar_drag.map(|(id, _)| id),
-        };
-        let (width, height) = renderer.size();
-        let model = self.model.clone();
-        let theme = self.family.variant(self.appearance);
-        let scroll_to = model.read(|state| {
-            self.output = self.scene.paint(
-                model.version(),
-                width,
-                height,
-                state,
-                &input,
-                theme,
-                &mut self.shaper,
-                &mut self.list,
-            );
-            let held_by_aside = self.focus.current().filter(|id| asides::is_aside(*id));
-            self.focus.set_order(
-                self.output
-                    .regions
-                    .iter()
-                    .map(|region| region.id)
-                    .chain(held_by_aside)
-                    .collect(),
-            );
-            if std::mem::take(&mut self.focus_terminal) {
-                self.focus.focus(TERMINAL_BODY);
-            }
-            if std::mem::take(&mut self.focus_browser_address) {
-                self.focus.focus(pm_components::browser::BROWSER_ADDRESS);
-            }
-            if std::mem::take(&mut self.focus_filter) {
-                self.focus.focus(pm_components::listing::LISTING_FILTER);
-            }
-            let drawn = |id| self.output.regions.iter().any(|region| region.id == id);
-            Self::give_back_focus(
-                &mut self.refocus,
-                &mut self.focus,
-                self.work.resuming(),
-                drawn,
-            );
-            let starting = state.is_starting();
-            if starting && !self.autofocused {
-                self.focus.focus(PROMPT);
-            }
-            self.autofocused = starting;
-            let naming = state.is_naming();
-            if naming && !self.naming {
-                self.focus.focus(ENTRY_FIELD);
-            }
-            self.naming = naming;
-            let mut scroll_to = None;
-            let band = pm_components::shadow_margin();
-            if let Some(id) = self.focus.current()
-                && let Some(field) = state.field(id)
-                && field.is_multiline()
-            {
-                if let Some(scroller) = self.output.scrollers.iter().find(|held| held.id == id)
-                    && field.follows_caret()
-                {
-                    scroll_to = Some((id, scroller.offset));
-                }
-                let caret = field.to_shown(field.caret());
-                if let Some(held) = self
-                    .output
-                    .fields
-                    .iter()
-                    .rfind(|held| held.id == id && held.start <= caret)
-                {
-                    let caret_x = held.run.caret_x(caret - held.start);
-                    let area = (held.x + caret_x, held.y, 1.0, held.height);
-                    if self.ime_area != Some(area) {
-                        self.ime_area = Some(area);
-                        window.set_ime_cursor_area(
-                            LogicalPosition::new(area.0 + band, area.1 + band),
-                            LogicalSize::new(area.2, area.3),
-                        );
-                    }
-                }
-            } else if let Some(id) = self.focus.current()
-                && let Some(field) = state.field(id)
-                && let Some(held) = self.output.fields.iter().find(|held| held.id == id)
-                && let Some(view) = held.view
-            {
-                let caret_x = held.run.caret_x(field.to_shown(field.caret()));
-                let want = field.scroll_for(caret_x, held.run.width, view.width);
-                if (want - field.scroll()).abs() > 0.5 {
-                    scroll_to = Some((id, want));
-                }
-                let area = (held.x + caret_x, view.y, 1.0, view.height);
-                if self.ime_area != Some(area) {
-                    self.ime_area = Some(area);
-                    window.set_ime_cursor_area(
-                        LogicalPosition::new(area.0 + band, area.1 + band),
-                        LogicalSize::new(area.2, area.3),
-                    );
-                }
-            }
-            scroll_to
-        });
-        if let Some((id, want)) = scroll_to {
-            self.model
-                .update(|state| *state = std::mem::take(state).edited(id, Edit::ScrollTo(want)));
-        }
-        if let Some(width) = model.read(|state| state.diff_resized(&self.output.scrollers)) {
-            self.model
-                .update(|state| *state = std::mem::take(state).measured_diff(width));
-        }
-        let history_pending = pm_components::chat::history_pending();
-        if history_pending {
-            self.model.update(|_| {});
-        }
-        let cursor = match self.sash_drag {
-            Some((.., Grows::Up)) => Cursor::RowResize,
-            Some(_) => Cursor::ColResize,
-            None if reaching => Cursor::Pointer,
-            None => browser_cursor.unwrap_or(self.output.cursor),
-        };
-        if cursor != self.cursor || edge != self.edge_cursor {
-            self.cursor = cursor;
-            self.edge_cursor = edge;
-            window.set_cursor(edge.map_or_else(|| cursor_icon(cursor), frame::edge_icon));
-        }
-        crate::startup::scene_painted();
-        let painted = self.timings.start();
-        let presented = renderer.render(&self.list, &mut self.shaper, scene::ground(theme), || {
-            window.pre_present_notify()
-        });
-        self.timings.frame(started, painted, presented);
-        self.frame_due = Self::frame_due_after(self.output.next_frame_ms, input.elapsed_ms);
-        if presented {
-            crate::startup::frame_presented();
-        }
-        if self.output.animating || !presented {
-            window.request_redraw();
-        }
-        self.place_completion();
-        self.place_signature();
-        self.note_code_view();
-        self.note_conversation(presented && !history_pending);
     }
 
     /// Marks updates read only after the end of the conversation has been presented in the focused window.
@@ -700,7 +501,7 @@ impl App {
             .regions
             .iter()
             .find(|region| region.id == VIEWER_SCROLL)
-            .map(|region| (region.rect.width, region.rect.height))
+            .map(|region| (region.rect.size.width, region.rect.size.height))
         else {
             return;
         };
@@ -720,12 +521,11 @@ impl App {
         }) else {
             return;
         };
-        let style = pm_style::typography::TypographyStyle {
-            family: pm_style::typography::FontFamily::Mono,
-            size: font,
-            ..pm_style::typography::TypographyStyle::BASE
-        };
-        let cell = self.shaper.measure(&"M".repeat(64), &style).width / 64.0;
+        let cell = pm_components::kit::measure(
+            &"M".repeat(64),
+            pm_components::kit::Type::code(font).unscaled(font),
+        )
+        .0 / 64.0;
         let known = self.model.read(Screen::code_view);
         let differs = known.is_none_or(|(held_width, held_cell)| {
             (held_width - width).abs() > 0.5 || (held_cell - cell).abs() > 0.01
@@ -880,48 +680,6 @@ impl App {
         self.apply_appearance();
     }
 
-    /// Builds and lays out the scene for a window of `size` physical pixels at `scale`, so that the first frame only paints it, and the GPU, which is still opening, is not waited for to do it.
-    fn warm_scene(&mut self, size: winit::dpi::PhysicalSize<u32>, scale: f32) {
-        let input = Input {
-            elapsed_ms: self.started.elapsed().as_secs_f32() * 1000.0,
-            ..Input::default()
-        };
-        let theme = self.family.variant(self.appearance);
-        let model = self.model.clone();
-        model.read(|state| {
-            self.scene.paint(
-                model.version(),
-                size.width as f32 / scale,
-                size.height as f32 / scale,
-                state,
-                &input,
-                theme,
-                &mut self.shaper,
-                &mut self.list,
-            )
-        });
-    }
-
-    /// When a frame that asked for another at `next_ms` on the clock, having been drawn at `elapsed_ms`, is due.
-    fn frame_due_after(next_ms: Option<f32>, elapsed_ms: f32) -> Option<Instant> {
-        next_ms
-            .map(|at| Instant::now() + Duration::from_secs_f32((at - elapsed_ms).max(0.0) / 1000.0))
-    }
-
-    /// When the next frame is due although nothing is animating, drawing it now once that time has come.
-    fn frame_deadline(&mut self) -> Option<Instant> {
-        let due = self.frame_due?;
-        if due > Instant::now() {
-            return Some(due);
-        }
-        self.frame_due = None;
-        if let Some(window) = self.window.as_ref() {
-            window.request_redraw();
-        }
-        self.redraw_asides();
-        None
-    }
-
     /// When the window looks for a newer release again while updates are looked for, asking now once that time has come.
     fn release_due(&mut self) -> Option<Instant> {
         let general = &self.saved_window.general;
@@ -954,14 +712,12 @@ impl App {
         }
         let fonts = (settings.interface_font.clone(), settings.code_font.clone());
         if fonts != self.fonts_applied {
-            self.scene.clear();
-            scene::set_fonts(&mut self.shaper, &fonts.0, &fonts.1);
+            crate::scene::set_fonts(&fonts.0, &fonts.1);
             self.fonts_applied = fonts;
         }
-        if let Some(window) = self.window.as_ref() {
-            window.request_redraw();
-        }
-        self.redraw_asides();
+        let tokens = self.tokens();
+        self.shell.set_tokens(tokens);
+        self.recompose = true;
     }
 
     /// Writes what the reader chose for the agents' settings to disk when it differs from what was last written.
@@ -1069,17 +825,15 @@ impl App {
         if self.terminal_wheel(pixels) {
             return;
         }
-        let (Some((x, y)), Some(renderer)) = (self.pointer.position, self.renderer.as_ref()) else {
+        let Some((x, y)) = self.pointer.position else {
             return;
         };
-        if let Some(scroller) = self
-            .output
-            .scrollers
-            .iter()
-            .rev()
-            .find(|scroller| scroller.rect.contains(x, y))
-        {
-            let (id, room) = (scroller.id, scroller.room);
+        let under = self.wheel_action().or_else(|| {
+            self.output
+                .scroller_at((x, y))
+                .map(|scroller| (scroller.id, scroller.room))
+        });
+        if let Some((id, room)) = under {
             let at_end = id == SUBAGENTS_SCROLL
                 && self.model.read(|screen| match screen {
                     Screen::Workspace(state) => {
@@ -1102,7 +856,7 @@ impl App {
                 return;
             }
         }
-        let height = renderer.size().1;
+        let height = self.window_size().1;
         self.model
             .update(|state| *state = std::mem::take(state).scrolled(x, pixels, height));
     }
@@ -1165,10 +919,19 @@ impl App {
     }
 
     /// How wide and tall the window is, in logical pixels.
-    fn window_size(&self) -> (f32, f32) {
-        self.renderer
-            .as_ref()
-            .map_or((1280.0, 800.0), |renderer| renderer.size())
+    pub(super) fn window_size(&self) -> (f32, f32) {
+        let Some(window) = self.window.as_ref() else {
+            return (WIDTH, HEIGHT);
+        };
+        let size = window
+            .surface_size()
+            .to_logical::<f32>(window.scale_factor());
+        let band = if self.on_aside.is_none() {
+            2.0 * pm_components::shadow_margin()
+        } else {
+            0.0
+        };
+        (size.width - band, size.height - band)
     }
 
     /// Takes hold of the handle on the edge of a panel when the pointer is down on it, and says whether it did.
@@ -1202,8 +965,8 @@ impl App {
         };
         let grabbed = self.output.scrollers.iter().rev().find(|scroller| {
             scroller.room > 0.0
-                && scroller.rect.contains(x, y)
-                && x >= scroller.rect.x + scroller.rect.width - SCROLLBAR_GRIP
+                && pm_components::kit::report::contains(scroller.rect, (x, y))
+                && x >= scroller.rect.origin.x + scroller.rect.size.width - SCROLLBAR_GRIP
         });
         self.bar_drag = grabbed.map(|scroller| (scroller.id, y));
         self.bar_drag.is_some()
@@ -1231,7 +994,11 @@ impl App {
         let (Some(map), Some(view)) = (find(MINIMAP), find(VIEWER_SCROLL)) else {
             return;
         };
-        let (down, height, shown) = (y - map.rect.y, map.rect.height, view.rect.height);
+        let (down, height, shown) = (
+            y - map.rect.origin.y,
+            map.rect.size.height,
+            view.rect.size.height,
+        );
         let room = self
             .output
             .scrollers
@@ -1285,7 +1052,7 @@ impl App {
         else {
             return;
         };
-        let height = scroller.rect.height;
+        let height = scroller.rect.size.height;
         let track = (height - 6.0).max(0.0);
         let thumb = (track * height / (height + scroller.room)).clamp(24.0, track.max(24.0));
         let travel = (track - thumb).max(1.0);
@@ -1386,7 +1153,9 @@ impl App {
             }
             PointerEvent::Pressed(Button::Left) => {
                 self.terminal_press();
-                let on = self.pointer.position.and_then(|at| self.output.hit(at));
+                let on = self
+                    .pressed_action()
+                    .or_else(|| self.pointer.position.and_then(|at| self.output.hit(at)));
                 if let Some(id) = on.filter(|id| gutter_of(*id).is_some()) {
                     self.model
                         .update(|state| *state = std::mem::take(state).comment_drag_begun(id));
@@ -1416,7 +1185,7 @@ impl App {
                     self.model
                         .update(|state| *state = std::mem::take(state).without_menu());
                 }
-                self.pressed_on = self.pointer.position.and_then(|at| self.output.hit(at));
+                self.pressed_on = on;
                 self.list_pressed = self.pressed_on.filter(|id| {
                     self.model.read(|screen| {
                         screen.tree_row_of(*id).is_some()
@@ -1484,7 +1253,9 @@ impl App {
                     self.pressed_on = None;
                     return;
                 }
-                let released_on = self.pointer.position.and_then(|at| self.output.hit(at));
+                let released_on = self
+                    .released_action()
+                    .or_else(|| self.pointer.position.and_then(|at| self.output.hit(at)));
                 if let (Some(pressed), Some(released)) = (self.pressed_on.take(), released_on)
                     && pressed == released
                 {
@@ -1614,7 +1385,12 @@ impl App {
             .find(|region| Some(region.id) == trigger)
             .map(|region| {
                 let rect = region.rect;
-                (rect.x, rect.y, rect.width, rect.height)
+                (
+                    rect.origin.x,
+                    rect.origin.y,
+                    rect.size.width,
+                    rect.size.height,
+                )
             });
         let at = if let Some(control) = control {
             self.model
@@ -1849,16 +1625,16 @@ impl App {
         };
         if several {
             let motion = if by < 0 {
-                pm_text::Motion::LineUp
+                pm_field::Motion::LineUp
             } else {
-                pm_text::Motion::LineDown
+                pm_field::Motion::LineDown
             };
             self.edit_field(id, Edit::Move(motion, extend));
             return;
         }
         let target = self
             .output
-            .vertical(id, caret, by, &mut self.shaper)
+            .vertical(id, caret, by)
             .unwrap_or(if by < 0 { 0 } else { length });
         self.edit_field(id, Edit::Place(target, extend));
     }
@@ -1875,9 +1651,9 @@ impl App {
         };
         if several {
             let motion = if end {
-                pm_text::Motion::LineEnd
+                pm_field::Motion::LineEnd
             } else {
-                pm_text::Motion::LineStart
+                pm_field::Motion::LineStart
             };
             self.edit_field(id, Edit::Move(motion, extend));
             return;
@@ -1953,11 +1729,8 @@ impl App {
             .regions
             .iter()
             .find(|region| region.id == VIEWER_SCROLL)
-            .map(|region| region.rect.height + STRIP);
-        let window = self
-            .renderer
-            .as_ref()
-            .map(|renderer| renderer.size().1 - TABS);
+            .map(|region| region.rect.size.height + STRIP);
+        let window = self.window.as_ref().map(|_| self.window_size().1 - TABS);
         if let Some(height) = drawn.or(window) {
             self.model
                 .update(|state| *state = std::mem::take(state).with_caret_shown(height));
@@ -2202,7 +1975,7 @@ impl App {
                 Some(id) if Screen::is_field(id) => {
                     let multiline = self
                         .model
-                        .read(|screen| screen.field(id).is_some_and(pm_text::Field::is_multiline));
+                        .read(|screen| screen.field(id).is_some_and(pm_field::Field::is_multiline));
                     let shift = event.modifiers.shift;
                     let hurried = event.modifiers.control || event.modifiers.logo;
                     let breaks = shift || (Screen::enter_breaks_line(id) && !hurried);
@@ -2237,35 +2010,18 @@ impl App {
     }
 }
 
-/// The window's pointer for the shape a style asks for.
-fn cursor_icon(cursor: Cursor) -> CursorIcon {
-    match cursor {
-        Cursor::Default => CursorIcon::Default,
-        Cursor::Pointer => CursorIcon::Pointer,
-        Cursor::Text => CursorIcon::Text,
-        Cursor::Move => CursorIcon::Move,
-        Cursor::NotAllowed => CursorIcon::NotAllowed,
-        Cursor::Grab => CursorIcon::Grab,
-        Cursor::Grabbing => CursorIcon::Grabbing,
-        Cursor::Wait => CursorIcon::Wait,
-        Cursor::Crosshair => CursorIcon::Crosshair,
-        Cursor::ColResize => CursorIcon::ColResize,
-        Cursor::RowResize => CursorIcon::RowResize,
-    }
-}
-
 /// The byte offset in the text of `field` that the offset `shown` of what is shown stands for.
-fn field_text_offset(field: &pm_text::Field, shown: usize) -> usize {
+fn field_text_offset(field: &pm_field::Field, shown: usize) -> usize {
     field.to_text(shown)
 }
 
 /// The themes `settings` pick: the light one for the window drawn light, the dark one for it drawn dark.
 fn chosen_family(settings: &pm_config::AppearanceSettings) -> ThemeFamily {
-    let dark = pm_theme::family_named(&settings.dark_theme);
+    let dark = pm_components::kit::theme::family_named(&settings.dark_theme);
     ThemeFamily {
         name: dark.name,
         dark: dark.dark,
-        light: pm_theme::family_named(&settings.light_theme).light,
+        light: pm_components::kit::theme::family_named(&settings.light_theme).light,
     }
 }
 
@@ -2283,49 +2039,10 @@ fn fail_to_start(reason: &str) -> ! {
     std::process::exit(1);
 }
 
-impl ApplicationHandler for App {
-    /// Captures the final draft and waits for its ordered background write before exit.
-    fn exiting(&mut self, _: &ActiveEventLoop) {
-        self.persist_view();
-        self.view_writer.flush();
-        self.browser_shutdown();
-    }
-
-    /// Opens the window and builds its renderer once the platform is ready, building the first scene while the GPU finishes opening.
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
-            return;
-        }
-        pm_components::set_shadow_outside(shadow::cast_outside(event_loop));
-        let window =
-            match event_loop.create_window(Self::attributes(Self::opening_size(event_loop))) {
-                Ok(window) => Arc::new(window),
-                Err(error) => fail_to_start(&format!("could not open a window: {error}")),
-            };
-        crate::startup::mark("window-created");
-        let size = window.inner_size();
-        let scale = window.scale_factor() as f32;
-        self.system_appearance = appearance(window.theme());
-        window.set_ime_allowed(true);
-        self.window = Some(window.clone());
-        self.apply_appearance();
-        self.warm_scene(size, scale);
-        crate::startup::mark("scene-warmed");
-        let made = match self.opening.take() {
-            Some(opening) => {
-                Renderer::from_opening(opening, window, size.width, size.height, scale)
-            }
-            None => Renderer::new(window, size.width, size.height, scale),
-        };
-        match made {
-            Ok(renderer) => self.renderer = Some(renderer),
-            Err(error) => fail_to_start(&error.to_string()),
-        }
-        crate::startup::mark("renderer-ready");
-    }
-
-    /// Draws again when the model changed while no event asked for it.
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+impl App {
+    /// Does what waits for the loop to come to rest: the agents' work, the
+    /// model's requests, saving, and when the loop wakes next.
+    fn idle(&mut self, event_loop: &dyn ActiveEventLoop) {
         self.work.discover();
         self.work.poll(&self.model);
         self.pump_drops();
@@ -2337,7 +2054,7 @@ impl ApplicationHandler for App {
         }
         if self.model.read(Screen::window_settings_wanted) {
             let settings = self.saved_window.clone();
-            let (all, mono) = self.shaper.families();
+            let (all, mono) = pm_components::kit::font_families();
             self.model.update(|screen| {
                 *screen = std::mem::take(screen)
                     .with_window_settings(settings)
@@ -2388,181 +2105,6 @@ impl ApplicationHandler for App {
         if self.closing || self.model.read(Screen::quitting) {
             event_loop.exit();
         }
-        self.sync_asides(event_loop);
         self.tell_field_left();
-        if self.dirty.replace(false)
-            && let Some(window) = self.window.as_ref()
-        {
-            window.request_redraw();
-            self.redraw_asides();
-        }
-    }
-
-    /// Routes window events to the renderer, the pointer and the keyboard.
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        if let Some(aside) = self.aside_of_window(id) {
-            self.aside_event(aside, event_loop, event);
-            return;
-        }
-        if self.window.as_ref().is_none_or(|window| window.id() != id) {
-            return;
-        }
-        if matches!(event, WindowEvent::Focused(true))
-            && self.focus.current().is_some_and(asides::is_aside)
-        {
-            self.focus.clear();
-        }
-        self.handle_window_event(event_loop, event);
-    }
-}
-
-impl App {
-    /// Routes an event of the window standing as the main one to the renderer, the pointer and the keyboard.
-    fn handle_window_event(&mut self, event_loop: &ActiveEventLoop, event: WindowEvent) {
-        let Some(window) = self.window.clone() else {
-            return;
-        };
-        let scale = window.scale_factor() as f32;
-        match event {
-            WindowEvent::CloseRequested => {
-                if self.close_window() {
-                    event_loop.exit();
-                }
-            }
-            WindowEvent::Focused(_) => window.request_redraw(),
-            WindowEvent::ThemeChanged(theme) => {
-                self.system_appearance = appearance(Some(theme));
-                self.apply_appearance();
-            }
-            WindowEvent::Resized(size) => {
-                if let Some(renderer) = self.renderer.as_mut() {
-                    renderer.resize(size.width, size.height, scale);
-                }
-                if self.on_aside.is_none() {
-                    Self::remember_size(&window);
-                }
-            }
-            WindowEvent::ScaleFactorChanged { .. } => {
-                let size = window.inner_size();
-                if let Some(renderer) = self.renderer.as_mut() {
-                    renderer.resize(size.width, size.height, scale);
-                }
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                let received = self.timings.start();
-                let before = self.pointer;
-                let version = self.model.version();
-                let band = pm_components::shadow_margin();
-                let at = (
-                    position.x as f32 / scale - band,
-                    position.y as f32 / scale - band,
-                );
-                self.pointer(PointerEvent::Moved(at.0, at.1));
-                self.settle_drop();
-                self.browser_moved(at);
-                if self.on_aside.is_none()
-                    && self.model.version() == version
-                    && !self.dirty.get()
-                    && self.frame_edge() == self.edge_cursor
-                    && self.model.read(|screen| {
-                        performance::same_tree_hover(&self.output, screen, before, self.pointer)
-                    })
-                {
-                    return;
-                }
-                if self.on_aside.is_none() {
-                    self.timings.pointer(received);
-                }
-            }
-            WindowEvent::CursorLeft { .. } => self.pointer(PointerEvent::Left),
-            WindowEvent::DroppedFile(path) => self.file_dropped(path),
-            WindowEvent::MouseWheel { delta, .. } => {
-                let (across, down) = match delta {
-                    MouseScrollDelta::LineDelta(across, down) => {
-                        (across * WHEEL_LINE, down * WHEEL_LINE)
-                    }
-                    MouseScrollDelta::PixelDelta(moved) => {
-                        (moved.x as f32 / scale, moved.y as f32 / scale)
-                    }
-                };
-                if self.browser_wheel(across, down) {
-                    window.request_redraw();
-                    return;
-                }
-                let pixels = match delta {
-                    MouseScrollDelta::LineDelta(_, lines) => -lines * WHEEL_LINE,
-                    MouseScrollDelta::PixelDelta(moved) => -moved.y as f32 / scale,
-                };
-                self.scroll(pixels);
-            }
-            WindowEvent::MouseInput { state, button, .. } => {
-                self.refocus = None;
-                if button == MouseButton::Left
-                    && state == ElementState::Pressed
-                    && self.frame_press(&window)
-                {
-                    window.request_redraw();
-                    return;
-                }
-                let button = match button {
-                    MouseButton::Left => Button::Left,
-                    MouseButton::Right => Button::Right,
-                    MouseButton::Back | MouseButton::Forward => {
-                        if state == ElementState::Pressed
-                            && !(self.on_aside.is_none()
-                                && self.browser_history(button == MouseButton::Back))
-                        {
-                            self.step_through_history(button == MouseButton::Back);
-                        }
-                        window.request_redraw();
-                        return;
-                    }
-                    _ => return,
-                };
-                self.browser_button(button, state == ElementState::Pressed);
-                self.pointer(match state {
-                    ElementState::Pressed => PointerEvent::Pressed(button),
-                    ElementState::Released => PointerEvent::Released(button),
-                });
-            }
-            WindowEvent::Ime(Ime::Preedit(composing, _)) => {
-                if self.on_aside.is_none() {
-                    self.timings.keyboard();
-                }
-                self.compose(composing);
-            }
-            WindowEvent::Ime(Ime::Disabled) => self.compose(String::new()),
-            WindowEvent::Ime(Ime::Commit(committed)) => {
-                if self.on_aside.is_none() {
-                    self.timings.keyboard();
-                }
-                if self.commit_to_terminal(&committed) || self.commit_to_browser(&committed) {
-                } else if let Some(id) = self.focus.current()
-                    && Screen::is_field(id)
-                {
-                    self.edit_field(id, Edit::Paste(committed));
-                }
-            }
-            WindowEvent::ModifiersChanged(modifiers) => {
-                self.modifiers = keys::modifiers(modifiers.state());
-                self.editor_modifiers_changed();
-                self.reach_terminal_link();
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                self.refocus = None;
-                if let Some(event) = keys::key_event(&event, self.modifiers) {
-                    if event.pressed && self.on_aside.is_none() {
-                        self.timings.keyboard();
-                    }
-                    self.key(event);
-                }
-            }
-            WindowEvent::RedrawRequested => {
-                self.redraw();
-                return;
-            }
-            _ => return,
-        }
-        window.request_redraw();
     }
 }

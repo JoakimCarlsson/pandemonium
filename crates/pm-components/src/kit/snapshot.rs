@@ -40,6 +40,8 @@ pub struct Shot {
     pub focused: Option<FocusId>,
     /// The stretch of selectable text selected.
     pub selection: Option<TextSelection>,
+    /// Whether what is not drawn stays see-through, as around a floating window's frame.
+    pub transparent: bool,
     /// The theme family.
     pub family: ThemeFamily,
     /// Light or dark.
@@ -58,6 +60,7 @@ impl Shot {
             pointer: None,
             focused: None,
             selection: None,
+            transparent: false,
             family: theme::default_family(),
             appearance: Appearance::Dark,
         }
@@ -105,7 +108,8 @@ pub fn render(
     overlay::set_tooltip_delay(0.0);
     overlay::reset_tooltip();
     let tokens = Tokens::new(&shot.family, shot.appearance);
-    let renderer = rustle_wgpu::Renderer::offscreen(physical.0, physical.1)?;
+    let mut renderer = rustle_wgpu::Renderer::offscreen(physical.0, physical.1)?;
+    renderer.set_transparent(shot.transparent);
     let root = move || {
         theme::provide(tokens.clone(), || {
             report::root(|| {

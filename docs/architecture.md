@@ -5,8 +5,8 @@ window; a **session** is an agent working in its own git worktree of one of
 them; the window shows both as first-class items: files, worktrees, diffs and
 the agent's own conversation, in panes, not in a terminal beside the editor.
 
-**Stack:** Rust 2024 · winit (windowing) · wgpu (rendering) · no UI framework:
-`pm-ui` is ours. Linux first; macOS and Windows follow from winit and wgpu, not
+**Stack:** Rust 2024 · winit (windowing) · rustle (the declarative UI
+framework, drawing through wgpu). Linux first; macOS and Windows follow from winit and wgpu, not
 from platform-specific code.
 
 ## Client and server
@@ -30,14 +30,12 @@ another client. The protocol is documented in `docs/protocol.md`; a change to
 
 One crate per layer, each depending only on the layers below it.
 
-- **Styling:** `pm-primitives`, `pm-color`, `pm-layout`, `pm-typography`,
-  `pm-decoration`, `pm-animation` and `pm-style`: small utility values a style
-  is made of, and the one public styling API on top of them.
-- **Drawing:** `pm-shaders` (WGSL), `pm-renderer` (the only crate that talks to
-  wgpu; callers submit a draw list), `pm-text` (shaping and text fields),
-  `pm-icon`, `pm-theme`.
-- **Interface:** `pm-input` (pointer, keyboard, focus), `pm-state`, `pm-ui` (the
-  element tree, layout pass, hit testing and painting into the draw list).
+- **Interface:** rustle composables, built with the kit in
+  `pm-components/src/kit`: design tokens and themes, rows and columns laid out
+  as flex boxes, text, icons, marked lines, fields drawn from `pm-field`,
+  scrolling boxes whose offsets live in the model, overlays, and the actions
+  and frame report through which the binary's logic hears what the user did
+  and where things were drawn. `pm-field` holds the text editing model.
 - **Components:** `pm-components`: reusable controls (`Button`, `Chip`,
   `Popover`, `Checkbox`, `Tally` and so on), each a builder with a variant and a
   size, and the state and sections the workspace is drawn from.

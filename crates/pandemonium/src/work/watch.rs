@@ -1,8 +1,8 @@
 //! Keeping project submodules and the shown git panel up to date through their servers’ folder watches.
 
+use pm_components::kit::State;
 use pm_pages::Screen;
 use pm_protocol::Request;
-use pm_state::State;
 
 use super::{Host, Pending, Work};
 

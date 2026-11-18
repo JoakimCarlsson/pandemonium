@@ -2,14 +2,14 @@
 //! the menu over a message that copies it or the message.
 
 use pm_components::assist::HOVER_CARD;
+use pm_components::kit::{FocusId, Key, KeyEvent};
 use pm_components::message_menu::{
     MESSAGE_MENU_COPY, MESSAGE_MENU_SELECT_ALL, is_message_menu_item,
 };
 use pm_components::panes::pane_of;
 use pm_components::state::CHAT_TEXT;
-use pm_input::{FocusId, Key, KeyEvent};
+use pm_field::{Edit, Reach};
 use pm_pages::Screen;
-use pm_text::{Edit, Reach};
 
 use super::gesture::ChatText;
 use super::{App, DOUBLE_CLICK};

@@ -1,7 +1,7 @@
 //! What a keypress does to a file while modal editing is on: the key goes to vim's engine before the keymap sees it, because in normal mode a plain letter is a command rather than a character, and whatever the engine does not take goes on as it would without modal editing, which is how insert mode types.
 
+use pm_components::kit::KeyEvent;
 use pm_editor::Action;
-use pm_input::KeyEvent;
 use pm_vim::Command;
 
 use pm_components::git_controls::VIEWER_SCROLL;
@@ -84,7 +84,10 @@ impl App {
             .regions
             .iter()
             .find(|region| region.id == VIEWER_SCROLL)
-            .map_or_else(|| self.window_height(), |region| region.rect.height + STRIP);
+            .map_or_else(
+                || self.window_height(),
+                |region| region.rect.size.height + STRIP,
+            );
         self.clipboard();
         let clipboard = &mut self.clipboard;
         let mut commands = None;

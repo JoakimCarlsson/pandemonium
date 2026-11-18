@@ -11,7 +11,8 @@
 //! where the minimap is. [`root`] starts a fresh report every time the
 //! interface is painted.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use rustle::{Affinity, Modifier, Offset, Rect, TextLayout};
@@ -29,7 +30,8 @@ pub enum Step {
     Edge,
 }
 
-/// A control or area named by an id and where it was painted, in logical pixels from the window's top left.
+/// A control or area named by an id and the part of it left visible where it was painted, in logical
+/// pixels from the window's top left; empty when it is scrolled or clipped out of sight.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Region {
     /// What names it.
@@ -138,45 +140,142 @@ pub struct Report {
     pub fields: Vec<FieldBox>,
     /// Pieces of text fields drawn line by line, in paint order.
     pub field_lines: Vec<FieldLine>,
+    /// Boxes of selectable texts, by the text they are part of, in paint order.
+    pub selectable_areas: Vec<(FocusId, Rect)>,
     /// Entries of long lists that were not built, kept in keyboard traversal order after the regions.
     pub virtual_focus: Vec<FocusId>,
     /// Pieces of selectable text, in paint order.
     pub pieces: Vec<Piece>,
 }
 
+/// The window a root composable fills: the main window is [`MAIN`], others
+/// are numbered by the host, so each keeps a report of its own.
+pub type WindowKey = u64;
+
+/// The key of the main window.
+pub const MAIN: WindowKey = 0;
+
 thread_local! {
-    /// The report of the frame being painted on this thread.
-    static REPORT: RefCell<Report> = RefCell::new(Report::default());
+    /// The report of the last frame painted in each window on this thread.
+    static REPORTS: RefCell<HashMap<WindowKey, Report>> = RefCell::new(HashMap::new());
+    /// The window whose frame is being painted.
+    static PAINTING: Cell<WindowKey> = const { Cell::new(MAIN) };
 }
 
 /// Runs `record` on the report of the frame being painted.
 pub(crate) fn record(record: impl FnOnce(&mut Report)) {
-    REPORT.with(|report| record(&mut report.borrow_mut()));
+    let window = PAINTING.with(Cell::get);
+    REPORTS.with(|reports| record(reports.borrow_mut().entry(window).or_default()));
 }
 
-/// The report of the last frame painted.
+/// The report of the last frame painted in the main window.
 pub fn last() -> Report {
-    REPORT.with(|report| report.borrow().clone())
+    last_of(MAIN)
 }
 
-/// Reads the report of the last frame painted without copying it.
+/// The report of the last frame painted in `window`; empty before one was painted.
+pub fn last_of(window: WindowKey) -> Report {
+    REPORTS.with(|reports| reports.borrow().get(&window).cloned().unwrap_or_default())
+}
+
+/// Reads the report of the last frame painted in the main window without copying it.
 pub fn with<R>(read: impl FnOnce(&Report) -> R) -> R {
-    REPORT.with(|report| read(&report.borrow()))
+    with_of(MAIN, read)
 }
 
-/// The modifier that starts a fresh report whenever the area it is on is
-/// painted; [`root`] puts it on the outermost box of a window.
+/// Reads the report of the last frame painted in `window` without copying it.
+pub fn with_of<R>(window: WindowKey, read: impl FnOnce(&Report) -> R) -> R {
+    REPORTS.with(|reports| read(reports.borrow_mut().entry(window).or_default()))
+}
+
+/// Forgets the report of `window`, for a window that closed.
+pub fn forget(window: WindowKey) {
+    REPORTS.with(|reports| reports.borrow_mut().remove(&window));
+}
+
+/// The modifier that starts a fresh report of the main window whenever the
+/// area it is on is painted; [`root`] puts it on the outermost box of a window.
 pub fn starts_report() -> Modifier {
-    Modifier::new().on_placed(|_, _| REPORT.with(|report| *report.borrow_mut() = Report::default()))
+    starts_report_of(MAIN)
 }
 
-/// Emits `content` filling the window, starting a fresh report each time it is painted.
+/// The modifier that starts a fresh report of `window` whenever the area it
+/// is on is painted, and records what is painted inside it in that report.
+pub fn starts_report_of(window: WindowKey) -> Modifier {
+    Modifier::new().on_placed(move |_, _| {
+        PAINTING.with(|painting| painting.set(window));
+        REPORTS.with(|reports| {
+            reports.borrow_mut().insert(window, Report::default());
+        });
+    })
+}
+
+/// Emits `content` filling the main window, starting a fresh report each time it is painted.
 #[track_caller]
 pub fn root(content: impl FnOnce()) {
-    rustle::stack_with(starts_report().fill_max_size(), content);
+    root_of(MAIN, content);
+}
+
+/// Emits `content` filling the window `window`, starting a fresh report of
+/// that window each time it is painted.
+#[track_caller]
+pub fn root_of(window: WindowKey, content: impl FnOnce()) {
+    rustle::stack_with(starts_report_of(window).fill_max_size(), content);
+}
+
+/// `rect` moved `dx` right and `dy` down.
+fn moved(rect: Rect, dx: f32, dy: f32) -> Rect {
+    Rect::new(
+        Offset::new(rect.origin.x + dx, rect.origin.y + dy),
+        rect.size,
+    )
 }
 
 impl Report {
+    /// The same report with everything moved `dx` right and `dy` down, for a
+    /// host that measures from a point other than the window's top left, such
+    /// as the corner of a frame inset by the band that holds its shadow.
+    pub fn shifted(mut self, dx: f32, dy: f32) -> Self {
+        if dx == 0.0 && dy == 0.0 {
+            return self;
+        }
+        for region in &mut self.regions {
+            region.rect = moved(region.rect, dx, dy);
+        }
+        for scroller in &mut self.scrollers {
+            scroller.rect = moved(scroller.rect, dx, dy);
+        }
+        for field in &mut self.fields {
+            field.origin = Offset::new(field.origin.x + dx, field.origin.y + dy);
+            field.view = moved(field.view, dx, dy);
+        }
+        for line in &mut self.field_lines {
+            line.rect = moved(line.rect, dx, dy);
+        }
+        for piece in &mut self.pieces {
+            piece.rect = moved(piece.rect, dx, dy);
+        }
+        for (_, rect) in &mut self.selectable_areas {
+            *rect = moved(*rect, dx, dy);
+        }
+        self
+    }
+
+    /// The box of a selectable text under the window point `at`: the name of
+    /// its text, and how many boxes of that text were painted before it.
+    pub fn selectable_at(&self, at: (f32, f32)) -> Option<(FocusId, usize)> {
+        let index = self
+            .selectable_areas
+            .iter()
+            .rposition(|(_, rect)| contains(*rect, at))?;
+        let id = self.selectable_areas[index].0;
+        let before = self.selectable_areas[..index]
+            .iter()
+            .filter(|(held, _)| *held == id)
+            .count();
+        Some((id, before))
+    }
+
     /// The topmost named control or area containing the window point `at`.
     pub fn hit(&self, at: (f32, f32)) -> Option<FocusId> {
         self.regions
@@ -445,7 +544,7 @@ fn step_in(layout: &TextLayout, caret: usize, right: bool) -> Option<Step> {
 }
 
 /// Whether the window point `at` lies inside `rect`.
-pub(crate) fn contains(rect: Rect, at: (f32, f32)) -> bool {
+pub fn contains(rect: Rect, at: (f32, f32)) -> bool {
     at.0 >= rect.origin.x
         && at.1 >= rect.origin.y
         && at.0 < rect.origin.x + rect.size.width

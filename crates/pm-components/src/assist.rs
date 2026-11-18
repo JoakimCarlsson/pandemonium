@@ -873,8 +873,8 @@ fn listing_panel(listing: &Listing) {
                     line(said, 12, 1.4, Role::Muted);
                 });
             }
-            for place in first..count.min(first + LISTING_SHOWN) {
-                let index = shown[place];
+            let end = count.min(first + LISTING_SHOWN);
+            for (place, index) in shown.iter().copied().enumerate().take(end).skip(first) {
                 let id = FocusId(LISTING_ROW_BASE + place as u64);
                 let looks = Looks::new().hover(Role::SurfaceHover).radius(Radius::Sm);
                 let looks = if place == listing.picked {

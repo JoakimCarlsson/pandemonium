@@ -123,16 +123,20 @@ pub fn row(modifier: Modifier, flex: Flex, content: impl FnOnce()) {
 }
 
 /// Emits a column laid out by `flex`: `node().styles([flex(), flex_col(), ...])`.
+///
+/// Children keep their own heights, as CSS flex items do, and run past the
+/// bottom when they do not fit, where a clip around the column cuts them;
+/// only children that [`grow`](Styled::grow) share what is left.
 #[track_caller]
 pub fn column(modifier: Modifier, flex: Flex, content: impl FnOnce()) {
-    rustle::column_spaced(modifier, flex.gap, flex.main, flex.cross, content);
+    rustle::column_overflowing(modifier, flex.gap, flex.main, flex.cross, content);
 }
 
 /// Emits a box whose children are stacked down it, each as wide as the box:
 /// a `node()` with no `flex()`, which was a CSS block.
 #[track_caller]
 pub fn block(modifier: Modifier, content: impl FnOnce()) {
-    rustle::column_spaced(
+    rustle::column_overflowing(
         modifier,
         0.0,
         Arrangement::Start,

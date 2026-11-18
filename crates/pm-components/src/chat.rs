@@ -114,57 +114,61 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
     let working = session.status == Status::Working;
     let restoring = state.restoring == Some(index);
     let (typed, elements) = crate::elements::split(&message.text);
-    column(Modifier::new().group(), Flex::new().gap(1), || {
-        column(
-            Modifier::new()
-                .placed(BoxAlignment::BottomEnd)
-                .fill_rounded(Role::SurfaceHover, Radius::Xl2)
-                .pad_x(4)
-                .pad_y(2.5),
-            Flex::new().gap(2),
-            || {
-                if !message.attachments.is_empty() {
-                    crate::composer::sent_files(state, &message.attachments);
-                }
-                if !elements.is_empty() {
-                    crate::elements::sent_chips(&elements);
-                }
-                if !typed.is_empty() {
-                    paragraph(typed, Role::Text, width * 0.85 - 32.0);
-                }
-            },
-        );
-        if restoring {
-            restore_offer();
-        } else {
-            row(
-                Modifier::new().placed(BoxAlignment::BottomEnd),
-                Flex::new().center().gap(1),
+    column(
+        Modifier::new().group().selectable_area(CHAT_TEXT),
+        Flex::new().gap(1),
+        || {
+            column(
+                Modifier::new()
+                    .placed(BoxAlignment::BottomEnd)
+                    .fill_rounded(Role::SurfaceHover, Radius::Xl2)
+                    .pad_x(4)
+                    .pad_y(2.5),
+                Flex::new().gap(2),
                 || {
-                    if message.checkpoint {
-                        message_action(
-                            IconName::GitCompare,
-                            "Show what this turn changed",
-                            TURN_CHANGES_BASE + index as u64,
-                            false,
-                        );
-                        message_action(
-                            IconName::History,
-                            "Restore files to before this turn",
-                            RESTORE_BASE + index as u64,
-                            working,
-                        );
+                    if !message.attachments.is_empty() {
+                        crate::composer::sent_files(state, &message.attachments);
                     }
-                    message_action(
-                        IconName::Undo,
-                        "Rewind conversation to before this message · edit and resend",
-                        REWIND_BASE + index as u64,
-                        working,
-                    );
+                    if !elements.is_empty() {
+                        crate::elements::sent_chips(&elements);
+                    }
+                    if !typed.is_empty() {
+                        paragraph(typed, Role::Text, width * 0.85 - 32.0);
+                    }
                 },
             );
-        }
-    });
+            if restoring {
+                restore_offer();
+            } else {
+                row(
+                    Modifier::new().placed(BoxAlignment::BottomEnd),
+                    Flex::new().center().gap(1),
+                    || {
+                        if message.checkpoint {
+                            message_action(
+                                IconName::GitCompare,
+                                "Show what this turn changed",
+                                TURN_CHANGES_BASE + index as u64,
+                                false,
+                            );
+                            message_action(
+                                IconName::History,
+                                "Restore files to before this turn",
+                                RESTORE_BASE + index as u64,
+                                working,
+                            );
+                        }
+                        message_action(
+                            IconName::Undo,
+                            "Rewind conversation to before this message · edit and resend",
+                            REWIND_BASE + index as u64,
+                            working,
+                        );
+                    },
+                );
+            }
+        },
+    );
 }
 
 /// Emits a note beside the conversation that says `content`: an answer to a question asked on the side, framed apart from the turns since it is not part of the conversation, or the mark where the conversation was handed over to a new one, with the prompt the new one starts with.
@@ -191,6 +195,7 @@ fn side_note(side: &Side, content: &str, width: f32) {
     column(
         Modifier::new()
             .group()
+            .selectable_area(CHAT_TEXT)
             .stroke(Role::Border, Radius::Xl)
             .pad_x(4)
             .pad_y(3),
@@ -299,112 +304,120 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
             }
         });
     };
-    column(Modifier::new().group(), Flex::new().gap(3), || {
-        let mut shown = 0;
-        let mut recorded = 0;
-        let mut exhibited = 0;
-        for (number, (before, piece)) in message.chunks().into_iter().enumerate() {
-            let before = before.min(message.steps.len());
-            while let Some((at, exhibit)) = message
-                .exhibits
-                .get(exhibited)
-                .filter(|(at, _)| *at <= before)
-            {
+    column(
+        Modifier::new().group().selectable_area(CHAT_TEXT),
+        Flex::new().gap(3),
+        || {
+            let mut shown = 0;
+            let mut recorded = 0;
+            let mut exhibited = 0;
+            for (number, (before, piece)) in message.chunks().into_iter().enumerate() {
+                let before = before.min(message.steps.len());
+                while let Some((at, exhibit)) = message
+                    .exhibits
+                    .get(exhibited)
+                    .filter(|(at, _)| *at <= before)
+                {
+                    let at = (*at).min(message.steps.len());
+                    if at > shown {
+                        run(shown, at);
+                        shown = at;
+                    }
+                    exhibit_card(state, exhibit, (index, exhibited), width);
+                    exhibited += 1;
+                }
+                if before > shown {
+                    run(shown, before);
+                }
+                shown = shown.max(before);
+                while let Some((_, answers)) = message
+                    .answers
+                    .get(recorded)
+                    .filter(|(at, _)| *at <= before)
+                {
+                    answered(answers, width);
+                    recorded += 1;
+                }
+                let base = number * FOLDS_PER_PIECE;
+                let unfolded = state
+                    .unfolded_in(index)
+                    .into_iter()
+                    .filter(|place| (base..base + FOLDS_PER_PIECE).contains(place))
+                    .map(|place| place - base)
+                    .collect();
+                Markdown::new(piece, width)
+                    .details(DETAILS_BASE + (index * 1000 + base) as u64, unfolded)
+                    .links(
+                        LINK_BASE
+                            + index as u64 * LINKS_PER_REPLY
+                            + number as u64 * LINKS_PER_PIECE,
+                    )
+                    .figures(&state.figures, None)
+                    .build();
+            }
+            for (number, (at, exhibit)) in message.exhibits.iter().enumerate().skip(exhibited) {
                 let at = (*at).min(message.steps.len());
                 if at > shown {
                     run(shown, at);
                     shown = at;
                 }
-                exhibit_card(state, exhibit, (index, exhibited), width);
-                exhibited += 1;
+                exhibit_card(state, exhibit, (index, number), width);
             }
-            if before > shown {
-                run(shown, before);
+            if shown < message.steps.len() {
+                run(shown, message.steps.len());
             }
-            shown = shown.max(before);
-            while let Some((_, answers)) = message
-                .answers
-                .get(recorded)
-                .filter(|(at, _)| *at <= before)
-            {
+            for (_, answers) in &message.answers[recorded..] {
                 answered(answers, width);
-                recorded += 1;
             }
-            let base = number * FOLDS_PER_PIECE;
-            let unfolded = state
-                .unfolded_in(index)
-                .into_iter()
-                .filter(|place| (base..base + FOLDS_PER_PIECE).contains(place))
-                .map(|place| place - base)
-                .collect();
-            Markdown::new(piece, width)
-                .details(DETAILS_BASE + (index * 1000 + base) as u64, unfolded)
-                .links(LINK_BASE + index as u64 * LINKS_PER_REPLY + number as u64 * LINKS_PER_PIECE)
-                .figures(&state.figures, None)
-                .build();
-        }
-        for (number, (at, exhibit)) in message.exhibits.iter().enumerate().skip(exhibited) {
-            let at = (*at).min(message.steps.len());
-            if at > shown {
-                run(shown, at);
-                shown = at;
+            if !message.bullets.is_empty() {
+                column(Modifier::new(), Flex::new().gap(1.5), || {
+                    for bullet in &message.bullets {
+                        row(Modifier::new(), Flex::new().gap(2.5), || {
+                            gap_box(
+                                Modifier::new()
+                                    .pad_side(Edge::Top, 2.5)
+                                    .square(1)
+                                    .fill_rounded(Role::Subtle, Radius::Full),
+                            );
+                            paragraph(bullet, Role::Muted, width - 14.0);
+                        });
+                    }
+                });
             }
-            exhibit_card(state, exhibit, (index, number), width);
-        }
-        if shown < message.steps.len() {
-            run(shown, message.steps.len());
-        }
-        for (_, answers) in &message.answers[recorded..] {
-            answered(answers, width);
-        }
-        if !message.bullets.is_empty() {
-            column(Modifier::new(), Flex::new().gap(1.5), || {
-                for bullet in &message.bullets {
-                    row(Modifier::new(), Flex::new().gap(2.5), || {
-                        gap_box(
-                            Modifier::new()
-                                .pad_side(Edge::Top, 2.5)
-                                .square(1)
-                                .fill_rounded(Role::Subtle, Radius::Full),
-                        );
-                        paragraph(bullet, Role::Muted, width - 14.0);
-                    });
-                }
-            });
-        }
-        let copy = !message.text.is_empty();
-        let writing = session.status == Status::Working && index + 1 == session.messages.len();
-        let fork = session.turn_of(index) > 0;
-        if copy || fork {
-            row(
-                Modifier::new()
-                    .placed(BoxAlignment::TopStart)
-                    .offset(0.0, -sp(1.0)),
-                Flex::new().center().gap(1),
-                || {
-                    if copy {
-                        message_action(IconName::Copy, "Copy", COPY_BASE + index as u64, false);
-                    }
-                    if fork {
-                        message_action(
-                            IconName::GitFork,
-                            "Branch from this reply · new session · shared current files",
-                            FORK_BASE + index as u64,
-                            writing,
-                        );
-                    }
-                },
-            );
-        }
-        if message.steps.is_empty()
-            && let Some(duration) = message.duration.as_deref().filter(|took| !took.is_empty())
-        {
-            row(Modifier::new(), Flex::new().center().gap(2), || {
-                glyph(IconName::Progress, 3.5, Role::Subtle);
-                chat_line(duration, 12, Role::Subtle);
-            });
-        }
-    });
+            let copy = !message.text.is_empty();
+            let writing = session.status == Status::Working && index + 1 == session.messages.len();
+            let fork = session.turn_of(index) > 0;
+            if copy || fork {
+                row(
+                    Modifier::new()
+                        .placed(BoxAlignment::TopStart)
+                        .offset(0.0, -sp(1.0)),
+                    Flex::new().center().gap(1),
+                    || {
+                        if copy {
+                            message_action(IconName::Copy, "Copy", COPY_BASE + index as u64, false);
+                        }
+                        if fork {
+                            message_action(
+                                IconName::GitFork,
+                                "Branch from this reply · new session · shared current files",
+                                FORK_BASE + index as u64,
+                                writing,
+                            );
+                        }
+                    },
+                );
+            }
+            if message.steps.is_empty()
+                && let Some(duration) = message.duration.as_deref().filter(|took| !took.is_empty())
+            {
+                row(Modifier::new(), Flex::new().center().gap(2), || {
+                    glyph(IconName::Progress, 3.5, Role::Subtle);
+                    chat_line(duration, 12, Role::Subtle);
+                });
+            }
+        },
+    );
 }
 
 /// Emits the strip above the conversation: its status, title, branch, agent and what it has cost.

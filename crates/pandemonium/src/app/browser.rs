@@ -18,12 +18,13 @@ use pm_components::browser_tabs::{TabInfo, changes_page, locked_message};
 use pm_components::elements::Element;
 use pm_components::exhibit::{Helper, PREVIEW_NEEDS_BROWSER, PREVIEW_NEEDS_UPDATE, PreviewRequest};
 use pm_components::figures::Drawing;
+use pm_components::kit::Picture;
+use pm_components::kit::{Button, FocusId, Key, KeyEvent};
 use pm_components::state::PROMPT;
 use pm_editor::{Action, Pressed};
-use pm_input::{Button, FocusId, Key, KeyEvent};
 use pm_pages::Screen;
-use pm_renderer::{Picture, Rect};
-use pm_ui::Cursor;
+use rustle::CursorIcon as Cursor;
+use rustle::Rect;
 
 use super::App;
 
@@ -331,7 +332,7 @@ fn is_local(host: &str) -> bool {
 }
 
 /// The engine's modifiers for the keyboard keys held and the buttons down.
-fn held(keys: pm_input::Modifiers, pointer: pm_input::PointerState) -> Held {
+fn held(keys: pm_components::kit::Modifiers, pointer: pm_components::kit::PointerState) -> Held {
     let mut bits = 0;
     if keys.shift {
         bits |= Held::SHIFT;
@@ -451,10 +452,10 @@ impl App {
     /// The window of a page the point `at` is over, and where in it, in logical pixels; nothing where the bar for finding or the question about clearing is drawn over the page.
     fn browser_under(&self, at: (f32, f32)) -> Option<(FocusId, (i32, i32))> {
         let inside = |rect: Rect| {
-            at.0 >= rect.x
-                && at.1 >= rect.y
-                && at.0 < rect.x + rect.width
-                && at.1 < rect.y + rect.height
+            at.0 >= rect.origin.x
+                && at.1 >= rect.origin.y
+                && at.0 < rect.origin.x + rect.size.width
+                && at.1 < rect.origin.y + rect.size.height
         };
         if self.browser_region(BROWSER_FIND_BAR).is_some_and(inside) || self.browser_clearing() {
             return None;
@@ -463,7 +464,10 @@ impl App {
             .into_iter()
             .find_map(|id| {
                 let rect = self.browser_region(id)?;
-                inside(rect).then_some((id, ((at.0 - rect.x) as i32, (at.1 - rect.y) as i32)))
+                inside(rect).then_some((
+                    id,
+                    ((at.0 - rect.origin.x) as i32, (at.1 - rect.origin.y) as i32),
+                ))
             })
     }
 
@@ -583,7 +587,10 @@ impl App {
         } else {
             self.web.pressed_in.and_then(|id| {
                 let rect = self.browser_region(id)?;
-                Some((id, ((at.0 - rect.x) as i32, (at.1 - rect.y) as i32)))
+                Some((
+                    id,
+                    ((at.0 - rect.origin.x) as i32, (at.1 - rect.origin.y) as i32),
+                ))
             })
         };
         let Some((id, (x, y))) = target else {
@@ -969,8 +976,8 @@ impl App {
     fn browser_size(&self, id: FocusId, scale: f32) -> (u32, u32, f32) {
         self.browser_region(id).map_or((960, 640, scale), |rect| {
             (
-                rect.width.max(1.0) as u32,
-                rect.height.max(1.0) as u32,
+                rect.size.width.max(1.0) as u32,
+                rect.size.height.max(1.0) as u32,
                 scale,
             )
         })
@@ -1347,8 +1354,8 @@ impl App {
     fn browser_fit(&mut self, scale: f32) {
         let size_of = |rect: Rect| {
             (
-                rect.width.max(1.0) as u32,
-                rect.height.max(1.0) as u32,
+                rect.size.width.max(1.0) as u32,
+                rect.size.height.max(1.0) as u32,
                 scale,
             )
         };

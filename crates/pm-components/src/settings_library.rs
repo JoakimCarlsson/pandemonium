@@ -11,7 +11,7 @@ use crate::kit::{
 };
 
 use crate::button::Variant;
-use crate::parts::{clipped, glyph, line};
+use crate::parts::{clipped, glyph};
 use crate::settings::Section;
 use crate::settings_drafts::{draft_node, draftable, new_button};
 use crate::settings_ids::{ITEM_OPENS, ITEM_SWITCHES, SET_FOLDS, SET_SWITCHES, TOOL_SWITCHES};

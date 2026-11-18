@@ -2,11 +2,12 @@
 
 use std::time::Instant;
 
+use pm_components::kit::Step;
+use pm_components::kit::{Key, KeyEvent};
 use pm_components::open_files::EDITOR_FIELD;
 use pm_editor::LightbulbShown;
-use pm_input::{Key, KeyEvent};
+use pm_field::{Edit, Motion};
 use pm_pages::Screen;
-use pm_text::{Edit, Motion, Step};
 
 use super::{App, DRAG_DISTANCE};
 
@@ -85,12 +86,9 @@ impl App {
         else {
             return;
         };
-        if self.shaper.ligatures() != on {
-            self.shaper.set_ligatures(on);
-            self.scene.clear();
-            if let Some(window) = self.window.as_ref() {
-                window.request_redraw();
-            }
+        if pm_components::kit::code_ligatures() != on {
+            pm_components::kit::set_code_ligatures(on);
+            self.recompose = true;
         }
     }
 

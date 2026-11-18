@@ -346,18 +346,6 @@ impl<'a> Preview<'a> {
         self
     }
 
-    /// The preview with `modifier` put around its box, outside its own size, fill and border.
-    pub(crate) fn modifier(mut self, modifier: Modifier) -> Self {
-        self.modifier = self.modifier.chain(modifier);
-        self
-    }
-
-    /// The preview laying out what its box holds by `flex` instead of centring it.
-    pub(crate) fn flex(mut self, flex: Flex) -> Self {
-        self.flex = Some(flex);
-        self
-    }
-
     /// Emits the picture, or the box that says it is being rendered, why it could not be, or what to press to have the embedded browser render it.
     #[track_caller]
     pub(crate) fn build(self) {

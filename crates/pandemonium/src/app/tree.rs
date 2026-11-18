@@ -1,7 +1,7 @@
 //! The project's files under the pointer and the keyboard: rows dragged into another folder, the keys that cut, copy, paste, rename and delete them, and files of this machine let go on them.
 
+use pm_components::kit::{FocusId, Key, KeyEvent};
 use pm_components::tree_actions::{TreeShortcut, TreeTarget};
-use pm_input::{FocusId, Key, KeyEvent};
 use pm_pages::Screen;
 
 use super::{App, DRAG_DISTANCE};

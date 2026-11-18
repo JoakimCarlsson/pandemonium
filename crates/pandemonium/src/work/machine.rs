@@ -1,8 +1,8 @@
 //! What the reader set up for the work the servers do: read from the server on this machine, sent to every server the window reaches whenever it changes and to each server as it is reached, and the newest release looked up.
 
+use pm_components::kit::State;
 use pm_components::update::Update;
 use pm_protocol::{MachineSettings, Request, Response};
-use pm_state::State;
 
 use super::{Host, Job, Pending, Work};
 use pm_pages::Screen;

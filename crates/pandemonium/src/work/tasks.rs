@@ -1,8 +1,8 @@
 //! The work behind tasks: asking the server of a session's machine what its folder can be built, tested and run with, running a task or a runnable place of a file there in a shell shown in the dock, and choosing the toolchains a project is run with.
 
+use pm_components::kit::State;
 use pm_pages::{Outgoing, Screen};
 use pm_protocol::{Request, Response};
-use pm_state::State;
 
 use super::{Host, Pending, Work};
 

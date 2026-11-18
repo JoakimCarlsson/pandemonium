@@ -13,6 +13,8 @@ use pm_components::assist::{
 use pm_components::color_picker::{COLOR_BOX, COLOR_HEX, color_format_of};
 use pm_components::extensions::EXTENSIONS;
 use pm_components::find::{FIND_CASE, FIND_FIELD, FIND_REGEX, FIND_WORD, REPLACE_FIELD};
+use pm_components::kit::theme::Appearance;
+use pm_components::kit::{FocusId, Key, KeyEvent};
 use pm_components::line_edits::{GO_TO_LINE, GO_TO_LINE_BOX, LineEdit};
 use pm_components::listing::{
     LISTING_BODY, LISTING_FILTER, LISTING_HEIGHT, LISTING_TAKE, LISTING_WIDTH, QUICK_INSET,
@@ -30,12 +32,10 @@ use pm_components::tab_menu::TabCommand;
 use pm_components::title_bar::{COMMAND_CENTER, TITLE_BAR_HEIGHT};
 use pm_config::ThemeMode;
 use pm_editor::{Action, Case, Chord, Keymap, LineOrder, Pressed};
+use pm_field::Edit;
 use pm_harness::Verdict;
-use pm_input::{FocusId, Key, KeyEvent};
 use pm_pages::Screen;
 use pm_protocol::{DebugAction, Seek};
-use pm_text::Edit;
-use pm_theme::Appearance;
 use pm_treesitter::TextObject;
 
 use super::App;
@@ -64,35 +64,42 @@ impl App {
     fn editor_point(&self, offset: usize) -> Option<(f32, f32, f32)> {
         let line = self
             .output
-            .fields
+            .field_lines
             .iter()
             .filter(|held| held.id == EDITOR_FIELD && held.start <= offset)
             .max_by_key(|held| held.start)?;
+        let caret = line
+            .layout
+            .caret(offset - line.start, rustle::Affinity::Downstream);
         Some((
-            line.x + line.run.caret_x(offset - line.start),
-            line.y,
-            line.height,
+            line.rect.origin.x + caret.x,
+            line.rect.origin.y,
+            line.rect.size.height,
         ))
     }
 
     /// The byte of the file shown under the point `x`, `y`, when the point is on a drawn character.
     fn editor_byte_at(&self, x: f32, y: f32) -> Option<usize> {
-        let line = self
-            .output
-            .fields
-            .iter()
-            .find(|held| held.id == EDITOR_FIELD && y >= held.y && y < held.y + held.height)?;
-        if x < line.x || x > line.x + line.run.width {
+        let line = self.output.field_lines.iter().find(|held| {
+            held.id == EDITOR_FIELD
+                && y >= held.rect.origin.y
+                && y < held.rect.origin.y + held.rect.size.height
+        })?;
+        if x < line.rect.origin.x || x > line.rect.origin.x + line.layout.size().width {
             return None;
         }
-        Some(line.start + line.run.byte_at(x - line.x, line.length))
+        Some(
+            line.start
+                + line.layout.hit_test(rustle::Offset::new(
+                    x - line.rect.origin.x,
+                    y - line.rect.origin.y,
+                )),
+        )
     }
 
     /// How tall the window is, in logical pixels.
     pub(super) fn window_height(&self) -> f32 {
-        self.renderer
-            .as_ref()
-            .map_or(800.0, |renderer| renderer.size().1)
+        self.window_size().1
     }
 
     /// Hangs the list of completions under the word it completes, or above it when it would run past the bottom of the window, as the last frame drew the word.
@@ -260,7 +267,7 @@ impl App {
     fn hover_at_caret(&mut self) {
         let Some(caret) = self
             .model
-            .read(|screen| screen.field(EDITOR_FIELD).map(pm_text::Field::caret))
+            .read(|screen| screen.field(EDITOR_FIELD).map(pm_field::Field::caret))
         else {
             return;
         };
@@ -303,7 +310,7 @@ impl App {
     /// The caret of the file shown.
     fn editor_caret(&self) -> Option<usize> {
         self.model
-            .read(|screen| screen.field(EDITOR_FIELD).map(pm_text::Field::caret))
+            .read(|screen| screen.field(EDITOR_FIELD).map(pm_field::Field::caret))
     }
 
     /// Where something hung under the line of the byte `offset` of the file shown goes: at its left edge, just below its line, as the last frame drew them.
@@ -508,7 +515,7 @@ impl App {
             .map(|region| region.rect);
         let (middle, field_top) = center.map_or(
             (width / 2.0, (TITLE_BAR_HEIGHT - FIELD_HEIGHT) / 2.0),
-            |rect| (rect.x + rect.width / 2.0, rect.y),
+            |rect| (rect.origin.x + rect.size.width / 2.0, rect.origin.y),
         );
         let left = (middle - LISTING_WIDTH / 2.0).clamp(0.0, (width - LISTING_WIDTH).max(0.0));
         (left, (field_top - QUICK_INSET).max(0.0))
@@ -1110,7 +1117,7 @@ impl App {
     }
 
     /// Closes the list over the file and the box for a new name when the press at `on` is outside them.
-    pub(super) fn press_beside_code(&mut self, on: Option<pm_input::FocusId>) {
+    pub(super) fn press_beside_code(&mut self, on: Option<pm_components::kit::FocusId>) {
         let on_listing = on.is_some_and(|id| {
             id == LISTING_BODY || id == LISTING_FILTER || listing_row_of(id).is_some()
         });
@@ -1193,7 +1200,7 @@ impl App {
         let several = self.model.read(|screen| {
             screen
                 .field(EDITOR_FIELD)
-                .is_some_and(pm_text::Field::has_others)
+                .is_some_and(pm_field::Field::has_others)
         });
         if listing {
             let changed = |screen: Screen| -> Option<Screen> {
@@ -1312,7 +1319,7 @@ impl App {
     /// The link of the file shown under the point `x`, `y`, where `over` is what the point is over, when it is on one: the bytes it covers and where it leads.
     fn link_under_point(
         &self,
-        over: Option<pm_input::FocusId>,
+        over: Option<pm_components::kit::FocusId>,
         x: f32,
         y: f32,
     ) -> Option<(std::ops::Range<usize>, pm_protocol::LinkTarget)> {
@@ -1325,7 +1332,7 @@ impl App {
     /// What Ctrl underlines under the point `x`, `y`: the link there, or else the word, which is what a press takes to its definition.
     fn reach_under(
         &self,
-        over: Option<pm_input::FocusId>,
+        over: Option<pm_components::kit::FocusId>,
         x: f32,
         y: f32,
     ) -> Option<std::ops::Range<usize>> {
@@ -1337,7 +1344,7 @@ impl App {
     /// The word of the file shown under the point `x`, `y`, where `over` is what the point is over, when it is on one.
     fn word_under(
         &self,
-        over: Option<pm_input::FocusId>,
+        over: Option<pm_components::kit::FocusId>,
         x: f32,
         y: f32,
     ) -> Option<std::ops::Range<usize>> {

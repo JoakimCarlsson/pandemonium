@@ -15,7 +15,7 @@ use std::path::Path;
 
 use winit::event_loop::{ControlFlow, EventLoop};
 
-use app::App;
+use app::{App, Running};
 use snapshot::{Shot, Trigger};
 
 /// Opens the window and runs the event loop until it is closed, or, given `--version`, prints the version
@@ -66,10 +66,10 @@ fn main() {
         let focused = arguments
             .get(5)
             .and_then(|value| value.parse().ok())
-            .map(pm_input::FocusId);
+            .map(pm_components::kit::FocusId);
         let appearance = match arguments.get(6).map(String::as_str) {
-            Some("light") => pm_theme::Appearance::Light,
-            _ => pm_theme::Appearance::Dark,
+            Some("light") => pm_components::kit::theme::Appearance::Light,
+            _ => pm_components::kit::theme::Appearance::Dark,
         };
         let shot = match arguments.get(7).map(String::as_str) {
             Some("code") => Shot::Code,
@@ -332,7 +332,6 @@ fn main() {
     }
 
     startup::mark("arguments-read");
-    let opening = pm_renderer::Opening::start();
     let event_loop = match EventLoop::new() {
         Ok(event_loop) => event_loop,
         Err(error) => {
@@ -343,10 +342,9 @@ fn main() {
     startup::mark("event-loop-created");
     event_loop.set_control_flow(ControlFlow::Wait);
     let proxy = event_loop.create_proxy();
-    let wake: pm_client::Wake = std::sync::Arc::new(move || {
-        let _ = proxy.send_event(());
-    });
-    if let Err(error) = event_loop.run_app(&mut App::new(wake, opening)) {
+    let waker = proxy.clone();
+    let wake: pm_client::Wake = std::sync::Arc::new(move || waker.wake_up());
+    if let Err(error) = event_loop.run_app(Running(App::new(wake, proxy))) {
         eprintln!("pandemonium: the event loop failed: {error}");
         std::process::exit(1);
     }

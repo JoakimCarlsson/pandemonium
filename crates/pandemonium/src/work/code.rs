@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
+use pm_components::kit::State;
 use pm_pages::{Outgoing, Screen};
 use pm_protocol::{GrammarBundle, Request, Response};
-use pm_state::State;
 use pm_treesitter::{Editing, Grammar, Queries};
 
 use super::{Host, Job, Pending, Work};

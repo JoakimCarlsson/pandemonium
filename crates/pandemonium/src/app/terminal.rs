@@ -1,13 +1,13 @@
 //! The terminal dock in the window: sizing it to the shell, typing into it, marking text and scrolling back.
 
+use pm_components::kit::{Key, KeyEvent};
 use pm_components::terminal::{cell_at, cell_size, fitting};
 use pm_components::terminal_keys;
 use pm_components::terminal_menu::{TERMINAL_MENU_HEIGHT, TerminalCommand};
 use pm_editor::{Action, Pressed};
-use pm_input::{Key, KeyEvent};
+use pm_field::Reach;
 use pm_pages::{PROMPT, TERMINAL_BODY};
-use pm_renderer::Rect;
-use pm_text::Reach;
+use rustle::Rect;
 
 use super::gesture::TerminalWindow;
 use super::{App, DOUBLE_CLICK};
@@ -28,7 +28,7 @@ impl App {
     /// How wide and how tall one cell of a shell's window is, in logical pixels.
     fn terminal_cell_size(&mut self) -> (f32, f32) {
         let font = self.terminal_font();
-        cell_size(&mut self.shaper, font)
+        cell_size(font)
     }
 
     /// Where the window of the shell showing was drawn, if it was.
@@ -46,7 +46,7 @@ impl App {
         let (columns, rows, _) = self.model.read(|screen| screen.terminal_window())?;
         let cell = self.terminal_cell_size();
         Some(cell_at(
-            (at.0 - body.x, at.1 - body.y),
+            (at.0 - body.origin.x, at.1 - body.origin.y),
             cell,
             (columns, rows),
         ))
@@ -58,7 +58,7 @@ impl App {
             return;
         };
         let cell = self.terminal_cell_size();
-        let (columns, rows) = fitting(body.width, body.height, cell);
+        let (columns, rows) = fitting(body.size.width, body.size.height, cell);
         let differs = self
             .model
             .read(|screen| screen.terminal_window())
@@ -219,7 +219,7 @@ impl App {
         let at = self.pointer.position?;
         (self.output.hit(at) == Some(TERMINAL_BODY)).then_some(())?;
         self.terminal_region()
-            .is_some_and(|body| body.contains(at.0, at.1))
+            .is_some_and(|body| pm_components::kit::report::contains(body, (at.0, at.1)))
             .then(|| self.terminal_cell(at))
             .flatten()
     }
@@ -292,7 +292,7 @@ impl App {
         };
         if !self
             .terminal_region()
-            .is_some_and(|body| body.contains(at.0, at.1))
+            .is_some_and(|body| pm_components::kit::report::contains(body, (at.0, at.1)))
         {
             return false;
         }
