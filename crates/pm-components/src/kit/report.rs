@@ -15,7 +15,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use rustle::{Affinity, Modifier, Offset, Rect, TextLayout};
+use rustle::{Affinity, Embedded, Modifier, Offset, PixelRounding, Rect, TextLayout};
 
 use crate::kit::focus::FocusId;
 use crate::kit::select::{Piece, TextPoint, TextSelection};
@@ -554,4 +554,31 @@ pub fn contains(rect: Rect, at: (f32, f32)) -> bool {
         && at.1 >= rect.origin.y
         && at.0 < rect.origin.x + rect.size.width
         && at.1 < rect.origin.y + rect.size.height
+}
+
+/// Lays `content` out at `width` by `height` logical pixels without drawing
+/// it, with `focused` holding focus, and returns what was painted where.
+///
+/// For tests and snapshots that ask which controls were drawn and where: no
+/// GPU is needed, text is measured with the fonts of this thread.
+pub fn lay_out(
+    width: f32,
+    height: f32,
+    focused: Option<FocusId>,
+    content: impl Fn() + 'static,
+) -> Report {
+    crate::kit::frame::set(crate::kit::frame::Frame {
+        focused,
+        ..crate::kit::frame::Frame::default()
+    });
+    rustle_wgpu::set_legible_text(false);
+    let tokens = crate::kit::theme::Tokens::default();
+    let root = move || crate::kit::theme::provide(tokens.clone(), || root(&content));
+    let mut ui = Embedded::without_renderer(root, || {});
+    ui.set_pixel_rounding(PixelRounding::Logical);
+    ui.resize((width.round() as u32, height.round() as u32), 1.0);
+    ui.update();
+    ui.invalidate();
+    ui.update();
+    last()
 }

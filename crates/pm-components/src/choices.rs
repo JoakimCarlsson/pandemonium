@@ -1193,7 +1193,7 @@ impl WorkspaceState {
     }
 
     /// The state knowing what the picture at `path` looks like.
-    pub fn with_preview(mut self, path: &str, picture: crate::kit::Picture) -> Self {
+    pub fn with_preview(mut self, path: &str, picture: rustle::ImageData) -> Self {
         self.previews.insert(path.to_owned(), picture);
         self
     }

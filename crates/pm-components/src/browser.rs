@@ -7,9 +7,7 @@ use rustle::{CursorIcon, Modifier};
 
 use std::ops::{Deref, DerefMut};
 
-use crate::kit::{
-    FocusId, IconName, Interactive, Picture, Radius, Role, Side, Styled, Tooltip, picture,
-};
+use crate::kit::{FocusId, IconName, Interactive, Radius, Role, Side, Styled, Tooltip};
 
 use crate::browser_address::address_of;
 use crate::browser_find::find_bar;
@@ -105,12 +103,6 @@ const TOOLS_WIDTH: f32 = 500.0;
 
 /// How narrow the developer tools, and the page beside them, can be made, in logical pixels.
 pub const TOOLS_LEAST: f32 = 200.0;
-
-/// The surface number the page's pictures are drawn on.
-pub const PAGE_SURFACE: u32 = 1;
-
-/// The surface number the developer tools' pictures are drawn on.
-pub const TOOLS_SURFACE: u32 = 2;
 
 /// How a zoom command changes the zoom of the page.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -215,7 +207,7 @@ pub struct Browser {
     /// How many tabs the strip drew when last drawn, which keeps the tab shown among them when another is shown.
     pub strip_fit: std::cell::Cell<usize>,
     /// The newest picture of the developer tools.
-    pub tools_page: Option<Picture>,
+    pub tools_page: Option<rustle::ImageData>,
     /// Whether the developer tools are open beside the page.
     pub tools: bool,
     /// How wide the developer tools are when open, in logical pixels.
@@ -665,7 +657,7 @@ impl WorkspaceState {
     }
 
     /// Records the newest picture of the developer tools.
-    pub fn browser_tools_painted(&mut self, tools_page: Picture) {
+    pub fn browser_tools_painted(&mut self, tools_page: rustle::ImageData) {
         if let Some(browser) = self.browser.as_mut() {
             browser.tools_page = Some(tools_page);
         }
@@ -675,7 +667,7 @@ impl WorkspaceState {
     pub fn browser_tab_painted(
         &mut self,
         tab: u32,
-        page: Option<Picture>,
+        page: Option<rustle::ImageData>,
         title: &str,
         address: &str,
         pointer: Pointer,
@@ -784,7 +776,13 @@ fn toolbar(browser: &Browser) {
 
 /// Emits the window `id` of `browser`, `wide` by `tall` logical pixels: the certificate the page is stopped at, the newest `shown` picture, or what the tab says instead of a page.
 #[track_caller]
-fn surface(browser: &Browser, id: FocusId, shown: &Option<Picture>, wide: f32, tall: f32) {
+fn surface(
+    browser: &Browser,
+    id: FocusId,
+    shown: &Option<rustle::ImageData>,
+    wide: f32,
+    tall: f32,
+) {
     if id == BROWSER_BODY
         && let Some(certificate) = browser.safety.certificate.as_ref()
     {
@@ -798,7 +796,9 @@ fn surface(browser: &Browser, id: FocusId, shown: &Option<Picture>, wide: f32, t
         .cursor(CursorIcon::Text)
         .target(id);
     match shown {
-        Some(shown) if browser.notice.is_none() || id != BROWSER_BODY => picture(body, shown),
+        Some(shown) if browser.notice.is_none() || id != BROWSER_BODY => {
+            rustle::image(body, shown, rustle::ContentScale::Crop)
+        }
         _ => column_arranged(body, Arrangement::Start, Alignment::Start, || {
             line(
                 browser.notice.as_deref().unwrap_or("Loading"),

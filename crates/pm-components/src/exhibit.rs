@@ -1,8 +1,6 @@
 //! What an agent puts in front of the reader to look at: the card of a diagram or a prototype it showed in the conversation, and the picture of a document it wrote, a prototype or the mockup of an answer, which the window has rendered sealed from the network.
 
-use crate::kit::{
-    FocusId, IconName, Radius, Role, Styled, Tooltip, Type, icon_with, label, picture, sp,
-};
+use crate::kit::{FocusId, IconName, Radius, Role, Styled, Tooltip, Type, icon_with, label, sp};
 use pm_harness::{Exhibit, ExhibitKind};
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
@@ -377,9 +375,10 @@ impl<'a> Preview<'a> {
                             .clip_to(Radius::None),
                     ),
                     || {
-                        picture(
+                        rustle::image(
                             Modifier::new().width(width).height(height),
                             &drawing.picture,
+                            rustle::ContentScale::Crop,
                         );
                     },
                 );

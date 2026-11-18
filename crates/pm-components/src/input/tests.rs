@@ -4,7 +4,7 @@ use pm_field::{Edit, Motion};
 
 use super::*;
 use crate::kit::Report;
-use crate::kit::snapshot::lay_out;
+use crate::kit::report::lay_out;
 
 /// Lays out a multiline input editing `field` in a small viewport with keyboard focus.
 fn paint(field: &Field) -> Report {

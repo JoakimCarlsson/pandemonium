@@ -1,6 +1,6 @@
 //! The work behind debugging: asking the server of a session's machine what a folder can be debugged as, starting the program there and doing things to it, and finding a program the server still debugs.
 
-use pm_components::kit::State;
+use crate::model::Model;
 use pm_pages::{Outgoing, Screen};
 use pm_protocol::{DebugInfo, Request, Response};
 
@@ -8,7 +8,7 @@ use super::{Host, Pending, Work};
 
 impl Work {
     /// The folder of the session at `session`, as the server of its machine knows it.
-    fn debug_directory(model: &State<Screen>, session: usize) -> Option<(Host, String)> {
+    fn debug_directory(model: &Model, session: usize) -> Option<(Host, String)> {
         let placement = Self::session_of(model, session)?;
         let directory = if placement.directory.is_empty() {
             placement.repository
@@ -19,7 +19,7 @@ impl Work {
     }
 
     /// Carries out what the window asked about debugging.
-    pub(super) fn deliver_debug(&mut self, model: &State<Screen>, outgoing: Outgoing) {
+    pub(super) fn deliver_debug(&mut self, model: &Model, outgoing: Outgoing) {
         match outgoing {
             Outgoing::DebugScenarios { session, file } => {
                 if let Some((host, directory)) = Self::debug_directory(model, session) {
@@ -104,12 +104,7 @@ impl Work {
     }
 
     /// Does what an answer about debugging calls for.
-    pub(super) fn answered_debug(
-        &mut self,
-        model: &State<Screen>,
-        pending: Pending,
-        response: Response,
-    ) {
+    pub(super) fn answered_debug(&mut self, model: &Model, pending: Pending, response: Response) {
         match (pending, response) {
             (Pending::DebugScenarios(session), Response::DebugScenarios { scenarios }) => {
                 model.update(|screen| {
@@ -166,7 +161,7 @@ impl Work {
     }
 
     /// Picks up the first program the server on `host` debugs in the folder of a session of this window, when the window shows none.
-    fn adopt_debugs(&mut self, model: &State<Screen>, host: &Host, debugs: Vec<DebugInfo>) {
+    fn adopt_debugs(&mut self, model: &Model, host: &Host, debugs: Vec<DebugInfo>) {
         if let Some((debug, session)) = model.read(Screen::debug_run) {
             let here =
                 Self::session_of(model, session).is_some_and(|placement| placement.host == *host);

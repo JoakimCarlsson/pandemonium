@@ -60,6 +60,7 @@ pub mod draft;
 pub mod drop_text;
 pub mod editor;
 pub mod elements;
+pub mod events;
 pub mod excerpts;
 pub mod exhibit;
 pub mod extensions;

@@ -113,9 +113,9 @@ fn files_drag_into_folders() {
     rig.key(pm_components::kit::Key::Escape);
     assert!(!rig.read(Screen::tree_dragging));
     rig.button_in(None, winit::event::MouseButton::Left, false, to);
-    let _ = rig.app.work.asked();
+    let _ = rig.app.borrow_mut().work.asked();
     rig.drag(from, to, 8);
-    let asked = rig.app.work.asked();
+    let asked = rig.app.borrow_mut().work.asked();
     assert!(
         asked
             .iter()

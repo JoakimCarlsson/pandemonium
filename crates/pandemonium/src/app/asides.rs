@@ -221,7 +221,7 @@ impl App {
 
     /// Runs `act` with the window of `aside` standing in for the main one: its
     /// window, frame, pointer and edge are swapped in for the time `act` runs.
-    fn in_aside(&mut self, aside: Aside, act: impl FnOnce(&mut Self)) {
+    pub(super) fn in_aside(&mut self, aside: Aside, act: impl FnOnce(&mut Self)) {
         let Some(mut surface) = self.surface_of(aside).take() else {
             return;
         };

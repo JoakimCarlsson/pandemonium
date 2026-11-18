@@ -4,7 +4,7 @@
 //! console as a fenced block that everything the page said is set off inside.
 
 use crate::kit::{
-    FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, picture, scroll_area, sp,
+    FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, scroll_area, sp,
 };
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
@@ -186,16 +186,17 @@ fn console_block(lines: &[String]) -> String {
 fn picture_card(state: &WorkspaceState, shot: &Shot) {
     section(&shot.label.to_uppercase(), || {
         match state.previews.get(&shot.path) {
-            Some(shown) if shown.width > 0 && shown.height > 0 => {
-                let scale = (CARD_TEXT / shown.width as f32)
-                    .min(PICTURE_HEIGHT / shown.height as f32)
+            Some(shown) if shown.width() > 0 && shown.height() > 0 => {
+                let scale = (CARD_TEXT / shown.width() as f32)
+                    .min(PICTURE_HEIGHT / shown.height() as f32)
                     .min(1.0);
-                picture(
+                rustle::image(
                     Modifier::new()
-                        .width((shown.width as f32 * scale).floor().max(1.0))
-                        .height((shown.height as f32 * scale).floor().max(1.0))
+                        .width((shown.width() as f32 * scale).floor().max(1.0))
+                        .height((shown.height() as f32 * scale).floor().max(1.0))
                         .clip_to(Radius::None),
                     shown,
+                    rustle::ContentScale::Crop,
                 );
             }
             _ => line("Preview not ready", 12, 1.4, Role::Muted),

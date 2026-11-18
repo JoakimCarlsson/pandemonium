@@ -5,7 +5,7 @@ use rustle::{Alignment, Arrangement, row_arranged};
 
 use std::ops::Range;
 
-use crate::kit::{FocusId, IconName, Picture, Radius, Role, Side, Styled};
+use crate::kit::{FocusId, IconName, Radius, Role, Side, Styled};
 use pm_field::Field;
 use rustle::Modifier;
 
@@ -100,7 +100,7 @@ pub struct BrowserTab {
     /// The title of the page.
     pub title: String,
     /// The newest picture of the page.
-    pub page: Option<Picture>,
+    pub page: Option<rustle::ImageData>,
     /// How the pointer looks over the page.
     pub pointer: Pointer,
     /// Whether a click on the page picks the element under the pointer.

@@ -33,9 +33,13 @@ One crate per layer, each depending only on the layers below it.
 - **Interface:** rustle composables, built with the kit in
   `pm-components/src/kit`: design tokens and themes, rows and columns laid out
   as flex boxes, text, icons, marked lines, fields drawn from `pm-field`,
-  scrolling boxes whose offsets live in the model, overlays, and the actions
-  and frame report through which the binary's logic hears what the user did
-  and where things were drawn. `pm-field` holds the text editing model.
+  scrolling boxes whose offsets live in the model, overlays, and the frame
+  report through which the binary's logic finds where things were drawn.
+  What the user does to a control reaches the app's state holder through the
+  `Handler` the views are composed under (`pm-components/src/events.rs`),
+  called while the interface handles the event. The screen is hoisted in one
+  rustle state (`mutable_state`) that every window reads; pictures are
+  rustle's `ImageData`. `pm-field` holds the text editing model.
 - **Components:** `pm-components`: reusable controls (`Button`, `Chip`,
   `Popover`, `Checkbox`, `Tally` and so on), each a builder with a variant and a
   size, and the state and sections the workspace is drawn from.

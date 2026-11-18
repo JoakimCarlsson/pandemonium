@@ -124,7 +124,7 @@ fn a_press_answers_only_the_question_it_was_for() {
 /// Whether the question bar of `safety` is drawn over a page 400 logical pixels wide at the time `now`.
 fn overlay_shown(safety: &Safety, now: Instant) -> bool {
     let safety = safety.clone();
-    let report = crate::kit::snapshot::lay_out(400.0, 300.0, None, move || {
+    let report = crate::kit::report::lay_out(400.0, 300.0, None, move || {
         rustle::stack_with(rustle::Modifier::new(), || {
             safety.question_overlay(400.0, now)
         });
@@ -138,7 +138,7 @@ fn overlay_shown(safety: &Safety, now: Instant) -> bool {
 /// Whether `safety` draws any bar above the page: the note about a download has a button that dismisses it.
 fn bars_shown(safety: &Safety) -> bool {
     let safety = safety.clone();
-    let report = crate::kit::snapshot::lay_out(400.0, 300.0, None, move || safety.bar_nodes());
+    let report = crate::kit::report::lay_out(400.0, 300.0, None, move || safety.bar_nodes());
     report
         .regions
         .iter()

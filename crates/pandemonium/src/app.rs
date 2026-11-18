@@ -4,6 +4,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use crate::model::Model;
 use pm_components::adder::{ADDER_DOWN, ADDER_ESCAPE, ADDER_UP};
 use pm_components::arrange::{is_project_menu_item, is_session_menu_item};
 use pm_components::assist::HOVER_SCROLL;
@@ -15,7 +16,6 @@ use pm_components::folder_picker::{
 };
 use pm_components::git_controls::{GRAPH_SCROLL, Pick, REVIEW_DISMISS, VIEWER_SCROLL};
 use pm_components::git_menus::{CHANGE_MENU_HEIGHT, MenuKind};
-use pm_components::kit::State;
 use pm_components::kit::theme::{Appearance, ThemeFamily};
 use pm_components::kit::{
     Button, Focus, FocusId, Key, KeyEvent, Modifiers, PointerEvent, PointerState,
@@ -49,6 +49,7 @@ mod asides;
 mod browser;
 mod capture;
 mod code;
+mod controller;
 mod drops;
 mod editing;
 mod frame;
@@ -119,7 +120,7 @@ pub struct App {
     /// Whether something changed outside the model that the windows must be composed again for.
     recompose: bool,
     /// What the interface made of the event being handled.
-    actions: Vec<pm_components::kit::Action>,
+    claimed: controller::Claims,
     /// Optional CPU frame timings and pointer response measurements.
     timings: performance::Timings,
     /// The light and the dark theme the window is drawn in.
@@ -133,7 +134,7 @@ pub struct App {
     /// The window's own settings as they were last written to disk.
     saved_window: pm_config::WindowSettings,
     /// What the user can change on the screen.
-    model: State<Screen>,
+    model: Model,
     /// Set by the model whenever it changes, so the screen is drawn again.
     dirty: Rc<Cell<bool>>,
     /// The pointer as the events so far left it.
@@ -355,15 +356,13 @@ impl App {
         editor: pm_editor::EditorSettings,
         proxy: Option<EventLoopProxy>,
     ) -> Self {
-        let model = State::new(screen);
-        let dirty = Rc::new(Cell::new(false));
-        let flag = Rc::clone(&dirty);
-        model.subscribe(move |_| flag.set(true));
+        let model = Model::new(screen);
+        let dirty = model.changes();
         Self {
             shell: host::Shell::new(model.clone(), proxy),
             window: None,
             recompose: true,
-            actions: Vec::new(),
+            claimed: controller::Claims::default(),
             fonts_applied: (
                 window_settings.appearance.interface_font.clone(),
                 window_settings.appearance.code_font.clone(),
@@ -958,13 +957,13 @@ impl App {
         (size.0 - band, size.1 - band)
     }
 
-    /// Takes hold of the handle on the edge of a panel when the pointer is down on it, and says whether it did.
-    fn grab_sash(&mut self) -> bool {
+    /// Takes hold of the handle on the edge of a panel when the press is on one, `on`, and says whether it did.
+    fn grab_sash(&mut self, on: Option<FocusId>) -> bool {
         let Some(at) = self.pointer.position else {
             return false;
         };
         let window = self.window_size();
-        self.sash_drag = self.output.hit(at).and_then(|id| {
+        self.sash_drag = on.and_then(|id| {
             self.model
                 .read(|screen| screen.sash(id, window))
                 .map(|(size, grows)| (id, at, size, grows))
@@ -996,12 +995,11 @@ impl App {
         self.bar_drag.is_some()
     }
 
-    /// Takes hold of the minimap when the pointer is down on it, scrolling the file shown to where it is, and says whether it did.
-    fn grab_minimap(&mut self) -> bool {
+    /// Takes hold of the minimap when the press is on it, `on`, scrolling the file shown to where it is, and says whether it did.
+    fn grab_minimap(&mut self, on: Option<FocusId>) -> bool {
         let Some((_, y)) = self.pointer.position else {
             return false;
         };
-        let on = self.pointer.position.and_then(|at| self.output.hit(at));
         self.minimap_drag = on == Some(MINIMAP);
         if self.minimap_drag {
             self.drag_minimap(y);
@@ -1031,9 +1029,8 @@ impl App {
         });
     }
 
-    /// Goes to the line kept at the top of the file shown that the pointer is down on, and says whether it is on one.
-    fn press_sticky(&mut self) -> bool {
-        let on = self.pointer.position.and_then(|at| self.output.hit(at));
+    /// Goes to the line kept at the top of the file shown that the press is on, `on`, and says whether it is on one.
+    fn press_sticky(&mut self, on: Option<FocusId>) -> bool {
         let Some(above) = on.and_then(pm_components::sticky::sticky_of) else {
             return false;
         };
@@ -1042,16 +1039,12 @@ impl App {
         true
     }
 
-    /// Presses the lens at the end of a line of the file shown that the pointer is down on, and says whether it is on one.
-    fn press_lens(&mut self) -> bool {
+    /// Presses the lens at the end of a line of the file shown that the press is on, `on`, and says whether it is on one.
+    fn press_lens(&mut self, on: Option<FocusId>) -> bool {
         let Some(at) = self.pointer.position else {
             return false;
         };
-        let Some(index) = self
-            .output
-            .hit(at)
-            .and_then(pm_components::annotations::lens_of)
-        else {
+        let Some(index) = on.and_then(pm_components::annotations::lens_of) else {
             return false;
         };
         self.model.update(|state| {
@@ -1089,153 +1082,15 @@ impl App {
         self.pointer.apply(event);
         match event {
             PointerEvent::Pressed(Button::Right) => {
-                let on = self.pointer.position.and_then(|at| self.output.hit(at));
-                match on {
-                    Some(id) if Screen::is_field(id) => self.open_menu(id),
-                    Some(id)
-                        if self
-                            .model
-                            .read(|screen| screen.session_row_of(id))
-                            .is_some() =>
-                    {
-                        self.open_session_menu(
-                            self.model
-                                .read(|screen| screen.session_row_of(id))
-                                .unwrap_or_default(),
-                        );
-                    }
-                    Some(id) if self.model.read(|screen| screen.header_of(id)).is_some() => {
-                        self.open_project_menu(
-                            self.model
-                                .read(|screen| screen.header_of(id))
-                                .unwrap_or_default(),
-                        );
-                    }
-                    Some(id) if self.model.read(|screen| screen.change_row_of(id)).is_some() => {
-                        self.open_change_menu(
-                            self.model
-                                .read(|screen| screen.change_row_of(id))
-                                .unwrap_or_default(),
-                        );
-                    }
-                    Some(id)
-                        if self
-                            .model
-                            .read(|screen| screen.change_folder_row_of(id))
-                            .is_some() =>
-                    {
-                        let position = self
-                            .model
-                            .read(|screen| screen.change_folder_row_of(id))
-                            .unwrap_or_default();
-                        self.open_folder_change_menu(position);
-                    }
-                    Some(id) if self.model.read(|screen| screen.file_tab_of(id)).is_some() => {
-                        let index = self
-                            .model
-                            .read(|screen| screen.file_tab_of(id))
-                            .unwrap_or_default();
-                        self.open_tab_menu(index);
-                    }
-                    Some(id) if self.model.read(|screen| screen.tree_row_of(id)).is_some() => {
-                        let target = self
-                            .model
-                            .read(|screen| screen.tree_row_of(id))
-                            .unwrap_or_else(TreeTarget::root);
-                        self.open_tree_menu(target);
-                    }
-                    Some(id)
-                        if self
-                            .model
-                            .read(|screen| screen.history_row_of(id))
-                            .is_some() =>
-                    {
-                        let row = self
-                            .model
-                            .read(|screen| screen.history_row_of(id))
-                            .unwrap_or_default();
-                        self.open_git_menu(MenuKind::History(row), None);
-                    }
-                    Some(TERMINAL_BODY) => self.open_terminal_menu(),
-                    Some(pm_components::browser::BROWSER_BODY) => self.open_browser_menu(),
-                    _ => self.open_message_menu(),
+                if !self.claimed.context {
+                    let on = self.pointer.position.and_then(|at| self.output.hit(at));
+                    self.context_press(on);
                 }
-            }
-            PointerEvent::Pressed(Button::Left) if self.grab_sash() => {
-                self.pressed_on = None;
-            }
-            PointerEvent::Pressed(Button::Left) if self.grab_bar() => {
-                self.pressed_on = None;
-            }
-            PointerEvent::Pressed(Button::Left)
-                if self.grab_minimap() || self.press_sticky() || self.press_lens() =>
-            {
-                self.pressed_on = None;
             }
             PointerEvent::Pressed(Button::Left) => {
-                self.terminal_press();
-                let on = self
-                    .pressed_action()
-                    .or_else(|| self.pointer.position.and_then(|at| self.output.hit(at)));
-                if let Some(id) = on.filter(|id| gutter_of(*id).is_some()) {
-                    self.model
-                        .update(|state| *state = std::mem::take(state).comment_drag_begun(id));
-                }
-                self.press_beside_code(on);
-                self.project_press = on
-                    .and_then(|id| self.model.read(|screen| screen.header_of(id)))
-                    .zip(self.pointer.position);
-                self.project_dragging = false;
-                self.pane_press(on);
-                self.tree_press(on);
-                if self.model.read(|screen| screen.list_menu_open())
-                    && !on.is_some_and(|id| {
-                        is_project_menu_item(id)
-                            || is_session_menu_item(id)
-                            || is_message_menu_item(id)
-                            || split_row_of(id).is_some()
-                            || self.model.read(|screen| screen.is_menu_row(id))
-                    })
-                {
-                    self.model
-                        .update(|state| *state = std::mem::take(state).without_menu());
-                }
-                if self.model.read(|screen| screen.menu().is_some())
-                    && !on.is_some_and(is_menu_item)
-                {
-                    self.model
-                        .update(|state| *state = std::mem::take(state).without_menu());
-                }
-                self.pressed_on = on;
-                self.list_pressed = self.pressed_on.filter(|id| {
-                    self.model.read(|screen| {
-                        screen.tree_row_of(*id).is_some()
-                            || screen.change_row_of(*id).is_some()
-                            || screen.change_folder_row_of(*id).is_some()
-                    })
-                });
-                self.press_excerpt();
-                self.text_press();
-                if self.pressed_on != Some(ENTRY_FIELD)
-                    && self.model.read(|screen| screen.is_naming())
-                {
-                    self.model
-                        .update(|state| *state = std::mem::take(state).without_naming());
-                }
-                if self.focus.current() != self.pressed_on {
-                    self.focus.clear();
-                }
-                if self.pressed_on.is_none() && self.model.read(|screen| screen.picker_open()) {
-                    self.model
-                        .update(|state| *state = std::mem::take(state).without_picker());
-                }
-                if let Some(id) = self.pressed_on
-                    && Screen::is_field(id)
-                {
-                    self.press_in_field(id);
-                }
-                if self.pressed_on == Some(EDITOR_FIELD) && self.editor_reach_pressed() {
-                    self.dragging = None;
+                if self.claimed.press.is_none() {
+                    let on = self.pointer.position.and_then(|at| self.output.hit(at));
+                    self.press_at(on);
                 }
             }
             PointerEvent::Moved(x, y) => {
@@ -1274,24 +1129,203 @@ impl App {
                     self.pressed_on = None;
                     return;
                 }
-                let released_on = self
-                    .released_action()
-                    .or_else(|| self.pointer.position.and_then(|at| self.output.hit(at)));
+                if self.claimed.click.is_some() {
+                    return;
+                }
+                let released_on = self.pointer.position.and_then(|at| self.output.hit(at));
                 if let (Some(pressed), Some(released)) = (self.pressed_on.take(), released_on)
                     && pressed == released
                 {
-                    if Screen::is_field(pressed)
-                        || pressed == TERMINAL_BODY
-                        || pressed == pm_components::browser::BROWSER_BODY
-                        || pressed == pm_components::browser::BROWSER_TOOLS_BODY
-                    {
-                        self.focus.focus(pressed);
-                    }
-                    self.activate(pressed);
+                    self.press_through(pressed);
                 }
             }
             _ => {}
         }
+    }
+
+    /// Opens the menu of what the secondary button went down on, `on`: the
+    /// field's, a row's, a tab's, the shell's or the page's, or the menu of
+    /// the conversation's text anywhere else.
+    pub(super) fn context_press(&mut self, on: Option<FocusId>) {
+        match on {
+            Some(id) if Screen::is_field(id) => self.open_menu(id),
+            Some(id)
+                if self
+                    .model
+                    .read(|screen| screen.session_row_of(id))
+                    .is_some() =>
+            {
+                self.open_session_menu(
+                    self.model
+                        .read(|screen| screen.session_row_of(id))
+                        .unwrap_or_default(),
+                );
+            }
+            Some(id) if self.model.read(|screen| screen.header_of(id)).is_some() => {
+                self.open_project_menu(
+                    self.model
+                        .read(|screen| screen.header_of(id))
+                        .unwrap_or_default(),
+                );
+            }
+            Some(id) if self.model.read(|screen| screen.change_row_of(id)).is_some() => {
+                self.open_change_menu(
+                    self.model
+                        .read(|screen| screen.change_row_of(id))
+                        .unwrap_or_default(),
+                );
+            }
+            Some(id)
+                if self
+                    .model
+                    .read(|screen| screen.change_folder_row_of(id))
+                    .is_some() =>
+            {
+                let position = self
+                    .model
+                    .read(|screen| screen.change_folder_row_of(id))
+                    .unwrap_or_default();
+                self.open_folder_change_menu(position);
+            }
+            Some(id) if self.model.read(|screen| screen.file_tab_of(id)).is_some() => {
+                let index = self
+                    .model
+                    .read(|screen| screen.file_tab_of(id))
+                    .unwrap_or_default();
+                self.open_tab_menu(index);
+            }
+            Some(id) if self.model.read(|screen| screen.tree_row_of(id)).is_some() => {
+                let target = self
+                    .model
+                    .read(|screen| screen.tree_row_of(id))
+                    .unwrap_or_else(TreeTarget::root);
+                self.open_tree_menu(target);
+            }
+            Some(id)
+                if self
+                    .model
+                    .read(|screen| screen.history_row_of(id))
+                    .is_some() =>
+            {
+                let row = self
+                    .model
+                    .read(|screen| screen.history_row_of(id))
+                    .unwrap_or_default();
+                self.open_git_menu(MenuKind::History(row), None);
+            }
+            Some(TERMINAL_BODY) => self.open_terminal_menu(),
+            Some(pm_components::browser::BROWSER_BODY) => self.open_browser_menu(),
+            _ => self.open_message_menu(),
+        }
+    }
+
+    /// Takes a press of the primary button on the control `id`, as its view
+    /// tells it while the interface handles the press, unless the press is on
+    /// the window's edge, which the app's handling of the press resizes.
+    pub(super) fn press(&mut self, id: FocusId) {
+        if self.frame_edge().is_some() {
+            return;
+        }
+        self.press_at(Some(id));
+    }
+
+    /// Takes a press of the primary button on `on`, or on nothing: a handle,
+    /// bar, minimap, line kept at the top or lens takes hold of it; anything
+    /// else is pressed, closes what a press elsewhere closes, and takes the
+    /// keyboard or starts a selection when it is a field.
+    fn press_at(&mut self, on: Option<FocusId>) {
+        if self.grab_sash(on)
+            || self.grab_bar()
+            || self.grab_minimap(on)
+            || self.press_sticky(on)
+            || self.press_lens(on)
+        {
+            self.pressed_on = None;
+            return;
+        }
+        self.terminal_press();
+        if let Some(id) = on.filter(|id| gutter_of(*id).is_some()) {
+            self.model
+                .update(|state| *state = std::mem::take(state).comment_drag_begun(id));
+        }
+        self.press_beside_code(on);
+        self.project_press = on
+            .and_then(|id| self.model.read(|screen| screen.header_of(id)))
+            .zip(self.pointer.position);
+        self.project_dragging = false;
+        self.pane_press(on);
+        self.tree_press(on);
+        if self.model.read(|screen| screen.list_menu_open())
+            && !on.is_some_and(|id| {
+                is_project_menu_item(id)
+                    || is_session_menu_item(id)
+                    || is_message_menu_item(id)
+                    || split_row_of(id).is_some()
+                    || self.model.read(|screen| screen.is_menu_row(id))
+            })
+        {
+            self.model
+                .update(|state| *state = std::mem::take(state).without_menu());
+        }
+        if self.model.read(|screen| screen.menu().is_some()) && !on.is_some_and(is_menu_item) {
+            self.model
+                .update(|state| *state = std::mem::take(state).without_menu());
+        }
+        self.pressed_on = on;
+        self.list_pressed = self.pressed_on.filter(|id| {
+            self.model.read(|screen| {
+                screen.tree_row_of(*id).is_some()
+                    || screen.change_row_of(*id).is_some()
+                    || screen.change_folder_row_of(*id).is_some()
+            })
+        });
+        self.press_excerpt();
+        self.text_press();
+        if self.pressed_on != Some(ENTRY_FIELD) && self.model.read(|screen| screen.is_naming()) {
+            self.model
+                .update(|state| *state = std::mem::take(state).without_naming());
+        }
+        if self.focus.current() != self.pressed_on {
+            self.focus.clear();
+        }
+        if self.pressed_on.is_none() && self.model.read(|screen| screen.picker_open()) {
+            self.model
+                .update(|state| *state = std::mem::take(state).without_picker());
+        }
+        if let Some(id) = self.pressed_on
+            && Screen::is_field(id)
+        {
+            self.press_in_field(id);
+        }
+        if self.pressed_on == Some(EDITOR_FIELD) && self.editor_reach_pressed() {
+            self.dragging = None;
+        }
+    }
+
+    /// Carries out a click on the control `id`, as its view tells it while
+    /// the interface handles the release: what pressing it means, when the
+    /// press began on it and was not the start of a drag.
+    pub(super) fn click(&mut self, id: FocusId) {
+        let dragging =
+            self.project_dragging || self.pane_dragging || self.model.read(Screen::tree_dragging);
+        if dragging || self.pressed_on != Some(id) {
+            return;
+        }
+        self.pressed_on = None;
+        self.press_through(id);
+    }
+
+    /// Carries out a press that began and ended on `id`: a field, the shell
+    /// or a page takes the keyboard, then whatever pressing `id` means.
+    fn press_through(&mut self, id: FocusId) {
+        if Screen::is_field(id)
+            || id == TERMINAL_BODY
+            || id == pm_components::browser::BROWSER_BODY
+            || id == pm_components::browser::BROWSER_TOOLS_BODY
+        {
+            self.focus.focus(id);
+        }
+        self.activate(id);
     }
 
     /// Carries out the menu row `row` on the field the menu is open over, and closes the menu.

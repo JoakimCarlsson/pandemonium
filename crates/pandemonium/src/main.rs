@@ -4,6 +4,7 @@
 
 mod app;
 mod keys;
+mod model;
 mod notify;
 mod scene;
 mod snapshot;
@@ -351,7 +352,7 @@ fn main() {
     let proxy = event_loop.create_proxy();
     let waker = proxy.clone();
     let wake: pm_client::Wake = std::sync::Arc::new(move || waker.wake_up());
-    if let Err(error) = event_loop.run_app(Running(App::new(wake, proxy))) {
+    if let Err(error) = event_loop.run_app(Running::new(App::new(wake, proxy))) {
         eprintln!("pandemonium: the event loop failed: {error}");
         std::process::exit(1);
     }

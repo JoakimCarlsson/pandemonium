@@ -8,7 +8,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use pm_markdown::{Block, Image};
 use rustle::{Arrangement, CursorIcon, FlowOptions, Modifier};
 
-use crate::kit::{FocusId, Interactive, Picture, Role, Type, label_with, picture, sp};
+use crate::kit::{FocusId, Interactive, Role, Type, label_with, sp};
 use crate::preview::linked_path;
 use crate::state::{Outgoing, WorkspaceState};
 
@@ -16,7 +16,7 @@ use crate::state::{Outgoing, WorkspaceState};
 #[derive(Clone, Debug, PartialEq)]
 pub struct Drawing {
     /// The pixels.
-    pub picture: Picture,
+    pub picture: rustle::ImageData,
     /// How many pixels fall on one logical pixel across: more than one for a picture drawn sharp for a dense screen.
     pub density: f32,
 }
@@ -25,8 +25,8 @@ impl Drawing {
     /// How wide and tall the drawing is at its own size, in logical pixels.
     pub(crate) fn size(&self) -> (f32, f32) {
         (
-            self.picture.width as f32 / self.density,
-            self.picture.height as f32 / self.density,
+            self.picture.width() as f32 / self.density,
+            self.picture.height() as f32 / self.density,
         )
     }
 }
@@ -190,7 +190,7 @@ pub(crate) fn figure_marks(source: &str, place: Option<&str>, figures: &Figures)
         .iter()
         .map(|(key, _)| match figures.get(key) {
             None => 0,
-            Some(Ok(drawing)) => drawing.picture.key,
+            Some(Ok(drawing)) => drawing.picture.id(),
             Some(Err(_)) => 1,
         })
         .collect()
@@ -199,7 +199,11 @@ pub(crate) fn figure_marks(source: &str, place: Option<&str>, figures: &Figures)
 /// Emits `drawing` `across` by `down` logical pixels, with `modifier` around it.
 #[track_caller]
 fn drawn(modifier: Modifier, drawing: &Drawing, across: f32, down: f32) {
-    picture(modifier.width(across).height(down), &drawing.picture);
+    rustle::image(
+        modifier.width(across).height(down),
+        &drawing.picture,
+        rustle::ContentScale::Crop,
+    );
 }
 
 /// Emits `drawing`, a drawn diagram or formula, at its own size or shrunk to `width` logical pixels, in the middle of a row that wide.

@@ -5,18 +5,18 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
+use crate::model::Model;
 use pm_client::{Client, Incoming};
 use pm_components::adder::{Found, Kind};
 use pm_components::figures::Drawing;
 use pm_components::git_controls::GRAPH_LIMIT;
 use pm_components::kit::FocusId;
-use pm_components::kit::Picture;
-use pm_components::kit::State;
 use pm_components::state::SESSION_BASE;
 use pm_components::tree_actions::EntryChange;
 use pm_harness::{Discovery, Event};
 use pm_pages::{Outgoing, Screen, WorkspaceState};
 use pm_protocol::{Attachment, Login, Request, Response, Target};
+use rustle::ImageData;
 
 use crate::view::View;
 
@@ -86,11 +86,11 @@ fn is_served_address(url: &str) -> bool {
 /// What a thread that did some of the work reports back.
 enum Job {
     /// The picture at this path was decoded, when it is one.
-    Previewed(String, Option<Picture>),
+    Previewed(String, Option<ImageData>),
     /// The picture file of the session at this position, at this path, and whether it was read from the last commit, was decoded, or could not be.
-    Pictured(usize, String, bool, Result<Picture, String>),
+    Pictured(usize, String, bool, Result<ImageData, String>),
     /// The text of the vector picture of the session at this position, at this path, and whether it was read from the last commit, was drawn, or could not be.
-    Drawn(usize, String, bool, Result<Picture, String>),
+    Drawn(usize, String, bool, Result<ImageData, String>),
     /// The figure kept under this key was drawn or decoded, or could not be.
     Figure(u64, Result<Drawing, String>),
     /// The server on this machine was found or reached, or could not be.
@@ -564,7 +564,7 @@ impl Work {
 
     /// Takes the shell of `tab` to be the one numbered `terminal` on this machine, as the server says once it opened it.
     #[cfg(test)]
-    pub fn terminal_opened(&mut self, model: &State<Screen>, tab: u64, terminal: u64) {
+    pub fn terminal_opened(&mut self, model: &Model, tab: u64, terminal: u64) {
         self.opened_terminal(model, &None, tab, terminal);
     }
 
@@ -799,7 +799,7 @@ impl Work {
     }
 
     /// Carries out what the reader asked of the agents and the folders since the last look, and returns what to copy.
-    pub fn deliver(&mut self, model: &State<Screen>) -> Vec<String> {
+    pub fn deliver(&mut self, model: &Model) -> Vec<String> {
         let mut outbox = Vec::new();
         model.update(|screen| {
             screen.diffs_wanted();
@@ -1373,7 +1373,7 @@ impl Work {
                     head,
                     text,
                 } => self.spawn(move |reporter| {
-                    let drawn = picture::draw(&path, &text);
+                    let drawn = picture::draw(&text);
                     let _ = reporter.send(Job::Drawn(session, path, head, drawn));
                 }),
                 Outgoing::DrawDiagram { key, source } => {
@@ -1710,7 +1710,7 @@ impl Work {
     }
 
     /// Takes in what the servers and the threads have reported since the last look.
-    pub fn poll(&mut self, model: &State<Screen>) {
+    pub fn poll(&mut self, model: &Model) {
         self.ask_wanted_grammars(model);
         self.watch_shown(model);
         while let Ok(job) = self.jobs.try_recv() {
@@ -1945,7 +1945,7 @@ impl Work {
     }
 
     /// Takes in one report of a thread.
-    fn finish(&mut self, model: &State<Screen>, job: Job) {
+    fn finish(&mut self, model: &Model, job: Job) {
         match job {
             Job::Previewed(path, picture) => {
                 if let Some(picture) = picture {
@@ -2061,7 +2061,7 @@ impl Work {
     }
 
     /// Passes what the agent of the session numbered `number` on `host` did on to the screen.
-    fn heard(&mut self, model: &State<Screen>, host: &Host, number: u64, seq: u64, event: Event) {
+    fn heard(&mut self, model: &Model, host: &Host, number: u64, seq: u64, event: Event) {
         let key = (host.clone(), number);
         let live = seq > self.history.get(&key).copied().unwrap_or(0);
         if self.forgotten.contains(&key) {
@@ -2097,7 +2097,7 @@ impl Work {
     }
 
     /// Tells the window whether the server is busy with something about a session's folder, when that has changed.
-    fn publish_working(&self, model: &State<Screen>) {
+    fn publish_working(&self, model: &Model) {
         let working = self
             .links
             .values()
@@ -2108,13 +2108,7 @@ impl Work {
     }
 
     /// Does what the answer to a request calls for.
-    fn answered(
-        &mut self,
-        model: &State<Screen>,
-        host: &Host,
-        pending: Pending,
-        response: Response,
-    ) {
+    fn answered(&mut self, model: &Model, host: &Host, pending: Pending, response: Response) {
         let failure = match &response {
             Response::Failed { message } => Some(message.clone()),
             _ => None,
@@ -2620,7 +2614,7 @@ impl Work {
             }
             Pending::ReadPicture(session, path, head) => match response {
                 Response::Bytes { bytes, truncated } => self.spawn(move |reporter| {
-                    let read = picture::decode(&path, &bytes, truncated);
+                    let read = picture::decode(&bytes, truncated);
                     let _ = reporter.send(Job::Pictured(session, path, head, read));
                 }),
                 other => {
@@ -2852,7 +2846,7 @@ impl Work {
     }
 
     /// Takes in the server's number for the shell of `tab`: what was done to it meanwhile is sent, and what it printed meanwhile is shown.
-    fn opened_terminal(&mut self, model: &State<Screen>, host: &Host, tab: u64, terminal: u64) {
+    fn opened_terminal(&mut self, model: &Model, host: &Host, tab: u64, terminal: u64) {
         self.tabs.insert(tab, (host.clone(), terminal));
         self.shells.insert((host.clone(), terminal), tab);
         if let Some(client) = self.links.get(host).and_then(|link| link.client.as_ref()) {
@@ -2869,7 +2863,7 @@ impl Work {
     /// Adds a tab for each shell of the server on `origin` that runs in the folder of a session the window shows and has no tab yet, as after a reconnect. It never starts a shell that was not running.
     fn adopt_terminals(
         &mut self,
-        model: &State<Screen>,
+        model: &Model,
         origin: &Host,
         terminals: Vec<pm_protocol::TerminalInfo>,
     ) {
@@ -2897,13 +2891,7 @@ impl Work {
     }
 
     /// Asks the server of the chat at `session` to continue it as a session in the project at `project`, in a worktree made from `base`, when the project is on the chat's machine; the session is called what the chat is.
-    fn continue_chat(
-        &mut self,
-        model: &State<Screen>,
-        session: usize,
-        project: usize,
-        base: String,
-    ) {
+    fn continue_chat(&mut self, model: &Model, session: usize, project: usize, base: String) {
         let placement = Self::session_of(model, session);
         let repository = model.read(|screen| {
             let Screen::Workspace(state) = screen;
@@ -2941,7 +2929,7 @@ impl Work {
     /// Takes in how continuing the chat numbered `chat` on `host` went: the session that continues it is listed and shown, or the chat is told why there is none.
     fn chat_continued(
         &mut self,
-        model: &State<Screen>,
+        model: &Model,
         host: &Host,
         chat: u64,
         started: Option<pm_protocol::SessionInfo>,
@@ -2962,12 +2950,7 @@ impl Work {
     }
 
     /// Adds the sessions of the server of `origin` that the window does not show yet, starts watching them, and takes in what their agents did before the window knew them.
-    fn adopt(
-        &mut self,
-        model: &State<Screen>,
-        origin: &Host,
-        sessions: Vec<pm_protocol::SessionInfo>,
-    ) {
+    fn adopt(&mut self, model: &Model, origin: &Host, sessions: Vec<pm_protocol::SessionInfo>) {
         let fresh: Vec<_> = sessions
             .into_iter()
             .filter(|info| !self.positions.contains_key(&(origin.clone(), info.session)))
@@ -3025,7 +3008,7 @@ impl Work {
     }
 
     /// Opens the session the window was left on, and scrolls the sidebar as it was, once the server of `origin` that holds the session has listed its sessions.
-    fn finish_resuming(&mut self, model: &State<Screen>, origin: &Host) {
+    fn finish_resuming(&mut self, model: &Model, origin: &Host) {
         if self
             .resume
             .as_ref()
@@ -3066,7 +3049,7 @@ impl Work {
     }
 
     /// Replaces the workspace with what `change` makes of it, while the workspace is showing.
-    fn in_workspace(model: &State<Screen>, change: impl FnOnce(WorkspaceState) -> WorkspaceState) {
+    fn in_workspace(model: &Model, change: impl FnOnce(WorkspaceState) -> WorkspaceState) {
         model.update(|screen| {
             let Screen::Workspace(state) = screen;
             *state = change(std::mem::replace(state, WorkspaceState::new(&[])));
@@ -3074,7 +3057,7 @@ impl Work {
     }
 
     /// Adds the projects another client added on this machine.
-    fn projects_changed(model: &State<Screen>, paths: &[String]) {
+    fn projects_changed(model: &Model, paths: &[String]) {
         model.update(|screen| {
             let mut next = std::mem::take(screen);
             for path in paths {
@@ -3085,7 +3068,7 @@ impl Work {
     }
 
     /// Where the session at `session` works.
-    fn session_of(model: &State<Screen>, session: usize) -> Option<Placement> {
+    fn session_of(model: &Model, session: usize) -> Option<Placement> {
         model.read(|screen| {
             let Screen::Workspace(state) = screen;
             let held = state.sessions.get(session)?;
@@ -3112,7 +3095,7 @@ impl Work {
     }
 
     /// The branch the session at `session` has checked out, or nothing when it is at a bare commit or not known.
-    fn branch_of(model: &State<Screen>, session: usize) -> Option<String> {
+    fn branch_of(model: &Model, session: usize) -> Option<String> {
         model.read(|screen| {
             let Screen::Workspace(state) = screen;
             state
@@ -3126,7 +3109,7 @@ impl Work {
     /// Asks the machine the session at `session` is on for what `make` builds from the folder of the repository the git panel works on: the session's folder, or the submodule picked in it.
     fn ask_in_repository(
         &mut self,
-        model: &State<Screen>,
+        model: &Model,
         session: usize,
         make: impl FnOnce(String) -> Request,
         pending: Pending,
@@ -3143,7 +3126,7 @@ impl Work {
     /// Asks the machine the session at `session` is on for what `make` builds from its folder; nothing is asked for a chat whose scratch folder its server has yet to make.
     fn ask_in_folder(
         &mut self,
-        model: &State<Screen>,
+        model: &Model,
         session: usize,
         make: impl FnOnce(String) -> Request,
         pending: Pending,
@@ -3156,7 +3139,7 @@ impl Work {
     }
 
     /// Asks the server of the session at `session` to write what was read for its folder, and tells the reader what was left out.
-    fn import(&mut self, model: &State<Screen>, session: usize, gathered: import::Gathered) {
+    fn import(&mut self, model: &Model, session: usize, gathered: import::Gathered) {
         if !gathered.skipped.is_empty() {
             let reason = format!(
                 "Not everything was brought in: {}",
@@ -3179,7 +3162,7 @@ impl Work {
     }
 
     /// Looks at the folder of the session at `session` again, for its changes and commits. Nothing is asked about a chat, which has no branch, worktree or diff.
-    fn refresh(&mut self, model: &State<Screen>, session: usize) {
+    fn refresh(&mut self, model: &Model, session: usize) {
         let Some(placement) = Self::session_of(model, session) else {
             return;
         };
@@ -3253,23 +3236,12 @@ impl Work {
 const PREVIEW_SIDE: u32 = 512;
 
 /// The picture in the file at `path`, shrunk to a preview, or nothing when the file is not a picture.
-fn decode_preview(path: &str) -> Option<Picture> {
-    use std::hash::{Hash, Hasher};
-    let modified = std::fs::metadata(path)
-        .and_then(|data| data.modified())
-        .ok();
+fn decode_preview(path: &str) -> Option<ImageData> {
     let decoded = image::open(path)
         .ok()?
         .thumbnail(PREVIEW_SIDE, PREVIEW_SIDE);
     let rgba = decoded.to_rgba8();
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    (path, modified).hash(&mut hasher);
-    Some(Picture {
-        key: hasher.finish(),
-        width: rgba.width(),
-        height: rgba.height(),
-        pixels: std::sync::Arc::new(rgba.into_raw()),
-    })
+    ImageData::from_rgba(rgba.width(), rgba.height(), rgba.into_raw())
 }
 
 /// Shows `directory` in the file manager of this machine.

@@ -7,11 +7,13 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use pm_components::events::{self, Handler};
+use pm_components::kit::FocusId;
 use pm_components::kit::frame::{self, Frame};
 use pm_components::kit::report::{self, Report};
 use pm_components::kit::theme::Appearance;
 use pm_components::kit::theme::Tokens;
-use pm_components::kit::{Action, Button, KeyEvent, Modifiers, PointerEvent, State, bus};
+use pm_components::kit::{Button, KeyEvent, Modifiers, PointerEvent};
 use pm_field::Edit;
 use pm_pages::Screen;
 use rustle::{CursorIcon, Host, ShadowLayer, WindowHandle, WindowOptions, WindowShadow};
@@ -24,15 +26,20 @@ use winit::window::{
 };
 
 use super::asides::Aside;
+use super::controller::{Claims, Controller};
 use super::port::{NativePort, Port};
 use super::{App, WHEEL_LINE, appearance, fail_to_start, frame as window_frame};
+use crate::model::Model;
 use crate::{keys, scene};
+
+/// The handler of the main window's views and of each window's beside it.
+type Handlers = [Rc<dyn Handler>; 3];
 
 /// What the root composable reads that the app changes outside rustle's own state.
 #[derive(Clone)]
 pub(super) struct Shared {
     /// The screen the app holds.
-    model: State<Screen>,
+    model: Model,
     /// How large the main window and each window beside it are, in logical pixels.
     sizes: Rc<RefCell<[(f32, f32); 3]>>,
     /// The theme and appearance every window is drawn in.
@@ -43,9 +50,35 @@ pub(super) struct Shared {
     handles: Rc<RefCell<[Option<WindowHandle>; 2]>>,
     /// The windows beside the main one their close button asked to close.
     closed: Rc<RefCell<Vec<Aside>>>,
+    /// What the views of the main window and of each window beside it hand
+    /// what the user does to them to, once the app is shared with them.
+    handlers: Rc<RefCell<Option<Handlers>>>,
 }
 
 impl Shared {
+    /// Hands what the user does to the views of every window to `app`.
+    pub(super) fn attach(&self, app: &Rc<RefCell<App>>) {
+        *self.handlers.borrow_mut() = Some([
+            Controller::handler(app, None),
+            Controller::handler(app, Some(Aside::Settings)),
+            Controller::handler(app, Some(Aside::Picker)),
+        ]);
+    }
+
+    /// Composes `content` under the handler of the main window's views, or of
+    /// `aside`'s, once the app is attached.
+    fn under_handler(&self, aside: Option<Aside>, content: impl FnOnce()) {
+        let handler = self
+            .handlers
+            .borrow()
+            .as_ref()
+            .map(|handlers| Rc::clone(&handlers[aside.map_or(0, |aside| slot(aside) + 1)]));
+        match handler {
+            Some(handler) => events::provide(handler, content),
+            None => content(),
+        }
+    }
+
     /// How large the main window is, or `aside`'s, as the desktop last said, in logical pixels.
     #[cfg(test)]
     pub(super) fn size_of(&self, aside: Option<Aside>) -> (f32, f32) {
@@ -67,8 +100,13 @@ impl Shared {
 
 /// The rustle side of the app: the host that owns the windows, and what its root reads.
 pub(super) struct Shell {
-    /// The interface and its windows, once the platform could make surfaces.
-    pub(super) host: Option<Host>,
+    /// The interface and its windows, once the platform could make surfaces,
+    /// shared so it can handle an event while the app is free for the
+    /// handlers the event runs.
+    pub(super) host: Rc<RefCell<Option<Host>>>,
+    /// Whether the windows were asked to compose while they were busy with
+    /// an event, so they compose once it is handled.
+    deferred: Rc<Cell<bool>>,
     /// The event loop's proxy, which wakes it for the host and for the app's work,
     /// when the app runs in one.
     proxy: Option<EventLoopProxy>,
@@ -76,7 +114,7 @@ pub(super) struct Shell {
     pub(super) shared: Shared,
     /// The interface laid out with no window, when the app runs headless.
     #[cfg(test)]
-    pub(super) headless: Option<super::headless::Screens>,
+    pub(super) headless: Rc<RefCell<Option<super::headless::Screens>>>,
 }
 
 /// The index of `aside` among the windows beside the main one.
@@ -98,9 +136,10 @@ pub(super) fn report_key(aside: Option<Aside>) -> report::WindowKey {
 
 impl Shell {
     /// A shell for `model`, its event loop woken through `proxy` when there is one, with no window yet.
-    pub(super) fn new(model: State<Screen>, proxy: Option<EventLoopProxy>) -> Self {
+    pub(super) fn new(model: Model, proxy: Option<EventLoopProxy>) -> Self {
         Self {
-            host: None,
+            host: Rc::new(RefCell::new(None)),
+            deferred: Rc::new(Cell::new(false)),
             proxy,
             shared: Shared {
                 model,
@@ -109,32 +148,60 @@ impl Shell {
                 cursor: Rc::new(Cell::new(None)),
                 handles: Rc::new(RefCell::new([None, None])),
                 closed: Rc::new(RefCell::new(Vec::new())),
+                handlers: Rc::new(RefCell::new(None)),
             },
             #[cfg(test)]
-            headless: None,
+            headless: Rc::new(RefCell::new(None)),
         }
     }
 
-    /// Composes everything again at the next wake-up.
+    /// Composes everything again at the next wake-up, or once the windows
+    /// have handled the event they are busy with.
     pub(super) fn invalidate(&mut self) {
-        if let Some(host) = self.host.as_mut() {
-            host.invalidate();
+        match self.host.try_borrow_mut() {
+            Ok(mut host) => {
+                if let Some(host) = host.as_mut() {
+                    host.invalidate();
+                }
+            }
+            Err(_) => self.deferred.set(true),
         }
         #[cfg(test)]
-        if let Some(screens) = self.headless.as_mut() {
-            screens.invalidate();
+        match self.headless.try_borrow_mut() {
+            Ok(mut screens) => {
+                if let Some(screens) = screens.as_mut() {
+                    screens.invalidate();
+                }
+            }
+            Err(_) => self.deferred.set(true),
         }
     }
 
-    /// Composes and lays out what changed now, in the windows or headless.
+    /// Composes and lays out what changed now, in the windows or headless,
+    /// or once the windows have handled the event they are busy with.
     pub(super) fn wake(&mut self) {
-        if let Some(host) = self.host.as_mut() {
-            host.wake();
+        match self.host.try_borrow_mut() {
+            Ok(mut host) => {
+                if let Some(host) = host.as_mut() {
+                    host.wake();
+                }
+            }
+            Err(_) => self.deferred.set(true),
         }
         #[cfg(test)]
-        if let Some(screens) = self.headless.as_mut() {
-            screens.wake(&self.shared);
+        match self.headless.try_borrow_mut() {
+            Ok(mut screens) => {
+                if let Some(screens) = screens.as_mut() {
+                    screens.wake(&self.shared);
+                }
+            }
+            Err(_) => self.deferred.set(true),
         }
+    }
+
+    /// Whether the windows were asked to compose while they were busy, clearing it.
+    pub(super) fn take_deferred(&self) -> bool {
+        self.deferred.replace(false)
     }
 
     /// The handle of `aside`'s window, while it is composed.
@@ -145,7 +212,7 @@ impl Shell {
     /// The window of `aside`, while it is open.
     pub(super) fn port_of(&self, aside: Aside) -> Option<Rc<dyn Port>> {
         #[cfg(test)]
-        if let Some(screens) = self.headless.as_ref() {
+        if let Some(screens) = self.headless.borrow().as_ref() {
             return screens.port_of(aside);
         }
         let handle = self.handle_of(aside)?;
@@ -210,17 +277,21 @@ pub(super) fn main_view(shared: &Shared) {
     let tokens = shared.tokens.borrow().clone();
     let size = shared.sizes.borrow()[0];
     let cursor = shared.cursor.get();
-    shared
-        .model
-        .read(|screen| scene::main_root(screen, size.0, size.1, tokens, cursor));
+    shared.under_handler(None, || {
+        shared
+            .model
+            .read(|screen| scene::main_root(screen, size.0, size.1, tokens, cursor));
+    });
 }
 
 /// Emits what the window of `aside` shows for what `shared` holds.
 pub(super) fn aside_view(shared: &Shared, aside: Aside) {
     let tokens = shared.tokens.borrow().clone();
     let (width, height) = aside_size(shared, aside);
-    shared.model.read(|screen| {
-        scene::aside_root(screen, report_key(Some(aside)), width, height, tokens);
+    shared.under_handler(Some(aside), || {
+        shared.model.read(|screen| {
+            scene::aside_root(screen, report_key(Some(aside)), width, height, tokens);
+        });
     });
 }
 
@@ -320,7 +391,10 @@ impl App {
     /// Composes again when anything asked for it since the last time, and
     /// runs what follows a composed frame.
     pub(super) fn flush(&mut self) {
-        if std::mem::take(&mut self.recompose) || self.dirty.replace(false) {
+        if std::mem::take(&mut self.recompose)
+            || self.dirty.replace(false)
+            || self.shell.take_deferred()
+        {
             let started = self.timings.start();
             self.set_frame();
             self.shell.invalidate();
@@ -336,7 +410,6 @@ impl App {
         pm_components::set_shadow_outside(on_wayland(event_loop));
         rustle_wgpu::set_legible_text(false);
         rustle_wgpu::set_gamma_blending(true);
-        rustle_wgpu::set_linear_shadows(true);
         rustle_wgpu::set_frame_latency(frame_latency());
         rustle::set_pixel_rounding(rustle::PixelRounding::Logical);
         rustle::set_close_handler(|| false);
@@ -356,7 +429,7 @@ impl App {
             fail_to_start("could not open a window");
         };
         crate::startup::mark("window-created");
-        self.shell.host = Some(host);
+        *self.shell.host.borrow_mut() = Some(host);
         self.system_appearance = appearance(window.theme());
         enable_ime(&*window);
         let port: Rc<dyn Port> = Rc::new(NativePort::new(window, WindowHandle::MAIN));
@@ -494,29 +567,11 @@ impl App {
         })
     }
 
-    /// Handles an event of a window of the app: the interface sees it first,
-    /// then the app's own logic, against the window it happened in.
-    fn route(&mut self, event_loop: &dyn ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        self.set_frame();
-        let aside = self.aside_of_window(id);
-        let main = self
-            .window
+    /// Whether `id` names the main window.
+    fn is_main_window(&self, id: WindowId) -> bool {
+        self.window
             .as_ref()
-            .is_some_and(|window| window.native().is_some_and(|native| native.id() == id));
-        let closing = matches!(event, WindowEvent::CloseRequested);
-        if !closing && let Some(host) = self.shell.host.as_mut() {
-            host.window_event(event_loop, id, event.clone());
-        }
-        let port = match aside {
-            Some(aside) => self.shell.port_of(aside),
-            None => self.window.clone(),
-        };
-        let input = port.and_then(|port| input_of(&event, &*port, self.modifiers));
-        if (aside.is_some() || main)
-            && let Some(input) = input
-        {
-            self.after_interface(aside, input);
-        }
+            .is_some_and(|window| window.native().is_some_and(|native| native.id() == id))
     }
 
     /// Carries out `input` of the main window, or of `aside`'s, once the
@@ -525,7 +580,6 @@ impl App {
     /// for what changed.
     pub(super) fn after_interface(&mut self, aside: Option<Aside>, input: Input) {
         let focus = self.focus.current();
-        self.actions = bus::drain();
         match aside {
             Some(aside) => self.aside_input(aside, input),
             None => {
@@ -537,13 +591,7 @@ impl App {
                 self.handle_input(input);
             }
         }
-        for dropped in std::mem::take(&mut self.actions) {
-            if let Action::Dropped { path, .. } = dropped
-                && !self.outside_offered()
-            {
-                self.file_dropped(path);
-            }
-        }
+        self.claimed = Claims::default();
         if self.focus.current() != focus {
             self.recompose = true;
         }
@@ -679,29 +727,9 @@ impl App {
         None
     }
 
-    /// The scroll action the wheel just made, if the interface turned it into one:
-    /// the box the pointer is over and how far it can scroll.
-    pub(super) fn wheel_action(&self) -> Option<(pm_components::kit::FocusId, f32)> {
-        self.actions.iter().find_map(|action| match action {
-            Action::Scroll { id, room, .. } => Some((*id, *room)),
-            _ => None,
-        })
-    }
-
-    /// The control the interface says the primary button went down on, if it said.
-    pub(super) fn pressed_action(&self) -> Option<pm_components::kit::FocusId> {
-        self.actions.iter().find_map(|action| match action {
-            Action::Down { id, .. } => Some(*id),
-            _ => None,
-        })
-    }
-
-    /// The control the interface says was pressed and let go, if it said.
-    pub(super) fn released_action(&self) -> Option<pm_components::kit::FocusId> {
-        self.actions.iter().find_map(|action| match action {
-            Action::Press(id) => Some(*id),
-            _ => None,
-        })
+    /// The scrolling box the wheel turned over, as its view said, and how far it can scroll.
+    pub(super) fn wheel_action(&self) -> Option<(FocusId, f32)> {
+        self.claimed.wheel
     }
 
     /// The tokens for the theme and appearance the window is drawn in.
@@ -787,41 +815,82 @@ fn input_of(event: &WindowEvent, port: &dyn Port, modifiers: Modifiers) -> Optio
     })
 }
 
-/// The app as the event loop drives it.
-pub struct Running(pub App);
+/// The app as the event loop drives it, shared with the handlers its
+/// interface runs.
+pub struct Running(Rc<RefCell<App>>);
+
+impl Running {
+    /// The event loop's handler for `app`.
+    pub fn new(app: App) -> Self {
+        let app = Rc::new(RefCell::new(app));
+        app.borrow().shell.shared.attach(&app);
+        Self(app)
+    }
+
+    /// The interface of every window, held apart from the app so the
+    /// handlers an event runs can reach the app.
+    fn host(&self) -> Rc<RefCell<Option<Host>>> {
+        Rc::clone(&self.0.borrow().shell.host)
+    }
+}
 
 impl ApplicationHandler for Running {
     /// Opens the main window on rustle once the platform is ready.
     fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
-        let app = &mut self.0;
-        match app.shell.host.as_mut() {
-            Some(host) => host.can_create_surfaces(event_loop),
-            None => app.open(event_loop),
+        let host = self.host();
+        if let Some(host) = host.borrow_mut().as_mut() {
+            host.can_create_surfaces(event_loop);
+            return;
         }
+        self.0.borrow_mut().open(event_loop);
     }
 
     /// Lets the interface run what woke the loop, then the app's work.
     fn proxy_wake_up(&mut self, _: &dyn ActiveEventLoop) {
-        let app = &mut self.0;
-        app.set_frame();
-        if let Some(host) = app.shell.host.as_mut() {
+        self.0.borrow().set_frame();
+        let host = self.host();
+        if let Some(host) = host.borrow_mut().as_mut() {
             host.wake();
         }
-        app.after_compose();
+        self.0.borrow_mut().after_compose();
     }
 
-    /// Hands each event of a window to the interface, then to the app.
+    /// Hands each event of a window to the interface, then to the app's
+    /// own logic, against the window it happened in.
     fn window_event(&mut self, event_loop: &dyn ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        self.0.route(event_loop, id, event);
+        let (aside, main) = {
+            let app = self.0.borrow();
+            app.set_frame();
+            (app.aside_of_window(id), app.is_main_window(id))
+        };
+        let closing = matches!(event, WindowEvent::CloseRequested);
+        let host = self.host();
+        if !closing && let Some(host) = host.borrow_mut().as_mut() {
+            host.window_event(event_loop, id, event.clone());
+        }
+        let mut app = self.0.borrow_mut();
+        let port = match aside {
+            Some(aside) => app.shell.port_of(aside),
+            None => app.window.clone(),
+        };
+        let input = port.and_then(|port| input_of(&event, &*port, app.modifiers));
+        if (aside.is_some() || main)
+            && let Some(input) = input
+        {
+            app.after_interface(aside, input);
+        } else if std::mem::take(&mut app.claimed).acted || app.shell.take_deferred() {
+            app.recompose = true;
+            app.flush();
+        }
     }
 
     /// Does the app's waiting work and decides when the loop wakes next.
     fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
-        let app = &mut self.0;
-        if let Some(host) = app.shell.host.as_mut() {
+        let host = self.host();
+        if let Some(host) = host.borrow_mut().as_mut() {
             host.about_to_wait(event_loop);
         }
-        let (flow, exit) = app.come_to_rest();
+        let (flow, exit) = self.0.borrow_mut().come_to_rest();
         event_loop.set_control_flow(flow);
         if exit {
             event_loop.exit();
@@ -832,9 +901,10 @@ impl ApplicationHandler for Running {
 impl Drop for Running {
     /// Captures the final draft and waits for its ordered background write before the app leaves.
     fn drop(&mut self) {
-        self.0.persist_view();
-        self.0.view_writer.flush();
-        self.0.browser_shutdown();
+        let mut app = self.0.borrow_mut();
+        app.persist_view();
+        app.view_writer.flush();
+        app.browser_shutdown();
     }
 }
 

@@ -3,27 +3,25 @@
 //! carets and an input method's composition.
 //!
 //! The [`Field`] stays the source of truth: the host edits it with `Edit`
-//! values on keys and on the [`Action::Field`](crate::kit::Action::Field)
-//! actions this sends for presses and drags (the shown byte under the
-//! pointer and the click count, for word and line reach). The field reports
+//! values on keys and on presses and drags it follows itself, finding the
+//! shown byte under the pointer in the report. The field reports
 //! its shaped text to the frame's [`Report`](crate::kit::Report), which
 //! answers the questions the host asked the old frame output: the byte under
 //! a point, the byte a line up or down, the ends of a line as drawn, and the
 //! caret rectangle the input method is told about. The text shaped is the
 //! whole shown text, so moving through lines that are not on screen works.
 //! Wrapped text that is taller than the lines it shows is also a scrolling
-//! box named by the field's id: it reports its room and turns the wheel into
-//! [`Action::Scroll`](crate::kit::Action::Scroll), as the old field did.
+//! box named by the field's id: it reports its room and hands the wheel to
+//! [`Handler::scrolled`](crate::events::Handler::scrolled), as the old field did.
 
 use std::rc::Rc;
 
 use pm_field::Field;
 use rustle::{Modifier, Offset, PointerButton, PointerInputPhase, PointerPhase, TextLayout};
 
-use crate::kit::bus::{self, Action, Phase};
+use crate::events;
 use crate::kit::focus::FocusId;
 use crate::kit::frame;
-use crate::kit::keys::Modifiers;
 use crate::kit::report::{self, FieldBox, Region, Scroller};
 use crate::kit::text::Type;
 use crate::kit::theme::{self, Role, Tone};
@@ -170,7 +168,8 @@ impl<'a> FieldText<'a> {
         let text_color = theme::color_in(&theme, kind.tone_of());
         let highlight = marks::selection_color(&theme);
         let size = style.font_size;
-        let hit = reported.clone();
+        let handler = events::handler();
+        let (wheel, context) = (Rc::clone(&handler), Rc::clone(&handler));
         if wraps {
             crate::kit::scroll::remember(id, room, dy, height);
         }
@@ -208,36 +207,18 @@ impl<'a> FieldText<'a> {
                 if !wraps || room <= 0.0 || event.phase != PointerInputPhase::Scroll {
                     return false;
                 }
-                bus::send(Action::Scroll {
-                    id,
-                    pixels: -event.scroll_delta.y,
-                    room,
-                });
+                wheel.scrolled(id, -event.scroll_delta.y, room);
                 true
             })
-            .on_pointer_button(PointerButton::Primary, move |event| {
-                let phase = match event.phase {
-                    PointerPhase::Press => Phase::Start,
-                    PointerPhase::Drag => Phase::Move,
-                    PointerPhase::Release => Phase::End,
-                    PointerPhase::Click => return bus::send(Action::Press(id)),
-                };
-                let offset =
-                    hit.hit_test(Offset::new(event.position.x + dx, event.position.y + dy));
-                bus::send(Action::Field {
-                    id,
-                    phase,
-                    offset,
-                    clicks: event.click_count,
-                    at: (event.window_position.x, event.window_position.y),
-                    modifiers: Modifiers::from_window(event.modifiers),
-                });
+            .on_pointer_button(PointerButton::Primary, move |event| match event.phase {
+                PointerPhase::Press => handler.pressed(id),
+                PointerPhase::Click => handler.clicked(id),
+                PointerPhase::Drag | PointerPhase::Release => {}
             })
-            .on_secondary_click(move |event| {
-                bus::send(Action::Menu {
-                    id,
-                    at: (event.window_position.x, event.window_position.y),
-                })
+            .on_pointer_button(PointerButton::Secondary, move |event| {
+                if event.phase == PointerPhase::Press {
+                    context.context_pressed(id);
+                }
             })
             .cursor(rustle::CursorIcon::Text);
         rustle::canvas(modifier, move |canvas| {

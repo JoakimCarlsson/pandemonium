@@ -46,10 +46,10 @@ fn tab_walks_the_focus() {
 #[test]
 fn enter_and_space_press_what_has_the_keyboard() {
     let mut rig = Rig::shot(Shot::Workspace);
-    rig.app.focus.focus(TAB_DIFF);
+    rig.app.borrow_mut().focus.focus(TAB_DIFF);
     rig.key(Key::Enter);
     assert_eq!(rig.state(|state| state.tab), Tab::Diff);
-    rig.app.focus.focus(FocusId(SESSION_BASE + 2));
+    rig.app.borrow_mut().focus.focus(FocusId(SESSION_BASE + 2));
     rig.key(Key::Space);
     assert_eq!(rig.state(|state| state.page), Page::Session(2));
 }
@@ -128,7 +128,7 @@ fn select_all_marks_every_changed_file() {
     );
     let marked = rig.state(|state| state.git.marked.len());
     assert!(marked > 1, "{marked}");
-    assert!(rig.app.text_selection.is_none());
+    assert!(rig.app.borrow_mut().text_selection.is_none());
 }
 
 /// With modal editing on, keys move the caret of the file shown instead of

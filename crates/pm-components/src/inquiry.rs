@@ -587,7 +587,7 @@ mod tests {
             }],
         });
         let figures = Figures::new();
-        let report = crate::kit::snapshot::lay_out(700.0, 2000.0, None, move || {
+        let report = crate::kit::report::lay_out(700.0, 2000.0, None, move || {
             inquiry(&draft, &figures, &Offer::Nothing, 700.0)
         });
         let ids: Vec<u64> = report.regions.iter().map(|region| region.id.0).collect();

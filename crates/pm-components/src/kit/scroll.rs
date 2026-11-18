@@ -8,9 +8,10 @@
 //! the logic that keeps a caret or a row in view read and write it: the box
 //! measures its content without a bound down its length, shows it moved up
 //! by the model's offset kept within the room, clips it, records the room in
-//! the frame's [`Report`](crate::kit::Report), turns the wheel and drags of
-//! its bar into [`Action::Scroll`](crate::kit::Action::Scroll), and draws a
-//! bar as the old one looked: thin, widening under the pointer and while held.
+//! the frame's [`Report`](crate::kit::Report), hands the wheel to
+//! [`Handler::scrolled`](crate::events::Handler::scrolled), and draws a bar
+//! as the old one looked: thin, widening under the pointer and while held;
+//! the app follows drags of the bar itself.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -21,7 +22,7 @@ use rustle::{
     PointerInputPhase, PointerPhase, Size,
 };
 
-use crate::kit::bus::{self, Action};
+use crate::events;
 use crate::kit::focus::FocusId;
 use crate::kit::frame;
 use crate::kit::report::{self, Scroller};
@@ -260,6 +261,7 @@ pub fn scroll_area(modifier: Modifier, scroll: Scroll, content: impl FnOnce()) {
     let id = scroll.id;
     let out = Rc::new(Cell::new(Measure::default()));
     let (placed, wheel, bar) = (out.clone(), out.clone(), out.clone());
+    let handler = events::handler();
     let previous = room_of(id);
     let outer = modifier
         .clip()
@@ -282,11 +284,7 @@ pub fn scroll_area(modifier: Modifier, scroll: Scroll, content: impl FnOnce()) {
             if room <= 0.0 {
                 return false;
             }
-            bus::send(Action::Scroll {
-                id,
-                pixels: -event.scroll_delta.y,
-                room,
-            });
+            handler.scrolled(id, -event.scroll_delta.y, room);
             true
         });
     rustle::layout(outer, Framed, move || {
@@ -302,32 +300,16 @@ pub fn scroll_area(modifier: Modifier, scroll: Scroll, content: impl FnOnce()) {
 #[track_caller]
 fn scrollbar(id: FocusId, measure: Rc<Cell<Measure>>) {
     let held = Rc::new(Cell::new(None::<f32>));
-    let (drawn, dragged) = (measure.clone(), measure);
+    let drawn = measure;
     let (holding, grip) = (held.clone(), held);
     let theme = theme::theme();
     let strip = Modifier::new()
         .width(SCROLLBAR_GRIP)
         .fill_max_height()
-        .on_pointer_button(PointerButton::Primary, move |event| {
-            let y = event.window_position.y;
-            match event.phase {
-                PointerPhase::Press => grip.set(Some(y)),
-                PointerPhase::Drag => {
-                    let Some(last) = grip.get() else {
-                        return;
-                    };
-                    let measure = dragged.get();
-                    let (_, thumb, track) = thumb_of(measure);
-                    let travel = (track - thumb).max(1.0);
-                    grip.set(Some(y));
-                    bus::send(Action::Scroll {
-                        id,
-                        pixels: (y - last) * measure.room / travel,
-                        room: measure.room,
-                    });
-                }
-                PointerPhase::Release | PointerPhase::Click => grip.set(None),
-            }
+        .on_pointer_button(PointerButton::Primary, move |event| match event.phase {
+            PointerPhase::Press => grip.set(Some(event.window_position.y)),
+            PointerPhase::Drag => {}
+            PointerPhase::Release | PointerPhase::Click => grip.set(None),
         })
         .draw_behind_interactive(move |canvas, interaction| {
             let measure = drawn.get();

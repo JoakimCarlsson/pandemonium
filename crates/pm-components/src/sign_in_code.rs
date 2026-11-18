@@ -163,7 +163,7 @@ pub fn code_dialog(state: &WorkspaceState) {
 #[cfg(test)]
 fn laid_out_buttons(state: &WorkspaceState) -> Vec<u64> {
     let state = state.clone();
-    let report = crate::kit::snapshot::lay_out(800.0, 600.0, None, move || code_dialog(&state));
+    let report = crate::kit::report::lay_out(800.0, 600.0, None, move || code_dialog(&state));
     report
         .regions
         .iter()

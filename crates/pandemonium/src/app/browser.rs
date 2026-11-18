@@ -7,8 +7,8 @@ use pm_browser::{
     Key as Typed, Modifiers as Held, Notice, PickedElement, View, ZoomAction,
 };
 use pm_components::browser::{
-    BROWSER_BODY, BROWSER_FIND_BAR, BROWSER_FIND_FIELD, BROWSER_TOOLS_BODY, Command, HOME,
-    PAGE_SURFACE, Pointer, TOOLS_SURFACE, ZoomStep,
+    BROWSER_BODY, BROWSER_FIND_BAR, BROWSER_FIND_FIELD, BROWSER_TOOLS_BODY, Command, HOME, Pointer,
+    ZoomStep,
 };
 use pm_components::browser_keys::{Shortcut, shortcut_of};
 use pm_components::browser_links::{Route, route};
@@ -18,12 +18,12 @@ use pm_components::browser_tabs::{TabInfo, changes_page, locked_message};
 use pm_components::elements::Element;
 use pm_components::exhibit::{Helper, PREVIEW_NEEDS_BROWSER, PREVIEW_NEEDS_UPDATE, PreviewRequest};
 use pm_components::figures::Drawing;
-use pm_components::kit::Picture;
 use pm_components::kit::{Button, FocusId, Key, KeyEvent};
 use pm_components::state::PROMPT;
 use pm_editor::{Action, Pressed};
 use pm_pages::Screen;
 use rustle::CursorIcon as Cursor;
+use rustle::ImageData;
 use rustle::Rect;
 
 use super::App;
@@ -47,6 +47,8 @@ pub(super) struct Web {
     tools_sized: Option<(u32, u32, f32)>,
     /// The newest frame of the tools that was handed to the window.
     tools_shown: u64,
+    /// The texture every frame of the page shown is drawn into, and the tools' one.
+    textures: [rustle::ImageKey; 2],
     /// Which window the primary button went down in, so the release goes to it too.
     pressed_in: Option<FocusId>,
     /// The last press, for counting clicks.
@@ -124,8 +126,8 @@ fn still_outdated() -> String {
 fn preview_drawing(path: &std::path::Path, width: u32) -> Result<Drawing, String> {
     let bytes =
         std::fs::read(path).map_err(|error| format!("The preview could not be read: {error}"))?;
-    let picture = crate::work::picture::decode("preview", &bytes, false)?;
-    let density = (picture.width as f32 / width.max(1) as f32).max(1.0);
+    let picture = crate::work::picture::decode(&bytes, false)?;
+    let density = (picture.width() as f32 / width.max(1) as f32).max(1.0);
     Ok(Drawing { picture, density })
 }
 
@@ -1439,16 +1441,12 @@ impl App {
                 view.focus(focused == Some(BROWSER_TOOLS_BODY));
             }
         }
-        let picture = |view: &View, surface: u32, shown: &mut u64| {
+        let picture = |view: &View, texture: rustle::ImageKey, shown: &mut u64| {
             let frame = view.frame().filter(|frame| frame.generation != *shown)?;
             *shown = frame.generation;
-            Some(Picture {
-                key: Picture::live_key(surface, frame.generation),
-                width: frame.width,
-                height: frame.height,
-                pixels: frame.rgba,
-            })
+            ImageData::keyed(texture, frame.width, frame.height, frame.rgba.as_slice())
         };
+        let [page_texture, tools_texture] = self.web.textures;
         let typing = self.focus.current() == Some(pm_components::browser::BROWSER_ADDRESS);
         let mut reports = Vec::new();
         for id in self.web.pages.keys().copied().collect::<Vec<_>>() {
@@ -1463,7 +1461,7 @@ impl App {
                 continue;
             };
             let page = if Some(id) == active {
-                picture(&shown.view, PAGE_SURFACE, &mut shown.shown)
+                picture(&shown.view, page_texture, &mut shown.shown)
             } else {
                 None
             };
@@ -1479,7 +1477,7 @@ impl App {
             .web
             .tools
             .as_ref()
-            .and_then(|(_, view)| picture(view, TOOLS_SURFACE, &mut self.web.tools_shown));
+            .and_then(|(_, view)| picture(view, tools_texture, &mut self.web.tools_shown));
         let changed = self.model.read(|screen| {
             let Screen::Workspace(state) = screen;
             reports.iter().any(|(id, page, title, address, pointer)| {

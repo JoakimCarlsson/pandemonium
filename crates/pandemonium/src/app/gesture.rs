@@ -1,11 +1,10 @@
 //! The places the pointer selects text, each as a [`Surface`] for the one
 //! press-and-drag gesture: a field, the conversation's text, and the shell.
 
+use crate::model::Model;
 use pm_components::kit::FocusId;
-use pm_components::kit::State;
 use pm_components::kit::{Report as Output, TextPoint, TextSelection};
 use pm_field::{Edit, Reach, Surface};
-use pm_pages::Screen;
 
 use super::App;
 
@@ -79,7 +78,7 @@ impl Surface for ChatText<'_> {
 /// The window of the shell showing, by line counted from the oldest kept and column.
 pub(super) struct TerminalWindow<'a> {
     /// The screen the shell is on.
-    pub(super) model: &'a State<Screen>,
+    pub(super) model: &'a Model,
 }
 
 impl Surface for TerminalWindow<'_> {

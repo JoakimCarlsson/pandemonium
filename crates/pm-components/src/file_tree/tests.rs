@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use super::*;
 use crate::kit::report::Report;
-use crate::kit::snapshot::lay_out;
+use crate::kit::report::lay_out;
 use crate::kit::theme::set_scales;
 use crate::kit::{Scroll, scroll_area};
 

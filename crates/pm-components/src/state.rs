@@ -1902,7 +1902,7 @@ pub struct WorkspaceState {
     /// What other machines said about the agents, by destination, while the settings of one machine are showing.
     pub discovered_elsewhere: std::collections::HashMap<Option<String>, Discovered>,
     /// What the attached pictures look like, by path, once they are decoded.
-    pub previews: std::collections::HashMap<String, crate::kit::Picture>,
+    pub previews: std::collections::HashMap<String, rustle::ImageData>,
     /// The diagrams and images of markdown drawn or fetched so far.
     pub figures: crate::figures::Figures,
     /// The figures asked for, by their key, so none is asked for twice.

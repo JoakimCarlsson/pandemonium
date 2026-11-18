@@ -33,7 +33,7 @@ pub enum Contents {
     /// The text of the file.
     Text(Box<Document>),
     /// The pixels of a picture file, decoded.
-    Picture(crate::kit::Picture),
+    Picture(rustle::ImageData),
     /// Why there is nothing to show.
     Message(String),
 }
@@ -60,7 +60,7 @@ pub struct Viewer {
     /// Whether a file that can be rendered shows its source instead.
     pub source: bool,
     /// The text of a vector picture drawn, or why it could not be, once it has been tried.
-    pub drawn: Option<Result<crate::kit::Picture, String>>,
+    pub drawn: Option<Result<rustle::ImageData, String>>,
     /// Whether it is open only for the excerpts, which leaves its tab out of the strip.
     pub hidden: bool,
 }
@@ -454,7 +454,7 @@ impl WorkspaceState {
         session: usize,
         path: &str,
         head: bool,
-        read: Result<crate::kit::Picture, String>,
+        read: Result<rustle::ImageData, String>,
     ) -> Self {
         if let Some(viewer) = self.viewer_of(session, path, head) {
             viewer.contents = match read {
@@ -471,7 +471,7 @@ impl WorkspaceState {
         session: usize,
         path: &str,
         head: bool,
-        drawn: Result<crate::kit::Picture, String>,
+        drawn: Result<rustle::ImageData, String>,
     ) -> Self {
         if let Some(viewer) = self.viewer_of(session, path, head) {
             viewer.drawn = Some(drawn);

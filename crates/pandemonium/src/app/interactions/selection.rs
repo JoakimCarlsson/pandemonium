@@ -32,6 +32,7 @@ fn conversation(rig: &Rig) -> Rect {
 /// The text of the conversation selected.
 fn selected(rig: &Rig) -> String {
     rig.app
+        .borrow()
         .text_selection
         .map(|selection| rig.report().selected_text(&selection))
         .unwrap_or_default()
@@ -101,7 +102,7 @@ fn select_all_and_let_go() {
         "{all}"
     );
     rig.click_on(TAB_DIFF);
-    assert!(rig.app.text_selection.is_none());
+    assert!(rig.app.borrow_mut().text_selection.is_none());
 }
 
 /// Files let go over the conversation from another application are

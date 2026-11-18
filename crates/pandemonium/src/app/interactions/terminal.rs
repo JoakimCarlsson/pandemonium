@@ -9,17 +9,17 @@ use crate::snapshot::Shot;
 
 /// What the shell was asked to be sent since the last time, as written out.
 fn sent(rig: &mut Rig) -> String {
-    format!("{:?}", rig.app.work.asked())
+    format!("{:?}", rig.app.borrow_mut().work.asked())
 }
 
 /// The shell's workspace, its shell taken to be open on the server as the first.
 fn opened() -> Rig {
-    let mut rig = Rig::shot(Shot::Terminal);
+    let rig = Rig::shot(Shot::Terminal);
     let tab = rig
         .state(|state| state.active_terminal().map(|tab| tab.id))
         .expect("a shell shows");
-    let model = rig.app.model.clone();
-    rig.app.work.terminal_opened(&model, tab, 1);
+    let model = rig.app.borrow().model.clone();
+    rig.app.borrow_mut().work.terminal_opened(&model, tab, 1);
     rig
 }
 

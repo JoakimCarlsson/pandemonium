@@ -86,7 +86,7 @@ fn cast_shadow(modifier: Modifier) -> Modifier {
         let (width, height) = (canvas.width(), canvas.height());
         for (x, y, blur, spread, alpha) in WINDOW_SHADOW {
             let shade = rustle::Color::rgba(0, 0, 0, (alpha * 255.0).round() as u8);
-            canvas.shadow(
+            canvas.shadow_with_falloff(
                 x - spread,
                 y - spread,
                 width + 2.0 * spread,
@@ -94,6 +94,7 @@ fn cast_shadow(modifier: Modifier) -> Modifier {
                 (FRAME_RADIUS + spread).max(0.0),
                 blur * crate::kit::layout::SHADOW_SOFTNESS,
                 shade,
+                rustle::ShadowFalloff::SmoothStep,
             );
         }
     })

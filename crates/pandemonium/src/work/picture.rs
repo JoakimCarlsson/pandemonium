@@ -1,13 +1,12 @@
 //! Pictures of open files turned into pixels away from the window: picture files decoded from their bytes and vector pictures drawn from their text.
 
 use std::collections::BTreeMap;
-use std::hash::{Hash, Hasher};
 use std::sync::{Arc, LazyLock};
 
 use pm_components::figures::Drawing;
-use pm_components::kit::Picture;
 use pm_components::kit::Role;
 use pm_components::preview::VECTOR_DENSITY;
+use rustle::ImageData;
 
 /// The longest side a picture is drawn or kept at, in pixels, so its texture fits any GPU.
 const LONGEST_SIDE: u32 = 4096;
@@ -110,15 +109,8 @@ impl Palette {
     }
 }
 
-/// A key naming pixels made from `source` for the file at `path`, so the same pixels are uploaded once.
-fn key_of(path: &str, source: &[u8]) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    (path, source).hash(&mut hasher);
-    hasher.finish()
-}
-
-/// The picture `bytes` of the file at `path` hold, decoded and shrunk to fit the longest side kept, or why it could not be read.
-pub(crate) fn decode(path: &str, bytes: &[u8], truncated: bool) -> Result<Picture, String> {
+/// The picture `bytes` hold, decoded and shrunk to fit the longest side kept, or why it could not be read.
+pub(crate) fn decode(bytes: &[u8], truncated: bool) -> Result<ImageData, String> {
     if truncated {
         return Err("This picture is too large to show.".to_owned());
     }
@@ -130,21 +122,17 @@ pub(crate) fn decode(path: &str, bytes: &[u8], truncated: bool) -> Result<Pictur
         decoded
     };
     let rgba = decoded.to_rgba8();
-    Ok(Picture {
-        key: key_of(path, bytes),
-        width: rgba.width(),
-        height: rgba.height(),
-        pixels: Arc::new(rgba.into_raw()),
-    })
+    ImageData::from_rgba(rgba.width(), rgba.height(), rgba.into_raw())
+        .ok_or_else(|| "This picture has no pixels to show.".to_owned())
 }
 
-/// The vector picture `text` of the file at `path` holds, drawn at the density of a drawn vector picture and its longest side no shorter than the shortest a vector file is drawn at, or why it could not be drawn.
-pub(crate) fn draw(path: &str, text: &str) -> Result<Picture, String> {
-    draw_sized(path, text, SHORTEST_VECTOR_SIDE)
+/// The vector picture `text` holds, drawn at the density of a drawn vector picture and its longest side no shorter than the shortest a vector file is drawn at, or why it could not be drawn.
+pub(crate) fn draw(text: &str) -> Result<ImageData, String> {
+    draw_sized(text, SHORTEST_VECTOR_SIDE)
 }
 
-/// The vector picture `text` of the file at `path` holds, drawn at the density of a drawn vector picture and its longest side no shorter than `shortest` pixels, or why it could not be drawn.
-fn draw_sized(path: &str, text: &str, shortest: f32) -> Result<Picture, String> {
+/// The vector picture `text` holds, drawn at the density of a drawn vector picture and its longest side no shorter than `shortest` pixels, or why it could not be drawn.
+fn draw_sized(text: &str, shortest: f32) -> Result<ImageData, String> {
     let options = resvg::usvg::Options {
         fontdb: Arc::clone(&FONTS),
         ..resvg::usvg::Options::default()
@@ -172,12 +160,8 @@ fn draw_sized(path: &str, text: &str, shortest: f32) -> Result<Picture, String> 
             [color.red(), color.green(), color.blue(), color.alpha()]
         })
         .collect();
-    Ok(Picture {
-        key: key_of(path, text.as_bytes()),
-        width,
-        height,
-        pixels: Arc::new(pixels),
-    })
+    ImageData::from_rgba(width, height, pixels)
+        .ok_or_else(|| "This picture has no pixels to show.".to_owned())
 }
 
 /// Whether `bytes` hold a vector picture's text rather than the pixels of a picture.
@@ -192,12 +176,12 @@ fn is_vector(bytes: &[u8]) -> bool {
 pub(crate) fn figure(bytes: &[u8], truncated: bool) -> Result<Drawing, String> {
     if is_vector(bytes) {
         let text = String::from_utf8_lossy(bytes);
-        return draw_sized("figure", &text, 1.0).map(|picture| Drawing {
+        return draw_sized(&text, 1.0).map(|picture| Drawing {
             picture,
             density: VECTOR_DENSITY,
         });
     }
-    decode("figure", bytes, truncated).map(|picture| Drawing {
+    decode(bytes, truncated).map(|picture| Drawing {
         picture,
         density: 1.0,
     })
@@ -214,7 +198,7 @@ pub(crate) fn diagram(source: &str, palette: &Palette) -> Result<Drawing, String
     theme.responsive = false;
     let svg = mermaid_svg::render_with(source, &theme)
         .map_err(|error| format!("This diagram could not be drawn: {error}"))?;
-    draw_sized("diagram", &svg, 1.0).map(|picture| Drawing {
+    draw_sized(&svg, 1.0).map(|picture| Drawing {
         picture,
         density: VECTOR_DENSITY,
     })
@@ -233,7 +217,7 @@ pub(crate) fn formula(source: &str, palette: &Palette) -> Result<Drawing, String
     options.display = true;
     let svg = latex_rust::latex_to_svg(source, &font, &options)
         .map_err(|error| format!("This formula could not be set: {error}"))?;
-    draw_sized("formula", &svg, 1.0).map(|picture| Drawing {
+    draw_sized(&svg, 1.0).map(|picture| Drawing {
         picture,
         density: VECTOR_DENSITY,
     })

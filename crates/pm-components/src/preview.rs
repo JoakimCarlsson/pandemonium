@@ -1,7 +1,7 @@
 //! A file shown rendered rather than as its source: markdown laid out as a page, and pictures drawn whole.
 
 use crate::kit::sp;
-use crate::kit::{FocusId, Picture, Radius, Role, Styled, picture as picture_box};
+use crate::kit::{FocusId, Radius, Role, Styled};
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
@@ -127,7 +127,7 @@ pub fn dimensions(viewer: &Viewer) {
         return;
     };
     line(
-        format!("{} × {}", picture.width, picture.height),
+        format!("{} × {}", picture.width(), picture.height()),
         11,
         1.4,
         Role::Muted,
@@ -197,10 +197,10 @@ fn page(path: &str, source: &str, figures: &Figures, width: f32) {
 
 /// Emits `picture`, `density` of its pixels to a logical pixel, shrunk to fit a view `room` logical pixels across and down and set in its middle on a plain backing.
 #[track_caller]
-fn framed(picture: &Picture, density: f32, room: (f32, f32)) {
+fn framed(picture: &rustle::ImageData, density: f32, room: (f32, f32)) {
     let (across, down) = (
-        picture.width as f32 / density,
-        picture.height as f32 / density,
+        picture.width() as f32 / density,
+        picture.height() as f32 / density,
     );
     let (wide, tall) = (
         (room.0 - 2.0 * MARGIN).max(16.0),
@@ -212,13 +212,14 @@ fn framed(picture: &Picture, density: f32, room: (f32, f32)) {
         Arrangement::Center,
         Alignment::Center,
         || {
-            picture_box(
+            rustle::image(
                 Modifier::new()
                     .width(across * fit)
                     .height(down * fit)
                     .fill_rounded(Role::Surface, Radius::Sm)
                     .stroke(Role::Border, Radius::Sm),
                 picture,
+                rustle::ContentScale::Crop,
             );
         },
     );

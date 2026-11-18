@@ -91,12 +91,12 @@ fn resting_on_code_waits_to_ask_about_it() {
         .expect("the word is drawn");
     let at = (caret.origin.x, caret.origin.y + caret.size.height / 2.0);
     rig.move_to(at);
-    assert!(rig.app.hover_rest.is_some());
+    assert!(rig.app.borrow_mut().hover_rest.is_some());
     rig.move_to((at.0 + 1.0, at.1));
-    assert!(rig.app.hover_rest.is_some());
+    assert!(rig.app.borrow_mut().hover_rest.is_some());
     rig.leave();
     rig.move_to((5.0, 400.0));
-    assert!(rig.app.hover_rest.is_none());
+    assert!(rig.app.borrow_mut().hover_rest.is_none());
 }
 
 /// Where byte `offset` of the file shown is drawn, halfway down its line.

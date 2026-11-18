@@ -4,7 +4,7 @@
 //! rig that feeds it input the way the event loop does, through the same
 //! interface and the same handling of each event.
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, Ref, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -258,8 +258,11 @@ pub(super) const SIZE: (f32, f32) = (1280.0, 800.0);
 /// The app running headless, fed input the way the event loop feeds it:
 /// each event goes to the interface of its window first, then to the app.
 pub(super) struct Rig {
-    /// The app.
-    pub(super) app: App,
+    /// The app, shared with the handlers its interface runs.
+    pub(super) app: Rc<RefCell<App>>,
+    /// The headless interfaces, held apart from the app so they can handle
+    /// an event while the app is free for the handlers it runs.
+    screens: Rc<RefCell<Option<Screens>>>,
     /// The clipboard the app reads and writes.
     pub(super) clipboard: Memory,
     /// The modifier keys held.
@@ -280,13 +283,17 @@ impl Rig {
         app.shell.set_size(None, outer);
         let screens = Screens::new(&app.shell.shared, outer);
         app.window = Some(Rc::clone(&screens.ports[0]) as Rc<dyn Port>);
-        app.shell.headless = Some(screens);
+        *app.shell.headless.borrow_mut() = Some(screens);
+        let screens = Rc::clone(&app.shell.headless);
         let clipboard = Memory::default();
         app.clipboard = Some(Box::new(clipboard.clone()));
         app.apply_appearance();
         app.recompose = true;
+        let app = Rc::new(RefCell::new(app));
+        app.borrow().shell.shared.attach(&app);
         let mut rig = Self {
             app,
+            screens,
             clipboard,
             modifiers: Modifiers::default(),
         };
@@ -303,7 +310,7 @@ impl Rig {
     /// so what the first turn asked for is composed.
     pub(super) fn settle(&mut self) {
         for _ in 0..2 {
-            let _ = self.app.come_to_rest();
+            let _ = self.app.borrow_mut().come_to_rest();
         }
     }
 
@@ -312,37 +319,38 @@ impl Rig {
     /// and comes to rest.
     pub(super) fn wait(&mut self, ms: u64) {
         let by = Duration::from_millis(ms);
-        self.app.started = self.app.started.checked_sub(by).unwrap_or(self.app.started);
-        if let Some(at) = self.app.title_press {
-            self.app.title_press = at.checked_sub(by);
+        let mut app = self.app.borrow_mut();
+        app.started = app.started.checked_sub(by).unwrap_or(app.started);
+        if let Some(at) = app.title_press {
+            app.title_press = at.checked_sub(by);
         }
-        if let Some((id, at)) = self.app.last_activation {
-            self.app.last_activation = at.checked_sub(by).map(|at| (id, at));
+        if let Some((id, at)) = app.last_activation {
+            app.last_activation = at.checked_sub(by).map(|at| (id, at));
         }
-        if let Some((word, at)) = self.app.hover_rest {
-            self.app.hover_rest = at.checked_sub(by).map(|at| (word, at));
+        if let Some((word, at)) = app.hover_rest {
+            app.hover_rest = at.checked_sub(by).map(|at| (word, at));
         }
-        if let Some(at) = self.app.hover_leaving {
-            self.app.hover_leaving = at.checked_sub(by);
+        if let Some(at) = app.hover_leaving {
+            app.hover_leaving = at.checked_sub(by);
         }
-        self.app.recompose = true;
+        app.recompose = true;
+        drop(app);
         self.settle();
     }
 
     /// Hands `input` of the main window, or of `aside`'s, to its interface
     /// through `feed`, then to the app, and lets the loop come to rest.
     fn send(&mut self, aside: Option<Aside>, input: Input, feed: impl FnOnce(&mut Embedded)) {
-        self.app.set_frame();
+        self.app.borrow().set_frame();
         if let Some(ui) = self
-            .app
-            .shell
-            .headless
+            .screens
+            .borrow_mut()
             .as_mut()
             .and_then(|screens| screens.ui(aside))
         {
             feed(ui);
         }
-        self.app.after_interface(aside, input);
+        self.app.borrow_mut().after_interface(aside, input);
         self.settle();
     }
 
@@ -546,12 +554,10 @@ impl Rig {
     }
 
     /// The headless interfaces.
-    fn screens(&self) -> &Screens {
-        self.app
-            .shell
-            .headless
-            .as_ref()
-            .expect("the rig runs headless")
+    fn screens(&self) -> Ref<'_, Screens> {
+        Ref::map(self.screens.borrow(), |screens| {
+            screens.as_ref().expect("the rig runs headless")
+        })
     }
 
     /// Whether the window of `aside` is open.
@@ -561,12 +567,12 @@ impl Rig {
 
     /// What the last frame of the main window found on screen, in its frame's coordinates.
     pub(super) fn report(&self) -> Report {
-        self.app.report_of(None)
+        self.app.borrow().report_of(None)
     }
 
     /// What the last frame of `aside`'s window found on screen.
     pub(super) fn aside_report(&self, aside: Aside) -> Report {
-        self.app.report_of(Some(aside))
+        self.app.borrow().report_of(Some(aside))
     }
 
     /// The middle of what `id` names in the main window.
@@ -600,20 +606,21 @@ impl Rig {
 
     /// What has the keyboard.
     pub(super) fn focused(&self) -> Option<FocusId> {
-        self.app.focus.current()
+        self.app.borrow().focus.current()
     }
 
     /// Reads the screen through `read`.
     pub(super) fn read<T>(&self, read: impl FnOnce(&Screen) -> T) -> T {
-        self.app.model.read(read)
+        self.app.borrow().model.read(read)
     }
 
     /// Where the last frame of the main window, or of `aside`'s, drew text
     /// holding `words`, in its frame's coordinates.
     pub(super) fn text_at(&self, aside: Option<Aside>, words: &str) -> Option<(f32, f32)> {
+        let screens = self.screens();
         let ui = match aside {
-            None => &self.screens().main,
-            Some(aside) => self.screens().asides[slot(aside)].as_ref()?,
+            None => &screens.main,
+            Some(aside) => screens.asides[slot(aside)].as_ref()?,
         };
         let band = Self::outer(aside, (0.0, 0.0)).0;
         ui.commands().iter().find_map(|command| match command {
@@ -648,7 +655,7 @@ impl Rig {
 
     /// The pointer shape the main window shows.
     pub(super) fn cursor(&self) -> rustle::CursorIcon {
-        let decided = self.app.shell.shared.cursor();
+        let decided = self.app.borrow().shell.shared.cursor();
         decided.unwrap_or_else(|| self.screens().main.cursor())
     }
 }

@@ -183,7 +183,7 @@ impl Styled for Modifier {
             let (width, height) = (canvas.width(), canvas.height());
             for (x, y, blur, spread, alpha) in layers {
                 let shade = rustle::Color::rgba(0, 0, 0, (alpha * 255.0).round() as u8);
-                canvas.shadow(
+                canvas.shadow_with_falloff(
                     x - spread,
                     y - spread,
                     width + 2.0 * spread,
@@ -191,6 +191,7 @@ impl Styled for Modifier {
                     (corner + spread).max(0.0),
                     blur * SHADOW_SOFTNESS,
                     shade,
+                    rustle::ShadowFalloff::SmoothStep,
                 );
             }
         })

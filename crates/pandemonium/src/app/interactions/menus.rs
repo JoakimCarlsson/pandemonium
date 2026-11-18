@@ -124,7 +124,12 @@ fn the_message_menu_selects_and_copies() {
     rig.right_click(at);
     assert!(rig.state(|state| state.message_menu.is_some()));
     rig.click_on(MESSAGE_MENU_SELECT_ALL);
-    assert!(rig.app.text_selection.is_some_and(|held| !held.is_empty()));
+    assert!(
+        rig.app
+            .borrow_mut()
+            .text_selection
+            .is_some_and(|held| !held.is_empty())
+    );
     rig.right_click(at);
     rig.click_on(MESSAGE_MENU_COPY);
     let copied = rig.clipboard.text.borrow().clone().unwrap_or_default();

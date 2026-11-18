@@ -746,7 +746,7 @@ impl Screen {
         session: usize,
         path: &str,
         head: bool,
-        read: Result<pm_components::kit::Picture, String>,
+        read: Result<rustle::ImageData, String>,
     ) -> Self {
         match self {
             Self::Workspace(state) => {
@@ -761,7 +761,7 @@ impl Screen {
         session: usize,
         path: &str,
         head: bool,
-        drawn: Result<pm_components::kit::Picture, String>,
+        drawn: Result<rustle::ImageData, String>,
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_drawn(session, path, head, drawn)),
@@ -1092,7 +1092,7 @@ impl Screen {
     }
 
     /// The screen knowing what the picture at `path` looks like, while the workspace is showing.
-    pub fn with_preview(self, path: &str, picture: pm_components::kit::Picture) -> Self {
+    pub fn with_preview(self, path: &str, picture: rustle::ImageData) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_preview(path, picture)),
         }

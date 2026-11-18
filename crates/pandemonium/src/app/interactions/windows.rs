@@ -119,13 +119,13 @@ fn the_frame_buttons() {
 fn closing_the_window_asks_then_quits() {
     let mut rig = Rig::shot(Shot::Workspace);
     rig.close(None);
-    assert!(!rig.app.come_to_rest().1);
+    assert!(!rig.app.borrow_mut().come_to_rest().1);
     assert_eq!(
         rig.state(|state| state.git.prompt.clone()),
         Some(Prompt::Quit)
     );
     rig.click_on(PROMPT_CONFIRM);
-    assert!(rig.app.come_to_rest().1);
+    assert!(rig.app.borrow_mut().come_to_rest().1);
 }
 
 /// The settings button opens settings in their own window, which takes

@@ -11,7 +11,7 @@ use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing
 use pm_components::git_menus::MenuKind;
 use pm_components::git_prompts::Prompt;
 use pm_components::kit::FocusId;
-use pm_components::kit::snapshot::{Shot as Frame, lay_out, write_png};
+use pm_components::kit::report::lay_out;
 use pm_components::kit::theme::{Appearance, default_family};
 use pm_components::kit::{TextPoint, TextSelection};
 use pm_components::open_files::EDITOR_FIELD;
@@ -34,6 +34,10 @@ use pm_harness::{
 use pm_pages::{ADD_PROJECT, HISTORY, PROMPT, SEND, Screen, TAB_DIFF, TERMINAL, WorkspaceState};
 
 use crate::scene;
+
+use self::offscreen::{Shot as Frame, write_png};
+
+mod offscreen;
 
 /// Logical width of the snapshot.
 const WIDTH: u32 = 1280;
@@ -1878,12 +1882,8 @@ fn browser_finding(tools: bool) -> WorkspaceState {
             pixels.extend_from_slice(&[shade, shade, shade, 255]);
         }
     }
-    let page = pm_components::kit::Picture {
-        key: pm_components::kit::Picture::live_key(pm_components::browser::PAGE_SURFACE, 1),
-        width,
-        height,
-        pixels: std::sync::Arc::new(pixels),
-    };
+    let page = rustle::ImageData::from_rgba(width, height, pixels)
+        .expect("as many pixels as the picture is large");
     state.browser_tab_painted(
         first,
         Some(page),
@@ -1909,7 +1909,7 @@ fn browser_finding(tools: bool) -> WorkspaceState {
 }
 
 /// The picture of a page with one text field that has the keyboard: a ring round the field, its text selected up to a caret.
-fn input_page(width: u32, height: u32) -> pm_components::kit::Picture {
+fn input_page(width: u32, height: u32) -> rustle::ImageData {
     let (left, right, top, bottom) = (40_u32, 400_u32, 60_u32, 100_u32);
     let (selected_to, caret) = (260_u32, 262_u32);
     let mut pixels = Vec::with_capacity((width * height * 4) as usize);
@@ -1932,12 +1932,8 @@ fn input_page(width: u32, height: u32) -> pm_components::kit::Picture {
             pixels.extend_from_slice(&pixel);
         }
     }
-    pm_components::kit::Picture {
-        key: pm_components::kit::Picture::live_key(pm_components::browser::PAGE_SURFACE, 1),
-        width,
-        height,
-        pixels: std::sync::Arc::new(pixels),
-    }
+    rustle::ImageData::from_rgba(width, height, pixels)
+        .expect("as many pixels as the picture is large")
 }
 
 /// The workspace with the browser on a page whose text field has the keyboard.
@@ -5645,12 +5641,7 @@ fn previewed(path: &str) -> WorkspaceState {
                 false,
                 Ok((Some(PREVIEW_VECTOR.to_owned()), false, None)),
             )
-            .with_drawn(
-                0,
-                path,
-                false,
-                crate::work::picture::draw(path, PREVIEW_VECTOR),
-            ),
+            .with_drawn(0, path, false, crate::work::picture::draw(PREVIEW_VECTOR)),
         _ => {
             let palette = crate::work::picture::Palette::of(
                 pm_components::kit::theme::default_family()
@@ -5714,14 +5705,9 @@ fn mock_page(width: u32, height: u32, hue: [u8; 3]) -> pm_components::figures::D
             })
         })
         .collect();
-    let [red, green, blue] = hue.map(u64::from);
     pm_components::figures::Drawing {
-        picture: pm_components::kit::Picture {
-            key: 0x5EA1_0000_0000 | red << 16 | green << 8 | blue,
-            width,
-            height,
-            pixels: std::sync::Arc::new(pixels),
-        },
+        picture: rustle::ImageData::from_rgba(width, height, pixels)
+            .expect("as many pixels as the picture is large"),
         density: 1.0,
     }
 }
@@ -5876,7 +5862,7 @@ fn inquiring_mockups(pictured: bool) -> WorkspaceState {
 }
 
 /// A picture that fades from red to blue, for a snapshot of a preview.
-fn gradient() -> pm_components::kit::Picture {
+fn gradient() -> rustle::ImageData {
     let (width, height) = (200u32, 120u32);
     let pixels = (0..height)
         .flat_map(|y| {
@@ -5884,12 +5870,8 @@ fn gradient() -> pm_components::kit::Picture {
                 .flat_map(move |x| [(255 * x / width) as u8, (255 * y / height) as u8, 200, 255])
         })
         .collect();
-    pm_components::kit::Picture {
-        key: 1,
-        width,
-        height,
-        pixels: std::sync::Arc::new(pixels),
-    }
+    rustle::ImageData::from_rgba(width, height, pixels)
+        .expect("as many pixels as the picture is large")
 }
 
 /// A listing of the registry of tool servers, for a snapshot.
@@ -6108,10 +6090,8 @@ mod performance_tests {
 /// Writes one frame of the window with a live page open in the browser to a PNG, after sending a few events into the page when `interact`, and with the developer tools open when `tools`; prints the title the page ends with.
 pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Result<(), String> {
     use pm_browser::{Button as Mouse, Engine, Key as Typed, Modifiers as Held, View};
-    use pm_components::browser::{
-        BROWSER_BODY, BROWSER_TOOLS_BODY, PAGE_SURFACE, Pointer, TOOLS_SURFACE,
-    };
-    use pm_components::kit::Picture;
+    use pm_components::browser::{BROWSER_BODY, BROWSER_TOOLS_BODY, Pointer};
+    use rustle::ImageData;
     use std::time::Duration;
 
     let (width, height) = (WIDTH as f32, HEIGHT as f32);
@@ -6175,12 +6155,9 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
         page.scrolled(200, 300, 0, -300, none);
         pump(1.0);
     }
-    let picture = |view: &View, surface: u32| {
-        view.frame().map(|frame| Picture {
-            key: Picture::live_key(surface, frame.generation),
-            width: frame.width,
-            height: frame.height,
-            pixels: frame.rgba,
+    let picture = |view: &View, texture: rustle::ImageKey| {
+        view.frame().and_then(|frame| {
+            ImageData::keyed(texture, frame.width, frame.height, frame.rgba.as_slice())
         })
     };
     let title = page.title();
@@ -6192,7 +6169,7 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
             .map_or(1, |browser| browser.active_id());
         state.browser_tab_painted(
             first,
-            picture(&page, PAGE_SURFACE),
+            picture(&page, rustle::ImageKey::new()),
             &title,
             &page.address(),
             Pointer::Arrow,
@@ -6200,7 +6177,7 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
         );
         if let Some(tools) = tools_view
             .as_ref()
-            .and_then(|view| picture(view, TOOLS_SURFACE))
+            .and_then(|view| picture(view, rustle::ImageKey::new()))
         {
             state.browser_tools_painted(tools);
         }

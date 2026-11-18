@@ -10,7 +10,7 @@ use crate::Popover;
 use crate::choices::{LIST_ROW_HEIGHT, LIST_ROWS, PRESSABLE_LIST_ROWS};
 use crate::kit::{
     FocusId, Hovered, IconName, Interactive, Looks, Placement, Radius, Role, Scroll, Side, Styled,
-    Type, label, label_with, picture, scroll_area, sp,
+    Type, label, label_with, scroll_area, sp,
 };
 use crate::parts::{line, spacer};
 use crate::plan::proposal;
@@ -583,12 +583,13 @@ pub fn attached_file(state: &WorkspaceState, path: &str, side: f32) {
         Alignment::Center,
         || {
             if let Some(shown) = shown {
-                picture(
+                rustle::image(
                     Modifier::new()
                         .width(side)
                         .height(side)
                         .clip_to(Radius::None),
                     &shown,
+                    rustle::ContentScale::Crop,
                 );
             }
             line(name, 12, 1.4, Role::Muted);
@@ -639,12 +640,13 @@ pub fn sent_files(state: &WorkspaceState, files: &[String]) {
         || {
             for path in files {
                 match state.previews.get(path) {
-                    Some(shown) => picture(
+                    Some(shown) => rustle::image(
                         Modifier::new()
                             .width(SENT_PICTURE)
                             .height(SENT_PICTURE)
                             .clip_to(Radius::None),
                         shown,
+                        rustle::ContentScale::Crop,
                     ),
                     None => attached_file(state, path, THUMBNAIL),
                 }

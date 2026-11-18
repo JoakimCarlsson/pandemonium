@@ -10,9 +10,9 @@ use rustle::Modifier;
 
 use crate::exhibit::Offer;
 use crate::figures::Figures;
-use crate::kit::Picture;
 use crate::sample::{Message, Session, Status, Step};
 use crate::state::WorkspaceState;
+use rustle::ImageData;
 
 /// How many recently displayed message layouts survive prompt edits.
 const CAPACITY: usize = 4096;
@@ -61,7 +61,7 @@ struct Cached {
     /// What the placeholders of its exhibits offer while the embedded browser is missing, when it has exhibits.
     offer: Option<Offer>,
     /// Attachment thumbnails, shared pixel buffers included.
-    previews: HashMap<String, Picture>,
+    previews: HashMap<String, ImageData>,
     /// Fonts, width, density, text scale and running-timer second.
     geometry: (u64, u32, u32, u32, u64),
     /// What the message emitted when it was last built.
@@ -369,7 +369,7 @@ mod tests {
     use std::rc::Rc;
 
     use crate::kit::Report;
-    use crate::kit::snapshot::lay_out;
+    use crate::kit::report::lay_out;
 
     use super::*;
 

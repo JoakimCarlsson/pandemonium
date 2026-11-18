@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use pm_components::kit::State;
+use crate::model::Model;
 use pm_pages::{Outgoing, Screen};
 use pm_protocol::{GrammarBundle, Request, Response};
 use pm_treesitter::{Editing, Grammar, Queries};
@@ -73,7 +73,7 @@ impl Work {
     }
 
     /// Has the server of another machine, `host`, install the extensions installed on this one, so the files of its projects are read in them too.
-    pub(super) fn share_extensions(&mut self, model: &State<Screen>, host: &Host) {
+    pub(super) fn share_extensions(&mut self, model: &Model, host: &Host) {
         if host.is_none() {
             return;
         }
@@ -102,7 +102,7 @@ impl Work {
     }
 
     /// Asks the server of the session at `session` for the grammar of `language`, unless it was asked for it before.
-    fn ask_grammar(&mut self, model: &State<Screen>, session: usize, language: String) {
+    fn ask_grammar(&mut self, model: &Model, session: usize, language: String) {
         let Some(placement) = Self::session_of(model, session) else {
             return;
         };
@@ -122,7 +122,7 @@ impl Work {
     }
 
     /// Asks for the grammars of the languages stretches of the open files are written in that no grammar here answers to yet.
-    pub(super) fn ask_wanted_grammars(&mut self, model: &State<Screen>) {
+    pub(super) fn ask_wanted_grammars(&mut self, model: &Model) {
         let wanted = pm_treesitter::registry::take_wanted();
         if !wanted.is_empty() {
             model.update(|screen| *screen = std::mem::take(screen).grammars_wanted(wanted));
@@ -130,7 +130,7 @@ impl Work {
     }
 
     /// Carries out what the window asked about writing code.
-    pub(super) fn deliver_code(&mut self, model: &State<Screen>, outgoing: Outgoing) {
+    pub(super) fn deliver_code(&mut self, model: &Model, outgoing: Outgoing) {
         match outgoing {
             Outgoing::Grammar { session, language } => self.ask_grammar(model, session, language),
             Outgoing::OpenDocument {
@@ -959,7 +959,7 @@ impl Work {
     /// Does what an answer about writing code calls for.
     pub(super) fn answered_code(
         &mut self,
-        model: &State<Screen>,
+        model: &Model,
         host: &Host,
         pending: Pending,
         response: Response,
@@ -1520,7 +1520,7 @@ impl Work {
     /// Takes in the grammar of the language `language` compiled, or why it could not be.
     pub(super) fn grammar_compiled(
         &mut self,
-        model: &State<Screen>,
+        model: &Model,
         language: &str,
         outcome: Result<(), String>,
     ) {

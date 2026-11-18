@@ -357,7 +357,7 @@ mod tests {
     fn drawn(context: Option<Usage>, limits: Option<Limits>) -> bool {
         let emitted = std::rc::Rc::new(std::cell::Cell::new(false));
         let seen = emitted.clone();
-        crate::kit::snapshot::lay_out(400.0, 200.0, None, move || {
+        crate::kit::report::lay_out(400.0, 200.0, None, move || {
             seen.set(rings_of(context.as_ref(), limits.as_ref()));
         });
         emitted.get()
