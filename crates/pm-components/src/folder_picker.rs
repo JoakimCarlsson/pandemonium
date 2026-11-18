@@ -5,7 +5,8 @@
 //! remote one alike.
 
 use crate::kit::sp;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use pm_config::KnownServer;
@@ -425,30 +426,41 @@ impl FolderPicker {
     /// Emits what the window holds: the bar with the steps and the path, the places beside the folders, and the bar with the buttons.
     #[track_caller]
     pub fn view(&self) {
-        flex_column(Modifier::new().grow().fill_max_width(), Flex::new(), || {
-            self.heading();
-            self.bar();
-            flex_row(
-                Modifier::new().grow().clip_to(Radius::None),
-                Flex::new(),
-                || {
-                    places();
-                    self.list();
-                },
-            );
-            self.footer();
-        });
+        column_arranged(
+            Modifier::new().weight(1.0).fill_max_width(),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                self.heading();
+                self.bar();
+                row_arranged(
+                    Modifier::new()
+                        .fill_max_width()
+                        .weight(1.0)
+                        .clip_to(Radius::None),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        places();
+                        self.list();
+                    },
+                );
+                self.footer();
+            },
+        );
     }
 
     /// Emits the line naming what the folder is for, and the machine it is on when that is not this one.
     #[track_caller]
     fn heading(&self) {
-        flex_row(
+        row_arranged(
             Modifier::new()
+                .fill_max_width()
                 .h(11)
                 .stroke_side(Side::Bottom, 1.0, Role::Border)
                 .pad_x(4),
-            Flex::new().items_center().gap(sp(2)),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
             || {
                 label(
                     self.title(),
@@ -469,12 +481,14 @@ impl FolderPicker {
     fn bar(&self) {
         let crumbs = self.directory.as_deref().map(trail).unwrap_or_default();
         let last = crumbs.len().saturating_sub(1);
-        flex_row(
+        row_arranged(
             Modifier::new()
+                .fill_max_width()
                 .h(12)
                 .stroke_side(Side::Bottom, 1.0, Role::Border)
                 .pad_x(3),
-            Flex::new().items_center().gap(sp(2)),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
             || {
                 Button::icon(IconName::ArrowLeft, PICKER_BACK)
                     .disabled(!self.can_go_back())
@@ -488,9 +502,10 @@ impl FolderPicker {
                     .disabled(crumbs.len() < 2)
                     .modifier(Modifier::new().tooltip("Up"))
                     .build();
-                flex_row(
-                    Modifier::new().grow(),
-                    Flex::new().items_center().gap(sp(0.5)),
+                row_arranged(
+                    Modifier::new().weight(1.0),
+                    Arrangement::SpacedBy(sp(0.5)),
+                    Alignment::Center,
                     || {
                         for (index, (name, _)) in crumbs.iter().enumerate() {
                             if index > 0 {
@@ -525,12 +540,13 @@ impl FolderPicker {
     #[track_caller]
     fn list(&self) {
         scroll_area(
-            Modifier::new().grow(),
+            Modifier::new().fill_max_height().weight(1.0),
             Scroll::from_start(PICKER_SCROLL, self.scroll),
             || {
-                flex_column(
+                column_arranged(
                     Modifier::new().fill_max_width().pad(2),
-                    Flex::new().gap(sp(0.5)),
+                    Arrangement::SpacedBy(sp(0.5)),
+                    Alignment::Start,
                     || {
                         for (index, found) in self.entries().into_iter().enumerate() {
                             folder_row(&found.name, index == self.selected, index);
@@ -547,12 +563,14 @@ impl FolderPicker {
     /// Emits the bar under the folders: the key that closes the picker, and the buttons that close it and that take the folder.
     #[track_caller]
     fn footer(&self) {
-        flex_row(
+        row_arranged(
             Modifier::new()
+                .fill_max_width()
                 .h(14)
                 .stroke_side(Side::Top, 1.0, Role::Border)
                 .pad_x(4),
-            Flex::new().items_center().gap(sp(2)),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
             || {
                 popover::key_hint("Esc", "Close");
                 spacer();
@@ -570,16 +588,19 @@ impl FolderPicker {
 /// Emits the column of places that are one press away.
 #[track_caller]
 fn places() {
-    flex_column(
+    column_arranged(
         Modifier::new()
+            .fill_max_height()
             .width(PLACES_WIDTH)
             .stroke_side(Side::Right, 1.0, Role::Border)
             .pad(2),
-        Flex::new().gap(sp(0.5)),
+        Arrangement::SpacedBy(sp(0.5)),
+        Alignment::Start,
         || {
-            flex_row(
+            row_arranged(
                 Modifier::new().h(8).pad_x(2),
-                Flex::new().items_center(),
+                Arrangement::Start,
+                Alignment::Center,
                 || {
                     label(
                         "Places",
@@ -591,6 +612,7 @@ fn places() {
                 Tile::new(FocusId(PLACE_BASE + index as u64))
                     .height(8.0)
                     .gap(2.5)
+                    .modifier(Modifier::new().fill_max_width())
                     .inner(Modifier::new().pad_x(2))
                     .build_with(|| {
                         icon(*glyph, 4.0, Role::Muted);
@@ -607,11 +629,12 @@ fn folder_row(name: &str, selected: bool, index: usize) {
     Tile::new(FocusId(ROW_BASE + index as u64))
         .selected(selected)
         .height(8.0)
+        .modifier(Modifier::new().fill_max_width())
         .inner(Modifier::new().pad_x(2.5))
         .build_with(|| {
             icon(IconName::Folder, 4.0, Role::Accent);
             label_with(
-                Modifier::new().grow(),
+                Modifier::new().weight(1.0),
                 name,
                 Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
             );

@@ -1,7 +1,7 @@
 //! The menu: a floating list of actions opened at a point.
 
+use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_row};
 
 use crate::Surface;
 use crate::kit::{
@@ -210,12 +210,13 @@ fn menu_row(entry: Entry, height: f32) {
                     .cursor(CursorIcon::Pointer)
                     .target(id)
             };
-            flex_row(
+            row_arranged(
                 modifier.pad_x(2),
-                Flex::new().items_center().gap(sp(4)),
+                Arrangement::SpacedBy(sp(4)),
+                Alignment::Center,
                 move || {
                     label_with(
-                        Modifier::new().grow(),
+                        Modifier::new().weight(1.0),
                         words,
                         Type::new(13).ratio(1.4).tone(Role::Text),
                     );

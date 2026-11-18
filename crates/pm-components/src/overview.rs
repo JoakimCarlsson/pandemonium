@@ -1,8 +1,8 @@
 //! A project's overview: its sessions grouped by where they stand, and how its own repository is.
 
 use crate::kit::sp;
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row};
 
 use crate::extensions::group_of_fixed_rows as group;
 use crate::kit::{
@@ -55,46 +55,55 @@ impl WorkspaceState {
 /// Emits the overview of the project at `project`.
 #[track_caller]
 pub fn overview(state: &WorkspaceState, project: usize) {
-    flex_column(Modifier::new().grow(), Flex::new(), || {
-        heading(state, project);
-        scroll_area(
-            Modifier::new().grow(),
-            Scroll::from_start(OVERVIEW_SCROLL, state.overview_scroll),
-            || {
-                flex_column(
-                    Modifier::new().fill_max_width(),
-                    Flex::new().items_center(),
-                    || {
-                        flex_column(
-                            Modifier::new()
-                                .fill_max_width()
-                                .max_w_px(PAGE_WIDTH)
-                                .pad_x(5)
-                                .pad_side(Side::Top, 5)
-                                .pad_side(Side::Bottom, 8),
-                            Flex::new().gap(sp(6)),
-                            || {
-                                sessions(state, project);
-                                repository(state);
-                                commits(state);
-                            },
-                        );
-                    },
-                );
-            },
-        );
-    });
+    column_arranged(
+        Modifier::new().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            heading(state, project);
+            scroll_area(
+                Modifier::new().fill_max_width().weight(1.0),
+                Scroll::from_start(OVERVIEW_SCROLL, state.overview_scroll),
+                || {
+                    column_arranged(
+                        Modifier::new().fill_max_width(),
+                        Arrangement::Start,
+                        Alignment::Center,
+                        || {
+                            column_arranged(
+                                Modifier::new()
+                                    .fill_max_width()
+                                    .max_w_px(PAGE_WIDTH)
+                                    .pad_x(5)
+                                    .pad_side(Side::Top, 5)
+                                    .pad_side(Side::Bottom, 8),
+                                Arrangement::SpacedBy(sp(6)),
+                                Alignment::Start,
+                                || {
+                                    sessions(state, project);
+                                    repository(state);
+                                    commits(state);
+                                },
+                            );
+                        },
+                    );
+                },
+            );
+        },
+    );
 }
 
 /// Emits the bar across the top: the project, where it lives, and the button that starts a session in it.
 #[track_caller]
 fn heading(state: &WorkspaceState, project: usize) {
-    flex_row(
+    row_arranged(
         Modifier::new()
+            .fill_max_width()
             .h(12)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(5),
-        Flex::new().items_center().gap(sp(3)),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
         || {
             if let Some(held) = state.projects.get(project) {
                 Avatar::of(held).build();
@@ -156,26 +165,33 @@ fn session_row(state: &WorkspaceState, index: usize) {
     card_row(own, || {
         status_icon(session.shown());
         clipped(&session.title, 14, Role::Text);
-        flex_row(Modifier::new().tooltip(agent.name), Flex::new(), || {
-            glyph(agent.icon, 3.5, Role::Muted);
-        });
+        row_arranged(
+            Modifier::new().tooltip(agent.name),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                glyph(agent.icon, 3.5, Role::Muted);
+            },
+        );
         if !session.changes.is_empty() {
             tally(session);
         }
-        flex_row(
+        row_arranged(
             Modifier::new().width(BRANCH_WIDTH).clip_to(Radius::None),
-            Flex::new(),
+            Arrangement::Start,
+            Alignment::Start,
             || {
                 label_with(
-                    Modifier::new().grow(),
+                    Modifier::new().weight(1.0),
                     &session.branch,
                     Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
                 );
             },
         );
-        flex_row(
+        row_arranged(
             Modifier::new().width(AGE_WIDTH),
-            Flex::new().justify_end(),
+            Arrangement::End,
+            Alignment::Start,
             || line(session.age(), 13, 1.4, Role::Subtle),
         );
     });
@@ -184,9 +200,10 @@ fn session_row(state: &WorkspaceState, index: usize) {
 /// Emits the lines `session` adds and takes away, in their colours.
 #[track_caller]
 fn tally(session: &Session) {
-    flex_row(
+    row_arranged(
         Modifier::new(),
-        Flex::new().items_center().gap(sp(1.5)),
+        Arrangement::SpacedBy(sp(1.5)),
+        Alignment::Center,
         || {
             label(
                 format!("+{}", session.added()),
@@ -247,7 +264,7 @@ fn repository(state: &WorkspaceState) {
         card_row(Modifier::new(), || {
             glyph(IconName::GitFork, 4.0, Role::Muted);
             label_with(
-                Modifier::new().grow(),
+                Modifier::new().weight(1.0),
                 &home.branch,
                 Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
             );
@@ -305,9 +322,14 @@ fn commits(state: &WorkspaceState) {
 /// box before its padding, holding what `content` emits.
 #[track_caller]
 fn card_row(modifier: Modifier, content: impl FnOnce()) {
-    flex_row(
-        Modifier::new().h(11).chain(modifier).pad_x(4),
-        Flex::new().items_center().gap(sp(3)),
+    row_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .h(11)
+            .chain(modifier)
+            .pad_x(4),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
         content,
     );
 }

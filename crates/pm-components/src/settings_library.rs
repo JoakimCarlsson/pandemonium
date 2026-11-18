@@ -1,7 +1,8 @@
 //! The pages of the settings window that list what agents are given in a project: an overview, the skills, instructions, agent definitions and hooks found in the folders the agent reads, and the tools it may call, each with a switch that leaves it out of new sessions.
 
 use crate::kit::sp;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+
 use std::path::Path;
 
 use pm_protocol::library::{Item, Kind, Product, Scope, Source, ToolSet, locations};
@@ -12,7 +13,7 @@ use crate::kit::{
 };
 
 use crate::button::Variant;
-use crate::parts::{clipped, glyph};
+use crate::parts::{glyph, line};
 use crate::settings::Section;
 use crate::settings_drafts::{draft_node, draftable, new_button};
 use crate::settings_ids::{ITEM_OPENS, ITEM_SWITCHES, SET_FOLDS, SET_SWITCHES, TOOL_SWITCHES};
@@ -450,9 +451,12 @@ fn context(state: &WorkspaceState, room: f32) {
             format!("Read for {read_for}; the app does not know how to read this agent's files.")
         }
     };
-    flex_column(Modifier::new(), Flex::new().gap(sp(2)), || {
-        wrapped_note(&said, room)
-    });
+    column_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Start,
+        || wrapped_note(&said, room),
+    );
 }
 
 /// Emits what the page of `section`, one of the pages of what agents are given, holds under its
@@ -555,9 +559,10 @@ fn items_page(state: &WorkspaceState, kind: Kind, room: f32) {
 /// Emits the heading over the customizations of `kind` found, with how many show, and the button for a new one when one can be written.
 #[track_caller]
 fn found_heading(state: &WorkspaceState, kind: Kind, shown: usize) {
-    flex_row(
-        Modifier::new(),
-        Flex::new().items_center().justify_between(),
+    row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpaceBetween,
+        Alignment::Center,
         || {
             heading_only("Found", shown);
             if draftable(kind) {
@@ -604,13 +609,15 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
     };
     let name_tone = if on { Role::Text } else { Role::Muted };
     flat_row(|| {
-        flex_column(
-            Modifier::new().grow().clip_to(Radius::None),
-            Flex::new().gap(sp(1)),
+        column_arranged(
+            Modifier::new().weight(1.0).clip_to(Radius::None),
+            Arrangement::SpacedBy(sp(1)),
+            Alignment::Start,
             || {
-                flex_row(
+                row_arranged(
                     Modifier::new(),
-                    Flex::new().items_center().gap(sp(2)),
+                    Arrangement::SpacedBy(sp(2)),
+                    Alignment::Center,
                     || {
                         label(
                             item.name.clone(),
@@ -626,7 +633,7 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
                     },
                 );
                 if !description.is_empty() {
-                    clipped(description, 12, Role::Muted);
+                    line(description, 12, 1.4, Role::Muted);
                 }
                 label_with(
                     Modifier::new().fill_max_width(),
@@ -635,9 +642,10 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
                 );
             },
         );
-        flex_row(
+        row_arranged(
             Modifier::new(),
-            Flex::new().items_center().gap(sp(2)),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
             || {
                 if item.kind.switchable(library.product) {
                     switch(on, ITEM_SWITCHES.id(index));
@@ -759,34 +767,41 @@ fn set_row(set: &ToolSet, place: usize, open: bool, product: Option<Product>, wi
         ),
         None => source_label(set),
     };
-    let heading = Modifier::new().grow().clip_to(Radius::None);
+    let heading = Modifier::new().weight(1.0).clip_to(Radius::None);
     let heading = match SET_FOLDS.id(place) {
         Some(fold) => heading.cursor(CursorIcon::Pointer).target(fold),
         None => heading,
     };
     let name_tone = if on { Role::Text } else { Role::Muted };
     flat_row(|| {
-        flex_row(heading, Flex::new().items_center().gap(sp(2)), || {
-            glyph(chevron, 4.0, Role::Muted);
-            flex_column(
-                Modifier::new().grow().clip_to(Radius::None),
-                Flex::new().gap(sp(1)),
-                || {
-                    flex_row(
-                        Modifier::new(),
-                        Flex::new().items_center().gap(sp(2)),
-                        || {
-                            label(
-                                set.name.clone(),
-                                Type::new(13).ratio(1.4).tone(name_tone).truncate().medium(),
-                            );
-                            Badge::new(count).build();
-                        },
-                    );
-                    clipped(about, 12, Role::Muted);
-                },
-            );
-        });
+        row_arranged(
+            heading,
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
+            || {
+                glyph(chevron, 4.0, Role::Muted);
+                column_arranged(
+                    Modifier::new().weight(1.0).clip_to(Radius::None),
+                    Arrangement::SpacedBy(sp(1)),
+                    Alignment::Start,
+                    || {
+                        row_arranged(
+                            Modifier::new(),
+                            Arrangement::SpacedBy(sp(2)),
+                            Alignment::Center,
+                            || {
+                                label(
+                                    set.name.clone(),
+                                    Type::new(13).ratio(1.4).tone(name_tone).truncate().medium(),
+                                );
+                                Badge::new(count).build();
+                            },
+                        );
+                        line(about, 12, 1.4, Role::Muted);
+                    },
+                );
+            },
+        );
         if set.switchable(product) {
             switch(on, SET_SWITCHES.id(place));
         }
@@ -804,23 +819,25 @@ fn tool_row(
 ) {
     let on = set.tool_enabled(&tool.name, withheld);
     let name_tone = if on { Role::Text } else { Role::Muted };
-    flex_row(
+    row_arranged(
         Modifier::new()
             .pad_side(Side::Left, 10)
             .pad_side(Side::Right, 3)
             .pad_y(3),
-        Flex::new().items_center().justify_between().gap(sp(3)),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
         || {
-            flex_column(
-                Modifier::new().grow().clip_to(Radius::None),
-                Flex::new().gap(sp(1)),
+            column_arranged(
+                Modifier::new().weight(1.0).clip_to(Radius::None),
+                Arrangement::SpacedBy(sp(1)),
+                Alignment::Start,
                 || {
                     label(
                         tool.name.clone(),
                         Type::new(12).ratio(1.4).tone(name_tone).truncate().mono(),
                     );
                     if let Some(first) = tool.description.lines().next() {
-                        clipped(first.to_owned(), 12, Role::Muted);
+                        line(first.to_owned(), 12, 1.4, Role::Muted);
                     }
                 },
             );

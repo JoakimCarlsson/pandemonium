@@ -1,6 +1,6 @@
 //! The prompt box where work is handed to an agent.
 
-use rustle::{Flex, flex_column, flex_row, flex_wrap};
+use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 use std::cell::Cell;
 
 use pm_harness::Setting;
@@ -80,6 +80,7 @@ fn list_height(settings: &[Setting], above: f32, rows: u32) -> f32 {
 /// The modifier of a section of a menu set off from what is above it by a rule: `border_t()` with `mt(1)`.
 fn ruled() -> Modifier {
     Modifier::new()
+        .fill_max_width()
         .pad_side(Side::Top, 1)
         .stroke_side(Side::Top, 1.0, Role::Border)
 }
@@ -108,11 +109,16 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) {
         .modifier(Modifier::new().target(MENU_BODY))
         .build_with(|| {
             if filters {
-                flex_column(
-                    Modifier::new().pad_x(1).pad_side(Side::Bottom, 1),
-                    Flex::new(),
+                column_arranged(
+                    Modifier::new()
+                        .fill_max_width()
+                        .pad_x(1)
+                        .pad_side(Side::Bottom, 1),
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
                         Input::search(&state.menu_filter, MENU_FILTER)
+                            .modifier(Modifier::new().fill_max_width())
                             .size(Size::Sm)
                             .placeholder(match setting.category.as_str() {
                                 "model" => "Search models",
@@ -123,27 +129,39 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) {
                 );
             }
             scroll_area(
-                Modifier::new().max_h_px(sp(list_height(settings, above, rows) / 4.0)),
+                Modifier::new()
+                    .fill_max_width()
+                    .max_h_px(sp(list_height(settings, above, rows) / 4.0)),
                 Scroll::from_start(MENU_SCROLL, state.menu_scroll),
                 || {
-                    flex_column(Modifier::new().fill_max_width(), Flex::new(), || {
-                        for position in &shown {
-                            let Some(pick) = setting.picks.get(*position) else {
-                                continue;
-                            };
-                            crate::popover::row(
-                                &pick.name,
-                                &pick.description,
-                                pick.value == setting.current,
-                                FocusId(MENU_PICK_BASE + *position as u64),
-                            );
-                        }
-                        if shown.is_empty() {
-                            flex_column(Modifier::new().pad_x(2).pad_y(2), Flex::new(), || {
-                                line("Nothing matches", 13, 1.4, Role::Muted);
-                            });
-                        }
-                    });
+                    column_arranged(
+                        Modifier::new().fill_max_width(),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            for position in &shown {
+                                let Some(pick) = setting.picks.get(*position) else {
+                                    continue;
+                                };
+                                crate::popover::row(
+                                    &pick.name,
+                                    &pick.description,
+                                    pick.value == setting.current,
+                                    FocusId(MENU_PICK_BASE + *position as u64),
+                                );
+                            }
+                            if shown.is_empty() {
+                                column_arranged(
+                                    Modifier::new().pad_x(2).pad_y(2),
+                                    Arrangement::Start,
+                                    Alignment::Start,
+                                    || {
+                                        line("Nothing matches", 13, 1.4, Role::Muted);
+                                    },
+                                );
+                            }
+                        },
+                    );
                 },
             );
             if setting.category == "model"
@@ -169,7 +187,7 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) {
 /// Emits the row at the foot of the model menu that switches the conversation in and out of orchestrator mode, ticked while it is `on`.
 #[track_caller]
 fn orchestrate_row(on: bool) {
-    flex_column(ruled(), Flex::new(), || {
+    column_arranged(ruled(), Arrangement::Start, Alignment::Start, || {
         crate::popover::row(
             "Orchestrate",
             "Lead, and hand work to subagents by category",
@@ -202,7 +220,7 @@ fn location_menu(state: &WorkspaceState) {
     menu.modifier(Modifier::new().target(MENU_BODY))
         .build_with(|| {
             if state.offers_container() {
-                flex_column(ruled(), Flex::new(), || {
+                column_arranged(ruled(), Arrangement::Start, Alignment::Start, || {
                     crate::popover::row(
                         "Dev container",
                         "Not a security boundary",
@@ -212,7 +230,9 @@ fn location_menu(state: &WorkspaceState) {
                 });
             }
             if worktree {
-                flex_column(ruled(), Flex::new(), || heading("Branch from", None));
+                column_arranged(ruled(), Arrangement::Start, Alignment::Start, || {
+                    heading("Branch from", None)
+                });
                 branch_rows(&state.branches, state.base.as_ref());
             }
         });
@@ -359,17 +379,19 @@ fn agent_row(agent: &Setting) {
 /// Emits a line of a menu's footer: `name` with how it is set, `value`, in brackets, then what `control` emits to set it, under a rule when `rule`.
 #[track_caller]
 fn labelled(name: &str, value: &str, control: impl FnOnce(), rule: bool) {
-    let mut own = Modifier::new().h(9);
+    let mut own = Modifier::new().fill_max_width().h(9);
     if rule {
         own = own.stroke_side(Side::Top, 1.0, Role::Border);
     }
-    flex_row(
+    row_arranged(
         own.pad_x(2.5),
-        Flex::new().items_center().justify_between(),
+        Arrangement::SpaceBetween,
+        Alignment::Center,
         || {
-            flex_row(
+            row_arranged(
                 Modifier::new(),
-                Flex::new().items_center().gap(sp(1)),
+                Arrangement::SpacedBy(sp(1)),
+                Alignment::Center,
                 || {
                     line(name, 13, 1.4, Role::Text);
                     line(format!("({value})"), 13, 1.4, Role::Subtle);
@@ -420,9 +442,14 @@ fn mention_list(state: &WorkspaceState) {
             .heading("Files", None)
             .modifier(above_box())
             .build_with(|| {
-                flex_column(Modifier::new().pad_x(2.5).pad_y(2), Flex::new(), || {
-                    line("No files found", 13, 1.4, Role::Subtle);
-                });
+                column_arranged(
+                    Modifier::new().pad_x(2.5).pad_y(2),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        line("No files found", 13, 1.4, Role::Subtle);
+                    },
+                );
             });
         return;
     }
@@ -433,30 +460,43 @@ fn mention_list(state: &WorkspaceState) {
         .modifier(above_box())
         .build_with(|| {
             scroll_area(
-                Modifier::new().max_h_px(sp(LIST_ROW_HEIGHT * LIST_ROWS as f32 / 4.0)),
+                Modifier::new()
+                    .fill_max_width()
+                    .max_h_px(sp(LIST_ROW_HEIGHT * LIST_ROWS as f32 / 4.0)),
                 Scroll::from_start(MENU_SCROLL, state.menu_scroll),
                 || {
-                    flex_column(Modifier::new().fill_max_width(), Flex::new(), || {
-                        for (position, path) in matches.iter().enumerate() {
-                            let id = FocusId(SLASH_BASE + position as u64);
-                            flex_row(
-                                Modifier::new()
-                                    .looks_of(list_row_looks(position == chosen), id)
-                                    .cursor(CursorIcon::Pointer)
-                                    .target(id)
-                                    .pad_x(2.5)
-                                    .pad_y(2),
-                                Flex::new().items_center(),
-                                || {
-                                    label_with(
-                                        Modifier::new().grow(),
-                                        path.as_str(),
-                                        Type::new(13).ratio(1.4).tone(Role::Text).mono().truncate(),
-                                    );
-                                },
-                            );
-                        }
-                    });
+                    column_arranged(
+                        Modifier::new().fill_max_width(),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            for (position, path) in matches.iter().enumerate() {
+                                let id = FocusId(SLASH_BASE + position as u64);
+                                row_arranged(
+                                    Modifier::new()
+                                        .fill_max_width()
+                                        .looks_of(list_row_looks(position == chosen), id)
+                                        .cursor(CursorIcon::Pointer)
+                                        .target(id)
+                                        .pad_x(2.5)
+                                        .pad_y(2),
+                                    Arrangement::Start,
+                                    Alignment::Center,
+                                    || {
+                                        label_with(
+                                            Modifier::new().weight(1.0),
+                                            path.as_str(),
+                                            Type::new(13)
+                                                .ratio(1.4)
+                                                .tone(Role::Text)
+                                                .mono()
+                                                .truncate(),
+                                        );
+                                    },
+                                );
+                            }
+                        },
+                    );
                 },
             );
         });
@@ -477,38 +517,50 @@ fn slash_list(state: &WorkspaceState) {
         .modifier(above_box())
         .build_with(|| {
             scroll_area(
-                Modifier::new().max_h_px(sp(LIST_ROW_HEIGHT * LIST_ROWS as f32 / 4.0)),
+                Modifier::new()
+                    .fill_max_width()
+                    .max_h_px(sp(LIST_ROW_HEIGHT * LIST_ROWS as f32 / 4.0)),
                 Scroll::from_start(MENU_SCROLL, state.menu_scroll),
                 || {
-                    flex_column(Modifier::new().fill_max_width(), Flex::new(), || {
-                        for (position, command) in matches.iter().enumerate() {
-                            let looks = list_row_looks(position == chosen);
-                            let own = if position < PRESSABLE_LIST_ROWS {
-                                let id = FocusId(SLASH_BASE + position as u64);
-                                Modifier::new()
-                                    .looks_of(looks, id)
-                                    .cursor(CursorIcon::Pointer)
-                                    .target(id)
-                            } else {
-                                Modifier::new().looks(looks).cursor(CursorIcon::Pointer)
-                            };
-                            flex_row(
-                                own.pad_x(2.5).pad_y(2),
-                                Flex::new().items_center().gap(sp(3)),
-                                || {
-                                    label(
-                                        format!("/{}", command.name),
-                                        Type::new(13).ratio(1.4).mono().tone(Role::Text),
-                                    );
-                                    label_with(
-                                        Modifier::new().grow(),
-                                        &command.description,
-                                        Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
-                                    );
-                                },
-                            );
-                        }
-                    });
+                    column_arranged(
+                        Modifier::new().fill_max_width(),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            for (position, command) in matches.iter().enumerate() {
+                                let looks = list_row_looks(position == chosen);
+                                let own = if position < PRESSABLE_LIST_ROWS {
+                                    let id = FocusId(SLASH_BASE + position as u64);
+                                    Modifier::new()
+                                        .looks_of(looks, id)
+                                        .cursor(CursorIcon::Pointer)
+                                        .target(id)
+                                } else {
+                                    Modifier::new().looks(looks).cursor(CursorIcon::Pointer)
+                                };
+                                row_arranged(
+                                    Modifier::new()
+                                        .fill_max_width()
+                                        .chain(own)
+                                        .pad_x(2.5)
+                                        .pad_y(2),
+                                    Arrangement::SpacedBy(sp(3)),
+                                    Alignment::Center,
+                                    || {
+                                        label(
+                                            format!("/{}", command.name),
+                                            Type::new(13).ratio(1.4).mono().tone(Role::Text),
+                                        );
+                                        label_with(
+                                            Modifier::new().weight(1.0),
+                                            &command.description,
+                                            Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
+                                        );
+                                    },
+                                );
+                            }
+                        },
+                    );
                 },
             );
         });
@@ -525,9 +577,10 @@ const SENT_PICTURE: f32 = 160.0;
 pub fn attached_file(state: &WorkspaceState, path: &str, side: f32) {
     let name = path.rsplit('/').next().unwrap_or(path);
     let shown = state.previews.get(path).cloned();
-    flex_row(
+    row_arranged(
         Modifier::new(),
-        Flex::new().items_center().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
         || {
             if let Some(shown) = shown {
                 picture(
@@ -549,17 +602,21 @@ fn attachment_row(state: &WorkspaceState) {
     if state.attachments.is_empty() {
         return;
     }
-    flex_wrap(
-        Modifier::new().pad_x(3).pad_side(Side::Top, 3),
-        Flex::new().gap(sp(2)),
+    flow_row_with(
+        Modifier::new()
+            .fill_max_width()
+            .pad_x(3)
+            .pad_side(Side::Top, 3),
+        FlowOptions::new(sp(2), sp(2)),
         || {
             for (index, path) in state.attachments.iter().enumerate() {
                 rustle::key(index, || {
-                    flex_row(
+                    row_arranged(
                         Modifier::new()
                             .fill_rounded(Role::SurfaceHover, Radius::Lg)
                             .pad(1),
-                        Flex::new().items_center().gap(sp(1.5)),
+                        Arrangement::SpacedBy(sp(1.5)),
+                        Alignment::Center,
                         || {
                             attached_file(state, path, THUMBNAIL);
                             Button::icon(IconName::Close, FocusId(ATTACHED_BASE + index as u64))
@@ -575,20 +632,25 @@ fn attachment_row(state: &WorkspaceState) {
 /// Emits the files sent with a message, each as large as the room beside the words allows.
 #[track_caller]
 pub fn sent_files(state: &WorkspaceState, files: &[String]) {
-    flex_column(Modifier::new(), Flex::new().gap(sp(2)), || {
-        for path in files {
-            match state.previews.get(path) {
-                Some(shown) => picture(
-                    Modifier::new()
-                        .width(SENT_PICTURE)
-                        .height(SENT_PICTURE)
-                        .clip_to(Radius::None),
-                    shown,
-                ),
-                None => attached_file(state, path, THUMBNAIL),
+    column_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Start,
+        || {
+            for path in files {
+                match state.previews.get(path) {
+                    Some(shown) => picture(
+                        Modifier::new()
+                            .width(SENT_PICTURE)
+                            .height(SENT_PICTURE)
+                            .clip_to(Radius::None),
+                        shown,
+                    ),
+                    None => attached_file(state, path, THUMBNAIL),
+                }
             }
-        }
-    });
+        },
+    );
 }
 
 /// Emits the round button at the end of the strip, answering to `id` with `icon`, switched off while `disabled`.
@@ -650,16 +712,20 @@ fn sign_in_again(state: &WorkspaceState, session: &Session, reason: &str, accoun
         Some(account) => format!("Sign in to {agent} again ({account})"),
         None => format!("Sign in to {agent} again"),
     };
-    flex_column(
+    column_arranged(
         Modifier::new()
+            .fill_max_width()
             .fill_rounded(Role::Surface, Radius::Xl)
             .stroke(Role::Border, Radius::Xl)
             .pad(4),
-        Flex::new().gap(sp(3)),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Start,
         || {
             label(words, Type::new(14.0).tone(Role::Text));
             label(reason, Type::new(12.0).tone(Role::Muted));
-            Button::new("Sign in", crate::state::SESSION_SIGN_IN).build();
+            Button::new("Sign in", crate::state::SESSION_SIGN_IN)
+                .modifier(Modifier::new().fill_max_width())
+                .build();
         },
     );
 }
@@ -673,12 +739,14 @@ fn strip(state: &WorkspaceState, session: Option<&Session>, rows: u32, above: f3
         && state.elements.is_empty()
         && state.captures.is_empty();
     let settings = state.settings_now();
-    flex_row(
+    row_arranged(
         Modifier::new()
+            .fill_max_width()
             .pad_x(2.5)
             .pad_side(Side::Top, 1)
             .pad_side(Side::Bottom, 2.5),
-        Flex::new().items_center().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Center,
         || {
             Button::icon(IconName::Plus, ATTACH).build();
             Button::icon(IconName::At, MENTION).build();
@@ -744,9 +812,10 @@ fn place(state: &WorkspaceState, session: Option<&Session>) {
     if chat.is_none() && !location {
         return;
     }
-    flex_row(
+    row_arranged(
         Modifier::new().pad_x(2.5),
-        Flex::new().items_center().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Center,
         || {
             if let Some(chat) = chat {
                 crate::continue_chat::chip(state, chat);
@@ -803,9 +872,10 @@ pub fn composer(
         proposal(ask);
         return;
     }
-    flex_column(
+    column_arranged(
         Modifier::new().fill_max_width(),
-        Flex::new().gap(sp(1.5)),
+        Arrangement::SpacedBy(sp(1.5)),
+        Alignment::Start,
         || {
             if let Some(session) = session {
                 crate::shared_checkout::notice(state, session);
@@ -816,7 +886,7 @@ pub fn composer(
                 Placement::Above,
                 2.0,
                 || {
-                    flex_column(
+                    column_arranged(
                         Modifier::new()
                             .fill_max_width()
                             .on_size_changed(|size| {
@@ -826,7 +896,8 @@ pub fn composer(
                             .fill_rounded(Role::Surface, Radius::Xl)
                             .stroke_by_focus(PROMPT, Role::Border, Role::Accent, Radius::Xl)
                             .focus_of(PROMPT),
-                        Flex::new(),
+                        Arrangement::Start,
+                        Alignment::Start,
                         || {
                             if let Some(ask) = ask {
                                 proposal(ask);
@@ -835,6 +906,7 @@ pub fn composer(
                             crate::elements::chips(state);
                             crate::captures::chips(state);
                             Input::new(&state.prompt, PROMPT)
+                                .modifier(Modifier::new().fill_max_width())
                                 .variant(input::Variant::Multiline)
                                 .placeholder(placeholder)
                                 .rows(rows)

@@ -6,7 +6,7 @@ use pm_protocol::library::{
     APPENDS_PROMPT, Item, Kind, PromptFile, REPLACES_PROMPT, Scope, valid_name,
 };
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::kit::{FocusId, Radius, Role, Styled, Type, label};
 
@@ -305,10 +305,15 @@ pub(crate) fn prompt_node(state: &WorkspaceState, room: f32) {
             None => format!("{about} Not written yet."),
         };
         flat_row(|| {
-            flex_column(Modifier::new().grow(), Flex::new().gap(sp(1)), || {
-                line(title, 13, 1.4, Role::Text);
-                wrapped_note(&said, (room - 160.0).max(120.0));
-            });
+            column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::SpacedBy(sp(1)),
+                Alignment::Start,
+                || {
+                    line(title, 13, 1.4, Role::Text);
+                    wrapped_note(&said, (room - 160.0).max(120.0));
+                },
+            );
             Button::new(if found.is_some() { "Open" } else { "Write" }, id)
                 .variant(Variant::Outline)
                 .size(Size::Sm)
@@ -316,32 +321,42 @@ pub(crate) fn prompt_node(state: &WorkspaceState, room: f32) {
                 .build();
         });
     };
-    flex_column(Modifier::new(), Flex::new().gap(sp(2)), || {
-        flex_row(Modifier::new().h(9), Flex::new().items_center(), || {
-            label(
-                "System prompt",
-                Type::new(15)
-                    .ratio(1.4)
-                    .tone(Role::Text)
-                    .truncate()
-                    .medium(),
+    column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Start,
+        || {
+            row_arranged(
+                Modifier::new().h(9),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    label(
+                        "System prompt",
+                        Type::new(15)
+                            .ratio(1.4)
+                            .tone(Role::Text)
+                            .truncate()
+                            .medium(),
+                    );
+                },
             );
-        });
-        boxed(|| {
-            prompt_row(
-                PromptFile::Replace,
-                "Replace crab's instructions",
-                "SYSTEM.md takes the place of crab's built-in instructions; its tools, skills and the project's details are still added.",
-                PROMPT_REPLACE,
-            );
-            prompt_row(
-                PromptFile::Append,
-                "Add to every prompt",
-                "APPEND_SYSTEM.md is added to the end of every prompt, subagents' too.",
-                PROMPT_APPEND,
-            );
-        });
-    });
+            boxed(|| {
+                prompt_row(
+                    PromptFile::Replace,
+                    "Replace crab's instructions",
+                    "SYSTEM.md takes the place of crab's built-in instructions; its tools, skills and the project's details are still added.",
+                    PROMPT_REPLACE,
+                );
+                prompt_row(
+                    PromptFile::Append,
+                    "Add to every prompt",
+                    "APPEND_SYSTEM.md is added to the end of every prompt, subagents' too.",
+                    PROMPT_APPEND,
+                );
+            });
+        },
+    );
 }
 
 /// Emits the button that opens the form for a new customization of `kind`, turned off while the form is open or nothing can be written.
@@ -407,12 +422,14 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) {
         }
         (None, true) => None,
     };
-    flex_column(
+    column_arranged(
         Modifier::new()
+            .fill_max_width()
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
             .pad(4),
-        Flex::new().gap(sp(3)),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Start,
         || {
             labelled("Name", &form.name, DRAFT_NAME, name_hint);
             labelled(
@@ -422,22 +439,33 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) {
                 description_hint,
             );
             if form.in_project {
-                flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
-                    line("Where", 12, 1.4, Role::Muted);
-                    flex_row(Modifier::new(), Flex::new(), || {
-                        choices(&["This project", "Every project"], picked, |place| {
-                            DRAFT_SCOPES.id(place)
-                        });
-                    });
-                });
+                column_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(sp(1)),
+                    Alignment::Start,
+                    || {
+                        line("Where", 12, 1.4, Role::Muted);
+                        row_arranged(
+                            Modifier::new(),
+                            Arrangement::Start,
+                            Alignment::Start,
+                            || {
+                                choices(&["This project", "Every project"], picked, |place| {
+                                    DRAFT_SCOPES.id(place)
+                                });
+                            },
+                        );
+                    },
+                );
             }
             wrapped_note(&place_note(form.kind, form.scope), room);
             if let Some(message) = message {
                 line(message, 12, 1.4, Role::Danger);
             }
-            flex_row(
+            row_arranged(
                 Modifier::new(),
-                Flex::new().items_center().gap(sp(2)),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Center,
                 || {
                     Button::new(if form.busy { "Creating…" } else { "Create" }, DRAFT_CREATE)
                         .size(Size::Sm)
@@ -457,13 +485,18 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) {
 #[track_caller]
 fn labelled(label: &str, field: &Field, id: FocusId, placeholder: &str) {
     rustle::key(id.0, || {
-        flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
-            line(label, 12, 1.4, Role::Muted);
-            Input::new(field, id)
-                .size(Size::Sm)
-                .placeholder(placeholder)
-                .build();
-        });
+        column_arranged(
+            Modifier::new().fill_max_width(),
+            Arrangement::SpacedBy(sp(1)),
+            Alignment::Start,
+            || {
+                line(label, 12, 1.4, Role::Muted);
+                Input::new(field, id)
+                    .size(Size::Sm)
+                    .placeholder(placeholder)
+                    .build();
+            },
+        );
     });
 }
 

@@ -1,8 +1,8 @@
 //! The settings window: the sections of settings down its left side and the one chosen on its right, filling a window of its own.
 
 use crate::kit::sp;
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row};
 
 use crate::kit::{
     FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, scroll_area,
@@ -507,9 +507,10 @@ pub fn settings(state: &WorkspaceState, width: f32) -> bool {
     } else {
         section
     };
-    flex_row(
+    row_arranged(
         Modifier::new().fill_max_size().fill(Role::Surface),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             navigation(state, section, folded, navigation_width);
             content(state, showing, width - navigation_width - 2.0 * PAGE_INSET);
@@ -522,28 +523,32 @@ pub fn settings(state: &WorkspaceState, width: f32) -> bool {
 #[track_caller]
 fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32) {
     let searching = state.settings_searching();
-    flex_column(
+    column_arranged(
         Modifier::new()
+            .fill_max_height()
             .width(width)
             .stroke_side(Side::Right, 1.0, Role::Border)
             .pad(3),
-        Flex::new().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Start,
         || {
-            flex_row(
+            row_arranged(
                 Modifier::new().h(9).pad_x(2),
-                Flex::new().items_center(),
+                Arrangement::Start,
+                Alignment::Center,
                 || {
                     line("Settings", 13, 1.4, Role::Subtle);
                 },
             );
             find(state, searching);
             scroll_area(
-                Modifier::new().grow(),
+                Modifier::new().fill_max_width().weight(1.0),
                 Scroll::from_start(SETTINGS_NAV_SCROLL, state.settings_page.nav_scroll),
                 || {
-                    flex_column(
+                    column_arranged(
                         Modifier::new().fill_max_width(),
-                        Flex::new().gap(sp(1)),
+                        Arrangement::SpacedBy(sp(1)),
+                        Alignment::Start,
                         || {
                             for section in Section::ALL.into_iter().filter(|section| match section
                                 .parent()
@@ -572,17 +577,18 @@ fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32
 /// Emits the box searching settings, with the button clearing it while `searching`.
 #[track_caller]
 fn find(state: &WorkspaceState, searching: bool) {
-    flex_row(
-        Modifier::new().pad_side(Side::Bottom, 2),
-        Flex::new().items_center().gap(sp(1)),
+    row_arranged(
+        Modifier::new().fill_max_width().pad_side(Side::Bottom, 2),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Center,
         || {
             Input::search(&state.settings_page.find, SETTINGS_FIND)
                 .size(Size::Sm)
                 .placeholder("Search settings")
-                .modifier(Modifier::new().grow())
+                .modifier(Modifier::new().weight(1.0))
                 .build();
             if searching {
-                flex_row(
+                row_arranged(
                     Modifier::new()
                         .square(6)
                         .looks_of(
@@ -591,7 +597,8 @@ fn find(state: &WorkspaceState, searching: bool) {
                         )
                         .cursor(CursorIcon::Pointer)
                         .target(SETTINGS_FIND_CLEAR),
-                    Flex::new().items_center().justify_center(),
+                    Arrangement::Center,
+                    Alignment::Center,
                     || glyph(IconName::Close, 3.5, Role::Muted),
                 );
             }
@@ -607,6 +614,7 @@ fn entry(section: Section, showing: bool, folded: bool, count: Option<usize>) {
     let left = if nested { 8.0 } else { 2.0 };
     Tile::new(section.id())
         .selected(showing)
+        .modifier(Modifier::new().fill_max_width())
         .inner(
             Modifier::new()
                 .pad_side(Side::Left, left)
@@ -636,17 +644,22 @@ fn entry(section: Section, showing: bool, folded: bool, count: Option<usize>) {
 /// Emits the settings of `section` under its title, with `room` logical pixels across for them.
 #[track_caller]
 fn content(state: &WorkspaceState, section: Section, room: f32) {
-    flex_column(
-        Modifier::new().grow().fill(Role::Background),
-        Flex::new(),
+    column_arranged(
+        Modifier::new()
+            .fill_max_height()
+            .weight(1.0)
+            .fill(Role::Background),
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            flex_row(
+            row_arranged(
                 Modifier::new()
                     .pad_side(Side::Left, 8)
                     .pad_side(Side::Right, 8)
                     .pad_side(Side::Top, 6)
                     .pad_side(Side::Bottom, 4),
-                Flex::new().items_center(),
+                Arrangement::Start,
+                Alignment::Center,
                 || settings_servers::page_title(section),
             );
             settings_servers::body(state, section, room);

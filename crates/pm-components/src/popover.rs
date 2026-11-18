@@ -4,8 +4,8 @@ use crate::kit::sp;
 use crate::kit::{
     FocusId, Hovered, IconName, Interactive, Looks, Placement, Radius, Role, Styled, Type, label,
 };
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row};
 
 use crate::parts::{glyph, line};
 use crate::{Surface, surface};
@@ -114,6 +114,9 @@ impl Popover {
         if self.full_width {
             own = own.fill_max_width();
         }
+        if self.width.is_none() && !self.full_width {
+            own = own.width_intrinsic(rustle::IntrinsicSize::Max);
+        }
         let entries = self.entries;
         let inner = self.inner.unwrap_or_else(|| Modifier::new().pad(1.5));
         Surface::new()
@@ -196,30 +199,42 @@ pub fn row(name: &str, description: &str, current: bool, id: FocusId) {
     }
     .radius(Radius::Lg);
     let modifier = Modifier::new()
+        .fill_max_width()
         .looks_of(looks, id)
         .cursor(CursorIcon::Pointer)
         .target(id)
         .pad_x(2.5)
         .pad_y(1.5);
-    flex_row(modifier, Flex::new().items_center().gap(sp(3)), || {
-        flex_column(Modifier::new().grow(), Flex::new(), || {
-            line(name, 13, 1.4, Role::Text);
-            if !description.is_empty() {
-                line(description, 12, 1.4, Role::Subtle);
+    row_arranged(
+        modifier,
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
+        || {
+            column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    line(name, 13, 1.4, Role::Text);
+                    if !description.is_empty() {
+                        line(description, 12, 1.4, Role::Subtle);
+                    }
+                },
+            );
+            if current {
+                glyph(IconName::Check, 4.0, Role::Text);
             }
-        });
-        if current {
-            glyph(IconName::Check, 4.0, Role::Text);
-        }
-    });
+        },
+    );
 }
 
 /// Emits the small heading line of a popover, with `hint` at its right: a key to press, and what it does.
 #[track_caller]
 pub fn heading(title: &str, hint: Option<(&str, &str)>) {
-    flex_row(
-        Modifier::new().h(8).pad_x(2.5),
-        Flex::new().items_center().justify_between(),
+    row_arranged(
+        Modifier::new().fill_max_width().h(8).pad_x(2.5),
+        Arrangement::SpaceBetween,
+        Alignment::Center,
         || {
             line(title, 12, 1.4, Role::Subtle);
             if let Some((key, does)) = hint {
@@ -232,15 +247,17 @@ pub fn heading(title: &str, hint: Option<(&str, &str)>) {
 /// Emits a key to press, in a small chip, and what it does.
 #[track_caller]
 pub fn key_hint(key: &str, does: &str) {
-    flex_row(
+    row_arranged(
         Modifier::new(),
-        Flex::new().items_center().gap(sp(1.5)),
+        Arrangement::SpacedBy(sp(1.5)),
+        Alignment::Center,
         || {
-            flex_row(
+            row_arranged(
                 Modifier::new()
                     .fill_rounded(Role::SurfaceHover, Radius::Md)
                     .pad_x(1.5),
-                Flex::new(),
+                Arrangement::Start,
+                Alignment::Start,
                 || label(key, Type::new(11).ratio(1.6).mono().tone(Role::Muted)),
             );
             line(does, 12, 1.4, Role::Subtle);

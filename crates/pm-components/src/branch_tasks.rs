@@ -2,9 +2,8 @@
 
 use crate::kit::sp;
 use pm_field::Field;
-use rustle::flex_row;
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column};
 
 use crate::kit::{FocusId, Interactive, Role, Side, Styled, Type, label};
 
@@ -367,12 +366,13 @@ fn commits(count: usize) -> String {
 /// Emits a row with a check box that says `label`, ticked while `checked`.
 #[track_caller]
 fn tick(label: &str, checked: bool) {
-    flex_row(
+    row_arranged(
         Modifier::new()
             .cursor(CursorIcon::Pointer)
             .target(BRANCH_TASK_REMOTE)
             .pad_x(2),
-        Flex::new().items_center().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
         || {
             Checkbox::new(checked, BRANCH_TASK_REMOTE).build();
             line(label, 13, 1.4, Role::Text);
@@ -430,7 +430,7 @@ pub fn branch_prompt(state: &WorkspaceState, task: BranchTask) {
         .width(WIDTH)
         .build_with(|| {
             let mut confirm: Option<(&str, Variant)> = None;
-            flex_column(Modifier::new().pad(5), Flex::new().gap(sp(3)), || {
+            column_arranged(Modifier::new().pad(5), Arrangement::SpacedBy(sp(3)), Alignment::Start, || {
                 title_line(task.title(), 15);
                 if loading {
                     line("Reading the remotes…", 13, 1.4, Role::Subtle);
@@ -446,6 +446,7 @@ pub fn branch_prompt(state: &WorkspaceState, task: BranchTask) {
                             }
                             line("Branch name on the remote", 12, 1.4, Role::Subtle);
                             Input::new(&open.field, BRANCH_TASK_FIELD)
+                                .modifier(Modifier::new().fill_max_width())
                                 .placeholder(&current)
                                 .size(Size::Md)
                                 .build();
@@ -453,6 +454,7 @@ pub fn branch_prompt(state: &WorkspaceState, task: BranchTask) {
                         }
                         BranchTask::Rename => {
                             Input::new(&open.field, BRANCH_TASK_FIELD)
+                                .modifier(Modifier::new().fill_max_width())
                                 .placeholder("New name")
                                 .size(Size::Md)
                                 .build();
@@ -500,6 +502,7 @@ pub fn branch_prompt(state: &WorkspaceState, task: BranchTask) {
                         }
                         _ => {
                             Input::new(&open.field, BRANCH_TASK_FIELD)
+                                .modifier(Modifier::new().fill_max_width())
                                 .placeholder("Search branches")
                                 .size(Size::Md)
                                 .build();
@@ -520,16 +523,16 @@ pub fn branch_prompt(state: &WorkspaceState, task: BranchTask) {
                     }
                 }
             });
-            flex_row(
-                Modifier::new().pad_x(5).pad_side(Side::Bottom, 5),
-                Flex::new().items_center().gap(sp(2)),
+            row_arranged(
+                Modifier::new().fill_max_width().pad_x(5).pad_side(Side::Bottom, 5),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Center,
                 || {
                     spacer();
                     button("Cancel", PROMPT_CANCEL, Variant::Ghost);
                     if let Some((label, variant)) = confirm.filter(|_| !loading) {
                         button(label, PROMPT_CONFIRM, variant);
                     }
-                },
-            );
+                });
         });
 }

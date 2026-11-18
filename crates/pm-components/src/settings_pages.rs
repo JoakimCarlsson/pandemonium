@@ -2,7 +2,7 @@
 
 use pm_field::{Edit, Field};
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::kit::{FocusId, Role, Side, Styled, Type, label};
 use crate::parts::line;
@@ -338,16 +338,24 @@ pub(crate) fn setting_row(state: &WorkspaceState, setting: Setting, room: f32) {
 #[track_caller]
 pub(crate) fn ruled<T>(items: Vec<T>, emit: impl Fn(T)) {
     let last = items.len().saturating_sub(1);
-    flex_column(Modifier::new(), Flex::new(), || {
-        for (place, item) in items.into_iter().enumerate() {
-            let modifier = if place < last {
-                Modifier::new().stroke_side(Side::Bottom, 1.0, Role::Border)
-            } else {
-                Modifier::new()
-            };
-            flex_column(modifier, Flex::new(), || emit(item));
-        }
-    });
+    column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for (place, item) in items.into_iter().enumerate() {
+                let modifier = Modifier::new().fill_max_width();
+                let modifier = if place < last {
+                    modifier.stroke_side(Side::Bottom, 1.0, Role::Border)
+                } else {
+                    modifier
+                };
+                column_arranged(modifier, Arrangement::Start, Alignment::Start, || {
+                    emit(item)
+                });
+            }
+        },
+    );
 }
 
 /// Emits the rows of the settings on the page `section` that show in `state`, `room` logical pixels across.
@@ -364,25 +372,32 @@ pub(crate) fn page_rows(state: &WorkspaceState, section: Section, room: f32) {
 /// Emits `title` over the rows `rows` emits of a group of settings, as the pages that hold several groups set it.
 #[track_caller]
 pub(crate) fn group(title: &str, rows: impl FnOnce()) {
-    flex_column(Modifier::new().pad_side(Side::Top, 2), Flex::new(), || {
-        flex_row(
-            Modifier::new()
-                .stroke_side(Side::Bottom, 1.0, Role::Border)
-                .pad_side(Side::Bottom, 1),
-            Flex::new().items_center(),
-            || {
-                label(
-                    title,
-                    Type::new(12)
-                        .ratio(1.4)
-                        .tone(Role::Muted)
-                        .truncate()
-                        .medium(),
-                );
-            },
-        );
-        rows();
-    });
+    column_arranged(
+        Modifier::new().fill_max_width().pad_side(Side::Top, 2),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            row_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .stroke_side(Side::Bottom, 1.0, Role::Border)
+                    .pad_side(Side::Bottom, 1),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    label(
+                        title,
+                        Type::new(12)
+                            .ratio(1.4)
+                            .tone(Role::Muted)
+                            .truncate()
+                            .medium(),
+                    );
+                },
+            );
+            rows();
+        },
+    );
 }
 
 /// Emits what a search of every setting found, each under the page it is on, `room` logical pixels across; or a line saying nothing was.

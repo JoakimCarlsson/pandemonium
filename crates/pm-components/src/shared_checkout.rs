@@ -4,7 +4,7 @@
 
 use crate::kit::sp;
 use rustle::Modifier;
-use rustle::{Flex, flex_row};
+use rustle::{Alignment, Arrangement, row_arranged};
 
 use crate::kit::{IconName, Role, Styled};
 
@@ -119,9 +119,10 @@ pub fn notice(state: &WorkspaceState, session: &Session) {
         return;
     }
     let words = shared_words(&titles);
-    flex_row(
+    row_arranged(
         Modifier::new().pad_x(2.5).pad_y(0.5),
-        Flex::new().items_center().gap(sp(1.5)),
+        Arrangement::SpacedBy(sp(1.5)),
+        Alignment::Center,
         move || {
             glyph(IconName::GitFork, 3.5, Role::Warning);
             clipped(words, 12, Role::Muted);

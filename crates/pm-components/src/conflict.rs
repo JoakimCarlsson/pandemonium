@@ -1,7 +1,7 @@
 //! The resolver of a file that a merge, a rebase or a cherry-pick stopped on: each place where the two sides disagree with both sides shown and a choice to take ours, theirs or both, and under them the result, which is the file itself, edited by hand, until the file is marked resolved and staged.
 
 use crate::kit::sp;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use std::ops::Range;
 
 use pm_field::Edit;
@@ -243,7 +243,7 @@ pub struct Conflict<'a> {
     /// What the caller puts around its box.
     modifier: Modifier,
     /// How its column lays out what it holds, when the caller changed it.
-    flex: Option<Flex>,
+    arranged: Option<(Arrangement, Alignment)>,
 }
 
 /// The conflict under `region`'s place among those of the text, as its card is drawn.
@@ -269,7 +269,7 @@ impl<'a> Conflict<'a> {
             },
             size: Size::default(),
             modifier: Modifier::new(),
-            flex: None,
+            arranged: None,
         }
     }
 
@@ -279,9 +279,9 @@ impl<'a> Conflict<'a> {
         self
     }
 
-    /// The resolver with its column laying out what it holds as `flex` says.
-    pub fn flex(mut self, flex: Flex) -> Self {
-        self.flex = Some(flex);
+    /// The resolver spreading its children by `arrangement` and placing them across by `alignment` in place of its own.
+    pub fn arranged(mut self, arrangement: Arrangement, alignment: Alignment) -> Self {
+        self.arranged = Some((arrangement, alignment));
         self
     }
 
@@ -319,31 +319,45 @@ impl<'a> Conflict<'a> {
     /// Emits a row `height` pixels tall, padded `pad` steps at each end, holding `content` centred across it.
     #[track_caller]
     fn line_row(height: f32, pad: f32, content: impl FnOnce()) {
-        flex_row(
-            Modifier::new().height(height).pad_x(pad),
-            Flex::new().items_center(),
+        row_arranged(
+            Modifier::new().fill_max_width().height(height).pad_x(pad),
+            Arrangement::Start,
+            Alignment::Center,
             content,
         );
     }
 
-    /// Emits one side of a conflict: what it is called, `name`, and the lines of `text_of` in the code font on a tint of `tint` `row` pixels tall each, the first few of them.
+    /// Emits one side of a conflict: what it is called, `name`, and the lines of `text_of` in the code font on a tint of `tint` `row` pixels tall each, the first few of them; beside the other side, sharing the row's width and filling its height, when `beside`, else as wide as the card and as tall as its lines.
     #[track_caller]
-    fn side(&self, name: &str, text_of: &str, tint: Role, row: f32) {
+    fn side(&self, name: &str, text_of: &str, tint: Role, row: f32, beside: bool) {
         let font = self.state.editor.font_size;
         let more = text_of.lines().count().saturating_sub(MOST_LINES);
-        flex_column(
-            Modifier::new().grow().clip_to(Radius::None),
-            Flex::new(),
+        let (own, tinted) = if beside {
+            (
+                Modifier::new().weight(1.0).fill_max_height(),
+                Modifier::new().fill_max_width().weight(1.0),
+            )
+        } else {
+            (
+                Modifier::new().fill_max_width(),
+                Modifier::new().fill_max_width(),
+            )
+        };
+        column_arranged(
+            own.clip_to(Radius::None),
+            Arrangement::Start,
+            Alignment::Start,
             || {
                 Self::line_row(LABEL, 2.0, || line(name, 11, 1.4, Role::Muted));
-                flex_column(
-                    Modifier::new().grow().fill(Tone::from(tint).alpha(0.12)),
-                    Flex::new(),
+                column_arranged(
+                    tinted.fill(Tone::from(tint).alpha(0.12)),
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
                         for content in text_of.lines().take(MOST_LINES) {
                             Self::line_row(row, 2.0, || {
                                 label_with(
-                                    Modifier::new().grow(),
+                                    Modifier::new().weight(1.0),
                                     crate::diff_syntax::shown(content),
                                     Type::code(font).ratio(1.4).tone(Role::Text).truncate(),
                                 );
@@ -363,14 +377,22 @@ impl<'a> Conflict<'a> {
     /// Emits both sides of the conflict `region`, named `ours` and `theirs`, lying as the resolver's layout says, `row` pixels a line.
     #[track_caller]
     fn sides(&self, region: &Region, ours: &str, theirs: &str, row: f32) {
+        let beside = self.layout == Layout::SideBySide;
         let both = || {
-            self.side(ours, &region.ours, Role::Success, row);
-            self.side(theirs, &region.theirs, Role::Warning, row);
+            self.side(ours, &region.ours, Role::Success, row, beside);
+            self.side(theirs, &region.theirs, Role::Warning, row, beside);
         };
-        let own = Modifier::new().keep().pad_x(3);
+        let own = Modifier::new().fill_max_width();
         match self.layout {
-            Layout::SideBySide => flex_row(own, Flex::new().gap(sp(2)), both),
-            Layout::Stacked => flex_column(own, Flex::new(), both),
+            Layout::SideBySide => row_arranged(
+                own.height_intrinsic(rustle::IntrinsicSize::Max).pad_x(3),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Start,
+                both,
+            ),
+            Layout::Stacked => {
+                column_arranged(own.pad_x(3), Arrangement::Start, Alignment::Start, both)
+            }
         }
     }
 
@@ -380,23 +402,27 @@ impl<'a> Conflict<'a> {
         let region = card.region;
         let ours = format!("Ours · {}", name_or(&region.ours_name, "HEAD"));
         let theirs = format!("Theirs · {}", name_or(&region.theirs_name, "incoming"));
-        flex_column(
+        column_arranged(
             Modifier::new()
+                .fill_max_width()
                 .height(self.card_height(region, row) - SPACE)
                 .stroke(Role::Border, Radius::Lg)
                 .clip_to(Radius::None),
-            Flex::new(),
+            Arrangement::Start,
+            Alignment::Start,
             || {
-                flex_row(
+                row_arranged(
                     Modifier::new()
+                        .fill_max_width()
                         .height(LABEL)
                         .fill(Role::Surface)
                         .stroke_side(Side::Bottom, 1.0, Role::Border)
                         .pad_x(3),
-                    Flex::new().items_center(),
+                    Arrangement::Start,
+                    Alignment::Center,
                     || {
                         label_with(
-                            Modifier::new().grow(),
+                            Modifier::new().weight(1.0),
                             format!(
                                 "Conflict {} of {} · line {}",
                                 card.place + 1,
@@ -412,9 +438,10 @@ impl<'a> Conflict<'a> {
                     },
                 );
                 self.sides(region, &ours, &theirs, row);
-                flex_row(
+                row_arranged(
                     Modifier::new().height(BUTTONS).pad_x(3),
-                    Flex::new().items_center().gap(sp(2)),
+                    Arrangement::SpacedBy(sp(2)),
+                    Alignment::Center,
                     || {
                         for (step, choice) in Choice::ALL.into_iter().enumerate() {
                             Button::new(
@@ -445,12 +472,14 @@ impl<'a> Conflict<'a> {
             (true, 1) => "1 conflict left".to_owned(),
             (true, left) => format!("{left} conflicts left"),
         };
-        flex_row(
+        row_arranged(
             Modifier::new()
+                .fill_max_width()
                 .height(STRIP)
                 .stroke_side(Side::Bottom, 1.0, Role::Border)
                 .pad_x(4),
-            Flex::new().items_center().gap(sp(3)),
+            Arrangement::SpacedBy(sp(3)),
+            Alignment::Center,
             || {
                 crate::kit::label(
                     name,
@@ -532,59 +561,72 @@ impl<'a> Conflict<'a> {
         }
         let doc_top = top + LABEL;
         let whole = Block::whole();
-        let flex = self.flex.unwrap_or_default();
-        flex_column(
-            self.modifier.clone().chain(Modifier::new().grow()),
-            flex,
+        let (arrangement, alignment) = self
+            .arranged
+            .unwrap_or((Arrangement::Start, Alignment::Start));
+        column_arranged(
+            self.modifier.clone().chain(Modifier::new().weight(1.0)),
+            arrangement,
+            alignment,
             || {
                 self.strip(resolver, regions.len(), text_now.is_some());
-                flex_column(
+                column_arranged(
                     Modifier::new()
-                        .grow()
+                        .fill_max_width()
+                        .weight(1.0)
                         .clip_to(Radius::None)
                         .fill(Role::Background),
-                    Flex::new(),
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
                         scroll_area(
-                            Modifier::new().grow(),
+                            Modifier::new().fill_max_width().weight(1.0),
                             Scroll::from_start(EXCERPTS_SCROLL, excerpts.scroll),
                             || {
-                                flex_column(Modifier::new().fill_max_width(), Flex::new(), || {
-                                    rustle::spacer(Modifier::new().height(before));
-                                    for card in &built {
-                                        rustle::key(card.place, || {
-                                            flex_column(
-                                                Modifier::new().pad(3),
-                                                Flex::new(),
-                                                || {
-                                                    self.card(card, row);
-                                                },
-                                            );
-                                        });
-                                    }
-                                    rustle::spacer(Modifier::new().height(after));
-                                    flex_row(
-                                        Modifier::new()
-                                            .height(LABEL)
-                                            .fill(Role::Surface)
-                                            .stroke_side(Side::Bottom, 1.0, Role::Border)
-                                            .pad_x(3),
-                                        Flex::new().items_center(),
-                                        || {
-                                            crate::kit::label(
-                                                "Result",
-                                                Type::new(12)
-                                                    .ratio(1.4)
-                                                    .tone(Role::Text)
-                                                    .truncate()
-                                                    .medium(),
-                                            );
-                                        },
-                                    );
-                                    if let Some(index) = index {
-                                        plain_block(state, index, &whole, doc_top, (low, high));
-                                    }
-                                });
+                                column_arranged(
+                                    Modifier::new().fill_max_width(),
+                                    Arrangement::Start,
+                                    Alignment::Start,
+                                    || {
+                                        rustle::spacer(Modifier::new().height(before));
+                                        for card in &built {
+                                            rustle::key(card.place, || {
+                                                column_arranged(
+                                                    Modifier::new().fill_max_width().pad(3),
+                                                    Arrangement::Start,
+                                                    Alignment::Start,
+                                                    || {
+                                                        self.card(card, row);
+                                                    },
+                                                );
+                                            });
+                                        }
+                                        rustle::spacer(Modifier::new().height(after));
+                                        row_arranged(
+                                            Modifier::new()
+                                                .fill_max_width()
+                                                .height(LABEL)
+                                                .fill(Role::Surface)
+                                                .stroke_side(Side::Bottom, 1.0, Role::Border)
+                                                .pad_x(3),
+                                            Arrangement::Start,
+                                            Alignment::Center,
+                                            || {
+                                                crate::kit::label(
+                                                    "Result",
+                                                    Type::new(12)
+                                                        .ratio(1.4)
+                                                        .tone(Role::Text)
+                                                        .truncate()
+                                                        .medium(),
+                                                );
+                                            },
+                                        );
+                                        if let Some(index) = index {
+                                            plain_block(state, index, &whole, doc_top, (low, high));
+                                        }
+                                    },
+                                );
                             },
                         );
                     },

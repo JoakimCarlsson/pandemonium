@@ -3,7 +3,7 @@
 use crate::kit::sp;
 use pm_protocol::{UsageDay, UsageModel, UsageReport, UsageSession, UsageTotals};
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row, flex_wrap};
+use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
 use crate::kit::{FocusId, Radius, Role, Side, Styled, Tone, Tooltip, Type, label};
 
@@ -330,13 +330,14 @@ fn series_tone(place: usize) -> Tone {
 /// Emits one headline figure, `width` logical pixels across: what it is, how much, and a quiet line saying more.
 #[track_caller]
 fn headline(title: &str, value: String, more: String, width: f32) {
-    flex_column(
+    column_arranged(
         Modifier::new()
             .width(width)
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
             .pad(3),
-        Flex::new().gap(sp(0.5)),
+        Arrangement::SpacedBy(sp(0.5)),
+        Alignment::Start,
         || {
             line(title, 12, 1.4, Role::Muted);
             label(
@@ -374,7 +375,7 @@ fn headlines(report: &UsageReport, room: f32) {
         1 => "in 1 session".to_owned(),
         count => format!("in {count} sessions"),
     };
-    flex_wrap(Modifier::new(), Flex::new().gap(sp(2)), || {
+    flow_row_with(Modifier::new(), FlowOptions::new(sp(2), sp(2)), || {
         headline("Spend", spend.0, spend.1, width);
         headline(
             "Tokens",
@@ -399,12 +400,13 @@ fn day_bar(day: &UsageDay, series: &[String], measure: Measure, most: u64, width
     let whole: u64 = amounts.iter().sum();
     let parts = heights(&amounts, most, CHART_HEIGHT);
     let said = format!("{}: {}", day_label(&day.day), figure(whole, measure));
-    flex_column(
+    column_arranged(
         Modifier::new()
             .width(width)
             .height(CHART_HEIGHT)
             .tooltip(said),
-        Flex::new().justify_end(),
+        Arrangement::End,
+        Alignment::Start,
         move || {
             for (place, tall) in parts
                 .into_iter()
@@ -426,9 +428,10 @@ fn day_bar(day: &UsageDay, series: &[String], measure: Measure, most: u64, width
 /// Emits one entry of the chart's legend: a swatch of `tone` and the name it stands for.
 #[track_caller]
 fn legend_entry(name: &str, tone: Tone) {
-    flex_row(
+    row_arranged(
         Modifier::new(),
-        Flex::new().items_center().gap(sp(1.5)),
+        Arrangement::SpacedBy(sp(1.5)),
+        Alignment::Center,
         || {
             rustle::spacer(
                 Modifier::new()
@@ -466,61 +469,69 @@ fn chart(report: &UsageReport, room: f32) {
             Role::Muted,
         );
     };
-    flex_column(Modifier::new().width(room), Flex::new().gap(sp(2)), || {
-        flex_row(
-            Modifier::new(),
-            Flex::new().items_center().justify_between().gap(sp(3)),
-            || {
-                label_grown(title);
-                line(
-                    format!("most {}", figure(most, measure)),
-                    12,
-                    1.4,
-                    Role::Muted,
-                );
-            },
-        );
-        flex_row(
-            Modifier::new()
-                .width(room)
-                .height(CHART_HEIGHT + 1.0)
-                .stroke_side(Side::Bottom, 1.0, Role::Border)
-                .padding_each(0.0, 0.0, 0.0, 1.0),
-            Flex::new().items_end().justify_between(),
-            || {
-                for day in &report.days {
-                    day_bar(day, &series, measure, most, width);
-                }
-            },
-        );
-        flex_row(
-            Modifier::new(),
-            Flex::new().items_center().justify_between(),
-            || {
-                ends(report.days.first());
-                ends(report.days.last());
-            },
-        );
-        flex_wrap(
-            Modifier::new(),
-            Flex::new().gap(sp(3)).items_center(),
-            || {
-                for (place, name) in series.iter().enumerate() {
-                    legend_entry(name, series_tone(place));
-                }
-                if others {
-                    legend_entry(OTHER, series_tone(MOST_SERIES));
-                }
-            },
-        );
-    });
+    column_arranged(
+        Modifier::new().width(room),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Start,
+        || {
+            row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(sp(3)),
+                Alignment::Center,
+                || {
+                    label_grown(title);
+                    line(
+                        format!("most {}", figure(most, measure)),
+                        12,
+                        1.4,
+                        Role::Muted,
+                    );
+                },
+            );
+            row_arranged(
+                Modifier::new()
+                    .width(room)
+                    .height(CHART_HEIGHT + 1.0)
+                    .stroke_side(Side::Bottom, 1.0, Role::Border)
+                    .padding_each(0.0, 0.0, 0.0, 1.0),
+                Arrangement::SpaceBetween,
+                Alignment::End,
+                || {
+                    for day in &report.days {
+                        day_bar(day, &series, measure, most, width);
+                    }
+                },
+            );
+            row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpaceBetween,
+                Alignment::Center,
+                || {
+                    ends(report.days.first());
+                    ends(report.days.last());
+                },
+            );
+            flow_row_with(
+                Modifier::new(),
+                FlowOptions::new(sp(3), sp(3)).item_alignment(Alignment::Center),
+                || {
+                    for (place, name) in series.iter().enumerate() {
+                        legend_entry(name, series_tone(place));
+                    }
+                    if others {
+                        legend_entry(OTHER, series_tone(MOST_SERIES));
+                    }
+                },
+            );
+        },
+    );
 }
 
 /// Emits the title of the chart, set medium, taking the room its row leaves and cut short at its edge.
 #[track_caller]
 fn label_grown(title: &str) {
     crate::kit::label_with(
-        Modifier::new().grow(),
+        Modifier::new().weight(1.0),
         title,
         Type::new(15)
             .ratio(1.4)
@@ -538,7 +549,12 @@ fn padded(last: bool, content: impl FnOnce()) {
     } else {
         Modifier::new().stroke_side(Side::Bottom, 1.0, Role::Border)
     };
-    flex_row(own.pad_x(3).pad_y(3), Flex::new(), content);
+    row_arranged(
+        own.pad_x(3).pad_y(3),
+        Arrangement::Start,
+        Alignment::Start,
+        content,
+    );
 }
 
 /// How wide a row inside a boxed list is when the page is `room` logical pixels across.
@@ -643,9 +659,11 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     };
     page();
     paragraph(SUMMARY, room);
-    flex_wrap(
+    flow_row_with(
         Modifier::new().fill_max_width(),
-        Flex::new().items_center().justify_between().gap(sp(2)),
+        FlowOptions::new(sp(2), sp(2))
+            .arrangement(Arrangement::SpaceBetween)
+            .item_alignment(Alignment::Center),
         || {
             choices(&RANGE_NAMES, picked, |option| USAGE_RANGES.id(option));
             if let Some(said) = &status {

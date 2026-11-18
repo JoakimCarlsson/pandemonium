@@ -1,7 +1,8 @@
 //! What keeps the reader safe in the browser pane: the questions a page asks about the reader's machine, a site whose certificate is not trusted, and the files a page downloaded.
 
 use crate::kit::sp;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+
 use std::time::{Duration, Instant};
 
 use crate::kit::{
@@ -262,14 +263,15 @@ fn host_of(origin: &str) -> &str {
 /// Emits a bar as tall as [`BAR`] and as wide as its parent, with `modifier` around it, holding what `content` emits side by side: its words, then its buttons.
 #[track_caller]
 fn bar(modifier: Modifier, content: impl FnOnce()) {
-    flex_row(
+    row_arranged(
         modifier
             .height(BAR)
             .fill_max_width()
             .fill(Role::Surface)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(3),
-        Flex::new().items_center().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
         content,
     );
 }
@@ -342,11 +344,16 @@ fn reason(error: &str) -> &'static str {
 #[track_caller]
 fn paragraph(content: &str, pixels: u32, tone: Role, room: f32) {
     let lines = wrap(content, pixels, room);
-    flex_column(Modifier::new(), Flex::new(), || {
-        for words in lines {
-            line(words, pixels, 1.45, tone);
-        }
-    });
+    column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for words in lines {
+                line(words, pixels, 1.45, tone);
+            }
+        },
+    );
 }
 
 /// Emits a row of the certificate's details: `name`, and what it says in `value`, set in the code face when `mono`.
@@ -355,16 +362,17 @@ fn detail(name: &str, value: &str, mono: bool) {
     let value = if value.is_empty() { "unknown" } else { value };
     let kind = Type::new(12).ratio(1.4).tone(Role::Text).truncate();
     let kind = if mono { kind.mono() } else { kind };
-    flex_row(
+    row_arranged(
         Modifier::new().fill_max_width(),
-        Flex::new().gap(sp(3)),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Start,
         || {
             label_with(
                 Modifier::new().width(108.0),
                 name,
                 Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
             );
-            label_with(Modifier::new().grow(), value, kind);
+            label_with(Modifier::new().weight(1.0), value, kind);
         },
     );
 }
@@ -386,21 +394,23 @@ pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) {
     };
     let across = (width - 48.0).clamp(0.0, 560.0);
     let room = (across - 40.0).max(0.0);
-    flex_row(
+    row_arranged(
         Modifier::new()
             .width(width)
             .height(height)
             .fill(Role::Background)
             .pad(6),
-        Flex::new().items_center().justify_center(),
+        Arrangement::Center,
+        Alignment::Center,
         || {
-            flex_column(
+            column_arranged(
                 Modifier::new()
                     .width(across)
                     .fill_rounded(Role::Surface, Radius::Xl)
                     .stroke(Role::Border, Radius::Xl)
                     .pad(5),
-                Flex::new().gap(sp(3)),
+                Arrangement::SpacedBy(sp(3)),
+                Alignment::Start,
                 || {
                     label(
                         "Not secure: certificate not trusted",
@@ -424,16 +434,22 @@ pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) {
                         Role::Muted,
                         room,
                     );
-                    flex_column(Modifier::new().pad_y(2), Flex::new().gap(sp(1)), || {
-                        detail("Site", &certificate.url, false);
-                        detail("Issued to", &certificate.subject, false);
-                        detail("Issued by", &certificate.issuer, false);
-                        detail("Expires", &certificate.expires, false);
-                        detail("SHA-256", &certificate.fingerprint, true);
-                    });
-                    flex_row(
+                    column_arranged(
+                        Modifier::new().fill_max_width().pad_y(2),
+                        Arrangement::SpacedBy(sp(1)),
+                        Alignment::Start,
+                        || {
+                            detail("Site", &certificate.url, false);
+                            detail("Issued to", &certificate.subject, false);
+                            detail("Issued by", &certificate.issuer, false);
+                            detail("Expires", &certificate.expires, false);
+                            detail("SHA-256", &certificate.fingerprint, true);
+                        },
+                    );
+                    row_arranged(
                         Modifier::new(),
-                        Flex::new().items_center().gap(sp(2)),
+                        Arrangement::SpacedBy(sp(2)),
+                        Alignment::Center,
                         || {
                             Button::new("Go back", BROWSER_CERT_BACK).build();
                             if certificate.confirming {

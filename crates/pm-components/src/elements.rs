@@ -3,7 +3,7 @@
 //! sections.
 
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row, flex_wrap};
+use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
 use crate::kit::{
     FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, Tone, Type, label,
@@ -203,15 +203,16 @@ pub fn split(text: &str) -> (&str, Vec<String>) {
 /// Emits the elements of a sent message as chips, which only say what they are.
 #[track_caller]
 pub fn sent_chips(labels: &[String]) {
-    flex_wrap(Modifier::new(), Flex::new().gap(sp(2)), || {
+    flow_row_with(Modifier::new(), FlowOptions::new(sp(2), sp(2)), || {
         for label in labels {
-            flex_row(
+            row_arranged(
                 Modifier::new()
                     .fill_rounded(Role::Surface, Radius::Lg)
                     .stroke(Role::Border, Radius::Lg)
                     .pad_x(2)
                     .pad_y(1),
-                Flex::new().items_center().gap(sp(1.5)),
+                Arrangement::SpacedBy(sp(1.5)),
+                Alignment::Center,
                 || {
                     crate::parts::glyph(
                         crate::captures::Capture::icon_of_label(label),
@@ -328,9 +329,13 @@ fn css_color(value: &str) -> Option<Tone> {
 /// Emits a card of the popover: a small title over what `body` emits.
 #[track_caller]
 pub(crate) fn section(title: &str, body: impl FnOnce()) {
-    flex_column(
-        Modifier::new().stroke(Role::Border, Radius::Lg).pad(2.5),
-        Flex::new().gap(sp(1.5)),
+    column_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .stroke(Role::Border, Radius::Lg)
+            .pad(2.5),
+        Arrangement::SpacedBy(sp(1.5)),
+        Alignment::Start,
         || {
             line(title, 11, 1.4, Role::Subtle);
             body();
@@ -346,11 +351,16 @@ pub(crate) fn words(content: &str, mono: bool, tone: Role, width: f32) {
     let kind = Type::new(12).ratio(1.5);
     let kind = if mono { kind.mono() } else { kind };
     let lines = wrap_lines(&content, kind, width);
-    flex_column(Modifier::new(), Flex::new(), || {
-        for piece in lines {
-            label(&content[piece.start..piece.end], kind.tone(tone));
-        }
-    });
+    column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for piece in lines {
+                label(&content[piece.start..piece.end], kind.tone(tone));
+            }
+        },
+    );
 }
 
 /// Emits a row of a list: a name at the left and a value at the right, with a swatch of the colour
@@ -363,16 +373,23 @@ fn pair(name: &str, value: &str) {
     } else {
         VALUE_TEXT + 18.0
     };
-    flex_row(
-        Modifier::new(),
-        Flex::new().items_start().gap(sp(3)),
+    row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Start,
         || {
-            flex_column(Modifier::new().width(NAME_WIDTH), Flex::new(), || {
-                words(name, false, Role::Muted, NAME_WIDTH);
-            });
-            flex_row(
-                Modifier::new().grow(),
-                Flex::new().items_start().gap(sp(1.5)),
+            column_arranged(
+                Modifier::new().width(NAME_WIDTH),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    words(name, false, Role::Muted, NAME_WIDTH);
+                },
+            );
+            row_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::SpacedBy(sp(1.5)),
+                Alignment::Start,
                 || {
                     if let Some(tone) = swatch {
                         rustle::spacer(
@@ -394,11 +411,16 @@ fn pair(name: &str, value: &str) {
 /// Emits a list of rows, one for each name and value of `rows`.
 #[track_caller]
 fn pairs(rows: &[(String, String)]) {
-    flex_column(Modifier::new(), Flex::new().gap(sp(1.5)), || {
-        for (name, value) in rows {
-            pair(name, value);
-        }
-    });
+    column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(sp(1.5)),
+        Alignment::Start,
+        || {
+            for (name, value) in rows {
+                pair(name, value);
+            }
+        },
+    );
 }
 
 /// Emits the popover of `element`: everything the prompt knows about it, in cards that scroll by
@@ -422,15 +444,21 @@ fn popover(element: &Element, state: &WorkspaceState) {
                     .height_in(0.0, sp(HEIGHT / 4.0)),
                 Scroll::from_start(MENU_SCROLL, state.menu_scroll),
                 || {
-                    flex_column(
+                    column_arranged(
                         Modifier::new().fill_max_width(),
-                        Flex::new().gap(sp(2)),
+                        Arrangement::SpacedBy(sp(2)),
+                        Alignment::Start,
                         || {
                             section("ELEMENT", || {
-                                flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
-                                    words(&element.opening_tag(), true, Role::Text, CARD_TEXT);
-                                    words(&element.size(), false, Role::Muted, CARD_TEXT);
-                                });
+                                column_arranged(
+                                    Modifier::new(),
+                                    Arrangement::SpacedBy(sp(1)),
+                                    Alignment::Start,
+                                    || {
+                                        words(&element.opening_tag(), true, Role::Text, CARD_TEXT);
+                                        words(&element.size(), false, Role::Muted, CARD_TEXT);
+                                    },
+                                );
                             });
                             section("PATH", || {
                                 words(&element.selector, true, Role::Text, CARD_TEXT);
@@ -465,20 +493,21 @@ pub fn chips(state: &WorkspaceState) {
     if state.elements.is_empty() {
         return;
     }
-    flex_wrap(
+    flow_row_with(
         Modifier::new().pad_x(3).pad_side(Side::Top, 3),
-        Flex::new().gap(sp(2)),
+        FlowOptions::new(sp(2), sp(2)),
         || {
             for (index, element) in state.elements.iter().enumerate() {
                 let open = state.picker == Some(Picker::Element(index));
                 rustle::key(ELEMENT_BASE + index as u64, || {
                     anchored(
                         || {
-                            flex_row(
+                            row_arranged(
                                 Modifier::new()
                                     .fill_rounded(Role::SurfaceHover, Radius::Lg)
                                     .pad_side(Side::Right, 1),
-                                Flex::new().items_center().gap(sp(0.5)),
+                                Arrangement::SpacedBy(sp(0.5)),
+                                Alignment::Center,
                                 || {
                                     Button::new(
                                         element.label(),

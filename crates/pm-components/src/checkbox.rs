@@ -1,7 +1,7 @@
 //! The check box: a small control that is ticked or not, as a square or as a switch.
 
+use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_row};
 
 use crate::kit::{FocusId, IconName, Interactive, Radius, Role, Styled, icon};
 
@@ -85,9 +85,10 @@ impl Checkbox {
         };
         let own = own.cursor(CursorIcon::Pointer).target(self.id);
         let (checked, mixed) = (self.checked, self.mixed);
-        flex_row(
+        row_arranged(
             self.modifier.chain(own),
-            Flex::new().items_center().justify_center(),
+            Arrangement::Center,
+            Alignment::Center,
             move || {
                 if checked {
                     icon(IconName::Check, 3.0, Role::OnAccent);
@@ -112,16 +113,21 @@ impl Checkbox {
             .cursor(CursorIcon::Pointer)
             .target(self.id)
             .pad_x(0.5);
-        let flex = if on {
-            Flex::new().items_center().justify_end()
+        let arrangement = if on {
+            Arrangement::End
         } else {
-            Flex::new().items_center()
+            Arrangement::Start
         };
-        flex_row(self.modifier.chain(own), flex, move || {
-            rustle::spacer(Modifier::new().square(4).fill_rounded(
-                if on { Role::Background } else { Role::Muted },
-                Radius::Full,
-            ));
-        });
+        row_arranged(
+            self.modifier.chain(own),
+            arrangement,
+            Alignment::Center,
+            move || {
+                rustle::spacer(Modifier::new().square(4).fill_rounded(
+                    if on { Role::Background } else { Role::Muted },
+                    Radius::Full,
+                ));
+            },
+        );
     }
 }

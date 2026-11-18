@@ -1,7 +1,7 @@
 //! The list of branches under the branch of the repository the panel works on: to check one out, or to make a new one.
 
 use rustle::Modifier;
-use rustle::{Flex, flex_column};
+use rustle::{Alignment, Arrangement, column_arranged};
 
 use crate::Input;
 use crate::git_controls::{BRANCH_BODY, BRANCH_CREATE, BRANCH_FILTER, BRANCH_PICK_BASE};
@@ -37,17 +37,20 @@ pub fn branch_menu(state: &WorkspaceState) {
                 .target(BRANCH_BODY),
         )
         .build_with(|| {
-            flex_column(
+            column_arranged(
                 Modifier::new()
+                    .fill_max_width()
                     .pad_side(Side::Top, 1)
                     .pad_side(Side::Left, 1)
                     .pad_side(Side::Right, 1)
                     .pad_side(Side::Bottom, 2),
-                Flex::new(),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
                     Input::new(&git.filter, BRANCH_FILTER)
                         .placeholder("Search branches, or name a new one")
                         .size(Size::Sm)
+                        .modifier(Modifier::new().fill_max_width())
                         .build();
                 },
             );
@@ -60,17 +63,24 @@ pub fn branch_menu(state: &WorkspaceState) {
                 );
             }
             if matching.is_empty() && typed.is_empty() {
-                flex_column(Modifier::new().pad_x(2.5).pad_y(1.5), Flex::new(), || {
-                    line("No branches.", 13, 1.4, Role::Subtle);
-                });
+                column_arranged(
+                    Modifier::new().pad_x(2.5).pad_y(1.5),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        line("No branches.", 13, 1.4, Role::Subtle);
+                    },
+                );
             }
             if !typed.is_empty() && !git.exists() {
-                flex_column(
+                column_arranged(
                     Modifier::new()
+                        .fill_max_width()
                         .pad_side(Side::Top, 1)
                         .stroke_side(Side::Top, 1.0, Role::Border)
                         .pad_side(Side::Top, 1),
-                    Flex::new(),
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
                         row(
                             &format!("Create branch “{typed}”"),

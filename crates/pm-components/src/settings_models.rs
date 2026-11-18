@@ -4,7 +4,7 @@ use crate::kit::sp;
 use pm_field::{Edit, Field};
 use pm_harness::{ModelServer, ServerWire};
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row, flex_wrap};
+use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
 use crate::kit::{FocusId, IconName, Radius, Role, Styled, Type, label, label_with};
 
@@ -12,7 +12,7 @@ use crate::agent_list::AgentEntry;
 use crate::button::Variant;
 use crate::checkbox::Checkbox;
 use crate::input::Input;
-use crate::parts::{clipped, line};
+use crate::parts::line;
 use crate::settings_ids::{FOUND_MODEL_PICKS, MODEL_SERVER_EDITS, MODEL_SERVER_REMOVES, SINGLES};
 use crate::settings_row::choices;
 use crate::settings_servers::{boxed, heading_only, note, paragraph, wrapped_note};
@@ -448,13 +448,18 @@ impl WorkspaceState {
 /// Emits a box of the form under the words that say what is written in it.
 #[track_caller]
 fn labelled(words: &str, field: &Field, id: FocusId, placeholder: &str) {
-    flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
-        line(words, 12, 1.4, Role::Muted);
-        Input::new(field, id)
-            .size(Size::Sm)
-            .placeholder(placeholder)
-            .build();
-    });
+    column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Start,
+        || {
+            line(words, 12, 1.4, Role::Muted);
+            Input::new(field, id)
+                .size(Size::Sm)
+                .placeholder(placeholder)
+                .build();
+        },
+    );
 }
 
 /// Emits the models the server was found to offer, each with a box that lists it in the form or takes it out, or what asking it came to; nothing when it was not asked or offers none.
@@ -473,40 +478,47 @@ fn found_node(form: &ModelServerForm, room: f32) {
         return;
     }
     let listed = form.listed();
-    flex_column(Modifier::new(), Flex::new().gap(sp(2)), || {
-        wrapped_note(
-            &format!(
-                "Found {} models; tick the ones to offer, or leave the list blank to offer every one.",
-                found.models.len()
-            ),
-            (room - 48.0).max(160.0),
-        );
-        flex_wrap(
-            Modifier::new()
-                .fill_rounded(Role::Background, Radius::Md)
-                .stroke(Role::Border, Radius::Md)
-                .pad(3),
-            Flex::new().gap(sp(3)),
-            || {
-                for (place, model) in found.models.iter().enumerate() {
-                    let Some(pick) = FOUND_MODEL_PICKS.id(place) else {
-                        continue;
-                    };
-                    flex_row(
-                        Modifier::new(),
-                        Flex::new().items_center().gap(sp(2)),
-                        || {
-                            Checkbox::new(listed.contains(model), pick).build();
-                            label(
-                                model.clone(),
-                                Type::new(12).ratio(1.4).tone(Role::Text).truncate().mono(),
-                            );
-                        },
-                    );
-                }
-            },
-        );
-    });
+    column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Start,
+        || {
+            wrapped_note(
+                &format!(
+                    "Found {} models; tick the ones to offer, or leave the list blank to offer every one.",
+                    found.models.len()
+                ),
+                (room - 48.0).max(160.0),
+            );
+            flow_row_with(
+                Modifier::new()
+                    .fill_max_width()
+                    .fill_rounded(Role::Background, Radius::Md)
+                    .stroke(Role::Border, Radius::Md)
+                    .pad(3),
+                FlowOptions::new(sp(3), sp(3)),
+                || {
+                    for (place, model) in found.models.iter().enumerate() {
+                        let Some(pick) = FOUND_MODEL_PICKS.id(place) else {
+                            continue;
+                        };
+                        row_arranged(
+                            Modifier::new(),
+                            Arrangement::SpacedBy(sp(2)),
+                            Alignment::Center,
+                            || {
+                                Checkbox::new(listed.contains(model), pick).build();
+                                label(
+                                    model.clone(),
+                                    Type::new(12).ratio(1.4).tone(Role::Text).truncate().mono(),
+                                );
+                            },
+                        );
+                    }
+                },
+            );
+        },
+    );
 }
 
 /// Emits the form a model server is declared or changed with, `room` logical pixels across.
@@ -521,63 +533,82 @@ fn form_node(form: &ModelServerForm, room: f32) {
     } else {
         "sk-..."
     };
-    flex_column(Modifier::new().pad(3), Flex::new().gap(sp(3)), || {
-        labelled("Name", &form.name, MODEL_NAME, "e.g. Company gateway");
-        labelled(
-            "Base URL",
-            &form.base_url,
-            MODEL_URL,
-            "e.g. http://localhost:8000/v1",
-        );
-        flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
-            line("API", 12, 1.4, Role::Muted);
-            flex_row(Modifier::new(), Flex::new(), || {
-                choices(&WIRES.map(|(_, name)| name), picked, |option| {
-                    [MODEL_WIRE_CHAT, MODEL_WIRE_RESPONSES].get(option).copied()
-                });
-            });
-        });
-        labelled("API key", &form.key, MODEL_KEY, key_hint);
-        labelled(
-            "Or read the key from (environment variables)",
-            &form.key_env,
-            MODEL_KEY_ENV,
-            "e.g. GATEWAY_API_KEY",
-        );
-        labelled(
-            "Models (separated by commas; blank asks the server)",
-            &form.models,
-            MODEL_LIST,
-            "e.g. qwen3-coder, gpt-oss-120b",
-        );
-        found_node(form, room);
-        flex_row(
-            Modifier::new(),
-            Flex::new().items_center().justify_between().gap(sp(2)),
-            || {
-                Button::new("Find models", MODEL_FIND)
-                    .variant(Variant::Outline)
-                    .size(Size::Sm)
-                    .with_icon(IconName::Search)
-                    .disabled(form.base_url.text().trim().is_empty() || form.found.asking.is_some())
-                    .build();
-                flex_row(
-                    Modifier::new(),
-                    Flex::new().items_center().justify_end().gap(sp(2)),
-                    || {
-                        Button::new("Cancel", MODEL_CANCEL)
-                            .variant(Variant::Ghost)
-                            .size(Size::Sm)
-                            .build();
-                        Button::new("Save", MODEL_SAVE)
-                            .size(Size::Sm)
-                            .disabled(!form.complete())
-                            .build();
-                    },
-                );
-            },
-        );
-    });
+    column_arranged(
+        Modifier::new().fill_max_width().pad(3),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Start,
+        || {
+            labelled("Name", &form.name, MODEL_NAME, "e.g. Company gateway");
+            labelled(
+                "Base URL",
+                &form.base_url,
+                MODEL_URL,
+                "e.g. http://localhost:8000/v1",
+            );
+            column_arranged(
+                Modifier::new(),
+                Arrangement::SpacedBy(sp(1)),
+                Alignment::Start,
+                || {
+                    line("API", 12, 1.4, Role::Muted);
+                    row_arranged(
+                        Modifier::new(),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            choices(&WIRES.map(|(_, name)| name), picked, |option| {
+                                [MODEL_WIRE_CHAT, MODEL_WIRE_RESPONSES].get(option).copied()
+                            });
+                        },
+                    );
+                },
+            );
+            labelled("API key", &form.key, MODEL_KEY, key_hint);
+            labelled(
+                "Or read the key from (environment variables)",
+                &form.key_env,
+                MODEL_KEY_ENV,
+                "e.g. GATEWAY_API_KEY",
+            );
+            labelled(
+                "Models (separated by commas; blank asks the server)",
+                &form.models,
+                MODEL_LIST,
+                "e.g. qwen3-coder, gpt-oss-120b",
+            );
+            found_node(form, room);
+            row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpaceBetween,
+                Alignment::Center,
+                || {
+                    Button::new("Find models", MODEL_FIND)
+                        .variant(Variant::Outline)
+                        .size(Size::Sm)
+                        .with_icon(IconName::Search)
+                        .disabled(
+                            form.base_url.text().trim().is_empty() || form.found.asking.is_some(),
+                        )
+                        .build();
+                    row_arranged(
+                        Modifier::new(),
+                        Arrangement::SpacedByAligned(sp(2), Alignment::End),
+                        Alignment::Center,
+                        || {
+                            Button::new("Cancel", MODEL_CANCEL)
+                                .variant(Variant::Ghost)
+                                .size(Size::Sm)
+                                .build();
+                            Button::new("Save", MODEL_SAVE)
+                                .size(Size::Sm)
+                                .disabled(!form.complete())
+                                .build();
+                        },
+                    );
+                },
+            );
+        },
+    );
 }
 
 /// How `server` is reached and what it offers, in the words under its name.
@@ -610,40 +641,48 @@ fn key_badge(server: &ModelServer) -> Option<String> {
 #[track_caller]
 fn server_row(index: usize, server: &ModelServer) {
     let name = server.label.clone().unwrap_or_else(|| server.id.clone());
-    flex_row(
-        Modifier::new().pad_x(3).pad_y(3),
-        Flex::new().items_center().justify_between().gap(sp(3)),
+    row_arranged(
+        Modifier::new().fill_max_width().pad_x(3).pad_y(3),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
         || {
-            flex_column(Modifier::new().grow(), Flex::new().gap(sp(0.5)), || {
-                flex_row(
-                    Modifier::new(),
-                    Flex::new().items_center().gap(sp(2)),
-                    || {
-                        label(
-                            name,
-                            Type::new(13)
-                                .ratio(1.4)
-                                .tone(Role::Text)
-                                .truncate()
-                                .medium(),
-                        );
-                        if let Some(said) = key_badge(server) {
-                            Badge::new(said).build();
-                        }
-                    },
-                );
-                clipped(detail_of(server), 12, Role::Muted);
-                if !server.models.is_empty() {
-                    label_with(
-                        Modifier::new().fill_max_width(),
-                        server.models.join(", "),
-                        Type::new(11).ratio(1.4).tone(Role::Subtle).truncate(),
+            column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::SpacedBy(sp(0.5)),
+                Alignment::Start,
+                || {
+                    row_arranged(
+                        Modifier::new(),
+                        Arrangement::SpacedBy(sp(2)),
+                        Alignment::Center,
+                        || {
+                            label(
+                                name,
+                                Type::new(13)
+                                    .ratio(1.4)
+                                    .tone(Role::Text)
+                                    .truncate()
+                                    .medium(),
+                            );
+                            if let Some(said) = key_badge(server) {
+                                Badge::new(said).build();
+                            }
+                        },
                     );
-                }
-            });
-            flex_row(
+                    line(detail_of(server), 12, 1.4, Role::Muted);
+                    if !server.models.is_empty() {
+                        label_with(
+                            Modifier::new().fill_max_width(),
+                            server.models.join(", "),
+                            Type::new(11).ratio(1.4).tone(Role::Subtle).truncate(),
+                        );
+                    }
+                },
+            );
+            row_arranged(
                 Modifier::new(),
-                Flex::new().items_center().gap(sp(1)),
+                Arrangement::SpacedBy(sp(1)),
+                Alignment::Center,
                 || {
                     if let Some(edit) = MODEL_SERVER_EDITS.id(index) {
                         Button::new("Edit", edit)
@@ -677,9 +716,10 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     if let Some(reason) = models.error.as_deref() {
         wrapped_note(&format!("Could not change the servers: {reason}"), room);
     }
-    flex_row(
-        Modifier::new(),
-        Flex::new().items_center().justify_between(),
+    row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpaceBetween,
+        Alignment::Center,
         || {
             heading_only("Servers", models.servers.len());
             Button::new("Add Server", MODEL_ADD)

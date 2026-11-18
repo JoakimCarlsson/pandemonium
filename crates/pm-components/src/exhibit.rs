@@ -5,7 +5,7 @@ use crate::kit::{
 };
 use pm_harness::{Exhibit, ExhibitKind};
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::button::Variant;
 use crate::figures::{Drawing, Figures, Wanted, diagram_key, diagram_node, prototype_key};
@@ -201,9 +201,10 @@ impl Offer {
         });
         let spelled = form == Marks::Words || (form == Marks::Icons && button.is_none());
         let lone = !spelled && button.is_none();
-        flex_column(
+        column_arranged(
             Modifier::new().fill_max_width(),
-            Flex::new().items_center().justify_center().gap(sp(2)),
+            Arrangement::SpacedByAligned(sp(2), Alignment::Center),
+            Alignment::Center,
             || {
                 if spelled {
                     caption(self.words(), tone, Modifier::new().tooltip(hint.clone()));
@@ -237,9 +238,10 @@ fn failure(reason: &str, id: FocusId, form: Marks) {
             .with_icon(IconName::Refresh),
     };
     let hint = format!("{reason} · press to render it again");
-    flex_column(
+    column_arranged(
         Modifier::new().fill_max_width(),
-        Flex::new().items_center().justify_center().gap(sp(2)),
+        Arrangement::SpacedByAligned(sp(2), Alignment::Center),
+        Alignment::Center,
         || {
             if form == Marks::Words {
                 caption(reason, Role::Danger, Modifier::new().tooltip(hint.clone()));
@@ -252,9 +254,10 @@ fn failure(reason: &str, id: FocusId, form: Marks) {
 /// Emits the line a placeholder says, `words` in `tone` after the globe, cut short where the placeholder is narrower than it, with `modifier` put around its box.
 #[track_caller]
 fn caption(words: &str, tone: Role, modifier: Modifier) {
-    flex_row(
+    row_arranged(
         modifier.fill_max_width().pad_x(3),
-        Flex::new().items_center().justify_center().gap(sp(1.5)),
+        Arrangement::SpacedByAligned(sp(1.5), Alignment::Center),
+        Alignment::Center,
         || {
             glyph(IconName::Globe, 3.5, tone);
             label(words, Type::new(12).ratio(1.4).tone(tone).truncate());
@@ -319,8 +322,8 @@ pub(crate) struct Preview<'a> {
     offer: Option<(&'a Offer, FocusId)>,
     /// What the caller puts around the box.
     modifier: Modifier,
-    /// How the box lays out what it holds, when the caller chose.
-    flex: Option<Flex>,
+    /// How the box spreads what it holds and places it across, when the caller chose.
+    arranged: Option<(Arrangement, Alignment)>,
 }
 
 impl<'a> Preview<'a> {
@@ -336,7 +339,7 @@ impl<'a> Preview<'a> {
             width,
             offer: None,
             modifier: Modifier::new(),
-            flex: None,
+            arranged: None,
         }
     }
 
@@ -358,9 +361,9 @@ impl<'a> Preview<'a> {
                 .stroke(Role::Border, Radius::Lg)
                 .clip_to(Radius::None)
         };
-        let flex = self
-            .flex
-            .unwrap_or(Flex::new().items_center().justify_center());
+        let (arrangement, alignment) = self
+            .arranged
+            .unwrap_or((Arrangement::Center, Alignment::Center));
         match self.figure {
             Some(Ok(drawing)) => {
                 let (across, down) = drawing.size();
@@ -395,22 +398,28 @@ impl<'a> Preview<'a> {
                 let retried = self
                     .offer
                     .filter(|(offer, _)| !waits && other.is_some() && **offer == Offer::Nothing);
-                flex_row(self.modifier.chain(own(height)), flex, || {
-                    if let Some((offer, id)) = offered {
-                        offer.shown(id, marks_in(width));
-                    } else if let Some((_, id)) = retried {
-                        failure(words, id, marks_in(width));
-                    } else {
-                        flex_row(
-                            Modifier::new().pad_x(3),
-                            Flex::new().items_center().gap(sp(1.5)),
-                            || {
-                                glyph(IconName::Globe, 3.5, Role::Subtle);
-                                line(words, 12, 1.4, Role::Subtle);
-                            },
-                        );
-                    }
-                });
+                row_arranged(
+                    self.modifier.chain(own(height)),
+                    arrangement,
+                    alignment,
+                    || {
+                        if let Some((offer, id)) = offered {
+                            offer.shown(id, marks_in(width));
+                        } else if let Some((_, id)) = retried {
+                            failure(words, id, marks_in(width));
+                        } else {
+                            row_arranged(
+                                Modifier::new().pad_x(3),
+                                Arrangement::SpacedBy(sp(1.5)),
+                                Alignment::Center,
+                                || {
+                                    glyph(IconName::Globe, 3.5, Role::Subtle);
+                                    line(words, 12, 1.4, Role::Subtle);
+                                },
+                            );
+                        }
+                    },
+                );
             }
         }
     }
@@ -434,8 +443,8 @@ pub struct ExhibitCard<'a> {
     modifier: Modifier,
     /// The padding the caller chose in place of the card's own, when it did.
     inner: Option<Modifier>,
-    /// How the card lays out its heading and body, when the caller chose.
-    flex: Option<Flex>,
+    /// How the card spreads its heading and body and places them across, when the caller chose.
+    arranged: Option<(Arrangement, Alignment)>,
 }
 
 impl<'a> ExhibitCard<'a> {
@@ -450,7 +459,7 @@ impl<'a> ExhibitCard<'a> {
             offer: None,
             modifier: Modifier::new(),
             inner: None,
-            flex: None,
+            arranged: None,
         }
     }
 
@@ -484,9 +493,9 @@ impl<'a> ExhibitCard<'a> {
         self
     }
 
-    /// The card laying out its heading and body by `flex` instead of its own.
-    pub fn flex(mut self, flex: Flex) -> Self {
-        self.flex = Some(flex);
+    /// The card spreading its children by `arrangement` and placing them across by `alignment` in place of its own.
+    pub fn arranged(mut self, arrangement: Arrangement, alignment: Alignment) -> Self {
+        self.arranged = Some((arrangement, alignment));
         self
     }
 
@@ -507,9 +516,10 @@ impl<'a> ExhibitCard<'a> {
         let opens = self
             .open
             .filter(|_| self.exhibit.kind == ExhibitKind::Prototype);
-        flex_row(
+        row_arranged(
             Modifier::new().fill_max_width(),
-            Flex::new().items_center().gap(sp(2)),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
             || {
                 glyph(icon, 3.5, Role::Subtle);
                 clipped(title, 13, Role::Text);
@@ -542,10 +552,15 @@ impl<'a> ExhibitCard<'a> {
         let source = fenced(&self.exhibit.content);
         match self.figures.get(&diagram_key(&self.exhibit.content)) {
             Some(Ok(drawing)) => diagram_node(drawing, inner),
-            Some(Err(reason)) => flex_column(Modifier::new(), Flex::new().gap(sp(1.5)), || {
-                Markdown::new(&source, inner).build();
-                crate::parts::paragraph(reason, 12, 1.4, Role::Danger, inner);
-            }),
+            Some(Err(reason)) => column_arranged(
+                Modifier::new(),
+                Arrangement::SpacedBy(sp(1.5)),
+                Alignment::Start,
+                || {
+                    Markdown::new(&source, inner).build();
+                    crate::parts::paragraph(reason, 12, 1.4, Role::Danger, inner);
+                },
+            ),
             None => Markdown::new(&source, inner).build(),
         }
     }
@@ -578,11 +593,18 @@ impl<'a> ExhibitCard<'a> {
         let own = Modifier::new()
             .stroke(Role::Border, Radius::Xl)
             .chain(padding);
-        let flex = self.flex.unwrap_or(Flex::new().gap(sp(2.5)));
-        flex_column(self.modifier.clone().chain(own), flex, || {
-            self.heading();
-            self.body(inner);
-        });
+        let (arrangement, alignment) = self
+            .arranged
+            .unwrap_or((Arrangement::SpacedBy(sp(2.5)), Alignment::Start));
+        column_arranged(
+            self.modifier.clone().chain(own),
+            arrangement,
+            alignment,
+            || {
+                self.heading();
+                self.body(inner);
+            },
+        );
     }
 }
 

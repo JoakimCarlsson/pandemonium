@@ -184,7 +184,7 @@ impl Layout for Framed {
 }
 
 /// Lays the content out with no bound down its length, and at least as tall as the box so
-/// what grows in it fills the box as a flex column in a scrolling box did, and moves it up by
+/// a column in it whose children have weights shares out the box's height, and moves it up by
 /// the offset kept within the room, which is rounded to whole pixels as the edges it is
 /// measured between are.
 struct Scrolled {

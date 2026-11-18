@@ -1,6 +1,6 @@
 //! Finding and replacing text in the file shown: the bar over its top right corner, what it looks for, and the matches it steps through.
 
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use std::ops::Range;
 
 use pm_editor::{Document, Query};
@@ -356,7 +356,7 @@ pub(crate) fn switch(label: &str, id: FocusId, on: bool) {
         .ratio(1.2)
         .mono()
         .tone(if on { Role::Text } else { Role::Subtle });
-    flex_row(own, Flex::new().items_center().justify_center(), || {
+    row_arranged(own, Arrangement::Center, Alignment::Center, || {
         crate::kit::label(label, kind);
     });
 }
@@ -390,10 +390,10 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
         IconName::ChevronRight
     };
     let read_only = document.field.is_read_only();
-    flex_column(
+    column_arranged(
         Modifier::new()
-            .unbounded_width()
-            .placed(BoxAlignment::TopEnd)
+            .wrap_content_width(BoxAlignment::TopEnd, true)
+            .align(BoxAlignment::TopEnd)
             .at(-sp(6), sp(2))
             .z_index(40)
             .shadows(&SHADOW, Radius::Md)
@@ -401,11 +401,13 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
             .stroke(Role::Border, Radius::Md)
             .target(FIND_BAR)
             .pad(1),
-        Flex::new().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Start,
         || {
-            flex_row(
+            row_arranged(
                 Modifier::new(),
-                Flex::new().items_center().gap(sp(1)),
+                Arrangement::SpacedBy(sp(1)),
+                Alignment::Center,
                 || {
                     Button::icon(toggle, FIND_TOGGLE_REPLACE).build();
                     Input::new(&finding.query, FIND_FIELD)
@@ -419,7 +421,7 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
                     switch(".*", FIND_REGEX, finding.regex);
                     switch("sel", FIND_IN_SELECTION, finding.scoped);
                     label_with(
-                        Modifier::new().keep().width(84.0).pad_x(1),
+                        Modifier::new().width(84.0).pad_x(1),
                         said,
                         Type::new(11).ratio(1.4).tone(tone).truncate(),
                     );
@@ -429,9 +431,10 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
                 },
             );
             if finding.replacing {
-                flex_row(
+                row_arranged(
                     Modifier::new(),
-                    Flex::new().items_center().gap(sp(1)),
+                    Arrangement::SpacedBy(sp(1)),
+                    Alignment::Center,
                     || {
                         rustle::spacer(Modifier::new().w(7));
                         Input::new(&finding.replacement, REPLACE_FIELD)

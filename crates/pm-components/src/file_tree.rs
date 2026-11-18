@@ -1,7 +1,8 @@
 //! Every file of the project as a tree of folders, folders first, with the files git sees changed marked.
 
 use crate::kit::sp;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+
 use std::collections::{HashMap, HashSet};
 
 use rustle::Modifier;
@@ -176,7 +177,7 @@ fn entry_row(
         Some(tone) => tone,
         None => Tone::from(Role::Text),
     };
-    let mut around = Modifier::new();
+    let mut around = Modifier::new().fill_max_width();
     if look.cut {
         around = around.opacity(60.0);
     }
@@ -203,7 +204,7 @@ fn entry_row(
             }
             icon();
             label_with(
-                Modifier::new().grow(),
+                Modifier::new().weight(1.0),
                 name,
                 Type::new(13).ratio(1.4).tone(tone).truncate(),
             );
@@ -232,7 +233,7 @@ pub fn drag_ghost(state: &WorkspaceState) {
     } else {
         format!("{count} items")
     };
-    flex_row(
+    row_arranged(
         Modifier::new()
             .at(drag.at.0 + 12.0, drag.at.1 + 10.0)
             .z_index_unclipped(60)
@@ -241,7 +242,8 @@ pub fn drag_ghost(state: &WorkspaceState) {
             .fill_rounded(Role::Surface, Radius::Md)
             .stroke(Role::Border, Radius::Md)
             .pad_x(2),
-        Flex::new().items_center().gap(sp(1.5)),
+        Arrangement::SpacedBy(sp(1.5)),
+        Alignment::Center,
         || {
             if count != 1 {
                 icon_of(IconName::Copy, 4.0, Role::Muted);
@@ -263,12 +265,14 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) -> usize {
     };
     let problem = state.naming_problem();
     rustle::key(ENTRY_FIELD.0, || {
-        flex_row(
+        row_arranged(
             Modifier::new()
+                .fill_max_width()
                 .h(6)
                 .pad_side(Side::Left, 3.0 + depth as f32 * INDENT)
                 .pad_side(Side::Right, 3),
-            Flex::new().items_center().gap(sp(2)),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
             || {
                 rustle::spacer(Modifier::new().square(3.5));
                 if folder {
@@ -279,7 +283,7 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) -> usize {
                 Input::new(field, ENTRY_FIELD)
                     .size(Size::Sm)
                     .invalid(problem.is_some())
-                    .modifier(Modifier::new().grow())
+                    .modifier(Modifier::new().weight(1.0))
                     .build();
             },
         );
@@ -287,12 +291,13 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) -> usize {
     let Some(problem) = problem else {
         return 1;
     };
-    flex_column(
+    column_arranged(
         Modifier::new()
             .pad_side(Side::Left, 3.0 + depth as f32 * INDENT + 8.0)
             .pad_side(Side::Right, 3)
             .pad_side(Side::Bottom, 1),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             label(
                 problem,

@@ -2,8 +2,8 @@
 
 use crate::kit::sp;
 use pm_protocol::{DebugCategory, DebugView, Standing};
-use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{BoxAlignment, CursorIcon, Modifier};
 
 use crate::Button;
 use crate::debug::{
@@ -15,7 +15,7 @@ use crate::debug::{
 use crate::input::Input;
 use crate::kit::{
     FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tone,
-    Tooltip, Type, icon, label, label_with, scroll_area,
+    Tooltip, Type, icon, label, label_with, measure, scroll_area,
 };
 use crate::size::Size;
 use crate::state::WorkspaceState;
@@ -55,12 +55,14 @@ fn controls(run: &Run) {
     let view = &run.view;
     let paused = view.standing == Standing::Stopped;
     let live = view.standing != Standing::Ended;
-    flex_row(
+    row_arranged(
         Modifier::new()
+            .fill_max_width()
             .h(9)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(3),
-        Flex::new().items_center().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Center,
         || {
             if paused || !live {
                 control(IconName::Continue, DEBUG_CONTINUE, "Continue", paused);
@@ -94,16 +96,18 @@ fn controls(run: &Run) {
 #[track_caller]
 fn section(title: &str, width: Option<f32>, body: impl FnOnce()) {
     let size = match width {
-        Some(width) => Modifier::new().width(width),
-        None => Modifier::new().grow(),
+        Some(width) => Modifier::new().fill_max_height().width(width),
+        None => Modifier::new().fill_max_height().weight(1.0),
     };
-    flex_column(
+    column_arranged(
         size.stroke_side(Side::Left, 1.0, Role::Border),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            flex_row(
+            row_arranged(
                 Modifier::new().h(7).pad_x(3),
-                Flex::new().items_center(),
+                Arrangement::Start,
+                Alignment::Center,
                 || {
                     label(title, small(11, Role::Subtle));
                 },
@@ -117,16 +121,23 @@ fn section(title: &str, width: Option<f32>, body: impl FnOnce()) {
 #[track_caller]
 fn rows_box(id: FocusId, scrolled: f32, content: impl FnOnce()) {
     scroll_area(
-        Modifier::new().grow(),
+        Modifier::new().fill_max_width().weight(1.0),
         Scroll::from_start(id, scrolled),
-        || flex_column(Modifier::new().fill_max_width(), Flex::new(), content),
+        || {
+            column_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::Start,
+                Alignment::Start,
+                content,
+            )
+        },
     );
 }
 
 /// Emits one row of a list holding what `content` emits, pressed as `id` when it is given one, marked while `selected`.
 #[track_caller]
 fn list_row(id: Option<FocusId>, selected: bool, content: impl FnOnce()) {
-    let mut own = Modifier::new().h(6);
+    let mut own = Modifier::new().fill_max_width().h(6);
     own = match id {
         Some(id) => {
             let looks = Looks::new().hover(Role::SurfaceHover);
@@ -143,7 +154,12 @@ fn list_row(id: Option<FocusId>, selected: bool, content: impl FnOnce()) {
         None if selected => own.fill(Role::SurfaceSelected).clip_to(Radius::None),
         None => own.clip_to(Radius::None),
     };
-    flex_row(own.pad_x(3), Flex::new().items_center().gap(sp(2)), content);
+    row_arranged(
+        own.pad_x(3),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
+        content,
+    );
 }
 
 /// Emits the stack of the paused thread, the frame being looked at marked.
@@ -174,7 +190,7 @@ fn stack(state: &WorkspaceState, run: &Run) {
                         view.frame == Some(frame.id),
                         || {
                             label(frame.name.clone(), small(12, Role::Text).mono().truncate());
-                            label_with(Modifier::new().keep(), place, small(12, Role::Subtle));
+                            label_with(Modifier::new(), place, small(12, Role::Subtle));
                         },
                     );
                 });
@@ -187,49 +203,104 @@ fn stack(state: &WorkspaceState, run: &Run) {
 #[track_caller]
 fn variable_row(index: usize, entry: &crate::debug::VariableRow) {
     let id = (entry.reference != 0).then_some(FocusId(DEBUG_VARIABLE_BASE + index as u64));
-    list_row(id, false, || {
-        rustle::spacer(Modifier::new().width(entry.depth as f32 * 12.0));
-        if entry.reference != 0 {
-            icon(
-                if entry.unfolded {
-                    IconName::ChevronDown
-                } else {
-                    IconName::ChevronRight
-                },
-                3.0,
-                Role::Muted,
-            );
-        } else {
-            rustle::spacer(Modifier::new().width(12.0));
-        }
-        let tone: Tone = if entry.value.is_empty() {
-            Role::Muted.into()
-        } else {
-            Role::Text.into()
-        };
-        label_with(
-            Modifier::new().keep(),
-            entry.name.clone(),
-            small(12, tone).mono(),
-        );
-        if !entry.value.is_empty() {
-            label_with(Modifier::new().keep(), "=", small(12, Role::Subtle));
-            label_with(
-                Modifier::new().grow(),
-                entry.value.clone(),
-                small(12, Role::SyntaxString).mono(),
-            );
-        }
-        if let Some(kind) = &entry.kind {
-            label(kind.clone(), small(11, Role::Subtle));
-        }
+    let entry = entry.clone();
+    list_row(id, false, move || {
+        rustle::with_constraints(Modifier::new().fill_max_width(), move |room| {
+            variable_parts(&entry, room.max_width);
+        });
     });
+}
+
+/// How wide, in logical pixels, the chevron of a variable with members is.
+const VARIABLE_CHEVRON: f32 = 12.0;
+
+/// Emits the parts of the row of `entry` in `room` logical pixels across: its indent, its chevron or the room of one, its name, and, when it holds one, `=` and its value, then its type.
+///
+/// The value takes the room the others leave. When there is none, the chevron and the type give up the overflow in proportion to their widths, the chevron drawn smaller and the type cutting itself short, and the value has no room.
+#[track_caller]
+fn variable_parts(entry: &crate::debug::VariableRow, room: f32) {
+    let tone: Tone = if entry.value.is_empty() {
+        Role::Muted.into()
+    } else {
+        Role::Text.into()
+    };
+    let name_kind = small(12, tone).mono();
+    let equals_kind = small(12, Role::Subtle);
+    let value_kind = small(12, Role::SyntaxString).mono();
+    let type_kind = small(11, Role::Subtle);
+    let indent = entry.depth as f32 * 12.0;
+    let typed = entry
+        .kind
+        .as_deref()
+        .map_or(0.0, |kind| measure(kind, type_kind).0.ceil());
+    let mut used = indent + VARIABLE_CHEVRON + measure(&entry.name, name_kind).0.ceil() + typed;
+    let mut parts = 3 + usize::from(entry.kind.is_some());
+    if !entry.value.is_empty() {
+        used += measure("=", equals_kind).0.ceil();
+        parts += 2;
+    }
+    used += sp(2) * (parts - 1) as f32;
+    let over = (used - room).max(0.0);
+    let giving = if entry.reference != 0 {
+        VARIABLE_CHEVRON
+    } else {
+        0.0
+    } + typed;
+    let kept = if giving > 0.0 {
+        (1.0 - over / giving).clamp(0.0, 1.0)
+    } else {
+        1.0
+    };
+    row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
+        || {
+            rustle::spacer(Modifier::new().width(indent));
+            if entry.reference != 0 {
+                rustle::stack_aligned(
+                    Modifier::new().size(VARIABLE_CHEVRON * kept, VARIABLE_CHEVRON),
+                    BoxAlignment::Center,
+                    || {
+                        icon(
+                            if entry.unfolded {
+                                IconName::ChevronDown
+                            } else {
+                                IconName::ChevronRight
+                            },
+                            3.0 * kept,
+                            Role::Muted,
+                        );
+                    },
+                );
+            } else {
+                rustle::spacer(Modifier::new().width(VARIABLE_CHEVRON));
+            }
+            label_with(Modifier::new(), entry.name.clone(), name_kind);
+            if !entry.value.is_empty() {
+                label_with(Modifier::new(), "=", equals_kind);
+                label_with(Modifier::new().weight(1.0), entry.value.clone(), value_kind);
+            }
+            if let Some(kind) = &entry.kind {
+                label_with(
+                    Modifier::new().width_in(0.0, typed * kept),
+                    kind.clone(),
+                    type_kind,
+                );
+            }
+        },
+    );
 }
 
 /// Emits a field, padded as the tab's fields are, from what `field` emits.
 #[track_caller]
 fn field_box(field: impl FnOnce()) {
-    flex_column(Modifier::new().pad_x(2).pad_y(1), Flex::new(), field);
+    column_arranged(
+        Modifier::new().fill_max_width().pad_x(2).pad_y(1),
+        Arrangement::Start,
+        Alignment::Start,
+        field,
+    );
 }
 
 /// Emits the variables of the frame being looked at over the expressions watched and the field that adds one.
@@ -247,9 +318,10 @@ fn variables(state: &WorkspaceState, run: &Run) {
             for (index, entry) in rows.iter().take(DEBUG_ROWS as usize).enumerate() {
                 rustle::key(index, || variable_row(index, entry));
             }
-            flex_row(
+            row_arranged(
                 Modifier::new().h(6).pad_x(3),
-                Flex::new().items_center(),
+                Arrangement::Start,
+                Alignment::Center,
                 || {
                     label("Watch", small(11, Role::Subtle));
                 },
@@ -276,7 +348,11 @@ fn variables(state: &WorkspaceState, run: &Run) {
                     list_row(None, false, || {
                         label(expression.clone(), small(12, Role::Text).mono());
                         label("=", small(12, Role::Subtle));
-                        label_with(Modifier::new().grow(), shown.0, small(12, shown.1).mono());
+                        label_with(
+                            Modifier::new().weight(1.0),
+                            shown.0,
+                            small(12, shown.1).mono(),
+                        );
                         Button::icon(
                             IconName::Close,
                             FocusId(DEBUG_WATCH_REMOVE_BASE + index as u64),
@@ -311,35 +387,41 @@ fn console_tone(category: DebugCategory) -> Role {
 #[track_caller]
 fn console(state: &WorkspaceState, run: &Run) {
     section("Console", None, || {
-        flex_column(Modifier::new().grow(), Flex::new(), || {
-            scroll_area(
-                Modifier::new().grow(),
-                Scroll::from_end(DEBUG_CONSOLE_SCROLL, state.debug.console_back),
-                || {
-                    flex_column(
-                        Modifier::new().fill_max_width().pad_x(3),
-                        Flex::new(),
-                        || {
-                            for entry in &run.view.lines {
-                                label(
-                                    entry.text.clone(),
-                                    Type::code(12)
-                                        .ratio(1.4)
-                                        .tone(console_tone(entry.category))
-                                        .truncate(),
-                                );
-                            }
-                        },
-                    );
-                },
-            );
-            field_box(|| {
-                Input::new(&state.debug.console, DEBUG_CONSOLE_FIELD)
-                    .size(Size::Sm)
-                    .placeholder("Evaluate an expression")
-                    .build();
-            });
-        });
+        column_arranged(
+            Modifier::new().fill_max_width().weight(1.0),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                scroll_area(
+                    Modifier::new().fill_max_width().weight(1.0),
+                    Scroll::from_end(DEBUG_CONSOLE_SCROLL, state.debug.console_back),
+                    || {
+                        column_arranged(
+                            Modifier::new().fill_max_width().pad_x(3),
+                            Arrangement::Start,
+                            Alignment::Start,
+                            || {
+                                for entry in &run.view.lines {
+                                    label(
+                                        entry.text.clone(),
+                                        Type::code(12)
+                                            .ratio(1.4)
+                                            .tone(console_tone(entry.category))
+                                            .truncate(),
+                                    );
+                                }
+                            },
+                        );
+                    },
+                );
+                field_box(|| {
+                    Input::new(&state.debug.console, DEBUG_CONSOLE_FIELD)
+                        .size(Size::Sm)
+                        .placeholder("Evaluate an expression")
+                        .build();
+                });
+            },
+        );
     });
 }
 
@@ -351,9 +433,10 @@ fn idle(state: &WorkspaceState) {
         .trouble
         .clone()
         .unwrap_or_else(|| "Nothing is being debugged.".to_owned());
-    flex_column(
-        Modifier::new().grow().pad_y(6),
-        Flex::new().items_center().gap(sp(3)),
+    column_arranged(
+        Modifier::new().weight(1.0).pad_y(6),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
         || {
             label(said, small(13, Role::Subtle));
             Button::new("Start debugging", DEBUG_START)
@@ -367,14 +450,24 @@ fn idle(state: &WorkspaceState) {
 #[track_caller]
 pub fn debug_tab(state: &WorkspaceState) {
     match &state.debug.run {
-        Some(run) => flex_column(Modifier::new().grow(), Flex::new(), || {
-            controls(run);
-            flex_row(Modifier::new().grow(), Flex::new(), || {
-                stack(state, run);
-                variables(state, run);
-                console(state, run);
-            });
-        }),
+        Some(run) => column_arranged(
+            Modifier::new().fill_max_width().weight(1.0),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                controls(run);
+                row_arranged(
+                    Modifier::new().fill_max_width().weight(1.0),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        stack(state, run);
+                        variables(state, run);
+                        console(state, run);
+                    },
+                );
+            },
+        ),
         None => idle(state),
     }
 }

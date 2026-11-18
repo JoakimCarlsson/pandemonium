@@ -2,7 +2,7 @@
 
 use crate::kit::sp;
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::kit::{
     FocusId, IconName, Radius, Role, Scroll, Side, Styled, Type, label, label_with, scroll_area,
@@ -50,36 +50,44 @@ const LOCAL_MACHINE: &str = "local";
 pub fn history(state: &WorkspaceState) {
     let now = age::now();
     let rows = matching(state);
-    flex_column(Modifier::new().grow(), Flex::new(), || {
-        heading();
-        search(state);
-        scroll_area(
-            Modifier::new().grow(),
-            Scroll::from_start(HISTORY_SCROLL, state.history_scroll),
-            || {
-                flex_column(
-                    Modifier::new().fill_max_width().pad_x(5),
-                    Flex::new(),
-                    || {
-                        for span in Span::ALL {
-                            group(state, span, &rows, now);
-                        }
-                    },
-                );
-            },
-        );
-    });
+    column_arranged(
+        Modifier::new().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            heading();
+            search(state);
+            scroll_area(
+                Modifier::new().fill_max_width().weight(1.0),
+                Scroll::from_start(HISTORY_SCROLL, state.history_scroll),
+                || {
+                    column_arranged(
+                        Modifier::new().fill_max_width().pad_x(5),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            for span in Span::ALL {
+                                group(state, span, &rows, now);
+                            }
+                        },
+                    );
+                },
+            );
+        },
+    );
 }
 
 /// Emits the bar across the top naming the page.
 #[track_caller]
 fn heading() {
-    flex_row(
+    row_arranged(
         Modifier::new()
+            .fill_max_width()
             .h(12)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(5),
-        Flex::new().items_center(),
+        Arrangement::Start,
+        Alignment::Center,
         || {
             label(
                 "History",
@@ -96,28 +104,30 @@ fn heading() {
 /// Emits the box the reader types into to narrow the list.
 #[track_caller]
 fn search(state: &WorkspaceState) {
-    flex_column(
+    column_arranged(
         Modifier::new()
             .pad_x(5)
             .pad_side(Side::Top, 5)
             .pad_side(Side::Bottom, 2),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            flex_row(
+            row_arranged(
                 Modifier::new()
                     .width(SEARCH_WIDTH)
                     .h(10)
                     .fill_rounded(Role::Surface, Radius::Lg)
                     .stroke(Role::Border, Radius::Lg)
                     .pad_x(3),
-                Flex::new().items_center().gap(sp(2)),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Center,
                 || {
                     glyph(IconName::Search, 4.0, Role::Muted);
                     Input::new(&state.history_search, HISTORY_SEARCH)
                         .variant(input::Variant::Ghost)
                         .size(Size::Sm)
                         .placeholder("Search history")
-                        .modifier(Modifier::new().grow())
+                        .modifier(Modifier::new().weight(1.0))
                         .build();
                 },
             );
@@ -163,13 +173,15 @@ fn group(state: &WorkspaceState, span: Span, rows: &[usize], now: u64) {
     if members.is_empty() {
         return;
     }
-    flex_column(
-        Modifier::new().pad_side(Side::Top, 5),
-        Flex::new().gap(sp(0.5)),
+    column_arranged(
+        Modifier::new().fill_max_width().pad_side(Side::Top, 5),
+        Arrangement::SpacedBy(sp(0.5)),
+        Alignment::Start,
         || {
-            flex_row(
+            row_arranged(
                 Modifier::new().h(8).pad_x(3),
-                Flex::new().items_center(),
+                Arrangement::Start,
+                Alignment::Center,
                 || {
                     label(
                         span.title(),
@@ -202,11 +214,13 @@ fn row_of(state: &WorkspaceState, index: usize) {
     let agent = state.agent_look(session.agent);
     Tile::new(FocusId(SESSION_BASE + index as u64))
         .height(12.0)
+        .modifier(Modifier::new().fill_max_width())
         .inner(Modifier::new().pad_x(3))
         .build_with(|| {
-            flex_row(
-                Modifier::new().grow(),
-                Flex::new().items_center().gap(sp(2)),
+            row_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Center,
                 || {
                     label_with(
                         Modifier::new().max_w_px(560.0),
@@ -231,14 +245,15 @@ fn row_of(state: &WorkspaceState, index: usize) {
 /// Emits a cell `width` pixels wide holding `content`, cut short at its edge, against its end when `end`.
 #[track_caller]
 fn cell(content: &str, width: f32, end: bool) {
-    let flex = if end {
-        Flex::new().justify_end()
+    let arrangement = if end {
+        Arrangement::End
     } else {
-        Flex::new()
+        Arrangement::Start
     };
-    flex_row(
+    row_arranged(
         Modifier::new().width(width).clip_to(Radius::None),
-        flex,
+        arrangement,
+        Alignment::Start,
         || clipped(content, 14, Role::Muted),
     );
 }

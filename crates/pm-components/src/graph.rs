@@ -4,8 +4,8 @@
 
 use crate::kit::sp;
 use pm_git::{Commit, Edge, Half, Lanes};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row};
 
 use crate::Sash;
 use crate::git_controls::{
@@ -16,7 +16,7 @@ use crate::kit::{
     FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tone,
     Tooltip, Type, label, label_with, scroll_area,
 };
-use crate::parts::{glyph, line, spacer};
+use crate::parts::{glyph, line};
 use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::{Badge, Button, badge};
@@ -178,14 +178,16 @@ fn reference_badge(decorated: &str, color: Tone) {
 fn commit_row(commit: &Commit, columns: usize, position: usize) {
     let color = lane_color(commit.lanes.color);
     let id = FocusId(HISTORY_ROW_BASE + position as u64);
-    flex_row(
+    row_arranged(
         Modifier::new()
+            .fill_max_width()
             .height(ROW)
             .clip_to(Radius::None)
             .looks_of(Looks::new().hover(Role::SurfaceHover), id)
             .target(id)
             .pad_x(3),
-        Flex::new().items_center().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
         || {
             cell(&commit.lanes, columns);
             label(
@@ -202,7 +204,7 @@ fn commit_row(commit: &Commit, columns: usize, position: usize) {
                 );
             }
             label_with(
-                Modifier::new().grow(),
+                Modifier::new().weight(1.0),
                 &commit.summary,
                 Type::new(12).ratio(1.4).tone(Role::Text).truncate(),
             );
@@ -233,7 +235,7 @@ fn visible(commits: &[Commit], columns: usize, scroll: f32, height: f32) {
 /// Emits the button saying which references the graph lists, which switches between the checked out branch and all of them, with `tip` shown while it is hovered.
 #[track_caller]
 fn refs_button(all: bool, tip: &str) {
-    flex_row(
+    row_arranged(
         Modifier::new()
             .h(6)
             .tooltip(tip)
@@ -244,7 +246,8 @@ fn refs_button(all: bool, tip: &str) {
             .cursor(CursorIcon::Pointer)
             .target(GRAPH_REFS)
             .pad_x(2),
-        Flex::new().items_center().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Center,
         || {
             glyph(IconName::GitFork, 3.5, Role::Muted);
             line(if all { "All" } else { "Auto" }, 12, 1.4, Role::Text);
@@ -253,13 +256,13 @@ fn refs_button(all: bool, tip: &str) {
     );
 }
 
-/// Emits a small button showing `icon` that answers to `id`, spinning while `spinning`, with `tip` shown while it is hovered, giving up room with the strip's other items when the strip is too narrow, as a CSS flex item does.
+/// Emits a small button showing `icon` that answers to `id`, spinning while `spinning`, with `tip` shown while it is hovered.
 #[track_caller]
 fn strip_button(icon: IconName, id: FocusId, spinning: bool, tip: &str) {
     Button::icon(icon, id)
         .size(Size::Sm)
         .spinning(spinning)
-        .modifier(Modifier::new().tooltip(tip).shrink(1.0))
+        .modifier(Modifier::new().tooltip(tip))
         .build();
 }
 
@@ -268,9 +271,9 @@ fn strip_button(icon: IconName, id: FocusId, spinning: bool, tip: &str) {
 fn strip(state: &WorkspaceState) {
     let git = &state.git;
     let open = git.graph_open;
-    flex_row(
-        Modifier::new().h(7).pad_x(2),
-        Flex::new().items_center().gap(sp(0.5)),
+    rustle::layout(
+        Modifier::new().fill_max_width().h(7).pad_x(2),
+        StripLayout { gap: sp(0.5) },
         || {
             strip_button(
                 if open {
@@ -287,7 +290,6 @@ fn strip(state: &WorkspaceState) {
                 },
             );
             line("Graph", 13, 1.4, Role::Text);
-            spacer();
             refs_button(git.graph_all, "Choose history references");
             strip_button(
                 IconName::Target,
@@ -308,49 +310,149 @@ fn strip(state: &WorkspaceState) {
     );
 }
 
+/// How the strip over the graph lays out its children: the fold button and the name at the
+/// start, the references button and the remote buttons after it at the end, `gap` apart and at
+/// least two gaps between the two groups.
+///
+/// When they do not fit, every child but the references button gives up the overflow in
+/// proportion to its width, the name cutting itself short and the buttons drawing narrower.
+struct StripLayout {
+    /// The room between neighbours, in logical pixels.
+    gap: f32,
+}
+
+impl StripLayout {
+    /// Where the references button is among the strip's children: the first of the group at the end.
+    const REFS: usize = 2;
+}
+
+impl rustle::Layout for StripLayout {
+    /// Measures every child at its own width or, when the strip is too narrow, its share, and
+    /// centres each down the strip.
+    fn measure(
+        &self,
+        children: &mut rustle::Children,
+        constraints: rustle::Constraints,
+    ) -> rustle::LayoutResult {
+        let height = constraints.max_height;
+        let room = constraints.max_width;
+        let count = children.len();
+        let natural: Vec<f32> = (0..count)
+            .map(|index| children.max_intrinsic_width(index, height))
+            .collect();
+        let gaps = self.gap * count as f32;
+        let fixed = natural.get(Self::REFS).copied().unwrap_or(0.0) + gaps;
+        let giving: f32 = natural.iter().sum::<f32>() + gaps - fixed;
+        let scale = if giving > 0.0 {
+            ((room - fixed).max(0.0) / giving).min(1.0)
+        } else {
+            1.0
+        };
+        let widths: Vec<f32> = natural
+            .iter()
+            .enumerate()
+            .map(|(index, width)| {
+                if index == Self::REFS {
+                    *width
+                } else {
+                    width * scale
+                }
+            })
+            .collect();
+        let trailing: f32 = widths.iter().skip(Self::REFS).sum::<f32>()
+            + self.gap * (count - Self::REFS.min(count)).saturating_sub(1) as f32;
+        let mut positions = Vec::with_capacity(count);
+        let mut along = 0.0;
+        for (index, width) in widths.iter().enumerate() {
+            if index == Self::REFS {
+                along = room - trailing;
+            }
+            let size = children.measure(
+                index,
+                rustle::Constraints {
+                    min_width: *width,
+                    max_width: *width,
+                    min_height: 0.0,
+                    max_height: height,
+                },
+            );
+            positions.push(rustle::Offset::new(along, (height - size.height) / 2.0));
+            along += width + self.gap;
+        }
+        rustle::LayoutResult {
+            size: rustle::Size::new(room, height),
+            positions,
+        }
+    }
+}
+
 /// Emits the graph of the open session's repository, pinned under the changes: a strip of what can be done to the remote, then the commits, with a handle above it that drags to change how tall it is.
 #[track_caller]
 pub fn graph(state: &WorkspaceState) {
     let git = &state.git;
     let open = git.graph_open;
     let height = git.graph_height.clamp(HEIGHTS.0, HEIGHTS.1);
-    flex_column(Modifier::new(), Flex::new(), || {
-        if open {
-            Sash::row(GRAPH_SASH).build();
-        }
-        flex_column(
-            Modifier::new()
-                .height(if open { height } else { 28.0 })
-                .stroke_side(Side::Top, 1.0, Role::Border)
-                .clip_to(Radius::None),
-            Flex::new(),
-            || {
-                strip(state);
-                if !open {
-                    return;
-                }
-                let columns = git
-                    .history
-                    .iter()
-                    .map(|commit| commit.lanes.width)
-                    .max()
-                    .unwrap_or(1);
-                scroll_area(
-                    Modifier::new().grow(),
-                    Scroll::from_start(GRAPH_SCROLL, git.graph_scroll),
-                    || {
-                        flex_column(Modifier::new().fill_max_width(), Flex::new(), || {
-                            if git.history.is_empty() {
-                                flex_column(Modifier::new().pad_x(4).pad_y(2), Flex::new(), || {
-                                    line("No commits.", 12, 1.4, Role::Subtle);
-                                });
-                            } else {
-                                visible(&git.history, columns, git.graph_scroll, height - 28.0);
-                            }
-                        });
-                    },
-                );
-            },
-        );
-    });
+    column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            if open {
+                Sash::row(GRAPH_SASH)
+                    .modifier(Modifier::new().fill_max_width())
+                    .build();
+            }
+            column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .height(if open { height } else { 28.0 })
+                    .stroke_side(Side::Top, 1.0, Role::Border)
+                    .clip_to(Radius::None),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    strip(state);
+                    if !open {
+                        return;
+                    }
+                    let columns = git
+                        .history
+                        .iter()
+                        .map(|commit| commit.lanes.width)
+                        .max()
+                        .unwrap_or(1);
+                    scroll_area(
+                        Modifier::new().fill_max_width().weight(1.0),
+                        Scroll::from_start(GRAPH_SCROLL, git.graph_scroll),
+                        || {
+                            column_arranged(
+                                Modifier::new().fill_max_width(),
+                                Arrangement::Start,
+                                Alignment::Start,
+                                || {
+                                    if git.history.is_empty() {
+                                        column_arranged(
+                                            Modifier::new().pad_x(4).pad_y(2),
+                                            Arrangement::Start,
+                                            Alignment::Start,
+                                            || {
+                                                line("No commits.", 12, 1.4, Role::Subtle);
+                                            },
+                                        );
+                                    } else {
+                                        visible(
+                                            &git.history,
+                                            columns,
+                                            git.graph_scroll,
+                                            height - 28.0,
+                                        );
+                                    }
+                                },
+                            );
+                        },
+                    );
+                },
+            );
+        },
+    );
 }

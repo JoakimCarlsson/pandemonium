@@ -3,7 +3,7 @@
 use crate::kit::sp;
 use crate::kit::{Role, Type, label};
 use rustle::Modifier;
-use rustle::{Flex, flex_row};
+use rustle::{Alignment, Arrangement, row_arranged};
 
 /// A tally being described: the two counts and how big they are set.
 ///
@@ -49,9 +49,10 @@ impl Tally {
     pub fn build(self) {
         let kind = Type::new(self.pixels).ratio(1.4).mono();
         let (added, removed) = (self.added, self.removed);
-        flex_row(
+        row_arranged(
             self.modifier,
-            Flex::new().items_center().gap(sp(1.5)),
+            Arrangement::SpacedBy(sp(1.5)),
+            Alignment::Center,
             move || {
                 label(format!("+{added}"), kind.tone(Role::Success));
                 label(format!("−{removed}"), kind.tone(Role::Danger));

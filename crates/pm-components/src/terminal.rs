@@ -1,7 +1,8 @@
 //! The terminal dock under the session: tabs of shells above the window of the one showing.
 
 use crate::kit::sp;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+
 use std::hash::{Hash, Hasher};
 
 use pm_config::TerminalCursor;
@@ -109,20 +110,23 @@ const SHELL_LIST_WIDTH: f32 = 160.0;
 pub fn terminal(state: &WorkspaceState, session: &Session, width: f32, page: f32) {
     let shown = state.bottom_tab();
     let (errors, warnings) = crate::problems_panel::tally(state);
-    flex_column(
+    column_arranged(
         Modifier::new()
             .fill_max_width()
             .height(height(state, page))
             .fill(Role::Background)
             .stroke_side(Side::Top, 1.0, Role::Border),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            flex_row(
+            row_arranged(
                 Modifier::new()
+                    .fill_max_width()
                     .h(10)
                     .stroke_side(Side::Bottom, 1.0, Role::Border)
                     .pad_x(2),
-                Flex::new().items_center().gap(sp(1)),
+                Arrangement::SpacedBy(sp(1)),
+                Alignment::Center,
                 || {
                     pane_tab(
                         "Problems",
@@ -171,12 +175,17 @@ pub fn terminal(state: &WorkspaceState, session: &Session, width: f32, page: f32
                         } else {
                             width
                         };
-                        flex_row(Modifier::new().grow(), Flex::new(), || {
-                            window(tab, room - 2.0 * PADDING_X, Look::of(state));
-                            if listed {
-                                shell_list(session);
-                            }
-                        });
+                        row_arranged(
+                            Modifier::new().fill_max_width().weight(1.0),
+                            Arrangement::Start,
+                            Alignment::Start,
+                            || {
+                                window(tab, room - 2.0 * PADDING_X, Look::of(state));
+                                if listed {
+                                    shell_list(session);
+                                }
+                            },
+                        );
                     }
                 }
             }
@@ -194,22 +203,24 @@ fn pane_tab(label: &str, count: Option<usize>, shown: bool, id: FocusId) {
         Looks::new().hover(Role::SurfaceHover)
     }
     .radius(Radius::Lg);
-    flex_row(
+    row_arranged(
         Modifier::new()
             .h(8)
             .looks_of(looks, id)
             .cursor(CursorIcon::Pointer)
             .target(id)
             .pad_x(3),
-        Flex::new().items_center().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
         || {
             line(label, 13, 1.4, tone);
             if let Some(count) = count {
-                flex_row(
+                row_arranged(
                     Modifier::new()
                         .fill_rounded(Role::Accent, Radius::Lg)
                         .pad_x(1.5),
-                    Flex::new().items_center(),
+                    Arrangement::Start,
+                    Alignment::Center,
                     || line(count.to_string(), 11, 1.3, Role::OnAccent),
                 );
             }
@@ -220,12 +231,14 @@ fn pane_tab(label: &str, count: Option<usize>, shown: bool, id: FocusId) {
 /// Emits the shells of `session` as a list at the right of the dock, the one showing marked, each with the button that ends it.
 #[track_caller]
 fn shell_list(session: &Session) {
-    flex_column(
+    column_arranged(
         Modifier::new()
+            .fill_max_height()
             .width(SHELL_LIST_WIDTH)
             .stroke_side(Side::Left, 1.0, Role::Border)
             .clip_to(Radius::None),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             for (index, tab) in session.terminals.iter().enumerate() {
                 rustle::key(index, || {
@@ -246,19 +259,25 @@ fn shell_row(index: usize, tab: &TerminalTab, shown: bool) {
         Looks::new().hover(Role::SurfaceHover)
     };
     let select = FocusId(TERMINAL_TAB_BASE + index as u64);
-    flex_row(
-        Modifier::new().h(7).looks(looks).pad_side(Side::Right, 1),
-        Flex::new().items_center().gap(sp(2)),
+    row_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .h(7)
+            .looks(looks)
+            .pad_side(Side::Right, 1),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
         || {
-            flex_row(
+            row_arranged(
                 Modifier::new()
-                    .grow()
+                    .weight(1.0)
                     .h(7)
                     .clip_to(Radius::None)
                     .cursor(CursorIcon::Pointer)
                     .target(select)
                     .pad_side(Side::Left, 3),
-                Flex::new().items_center().gap(sp(2)),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Center,
                 || {
                     glyph(IconName::Terminal, 3.5, tone);
                     line(tab.name(), 13, 1.4, tone);
@@ -288,15 +307,17 @@ fn window(tab: &TerminalTab, width: f32, look: Look) {
     )
         .hash(&mut hasher);
     let key = hasher.finish();
-    flex_column(
+    column_arranged(
         Modifier::new()
-            .grow()
+            .fill_max_height()
+            .weight(1.0)
             .fill(Role::Background)
             .clip_to(Radius::None)
             .cursor(CursorIcon::Text)
             .target(TERMINAL_BODY)
             .padding_xy(PADDING_X, PADDING_Y),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         move || {
             rustle::key(key, || {
                 rustle::skippable((key, width.to_bits()), || {
@@ -330,24 +351,29 @@ fn lines(emulator: &Emulator, back: usize, composing: &str, link: Option<&Link>,
     let first = emulator.first_line(back);
     let cursor = emulator.cursor(back);
     let selection = emulator.selection().map(|marked| marked.ordered());
-    flex_column(Modifier::new(), Flex::new(), || {
-        for row in 0..emulator.rows() {
-            let at_cursor = cursor
-                .filter(|(line, _)| *line == row)
-                .map(|(_, column)| column);
-            let marked = selection.and_then(|range| marked_columns(range, first + row));
-            let linked = link.and_then(|link| linked_columns(link, first + row));
-            rustle::key(row, || {
-                line_of(
-                    emulator.line(row, back),
-                    at_cursor,
-                    Marks { marked, linked },
-                    composing,
-                    look,
-                )
-            });
-        }
-    });
+    column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for row in 0..emulator.rows() {
+                let at_cursor = cursor
+                    .filter(|(line, _)| *line == row)
+                    .map(|(_, column)| column);
+                let marked = selection.and_then(|range| marked_columns(range, first + row));
+                let linked = link.and_then(|link| linked_columns(link, first + row));
+                rustle::key(row, || {
+                    line_of(
+                        emulator.line(row, back),
+                        at_cursor,
+                        Marks { marked, linked },
+                        composing,
+                        look,
+                    )
+                });
+            }
+        },
+    );
 }
 
 /// The columns of line `line` that the selection from `start` to `end` covers, when it covers any.
@@ -396,9 +422,10 @@ fn line_of(
         })
         .max(cursor.map_or(0, |column| column + 1))
         .min(cells.len());
-    flex_row(
+    row_arranged(
         Modifier::new().height(look.font * LEADING),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             let mut run: Option<(Run, String)> = None;
             for (column, cell) in cells[..end].iter().enumerate() {
@@ -489,7 +516,7 @@ fn run_node(look: Run, content: String, drawn: Look) {
     if look.flags.has(Flags::STRIKE) {
         kind = kind.strike();
     }
-    let mut modifier = Modifier::new();
+    let mut modifier = Modifier::new().fill_max_height();
     if let Some(ground) = ground {
         modifier = modifier.fill(ground);
     }

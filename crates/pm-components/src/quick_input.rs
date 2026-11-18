@@ -1,8 +1,8 @@
 //! The quick input as it is drawn: a field over the command center it opens from, and under it the rows of what the field lists, the letters typed marked in their names and the keys of each command on caps.
 
 use crate::kit::sp;
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row};
 
 use crate::assist::listing_cells;
 use crate::input::Input;
@@ -49,7 +49,7 @@ pub fn quick_input(listing: &Listing) {
         .picked
         .saturating_sub(QUICK_SHOWN - 1)
         .min(count.saturating_sub(QUICK_SHOWN));
-    flex_column(
+    column_arranged(
         Modifier::new()
             .at(listing.at.0, listing.at.1)
             .z_index(60)
@@ -59,32 +59,40 @@ pub fn quick_input(listing: &Listing) {
             .stroke(Role::Border, Radius::Lg)
             .clip_to(Radius::None)
             .target(LISTING_BODY),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             if let Some(filter) = listing.items.filter() {
-                flex_column(
+                column_arranged(
                     Modifier::new()
+                        .fill_max_width()
                         .pad_x(1.5)
                         .pad_side(Side::Top, 1.5)
                         .pad_side(Side::Bottom, 1),
-                    Flex::new(),
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
                         Input::new(filter, LISTING_FILTER)
                             .size(Size::Sm)
                             .placeholder(listing.items.placeholder())
-                            .modifier(Modifier::new().height(FIELD_HEIGHT))
+                            .modifier(Modifier::new().fill_max_width().height(FIELD_HEIGHT))
                             .build();
                     },
                 );
             }
-            flex_column(
-                Modifier::new().pad_x(1.5).pad_side(Side::Bottom, 1.75),
-                Flex::new(),
+            column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .pad_x(1.5)
+                    .pad_side(Side::Bottom, 1.75),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
                     if let Some(said) = status {
-                        flex_row(
-                            Modifier::new().height(ROW).pad_x(1.5),
-                            Flex::new().items_center(),
+                        row_arranged(
+                            Modifier::new().fill_max_width().height(ROW).pad_x(1.5),
+                            Arrangement::Start,
+                            Alignment::Center,
                             || line(said, 13, 1.4, Role::Muted),
                         );
                     }
@@ -120,9 +128,12 @@ fn empty_words(items: &Items) -> String {
 /// Emits `content` in a line of `pixels` tall type in `tone`, in a box `modifier` shapes that cuts it short at its edge.
 #[track_caller]
 fn cut(modifier: Modifier, content: impl Into<String>, pixels: u32, tone: Role) {
-    flex_row(modifier.clip_to(Radius::None), Flex::new(), || {
-        line(content, pixels, 1.4, tone)
-    });
+    row_arranged(
+        modifier.clip_to(Radius::None),
+        Arrangement::Start,
+        Alignment::Start,
+        || line(content, pixels, 1.4, tone),
+    );
 }
 
 /// Emits the row at `place` among those shown, of the item at `index`, filled under the pointer and when `picked`.
@@ -164,7 +175,7 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
             };
             let cells: Cells<'_> = Box::new(move || match commands.get(index) {
                 Some((action, keys)) => {
-                    marked(Modifier::new().grow(), &action.palette_title(), query);
+                    marked(Modifier::new().weight(1.0), &action.palette_title(), query);
                     if let Some((said, _)) = group {
                         separator(said);
                     }
@@ -174,7 +185,7 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
                 }
                 None => match tasks.get(index - commands.len()) {
                     Some(task) => {
-                        marked(Modifier::new().grow(), &task_title(task), query);
+                        marked(Modifier::new().weight(1.0), &task_title(task), query);
                         if let Some((said, _)) = group {
                             separator(said);
                         }
@@ -183,7 +194,7 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
                     None => {
                         if let Some((_, command)) = extras.get(index - commands.len() - tasks.len())
                         {
-                            marked(Modifier::new().grow(), &command.title, query);
+                            marked(Modifier::new().weight(1.0), &command.title, query);
                             if let Some((said, _)) = group {
                                 separator(said);
                             }
@@ -206,7 +217,7 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
                     let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
                     crate::file_icon::file_icon(path, 4.0);
                     marked(Modifier::new().clip_to(Radius::None), name, query);
-                    cut(Modifier::new().grow(), folder, 12, Role::Subtle);
+                    cut(Modifier::new().weight(1.0), folder, 12, Role::Subtle);
                     if let Some((said, _)) = group {
                         separator(said);
                     }
@@ -242,9 +253,14 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
                             title,
                             query,
                         );
-                        cut(Modifier::new().grow(), preview.clone(), 12, Role::Muted);
+                        cut(
+                            Modifier::new().weight(1.0),
+                            preview.clone(),
+                            12,
+                            Role::Muted,
+                        );
                     }
-                    None => marked(Modifier::new().grow(), title, query),
+                    None => marked(Modifier::new().weight(1.0), title, query),
                 }
                 if let Some((said, _)) = group {
                     separator(said);
@@ -262,7 +278,11 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
         Items::Line { lines, .. } => {
             let cells: Cells<'_> = Box::new(move || {
                 if let Some(number) = line_named(query, *lines) {
-                    marked(Modifier::new().grow(), &format!("Go to line {number}"), "");
+                    marked(
+                        Modifier::new().weight(1.0),
+                        &format!("Go to line {number}"),
+                        "",
+                    );
                     line(format!("of {lines}"), 12, 1.4, Role::Subtle);
                 }
             });
@@ -272,7 +292,7 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
             let cells: Cells<'_> = Box::new(move || {
                 if let Some(choice) = choices.get(index) {
                     marked(
-                        Modifier::new().grow(),
+                        Modifier::new().weight(1.0),
                         &choice.label,
                         query.trim_start_matches('?'),
                     );
@@ -300,6 +320,7 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
         Looks::new().hover(Role::SurfaceHover)
     };
     let own = Modifier::new()
+        .fill_max_width()
         .height(ROW)
         .looks_of(looks.radius(Radius::Sm), id);
     let own = if group.is_some_and(|(_, ruled)| ruled) {
@@ -307,9 +328,10 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
     } else {
         own
     };
-    flex_row(
+    row_arranged(
         own.cursor(CursorIcon::Pointer).target(id).pad_x(1.5),
-        Flex::new().items_center().gap(sp(1.5)),
+        Arrangement::SpacedBy(sp(1.5)),
+        Alignment::Center,
         cells,
     );
 }
@@ -326,9 +348,10 @@ fn marked(modifier: Modifier, name: &str, query: &str) {
             _ => runs.push((character.to_string(), lit)),
         }
     }
-    flex_row(
+    row_arranged(
         modifier.clip_to(Radius::None),
-        Flex::new().items_center(),
+        Arrangement::Start,
+        Alignment::Center,
         move || {
             let kind = Type::new(13).ratio(1.4);
             for (run, lit) in runs {
@@ -351,14 +374,16 @@ fn separator(said: &str) {
 /// Emits the keys `binding` is pressed with, such as `Ctrl+K Ctrl+I`, each on a cap of its own, joined by `+` within a chord and set apart between chords.
 #[track_caller]
 fn keycaps(binding: &str) {
-    flex_row(
+    row_arranged(
         Modifier::new(),
-        Flex::new().items_center().gap(sp(1.5)),
+        Arrangement::SpacedBy(sp(1.5)),
+        Alignment::Center,
         || {
             for chord in binding.split(' ') {
-                flex_row(
+                row_arranged(
                     Modifier::new(),
-                    Flex::new().items_center().gap(sp(0.5)),
+                    Arrangement::SpacedBy(sp(0.5)),
+                    Alignment::Center,
                     || {
                         for (place, key) in chord.split('+').enumerate() {
                             if place > 0 {
@@ -376,13 +401,14 @@ fn keycaps(binding: &str) {
 /// Emits one key, on a cap.
 #[track_caller]
 fn keycap(key: &str) {
-    flex_row(
+    row_arranged(
         Modifier::new()
             .height(17.0)
             .fill_rounded(Role::Background, Radius::Sm)
             .stroke(Role::Border, Radius::Sm)
             .pad_x(1.25),
-        Flex::new().items_center(),
+        Arrangement::Start,
+        Alignment::Center,
         || line(key, 11, 1.0, Role::Muted),
     );
 }

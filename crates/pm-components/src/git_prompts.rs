@@ -3,7 +3,7 @@
 use crate::kit::sp;
 use crate::kit::{FocusId, Role, Side, Styled, Type, label};
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::button::Variant;
 use crate::parts::{line, wrap};
@@ -307,11 +307,15 @@ fn title_type() -> Type {
 /// Emits the row of a question's buttons, pushed to its right end: the one that says no, then `confirm` when there is one.
 #[track_caller]
 fn buttons(cancel: FocusId, confirm: Option<(&str, FocusId, Variant)>) {
-    flex_row(
-        Modifier::new().pad_x(5).pad_side(Side::Bottom, 5),
-        Flex::new().items_center().gap(sp(2)),
+    row_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .pad_x(5)
+            .pad_side(Side::Bottom, 5),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
         || {
-            rustle::spacer(rustle::Modifier::new().flex_grow(1.0));
+            rustle::spacer(rustle::Modifier::new().weight(1.0));
             button("Cancel", cancel, Variant::Ghost);
             if let Some((words, id, variant)) = confirm {
                 button(words, id, variant);
@@ -332,14 +336,19 @@ pub(crate) fn question_of(
     Modal::new(ids.outside, ids.inside)
         .width(WIDTH)
         .build_with(|| {
-            flex_column(Modifier::new().pad(5), Flex::new().gap(sp(2)), || {
-                for title in wrap(&title, 15, WIDTH - 40.0) {
-                    label(title, title_type());
-                }
-                for words in wrap(words, 13, WIDTH - 40.0) {
-                    line(words, 13, 1.5, Role::Muted);
-                }
-            });
+            column_arranged(
+                Modifier::new().pad(5),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Start,
+                || {
+                    for title in wrap(&title, 15, WIDTH - 40.0) {
+                        label(title, title_type());
+                    }
+                    for words in wrap(words, 13, WIDTH - 40.0) {
+                        line(words, 13, 1.5, Role::Muted);
+                    }
+                },
+            );
             buttons(ids.cancel, Some((confirm, ids.confirm, variant)));
         });
 }
@@ -350,13 +359,19 @@ fn naming_box(title: &str, field: &pm_field::Field, id: FocusId, placeholder: &s
     Modal::new(PROMPT_OUTSIDE, PROMPT_INSIDE)
         .width(WIDTH)
         .build_with(|| {
-            flex_column(Modifier::new().pad(5), Flex::new().gap(sp(3)), || {
-                label(title, title_type());
-                Input::new(field, id)
-                    .placeholder(placeholder)
-                    .size(Size::Md)
-                    .build();
-            });
+            column_arranged(
+                Modifier::new().fill_max_width().pad(5),
+                Arrangement::SpacedBy(sp(3)),
+                Alignment::Start,
+                || {
+                    label(title, title_type());
+                    Input::new(field, id)
+                        .modifier(Modifier::new().fill_max_width())
+                        .placeholder(placeholder)
+                        .size(Size::Md)
+                        .build();
+                },
+            );
             buttons(
                 PROMPT_CANCEL,
                 Some((confirm, PROMPT_CONFIRM, Variant::Default)),
@@ -370,28 +385,35 @@ fn stash_list(state: &WorkspaceState, action: StashAction) {
     Modal::new(PROMPT_OUTSIDE, PROMPT_INSIDE)
         .width(WIDTH)
         .build_with(|| {
-            flex_column(Modifier::new().pad(3), Flex::new().gap(sp(1)), || {
-                flex_column(
-                    Modifier::new().pad_x(2).pad_side(Side::Bottom, 2),
-                    Flex::new(),
-                    || label(action.title(), title_type()),
-                );
-                if state.git.stashes.is_empty() {
-                    flex_column(
+            column_arranged(
+                Modifier::new().fill_max_width().pad(3),
+                Arrangement::SpacedBy(sp(1)),
+                Alignment::Start,
+                || {
+                    column_arranged(
                         Modifier::new().pad_x(2).pad_side(Side::Bottom, 2),
-                        Flex::new(),
-                        || line("There are no stashes.", 13, 1.4, Role::Subtle),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || label(action.title(), title_type()),
                     );
-                }
-                for (position, stash) in state.git.stashes.iter().take(STASH_ROWS).enumerate() {
-                    crate::popover::row(
-                        &format!("stash@{{{}}}", stash.index),
-                        &stash.message,
-                        false,
-                        FocusId(PROMPT_ROW_BASE + position as u64),
-                    );
-                }
-            });
+                    if state.git.stashes.is_empty() {
+                        column_arranged(
+                            Modifier::new().pad_x(2).pad_side(Side::Bottom, 2),
+                            Arrangement::Start,
+                            Alignment::Start,
+                            || line("There are no stashes.", 13, 1.4, Role::Subtle),
+                        );
+                    }
+                    for (position, stash) in state.git.stashes.iter().take(STASH_ROWS).enumerate() {
+                        crate::popover::row(
+                            &format!("stash@{{{}}}", stash.index),
+                            &stash.message,
+                            false,
+                            FocusId(PROMPT_ROW_BASE + position as u64),
+                        );
+                    }
+                },
+            );
             buttons(PROMPT_CANCEL, None);
         });
 }

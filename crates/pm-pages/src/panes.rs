@@ -5,8 +5,8 @@ use pm_components::kit::{
     FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Side, Styled, Tooltip, Type,
     label,
 };
-use rustle::{Canvas, CursorIcon, Interaction, Modifier};
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{BoxAlignment, Canvas, CursorIcon, Interaction, Modifier};
 
 use pm_components::Menu;
 use pm_components::Size;
@@ -48,12 +48,12 @@ fn fill_top_rounded(canvas: &mut Canvas, color: rustle::Color) {
     canvas.rect(0.0, height / 2.0, width, height / 2.0, color);
 }
 
-/// The box of a tab answering to `id`: rounded at the top, filled while it is the one its pane shows and while the pointer is on it otherwise, with its padding.
+/// The box of a tab answering to `id`: rounded at the top, filled while it is the one its pane shows and while the pointer is on it otherwise, with its padding; as wide as what it holds, running past the end of a strip too narrow for it.
 fn tab_modifier(shown: bool, id: FocusId) -> Modifier {
     let surface = pm_components::kit::color(Role::Surface);
     let hover = pm_components::kit::color(Role::SurfaceHover);
     Modifier::new()
-        .keep()
+        .wrap_content_width(BoxAlignment::CenterStart, true)
         .h(10)
         .styled_by(move |canvas: &mut Canvas, interaction: Interaction| {
             if shown {
@@ -76,9 +76,10 @@ fn tab_tone(shown: bool) -> Role {
 #[track_caller]
 fn tab_with(icon: IconName, label: &str, id: FocusId, shown: bool, extra: impl FnOnce()) {
     let tone = tab_tone(shown);
-    flex_row(
+    row_arranged(
         tab_modifier(shown, id),
-        Flex::new().items_center().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
         || {
             glyph(icon, 3.5, tone);
             line(label, 13, 1.4, tone);
@@ -111,9 +112,10 @@ fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) {
     };
     let kind = Type::new(13).ratio(1.4).tone(tone).truncate();
     let kind = if viewer.preview { kind.italic() } else { kind };
-    flex_row(
+    row_arranged(
         tab_modifier(shown, FocusId(FILE_TAB_BASE + index as u64)),
-        Flex::new().items_center().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
         || {
             file_icon(&viewer.path, 3.5);
             label(label_text, kind);
@@ -187,7 +189,7 @@ fn strip_button(icon: IconName, id: FocusId, on: bool, hint: &str) {
         looks
     };
     let tone = if on { Role::Text } else { Role::Muted };
-    flex_row(
+    row_arranged(
         Modifier::new()
             .pad_side(Side::Bottom, 1)
             .square(8.0)
@@ -195,7 +197,8 @@ fn strip_button(icon: IconName, id: FocusId, on: bool, hint: &str) {
             .tooltip(hint)
             .cursor(CursorIcon::Pointer)
             .target(id),
-        Flex::new().items_center().justify_center(),
+        Arrangement::Center,
+        Alignment::Center,
         || glyph(icon, 3.5, tone),
     );
 }
@@ -203,14 +206,19 @@ fn strip_button(icon: IconName, id: FocusId, on: bool, hint: &str) {
 /// Emits the buttons at the end of the strip of tabs: the one that opens the menu of panes.
 #[track_caller]
 fn strip_buttons(state: &WorkspaceState) {
-    flex_row(Modifier::new(), Flex::new().items_end().gap(sp(1)), || {
-        strip_button(
-            IconName::SquareSplit,
-            PANE_MENU,
-            state.pane_menu.is_some(),
-            "Split pane",
-        );
-    });
+    row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::End,
+        || {
+            strip_button(
+                IconName::SquareSplit,
+                PANE_MENU,
+                state.pane_menu.is_some(),
+                "Split pane",
+            );
+        },
+    );
 }
 
 /// Emits the menu of panes, opened with its corner at `at`: the pane being worked in split with an empty pane on each side.
@@ -282,13 +290,15 @@ fn item_tab(state: &WorkspaceState, item: &Item, shown: bool) {
 /// Emits the strip above a pane: the tab of everything in `group`, and, in the pane at the top right, `toggle`, the button for the terminal.
 #[track_caller]
 fn strip(state: &WorkspaceState, group: &Group, toggle: bool) {
-    flex_row(
+    row_arranged(
         Modifier::new()
+            .fill_max_width()
             .h(12)
             .clip_to(Radius::None)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(3),
-        Flex::new().items_end().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::End,
         || {
             for (index, item) in group.items.iter().enumerate() {
                 rustle::key(index, || item_tab(state, item, index == group.active));
@@ -373,9 +383,10 @@ fn empty_pane(state: &WorkspaceState, index: usize) {
     let changed = state
         .open()
         .is_some_and(|session| !session.changes.is_empty());
-    flex_column(
-        Modifier::new().grow(),
-        Flex::new().items_center().justify_center().gap(sp(4)),
+    column_arranged(
+        Modifier::new().fill_max_width().weight(1.0),
+        Arrangement::SpacedByAligned(sp(4), Alignment::Center),
+        Alignment::Center,
         || {
             line(
                 "Bring something into this pane, or drag a tab here.",
@@ -383,9 +394,10 @@ fn empty_pane(state: &WorkspaceState, index: usize) {
                 1.4,
                 Role::Muted,
             );
-            flex_column(
+            column_arranged(
                 Modifier::new(),
-                Flex::new().items_center().gap(sp(2)),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Center,
                 || {
                     put_button(&label_text, icon, put(0));
                     if changed {
@@ -407,12 +419,14 @@ fn empty_pane(state: &WorkspaceState, index: usize) {
 #[track_caller]
 fn pane(state: &WorkspaceState, placed: &Placed, toggle: bool, extra: f32) {
     let group = placed.group;
-    flex_column(
+    column_arranged(
         Modifier::new()
-            .grow()
+            .fill_max_height()
+            .weight(1.0)
             .clip_to(Radius::None)
             .target(FocusId(PANE_BASE + placed.index as u64)),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             strip(state, group, toggle);
             match group.items.get(group.active) {
@@ -449,23 +463,39 @@ fn laid(
         } => {
             let (one_area, two_area) = area.halves(*axis, *ratio);
             let (sized, edge) = match axis {
-                Axis::Row => (Modifier::new().width(one_area.width), Side::Left),
-                Axis::Column => (Modifier::new().height(one_area.height), Side::Top),
+                Axis::Row => (
+                    Modifier::new().fill_max_height().width(one_area.width),
+                    Side::Left,
+                ),
+                Axis::Column => (
+                    Modifier::new().fill_max_width().height(one_area.height),
+                    Side::Top,
+                ),
             };
             let halves = || {
-                flex_row(sized, Flex::new(), || {
+                row_arranged(sized, Arrangement::Start, Alignment::Start, || {
                     laid(state, first, placed, next, (one_area, whole, extra));
                 });
-                flex_row(
-                    Modifier::new().grow().stroke_side(edge, 1.0, Role::Border),
-                    Flex::new(),
+                let across = match axis {
+                    Axis::Row => Modifier::new().fill_max_height(),
+                    Axis::Column => Modifier::new().fill_max_width(),
+                };
+                row_arranged(
+                    across.weight(1.0).stroke_side(edge, 1.0, Role::Border),
+                    Arrangement::Start,
+                    Alignment::Start,
                     || laid(state, second, placed, next, (two_area, whole, extra)),
                 );
             };
-            let outer = Modifier::new().grow().clip_to(Radius::None);
+            let outer = Modifier::new()
+                .fill_max_height()
+                .weight(1.0)
+                .clip_to(Radius::None);
             match axis {
-                Axis::Row => flex_row(outer, Flex::new(), halves),
-                Axis::Column => flex_column(outer, Flex::new(), halves),
+                Axis::Row => row_arranged(outer, Arrangement::Start, Alignment::Start, halves),
+                Axis::Column => {
+                    column_arranged(outer, Arrangement::Start, Alignment::Start, halves)
+                }
             }
         }
     }
@@ -511,20 +541,26 @@ pub(crate) fn main_area(state: &WorkspaceState, window: (f32, f32)) {
     let placed = panes.layout.placed(area);
     let page = window.1 - TITLE_BAR_HEIGHT;
     let extra = page - area.height;
-    flex_column(
-        Modifier::new().grow().fill_max_height(),
-        Flex::new(),
+    column_arranged(
+        Modifier::new().weight(1.0).fill_max_height(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            flex_row(Modifier::new().grow(), Flex::new(), || {
-                let mut next = 0;
-                laid(
-                    state,
-                    &panes.layout,
-                    &placed,
-                    &mut next,
-                    (area, area, extra),
-                );
-            });
+            row_arranged(
+                Modifier::new().fill_max_width().weight(1.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    let mut next = 0;
+                    laid(
+                        state,
+                        &panes.layout,
+                        &placed,
+                        &mut next,
+                        (area, area, extra),
+                    );
+                },
+            );
             if let Some(session) = state.docked().filter(|_| state.docking()) {
                 terminal::terminal(state, session, area.width, page);
             }

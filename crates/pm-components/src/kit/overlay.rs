@@ -2,7 +2,7 @@
 //! menus opened at a point of the window, and tooltips, all kept inside the
 //! window and drawn over everything, unclipped by the boxes they are declared in.
 
-use rustle::{Flex, flex_column};
+use rustle::{Alignment, Arrangement, column_arranged};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
@@ -257,13 +257,14 @@ pub fn tooltips(window: report::WindowKey) {
         TOOLTIP_LAYER,
         Modifier::new(),
         || {
-            flex_column(
+            column_arranged(
                 Modifier::new()
                     .fill_rounded(Role::Surface, Radius::Sm)
                     .stroke(Role::Border, Radius::Sm)
                     .pad_x(1.5)
                     .pad_y(0.75),
-                Flex::new().items_start(),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
                     for line in resting.words.lines() {
                         label(line.to_owned(), kind.tone(Role::Text));

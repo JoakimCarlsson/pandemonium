@@ -2,8 +2,8 @@
 
 use crate::kit::{FocusId, Hovered, Interactive, Looks, Radius, Role, Side, Styled, Type, label};
 use crate::marked::{CaretLook, Mark, Paint, marked_line};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row};
 
 use crate::state::WorkspaceState;
 use crate::viewer::kind_role;
@@ -40,13 +40,15 @@ fn kept_line(document: &Document, index: usize, place: usize, settings: &EditorS
     let id = FocusId(STICKY_BASE + place as u64);
     let kind = Type::code(font).ratio(1.4);
     let content = document.field.text()[line].to_string();
-    flex_row(
+    row_arranged(
         Modifier::new()
+            .fill_max_width()
             .height(height)
             .looks_of(Looks::new().hover(Role::SurfaceHover), id)
             .cursor(CursorIcon::Pointer)
             .target(id),
-        Flex::new().items_center(),
+        Arrangement::Start,
+        Alignment::Center,
         move || {
             rustle::spacer(Modifier::new().width(3.0));
             let gutter = if numbers {
@@ -54,18 +56,20 @@ fn kept_line(document: &Document, index: usize, place: usize, settings: &EditorS
             } else {
                 Modifier::new().w(2)
             };
-            flex_row(
+            row_arranged(
                 gutter.pad_side(Side::Right, 3),
-                Flex::new().items_center().justify_end(),
+                Arrangement::End,
+                Alignment::Center,
                 move || {
                     if numbers {
                         label((index + 1).to_string(), kind.tone(Role::Subtle));
                     }
                 },
             );
-            flex_row(
-                Modifier::new().grow().clip_to(Radius::None).pad_x(2),
-                Flex::new(),
+            row_arranged(
+                Modifier::new().weight(1.0).clip_to(Radius::None).pad_x(2),
+                Arrangement::Start,
+                Alignment::Start,
                 move || {
                     marked_line(
                         Modifier::new(),
@@ -96,13 +100,14 @@ pub(crate) fn sticky(
     if lines.is_empty() {
         return;
     }
-    flex_column(
+    column_arranged(
         Modifier::new()
-            .placed(BoxAlignment::TopStart)
+            .align(BoxAlignment::TopStart)
             .fill_max_width()
             .fill(Role::Background)
             .stroke_side(Side::Bottom, 1.0, Role::Border),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             for (place, index) in lines.into_iter().enumerate() {
                 rustle::key(place, || kept_line(document, index, place, settings));

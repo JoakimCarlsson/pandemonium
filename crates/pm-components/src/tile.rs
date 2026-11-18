@@ -2,8 +2,8 @@
 
 use crate::kit::sp;
 use crate::kit::{FocusId, Hovered, Interactive, Looks, Radius, Role, Styled};
+use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_row};
 
 /// A tile being described: what it answers to, how tall it is and whether it is selected.
 ///
@@ -22,8 +22,10 @@ pub struct Tile {
     radius: Radius,
     /// Whether it is filled.
     selected: bool,
-    /// How its children are laid out, past the gap, when the caller chose it.
-    flex: Option<Flex>,
+    /// How its children are spread along it, in place of `gap` steps between them, when the caller chose it.
+    arrangement: Option<Arrangement>,
+    /// Where its children sit across it.
+    alignment: Alignment,
     /// The padding the caller gave in place of the tile's own, which has none.
     inner: Modifier,
     /// What the caller puts around its box.
@@ -39,7 +41,8 @@ impl Tile {
             gap: 3.0,
             radius: Radius::Md,
             selected: false,
-            flex: None,
+            arrangement: None,
+            alignment: Alignment::Center,
             inner: Modifier::new(),
             modifier: Modifier::new(),
         }
@@ -69,9 +72,15 @@ impl Tile {
         self
     }
 
-    /// The tile with its children laid out by `flex` instead of centred across; the tile's gap still applies.
-    pub fn flex(mut self, flex: Flex) -> Self {
-        self.flex = Some(flex);
+    /// The tile with its children spread along it by `arrangement` in place of its gap.
+    pub fn arrangement(mut self, arrangement: Arrangement) -> Self {
+        self.arrangement = Some(arrangement);
+        self
+    }
+
+    /// The tile with its children placed across it by `alignment` instead of centred.
+    pub fn alignment(mut self, alignment: Alignment) -> Self {
+        self.alignment = alignment;
         self
     }
 
@@ -105,11 +114,13 @@ impl Tile {
                 .target(self.id)
                 .chain(self.inner),
         );
-        let flex = self
-            .flex
-            .unwrap_or(Flex::new().items_center())
-            .gap(sp(self.gap));
-        flex_row(modifier, flex, content);
+        row_arranged(
+            modifier,
+            self.arrangement
+                .unwrap_or(Arrangement::SpacedBy(sp(self.gap))),
+            self.alignment,
+            content,
+        );
     }
 
     /// Emits the tile holding nothing.

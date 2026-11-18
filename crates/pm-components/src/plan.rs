@@ -1,10 +1,12 @@
 //! The plan an agent proposes before it starts: the panel that reads it and the band above the prompt that answers it.
 
 use crate::kit::sp;
-use crate::kit::{FocusId, IconName, Radius, Role, Scroll, Side, Styled, scroll_area};
+use crate::kit::{
+    FocusId, IconName, Radius, Role, Scroll, Side, Styled, Type, label_with, scroll_area,
+};
 use pm_harness::{Permission, Verdict};
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row, flex_wrap};
+use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
 use crate::button::Variant;
 use crate::parts::{line, spacer};
@@ -27,20 +29,23 @@ pub fn width_in(state: &WorkspaceState, room: f32) -> f32 {
 /// Emits the panel `width` logical pixels wide that reads `source`, the plan the agent proposed, as markdown beside the conversation.
 #[track_caller]
 pub fn panel(state: &WorkspaceState, source: &str, width: f32) {
-    flex_column(
+    column_arranged(
         Modifier::new()
             .width(width)
             .fill_max_height()
             .fill(Role::Background)
             .stroke_side(Side::Left, 1.0, Role::Border),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            flex_row(
+            row_arranged(
                 Modifier::new()
+                    .fill_max_width()
                     .h(12)
                     .stroke_side(Side::Bottom, 1.0, Role::Border)
                     .pad_x(4),
-                Flex::new().items_center().gap(sp(2)),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Center,
                 || {
                     line("Plan", 13, 1.4, Role::Muted);
                     spacer();
@@ -48,12 +53,16 @@ pub fn panel(state: &WorkspaceState, source: &str, width: f32) {
                 },
             );
             scroll_area(
-                Modifier::new().grow().clip_to(Radius::None),
+                Modifier::new()
+                    .fill_max_width()
+                    .weight(1.0)
+                    .clip_to(Radius::None),
                 Scroll::from_start(PLAN_SCROLL, state.plan_scroll),
                 || {
-                    flex_column(
+                    column_arranged(
                         Modifier::new().fill_max_width().pad_x(4).pad_y(4),
-                        Flex::new(),
+                        Arrangement::Start,
+                        Alignment::Start,
                         || {
                             Markdown::new(source, width - 33.0).build();
                         },
@@ -85,25 +94,34 @@ pub fn proposal(ask: &Permission) -> bool {
     if ask.plan.is_none() {
         return false;
     }
-    flex_column(
+    column_arranged(
         Modifier::new()
             .fill_rounded(Role::Surface, Radius::Xl)
             .stroke(Role::Border, Radius::Xl)
             .pad_x(4)
             .pad_y(3),
-        Flex::new().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Start,
         || {
-            flex_row(Modifier::new(), Flex::new().items_center(), || {
-                line("The agent proposed a plan", 14, 1.4, Role::Text);
-                spacer();
-                Button::new("Open plan", OPEN_PLAN)
-                    .variant(Variant::Ghost)
-                    .size(Size::Sm)
-                    .build();
-            });
-            flex_wrap(
-                Modifier::new(),
-                Flex::new().gap(sp(2)).items_center(),
+            row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    label_with(
+                        Modifier::new().weight(1.0),
+                        "The agent proposed a plan",
+                        Type::new(14).ratio(1.4).tone(Role::Text).truncate(),
+                    );
+                    Button::new("Open plan", OPEN_PLAN)
+                        .variant(Variant::Ghost)
+                        .size(Size::Sm)
+                        .build();
+                },
+            );
+            flow_row_with(
+                Modifier::new().fill_max_width(),
+                FlowOptions::new(sp(2), sp(2)).item_alignment(Alignment::Center),
                 || {
                     for (index, _) in ask
                         .choices

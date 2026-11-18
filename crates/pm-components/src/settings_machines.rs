@@ -4,14 +4,14 @@ use crate::kit::sp;
 use pm_config::{KnownServer, Reach};
 use pm_field::{Edit, Field};
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::kit::{FocusId, Role, Styled};
 
 use crate::Button;
 use crate::button::Variant;
 use crate::input::Input;
-use crate::parts::{clipped, line};
+use crate::parts::line;
 use crate::settings::Section;
 use crate::settings_ids::{MACHINE_EDITS, MACHINE_REACHES, MACHINE_REMOVES, SINGLES};
 use crate::settings_pages::page_rows;
@@ -194,13 +194,18 @@ impl WorkspaceState {
 /// Emits a box of the form under the words that say what is written in it.
 #[track_caller]
 fn labelled(words: &str, field: &Field, id: FocusId, placeholder: &str) {
-    flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
-        line(words, 12, 1.4, Role::Muted);
-        Input::new(field, id)
-            .size(Size::Sm)
-            .placeholder(placeholder)
-            .build();
-    });
+    column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Start,
+        || {
+            line(words, 12, 1.4, Role::Muted);
+            Input::new(field, id)
+                .size(Size::Sm)
+                .placeholder(placeholder)
+                .build();
+        },
+    );
 }
 
 /// Emits the form a server is added or changed with.
@@ -220,59 +225,82 @@ fn form_node(form: &MachineForm) {
         .iter()
         .position(|held| *held == form.reach)
         .unwrap_or(0);
-    flex_column(Modifier::new().pad(3), Flex::new().gap(sp(3)), || {
-        labelled("Name", &form.name, MACHINE_NAME, "e.g. Build box");
-        flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
-            line("Reached", 12, 1.4, Role::Muted);
-            flex_row(Modifier::new(), Flex::new(), || {
-                choices(
-                    &["Direct", "SSH", "WSL", "Dev container", "Tunnel"],
-                    picked,
-                    |option| MACHINE_REACHES.id(option),
-                );
-            });
-        });
-        labelled(address_label, &form.address, MACHINE_ADDRESS, address_hint);
-        if form.reach.keeps_token() {
-            labelled(
-                "Token",
-                &form.token,
-                MACHINE_TOKEN,
-                "As in server.json on that machine",
+    column_arranged(
+        Modifier::new().fill_max_width().pad(3),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Start,
+        || {
+            labelled("Name", &form.name, MACHINE_NAME, "e.g. Build box");
+            column_arranged(
+                Modifier::new(),
+                Arrangement::SpacedBy(sp(1)),
+                Alignment::Start,
+                || {
+                    line("Reached", 12, 1.4, Role::Muted);
+                    row_arranged(
+                        Modifier::new(),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            choices(
+                                &["Direct", "SSH", "WSL", "Dev container", "Tunnel"],
+                                picked,
+                                |option| MACHINE_REACHES.id(option),
+                            );
+                        },
+                    );
+                },
             );
-        }
-        flex_row(
-            Modifier::new(),
-            Flex::new().items_center().justify_end().gap(sp(2)),
-            || {
-                Button::new("Cancel", MACHINE_CANCEL)
-                    .variant(Variant::Ghost)
-                    .size(Size::Sm)
-                    .build();
-                Button::new("Save", MACHINE_SAVE)
-                    .size(Size::Sm)
-                    .disabled(form.server().is_none())
-                    .build();
-            },
-        );
-    });
+            labelled(address_label, &form.address, MACHINE_ADDRESS, address_hint);
+            if form.reach.keeps_token() {
+                labelled(
+                    "Token",
+                    &form.token,
+                    MACHINE_TOKEN,
+                    "As in server.json on that machine",
+                );
+            }
+            row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedByAligned(sp(2), Alignment::End),
+                Alignment::Center,
+                || {
+                    Button::new("Cancel", MACHINE_CANCEL)
+                        .variant(Variant::Ghost)
+                        .size(Size::Sm)
+                        .build();
+                    Button::new("Save", MACHINE_SAVE)
+                        .size(Size::Sm)
+                        .disabled(form.server().is_none())
+                        .build();
+                },
+            );
+        },
+    );
 }
 
 /// Emits the row of a server: its name over how it is reached, and its buttons when it can be changed and the page has names for them.
 #[track_caller]
 fn machine_row(name: &str, reach: String, buttons: Option<usize>) {
-    flex_row(
+    row_arranged(
         Modifier::new().pad_x(3).pad_y(3),
-        Flex::new().items_center().justify_between().gap(sp(3)),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
         || {
-            flex_column(Modifier::new().grow(), Flex::new().gap(sp(0.5)), || {
-                clipped(name, 13, Role::Text);
-                clipped(reach, 12, Role::Muted);
-            });
+            column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::SpacedBy(sp(0.5)),
+                Alignment::Start,
+                || {
+                    line(name, 13, 1.4, Role::Text);
+                    line(reach, 12, 1.4, Role::Muted);
+                },
+            );
             if let Some(index) = buttons {
-                flex_row(
+                row_arranged(
                     Modifier::new(),
-                    Flex::new().items_center().gap(sp(1)),
+                    Arrangement::SpacedBy(sp(1)),
+                    Alignment::Center,
                     || {
                         if let Some(edit) = MACHINE_EDITS.id(index) {
                             Button::new("Edit", edit)
@@ -310,9 +338,10 @@ pub(crate) fn body(state: &WorkspaceState, room: f32) {
     let form = state.settings_page.server_form.as_ref();
     let adding = form.is_some_and(|form| form.index.is_none());
     page_rows(state, Section::Servers, room);
-    flex_row(
-        Modifier::new(),
-        Flex::new().items_center().justify_between(),
+    row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpaceBetween,
+        Alignment::Center,
         || {
             crate::settings_servers::heading_only("Servers", state.window.servers.known.len() + 1);
             Button::new("Add Server", MACHINE_ADD)

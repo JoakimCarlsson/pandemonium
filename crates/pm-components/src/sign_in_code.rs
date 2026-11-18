@@ -3,7 +3,7 @@
 use crate::kit::sp;
 use crate::kit::{FocusId, Role, Side, Styled, Type, label};
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::button::Variant;
 use crate::parts::{line, spacer, wrap};
@@ -108,33 +108,47 @@ pub fn code_dialog(state: &WorkspaceState) {
     Modal::new(SIGN_IN_CODE_OUTSIDE, SIGN_IN_CODE_INSIDE)
         .width(WIDTH)
         .build_with(move || {
-            flex_column(Modifier::new().pad(5), Flex::new().gap(sp(2)), || {
-                label(
-                    title,
-                    Type::new(15)
-                        .ratio(1.4)
-                        .tone(Role::Text)
-                        .truncate()
-                        .medium(),
-                );
-                for words in wrap(&words, 13, WIDTH - 40.0) {
-                    line(words, 13, 1.5, Role::Muted);
-                }
-                flex_row(Modifier::new(), Flex::new().items_center(), || {
+            column_arranged(
+                Modifier::new().pad(5),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Start,
+                || {
                     label(
-                        code,
-                        Type::new(24)
-                            .ratio(1.6)
+                        title,
+                        Type::new(15)
+                            .ratio(1.4)
                             .tone(Role::Text)
                             .truncate()
-                            .mono()
                             .medium(),
                     );
-                });
-            });
-            flex_row(
-                Modifier::new().pad_x(5).pad_side(Side::Bottom, 5),
-                Flex::new().items_center().gap(sp(2)),
+                    for words in wrap(&words, 13, WIDTH - 40.0) {
+                        line(words, 13, 1.5, Role::Muted);
+                    }
+                    row_arranged(
+                        Modifier::new(),
+                        Arrangement::Start,
+                        Alignment::Center,
+                        || {
+                            label(
+                                code,
+                                Type::new(24)
+                                    .ratio(1.6)
+                                    .tone(Role::Text)
+                                    .truncate()
+                                    .mono()
+                                    .medium(),
+                            );
+                        },
+                    );
+                },
+            );
+            row_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .pad_x(5)
+                    .pad_side(Side::Bottom, 5),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Center,
                 || {
                     button("Hide", SIGN_IN_CODE_HIDE, Variant::Ghost);
                     spacer();

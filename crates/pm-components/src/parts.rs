@@ -2,7 +2,7 @@
 
 use crate::kit::{IconName, Styled, Tone, Type, icon, label, label_with};
 use rustle::Modifier;
-use rustle::{Flex, flex_column};
+use rustle::{Alignment, Arrangement, column_arranged};
 
 /// How wide, as a share of its height, a character of body text is taken to be.
 const CHARACTER_WIDTH: f32 = 0.53;
@@ -27,7 +27,7 @@ pub fn glyph(name: IconName, steps: f32, tone: impl Into<Tone>) {
 #[track_caller]
 pub fn clipped(content: impl Into<String>, pixels: u32, tone: impl Into<Tone>) {
     label_with(
-        Modifier::new().grow(),
+        Modifier::new().weight(1.0),
         content,
         Type::new(pixels).ratio(1.4).tone(tone).truncate(),
     );
@@ -36,7 +36,7 @@ pub fn clipped(content: impl Into<String>, pixels: u32, tone: impl Into<Tone>) {
 /// Emits a box that takes the room left in its row and holds nothing.
 #[track_caller]
 pub fn spacer() {
-    rustle::spacer(rustle::Modifier::new().flex_grow(1.0));
+    rustle::spacer(rustle::Modifier::new().weight(1.0));
 }
 
 /// Emits the lines of `content` wrapped to `width`, one text line each, set in `pixels` tall type with a line height of `ratio` times that, in `tone`, with a gap where it has a blank line.
@@ -47,15 +47,20 @@ pub fn paragraph(content: &str, pixels: u32, ratio: f32, tone: impl Into<Tone>, 
     let kind = Type::new(pixels).ratio(ratio);
     let tone = tone.into();
     let lines = crate::kit::wrap_lines(content, kind, width.max(32.0));
-    flex_column(Modifier::new(), Flex::new(), || {
-        for part in lines {
-            if part.end == part.start {
-                rustle::spacer(Modifier::new().h(3));
-            } else {
-                label(&content[part.start..part.end], kind.tone(tone));
+    column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for part in lines {
+                if part.end == part.start {
+                    rustle::spacer(Modifier::new().h(3));
+                } else {
+                    label(&content[part.start..part.end], kind.tone(tone));
+                }
             }
-        }
-    });
+        },
+    );
 }
 
 /// The lines `content` breaks into when each may hold as many characters of

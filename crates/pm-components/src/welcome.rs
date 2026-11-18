@@ -1,7 +1,7 @@
 //! The empty page of a new session or a new chat: pick an agent, then describe the work.
 
+use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with};
 use rustle::{BoxAlignment, Modifier};
-use rustle::{Flex, flex_column, flex_wrap};
 
 use crate::Button;
 use crate::button::Variant;
@@ -52,22 +52,24 @@ fn heading(state: &WorkspaceState) -> String {
 #[track_caller]
 pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32) {
     let reviewable = state.review_session().is_some();
-    rustle::stack_with(Modifier::new().grow(), || {
-        flex_column(
+    rustle::stack_with(Modifier::new().weight(1.0), || {
+        column_arranged(
             Modifier::new().fill_max_size().pad_x(6).pad_y(10),
-            Flex::new().items_center().justify_center(),
+            Arrangement::Center,
+            Alignment::Center,
             || {
-                flex_column(
+                column_arranged(
                     Modifier::new().max_w_px(680.0).fill_max_width(),
-                    Flex::new().items_center().gap(sp(7)),
+                    Arrangement::SpacedBy(sp(7)),
+                    Alignment::Center,
                     || {
                         label(
                             heading(state),
                             Type::new(28).ratio(1.25).semibold().tone(Role::Text),
                         );
-                        flex_wrap(
+                        flow_row_with(
                             Modifier::new().fill_max_width(),
-                            Flex::new().gap(sp(2)).justify_center(),
+                            FlowOptions::new(sp(2), sp(2)).arrangement(Arrangement::Center),
                             || {
                                 for index in state.startable_agents() {
                                     chip(state, index);
@@ -90,7 +92,7 @@ pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32) {
             Button::icon(IconName::PanelRight, REVIEW)
                 .modifier(
                     Modifier::new()
-                        .placed(BoxAlignment::TopEnd)
+                        .align(BoxAlignment::TopEnd)
                         .at(-sp(2.0), sp(2.0)),
                 )
                 .build();

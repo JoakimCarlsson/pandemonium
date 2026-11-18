@@ -3,7 +3,7 @@
 //! The server asks the chat's agent for a handoff summary and starts the session with it, so the window only says where the work goes on and is told the outcome.
 
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::Button;
 use crate::kit::{FocusId, IconName, Interactive, Role, Side, Styled};
@@ -213,6 +213,7 @@ impl WorkspaceState {
 /// The modifier of a section of the choice set off from what is above it by a rule: `border_t()` with `mt(1)`.
 fn ruled() -> Modifier {
     Modifier::new()
+        .fill_max_width()
         .pad_side(Side::Top, 1)
         .stroke_side(Side::Top, 1.0, Role::Border)
 }
@@ -220,9 +221,10 @@ fn ruled() -> Modifier {
 /// Emits a line of the choice saying `words`, where rows would be.
 #[track_caller]
 fn said(words: &str) {
-    flex_row(
+    row_arranged(
         Modifier::new().pad_x(2.5).pad_y(1.5),
-        Flex::new().items_center(),
+        Arrangement::Start,
+        Alignment::Center,
         || line(words, 13, 1.4, Role::Subtle),
     );
 }
@@ -247,7 +249,7 @@ fn menu(state: &WorkspaceState, chat: &Session) {
     let ready = chosen.is_some() && listed.is_some_and(|branches| !branches.is_empty());
     menu.modifier(Modifier::new().target(MENU_BODY))
         .build_with(|| {
-            flex_column(ruled(), Flex::new(), || {
+            column_arranged(ruled(), Arrangement::Start, Alignment::Start, || {
                 heading("Branch from", None);
                 match listed {
                     None => said("Reading the branches…"),
@@ -257,9 +259,10 @@ fn menu(state: &WorkspaceState, chat: &Session) {
                     }
                 }
             });
-            flex_row(
+            row_arranged(
                 ruled().pad_x(1).pad_y(1.5),
-                Flex::new().justify_end(),
+                Arrangement::End,
+                Alignment::Start,
                 || {
                     Button::new("Continue", CONTINUE_START)
                         .size(Size::Sm)

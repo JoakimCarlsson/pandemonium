@@ -2,8 +2,8 @@
 
 use crate::kit::sp;
 use crate::kit::{FocusId, Interactive, Radius, Role, Styled};
+use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_row};
 
 use crate::parts::line;
 
@@ -83,18 +83,20 @@ impl Stepper {
             .h(6)
             .fill_rounded(Role::SurfaceHover, Radius::Full)
             .pad_x(1);
-        flex_row(
+        row_arranged(
             self.modifier.chain(own),
-            Flex::new().items_center().justify_between(),
+            Arrangement::SpaceBetween,
+            Alignment::Center,
             move || {
                 for position in 0..stops {
                     let id = FocusId(first + position as u64);
-                    flex_row(
+                    row_arranged(
                         Modifier::new()
                             .square(4)
                             .cursor(CursorIcon::Pointer)
                             .target(id),
-                        Flex::new().items_center().justify_center(),
+                        Arrangement::Center,
+                        Alignment::Center,
                         move || {
                             if current == Some(position) {
                                 rustle::spacer(
@@ -121,13 +123,15 @@ impl Stepper {
     fn bar(self) {
         let at = self.current.unwrap_or(0);
         let stops = self.stops;
-        flex_row(
+        row_arranged(
             self.modifier,
-            Flex::new().items_center().gap(sp(3)),
+            Arrangement::SpacedBy(sp(3)),
+            Alignment::Center,
             move || {
-                flex_row(
+                row_arranged(
                     Modifier::new(),
-                    Flex::new().items_center().gap(sp(2)),
+                    Arrangement::SpacedBy(sp(2)),
+                    Alignment::Center,
                     move || {
                         for candidate in 0..stops {
                             let tone = if candidate <= at {

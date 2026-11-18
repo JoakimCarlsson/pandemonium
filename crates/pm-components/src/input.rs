@@ -2,8 +2,8 @@
 
 use crate::kit::sp;
 use pm_field::Field;
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row};
 
 use crate::kit::scroll::bar_of;
 use crate::kit::{
@@ -225,16 +225,17 @@ impl<'a> Input<'a> {
             kind.ratio(1.57)
         };
         let (field, placeholder, leading) = (self.field, self.placeholder, self.leading);
-        flex_row(
+        row_arranged(
             self.modifier.chain(own),
-            Flex::new().items_center().gap(sp(2)),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
             move || {
                 if let Some(icon) = leading {
                     glyph(icon, 4.0, Role::Muted);
                 }
                 FieldText::new(field, id, kind)
                     .placeholder(placeholder, Role::Subtle)
-                    .build(Modifier::new().grow());
+                    .build(Modifier::new().weight(1.0));
             },
         );
     }
@@ -263,17 +264,23 @@ impl<'a> Input<'a> {
                 .pad_side(Side::Bottom, 1);
             if scrolls { padded } else { padded.pad_x(4) }
         }));
-        flex_column(self.modifier.chain(own), Flex::new(), move || {
-            if scrolls {
-                flex_column(
-                    bar_of(Modifier::new().fill_max_width(), id).pad_x(4),
-                    Flex::new(),
-                    || text.build(Modifier::new().fill_max_width()),
-                );
-            } else {
-                text.build(Modifier::new().fill_max_width());
-            }
-        });
+        column_arranged(
+            self.modifier.chain(own),
+            Arrangement::Start,
+            Alignment::Start,
+            move || {
+                if scrolls {
+                    column_arranged(
+                        bar_of(Modifier::new().fill_max_width(), id).pad_x(4),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || text.build(Modifier::new().fill_max_width()),
+                    );
+                } else {
+                    text.build(Modifier::new().fill_max_width());
+                }
+            },
+        );
     }
 }
 

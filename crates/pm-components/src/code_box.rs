@@ -2,7 +2,7 @@
 
 use crate::kit::{Radius, Role, Side, Styled};
 use rustle::Modifier;
-use rustle::{Flex, flex_column};
+use rustle::{Alignment, Arrangement, column_arranged};
 
 /// A code box being described: the lines it holds and how tall it may grow.
 ///
@@ -81,6 +81,11 @@ impl<'a> CodeBox<'a> {
             .stroke(Role::Border, Radius::Lg)
             .clip_to(Radius::None)
             .chain(self.inner.unwrap_or_default());
-        flex_column(self.modifier.chain(own), Flex::new(), self.lines);
+        column_arranged(
+            self.modifier.chain(own),
+            Arrangement::Start,
+            Alignment::Start,
+            self.lines,
+        );
     }
 }

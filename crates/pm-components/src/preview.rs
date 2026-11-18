@@ -3,7 +3,7 @@
 use crate::kit::sp;
 use crate::kit::{FocusId, Picture, Radius, Role, Styled, picture as picture_box};
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::Button;
 use crate::button::Variant;
@@ -101,9 +101,10 @@ pub fn switch(viewer: &Viewer) {
         return;
     }
     let shown = viewer.rendering() == Some(rendering);
-    flex_row(
+    row_arranged(
         Modifier::new(),
-        Flex::new().items_center().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Center,
         || {
             Button::new("Preview", PREVIEW_SHOW)
                 .variant(Variant::Ghost)
@@ -160,25 +161,36 @@ pub fn rendered(viewer: &Viewer, figures: &Figures, (width, height): (f32, f32))
 /// Emits a line saying `message` where the rendering would be.
 #[track_caller]
 fn note(message: &str) {
-    flex_column(Modifier::new().pad_x(4).pad_y(4), Flex::new(), || {
-        line(message, 13, 1.4, Role::Subtle);
-    });
+    column_arranged(
+        Modifier::new().pad_x(4).pad_y(4),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            line(message, 13, 1.4, Role::Subtle);
+        },
+    );
 }
 
 /// Emits the markdown `source` of the file at `path` laid out as a page in the middle of a view `width` logical pixels wide, its links pressable and its diagrams and images drawn as `figures` holds them.
 #[track_caller]
 fn page(path: &str, source: &str, figures: &Figures, width: f32) {
     let column = (width - 2.0 * MARGIN).clamp(120.0, PAGE_WIDTH);
-    flex_row(
-        Modifier::new().pad_y(8),
-        Flex::new().justify_center(),
+    row_arranged(
+        Modifier::new().fill_max_width().pad_y(8),
+        Arrangement::Center,
+        Alignment::Start,
         || {
-            flex_column(Modifier::new().width(column), Flex::new(), || {
-                Markdown::new(source, column)
-                    .links(PREVIEW_LINK_BASE)
-                    .figures(figures, Some(path))
-                    .build();
-            });
+            column_arranged(
+                Modifier::new().width(column),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    Markdown::new(source, column)
+                        .links(PREVIEW_LINK_BASE)
+                        .figures(figures, Some(path))
+                        .build();
+                },
+            );
         },
     );
 }
@@ -195,9 +207,10 @@ fn framed(picture: &Picture, density: f32, room: (f32, f32)) {
         (room.1 - 2.0 * MARGIN).max(16.0),
     );
     let fit = (wide / across.max(1.0)).min(tall / down.max(1.0)).min(1.0);
-    flex_row(
-        Modifier::new().grow(),
-        Flex::new().items_center().justify_center(),
+    row_arranged(
+        Modifier::new().weight(1.0).fill_max_width(),
+        Arrangement::Center,
+        Alignment::Center,
         || {
             picture_box(
                 Modifier::new()

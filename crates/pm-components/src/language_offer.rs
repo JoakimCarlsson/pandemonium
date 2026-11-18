@@ -3,7 +3,7 @@
 use crate::kit::sp;
 use pm_protocol::ExtensionInfo;
 use rustle::Modifier;
-use rustle::{Flex, flex_row};
+use rustle::{Alignment, Arrangement, row_arranged};
 
 use crate::kit::{FocusId, Role, Side, Styled, Type, label_with};
 
@@ -69,16 +69,19 @@ pub(crate) fn offer(state: &WorkspaceState, viewer: &Viewer) {
     };
     let idle = extension.busy.is_none();
     let retry = extension.problem.is_some();
-    flex_row(
+    row_arranged(
         Modifier::new()
             .fill(Role::Surface)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(4)
             .pad_y(1),
-        Flex::new().items_center().gap(sp(3)),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
         move || {
             label_with(
-                Modifier::new().grow().clip_to(crate::kit::Radius::None),
+                Modifier::new()
+                    .weight(1.0)
+                    .clip_to(crate::kit::Radius::None),
                 words,
                 Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
             );

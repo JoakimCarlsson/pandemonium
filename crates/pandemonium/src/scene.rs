@@ -3,10 +3,10 @@
 
 use pm_components::kit::report::{self, WindowKey};
 use pm_components::kit::theme::{self, Tokens};
-use pm_components::kit::{Interactive, Styled, overlay};
+use pm_components::kit::{Interactive, overlay};
 use pm_pages::{Screen, picker_screen, screen, settings_window};
+use rustle::{Alignment, Arrangement, column_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column};
 
 /// The window key the settings window keeps its report under.
 pub const SETTINGS_WINDOW: WindowKey = 1;
@@ -39,9 +39,10 @@ pub fn scale_for(state: &Screen) {
 #[track_caller]
 pub fn banded(content: impl FnOnce(f32, f32), width: f32, height: f32) {
     let band = pm_components::shadow_margin();
-    flex_column(
+    column_arranged(
         Modifier::new().fill_max_size().padding(band),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || content(width - 2.0 * band, height - 2.0 * band),
     );
 }
@@ -86,14 +87,15 @@ pub fn main_root(
     scale_for(state);
     theme::provide(tokens, || {
         report::root(|| {
-            flex_column(
+            column_arranged(
                 Modifier::new().fill_max_size().file_drop_id(DROP_AREA),
-                Flex::new(),
+                Arrangement::Start,
+                Alignment::Start,
                 || main_frame(state, width, height),
             );
             overlay::tooltips(report::MAIN);
             if let Some(cursor) = cursor {
-                rustle::spacer(Modifier::new().cover().cursor(cursor));
+                rustle::spacer(Modifier::new().match_parent_size().cursor(cursor));
             }
         });
     });

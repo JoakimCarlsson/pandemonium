@@ -2,8 +2,8 @@
 
 use crate::kit::sp;
 use pm_harness::Alternative;
+use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row, flex_wrap};
 
 use crate::Button;
 use crate::button::Variant;
@@ -23,31 +23,44 @@ use crate::size::Size;
 fn wrapped(content: &str, pixels: u32, tone: Role, width: f32) {
     let kind = Type::new(pixels).ratio(1.4);
     let lines = wrap_lines(content, kind, width.max(32.0));
-    flex_column(Modifier::new(), Flex::new(), || {
-        for part in lines {
-            label(&content[part.start..part.end], kind.tone(tone));
-        }
-    });
+    column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for part in lines {
+                label(&content[part.start..part.end], kind.tone(tone));
+            }
+        },
+    );
 }
 
 /// Emits the small box holding the number of the key that picks a row.
 #[track_caller]
 fn key(number: usize) {
-    flex_row(
+    row_arranged(
         Modifier::new()
             .square(7)
             .fill_rounded(Role::Background, Radius::Lg)
             .stroke(Role::Border, Radius::Lg),
-        Flex::new().items_center().justify_center(),
+        Arrangement::Center,
+        Alignment::Center,
         || line(number.to_string(), 13, 1.4, Role::Muted),
     );
 }
 
-/// Emits the row offering `alternative`, which the key `number` picks, drawn as taken when `picked`, answering to `id`, its words wrapped to `width`.
+/// Emits the row offering `alternative`, which the key `number` picks, drawn as taken when `picked`, answering to `id`, its words wrapped to `width`, with `modifier` outermost on the row.
 #[track_caller]
-fn choice(alternative: &Alternative, number: usize, picked: bool, id: FocusId, width: f32) {
-    flex_row(
-        Modifier::new()
+fn choice(
+    alternative: &Alternative,
+    number: usize,
+    picked: bool,
+    id: FocusId,
+    width: f32,
+    modifier: Modifier,
+) {
+    row_arranged(
+        modifier
             .looks_of(
                 Looks::new()
                     .idle(Role::SurfaceHover)
@@ -63,14 +76,20 @@ fn choice(alternative: &Alternative, number: usize, picked: bool, id: FocusId, w
             .target(id)
             .pad_x(3)
             .pad_y(2),
-        Flex::new().items_center().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
         || {
-            flex_column(Modifier::new().grow(), Flex::new(), || {
-                wrapped(&alternative.label, 14, Role::Text, width);
-                if !alternative.description.is_empty() {
-                    wrapped(&alternative.description, 13, Role::Muted, width);
-                }
-            });
+            column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    wrapped(&alternative.label, 14, Role::Text, width);
+                    if !alternative.description.is_empty() {
+                        wrapped(&alternative.description, 13, Role::Muted, width);
+                    }
+                },
+            );
             key(number);
         },
     );
@@ -159,12 +178,13 @@ fn mark(icon: IconName, words: &str, tone: Role, form: Marks, tip: &str) {
 /// Emits a small mark on a tile that shows `icon` in `tone`, followed by `words` when it has any, saying `tip` when hovered.
 #[track_caller]
 fn mark_node(icon: IconName, words: Option<&str>, tone: Role, tip: &str) {
-    flex_row(
+    row_arranged(
         Modifier::new()
             .tooltip(tip)
             .stroke(tone, Radius::Full)
             .pad_x(1.5),
-        Flex::new().items_center().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Center,
         || {
             crate::parts::glyph(icon, 3.0, tone);
             if let Some(words) = words {
@@ -187,7 +207,7 @@ fn tile(
     let outdated = matches!(offer, Offer::Update(_));
     let form = marks_in(inner);
     let id = FocusId(PICK_BASE + index as u64);
-    flex_column(
+    column_arranged(
         Modifier::new()
             .width(width)
             .looks_of(
@@ -207,11 +227,13 @@ fn tile(
             .target(id)
             .pad_x(2)
             .pad_y(2),
-        Flex::new().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Start,
         || {
-            flex_row(
+            row_arranged(
                 Modifier::new().fill_max_width().clip_to(Radius::None),
-                Flex::new().items_center().gap(sp(1.5)),
+                Arrangement::SpacedBy(sp(1.5)),
+                Alignment::Center,
                 || {
                     key(index + 1);
                     if suggested {
@@ -226,7 +248,7 @@ fn tile(
                     if picked {
                         mark(IconName::Check, "Selected", Role::Accent, form, "Selected");
                     }
-                    rustle::spacer(rustle::Modifier::new().flex_grow(1.0));
+                    rustle::spacer(rustle::Modifier::new().weight(1.0));
                     if alternative.mockup.is_some() && form != Marks::Hidden {
                         Button::icon(IconName::Maximize, FocusId(MOCKUP_OPEN_BASE + index as u64))
                             .disabled(outdated)
@@ -245,12 +267,17 @@ fn tile(
                     .offer(offer, FocusId(MOCKUP_OFFER_BASE + index as u64))
                     .build();
             }
-            flex_column(Modifier::new(), Flex::new(), || {
-                wrapped(label, 14, Role::Text, inner);
-                if !alternative.description.is_empty() {
-                    wrapped(&alternative.description, 13, Role::Muted, inner);
-                }
-            });
+            column_arranged(
+                Modifier::new(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    wrapped(label, 14, Role::Text, inner);
+                    if !alternative.description.is_empty() {
+                        wrapped(&alternative.description, 13, Role::Muted, inner);
+                    }
+                },
+            );
         },
     );
 }
@@ -259,9 +286,9 @@ fn tile(
 #[track_caller]
 fn tiles(alternatives: &[Alternative], pictures: (&Figures, &Offer), picked: &[usize], width: f32) {
     let each = tile_width(width, tiles_per_row(width, alternatives.len()));
-    flex_wrap(
+    flow_row_with(
         Modifier::new().fill_max_width(),
-        Flex::new().gap(sp(TILE_GAP / 4.0)),
+        FlowOptions::new(sp(TILE_GAP / 4.0), sp(TILE_GAP / 4.0)),
         || {
             for (index, alternative) in alternatives.iter().enumerate() {
                 rustle::key(index, || {
@@ -277,12 +304,12 @@ fn tiles(alternatives: &[Alternative], pictures: (&Figures, &Offer), picked: &[u
     );
 }
 
-/// Emits the row for an answer of the reader's own, with the box to type it in.
+/// Emits the row for an answer of the reader's own, with the box to type it in, with `modifier` outermost on the row.
 #[track_caller]
-fn other(draft: &Draft, number: usize) {
+fn other(draft: &Draft, number: usize, modifier: Modifier) {
     let field = &draft.others[draft.step];
-    flex_column(
-        Modifier::new()
+    column_arranged(
+        modifier
             .fill_rounded(Role::SurfaceHover, Radius::Lg)
             .stroke(
                 if field.text().trim().is_empty() {
@@ -294,23 +321,31 @@ fn other(draft: &Draft, number: usize) {
             )
             .pad_x(3)
             .pad_y(2),
-        Flex::new().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Start,
         || {
-            flex_row(
-                Modifier::new(),
-                Flex::new().items_center().gap(sp(3)),
+            row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(sp(3)),
+                Alignment::Center,
                 || {
-                    flex_row(Modifier::new().grow(), Flex::new(), || {
-                        line("Other", 15, 1.4, Role::Text);
-                    });
+                    row_arranged(
+                        Modifier::new().weight(1.0),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            line("Other", 15, 1.4, Role::Text);
+                        },
+                    );
                     key(number);
                 },
             );
-            flex_column(
+            column_arranged(
                 Modifier::new()
                     .fill_max_width()
                     .fill_rounded(Role::Background, Radius::Lg),
-                Flex::new(),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
                     Input::new(field, OTHER)
                         .variant(input::Variant::Ghost)
@@ -327,38 +362,46 @@ fn other(draft: &Draft, number: usize) {
 pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
     let question = draft.question();
     let count = draft.inquiry.questions.len();
-    flex_column(
+    column_arranged(
         Modifier::new()
             .fill_rounded(Role::Surface, Radius::Xl)
             .stroke(Role::Border, Radius::Xl)
             .pad_x(3)
             .pad_y(2.5),
-        Flex::new().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Start,
         || {
-            flex_row(
-                Modifier::new(),
-                Flex::new().items_start().gap(sp(2)),
+            row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Start,
                 || {
                     if count > 1 {
-                        flex_row(
+                        row_arranged(
                             Modifier::new()
                                 .fill_rounded(Role::SurfaceHover, Radius::Full)
                                 .pad_x(3)
                                 .pad_y(1),
-                            Flex::new().items_center(),
+                            Arrangement::Start,
+                            Alignment::Center,
                             || {
                                 line(format!("{}/{count}", draft.step + 1), 13, 1.4, Role::Muted);
                             },
                         );
                     }
-                    flex_row(Modifier::new().grow(), Flex::new(), || {
-                        wrapped(
-                            &question.text,
-                            14,
-                            Role::Text,
-                            width - if count > 1 { 145.0 } else { 105.0 },
-                        );
-                    });
+                    row_arranged(
+                        Modifier::new().weight(1.0),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            wrapped(
+                                &question.text,
+                                14,
+                                Role::Text,
+                                width - if count > 1 { 145.0 } else { 105.0 },
+                            );
+                        },
+                    );
                     Button::icon(
                         if draft.folded {
                             IconName::ChevronRight
@@ -375,30 +418,42 @@ pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
                 return;
             }
             let picked = &draft.picks[draft.step];
-            flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
-                if compares(&question.alternatives) {
-                    tiles(
-                        &question.alternatives,
-                        (figures, offer),
-                        picked,
-                        width - CARD_INSET,
-                    );
-                } else {
-                    for (index, alternative) in question.alternatives.iter().enumerate() {
-                        choice(
-                            alternative,
-                            index + 1,
-                            picked.contains(&index),
-                            FocusId(PICK_BASE + index as u64),
-                            width - 92.0,
-                        );
-                    }
-                }
-                other(draft, question.alternatives.len() + 1);
-            });
-            flex_wrap(
+            column_arranged(
                 Modifier::new().fill_max_width(),
-                Flex::new().items_center().justify_end().gap(sp(2)),
+                Arrangement::SpacedBy(sp(1)),
+                Alignment::Start,
+                || {
+                    if compares(&question.alternatives) {
+                        tiles(
+                            &question.alternatives,
+                            (figures, offer),
+                            picked,
+                            width - CARD_INSET,
+                        );
+                    } else {
+                        for (index, alternative) in question.alternatives.iter().enumerate() {
+                            choice(
+                                alternative,
+                                index + 1,
+                                picked.contains(&index),
+                                FocusId(PICK_BASE + index as u64),
+                                width - 92.0,
+                                Modifier::new().fill_max_width(),
+                            );
+                        }
+                    }
+                    other(
+                        draft,
+                        question.alternatives.len() + 1,
+                        Modifier::new().fill_max_width(),
+                    );
+                },
+            );
+            flow_row_with(
+                Modifier::new().fill_max_width(),
+                FlowOptions::new(sp(2), sp(2))
+                    .arrangement(Arrangement::End)
+                    .item_alignment(Alignment::Center),
                 || {
                     Button::new("Skip", SKIP)
                         .variant(Variant::Outline)
@@ -424,25 +479,31 @@ const ANSWERED_INSET: f32 = 34.0;
 #[track_caller]
 pub fn answered(answers: &[(String, Option<String>)], width: f32) {
     let room = width - ANSWERED_INSET;
-    flex_column(
+    column_arranged(
         Modifier::new()
-            .placed(BoxAlignment::TopStart)
+            .align(BoxAlignment::TopStart)
             .fill_rounded(Role::Background, Radius::Xl)
             .stroke(Role::Border, Radius::Xl)
             .pad_x(4)
             .pad_y(3.5),
-        Flex::new().gap(sp(3)),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Start,
         || {
             for (question, answer) in answers {
-                flex_column(Modifier::new(), Flex::new().gap(sp(0.5)), || {
-                    wrapped(question, 15, Role::Muted, room);
-                    wrapped(
-                        answer.as_deref().unwrap_or("[No preference]"),
-                        15,
-                        Role::Text,
-                        room,
-                    );
-                });
+                column_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(sp(0.5)),
+                    Alignment::Start,
+                    || {
+                        wrapped(question, 15, Role::Muted, room);
+                        wrapped(
+                            answer.as_deref().unwrap_or("[No preference]"),
+                            15,
+                            Role::Text,
+                            room,
+                        );
+                    },
+                );
             }
         },
     );

@@ -1,8 +1,8 @@
 //! What floats over the file shown while code is written in it: the list of completions at the caret and the card saying what is known about a place.
 
 use pm_protocol::CompletionKind;
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row};
 
 use crate::kit::{
     FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Styled, Tone, Type,
@@ -96,30 +96,30 @@ fn kind_mark(kind: CompletionKind) -> (&'static str, Role) {
 /// Emits a raised box at `at` in the window, the frame of what floats over the file, holding `content`.
 ///
 /// `size` is what bounds the box (its width, its greatest height), `target` the name that keeps a
-/// press on it from counting as outside, `padding` the room inside its edge and `flex` how its
-/// column lays out what it holds.
+/// press on it from counting as outside, `padding` the room inside its edge and `arrangement` how its
+/// column spreads what it holds.
 #[track_caller]
 fn floating(
     at: (f32, f32),
     size: Modifier,
     target: Option<FocusId>,
     padding: Modifier,
-    flex: Flex,
+    arrangement: Arrangement,
     content: impl FnOnce(),
 ) {
     at_window(at.0, at.1, Modifier::new(), move || {
-        framed(size, target, padding, flex, content);
+        framed(size, target, padding, arrangement, content);
     });
 }
 
 /// Emits the raised column of what floats over the file, with `size`, answering to `target`,
-/// `padding` inside its edge and laid out by `flex`, holding `content`.
+/// `padding` inside its edge and spread by `arrangement`, holding `content`.
 #[track_caller]
 fn framed(
     size: Modifier,
     target: Option<FocusId>,
     padding: Modifier,
-    flex: Flex,
+    arrangement: Arrangement,
     content: impl FnOnce(),
 ) {
     let own = size
@@ -131,15 +131,16 @@ fn framed(
         Some(id) => own.target(id),
         None => own,
     };
-    flex_column(own.chain(padding), flex, content);
+    column_arranged(own.chain(padding), arrangement, Alignment::Start, content);
 }
 
 /// Emits `content` in a box that takes the room left in its row and cuts it off at its edge.
 #[track_caller]
 fn clipped_box(content: impl FnOnce()) {
-    flex_column(
-        Modifier::new().grow().clip_to(Radius::None),
-        Flex::new(),
+    column_arranged(
+        Modifier::new().weight(1.0).clip_to(Radius::None),
+        Arrangement::Start,
+        Alignment::Start,
         content,
     );
 }
@@ -155,18 +156,21 @@ fn completion_row(place: usize, item: &pm_protocol::Completion, picked: bool) {
     } else {
         looks
     };
-    flex_row(
+    row_arranged(
         Modifier::new()
+            .fill_max_width()
             .h(6)
             .looks_of(looks, id)
             .cursor(CursorIcon::Pointer)
             .target(id)
             .pad_x(1.5),
-        Flex::new().items_center().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
         || {
-            flex_row(
+            row_arranged(
                 Modifier::new().square(4),
-                Flex::new().items_center().justify_center(),
+                Arrangement::Center,
+                Alignment::Center,
                 || label(letter, Type::code(11).ratio(1.2).tone(tone)),
             );
             clipped_box(|| {
@@ -177,11 +181,12 @@ fn completion_row(place: usize, item: &pm_protocol::Completion, picked: bool) {
             });
             if let Some(detail) = &item.detail {
                 let short: String = detail.chars().take(48).collect();
-                flex_column(
+                column_arranged(
                     Modifier::new()
                         .max_w_px(LIST_WIDTH * 0.45)
                         .clip_to(Radius::None),
-                    Flex::new(),
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
                         label(
                             short,
@@ -213,7 +218,7 @@ fn completion_list(completion: &Completions) {
         Modifier::new().width(LIST_WIDTH),
         Some(COMPLETION_BODY),
         Modifier::new().pad(1),
-        Flex::new(),
+        Arrangement::Start,
         || {
             for (place, index) in completion
                 .shown
@@ -260,7 +265,7 @@ fn completion_docs(completion: &Completions, shown: bool, language: Option<&str>
             .height_in(0.0, sp(list_height(completion).max(160.0) / 4.0)),
         None,
         Modifier::new().pad_x(3).pad_y(2),
-        Flex::new().gap(sp(1.5)),
+        Arrangement::SpacedBy(sp(1.5)),
         || {
             if let Some(detail) = &item.detail {
                 code_lines(detail, "", language, width);
@@ -269,9 +274,14 @@ fn completion_docs(completion: &Completions, shown: bool, language: Option<&str>
             for piece in pieces(said, DOCS_LINES) {
                 match piece {
                     Piece::Code(fence, body) => {
-                        flex_column(Modifier::new().clip_to(Radius::None), Flex::new(), || {
-                            code_lines(&body, &fence, language, width);
-                        });
+                        column_arranged(
+                            Modifier::new().clip_to(Radius::None),
+                            Arrangement::Start,
+                            Alignment::Start,
+                            || {
+                                code_lines(&body, &fence, language, width);
+                            },
+                        );
                     }
                     Piece::Prose(text) => Markdown::new(&text, width)
                         .size(12)
@@ -414,15 +424,16 @@ fn hover_card(row_height: f32, card: &HoverCard, language: Option<&str>, height:
             Modifier::new().width(CARD_WIDTH),
             Some(HOVER_CARD),
             Modifier::new(),
-            Flex::new(),
+            Arrangement::Start,
             || {
                 scroll_area(
-                    Modifier::new().height_in(0.0, room),
+                    Modifier::new().fill_max_width().height_in(0.0, room),
                     Scroll::from_start(HOVER_SCROLL, card.scroll),
                     || {
-                        flex_column(
+                        column_arranged(
                             Modifier::new().fill_max_width().pad_x(3).pad_y(2.5),
-                            Flex::new().gap(sp(2)),
+                            Arrangement::SpacedBy(sp(2)),
+                            Alignment::Start,
                             || selectable_scope(HOVER_TEXT, || card_parts(card, language)),
                         );
                     },
@@ -438,9 +449,10 @@ fn hover_card(row_height: f32, card: &HoverCard, language: Option<&str>, height:
             card.at.1 - CARD_GAP - room,
             Modifier::new(),
             || {
-                flex_column(
+                column_arranged(
                     Modifier::new().width(CARD_WIDTH).height(room),
-                    Flex::new().justify_end(),
+                    Arrangement::End,
+                    Alignment::Start,
                     body,
                 );
             },
@@ -459,25 +471,30 @@ fn card_parts(card: &HoverCard, language: Option<&str>) {
             .unwrap_or_default();
         let mut lines = diagnostic.message.lines();
         let first = lines.next().unwrap_or_default();
-        flex_column(Modifier::new(), Flex::new(), || {
-            selectable(
-                Modifier::new(),
-                HOVER_TEXT,
-                format!("{source}{first}"),
-                Type::new(12)
-                    .ratio(1.5)
-                    .tone(severity_role(diagnostic.severity))
-                    .truncate(),
-            );
-            for rest in lines.take(4) {
+        column_arranged(
+            Modifier::new(),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
                 selectable(
                     Modifier::new(),
                     HOVER_TEXT,
-                    rest,
-                    Type::new(12).ratio(1.5).tone(Role::Muted).truncate(),
+                    format!("{source}{first}"),
+                    Type::new(12)
+                        .ratio(1.5)
+                        .tone(severity_role(diagnostic.severity))
+                        .truncate(),
                 );
-            }
-        });
+                for rest in lines.take(4) {
+                    selectable(
+                        Modifier::new(),
+                        HOVER_TEXT,
+                        rest,
+                        Type::new(12).ratio(1.5).tone(Role::Muted).truncate(),
+                    );
+                }
+            },
+        );
     }
     if let Some(said) = &card.text {
         if !card.diagnostics.is_empty() {
@@ -487,9 +504,14 @@ fn card_parts(card: &HoverCard, language: Option<&str>) {
         for piece in pieces(said, CARD_LINES) {
             match piece {
                 Piece::Code(fence, body) => {
-                    flex_column(Modifier::new().clip_to(Radius::None), Flex::new(), || {
-                        code_lines(&body, &fence, language, CARD_TEXT);
-                    });
+                    column_arranged(
+                        Modifier::new().clip_to(Radius::None),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            code_lines(&body, &fence, language, CARD_TEXT);
+                        },
+                    );
                 }
                 Piece::Prose(text) => {
                     prose += 1;
@@ -586,21 +608,31 @@ fn signature_card(signature: &pm_protocol::Signature, at: (f32, f32)) {
         Modifier::new().max_w_px(CARD_WIDTH + 120.0),
         None,
         Modifier::new().pad_x(2).pad_y(1),
-        Flex::new().gap(sp(0.5)),
+        Arrangement::SpacedBy(sp(0.5)),
         || {
-            flex_column(Modifier::new().clip_to(Radius::None), Flex::new(), || {
-                marked_line(
-                    Modifier::new(),
-                    &words,
-                    Type::code(12).ratio(1.5).tone(Role::Text),
-                    marks,
-                    CaretLook::default(),
-                );
-            });
+            column_arranged(
+                Modifier::new().clip_to(Radius::None),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    marked_line(
+                        Modifier::new(),
+                        &words,
+                        Type::code(12).ratio(1.5).tone(Role::Text),
+                        marks,
+                        CaretLook::default(),
+                    );
+                },
+            );
             if let Some(said) = first_line {
-                flex_column(Modifier::new().clip_to(Radius::None), Flex::new(), || {
-                    line(said, 11, 1.4, Role::Muted);
-                });
+                column_arranged(
+                    Modifier::new().clip_to(Radius::None),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        line(said, 11, 1.4, Role::Muted);
+                    },
+                );
             }
         },
     );
@@ -614,9 +646,10 @@ fn go_to_line_box(going: &GoingTo, lines: usize) {
         Modifier::new().width(260.0),
         Some(GO_TO_LINE_BOX),
         Modifier::new().pad(1.5),
-        Flex::new().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
         || {
             Input::new(&going.field, GO_TO_LINE)
+                .modifier(Modifier::new().fill_max_width())
                 .size(Size::Sm)
                 .placeholder("Line number")
                 .build();
@@ -643,11 +676,12 @@ fn cell(content: impl Into<String>, pixels: u32, tone: Role, code: bool) {
 #[track_caller]
 fn tag(content: impl Into<String>, pixels: u32, tone: Role) {
     let content = content.into();
-    flex_column(
+    column_arranged(
         Modifier::new()
             .max_w_px(LISTING_WIDTH * 0.5)
             .clip_to(Radius::None),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         move || line(content, pixels, 1.4, tone),
     );
 }
@@ -737,9 +771,10 @@ pub(crate) fn listing_cells(items: &Items, index: usize) {
                 return;
             };
             rustle::spacer(Modifier::new().width(item.depth.min(8) as f32 * 14.0));
-            flex_column(
+            column_arranged(
                 Modifier::new().width(52.0).clip_to(Radius::None),
-                Flex::new(),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
                     line(item.context.clone(), 11, 1.4, Role::SyntaxKeyword);
                 },
@@ -859,19 +894,26 @@ fn listing_panel(listing: &Listing) {
         Modifier::new().width(LISTING_WIDTH),
         Some(LISTING_BODY),
         Modifier::new().pad(1),
-        Flex::new(),
+        Arrangement::Start,
         || {
             if let Some((filter, hint)) = filter {
-                flex_column(Modifier::new().pad_x(0.5).pad_y(0.5), Flex::new(), || {
-                    Input::new(filter, LISTING_FILTER)
-                        .size(Size::Sm)
-                        .placeholder(hint)
-                        .build();
-                });
+                column_arranged(
+                    Modifier::new().fill_max_width().pad_x(0.5).pad_y(0.5),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        Input::new(filter, LISTING_FILTER)
+                            .modifier(Modifier::new().fill_max_width())
+                            .size(Size::Sm)
+                            .placeholder(hint)
+                            .build();
+                    },
+                );
             }
-            flex_row(
-                Modifier::new().h(7).pad_x(1.5),
-                Flex::new().items_center().gap(sp(2)),
+            row_arranged(
+                Modifier::new().fill_max_width().h(7).pad_x(1.5),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Center,
                 || {
                     cell(listing.items.title(), 12, Role::Text, false);
                     if count > 0 {
@@ -880,9 +922,14 @@ fn listing_panel(listing: &Listing) {
                 },
             );
             if let Some(said) = status {
-                flex_column(Modifier::new().pad_x(1.5).pad_y(1), Flex::new(), || {
-                    line(said, 12, 1.4, Role::Muted);
-                });
+                column_arranged(
+                    Modifier::new().pad_x(1.5).pad_y(1),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        line(said, 12, 1.4, Role::Muted);
+                    },
+                );
             }
             let end = count.min(first + LISTING_SHOWN);
             for (place, index) in shown.iter().copied().enumerate().take(end).skip(first) {
@@ -893,14 +940,16 @@ fn listing_panel(listing: &Listing) {
                 } else {
                     looks
                 };
-                flex_row(
+                row_arranged(
                     Modifier::new()
+                        .fill_max_width()
                         .h(6.5)
                         .looks_of(looks, id)
                         .cursor(CursorIcon::Pointer)
                         .target(id)
                         .pad_x(1.5),
-                    Flex::new().items_center().gap(sp(3)),
+                    Arrangement::SpacedBy(sp(3)),
+                    Alignment::Center,
                     || listing_cells(&listing.items, index),
                 );
             }
@@ -921,9 +970,10 @@ fn rename_box(renaming: &Renaming) {
         Modifier::new().width(320.0),
         Some(RENAME_BOX),
         Modifier::new().pad(1.5),
-        Flex::new().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
         || {
             Input::new(&renaming.field, RENAME_SYMBOL)
+                .modifier(Modifier::new().fill_max_width())
                 .size(Size::Sm)
                 .invalid(renaming.problem.is_some())
                 .build();
@@ -959,11 +1009,12 @@ fn color_box(picking: &ColorPicking) {
         Modifier::new().width(260.0),
         Some(COLOR_BOX),
         Modifier::new().pad(1.5),
-        Flex::new().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
         || {
-            flex_row(
-                Modifier::new(),
-                Flex::new().items_center().gap(sp(2)),
+            row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Center,
                 || {
                     rustle::spacer(
                         Modifier::new()
@@ -977,19 +1028,25 @@ fn color_box(picking: &ColorPicking) {
                     Input::new(&picking.hex, COLOR_HEX)
                         .size(Size::Sm)
                         .invalid(crate::color_picker::color_of(picking.hex.text()).is_none())
-                        .modifier(Modifier::new().grow())
+                        .modifier(Modifier::new().weight(1.0))
                         .build();
                 },
             );
             if let Some(said) = status {
-                flex_column(Modifier::new().pad_x(1.5).pad_y(1), Flex::new(), || {
-                    line(said, 11, 1.4, Role::Subtle);
-                });
+                column_arranged(
+                    Modifier::new().pad_x(1.5).pad_y(1),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        line(said, 11, 1.4, Role::Subtle);
+                    },
+                );
             }
             for (place, format) in picking.formats.iter().take(COLOR_FORMATS_SHOWN).enumerate() {
                 let id = FocusId(COLOR_FORMAT_BASE + place as u64);
-                flex_row(
+                row_arranged(
                     Modifier::new()
+                        .fill_max_width()
                         .h(6.5)
                         .looks_of(
                             Looks::new().hover(Role::SurfaceHover).radius(Radius::Sm),
@@ -998,7 +1055,8 @@ fn color_box(picking: &ColorPicking) {
                         .cursor(CursorIcon::Pointer)
                         .target(id)
                         .pad_x(1.5),
-                    Flex::new().items_center(),
+                    Arrangement::Start,
+                    Alignment::Center,
                     || {
                         label(
                             &format.label,

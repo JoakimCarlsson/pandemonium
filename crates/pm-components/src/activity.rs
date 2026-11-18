@@ -2,8 +2,8 @@
 
 use crate::kit::sp;
 use pm_harness::Progress;
+use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row, flex_wrap};
 
 use crate::Button;
 use crate::Tally;
@@ -44,13 +44,15 @@ pub(crate) fn latest_plan(session: &Session) -> Option<&[pm_harness::PlanStep]> 
 
 /// Emits the card of the commands the agent left running, with how long each has gone on.
 fn shells(session: &Session) {
-    flex_column(
+    column_arranged(
         Modifier::new()
+            .fill_max_width()
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
             .pad_x(3.5)
             .pad_y(3),
-        Flex::new().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Start,
         || {
             line(
                 format!("{} running", session.shells.len()),
@@ -59,9 +61,10 @@ fn shells(session: &Session) {
                 Role::Muted,
             );
             for shell in &session.shells {
-                flex_row(
+                row_arranged(
                     Modifier::new(),
-                    Flex::new().items_center().gap(sp(2.5)),
+                    Arrangement::SpacedBy(sp(2.5)),
+                    Alignment::Center,
                     || {
                         spinner(3.5, Role::Muted);
                         clipped(&shell.label, 13, Role::Text);
@@ -123,14 +126,15 @@ fn has_panel(session: &Session, open: Activity) -> bool {
 /// Emits the open panel `open` for `session`, `width` logical pixels wide, hanging over the chips.
 #[track_caller]
 fn panel(state: &WorkspaceState, session: &Session, open: Activity, width: f32) {
-    flex_column(
+    column_arranged(
         Modifier::new()
             .width(width)
             .shadow_md(Radius::Xl)
             .fill_rounded(Role::Background, Radius::Xl)
             .stroke(Role::Border, Radius::Xl)
             .pad(2),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || match open {
             Activity::Plan => {
                 if let Some(items) = latest_plan(session) {
@@ -185,9 +189,9 @@ fn chips(
     awaiting: usize,
     working_agents: usize,
 ) {
-    flex_wrap(
+    flow_row_with(
         Modifier::new(),
-        Flex::new().gap(sp(2)).items_center(),
+        FlowOptions::new(sp(2), sp(2)).item_alignment(Alignment::Center),
         || {
             if awaiting > 0 {
                 chip(format!("{awaiting} awaiting approval"), APPROVALS_CHIP)
@@ -231,7 +235,7 @@ fn chips(
                 .build();
             }
             if !session.changes.is_empty() {
-                flex_row(
+                row_arranged(
                     Modifier::new()
                         .h(7)
                         .looks_of(
@@ -242,7 +246,8 @@ fn chips(
                         .cursor(CursorIcon::Pointer)
                         .target(OPEN_DIFF)
                         .pad_x(3),
-                    Flex::new().items_center(),
+                    Arrangement::Start,
+                    Alignment::Center,
                     || {
                         Tally::new(session.added(), session.removed())
                             .size(12)

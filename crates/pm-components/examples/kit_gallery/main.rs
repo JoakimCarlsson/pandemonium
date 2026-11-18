@@ -5,7 +5,8 @@
 //! Run it with `CARGO_TARGET_DIR=build cargo run -p pm-components --example kit_gallery`.
 
 use pm_components::kit::sp;
-use rustle::{Flex, flex_column, flex_row, flex_wrap};
+use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
+
 use std::sync::Arc;
 
 use pm_components::kit::snapshot::{Shot, lay_out, write_png};
@@ -180,12 +181,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// A page on the background with a caption, holding `content` in a column.
 fn page(content: impl FnOnce()) {
-    flex_column(
+    column_arranged(
         Modifier::new()
             .fill_max_size()
             .fill(Role::Background)
             .pad(4),
-        Flex::new().gap(sp(3)),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Start,
         content,
     );
 }
@@ -195,21 +197,22 @@ fn caption(words: &str) {
     label(words, Type::new(11).ratio(1.4).tone(Role::Subtle).medium());
 }
 
-/// Rows and columns as the old flex boxes laid them out.
+/// Rows and columns laid out by arrangement, alignment, weight and intrinsic size.
 fn layout_shot() {
     page(|| {
-        caption("row: items_center, gap(2), a flex_1 label cut short, flex_none badge");
-        flex_row(
+        caption("row: centred, spaced by 2, a weighted label cut short, a badge at its own width");
+        row_arranged(
             Modifier::new()
                 .fill_max_width()
                 .h(9)
                 .fill_rounded(Role::Surface, Radius::Md)
                 .pad_x(2),
-            Flex::new().items_center().gap(sp(2)),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
             || {
                 icon(IconName::Folder, 4.0, Role::Muted);
                 label_with(
-                    Modifier::new().grow(),
+                    Modifier::new().weight(1.0),
                     "A long name that does not fit in the room the row leaves it, so it ends in an ellipsis at its edge, however wide the window happens to be",
                     Type::new(13).ratio(1.4).truncate(),
                 );
@@ -217,22 +220,26 @@ fn layout_shot() {
             },
         );
         caption(
-            "row: justify_between with gap; default stretch makes the boxes as tall as the tallest",
+            "row: space between; an intrinsic height lets every box fill the height of the tallest",
         );
-        flex_row(
+        row_arranged(
             Modifier::new()
                 .fill_max_width()
+                .height_intrinsic(rustle::IntrinsicSize::Max)
                 .stroke(Role::Border, Radius::Md)
                 .pad(2),
-            Flex::new().justify_between().gap(sp(2)),
+            Arrangement::SpaceBetween,
+            Alignment::Start,
             || {
                 for (index, height) in [6.0, 10.0, 8.0].into_iter().enumerate() {
-                    flex_column(
+                    column_arranged(
                         Modifier::new()
                             .w(16)
+                            .fill_max_height()
                             .fill_rounded(Role::SurfaceHover, Radius::Sm)
                             .pad(1),
-                        Flex::new(),
+                        Arrangement::Start,
+                        Alignment::Start,
                         || {
                             label(format!("box {index}"), Type::new(12).ratio(1.4));
                             rustle::spacer(Modifier::new().h(height));
@@ -241,48 +248,54 @@ fn layout_shot() {
                 }
             },
         );
-        caption("column: a block stretches children across; items_start, items_center, items_end");
-        flex_row(
+        caption("column: children filling its width; aligned to the start, the centre, the end");
+        row_arranged(
             Modifier::new().fill_max_width(),
-            Flex::new().gap(sp(3)),
+            Arrangement::SpacedBy(sp(3)),
+            Alignment::Start,
             || {
-                for (name, flex) in [
-                    ("stretch", Flex::new().gap(sp(1))),
-                    ("start", Flex::new().gap(sp(1)).items_start()),
-                    ("center", Flex::new().gap(sp(1)).items_center()),
-                    ("end", Flex::new().gap(sp(1)).items_end()),
+                for (name, alignment, fills) in [
+                    ("fill", Alignment::Start, true),
+                    ("start", Alignment::Start, false),
+                    ("center", Alignment::Center, false),
+                    ("end", Alignment::End, false),
                 ] {
-                    flex_column(
+                    column_arranged(
                         Modifier::new()
-                            .grow()
+                            .weight(1.0)
                             .stroke(Role::Border, Radius::Md)
                             .pad(2),
-                        flex,
-                        || {
+                        Arrangement::SpacedBy(sp(1)),
+                        alignment,
+                        move || {
                             label(name, Type::new(12).ratio(1.4).tone(Role::Muted));
-                            flex_column(
-                                Modifier::new()
-                                    .fill_rounded(Role::SurfaceSelected, Radius::Sm)
-                                    .pad_x(2),
-                                Flex::new(),
-                                || label("child", Type::new(12).ratio(1.4)),
-                            );
+                            let child = Modifier::new()
+                                .fill_rounded(Role::SurfaceSelected, Radius::Sm)
+                                .pad_x(2);
+                            let child = if fills {
+                                Modifier::new().fill_max_width().chain(child)
+                            } else {
+                                child
+                            };
+                            column_arranged(child, Arrangement::Start, Alignment::Start, || {
+                                label("child", Type::new(12).ratio(1.4))
+                            });
                         },
                     );
                 }
             },
         );
-        caption("flex_wrap: chips wrap onto further lines");
-        flex_wrap(
+        caption("flow_row_with: chips wrap onto further lines");
+        flow_row_with(
             Modifier::new().fill_max_width(),
-            Flex::new().gap(sp(1.5)),
+            FlowOptions::new(sp(1.5), sp(1.5)),
             || {
                 for word in [
                     "rustle",
                     "compose",
-                    "flex",
+                    "arrangement",
                     "gap",
-                    "stretch",
+                    "weight",
                     "truncate",
                     "scroll",
                     "popover",
@@ -293,12 +306,13 @@ fn layout_shot() {
                     "tooltip",
                     "spinner",
                 ] {
-                    flex_column(
+                    column_arranged(
                         Modifier::new()
                             .fill_rounded(Role::SurfaceHover, Radius::Full)
                             .pad_x(2.5)
                             .pad_y(0.5),
-                        Flex::new(),
+                        Arrangement::Start,
+                        Alignment::Start,
                         || label(word, Type::new(12).ratio(1.4).tone(Role::Muted)),
                     );
                 }
@@ -317,25 +331,31 @@ fn layout_shot() {
                     (BoxAlignment::Center, "centre"),
                     (BoxAlignment::BottomEnd, "bottom right"),
                 ] {
-                    flex_column(
-                        Modifier::new().placed(alignment).pad(1.5),
-                        Flex::new(),
+                    column_arranged(
+                        Modifier::new().align(alignment).pad(1.5),
+                        Arrangement::Start,
+                        Alignment::Start,
                         || label(words, Type::new(12).ratio(1.4).tone(Role::Muted)),
                     );
                 }
             },
         );
         caption("cover: an absolute inset-0 tint sized by its sibling, not by the page");
-        rustle::stack_with(Modifier::new(), || {
-            flex_column(Modifier::new().pad_x(3).pad_y(1.5), Flex::new(), || {
-                label(
-                    "content that sizes the layer",
-                    Type::new(12).ratio(1.4).tone(Role::Text),
-                )
-            });
+        rustle::stack_with(Modifier::new().fill_max_width(), || {
+            column_arranged(
+                Modifier::new().pad_x(3).pad_y(1.5),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    label(
+                        "content that sizes the layer",
+                        Type::new(12).ratio(1.4).tone(Role::Text),
+                    )
+                },
+            );
             rustle::spacer(
                 Modifier::new()
-                    .cover()
+                    .match_parent_size()
                     .fill_rounded(Tone::from(Role::Accent).alpha(0.25), Radius::Md),
             );
         });
@@ -353,9 +373,10 @@ fn text_shot() {
             (16, 1.5),
             (22, 1.3),
         ] {
-            flex_row(
+            row_arranged(
                 Modifier::new(),
-                Flex::new().gap(sp(4)).items_center(),
+                Arrangement::SpacedBy(sp(4)),
+                Alignment::Center,
                 || {
                     label(format!("{size}px"), Type::code(12).tone(Role::Subtle));
                     label("The quick brown fox jumps", Type::new(size).ratio(ratio));
@@ -370,9 +391,10 @@ fn text_shot() {
                 },
             );
         }
-        flex_row(
+        row_arranged(
             Modifier::new(),
-            Flex::new().gap(sp(4)).items_center(),
+            Arrangement::SpacedBy(sp(4)),
+            Alignment::Center,
             || {
                 label("underline", Type::new(13).underline());
                 label("struck", Type::new(13).strike().tone(Role::Muted));
@@ -394,18 +416,19 @@ fn text_shot() {
 /// Every named icon, and the same icons in the tones views use.
 fn icons_shot() {
     page(|| {
-        flex_wrap(
+        flow_row_with(
             Modifier::new().fill_max_width(),
-            Flex::new().gap(sp(3)),
+            FlowOptions::new(sp(3), sp(3)),
             || {
                 for name in ALL_ICONS {
                     icon(name, 4.0, Role::Text);
                 }
             },
         );
-        flex_row(
+        row_arranged(
             Modifier::new(),
-            Flex::new().gap(sp(3)).items_center(),
+            Arrangement::SpacedBy(sp(3)),
+            Alignment::Center,
             || {
                 for tone in [
                     Role::Muted,
@@ -426,9 +449,10 @@ fn icons_shot() {
 fn buttons_shot() {
     page(|| {
         caption("variants; the second button is under the pointer, the outline one holds focus");
-        flex_row(
+        row_arranged(
             Modifier::new(),
-            Flex::new().gap(sp(2)).items_center(),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
             || {
                 let variants = [
                     ("Default", ported::Variant::Default),
@@ -447,9 +471,10 @@ fn buttons_shot() {
             },
         );
         caption("hovered (pointer on the left button)");
-        flex_row(
+        row_arranged(
             Modifier::new(),
-            Flex::new().gap(sp(2)).items_center(),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
             || {
                 Button::new("Hover me", FocusId(30))
                     .variant(ported::Variant::Secondary)
@@ -460,9 +485,10 @@ fn buttons_shot() {
             },
         );
         caption("sizes Xs, Sm, Md, Lg");
-        flex_row(
+        row_arranged(
             Modifier::new(),
-            Flex::new().gap(sp(2)).items_center(),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
             || {
                 for (index, size) in [Size::Xs, Size::Sm, Size::Md, Size::Lg]
                     .into_iter()
@@ -476,9 +502,10 @@ fn buttons_shot() {
             },
         );
         caption("icons, trailing icon, round, selected, disabled, spinning, monospace");
-        flex_row(
+        row_arranged(
             Modifier::new(),
-            Flex::new().gap(sp(2)).items_center(),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
             || {
                 Button::icon(IconName::Plus, FocusId(50)).build();
                 Button::icon(IconName::Settings, FocusId(51))
@@ -515,9 +542,10 @@ fn buttons_shot() {
             },
         );
         caption("fixed width, and fill: the label is cut short at the edge");
-        flex_row(
+        row_arranged(
             Modifier::new().width(360.0),
-            Flex::new().gap(sp(2)).items_center(),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
             || {
                 Button::new("Fixed", FocusId(61))
                     .variant(ported::Variant::Outline)
@@ -540,9 +568,10 @@ fn buttons_shot() {
 fn controls_shot() {
     page(|| {
         caption("check boxes: ticked, mixed, clear; switches on and off");
-        flex_row(
+        row_arranged(
             Modifier::new(),
-            Flex::new().gap(sp(4)).items_center(),
+            Arrangement::SpacedBy(sp(4)),
+            Alignment::Center,
             || {
                 Checkbox::new(true, FocusId(100)).build();
                 Checkbox::new(false, FocusId(101)).mixed(true).build();
@@ -558,35 +587,43 @@ fn controls_shot() {
             },
         );
         caption("tiles: selected, hovered, plain");
-        flex_column(Modifier::new().width(240.0), Flex::new().gap(sp(1)), || {
-            for (index, (name, glyph)) in [
-                ("General", IconName::Settings),
-                ("Appearance", IconName::Pencil),
-                ("Editor", IconName::FileCode),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                Tile::new(FocusId(110 + index as u64))
-                    .selected(index == 0)
-                    .gap(3.0)
-                    .inner(Modifier::new().pad_x(2))
-                    .modifier(Modifier::new().fill_max_width())
-                    .build_with(|| {
-                        let tone = if index == 0 { Role::Text } else { Role::Muted };
-                        icon(glyph, 4.0, tone);
-                        label_with(
-                            Modifier::new().grow(),
-                            name,
-                            Type::new(13).ratio(1.4).tone(tone).truncate(),
-                        );
-                    });
-            }
-        });
+        column_arranged(
+            Modifier::new().width(240.0),
+            Arrangement::SpacedBy(sp(1)),
+            Alignment::Start,
+            || {
+                for (index, (name, glyph)) in [
+                    ("General", IconName::Settings),
+                    ("Appearance", IconName::Pencil),
+                    ("Editor", IconName::FileCode),
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    Tile::new(FocusId(110 + index as u64))
+                        .selected(index == 0)
+                        .gap(3.0)
+                        .inner(Modifier::new().pad_x(2))
+                        .modifier(Modifier::new().fill_max_width())
+                        .build_with(|| {
+                            let tone = if index == 0 { Role::Text } else { Role::Muted };
+                            icon(glyph, 4.0, tone);
+                            label_with(
+                                Modifier::new().weight(1.0),
+                                name,
+                                Type::new(13).ratio(1.4).tone(tone).truncate(),
+                            );
+                        });
+                }
+            },
+        );
         caption("choices: a picked one in a bordered strip");
-        ported::choices(&["Last workspace", "Fresh start"], 0, |option| {
-            Some(FocusId(120 + option as u64))
-        });
+        ported::choices(
+            Modifier::new().fill_max_width(),
+            &["Last workspace", "Fresh start"],
+            0,
+            |option| Some(FocusId(120 + option as u64)),
+        );
     });
 }
 
@@ -596,9 +633,10 @@ fn floating_shot() {
         caption(
             "a popover above a trigger at the right edge is moved left to stay inside the window",
         );
-        flex_row(
+        row_arranged(
             Modifier::new().fill_max_width().height(180.0),
-            Flex::new().justify_end().items_end(),
+            Arrangement::End,
+            Alignment::End,
             || {
                 anchored(
                     Modifier::new(),
@@ -631,9 +669,10 @@ fn floating_shot() {
             },
         );
         caption("a tooltip shows over the button under the pointer");
-        flex_row(
+        row_arranged(
             Modifier::new(),
-            Flex::new().gap(sp(2)).items_center(),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
             || {
                 Button::icon(IconName::Refresh, FocusId(210))
                     .modifier(Modifier::new().tooltip("Refresh the list"))
@@ -676,12 +715,13 @@ fn inputs_shot() {
         caption(
             "default (focused: composing with an input method, caret at the end); a disabled ghost input beside",
         );
-        flex_row(
+        row_arranged(
             Modifier::new().fill_max_width(),
-            Flex::new().gap(sp(3)).items_center(),
+            Arrangement::SpacedBy(sp(3)),
+            Alignment::Center,
             || {
                 Input::new(&typed, FocusId(300))
-                    .modifier(Modifier::new().grow())
+                    .modifier(Modifier::new().weight(1.0))
                     .build();
                 Input::new(&empty, FocusId(307))
                     .variant(InputVariant::Ghost)
@@ -746,57 +786,69 @@ fn multiline_shot() {
 fn scroll_shot() {
     page(|| {
         caption("scroll_area at offset 140 of 40 rows; the pointer is on the bar, so it is wide");
-        flex_row(Modifier::new(), Flex::new().gap(sp(4)), || {
-            scroll_area(
-                Modifier::new()
-                    .width(340.0)
-                    .height(220.0)
-                    .stroke(Role::Border, Radius::Md),
-                Scroll::from_start(FocusId(400), 140.0),
-                || {
-                    flex_column(Modifier::new().fill_max_width().pad(1), Flex::new(), || {
-                        for index in 0..40 {
-                            Tile::new(FocusId(410 + index))
-                                .height(8.0)
-                                .inner(Modifier::new().pad_x(2))
-                                .build_with(|| {
-                                    icon(IconName::File, 4.0, Role::Muted);
-                                    label_with(
-                                        Modifier::new().grow(),
-                                        format!("file_{index}.rs"),
-                                        Type::new(13).ratio(1.4).truncate(),
+        row_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(sp(4)),
+            Alignment::Start,
+            || {
+                scroll_area(
+                    Modifier::new()
+                        .width(340.0)
+                        .height(220.0)
+                        .stroke(Role::Border, Radius::Md),
+                    Scroll::from_start(FocusId(400), 140.0),
+                    || {
+                        column_arranged(
+                            Modifier::new().fill_max_width().pad(1),
+                            Arrangement::Start,
+                            Alignment::Start,
+                            || {
+                                for index in 0..40 {
+                                    Tile::new(FocusId(410 + index))
+                                        .height(8.0)
+                                        .inner(Modifier::new().pad_x(2))
+                                        .modifier(Modifier::new().fill_max_width())
+                                        .build_with(|| {
+                                            icon(IconName::File, 4.0, Role::Muted);
+                                            label_with(
+                                                Modifier::new().weight(1.0),
+                                                format!("file_{index}.rs"),
+                                                Type::new(13).ratio(1.4).truncate(),
+                                            );
+                                            label("M", Type::new(12).tone(Role::Warning).medium());
+                                        });
+                                }
+                            },
+                        );
+                    },
+                );
+                scroll_area(
+                    Modifier::new()
+                        .width(300.0)
+                        .height(220.0)
+                        .stroke(Role::Border, Radius::Md),
+                    Scroll::from_end(FocusId(401), 0.0),
+                    || {
+                        column_arranged(
+                            Modifier::new().fill_max_width().pad(3),
+                            Arrangement::SpacedBy(sp(2)),
+                            Alignment::Start,
+                            || {
+                                for index in 0..12 {
+                                    paragraph(
+                                        Modifier::new(),
+                                        format!(
+                                            "Message {index}: anchored to the end, as the conversation scrolls from its bottom."
+                                        ),
+                                        Type::new(13).ratio(1.6).tone(Role::Muted),
                                     );
-                                    label("M", Type::new(12).tone(Role::Warning).medium());
-                                });
-                        }
-                    });
-                },
-            );
-            scroll_area(
-                Modifier::new()
-                    .width(300.0)
-                    .height(220.0)
-                    .stroke(Role::Border, Radius::Md),
-                Scroll::from_end(FocusId(401), 0.0),
-                || {
-                    flex_column(
-                        Modifier::new().fill_max_width().pad(3),
-                        Flex::new().gap(sp(2)),
-                        || {
-                            for index in 0..12 {
-                                paragraph(
-                                    Modifier::new(),
-                                    format!(
-                                        "Message {index}: anchored to the end, as the conversation scrolls from its bottom."
-                                    ),
-                                    Type::new(13).ratio(1.6).tone(Role::Muted),
-                                );
-                            }
-                        },
-                    );
-                },
-            );
-        });
+                                }
+                            },
+                        );
+                    },
+                );
+            },
+        );
     });
 }
 
@@ -854,20 +906,22 @@ fn code_shot() {
     ];
     page(move || {
         caption("marked lines: ink, fill, wave, underline, selected, caret, guide, drop");
-        flex_column(
+        column_arranged(
             Modifier::new()
                 .fill_max_width()
                 .fill_rounded(Role::Surface, Radius::Md)
                 .pad(2),
-            Flex::new(),
+            Arrangement::Start,
+            Alignment::Start,
             || {
                 let mut start = 0;
                 for (number, (content, marks)) in lines.iter().enumerate() {
                     let begins = start;
                     start += content.len() + 1;
-                    flex_row(
+                    row_arranged(
                         Modifier::new(),
-                        Flex::new().items_center().gap(sp(4)),
+                        Arrangement::SpacedBy(sp(4)),
+                        Alignment::Center,
                         || {
                             label_with(
                                 Modifier::new().width(28.0),
@@ -891,13 +945,14 @@ fn code_shot() {
         caption(
             "terminal grid: one marked line per row, cells coloured with ink and fill, a block caret",
         );
-        flex_column(
+        column_arranged(
             Modifier::new()
                 .fill_max_width()
                 .fill_rounded(Role::Background, Radius::Md)
                 .stroke(Role::Border, Radius::Md)
                 .pad(2),
-            Flex::new(),
+            Arrangement::Start,
+            Alignment::Start,
             || {
                 let rows = [
                     (
@@ -960,13 +1015,15 @@ fn misc_shot() {
     };
     page(move || {
         caption("picture (cropped into a rounded box), spinner, rings, a ring with two fills");
-        flex_row(
+        row_arranged(
             Modifier::new(),
-            Flex::new().gap(sp(6)).items_center(),
+            Arrangement::SpacedBy(sp(6)),
+            Alignment::Center,
             || {
-                flex_column(
+                column_arranged(
                     Modifier::new().size(160.0, 90.0).clip_to(Radius::Lg),
-                    Flex::new(),
+                    Arrangement::Start,
+                    Alignment::Start,
                     || picture(Modifier::new().fill_max_size(), &still),
                 );
                 spinner(6.0, Role::Muted);
@@ -988,61 +1045,73 @@ fn misc_shot() {
             },
         );
         caption("selectable text: one selection running from the first box into the second");
-        flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
-            for line in SELECTABLE {
-                selectable(
-                    Modifier::new(),
-                    FocusId(700),
-                    line,
-                    Type::new(13).ratio(1.4),
-                );
-            }
-        });
+        column_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(sp(1)),
+            Alignment::Start,
+            || {
+                for line in SELECTABLE {
+                    selectable(
+                        Modifier::new(),
+                        FocusId(700),
+                        line,
+                        Type::new(13).ratio(1.4),
+                    );
+                }
+            },
+        );
     });
 }
 
 /// The settings window's general page, as `settings.png` of the old snapshots shows it.
 fn settings_shot() {
     let find = Field::new("");
-    flex_column(
+    column_arranged(
         Modifier::new().fill_max_size().fill(Role::Surface),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         move || {
-            flex_row(
+            row_arranged(
                 Modifier::new().fill_max_width().height(40.0).stroke_side(
                     Side::Bottom,
                     1.0,
                     Role::Border,
                 ),
-                Flex::new().items_center().justify_end(),
+                Arrangement::End,
+                Alignment::Center,
                 || {
-                    flex_column(
+                    column_arranged(
                         Modifier::new().pad_x(4).cursor(CursorIcon::Pointer),
-                        Flex::new(),
+                        Arrangement::Start,
+                        Alignment::Start,
                         || icon(IconName::Close, 4.0, Role::Muted),
                     );
                 },
             );
-            flex_row(
+            row_arranged(
                 Modifier::new().fill_max_width().weight(1.0),
-                Flex::new(),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
-                    flex_column(
+                    column_arranged(
                         Modifier::new()
                             .width(220.0)
                             .fill_max_height()
                             .stroke_side(Side::Right, 1.0, Role::Border)
                             .pad(3),
-                        Flex::new().gap(sp(1)),
+                        Arrangement::SpacedBy(sp(1)),
+                        Alignment::Start,
                         || {
-                            flex_row(
+                            row_arranged(
                                 Modifier::new().h(9).pad_x(2),
-                                Flex::new().items_center(),
+                                Arrangement::Start,
+                                Alignment::Center,
                                 || label("Settings", Type::new(13).ratio(1.4).tone(Role::Subtle)),
                             );
-                            flex_column(
-                                Modifier::new().pad_side(Side::Bottom, 2),
-                                Flex::new(),
+                            column_arranged(
+                                Modifier::new().fill_max_width().pad_side(Side::Bottom, 2),
+                                Arrangement::Start,
+                                Alignment::Start,
                                 || {
                                     Input::new(&find, FocusId(600))
                                         .variant(InputVariant::Bordered)
@@ -1071,10 +1140,11 @@ fn settings_shot() {
                                 Tile::new(FocusId(610 + index as u64))
                                     .selected(index == 0)
                                     .inner(Modifier::new().pad_x(2))
+                                    .modifier(Modifier::new().fill_max_width())
                                     .build_with(|| {
                                         icon(glyph, 4.0, tone);
                                         label_with(
-                                            Modifier::new().grow(),
+                                            Modifier::new().weight(1.0),
                                             name,
                                             Type::new(13).ratio(1.4).tone(tone).truncate(),
                                         );
@@ -1082,25 +1152,28 @@ fn settings_shot() {
                             }
                         },
                     );
-                    flex_column(
+                    column_arranged(
                         Modifier::new()
-                            .grow()
+                            .weight(1.0)
                             .fill_max_height()
                             .fill(Role::Background),
-                        Flex::new(),
+                        Arrangement::Start,
+                        Alignment::Start,
                         || {
-                            flex_column(
+                            column_arranged(
                                 Modifier::new()
                                     .pad_side(Side::Left, 8)
                                     .pad_side(Side::Right, 8)
                                     .pad_side(Side::Top, 6)
                                     .pad_side(Side::Bottom, 4),
-                                Flex::new(),
+                                Arrangement::Start,
+                                Alignment::Start,
                                 || label("General", Type::new(22).ratio(1.3).medium()),
                             );
-                            flex_column(
+                            column_arranged(
                                 Modifier::new().fill_max_width().pad_x(8),
-                                Flex::new(),
+                                Arrangement::Start,
+                                Alignment::Start,
                                 || {
                                     paragraph(
                                         Modifier::new().pad_side(Side::Bottom, 4),
@@ -1112,6 +1185,7 @@ fn settings_shot() {
                                         "The last workspace with its open files and layout, or a fresh start.",
                                         || {
                                             ported::choices(
+                                                Modifier::new(),
                                                 &["Last workspace", "Fresh start"],
                                                 0,
                                                 |option| Some(FocusId(630 + option as u64)),
@@ -1136,18 +1210,29 @@ fn settings_shot() {
                                         "Update channel",
                                         "Follow the stable releases, or the pre-releases.",
                                         || {
-                                            ported::choices(&["Stable", "Preview"], 0, |option| {
-                                                Some(FocusId(650 + option as u64))
-                                            });
+                                            ported::choices(
+                                                Modifier::new(),
+                                                &["Stable", "Preview"],
+                                                0,
+                                                |option| Some(FocusId(650 + option as u64)),
+                                            );
                                         },
                                     );
-                                    flex_row(
+                                    row_arranged(
                                         Modifier::new().fill_max_width().pad_y(4),
-                                        Flex::new().items_center().justify_between().gap(sp(6)),
+                                        Arrangement::SpacedBy(sp(6)),
+                                        Alignment::Center,
                                         || {
-                                            label(
-                                                "Pandemonium 0.14.0 is available; this is 0.15.0-rc.4.",
-                                                Type::new(13).ratio(1.4).tone(Role::Muted),
+                                            row_arranged(
+                                                Modifier::new().weight(1.0),
+                                                Arrangement::Start,
+                                                Alignment::Center,
+                                                || {
+                                                    label(
+                                                        "Pandemonium 0.14.0 is available; this is 0.15.0-rc.4.",
+                                                        Type::new(13).ratio(1.4).tone(Role::Muted),
+                                                    );
+                                                },
                                             );
                                             Button::new("Open Release Page", FocusId(660))
                                                 .variant(ported::Variant::Outline)

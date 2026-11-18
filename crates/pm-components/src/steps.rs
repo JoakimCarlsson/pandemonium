@@ -3,8 +3,8 @@
 use pm_harness::{
     Diff, Kind as ToolKind, Merge, Permission, PlanStep, Progress, ToolState, Verdict, Worktree,
 };
+use rustle::{Alignment, column_arranged, row_arranged};
 use rustle::{Arrangement, CursorIcon, FlowOptions, Modifier};
-use rustle::{Flex, flex_column, flex_row};
 
 use crate::Button;
 use crate::Tile;
@@ -81,45 +81,62 @@ fn step_line(
     if let Some(id) = id {
         own = own.cursor(CursorIcon::Pointer).target(id);
     }
-    flex_row(own, Flex::new().items_center().gap(sp(2.5)), || {
-        flex_row(Modifier::new().square(4), Flex::new().items_center(), mark);
-        line(verb, 13, 1.4, Role::Muted);
-        if let Some(target) = target {
-            clipped_mono(target, verb == "Ran");
-        } else {
-            rustle::spacer(Modifier::new().grow());
-        }
-        detail();
-        if id.is_some() {
-            glyph(
-                if open {
-                    IconName::ChevronDown
-                } else {
-                    IconName::ChevronRight
-                },
-                3.5,
-                Role::Subtle,
+    row_arranged(
+        own,
+        Arrangement::SpacedBy(sp(2.5)),
+        Alignment::Center,
+        || {
+            row_arranged(
+                Modifier::new().square(4),
+                Arrangement::Start,
+                Alignment::Center,
+                mark,
             );
-        }
-    });
+            line(verb, 13, 1.4, Role::Muted);
+            if let Some(target) = target {
+                clipped_mono(target, verb == "Ran");
+            } else {
+                rustle::spacer(Modifier::new().weight(1.0));
+            }
+            detail();
+            if id.is_some() {
+                glyph(
+                    if open {
+                        IconName::ChevronDown
+                    } else {
+                        IconName::ChevronRight
+                    },
+                    3.5,
+                    Role::Subtle,
+                );
+            }
+        },
+    );
 }
 
 /// Emits a box that takes the room left in its row and cuts a line of code short at its edge, on a chip when `chip` is set.
 #[track_caller]
 fn clipped_mono(content: &str, chip: bool) {
     let code = Type::new(12).ratio(1.4).mono().tone(Role::Text).truncate();
-    flex_row(Modifier::new().grow(), Flex::new(), || {
-        let holder = Modifier::new().clip_to(Radius::None);
-        let holder = if chip {
-            Modifier::new()
-                .fill_rounded(Role::Surface, Radius::Md)
-                .clip_to(Radius::None)
-                .pad_x(1.5)
-        } else {
-            holder
-        };
-        flex_row(holder, Flex::new(), || label(content, code));
-    });
+    row_arranged(
+        Modifier::new().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            let holder = Modifier::new().clip_to(Radius::None);
+            let holder = if chip {
+                Modifier::new()
+                    .fill_rounded(Role::Surface, Radius::Md)
+                    .clip_to(Radius::None)
+                    .pad_x(1.5)
+            } else {
+                holder
+            };
+            row_arranged(holder, Arrangement::Start, Alignment::Start, || {
+                label(content, code)
+            });
+        },
+    );
 }
 
 /// Emits the mark of how a tool got on: a turning ring, or the glyph that is its kind.
@@ -165,6 +182,7 @@ fn tool_detail(tool: &ToolUse) {
                 diff_line(line.kind, &line.text, colours.line(at));
             }
         })
+        .modifier(Modifier::new().fill_max_width())
         .max_height(DETAIL_HEIGHT)
         .build();
         return;
@@ -178,14 +196,20 @@ fn tool_detail(tool: &ToolUse) {
             .filter(|printed| !printed.starts_with("```"))
             .take(40)
         {
-            flex_row(Modifier::new().pad_x(3.5), Flex::new(), || {
-                label(
-                    printed.replace('\t', "    "),
-                    Type::new(12).ratio(1.6).mono().tone(Role::Muted),
-                );
-            });
+            row_arranged(
+                Modifier::new().pad_x(3.5),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    label(
+                        printed.replace('\t', "    "),
+                        Type::new(12).ratio(1.6).mono().tone(Role::Muted),
+                    );
+                },
+            );
         }
     })
+    .modifier(Modifier::new().fill_max_width())
     .max_height(DETAIL_HEIGHT)
     .build();
 }
@@ -240,19 +264,24 @@ fn tool_line(tool: &ToolUse, root: &str, id: FocusId, open: bool, foldable: bool
         _ => {}
     };
     let expandable = foldable && has_detail(tool);
-    flex_column(Modifier::new().fill_max_width(), Flex::new(), || {
-        step_line(
-            || tool_mark(tool),
-            verb,
-            shown,
-            detail,
-            expandable.then_some(id),
-            open,
-        );
-        if open {
-            tool_detail(tool);
-        }
-    });
+    column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            step_line(
+                || tool_mark(tool),
+                verb,
+                shown,
+                detail,
+                expandable.then_some(id),
+                open,
+            );
+            if open {
+                tool_detail(tool);
+            }
+        },
+    );
 }
 
 /// How long something has gone on, in words: `42s` or `3m 05s`.
@@ -267,9 +296,10 @@ pub fn elapsed(seconds: u64) -> String {
 /// Emits the mark of how a subagent is getting on: a turning ring, a dot once it is done, or a cross.
 #[track_caller]
 fn agent_mark(state: ToolState) {
-    flex_row(
+    row_arranged(
         Modifier::new().square(4),
-        Flex::new().items_center(),
+        Arrangement::Start,
+        Alignment::Center,
         || match state {
             ToolState::Running => spinner(3.5, Role::Muted),
             ToolState::Done => rustle::spacer(
@@ -295,11 +325,12 @@ fn worktree_chip(worktree: &Worktree) {
         Some(Merge::Conflicted { .. }) => ("conflict".to_owned(), Role::Danger),
         Some(Merge::Held { .. }) => ("not applied".to_owned(), Role::Warning),
     };
-    flex_row(
+    row_arranged(
         Modifier::new()
             .fill_rounded(Role::SurfaceHover, Radius::Md)
             .pad_x(1.5),
-        Flex::new().items_center().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Center,
         || {
             glyph(IconName::GitFork, 3.0, role);
             label(words, Type::new(12).ratio(1.4).tone(role));
@@ -323,11 +354,12 @@ fn quiet_label(words: String) {
 #[track_caller]
 fn quiet_text(words: String) {
     let kind = Type::new(12).ratio(1.4).tone(Role::Muted);
-    flex_row(
+    row_arranged(
         Modifier::new()
             .fill_rounded(Role::SurfaceHover, Radius::Md)
             .pad_x(1.5),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || label(words, kind),
     );
 }
@@ -394,27 +426,36 @@ pub fn subagents(
         (count, working) => format!("{count} subagents · {working} running"),
     };
     let rows = move || {
-        flex_column(Modifier::new().fill_max_width(), Flex::new(), || {
-            for (position, tool) in agents {
-                rustle::key(position, || {
-                    agent_row(all, message, opened, root, position, tool)
-                });
-            }
-        });
+        column_arranged(
+            Modifier::new().fill_max_width(),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                for (position, tool) in agents {
+                    rustle::key(position, || {
+                        agent_row(all, message, opened, root, position, tool)
+                    });
+                }
+            },
+        );
     };
-    flex_column(
+    column_arranged(
         Modifier::new()
+            .fill_max_width()
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
             .clip_to(Radius::None),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            flex_row(
+            row_arranged(
                 Modifier::new()
+                    .fill_max_width()
                     .h(10)
                     .stroke_side(Side::Bottom, 1.0, Role::Border)
                     .pad_x(3.5),
-                Flex::new().items_center().gap(sp(2.5)),
+                Arrangement::SpacedBy(sp(2.5)),
+                Alignment::Center,
                 || {
                     glyph(IconName::GitFork, 4.0, Role::Muted);
                     line(title, 13, 1.4, Role::Text);
@@ -422,7 +463,7 @@ pub fn subagents(
             );
             match scroll {
                 Some((id, offset)) => scroll_area(
-                    Modifier::new().height_in(0.0, sp(60)),
+                    Modifier::new().fill_max_width().height_in(0.0, sp(60)),
                     Scroll::from_start(id, offset),
                     rows,
                 ),
@@ -446,81 +487,90 @@ fn agent_row(
     let open = opened(position);
     let id = FocusId(STEP_BASE + (message * 1000 + position) as u64);
     let described = tool.target.as_deref().unwrap_or(&tool.title);
-    flex_column(Modifier::new().fill_max_width(), Flex::new(), || {
-        Tile::new(id)
-            .height(10.0)
-            .gap(2.5)
-            .radius(Radius::Xs)
-            .inner(Modifier::new().pad_x(3.5))
-            .build_with(|| {
-                agent_mark(tool.state);
-                if tool.agent.as_deref() != Some("agent") {
-                    quiet_chip(tool.agent.clone().unwrap_or_default());
-                }
-                if let Some(worktree) = tool.worktree.as_deref() {
-                    worktree_chip(worktree);
-                }
-                clipped(described, 13, Role::Text);
-                if let Some(runs_as) = tool.runs_as.clone() {
-                    quiet_label(runs_as);
-                }
-                if let Some(cost) = tool.cost {
-                    cost_label(cost);
-                }
-                line(
-                    match used.len() {
-                        1 => "1 tool".to_owned(),
-                        count => format!("{count} tools"),
-                    },
-                    12,
-                    1.4,
-                    Role::Subtle,
-                );
-                if tool.stoppable().is_some() {
-                    Button::icon(
-                        IconName::Stop,
-                        FocusId(SUBAGENT_STOP_BASE + (message * 1000 + position) as u64),
-                    )
-                    .size(Size::Xs)
-                    .modifier(Modifier::new().tooltip("Stop this subagent"))
-                    .build();
-                }
-                glyph(
-                    if open {
-                        IconName::ChevronDown
-                    } else {
-                        IconName::ChevronRight
-                    },
-                    3.5,
-                    Role::Subtle,
-                );
-            });
-        if open && !used.is_empty() {
-            flex_column(
-                Modifier::new()
-                    .pad_side(Side::Left, 10)
-                    .pad_side(Side::Right, 3.5)
-                    .pad_side(Side::Bottom, 2),
-                Flex::new().gap(sp(1)),
-                || {
-                    for tool in used {
-                        tool_line(tool, root, FocusId(0), false, false);
+    column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            Tile::new(id)
+                .height(10.0)
+                .gap(2.5)
+                .radius(Radius::Xs)
+                .inner(Modifier::new().pad_x(3.5))
+                .modifier(Modifier::new().fill_max_width())
+                .build_with(|| {
+                    agent_mark(tool.state);
+                    if tool.agent.as_deref() != Some("agent") {
+                        quiet_chip(tool.agent.clone().unwrap_or_default());
                     }
-                },
-            );
-        }
-    });
+                    if let Some(worktree) = tool.worktree.as_deref() {
+                        worktree_chip(worktree);
+                    }
+                    clipped(described, 13, Role::Text);
+                    if let Some(runs_as) = tool.runs_as.clone() {
+                        quiet_label(runs_as);
+                    }
+                    if let Some(cost) = tool.cost {
+                        cost_label(cost);
+                    }
+                    line(
+                        match used.len() {
+                            1 => "1 tool".to_owned(),
+                            count => format!("{count} tools"),
+                        },
+                        12,
+                        1.4,
+                        Role::Subtle,
+                    );
+                    if tool.stoppable().is_some() {
+                        Button::icon(
+                            IconName::Stop,
+                            FocusId(SUBAGENT_STOP_BASE + (message * 1000 + position) as u64),
+                        )
+                        .size(Size::Xs)
+                        .modifier(Modifier::new().tooltip("Stop this subagent"))
+                        .build();
+                    }
+                    glyph(
+                        if open {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        },
+                        3.5,
+                        Role::Subtle,
+                    );
+                });
+            if open && !used.is_empty() {
+                column_arranged(
+                    Modifier::new()
+                        .fill_max_width()
+                        .pad_side(Side::Left, 10)
+                        .pad_side(Side::Right, 3.5)
+                        .pad_side(Side::Bottom, 2),
+                    Arrangement::SpacedBy(sp(1)),
+                    Alignment::Start,
+                    || {
+                        for tool in used {
+                            tool_line(tool, root, FocusId(0), false, false);
+                        }
+                    },
+                );
+            }
+        },
+    );
 }
 
 /// Emits the mark in front of a plan step: a filled check when done, a spinner while under way, an empty ring when not begun.
 #[track_caller]
 fn plan_mark(progress: Progress) {
     match progress {
-        Progress::Done => flex_row(
+        Progress::Done => row_arranged(
             Modifier::new()
                 .square(4)
                 .fill_rounded(Role::Success, Radius::Full),
-            Flex::new().items_center().justify_center(),
+            Arrangement::Center,
+            Alignment::Center,
             || glyph(IconName::Check, 3.0, Role::OnSuccess),
         ),
         Progress::Doing => spinner(4.0, Role::Muted),
@@ -538,19 +588,23 @@ pub fn plan(items: &[PlanStep]) {
         .filter(|item| item.progress == Progress::Done)
         .count();
     let finished = done == items.len();
-    flex_column(
+    column_arranged(
         Modifier::new()
+            .fill_max_width()
             .fill_rounded(Role::Surface, Radius::Xl)
             .stroke(Role::Border, Radius::Xl)
             .clip_to(Radius::None),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            flex_row(
+            row_arranged(
                 Modifier::new()
+                    .fill_max_width()
                     .h(12)
                     .stroke_side(Side::Bottom, 1.0, Role::Border)
                     .pad_x(4),
-                Flex::new().items_center().gap(sp(3)),
+                Arrangement::SpacedBy(sp(3)),
+                Alignment::Center,
                 || {
                     glyph(
                         IconName::CheckCircle,
@@ -565,9 +619,10 @@ pub fn plan(items: &[PlanStep]) {
                     );
                 },
             );
-            flex_column(
-                Modifier::new().pad_x(4).pad_y(3.5),
-                Flex::new().gap(sp(3)),
+            column_arranged(
+                Modifier::new().fill_max_width().pad_x(4).pad_y(3.5),
+                Arrangement::SpacedBy(sp(3)),
+                Alignment::Start,
                 || {
                     for item in items {
                         let (tone, struck) = match item.progress {
@@ -577,17 +632,19 @@ pub fn plan(items: &[PlanStep]) {
                         };
                         let kind = Type::new(13).ratio(1.4).tone(tone).truncate();
                         let kind = if struck { kind.strike() } else { kind };
-                        flex_row(
-                            Modifier::new(),
-                            Flex::new().items_center().gap(sp(3)),
+                        row_arranged(
+                            Modifier::new().fill_max_width(),
+                            Arrangement::SpacedBy(sp(3)),
+                            Alignment::Center,
                             || {
-                                flex_row(
+                                row_arranged(
                                     Modifier::new().square(4),
-                                    Flex::new().items_center(),
+                                    Arrangement::Start,
+                                    Alignment::Center,
                                     || plan_mark(item.progress),
                                 );
                                 label_with(
-                                    Modifier::new().grow().clip_to(Radius::None),
+                                    Modifier::new().weight(1.0).clip_to(Radius::None),
                                     &item.text,
                                     kind,
                                 );
@@ -610,11 +667,12 @@ pub fn steps(
     root: &str,
     width: f32,
 ) {
-    flex_column(
+    column_arranged(
         Modifier::new()
             .stroke_side(Side::Left, 1.0, Role::Border)
             .pad_side(Side::Left, 4),
-        Flex::new().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Start,
         || {
             let mut agents: Vec<usize> = Vec::new();
             let flush = |agents: &mut Vec<usize>| {
@@ -648,27 +706,33 @@ pub fn steps(
                             None => "Thinking".to_owned(),
                         };
                         rustle::key(position, || {
-                            flex_column(Modifier::new().fill_max_width(), Flex::new(), || {
-                                step_line(
-                                    || glyph(IconName::Sparkles, 3.5, Role::Subtle),
-                                    &words,
-                                    None,
-                                    || {},
-                                    Some(id),
-                                    open,
-                                );
-                                if open {
-                                    flex_column(
-                                        Modifier::new().pad_y(1).pad_side(Side::Left, 4),
-                                        Flex::new(),
-                                        || {
-                                            for piece in wrap(&thought.text, 13, width - 40.0) {
-                                                line(piece, 13, 1.6, Role::Subtle);
-                                            }
-                                        },
+                            column_arranged(
+                                Modifier::new().fill_max_width(),
+                                Arrangement::Start,
+                                Alignment::Start,
+                                || {
+                                    step_line(
+                                        || glyph(IconName::Sparkles, 3.5, Role::Subtle),
+                                        &words,
+                                        None,
+                                        || {},
+                                        Some(id),
+                                        open,
                                     );
-                                }
-                            });
+                                    if open {
+                                        column_arranged(
+                                            Modifier::new().pad_y(1).pad_side(Side::Left, 4),
+                                            Arrangement::Start,
+                                            Alignment::Start,
+                                            || {
+                                                for piece in wrap(&thought.text, 13, width - 40.0) {
+                                                    line(piece, 13, 1.6, Role::Subtle);
+                                                }
+                                            },
+                                        );
+                                    }
+                                },
+                            );
                         });
                     }
                 }
@@ -688,30 +752,38 @@ const CARD_INSET: f32 = 34.0;
 #[track_caller]
 pub fn question(ask: &Permission, width: f32) {
     let title = Type::new(13).ratio(1.4).tone(Role::Text);
-    flex_column(
+    column_arranged(
         Modifier::new()
             .fill_rounded(Role::Surface, Radius::Xl)
             .stroke(Role::Border, Radius::Xl)
             .pad_x(4)
             .pad_y(3),
-        Flex::new().gap(sp(2.5)),
+        Arrangement::SpacedBy(sp(2.5)),
+        Alignment::Start,
         || {
             line("Needs your approval", 12, 1.4, Role::Muted);
-            flex_column(Modifier::new(), Flex::new(), || {
-                for piece in wrap_lines(&ask.title, title, width - CARD_INSET) {
-                    label(&ask.title[piece.start..piece.end], title);
-                }
-            });
+            column_arranged(
+                Modifier::new(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    for piece in wrap_lines(&ask.title, title, width - CARD_INSET) {
+                        label(&ask.title[piece.start..piece.end], title);
+                    }
+                },
+            );
             if let Some(command) = &ask.command {
                 let kind = Type::new(12).ratio(1.6).mono().tone(Role::Text);
                 let shown = format!("$ {command}").replace('\t', "    ");
                 let room = width - COMMAND_INSET;
-                flex_column(
+                column_arranged(
                     Modifier::new()
+                        .fill_max_width()
                         .fill_rounded(Role::Background, Radius::Lg)
                         .pad_x(3)
                         .pad_y(2),
-                    Flex::new(),
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
                         for piece in wrap_lines(&shown, kind, room) {
                             label(&shown[piece.start..piece.end], kind);
@@ -738,7 +810,7 @@ fn answers(ask: &Permission, width: f32) {
         Modifier::new().fill_max_width(),
         FlowOptions::new(sp(2), sp(2))
             .arrangement(Arrangement::End)
-            .alignment(rustle::Alignment::Center),
+            .item_alignment(rustle::Alignment::Center),
         || {
             for (index, choice) in choices {
                 Button::new(&choice.name, FocusId(CHOICE_BASE + index as u64))

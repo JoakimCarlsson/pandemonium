@@ -5,8 +5,8 @@ use crate::kit::{
     FocusId, Hovered, Interactive, Looks, Radius, Role, Scroll, Styled, color, scroll_area,
 };
 use pm_protocol::Severity;
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row};
 
 use crate::parts::line;
 use crate::state::{PROBLEM_ROW_BASE, PROBLEMS_SCROLL, WorkspaceState};
@@ -43,6 +43,7 @@ fn problem_row(index: usize, problem: &pm_protocol::Problem) {
     );
     let id = FocusId(PROBLEM_ROW_BASE + index as u64);
     let modifier = Modifier::new()
+        .fill_max_width()
         .h(6)
         .clip_to(Radius::None)
         .looks_of(Looks::new().hover(Role::SurfaceHover), id)
@@ -50,39 +51,51 @@ fn problem_row(index: usize, problem: &pm_protocol::Problem) {
         .target(id)
         .pad_x(3);
     let dot = color(severity_role(diagnostic.severity));
-    flex_row(modifier, Flex::new().items_center().gap(sp(2)), || {
-        rustle::spacer(Modifier::new().square(2).background_rounded(dot, 4.0));
-        line(message.to_owned(), 12, 1.4, Role::Text);
-        if let Some(source) = &diagnostic.source {
-            line(source.clone(), 11, 1.4, Role::Subtle);
-        }
-        line(place, 11, 1.4, Role::Subtle);
-    });
+    row_arranged(
+        modifier,
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
+        || {
+            rustle::spacer(Modifier::new().square(2).background_rounded(dot, 4.0));
+            line(message.to_owned(), 12, 1.4, Role::Text);
+            if let Some(source) = &diagnostic.source {
+                line(source.clone(), 11, 1.4, Role::Subtle);
+            }
+            line(place, 11, 1.4, Role::Subtle);
+        },
+    );
 }
 
 /// Emits the tab: the list of problems, scrolled as the state says.
 #[track_caller]
 pub fn problems_tab(state: &WorkspaceState) {
     scroll_area(
-        Modifier::new().grow().clip_to(Radius::None),
+        Modifier::new().weight(1.0).clip_to(Radius::None),
         Scroll::from_start(PROBLEMS_SCROLL, state.problems_scroll),
         || {
-            flex_column(Modifier::new().fill_max_width(), Flex::new(), || {
-                if state.current_problems().is_empty() {
-                    flex_row(
-                        Modifier::new().h(7).pad_x(3),
-                        Flex::new().items_center(),
-                        || {
-                            line(NOTHING_WRONG, 12, 1.4, Role::Subtle);
-                        },
-                    );
-                    return;
-                }
-                for (index, problem) in state.current_problems().iter().take(MOST_ROWS).enumerate()
-                {
-                    problem_row(index, problem);
-                }
-            });
+            column_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    if state.current_problems().is_empty() {
+                        row_arranged(
+                            Modifier::new().h(7).pad_x(3),
+                            Arrangement::Start,
+                            Alignment::Center,
+                            || {
+                                line(NOTHING_WRONG, 12, 1.4, Role::Subtle);
+                            },
+                        );
+                        return;
+                    }
+                    for (index, problem) in
+                        state.current_problems().iter().take(MOST_ROWS).enumerate()
+                    {
+                        problem_row(index, problem);
+                    }
+                },
+            );
         },
     );
 }

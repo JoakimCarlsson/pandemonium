@@ -2,8 +2,8 @@
 
 use crate::kit::{Role, Tooltip};
 use pm_harness::{ModelSpend, Spent};
+use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_row};
 
 use crate::parts::line;
 use crate::sample::Session;
@@ -84,11 +84,12 @@ pub fn cost_of(session: &Session) {
         return;
     };
     let words = label(spent);
-    flex_row(
+    row_arranged(
         Modifier::new()
             .cursor(CursorIcon::Default)
             .tooltip(tooltip(spent)),
-        Flex::new().items_center(),
+        Arrangement::Start,
+        Alignment::Center,
         move || line(words, 12, 1.4, Role::Subtle),
     );
 }

@@ -8,7 +8,7 @@ use crate::kit::{
 use pm_field::{Edit, Field};
 use pm_protocol::{ExtensionAssets, ExtensionCommand, ExtensionInfo};
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::button::Variant;
 use crate::checkbox::Variant as CheckboxVariant;
@@ -413,12 +413,14 @@ fn line_type(pixels: u32, tone: Role) -> Type {
 /// Emits the title of the page and the button that installs an extension from a folder.
 #[track_caller]
 fn heading() {
-    flex_row(
+    row_arranged(
         Modifier::new()
+            .fill_max_width()
             .h(12)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(5),
-        Flex::new().items_center().justify_between(),
+        Arrangement::SpaceBetween,
+        Alignment::Center,
         || {
             label("Extensions", line_type(14, Role::Text).medium());
             Button::new("Install Extension…", INSTALL_EXTENSION)
@@ -484,18 +486,21 @@ pub(crate) fn row(extension: &ExtensionInfo, action: FocusId) {
         format!("{}  {}", extension.description, endings(extension))
     };
     let brings = wrapped(&extension.provides, ROW_LINE);
-    flex_row(
-        Modifier::new().pad_x(4).pad_y(3),
-        Flex::new().items_center().gap(sp(3)),
+    row_arranged(
+        Modifier::new().fill_max_width().pad_x(4).pad_y(3),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
         || {
             mark(extension);
-            flex_column(
-                Modifier::new().grow().clip_to(Radius::None),
-                Flex::new(),
+            column_arranged(
+                Modifier::new().weight(1.0).clip_to(Radius::None),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
-                    flex_row(
+                    row_arranged(
                         Modifier::new(),
-                        Flex::new().items_center().gap(sp(2)),
+                        Arrangement::SpacedBy(sp(2)),
+                        Alignment::Center,
                         || {
                             label(&extension.name, line_type(14, Role::Text).medium());
                             if !extension.version.is_empty() {
@@ -526,11 +531,19 @@ pub(crate) fn row(extension: &ExtensionInfo, action: FocusId) {
 /// Emits one line saying what a capability lets an extension do, with the switch, answering to `id`, that allows it or not.
 #[track_caller]
 fn permission(capability: &str, allowed: bool, id: FocusId) {
-    flex_row(
-        Modifier::new().pad_y(1),
-        Flex::new().items_center().justify_between().gap(sp(3)),
+    row_arranged(
+        Modifier::new().fill_max_width().pad_y(1),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
         || {
-            line(describe_capability(capability), 12, 1.4, Role::Muted);
+            row_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    line(describe_capability(capability), 12, 1.4, Role::Muted);
+                },
+            );
             Checkbox::new(allowed, id)
                 .variant(CheckboxVariant::Switch)
                 .build();
@@ -544,9 +557,13 @@ fn permissions(extension: &ExtensionInfo, place: usize) {
     if extension.kind != "extension" || !extension.installed || extension.requests.is_empty() {
         return;
     }
-    flex_column(
-        Modifier::new().pad_x(4).pad_side(Side::Bottom, 3),
-        Flex::new(),
+    column_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .pad_x(4)
+            .pad_side(Side::Bottom, 3),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             line("Allowed to", 12, 1.4, Role::Subtle);
             for (which, asked) in extension.requests.iter().enumerate() {
@@ -568,13 +585,15 @@ fn preview_card(preview: &Preview) {
     if !extension.version.is_empty() {
         title = format!("{title} {}", extension.version);
     }
-    flex_column(
+    column_arranged(
         Modifier::new()
+            .fill_max_width()
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
             .pad_x(4)
             .pad_y(4),
-        Flex::new().gap(sp(3)),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Start,
         || {
             label(title, line_type(14, Role::Text).medium());
             if !extension.description.is_empty() {
@@ -591,9 +610,10 @@ fn preview_card(preview: &Preview) {
                     FocusId(PREVIEW_GRANT_BASE + which as u64),
                 );
             }
-            flex_row(
+            row_arranged(
                 Modifier::new(),
-                Flex::new().items_center().gap(sp(2)),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Center,
                 || {
                     Button::new("Install", PREVIEW_INSTALL)
                         .size(Size::Sm)
@@ -633,107 +653,130 @@ fn lined_group(title: &str, inside: bool, rows: impl FnOnce()) {
     if rows.is_empty() {
         return;
     }
-    flex_column(Modifier::new(), Flex::new().gap(sp(2)), move || {
-        line(title.to_owned(), 12, 1.4, Role::Subtle);
-        flex_column(
-            Modifier::new()
-                .fill_rounded(Role::Surface, Radius::Lg)
-                .stroke(Role::Border, Radius::Lg)
-                .clip_to(Radius::None),
-            Flex::new(),
-            move || {
-                let last = rows.len() - 1;
-                let color = theme::color(Role::Border);
-                for (at, built) in rows.into_iter().enumerate() {
-                    if at == last {
-                        rustle::emit(built);
-                        continue;
+    column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Start,
+        move || {
+            line(title.to_owned(), 12, 1.4, Role::Subtle);
+            column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .fill_rounded(Role::Surface, Radius::Lg)
+                    .stroke(Role::Border, Radius::Lg)
+                    .clip_to(Radius::None),
+                Arrangement::Start,
+                Alignment::Start,
+                move || {
+                    let last = rows.len() - 1;
+                    let color = theme::color(Role::Border);
+                    for (at, built) in rows.into_iter().enumerate() {
+                        if at == last {
+                            rustle::emit(built);
+                            continue;
+                        }
+                        let lined = Modifier::new().fill_max_width().draw_over_interactive(
+                            move |canvas, _| {
+                                let (width, height) = (canvas.width(), canvas.height());
+                                canvas.rect(0.0, height - 1.0, width, 1.0, color);
+                            },
+                        );
+                        let lined = if inside {
+                            lined
+                        } else {
+                            lined.padding_each(0.0, 0.0, 0.0, 1.0)
+                        };
+                        column_arranged(lined, Arrangement::Start, Alignment::Start, move || {
+                            rustle::emit(built)
+                        });
                     }
-                    let lined = Modifier::new().draw_over_interactive(move |canvas, _| {
-                        let (width, height) = (canvas.width(), canvas.height());
-                        canvas.rect(0.0, height - 1.0, width, 1.0, color);
-                    });
-                    let lined = if inside {
-                        lined
-                    } else {
-                        lined.padding_each(0.0, 0.0, 0.0, 1.0)
-                    };
-                    flex_column(lined, Flex::new(), move || rustle::emit(built));
-                }
-            },
-        );
-    });
+                },
+            );
+        },
+    );
 }
 
 /// Emits the row of the extension listed at `place`, with the switches of what it is allowed under it.
 #[track_caller]
 fn entry(extension: &ExtensionInfo, place: usize) {
-    flex_column(Modifier::new(), Flex::new(), || {
-        row(extension, FocusId(ROW_BASE + place as u64));
-        permissions(extension, place);
-    });
+    column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            row(extension, FocusId(ROW_BASE + place as u64));
+            permissions(extension, place);
+        },
+    );
 }
 
 /// Emits the extensions page for `state`.
 #[track_caller]
 pub fn extensions(state: &WorkspaceState) {
     let listed = state.listed_extensions();
-    flex_column(Modifier::new().grow(), Flex::new(), || {
-        heading();
-        scroll_area(
-            Modifier::new().grow(),
-            Scroll::from_start(EXTENSIONS_SCROLL, state.extensions_page.scroll),
-            || {
-                flex_column(
-                    Modifier::new().fill_max_width(),
-                    Flex::new().items_center(),
-                    || {
-                        flex_column(
-                            Modifier::new()
-                                .max_w_px(PAGE_WIDTH)
-                                .fill_max_width()
-                                .pad_x(5)
-                                .pad_side(Side::Top, 5)
-                                .pad_side(Side::Bottom, 8),
-                            Flex::new().gap(sp(6)),
-                            || {
-                                search(state);
-                                if let Some(problem) = &state.extensions_page.problem {
-                                    line(problem.clone(), 12, 1.4, Role::Danger);
-                                }
-                                if let Some(preview) = &state.extensions_page.preview {
-                                    preview_card(preview);
-                                }
-                                if state.extensions.is_empty() {
-                                    line(
-                                        "Asking the server which extensions there are…",
-                                        13,
-                                        1.4,
-                                        Role::Subtle,
-                                    );
-                                } else if listed.is_empty() {
-                                    line("No extension matches.", 13, 1.4, Role::Subtle);
-                                } else {
-                                    group("Installed on this machine", || {
-                                        for (place, extension) in listed.iter().enumerate() {
-                                            if extension.installed {
-                                                entry(extension, place);
+    column_arranged(
+        Modifier::new().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            heading();
+            scroll_area(
+                Modifier::new().fill_max_width().weight(1.0),
+                Scroll::from_start(EXTENSIONS_SCROLL, state.extensions_page.scroll),
+                || {
+                    column_arranged(
+                        Modifier::new().fill_max_width(),
+                        Arrangement::Start,
+                        Alignment::Center,
+                        || {
+                            column_arranged(
+                                Modifier::new()
+                                    .max_w_px(PAGE_WIDTH)
+                                    .fill_max_width()
+                                    .pad_x(5)
+                                    .pad_side(Side::Top, 5)
+                                    .pad_side(Side::Bottom, 8),
+                                Arrangement::SpacedBy(sp(6)),
+                                Alignment::Start,
+                                || {
+                                    search(state);
+                                    if let Some(problem) = &state.extensions_page.problem {
+                                        line(problem.clone(), 12, 1.4, Role::Danger);
+                                    }
+                                    if let Some(preview) = &state.extensions_page.preview {
+                                        preview_card(preview);
+                                    }
+                                    if state.extensions.is_empty() {
+                                        line(
+                                            "Asking the server which extensions there are…",
+                                            13,
+                                            1.4,
+                                            Role::Subtle,
+                                        );
+                                    } else if listed.is_empty() {
+                                        line("No extension matches.", 13, 1.4, Role::Subtle);
+                                    } else {
+                                        group("Installed on this machine", || {
+                                            for (place, extension) in listed.iter().enumerate() {
+                                                if extension.installed {
+                                                    entry(extension, place);
+                                                }
                                             }
-                                        }
-                                    });
-                                    group("Available", || {
-                                        for (place, extension) in listed.iter().enumerate() {
-                                            if !extension.installed {
-                                                entry(extension, place);
+                                        });
+                                        group("Available", || {
+                                            for (place, extension) in listed.iter().enumerate() {
+                                                if !extension.installed {
+                                                    entry(extension, place);
+                                                }
                                             }
-                                        }
-                                    });
-                                }
-                            },
-                        );
-                    },
-                );
-            },
-        );
-    });
+                                        });
+                                    }
+                                },
+                            );
+                        },
+                    );
+                },
+            );
+        },
+    );
 }

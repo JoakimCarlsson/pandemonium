@@ -1,7 +1,7 @@
 //! The button: one component with a look per variant and a measure per size.
 
 use crate::kit::sp;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use std::fmt;
 use std::rc::Rc;
 
@@ -99,7 +99,7 @@ pub struct Button {
     /// The padding that replaces the button's own, when the caller gave one.
     inner: Option<Modifier>,
     /// How the button lays out what it holds, in place of its own, when the caller gave one.
-    flex: Option<Flex>,
+    arranged: Option<(Arrangement, Alignment)>,
 }
 
 impl Button {
@@ -124,7 +124,7 @@ impl Button {
             lines: Vec::new(),
             modifier: Modifier::new(),
             inner: None,
-            flex: None,
+            arranged: None,
         }
     }
 
@@ -149,7 +149,7 @@ impl Button {
             lines: Vec::new(),
             modifier: Modifier::new(),
             inner: None,
-            flex: None,
+            arranged: None,
         }
     }
 
@@ -260,9 +260,9 @@ impl Button {
         self
     }
 
-    /// The button laying out what it holds by `flex` in place of its own.
-    pub fn flex(mut self, flex: Flex) -> Self {
-        self.flex = Some(flex);
+    /// The button spreading its children by `arrangement` and placing them across by `alignment` in place of its own.
+    pub fn arranged(mut self, arrangement: Arrangement, alignment: Alignment) -> Self {
+        self.arranged = Some((arrangement, alignment));
         self
     }
 
@@ -292,7 +292,7 @@ impl Button {
         let mut own = match self.reach {
             Reach::Content => Modifier::new(),
             Reach::Fixed(width) => Modifier::new().width(width),
-            Reach::Fill => Modifier::new().grow(),
+            Reach::Fill => Modifier::new().weight(1.0),
         };
         if self.disabled {
             own = own.opacity(40.0);
@@ -323,10 +323,15 @@ impl Button {
             (None, true, false) => own.pad_x(side),
             (None, false, _) => own,
         };
-        let flex = self.flex.unwrap_or(if spread {
-            Flex::new().items_center().justify_between().gap(sp(2))
+        let (arrangement, alignment) = self.arranged.unwrap_or(if spread && self.label.is_some() {
+            (Arrangement::SpacedBy(sp(2)), Alignment::Center)
+        } else if spread {
+            (Arrangement::SpaceBetween, Alignment::Center)
         } else {
-            Flex::new().items_center().justify_center().gap(sp(2))
+            (
+                Arrangement::SpacedByAligned(sp(2), Alignment::Center),
+                Alignment::Center,
+            )
         });
         let mut kind = Type::new(font).ratio(1.4).tone(ink);
         if !spread || several {
@@ -349,29 +354,39 @@ impl Button {
             self.label,
             self.lines,
         );
-        flex_row(self.modifier.chain(own), flex, move || {
-            if let Some(mark) = mark {
-                (mark.0)();
-            } else if let Some(name) = leading {
-                Self::glyph(name, ink, spins_first);
-            }
-            if let Some(words) = words {
-                if lines.len() > 1 {
-                    flex_column(Modifier::new(), Flex::new(), || {
-                        for part in &lines {
-                            label(part, kind);
-                        }
-                    });
-                } else if spread {
-                    label_with(Modifier::new().grow(), words, kind.truncate());
-                } else {
-                    label(words, kind);
+        row_arranged(
+            self.modifier.chain(own),
+            arrangement,
+            alignment,
+            move || {
+                if let Some(mark) = mark {
+                    (mark.0)();
+                } else if let Some(name) = leading {
+                    Self::glyph(name, ink, spins_first);
                 }
-            }
-            if let Some(name) = trailing {
-                Self::glyph(name, ink, spinning);
-            }
-        });
+                if let Some(words) = words {
+                    if lines.len() > 1 {
+                        column_arranged(
+                            Modifier::new(),
+                            Arrangement::Start,
+                            Alignment::Start,
+                            || {
+                                for part in &lines {
+                                    label(part, kind);
+                                }
+                            },
+                        );
+                    } else if spread {
+                        label_with(Modifier::new().weight(1.0), words, kind.truncate());
+                    } else {
+                        label(words, kind);
+                    }
+                }
+                if let Some(name) = trailing {
+                    Self::glyph(name, ink, spinning);
+                }
+            },
+        );
     }
 
     /// Emits `name` four steps across in `ink`, turning while `spinning` is true.

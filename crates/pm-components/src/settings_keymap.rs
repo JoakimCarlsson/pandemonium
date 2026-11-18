@@ -2,13 +2,13 @@
 
 use crate::kit::sp;
 use pm_editor::{Action, shown};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row};
 
 use crate::kit::{FocusId, Hovered, Interactive, Looks, Radius, Role, Side, Styled, Type, label};
 
 use crate::input::Input;
-use crate::parts::{clipped, line};
+use crate::parts::line;
 use crate::settings::SETTINGS_KEYMAP_FIND;
 use crate::settings_catalog::Setting;
 use crate::settings_ids::{KEYMAP_CONTROLS, PER_ACTION};
@@ -108,9 +108,10 @@ fn small(words: &str, id: Option<FocusId>) {
     let own = Modifier::new()
         .h(6)
         .looks(Looks::new().hover(Role::SurfaceHover).radius(Radius::Sm));
-    flex_row(
+    row_arranged(
         pressable(own, id).pad_x(2),
-        Flex::new().items_center(),
+        Arrangement::Start,
+        Alignment::Center,
         || line(words, 11, 1.4, Role::Muted),
     );
 }
@@ -128,9 +129,10 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: Option<FocusId>) {
         .fill_rounded(Role::Background, Radius::Sm)
         .stroke(edge, Radius::Sm);
     let code = Type::new(12).ratio(1.4).tone(Role::Text).truncate().mono();
-    flex_row(
+    row_arranged(
         pressable(own, id).pad_x(1.5),
-        Flex::new().items_center().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Center,
         move || {
             if let Some(so_far) = recording {
                 let said = if so_far.is_empty() {
@@ -258,11 +260,13 @@ fn section(group: &str, members: &[Found]) {
             .medium(),
     );
     let last = members.len().saturating_sub(1);
-    flex_column(
+    column_arranged(
         Modifier::new()
+            .fill_max_width()
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             for (place, entry) in members.iter().enumerate() {
                 rustle::key(place, || action_row(entry, place < last));
@@ -275,29 +279,37 @@ fn section(group: &str, members: &[Found]) {
 #[track_caller]
 fn action_row(entry: &Found, ruled: bool) {
     let action = entry.action;
+    let own = Modifier::new().fill_max_width();
     let own = if ruled {
-        Modifier::new().stroke_side(Side::Bottom, 1.0, Role::Border)
+        own.stroke_side(Side::Bottom, 1.0, Role::Border)
     } else {
-        Modifier::new()
+        own
     };
-    flex_row(
+    row_arranged(
         own.pad_x(4).pad_y(2),
-        Flex::new().items_center().justify_between().gap(sp(6)),
+        Arrangement::SpacedBy(sp(6)),
+        Alignment::Center,
         || {
-            flex_column(Modifier::new().grow(), Flex::new().gap(sp(0.5)), || {
-                clipped(action.title(), 13, Role::Text);
-                if !entry.clashes.is_empty() {
-                    line(
-                        format!("Also bound to {}", entry.clashes.join(", ")),
-                        11,
-                        1.4,
-                        Role::Warning,
-                    );
-                }
-            });
-            flex_row(
+            column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::SpacedBy(sp(0.5)),
+                Alignment::Start,
+                || {
+                    line(action.title(), 13, 1.4, Role::Text);
+                    if !entry.clashes.is_empty() {
+                        line(
+                            format!("Also bound to {}", entry.clashes.join(", ")),
+                            11,
+                            1.4,
+                            Role::Warning,
+                        );
+                    }
+                },
+            );
+            row_arranged(
                 Modifier::new(),
-                Flex::new().items_center().gap(sp(1)),
+                Arrangement::SpacedBy(sp(1)),
+                Alignment::Center,
                 || {
                     caps(&entry.keys, entry.recording, id_of(action, Part::Record));
                     if entry.own {

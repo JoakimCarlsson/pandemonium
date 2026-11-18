@@ -1,8 +1,8 @@
 //! The rings in the prompt box that show how full the conversation's context is and how much of the account's allowance is used, and the words they say when the pointer rests on them.
 
 use pm_harness::{Limit, LimitUnit, Limits, Usage};
+use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_row};
 
 use crate::kit::{Hovered, Looks, Radius, Role, Tone, Tooltip};
 use crate::sample::Session;
@@ -224,14 +224,15 @@ pub fn rings_of(context: Option<&Usage>, limits: Option<&Limits>) -> bool {
         .filter_map(|meter| meter.share)
         .take(MAX_RINGS)
         .collect();
-    flex_row(
+    row_arranged(
         Modifier::new()
             .width(32.0)
             .height(32.0)
             .looks(Looks::new().hover(Role::SurfaceHover).radius(Radius::Full))
             .cursor(CursorIcon::Default)
             .tooltip(tooltip),
-        Flex::new().items_center().justify_center(),
+        Arrangement::Center,
+        Alignment::Center,
         || rings(&shares),
     );
     true

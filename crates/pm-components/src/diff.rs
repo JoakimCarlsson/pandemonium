@@ -1,12 +1,12 @@
 //! The diff view: every changed file stacked, the old and the new side by side, with notes on lines for the agent.
 
 use crate::kit::sp;
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row};
 
 use crate::kit::{
     FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tone, Type,
-    icon, label, label_with, scroll_area,
+    icon, label, label_with, measure, scroll_area,
 };
 use crate::marked::{CaretLook, Mark, marked_line};
 
@@ -353,15 +353,20 @@ pub fn diff_line(kind: Kind, content: &str, marks: Vec<Mark>) {
         })
         .collect::<Vec<_>>();
     let content = format!("{marker}{}", shown(content));
-    flex_row(own.pad_x(3), Flex::new().items_center(), move || {
-        marked_line(
-            Modifier::new(),
-            &content,
-            code_type(tone),
-            marks,
-            CaretLook::default(),
-        );
-    });
+    row_arranged(
+        own.pad_x(3),
+        Arrangement::Start,
+        Alignment::Center,
+        move || {
+            marked_line(
+                Modifier::new(),
+                &content,
+                code_type(tone),
+                marks,
+                CaretLook::default(),
+            );
+        },
+    );
 }
 
 /// The tint behind a line, the stronger one behind its number, and the colour of the number.
@@ -390,7 +395,7 @@ fn tints(kind: Option<Kind>) -> (Option<Tone>, Option<Tone>, Role) {
 #[track_caller]
 fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<FocusId>) {
     let (_, tint, tone) = tints(kind);
-    let mut own = Modifier::new().w(11);
+    let mut own = Modifier::new().fill_max_height().w(11);
     own = match id.filter(|_| number.is_some()) {
         Some(id) => {
             let looks = Looks::new().hover(Role::Accent);
@@ -409,13 +414,15 @@ fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<FocusId>) {
         },
     };
     let shown_number = number.map(|number| number.to_string()).unwrap_or_default();
-    flex_row(
+    row_arranged(
         own.pad_side(Side::Right, 2),
-        Flex::new().items_start().justify_end(),
+        Arrangement::End,
+        Alignment::Start,
         move || {
-            flex_row(
+            row_arranged(
                 Modifier::new().h(5),
-                Flex::new().items_center(),
+                Arrangement::Start,
+                Alignment::Center,
                 move || {
                     label(shown_number, code_type(tone));
                 },
@@ -428,9 +435,10 @@ fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<FocusId>) {
 #[track_caller]
 fn code(content: &str, marks: Vec<Mark>, columns: usize) {
     let content = shown(content);
-    flex_column(
-        Modifier::new().grow().clip_to(Radius::None).pad_x(3),
-        Flex::new(),
+    column_arranged(
+        Modifier::new().weight(1.0).clip_to(Radius::None).pad_x(3),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             for piece in pieces(&content, columns) {
                 let within: Vec<Mark> = marks
@@ -443,12 +451,13 @@ fn code(content: &str, marks: Vec<Mark>, columns: usize) {
                     })
                     .collect();
                 let text = &content[piece];
-                flex_row(
-                    Modifier::new().h(5),
-                    Flex::new().items_center(),
+                row_arranged(
+                    Modifier::new().fill_max_width().h(5),
+                    Arrangement::Start,
+                    Alignment::Center,
                     move || {
                         marked_line(
-                            Modifier::new().grow(),
+                            Modifier::new().weight(1.0),
                             text,
                             code_type(Role::Text).truncate(),
                             within,
@@ -490,36 +499,42 @@ fn half(
     } else {
         fill
     };
-    let mut own = Modifier::new().grow().h(5.0 * lines as f32);
+    let mut own = Modifier::new().weight(1.0).h(5.0 * lines as f32);
     if let Some(fill) = fill {
         own = own.fill(fill);
     }
     if new {
         own = own.stroke_side(Side::Left, 1.0, Role::Border);
     }
-    flex_row(own.clip_to(Radius::None), Flex::new(), move || {
-        gutter(
-            number,
-            kind,
-            number.map(|number| gutter_id(change, new, number)),
-        );
-        code(content, marks, columns);
-    });
+    row_arranged(
+        own.clip_to(Radius::None),
+        Arrangement::Start,
+        Alignment::Start,
+        move || {
+            gutter(
+                number,
+                kind,
+                number.map(|number| gutter_id(change, new, number)),
+            );
+            code(content, marks, columns);
+        },
+    );
 }
 
 /// Emits the row of a hunk header.
 #[track_caller]
 fn hunk_row(header: &str) {
-    flex_row(
+    row_arranged(
         Modifier::new()
             .fill_max_width()
             .h(5)
             .fill(Role::Surface)
             .pad_x(3),
-        Flex::new().items_center(),
+        Arrangement::Start,
+        Alignment::Center,
         || {
             label_with(
-                Modifier::new().grow(),
+                Modifier::new().weight(1.0),
                 header,
                 code_type(Role::Subtle).truncate(),
             );
@@ -539,9 +554,10 @@ fn diff_row(
     let lines = row_height(row_of, columns);
     match row_of {
         Row::Hunk(header) => hunk_row(header),
-        Row::Pair(old, new) => flex_row(
+        Row::Pair(old, new) => row_arranged(
             Modifier::new().fill_max_width().h(5.0 * lines as f32),
-            Flex::new(),
+            Arrangement::Start,
+            Alignment::Start,
             || {
                 half(
                     old.as_ref(),
@@ -566,36 +582,50 @@ fn diff_row(
     }
 }
 
-/// Emits a card of a note, drawn by `card`, under the column it is about when it is about lines and across the file when it is not.
+/// Emits a card of a note, drawn by `card`, under the column it is about when it is about lines and across the file when it is not; the blank beside it and the card share the room left after the card's side margins.
 #[track_caller]
 fn under(range: Option<Range>, card: impl FnOnce()) {
-    let blank = || rustle::spacer(Modifier::new().grow());
-    let boxed = Modifier::new().grow().pad(2);
-    flex_row(
+    let blank = || rustle::spacer(Modifier::new().weight(1.0));
+    row_arranged(
         Modifier::new().fill_max_width(),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         move || match range {
             Some(range) if range.new => {
                 blank();
-                flex_column(boxed, Flex::new(), card);
+                margined(card);
             }
             Some(_) => {
-                flex_column(boxed, Flex::new(), card);
+                margined(card);
                 blank();
             }
-            None => flex_column(boxed, Flex::new(), card),
+            None => margined(card),
         },
     );
 }
 
-/// Emits the frame of a note: a rounded box on the panel colour, padded when `padded`, laying out what `content` emits as `flex` says.
+/// Emits the card `card` draws in a weighted share of its row, with two steps of margin on every side, the side margins kept out of the share.
 #[track_caller]
-fn card(padded: bool, flex: Flex, content: impl FnOnce()) {
+fn margined(card: impl FnOnce()) {
+    rustle::spacer(Modifier::new().w(2));
+    column_arranged(
+        Modifier::new().weight(1.0).pad_y(2),
+        Arrangement::Start,
+        Alignment::Start,
+        card,
+    );
+    rustle::spacer(Modifier::new().w(2));
+}
+
+/// Emits the frame of a note: a rounded box on the panel colour, padded when `padded`, spreading what `content` emits by `arrangement`.
+#[track_caller]
+fn card(padded: bool, arrangement: Arrangement, content: impl FnOnce()) {
     let own = Modifier::new()
+        .fill_max_width()
         .fill_rounded(Role::Surface, Radius::Lg)
         .stroke(Role::Border, Radius::Lg);
     let own = if padded { own.pad(3) } else { own };
-    flex_column(own, flex, content);
+    column_arranged(own, arrangement, Alignment::Start, content);
 }
 
 /// Emits a note waiting to be sent: which lines it is about, that it is unsent, a button to take it back, and what it says.
@@ -606,18 +636,21 @@ fn comment_card(index: usize, comment: &Comment, width: f32) {
         .map_or_else(|| "Whole file".to_owned(), |range| range.label());
     let body = wrap(&comment.text, 13, width);
     under(comment.range, || {
-        card(false, Flex::new(), || {
-            flex_row(
+        card(false, Arrangement::Start, || {
+            row_arranged(
                 Modifier::new()
+                    .fill_max_width()
                     .h(8)
                     .stroke_side(Side::Bottom, 1.0, Role::Border)
                     .pad_x(3),
-                Flex::new().items_center().gap(sp(2)),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Center,
                 || {
                     line(about, 12, 1.4, Role::Subtle);
-                    flex_column(
+                    column_arranged(
                         Modifier::new().stroke(Role::Border, Radius::Full).pad_x(2),
-                        Flex::new(),
+                        Arrangement::Start,
+                        Alignment::Start,
                         || line("Not sent", 11, 1.4, Role::Muted),
                     );
                     spacer();
@@ -625,11 +658,16 @@ fn comment_card(index: usize, comment: &Comment, width: f32) {
                         .build();
                 },
             );
-            flex_column(Modifier::new().pad_x(3).pad_y(2.5), Flex::new(), || {
-                for text in &body {
-                    line(text, 13, 1.54, Role::Text);
-                }
-            });
+            column_arranged(
+                Modifier::new().pad_x(3).pad_y(2.5),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    for text in &body {
+                        line(text, 13, 1.54, Role::Text);
+                    }
+                },
+            );
         });
     });
 }
@@ -642,7 +680,7 @@ fn comment_box(state: &WorkspaceState, target: CommentTarget) {
         .map_or_else(|| "this file".to_owned(), |range| range.label());
     let ready = !state.comment_text.text().trim().is_empty();
     under(target.range, || {
-        card(true, Flex::new().gap(sp(2.5)), || {
+        card(true, Arrangement::SpacedBy(sp(2.5)), || {
             label(
                 format!("Comment on {about}"),
                 Type::new(13)
@@ -654,9 +692,10 @@ fn comment_box(state: &WorkspaceState, target: CommentTarget) {
             Input::new(&state.comment_text, COMMENT_FIELD)
                 .placeholder("Tell the agent what to change")
                 .build();
-            flex_row(
-                Modifier::new(),
-                Flex::new().items_center().gap(sp(2)),
+            row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Center,
                 || {
                     spacer();
                     Button::new("Cancel", COMMENT_CANCEL)
@@ -692,69 +731,114 @@ enum Block<'a> {
     Note(usize, &'a Comment),
 }
 
-/// Emits the header of `change`, the change at `index`, unfolded when `open`, with the count of `notes` on it; when the header is too narrow the chevron and the file icon give up their room first, then the folder, which is cut off at the edge.
+/// How wide, in steps, the chevron and the file icon of a file header are.
+const HEADER_MARKS: [f32; 2] = [3.5, 4.0];
+
+/// Emits the parts of a file header that answer to its fold, in `room` logical pixels across: the chevron, open when `open`, the icon of the file `name` and `name` itself, then its `directory`.
+///
+/// When they do not fit, the chevron and the icon give up their width, in proportion to it, as far as the overflow goes or until they have none; the name then takes what it needs of what is left, cut short at its edge, and the folder the rest, cut off at the header's edge.
 #[track_caller]
-fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
-    let mut own = Modifier::new().h(10).fill(Role::Surface);
-    if open {
-        own = own.stroke_side(Side::Bottom, 1.0, Role::Border);
-    }
-    flex_row(own.pad_x(3), Flex::new().items_center().gap(sp(2)), || {
-        flex_row(
-            Modifier::new()
-                .grow()
-                .clip_to(Radius::None)
-                .cursor(CursorIcon::Pointer)
-                .target(FocusId(DIFF_FOLD_BASE + index as u64)),
-            Flex::new().items_center().gap(sp(2)),
-            || {
-                let giving = || Modifier::new().shrink(1.0).clip_to(Radius::None);
-                let first = || Modifier::new().shrink(1000.0).clip_to(Radius::None);
-                flex_column(first(), Flex::new(), || {
+fn heading_parts(name: &str, directory: &str, open: bool, room: f32) {
+    let name_kind = Type::new(13)
+        .ratio(1.4)
+        .tone(Role::Text)
+        .truncate()
+        .medium();
+    let directory_kind = Type::new(11).ratio(1.4).mono().tone(Role::Subtle);
+    let name_width = measure(name, name_kind).0.ceil();
+    let directory_width = measure(directory, directory_kind).0.ceil();
+    let marks = sp(HEADER_MARKS[0] + HEADER_MARKS[1]);
+    let gaps = sp(2) * 3.0;
+    let over = (marks + name_width + directory_width + gaps - room).max(0.0);
+    let kept = (1.0 - over / marks).clamp(0.0, 1.0);
+    row_arranged(
+        Modifier::new().width_in(0.0, room),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
+        || {
+            column_arranged(
+                Modifier::new()
+                    .width(sp(HEADER_MARKS[0]) * kept)
+                    .clip_to(Radius::None),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
                     icon(
                         if open {
                             IconName::ChevronDown
                         } else {
                             IconName::ChevronRight
                         },
-                        3.5,
+                        HEADER_MARKS[0],
                         Role::Muted,
                     );
-                });
-                flex_column(first(), Flex::new(), || file_icon(change.name(), 4.0));
-                label_with(
-                    Modifier::new().keep(),
-                    change.name(),
-                    Type::new(13)
-                        .ratio(1.4)
-                        .tone(Role::Text)
-                        .truncate()
-                        .medium(),
-                );
-                flex_column(giving(), Flex::new(), || {
-                    label(
-                        change.directory(),
-                        Type::new(11).ratio(1.4).mono().tone(Role::Subtle),
-                    );
-                });
-            },
-        );
-        if notes > 0 {
-            flex_row(
-                Modifier::new(),
-                Flex::new().items_center().gap(sp(1)),
-                || {
-                    icon(IconName::Message, 3.5, Role::Muted);
-                    line(notes.to_string(), 11, 1.4, Role::Muted);
                 },
             );
-        }
-        Tally::new(change.added(), change.removed())
-            .size(11)
-            .build();
-        viewed_button(change.viewed, FocusId(VIEWED_BASE + index as u64));
-        Button::icon(IconName::Message, FocusId(COMMENT_FILE_BASE + index as u64)).build();
-    });
+            column_arranged(
+                Modifier::new()
+                    .width(sp(HEADER_MARKS[1]) * kept)
+                    .clip_to(Radius::None),
+                Arrangement::Start,
+                Alignment::Start,
+                || file_icon(name, HEADER_MARKS[1]),
+            );
+            label(name, name_kind);
+            column_arranged(
+                Modifier::new().clip_to(Radius::None),
+                Arrangement::Start,
+                Alignment::Start,
+                || label(directory, directory_kind),
+            );
+        },
+    );
+}
+
+/// Emits the header of `change`, the change at `index`, unfolded when `open`, with the count of `notes` on it; when the header is too narrow the chevron and the file icon give up their room first, then the folder, which is cut off at the edge.
+#[track_caller]
+fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
+    let mut own = Modifier::new().fill_max_width().h(10).fill(Role::Surface);
+    if open {
+        own = own.stroke_side(Side::Bottom, 1.0, Role::Border);
+    }
+    row_arranged(
+        own.pad_x(3),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
+        || {
+            row_arranged(
+                Modifier::new()
+                    .weight(1.0)
+                    .clip_to(Radius::None)
+                    .cursor(CursorIcon::Pointer)
+                    .target(FocusId(DIFF_FOLD_BASE + index as u64)),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Center,
+                || {
+                    let name = change.name().to_owned();
+                    let directory = change.directory().to_owned();
+                    rustle::with_constraints(Modifier::new(), move |room| {
+                        heading_parts(&name, &directory, open, room.max_width);
+                    });
+                },
+            );
+            if notes > 0 {
+                row_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(sp(1)),
+                    Alignment::Center,
+                    || {
+                        icon(IconName::Message, 3.5, Role::Muted);
+                        line(notes.to_string(), 11, 1.4, Role::Muted);
+                    },
+                );
+            }
+            Tally::new(change.added(), change.removed())
+                .size(11)
+                .build();
+            viewed_button(change.viewed, FocusId(VIEWED_BASE + index as u64));
+            Button::icon(IconName::Message, FocusId(COMMENT_FILE_BASE + index as u64)).build();
+        },
+    );
 }
 
 /// Emits one changed file: its header, and, unless it is folded away, its lines with the notes on them.
@@ -782,25 +866,28 @@ fn file(
         .filter(|(_, comment)| comment.path == change.path)
         .collect();
     let target = state.comment_target.filter(|target| target.change == index);
-    flex_column(
+    column_arranged(
         Modifier::new()
+            .fill_max_width()
             .pad_x(4)
             .pad_side(Side::Top, 4)
             .stroke(Role::Border, Radius::Lg)
             .clip_to(Radius::None),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             file_header(change, index, open, mine.len());
             if !open {
                 return;
             }
             if !change.loaded {
-                flex_row(
+                row_arranged(
                     Modifier::new()
                         .h(change.expected_rows() as f32 * ROW / 4.0)
                         .pad_x(3)
                         .pad_y(2),
-                    Flex::new(),
+                    Arrangement::Start,
+                    Alignment::Start,
                     || line("Reading the diff…", 12, 1.4, Role::Subtle),
                 );
                 return;
@@ -902,12 +989,13 @@ fn summary(session: &Session) {
         .count();
     let count = session.changes.len();
     let waiting = session.comments.len();
-    flex_row(
+    rustle::layout(
         Modifier::new()
+            .fill_max_width()
             .h(10)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(4),
-        Flex::new().items_center().gap(sp(3)),
+        SummaryLayout { gap: sp(3) },
         || {
             line(
                 format!("{count} file{} changed", if count == 1 { "" } else { "s" }),
@@ -918,7 +1006,6 @@ fn summary(session: &Session) {
             Tally::new(session.added(), session.removed())
                 .size(12)
                 .build();
-            spacer();
             line(format!("{viewed} of {count} viewed"), 12, 1.4, Role::Subtle);
             Button::new(
                 if waiting > 0 {
@@ -935,6 +1022,73 @@ fn summary(session: &Session) {
     );
 }
 
+/// How the summary strip lays out its four children: the count of files and the tally at the
+/// start, the count of files read and the send button at the end, `gap` apart and at least two
+/// gaps between the two groups.
+///
+/// When they do not fit, the two counts, which cut themselves short, give up the overflow in
+/// proportion to their widths; the tally and the button keep theirs.
+struct SummaryLayout {
+    /// The least room between neighbours, in logical pixels.
+    gap: f32,
+}
+
+impl rustle::Layout for SummaryLayout {
+    /// Measures the tally and the button at their own widths, the counts at their own widths or
+    /// their shares of what is left, and centres everything down the strip.
+    fn measure(
+        &self,
+        children: &mut rustle::Children,
+        constraints: rustle::Constraints,
+    ) -> rustle::LayoutResult {
+        let height = constraints.max_height;
+        let room = constraints.max_width;
+        let natural: Vec<f32> = (0..children.len())
+            .map(|index| children.max_intrinsic_width(index, height))
+            .collect();
+        let fixed = natural[1] + natural[3] + 4.0 * self.gap;
+        let wanted = natural[0] + natural[2];
+        let scale = if wanted > 0.0 {
+            ((room - fixed).max(0.0) / wanted).min(1.0)
+        } else {
+            1.0
+        };
+        let widths = [
+            natural[0] * scale,
+            natural[1],
+            natural[2] * scale,
+            natural[3],
+        ];
+        let lefts = [
+            0.0,
+            widths[0] + self.gap,
+            room - widths[3] - self.gap - widths[2],
+            room - widths[3],
+        ];
+        let positions = widths
+            .iter()
+            .zip(lefts)
+            .enumerate()
+            .map(|(index, (width, left))| {
+                let size = children.measure(
+                    index,
+                    rustle::Constraints {
+                        min_width: 0.0,
+                        max_width: *width,
+                        min_height: 0.0,
+                        max_height: height,
+                    },
+                );
+                rustle::Offset::new(left, (height - size.height) / 2.0)
+            })
+            .collect();
+        rustle::LayoutResult {
+            size: rustle::Size::new(room, height),
+            positions,
+        }
+    }
+}
+
 /// Emits the diff of `session` in a view `width` by `height` logical pixels: a summary strip, then each changed file, of which only those in or near the view are built.
 #[track_caller]
 pub fn diff(state: &WorkspaceState, session: &Session, width: f32, height: f32) {
@@ -947,24 +1101,32 @@ pub fn diff(state: &WorkspaceState, session: &Session, width: f32, height: f32) 
         state.diff_scroll.min(total - view) - OVERSCAN * pixels(),
         state.diff_scroll.min(total) + view + OVERSCAN * pixels(),
     );
-    flex_column(Modifier::new().grow(), Flex::new(), || {
-        summary(session);
-        scroll_area(
-            Modifier::new().grow(),
-            Scroll::from_start(DIFF_SCROLL, state.diff_scroll),
-            || {
-                flex_column(
-                    Modifier::new().fill_max_width().pad_side(Side::Bottom, 4),
-                    Flex::new(),
-                    || {
-                        let mut top = 0.0;
-                        for (index, tall) in heights.iter().enumerate() {
-                            rustle::key(index, || file(state, session, index, width, top, window));
-                            top += tall;
-                        }
-                    },
-                );
-            },
-        );
-    });
+    column_arranged(
+        Modifier::new().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            summary(session);
+            scroll_area(
+                Modifier::new().fill_max_width().weight(1.0),
+                Scroll::from_start(DIFF_SCROLL, state.diff_scroll),
+                || {
+                    column_arranged(
+                        Modifier::new().fill_max_width().pad_side(Side::Bottom, 4),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            let mut top = 0.0;
+                            for (index, tall) in heights.iter().enumerate() {
+                                rustle::key(index, || {
+                                    file(state, session, index, width, top, window)
+                                });
+                                top += tall;
+                            }
+                        },
+                    );
+                },
+            );
+        },
+    );
 }

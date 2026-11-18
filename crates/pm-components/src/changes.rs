@@ -3,7 +3,7 @@
 use crate::kit::sp;
 use pm_field::Edit;
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::button::Variant;
 use crate::excerpts::{
@@ -50,7 +50,7 @@ pub struct Changes<'a> {
     /// What the caller puts around its box.
     modifier: Modifier,
     /// How the column holding the strip and the files lays them out.
-    flex: Flex,
+    arranged: Option<(Arrangement, Alignment)>,
 }
 
 impl<'a> Changes<'a> {
@@ -66,7 +66,7 @@ impl<'a> Changes<'a> {
             mode,
             size: Size::default(),
             modifier: Modifier::new(),
-            flex: Flex::new(),
+            arranged: None,
         }
     }
 
@@ -88,9 +88,9 @@ impl<'a> Changes<'a> {
         self
     }
 
-    /// The view laying out the strip and the files as `flex` says instead of its own way.
-    pub fn flex(mut self, flex: Flex) -> Self {
-        self.flex = flex;
+    /// The view spreading its children by `arrangement` and placing them across by `alignment` in place of its own.
+    pub fn arranged(mut self, arrangement: Arrangement, alignment: Alignment) -> Self {
+        self.arranged = Some((arrangement, alignment));
         self
     }
 
@@ -118,12 +118,14 @@ impl<'a> Changes<'a> {
         let undoes =
             matches!(&excerpts.source, Source::Revision { turn: Some(_), .. }) && count > 0;
         let mode = self.mode;
-        flex_row(
+        row_arranged(
             Modifier::new()
+                .fill_max_width()
                 .height(STRIP)
                 .stroke_side(Side::Bottom, 1.0, Role::Border)
                 .pad_x(4),
-            Flex::new().items_center().gap(sp(3)),
+            Arrangement::SpacedBy(sp(3)),
+            Alignment::Center,
             move || match mode {
                 Mode::Timeline => {
                     glyph(IconName::History, 3.5, Role::Muted);
@@ -165,11 +167,19 @@ impl<'a> Changes<'a> {
     /// Emits the view: the strip, then every file with its lines.
     #[track_caller]
     pub fn build(self) {
-        let own = Modifier::new().grow();
-        flex_column(self.modifier.clone().chain(own), self.flex, || {
-            self.strip();
-            file_list(self.state, (self.height - STRIP).max(0.0), self.size);
-        });
+        let own = Modifier::new().weight(1.0);
+        let (arrangement, alignment) = self
+            .arranged
+            .unwrap_or((Arrangement::Start, Alignment::Start));
+        column_arranged(
+            self.modifier.clone().chain(own),
+            arrangement,
+            alignment,
+            || {
+                self.strip();
+                file_list(self.state, (self.height - STRIP).max(0.0), self.size);
+            },
+        );
     }
 }
 

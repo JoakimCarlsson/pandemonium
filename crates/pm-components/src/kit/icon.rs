@@ -396,12 +396,11 @@ pub fn icon_with(modifier: Modifier, name: IconName, pixels: f32, tone: impl Int
 }
 
 /// Emits the vector outline `path`, such as `phosphor::X`, in a square
-/// `pixels` logical pixels on a side, tinted with `tone`, with `modifier` around it, giving
-/// up room when its row runs out of it as a CSS flex item does.
+/// `pixels` logical pixels on a side, tinted with `tone`, with `modifier` around it.
 #[track_caller]
 pub fn path_with(modifier: Modifier, path: Path, pixels: f32, tone: impl Into<Tone>) {
     let color = theme::color(tone);
-    rustle::canvas(modifier.size(pixels, pixels).shrink(1.0), move |canvas| {
+    rustle::canvas(modifier.size(pixels, pixels), move |canvas| {
         let side = canvas.width().min(canvas.height());
         let (x, y) = (
             (canvas.width() - side) / 2.0,

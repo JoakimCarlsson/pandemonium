@@ -1,7 +1,8 @@
 //! The changed files in groups: staged, tracked and untracked, each file with how it changed, a way to open it and a box that stages it.
 
 use rustle::Modifier;
-use rustle::{Flex, flex_row};
+use rustle::{Alignment, Arrangement, row_arranged};
+
 use std::collections::HashSet;
 
 use crate::file_icon::file_icon;
@@ -96,13 +97,15 @@ fn heading(changes: &[Change], group: Group, repository: Option<&str>) {
         .iter()
         .filter(|&&index| changes[index].fully_staged())
         .count();
-    flex_row(
+    row_arranged(
         Modifier::new()
+            .fill_max_width()
             .pad_side(Side::Left, 3)
             .pad_side(Side::Right, 3)
             .pad_side(Side::Top, 2)
             .pad_side(Side::Bottom, 1),
-        Flex::new().items_center().justify_between(),
+        Arrangement::SpaceBetween,
+        Alignment::Center,
         || {
             label(
                 format!("{} ({})", group.label(), files.len()),
@@ -274,6 +277,7 @@ fn file_row(state: &WorkspaceState, change: &Change, index: usize, name: &str, d
     let letter = change.mark();
     let tone = mark_color(letter);
     Tile::new(FocusId(FILE_BASE + index as u64))
+        .modifier(Modifier::new().fill_max_width())
         .selected(state.git.marked.contains(&index))
         .height(6.5)
         .gap(2.0)
@@ -290,7 +294,7 @@ fn file_row(state: &WorkspaceState, change: &Change, index: usize, name: &str, d
                 None => file_icon(name, 3.5),
             }
             label_with(
-                Modifier::new().grow(),
+                Modifier::new().weight(1.0),
                 name,
                 Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
             );
@@ -351,6 +355,7 @@ fn folder_row(
     let added = inside.iter().map(|&index| changes[index].added()).sum();
     let removed = inside.iter().map(|&index| changes[index].removed()).sum();
     Tile::new(FocusId(FOLDER_BASE + position as u64))
+        .modifier(Modifier::new().fill_max_width())
         .height(6.5)
         .gap(2.0)
         .radius(Radius::Sm)
@@ -379,7 +384,7 @@ fn folder_row(
                 glyph(IconName::Git, 3.5, Role::Muted);
             }
             label_with(
-                Modifier::new().grow(),
+                Modifier::new().weight(1.0),
                 &folder.name,
                 Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
             );

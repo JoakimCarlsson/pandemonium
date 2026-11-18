@@ -1,8 +1,8 @@
 //! Adding a project: the modal that offers a folder on this computer or a repository to clone, found through the accounts and organizations on GitHub.
 
 use pm_field::{Edit, Field};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row};
 
 use crate::Input;
 use crate::Modal;
@@ -331,18 +331,23 @@ fn panel(open: &Adder, scrolled: f32) {
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(4)
     };
-    flex_row(banded(), Flex::new().items_center().gap(sp(2)), || {
-        line("Add project", 13, 1.4, Role::Text);
-        if let Some(hint) = heading_hint(open) {
-            line(hint, 13, 1.4, Role::Subtle);
-        }
-    });
+    row_arranged(
+        banded(),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
+        || {
+            line("Add project", 13, 1.4, Role::Text);
+            if let Some(hint) = heading_hint(open) {
+                line(hint, 13, 1.4, Role::Subtle);
+            }
+        },
+    );
     if open.step != Step::Choices {
-        flex_row(banded(), Flex::new().items_center(), || {
+        row_arranged(banded(), Arrangement::Start, Alignment::Center, || {
             Input::new(&open.field, ADDER_FIELD)
                 .variant(input::Variant::Ghost)
                 .placeholder(open.placeholder())
-                .modifier(Modifier::new().grow())
+                .modifier(Modifier::new().weight(1.0))
                 .build();
         });
     }
@@ -350,9 +355,10 @@ fn panel(open: &Adder, scrolled: f32) {
         Modifier::new().height_in(0.0, sp(LIST_HEIGHT / 4.0)),
         Scroll::from_start(MENU_SCROLL, scrolled),
         || {
-            flex_column(
+            column_arranged(
                 Modifier::new().fill_max_width().pad(1.5),
-                Flex::new(),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
                     for (index, row) in open.rows().iter().enumerate() {
                         let id = if open.step == Step::Choices {
@@ -382,9 +388,10 @@ fn heading_hint(open: &Adder) -> Option<String> {
 /// Emits the line under the rows: a spinner and what is being waited for, or what is the matter.
 #[track_caller]
 pub(crate) fn status_line(status: Status) {
-    flex_row(
+    row_arranged(
         Modifier::new().pad_x(2.5).pad_y(2),
-        Flex::new().items_center().gap(sp(3)),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
         || match status {
             Status::Loading(message) => {
                 spinner(4.0, Role::Muted);
@@ -404,29 +411,36 @@ fn entry(row_of: &Row, id: FocusId, selected: bool) {
     } else {
         looks
     };
-    flex_row(
+    row_arranged(
         Modifier::new()
+            .fill_max_width()
             .looks_of(looks, id)
             .cursor(CursorIcon::Pointer)
             .target(id)
             .pad_x(2.5)
             .pad_y(1.5),
-        Flex::new().items_center().gap(sp(3)),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
         || {
             glyph(row_of.icon, 4.0, Role::Muted);
-            flex_column(Modifier::new().grow(), Flex::new(), || {
-                label(
-                    row_of.name.clone(),
-                    Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
-                );
-                if !row_of.detail.is_empty() {
-                    label_with(
-                        Modifier::new(),
-                        row_of.detail.clone(),
-                        Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
+            column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    label(
+                        row_of.name.clone(),
+                        Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
                     );
-                }
-            });
+                    if !row_of.detail.is_empty() {
+                        label_with(
+                            Modifier::new(),
+                            row_of.detail.clone(),
+                            Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
+                        );
+                    }
+                },
+            );
         },
     );
 }

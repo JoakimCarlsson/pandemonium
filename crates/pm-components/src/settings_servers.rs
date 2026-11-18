@@ -3,8 +3,8 @@
 use crate::kit::sp;
 use pm_field::{Edit, Field};
 use pm_protocol::{McpServer, ToolListing};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row};
 
 use crate::agent_list::AgentEntry;
 use crate::button::Variant;
@@ -622,48 +622,60 @@ fn title_type(pixels: u32, tone: Role) -> Type {
 /// Emits the words `content` breaks into, one line under another, in no more than `room` logical pixels across.
 #[track_caller]
 pub(crate) fn paragraph(content: &str, room: f32) {
-    flex_column(Modifier::new(), Flex::new(), || {
-        for words in wrap(content, 13, room.min(PARAGRAPH_WIDTH)) {
-            line(words, 13, 1.5, Role::Muted);
-        }
-    });
+    column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for words in wrap(content, 13, room.min(PARAGRAPH_WIDTH)) {
+                line(words, 13, 1.5, Role::Muted);
+            }
+        },
+    );
 }
 
 /// Emits the breadcrumb over the title of `section`'s page, and the title.
 #[track_caller]
 pub(crate) fn page_title(section: Section) {
-    flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
-        if let Some(parent) = section.parent() {
-            line(parent.title(), 12, 1.4, Role::Muted);
-        }
-        label(
-            section.title(),
-            Type::new(22)
-                .ratio(1.3)
-                .tone(Role::Text)
-                .truncate()
-                .medium(),
-        );
-    });
+    column_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Start,
+        || {
+            if let Some(parent) = section.parent() {
+                line(parent.title(), 12, 1.4, Role::Muted);
+            }
+            label(
+                section.title(),
+                Type::new(22)
+                    .ratio(1.3)
+                    .tone(Role::Text)
+                    .truncate()
+                    .medium(),
+            );
+        },
+    );
 }
 
 /// Emits what the right side of the window holds under the title of `section`: what it is for, then its settings, `room` logical pixels across, scrolled as the page showing is.
 #[track_caller]
 pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) {
     scroll_area(
-        Modifier::new().grow().clip_to(Radius::None),
+        Modifier::new().weight(1.0).clip_to(Radius::None),
         Scroll::from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
         || {
-            flex_column(
+            column_arranged(
                 Modifier::new()
                     .fill_max_width()
                     .pad_x(8)
                     .pad_side(Side::Bottom, 6),
-                Flex::new(),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
-                    flex_column(
+                    column_arranged(
                         Modifier::new().fill_max_width(),
-                        Flex::new().gap(sp(4)),
+                        Arrangement::SpacedBy(sp(4)),
+                        Alignment::Start,
                         || {
                             section_content(state, section, room);
                         },
@@ -770,11 +782,19 @@ fn release_note(state: &WorkspaceState, room: f32) {
             false,
         ),
     };
-    flex_row(
-        Modifier::new(),
-        Flex::new().items_center().justify_between().gap(sp(3)),
+    row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
         || {
-            wrapped_note(&said, (room - 160.0).max(120.0));
+            row_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    wrapped_note(&said, (room - 160.0).max(120.0));
+                },
+            );
             if newer {
                 Button::new("Open Release Page", SETTINGS_RELEASE)
                     .variant(Variant::Outline)
@@ -803,19 +823,25 @@ fn count_of(state: &WorkspaceState, section: Section) -> String {
 pub(crate) fn boxed(rows: impl FnOnce()) {
     let rows = rustle::collect(rows);
     let last = rows.len().saturating_sub(1);
-    flex_column(
+    column_arranged(
         Modifier::new()
+            .fill_max_width()
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
             .clip_to(Radius::None),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             for (place, mut held) in rows.into_iter().enumerate() {
-                if place != last {
-                    held.modifier = Modifier::new()
-                        .stroke_side(Side::Bottom, 1.0, Role::Border)
-                        .chain(held.modifier);
-                }
+                let ruled = if place == last {
+                    Modifier::new()
+                } else {
+                    Modifier::new().stroke_side(Side::Bottom, 1.0, Role::Border)
+                };
+                held.modifier = Modifier::new()
+                    .fill_max_width()
+                    .chain(ruled)
+                    .chain(held.modifier);
                 rustle::emit(held);
             }
         },
@@ -838,17 +864,23 @@ pub(crate) fn card(section: Section, count: String) {
     Tile::new(section.id())
         .height(20.0)
         .radius(Radius::Lg)
-        .modifier(Modifier::new().fill_rounded(Role::Surface, Radius::Lg))
+        .modifier(
+            Modifier::new()
+                .fill_max_width()
+                .fill_rounded(Role::Surface, Radius::Lg),
+        )
         .inner(Modifier::new().stroke(Role::Border, Radius::Lg).pad(4))
-        .flex(Flex::new().items_start())
+        .alignment(Alignment::Start)
         .build_with(|| {
-            flex_column(
-                Modifier::new().grow(),
-                Flex::new().items_start().gap(sp(1)),
+            column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::SpacedBy(sp(1)),
+                Alignment::Start,
                 || {
-                    flex_row(
+                    row_arranged(
                         Modifier::new().fill_max_width(),
-                        Flex::new().items_center().justify_between(),
+                        Arrangement::SpaceBetween,
+                        Alignment::Center,
                         || {
                             label(section.title(), title_type(14, Role::Text));
                             line(count, 12, 1.4, Role::Muted);
@@ -863,9 +895,10 @@ pub(crate) fn card(section: Section, count: String) {
 /// Emits a row of a boxed list: what `content` emits side by side, with room around it.
 #[track_caller]
 pub(crate) fn flat_row(content: impl FnOnce()) {
-    flex_row(
+    row_arranged(
         Modifier::new().pad_x(3).pad_y(3),
-        Flex::new().items_center().justify_between().gap(sp(3)),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
         content,
     );
 }
@@ -882,7 +915,7 @@ fn list(state: &WorkspaceState, section: Section, room: f32) {
         Button::new("Learn more about MCP servers", SETTINGS_DOCS)
             .variant(Variant::Ghost)
             .size(Size::Sm)
-            .modifier(Modifier::new().placed(BoxAlignment::TopStart))
+            .modifier(Modifier::new().align(BoxAlignment::TopStart))
             .build();
     }
     search_box(state, section);
@@ -890,9 +923,10 @@ fn list(state: &WorkspaceState, section: Section, room: f32) {
         form_node(form, section);
     }
     let installed = installed_rows(state, &needle);
-    flex_row(
-        Modifier::new(),
-        Flex::new().items_center().justify_between(),
+    row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpaceBetween,
+        Alignment::Center,
         || {
             heading(
                 "Installed",
@@ -981,12 +1015,13 @@ fn heading(title: &str, count: usize, open: bool, toggle: FocusId) {
     } else {
         IconName::ChevronRight
     };
-    flex_row(
+    row_arranged(
         Modifier::new()
             .h(9)
             .cursor(CursorIcon::Pointer)
             .target(toggle),
-        Flex::new().items_center().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
         || {
             glyph(chevron, 4.0, Role::Muted);
             label(title, title_type(15, Role::Text));
@@ -998,9 +1033,10 @@ fn heading(title: &str, count: usize, open: bool, toggle: FocusId) {
 /// Emits the name of a list that does not fold, with how many rows it holds.
 #[track_caller]
 pub(crate) fn heading_only(title: &str, count: usize) {
-    flex_row(
+    row_arranged(
         Modifier::new().h(9),
-        Flex::new().items_center().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
         || {
             label(title, title_type(15, Role::Text));
             Badge::new(count.to_string()).build();
@@ -1017,11 +1053,16 @@ pub(crate) fn note(message: &str) {
 /// Emits a quiet note saying `message`, broken into lines no more than `room` logical pixels across.
 #[track_caller]
 pub(crate) fn wrapped_note(message: &str, room: f32) {
-    flex_column(Modifier::new(), Flex::new(), || {
-        for words in wrap(message, 12, room) {
-            line(words, 12, 1.4, Role::Muted);
-        }
-    });
+    column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for words in wrap(message, 12, room) {
+                line(words, 12, 1.4, Role::Muted);
+            }
+        },
+    );
 }
 
 /// How a tool server is reached, in the words of its row: what kind it is, where, and how many variables it takes.
@@ -1156,9 +1197,10 @@ fn offer(index: usize, title: &str, description: &str, how: &str, action: &str, 
         }
     });
     flat_row(|| {
-        flex_column(
-            Modifier::new().grow().clip_to(Radius::None),
-            Flex::new().gap(sp(1)),
+        column_arranged(
+            Modifier::new().weight(1.0).clip_to(Radius::None),
+            Arrangement::SpacedBy(sp(1)),
+            Alignment::Start,
             || {
                 label(title, title_type(13, Role::Text));
                 label(
@@ -1167,9 +1209,10 @@ fn offer(index: usize, title: &str, description: &str, how: &str, action: &str, 
                 );
             },
         );
-        flex_row(
+        row_arranged(
             Modifier::new(),
-            Flex::new().items_center().gap(sp(3)),
+            Arrangement::SpacedBy(sp(3)),
+            Alignment::Center,
             || {
                 if !how.is_empty() {
                     label(
@@ -1194,13 +1237,15 @@ fn offer(index: usize, title: &str, description: &str, how: &str, action: &str, 
 fn installed_row(shown: InstalledRow) {
     let dim = shown.enabled == Some(false);
     flat_row(|| {
-        flex_column(
-            Modifier::new().grow().clip_to(Radius::None),
-            Flex::new().gap(sp(1)),
+        column_arranged(
+            Modifier::new().weight(1.0).clip_to(Radius::None),
+            Arrangement::SpacedBy(sp(1)),
+            Alignment::Start,
             || {
-                flex_row(
+                row_arranged(
                     Modifier::new(),
-                    Flex::new().items_center().gap(sp(2)),
+                    Arrangement::SpacedBy(sp(2)),
+                    Alignment::Center,
                     || {
                         label(
                             shown.title.as_str(),
@@ -1223,9 +1268,10 @@ fn installed_row(shown: InstalledRow) {
                 );
             },
         );
-        flex_row(
+        row_arranged(
             Modifier::new(),
-            Flex::new().items_center().gap(sp(2)),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
             || {
                 if let (Some(place), Some(on), true) =
                     (shown.place, shown.enabled, shown.switchable)
@@ -1251,19 +1297,22 @@ fn form_node(form: &ServerForm, section: Section) {
         Section::AgentServers => "Environment (NAME=value, separated by spaces)",
         _ => "Environment or headers (NAME=value, separated by spaces)",
     };
-    flex_column(
+    column_arranged(
         Modifier::new()
+            .fill_max_width()
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
             .pad(4),
-        Flex::new().gap(sp(3)),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Start,
         || {
             labelled("Name", &form.name, SETTINGS_NAME, "My server");
             labelled(target, &form.target, SETTINGS_TARGET, "npx my-server");
             labelled(environment, &form.env, SETTINGS_ENV, "TOKEN=abc");
-            flex_row(
+            row_arranged(
                 Modifier::new(),
-                Flex::new().items_center().gap(sp(2)),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Center,
                 || {
                     Button::new("Save", SETTINGS_SAVE)
                         .size(Size::Sm)
@@ -1282,11 +1331,16 @@ fn form_node(form: &ServerForm, section: Section) {
 /// Emits a box under the words that say what is written in it.
 #[track_caller]
 fn labelled(words: &str, field: &Field, id: FocusId, placeholder: &str) {
-    flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
-        line(words, 12, 1.4, Role::Muted);
-        Input::new(field, id)
-            .size(Size::Sm)
-            .placeholder(placeholder)
-            .build();
-    });
+    column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Start,
+        || {
+            line(words, 12, 1.4, Role::Muted);
+            Input::new(field, id)
+                .size(Size::Sm)
+                .placeholder(placeholder)
+                .build();
+        },
+    );
 }

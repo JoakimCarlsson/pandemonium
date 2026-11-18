@@ -1,8 +1,8 @@
 //! Finding text in the page of the browser: the search the engine runs, and the bar over the top right corner of the page that drives it.
 
 use pm_field::{Edit, Field};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{BoxAlignment, Modifier};
-use rustle::{Flex, flex_column, flex_row};
 
 use crate::kit::{IconName, Interactive, Radius, Role, Styled, sp};
 
@@ -154,9 +154,9 @@ impl WorkspaceState {
 pub fn find_bar(search: &PageSearch, page: f32, beside: f32) {
     let (said, tone) = search.tally();
     let field = (page - 2.0 * EDGE - BAR_EXTRA).clamp(FIELD_LEAST, FIELD_WIDTH);
-    flex_row(
+    row_arranged(
         Modifier::new()
-            .placed(BoxAlignment::TopEnd)
+            .align(BoxAlignment::TopEnd)
             .at(-sp((EDGE + beside) / 4.0), sp(2))
             .z_index(40)
             .shadows(&SHADOW, Radius::Md)
@@ -164,18 +164,28 @@ pub fn find_bar(search: &PageSearch, page: f32, beside: f32) {
             .stroke(Role::Border, Radius::Md)
             .target(BROWSER_FIND_BAR)
             .pad(1),
-        Flex::new().items_center().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Center,
         || {
-            flex_column(Modifier::new().width(field), Flex::new(), || {
-                Input::new(&search.query, BROWSER_FIND_FIELD)
-                    .size(Size::Sm)
-                    .placeholder("Find in page")
-                    .invalid(!search.query.text().is_empty() && search.counted && search.total == 0)
-                    .build();
-            });
-            flex_column(
+            column_arranged(
+                Modifier::new().width(field),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    Input::new(&search.query, BROWSER_FIND_FIELD)
+                        .modifier(Modifier::new().fill_max_width())
+                        .size(Size::Sm)
+                        .placeholder("Find in page")
+                        .invalid(
+                            !search.query.text().is_empty() && search.counted && search.total == 0,
+                        )
+                        .build();
+                },
+            );
+            column_arranged(
                 Modifier::new().width(COUNT_WIDTH).pad_x(1),
-                Flex::new(),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
                     line(said, 11, 1.4, tone);
                 },

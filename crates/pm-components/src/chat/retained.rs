@@ -1,6 +1,6 @@
 //! Message layout retained independently of the prompt and other workspace controls.
 
-use rustle::{Flex, flex_column};
+use rustle::{Alignment, Arrangement, column_arranged};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -235,13 +235,16 @@ fn height_of(page: Option<usize>, index: usize, width: f32) -> Option<f32> {
 fn measured(page: Option<usize>, index: usize, width: f32, node: rustle::Node) -> rustle::Node {
     let bits = width.to_bits();
     rustle::compose(move || {
-        flex_column(
-            Modifier::new().on_size_changed(move |size| {
-                HEIGHTS.with_borrow_mut(|heights| {
-                    heights.insert((page, index), (bits, size.height));
-                });
-            }),
-            Flex::new(),
+        column_arranged(
+            Modifier::new()
+                .fill_max_width()
+                .on_size_changed(move |size| {
+                    HEIGHTS.with_borrow_mut(|heights| {
+                        heights.insert((page, index), (bits, size.height));
+                    });
+                }),
+            Arrangement::Start,
+            Alignment::Start,
             move || rustle::emit(node),
         );
     })

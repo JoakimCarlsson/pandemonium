@@ -1,7 +1,7 @@
 //! The handles on the edges between panels, dragged to change how big a panel is, and the sizes they set.
 
+use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_row};
 
 use crate::kit::{FocusId, Hovered, Interactive, Looks, Role, Styled};
 
@@ -72,7 +72,7 @@ pub struct Sash {
     /// What the caller puts around the handle's strip.
     modifier: Modifier,
     /// How the strip lays out the line it lights, when the caller replaces it.
-    flex: Option<Flex>,
+    arranged: Option<(Arrangement, Alignment)>,
 }
 
 impl Sash {
@@ -84,7 +84,7 @@ impl Sash {
             placed: None,
             bare: false,
             modifier: Modifier::new(),
-            flex: None,
+            arranged: None,
         }
     }
 
@@ -96,7 +96,7 @@ impl Sash {
             placed: None,
             bare: false,
             modifier: Modifier::new(),
-            flex: None,
+            arranged: None,
         }
     }
 
@@ -118,9 +118,9 @@ impl Sash {
         self
     }
 
-    /// The handle with its strip laying out the line it lights by `flex` instead of centring it.
-    pub fn flex(mut self, flex: Flex) -> Self {
-        self.flex = Some(flex);
+    /// The handle spreading its children by `arrangement` and placing them across by `alignment` in place of its own.
+    pub fn arranged(mut self, arrangement: Arrangement, alignment: Alignment) -> Self {
+        self.arranged = Some((arrangement, alignment));
         self
     }
 
@@ -161,20 +161,20 @@ impl Sash {
             .cursor(cursor)
             .target(self.id)
             .draggable_id(self.id);
-        let flex = self
-            .flex
-            .unwrap_or(Flex::new().items_center().justify_center());
+        let (arrangement, alignment) = self
+            .arranged
+            .unwrap_or((Arrangement::Center, Alignment::Center));
         let modifier = self.modifier.chain(own);
         let handle = move || {
-            flex_row(modifier, flex, move || {
+            row_arranged(modifier, arrangement, alignment, move || {
                 rustle::spacer(line.looks(Looks::new().group(Role::Accent)));
             });
         };
         match self.placed {
             Some(_) => handle(),
-            None if self.bare => rustle::stack_with(Modifier::new().cover(), handle),
+            None if self.bare => rustle::stack_with(Modifier::new().match_parent_size(), handle),
             None => rustle::stack_with(Modifier::new().fill_max_width().height(0.0), move || {
-                rustle::stack_with(Modifier::new().cover(), handle);
+                rustle::stack_with(Modifier::new().match_parent_size(), handle);
             }),
         }
     }

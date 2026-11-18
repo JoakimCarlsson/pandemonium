@@ -3,7 +3,7 @@
 use crate::kit::sp;
 use crate::kit::{Radius, Role, Styled};
 use rustle::Modifier;
-use rustle::{Flex, flex_row};
+use rustle::{Alignment, Arrangement, row_arranged};
 
 /// A card being described: how tall it is.
 ///
@@ -19,7 +19,7 @@ pub struct Card {
     /// The padding that replaces the card's own, when the caller gave one.
     inner: Option<Modifier>,
     /// How the card lays out what it holds, in place of its own, when the caller gave one.
-    flex: Option<Flex>,
+    arranged: Option<(Arrangement, Alignment)>,
 }
 
 impl Card {
@@ -29,7 +29,7 @@ impl Card {
             height,
             modifier: Modifier::new(),
             inner: None,
-            flex: None,
+            arranged: None,
         }
     }
 
@@ -45,9 +45,9 @@ impl Card {
         self
     }
 
-    /// The card laying out what it holds by `flex` in place of its own.
-    pub fn flex(mut self, flex: Flex) -> Self {
-        self.flex = Some(flex);
+    /// The card spreading its children by `arrangement` and placing them across by `alignment` in place of its own.
+    pub fn arranged(mut self, arrangement: Arrangement, alignment: Alignment) -> Self {
+        self.arranged = Some((arrangement, alignment));
         self
     }
 
@@ -59,8 +59,10 @@ impl Card {
             .fill_max_width()
             .stroke(Role::Border, Radius::Xl);
         let own = own.chain(self.inner.unwrap_or_else(|| Modifier::new().pad_x(4)));
-        let flex = self.flex.unwrap_or(Flex::new().items_center().gap(sp(3)));
-        flex_row(self.modifier.chain(own), flex, content);
+        let (arrangement, alignment) = self
+            .arranged
+            .unwrap_or((Arrangement::SpacedBy(sp(3)), Alignment::Center));
+        row_arranged(self.modifier.chain(own), arrangement, alignment, content);
     }
 
     /// Emits the empty card.

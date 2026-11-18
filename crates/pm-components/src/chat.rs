@@ -1,7 +1,7 @@
 //! The conversation with an agent: its messages and the prompt box.
 
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row};
 
 use crate::Button;
 use crate::Markdown;
@@ -46,20 +46,25 @@ const GUTTER: f32 = 24.0;
 fn paragraph(content: &str, tone: Role, width: f32) {
     let kind = Type::new(14).ratio(1.57).tone(tone);
     let lines = wrap_lines(content, kind, width.max(32.0));
-    flex_column(Modifier::new(), Flex::new(), || {
-        for part in lines {
-            if part.end == part.start {
-                rustle::spacer(Modifier::new().h(3));
-            } else {
-                selectable(
-                    Modifier::new(),
-                    CHAT_TEXT,
-                    &content[part.start..part.end],
-                    kind,
-                );
+    column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for part in lines {
+                if part.end == part.start {
+                    rustle::spacer(Modifier::new().h(3));
+                } else {
+                    selectable(
+                        Modifier::new(),
+                        CHAT_TEXT,
+                        &content[part.start..part.end],
+                        kind,
+                    );
+                }
             }
-        }
-    });
+        },
+    );
 }
 
 /// Emits one line of `content` in `pixels` tall type in `tone` as a piece of the selectable conversation
@@ -91,9 +96,10 @@ fn message_action(icon: IconName, tooltip: &str, id: u64, disabled: bool) {
 /// Emits the offer to put the files back as they were before a message of the reader's, in place of the buttons under it.
 #[track_caller]
 fn restore_offer() {
-    flex_row(
-        Modifier::new().placed(BoxAlignment::BottomEnd),
-        Flex::new().items_center().gap(sp(2)),
+    row_arranged(
+        Modifier::new().align(BoxAlignment::BottomEnd),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
         || {
             chat_line("Restore files to before this turn?", 12, Role::Muted);
             Button::new("Restore", RESTORE_FILES)
@@ -115,18 +121,23 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
     let working = session.status == Status::Working;
     let restoring = state.restoring == Some(index);
     let (typed, elements) = crate::elements::split(&message.text);
-    flex_column(
-        Modifier::new().group().selectable_area(CHAT_TEXT),
-        Flex::new().gap(sp(1)),
+    column_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .group()
+            .selectable_area(CHAT_TEXT),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Start,
         || {
             selectable_scope(CHAT_TEXT, || {
-                flex_column(
+                column_arranged(
                     Modifier::new()
-                        .placed(BoxAlignment::BottomEnd)
+                        .align(BoxAlignment::BottomEnd)
                         .fill_rounded(Role::SurfaceHover, Radius::Xl2)
                         .pad_x(4)
                         .pad_y(2.5),
-                    Flex::new().gap(sp(2)),
+                    Arrangement::SpacedBy(sp(2)),
+                    Alignment::Start,
                     || {
                         if !message.attachments.is_empty() {
                             crate::composer::sent_files(state, &message.attachments);
@@ -142,9 +153,10 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
                 if restoring {
                     restore_offer();
                 } else {
-                    flex_row(
-                        Modifier::new().placed(BoxAlignment::BottomEnd),
-                        Flex::new().items_center().gap(sp(1)),
+                    row_arranged(
+                        Modifier::new().align(BoxAlignment::BottomEnd),
+                        Arrangement::SpacedBy(sp(1)),
+                        Alignment::Center,
                         || {
                             if message.checkpoint {
                                 message_action(
@@ -195,19 +207,22 @@ fn side_note(side: &Side, content: &str, width: f32) {
         Side::Fallback { .. } => (IconName::Zap, "Switched to a backup model", None),
     };
     let inner = width - 34.0;
-    flex_column(
+    column_arranged(
         Modifier::new()
+            .fill_max_width()
             .group()
             .selectable_area(CHAT_TEXT)
             .stroke(Role::Border, Radius::Xl)
             .pad_x(4)
             .pad_y(3),
-        Flex::new().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Start,
         || {
             selectable_scope(CHAT_TEXT, || {
-                flex_row(
+                row_arranged(
                     Modifier::new(),
-                    Flex::new().items_center().gap(sp(2)),
+                    Arrangement::SpacedBy(sp(2)),
+                    Alignment::Center,
                     || {
                         glyph(icon, 3.5, Role::Subtle);
                         chat_line(heading, 12, Role::Subtle);
@@ -274,50 +289,60 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
         let count = (from..to)
             .filter(|position| !crate::steps::is_inside_card(&message.steps, *position))
             .count();
-        flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
-            flex_row(
-                Modifier::new()
-                    .placed(BoxAlignment::TopStart)
-                    .h(7)
-                    .cursor(CursorIcon::Pointer)
-                    .target(FocusId(TURN_BASE + index as u64)),
-                Flex::new().items_center().gap(sp(1.5)),
-                || {
-                    glyph(
-                        if open {
-                            IconName::ChevronDown
-                        } else {
-                            IconName::ChevronRight
-                        },
-                        3.5,
-                        Role::Subtle,
-                    );
-                    line(
-                        format!(
-                            "{label} · {count} step{}",
-                            if count == 1 { "" } else { "s" }
-                        ),
-                        12,
-                        1.4,
-                        Role::Subtle,
-                    );
-                },
-            );
-            if open {
-                steps(
-                    &message.steps,
-                    from..to,
-                    index,
-                    |position| page.is_some_and(|open| held.contains(&(open, index, position))),
-                    &root,
-                    width,
+        column_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(sp(1)),
+            Alignment::Start,
+            || {
+                row_arranged(
+                    Modifier::new()
+                        .align(BoxAlignment::TopStart)
+                        .h(7)
+                        .cursor(CursorIcon::Pointer)
+                        .target(FocusId(TURN_BASE + index as u64)),
+                    Arrangement::SpacedBy(sp(1.5)),
+                    Alignment::Center,
+                    || {
+                        glyph(
+                            if open {
+                                IconName::ChevronDown
+                            } else {
+                                IconName::ChevronRight
+                            },
+                            3.5,
+                            Role::Subtle,
+                        );
+                        line(
+                            format!(
+                                "{label} · {count} step{}",
+                                if count == 1 { "" } else { "s" }
+                            ),
+                            12,
+                            1.4,
+                            Role::Subtle,
+                        );
+                    },
                 );
-            }
-        });
+                if open {
+                    steps(
+                        &message.steps,
+                        from..to,
+                        index,
+                        |position| page.is_some_and(|open| held.contains(&(open, index, position))),
+                        &root,
+                        width,
+                    );
+                }
+            },
+        );
     };
-    flex_column(
-        Modifier::new().group().selectable_area(CHAT_TEXT),
-        Flex::new().gap(sp(3)),
+    column_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .group()
+            .selectable_area(CHAT_TEXT),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Start,
         || {
             selectable_scope(CHAT_TEXT, || {
                 let mut shown = 0;
@@ -382,33 +407,44 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                     answered(answers, width);
                 }
                 if !message.bullets.is_empty() {
-                    flex_column(Modifier::new(), Flex::new().gap(sp(1.5)), || {
-                        for bullet in &message.bullets {
-                            flex_row(Modifier::new(), Flex::new().gap(sp(2.5)), || {
-                                rustle::spacer(
-                                    Modifier::new()
-                                        .pad_side(Edge::Top, 2.5)
-                                        .square(1)
-                                        .fill_rounded(Role::Subtle, Radius::Full),
+                    column_arranged(
+                        Modifier::new(),
+                        Arrangement::SpacedBy(sp(1.5)),
+                        Alignment::Start,
+                        || {
+                            for bullet in &message.bullets {
+                                row_arranged(
+                                    Modifier::new(),
+                                    Arrangement::SpacedBy(sp(2.5)),
+                                    Alignment::Start,
+                                    || {
+                                        rustle::spacer(
+                                            Modifier::new()
+                                                .pad_side(Edge::Top, 2.5)
+                                                .square(1)
+                                                .fill_rounded(Role::Subtle, Radius::Full),
+                                        );
+                                        paragraph(bullet, Role::Muted, width - 14.0);
+                                    },
                                 );
-                                paragraph(bullet, Role::Muted, width - 14.0);
-                            });
-                        }
-                    });
+                            }
+                        },
+                    );
                 }
                 let copy = !message.text.is_empty();
                 let writing =
                     session.status == Status::Working && index + 1 == session.messages.len();
                 let fork = session.turn_of(index) > 0;
                 if copy || fork {
-                    flex_row(
-                        Modifier::new().placed(BoxAlignment::TopStart).padding_each(
+                    row_arranged(
+                        Modifier::new().align(BoxAlignment::TopStart).padding_each(
                             0.0,
                             -sp(1.0),
                             0.0,
                             0.0,
                         ),
-                        Flex::new().items_center().gap(sp(1)),
+                        Arrangement::SpacedBy(sp(1)),
+                        Alignment::Center,
                         || {
                             if copy {
                                 message_action(
@@ -433,9 +469,10 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                     && let Some(duration) =
                         message.duration.as_deref().filter(|took| !took.is_empty())
                 {
-                    flex_row(
+                    row_arranged(
                         Modifier::new(),
-                        Flex::new().items_center().gap(sp(2)),
+                        Arrangement::SpacedBy(sp(2)),
+                        Alignment::Center,
                         || {
                             glyph(IconName::Progress, 3.5, Role::Subtle);
                             chat_line(duration, 12, Role::Subtle);
@@ -463,21 +500,24 @@ fn header(state: &WorkspaceState, session: &Session) {
         Some(model) => format!("{agent} · {model}"),
         None => agent.clone(),
     };
-    flex_row(
+    row_arranged(
         Modifier::new()
+            .fill_max_width()
             .h(10)
             .stroke_side(Edge::Bottom, 1.0, Role::Border)
             .pad_x(5),
-        Flex::new().items_center().gap(sp(3)),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
         || {
             status_icon(session.shown());
             clipped(&session.title, 14, Role::Text);
             if !session.branch.is_empty() {
-                flex_row(
+                row_arranged(
                     Modifier::new()
                         .fill_rounded(Role::Surface, Radius::Md)
                         .pad_x(2),
-                    Flex::new().items_center().gap(sp(1)),
+                    Arrangement::SpacedBy(sp(1)),
+                    Alignment::Center,
                     || {
                         glyph(IconName::GitFork, 3.0, Role::Muted);
                         label(
@@ -498,76 +538,89 @@ pub fn history_pending() -> bool {
     retained::pending()
 }
 
-/// Emits the conversation of `session` in a column `width` logical pixels wide, with the prompt box below.
+/// Emits the conversation of `session` in a column `width` logical pixels wide, with the prompt box below, which keeps its own height and runs past the bottom when the column is too short for it.
 #[track_caller]
 pub fn chat(state: &WorkspaceState, session: &Session, width: f32, above: f32) {
     let text_width = width.min(COLUMN) - GUTTER * 2.0;
-    flex_column(Modifier::new().grow(), Flex::new(), || {
-        header(state, session);
-        crate::pull_request_bar::bar(session);
-        scroll_area(
-            Modifier::new().grow(),
-            Scroll::from_end(CHAT_SCROLL, state.chat_back),
-            || {
-                flex_column(
-                    Modifier::new().fill_max_width(),
-                    Flex::new().items_center(),
-                    || {
-                        messages(state, session, text_width);
-                    },
-                );
-            },
-        );
-        flex_column(
-            Modifier::new().fill_max_width().pad_side(Edge::Bottom, 5),
-            Flex::new().items_center(),
-            || {
-                flex_column(
-                    Modifier::new().max_w_px(COLUMN).fill_max_width().pad_x(6),
-                    Flex::new(),
-                    || {
-                        queued(state, session, text_width);
-                        if let Some(draft) = session.inquiry.as_ref() {
-                            flex_column(
-                                Modifier::new().pad_side(Edge::Bottom, 2).fill_max_width(),
-                                Flex::new(),
-                                || {
-                                    inquiry(
-                                        draft,
-                                        &state.figures,
-                                        &state.preview_offer(),
-                                        text_width,
-                                    )
-                                },
+    column_arranged(
+        Modifier::new().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            header(state, session);
+            crate::pull_request_bar::bar(session);
+            scroll_area(
+                Modifier::new().fill_max_width().weight(1.0),
+                Scroll::from_end(CHAT_SCROLL, state.chat_back),
+                || {
+                    column_arranged(
+                        Modifier::new().fill_max_width(),
+                        Arrangement::Start,
+                        Alignment::Center,
+                        || {
+                            messages(state, session, text_width);
+                        },
+                    );
+                },
+            );
+            column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .wrap_content_height(BoxAlignment::TopStart, true)
+                    .pad_side(Edge::Bottom, 5),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    column_arranged(
+                        Modifier::new().max_w_px(COLUMN).fill_max_width().pad_x(6),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            queued(state, session, text_width);
+                            if let Some(draft) = session.inquiry.as_ref() {
+                                column_arranged(
+                                    Modifier::new().pad_side(Edge::Bottom, 2).fill_max_width(),
+                                    Arrangement::Start,
+                                    Alignment::Start,
+                                    || {
+                                        inquiry(
+                                            draft,
+                                            &state.figures,
+                                            &state.preview_offer(),
+                                            text_width,
+                                        )
+                                    },
+                                );
+                            }
+                            activity(state, session, text_width);
+                            composer(
+                                state,
+                                "Reply to the agent, or type / for commands",
+                                Some(session),
+                                2,
+                                above,
+                                input::inner_width(text_width),
                             );
-                        }
-                        activity(state, session, text_width);
-                        composer(
-                            state,
-                            "Reply to the agent, or type / for commands",
-                            Some(session),
-                            2,
-                            above,
-                            input::inner_width(text_width),
-                        );
-                    },
-                );
-            },
-        );
-    });
+                        },
+                    );
+                },
+            );
+        },
+    );
 }
 
 /// Emits the column of the conversation's messages, `width` logical pixels of text wide, then the request to
 /// trust its folder, the question the agent asks, or what it is doing while it works.
 #[track_caller]
 fn messages(state: &WorkspaceState, session: &Session, width: f32) {
-    flex_column(
+    column_arranged(
         Modifier::new()
             .max_w_px(COLUMN)
             .fill_max_width()
             .pad_x(6)
             .pad_y(8),
-        Flex::new().gap(sp(6)),
+        Arrangement::SpacedBy(sp(6)),
+        Alignment::Start,
         || {
             retained::messages(state, session, width);
             if let Some(request) = session.trust.as_ref() {
@@ -589,9 +642,10 @@ fn messages(state: &WorkspaceState, session: &Session, width: f32) {
                 } else {
                     "Thinking…"
                 };
-                flex_row(
+                row_arranged(
                     Modifier::new(),
-                    Flex::new().items_center().gap(sp(2)),
+                    Arrangement::SpacedBy(sp(2)),
+                    Alignment::Center,
                     || {
                         status_icon(session.shown());
                         line(label, 13, 1.4, Role::Muted);

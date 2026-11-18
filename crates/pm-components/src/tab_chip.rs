@@ -2,8 +2,8 @@
 
 use crate::kit::sp;
 use crate::kit::{FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Tooltip};
+use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_row};
 
 use crate::Button;
 use crate::parts::{clipped, glyph};
@@ -133,9 +133,10 @@ impl TabChip {
         let own = own.pad_x(2);
         let (variant, icon, label, locked, close) =
             (self.variant, self.icon, self.label, self.locked, self.close);
-        flex_row(
+        row_arranged(
             self.modifier.chain(own),
-            Flex::new().items_center().gap(sp(1)),
+            Arrangement::SpacedBy(sp(1)),
+            Alignment::Center,
             move || {
                 match variant {
                     TabVariant::Agent => glyph(IconName::Sparkles, 3.5, Role::Accent),

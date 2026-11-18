@@ -4,7 +4,7 @@ use crate::kit::sp;
 use crate::kit::{FocusId, IconName, Radius, Role, Side, Styled, Tooltip};
 use pm_git::{CheckState, CodeHost, PullRequestStatus, ReviewDecision};
 use rustle::Modifier;
-use rustle::{Flex, flex_row};
+use rustle::{Alignment, Arrangement, row_arranged};
 
 use crate::Button;
 use crate::badge::{Badge, Variant as BadgeVariant};
@@ -108,9 +108,10 @@ fn tally(icon: IconName, tone: Role, count: usize) {
     if count == 0 {
         return;
     }
-    flex_row(
+    row_arranged(
         Modifier::new(),
-        Flex::new().items_center().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Center,
         || {
             glyph(icon, 3.5, tone);
             line(count.to_string(), 12, 1.4, tone);
@@ -150,9 +151,10 @@ fn checks(request: &PullRequestStatus) {
     .variant(Variant::Ghost)
     .size(Size::Xs)
     .mark(move || {
-        flex_row(
+        row_arranged(
             Modifier::new(),
-            Flex::new().items_center().gap(sp(2)),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Center,
             || {
                 tally(IconName::CheckCircle, Role::Success, counts.0);
                 tally(IconName::Close, Role::Danger, counts.1);
@@ -263,48 +265,53 @@ pub fn bar(session: &Session) {
         .clip_to(Radius::None)
         .stroke_side(Side::Bottom, 1.0, Role::Border)
         .pad_x(5);
-    flex_row(modifier, Flex::new().items_center().gap(sp(3)), || {
-        match (&session.pull_request, unsupported(session)) {
-            (_, Some(host)) => {
-                let said = if host.name.is_empty() {
-                    "This code host is not supported yet".to_owned()
-                } else {
-                    format!("{} is not supported yet", host.name)
-                };
-                glyph(IconName::GitCompare, 3.5, Role::Muted);
-                line(said, 12, 1.4, Role::Muted);
-                spacer();
+    row_arranged(
+        modifier,
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
+        || {
+            match (&session.pull_request, unsupported(session)) {
+                (_, Some(host)) => {
+                    let said = if host.name.is_empty() {
+                        "This code host is not supported yet".to_owned()
+                    } else {
+                        format!("{} is not supported yet", host.name)
+                    };
+                    glyph(IconName::GitCompare, 3.5, Role::Muted);
+                    line(said, 12, 1.4, Role::Muted);
+                    spacer();
+                }
+                (Some(request), None) => {
+                    let (said, tone) = standing(request);
+                    let number = request.number;
+                    Button::new("", PULL_OPEN)
+                        .variant(Variant::Ghost)
+                        .size(Size::Xs)
+                        .mark(move || state_badge(number, said, tone))
+                        .modifier(Modifier::new().tooltip(match host_name {
+                            Some(name) => format!("Open on {name}: {}", request.title),
+                            None => format!("Open: {}", request.title),
+                        }))
+                        .build();
+                    checks(request);
+                    review(request);
+                    spacer();
+                }
+                (None, None) => {
+                    glyph(IconName::GitCompare, 3.5, Role::Muted);
+                    line(format!("No {}", noun(session)), 12, 1.4, Role::Muted);
+                    spacer();
+                }
             }
-            (Some(request), None) => {
-                let (said, tone) = standing(request);
-                let number = request.number;
-                Button::new("", PULL_OPEN)
-                    .variant(Variant::Ghost)
-                    .size(Size::Xs)
-                    .mark(move || state_badge(number, said, tone))
-                    .modifier(Modifier::new().tooltip(match host_name {
-                        Some(name) => format!("Open on {name}: {}", request.title),
-                        None => format!("Open: {}", request.title),
-                    }))
-                    .build();
-                checks(request);
-                review(request);
-                spacer();
+            match session.pull_busy {
+                Some(doing) => {
+                    glyph(IconName::Loading, 3.5, Role::Muted);
+                    line(doing, 12, 1.4, Role::Muted);
+                }
+                None => actions(session),
             }
-            (None, None) => {
-                glyph(IconName::GitCompare, 3.5, Role::Muted);
-                line(format!("No {}", noun(session)), 12, 1.4, Role::Muted);
-                spacer();
-            }
-        }
-        match session.pull_busy {
-            Some(doing) => {
-                glyph(IconName::Loading, 3.5, Role::Muted);
-                line(doing, 12, 1.4, Role::Muted);
-            }
-            None => actions(session),
-        }
-    });
+        },
+    );
 }
 
 impl WorkspaceState {

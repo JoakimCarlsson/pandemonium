@@ -2,7 +2,7 @@
 
 use crate::kit::{Radius, Role, Styled};
 use rustle::Modifier;
-use rustle::{Flex, flex_column};
+use rustle::{Alignment, Arrangement, column_arranged};
 
 /// The shadow under a floating surface: a tall, soft one that lifts it off what is behind,
 /// as `(x, y, blur, spread, alpha)`.
@@ -35,7 +35,7 @@ pub struct Surface {
     /// What the caller puts around its box.
     modifier: Modifier,
     /// How its children are laid out, when the caller restyled the column.
-    flex: Option<Flex>,
+    arranged: Option<(Arrangement, Alignment)>,
 }
 
 impl Surface {
@@ -62,9 +62,9 @@ impl Surface {
         self
     }
 
-    /// The surface laying out its children by `flex` instead of the plain column's default.
-    pub fn flex(mut self, flex: Flex) -> Self {
-        self.flex = Some(flex);
+    /// The surface spreading its children by `arrangement` and placing them across by `alignment` in place of its own.
+    pub fn arranged(mut self, arrangement: Arrangement, alignment: Alignment) -> Self {
+        self.arranged = Some((arrangement, alignment));
         self
     }
 
@@ -85,9 +85,13 @@ impl Surface {
         if self.variant == Variant::Dialog {
             own = own.clip_to(Radius::None);
         }
-        flex_column(
+        let (arrangement, alignment) = self
+            .arranged
+            .unwrap_or((Arrangement::Start, Alignment::Start));
+        column_arranged(
             self.modifier.chain(own.chain(self.inner)),
-            self.flex.unwrap_or_default(),
+            arrangement,
+            alignment,
             content,
         );
     }

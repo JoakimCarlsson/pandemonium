@@ -1,14 +1,14 @@
 //! The modifier helpers that take the spacing scale, the colour roles and
-//! the corner radii. Rows and columns are rustle's [`rustle::flex_row`],
-//! [`rustle::flex_column`] and [`rustle::flex_wrap`].
+//! the corner radii. Rows and columns are rustle's [`rustle::row_arranged`],
+//! [`rustle::column_arranged`] and [`rustle::flow_row_with`], sized with
+//! rustle's own `weight`, `fill_max_width`, `width_in` and intrinsic sizes.
 //!
-//! Modifier order matters as it does in Compose: what comes first is
-//! outside. Write a box's modifier in this order, which is the CSS box model
-//! from the outside in: margin (`pad` before anything else), size,
-//! [`Styled::grow`], shadow, background, border, clip, padding, and last the
-//! input modifiers that should cover the padded area.
+//! Modifier order matters: what comes first is outside. Write a box's
+//! modifier in this order, from the outside in: outer space (`pad` before
+//! anything else), size and weight, shadow, background, border, clip,
+//! padding, and last the input modifiers that should cover the padded area.
 
-use rustle::{BoxAlignment, Modifier};
+use rustle::Modifier;
 
 use crate::kit::theme::{self, Radius, Tone, sp};
 
@@ -50,9 +50,6 @@ pub trait Styled: Sized {
     fn max_w_px(self, pixels: f32) -> Self;
     /// At most `pixels` tall: `max_h_px(pixels)`.
     fn max_h_px(self, pixels: f32) -> Self;
-    /// Takes the room left in its row or column: `flex_1()`. Text inside it is
-    /// cut short at its edge, which `min_w_px(0)` was needed for before.
-    fn grow(self) -> Self;
     /// Filled with `tone`: `bg(tone)`.
     fn fill(self, tone: impl Into<Tone>) -> Self;
     /// Filled with `tone` inside corners rounded by `radius`: `bg(tone)` with `rounded(radius)`.
@@ -73,19 +70,6 @@ pub trait Styled: Sized {
     fn shadows(self, layers: &'static [(f32, f32, f32, f32, f32)], radius: Radius) -> Self;
     /// Placed `x` and `y` logical pixels from the top left of the [`layer`] it is in: `absolute()`, `left_px(x)`, `top_px(y)`.
     fn at(self, x: f32, y: f32) -> Self;
-    /// Placed at `alignment` in the [`layer`] it is in, or across its row or column: `absolute()` with insets of 0, `self_start()`, `self_end()`.
-    fn placed(self, alignment: BoxAlignment) -> Self;
-    /// Gives up room when its row or column runs out of it, in proportion to
-    /// its length, as a CSS flex item does by default (`flex-shrink: 1`): for a
-    /// box whose text cuts itself short, so the row fits.
-    fn shrink(self) -> Self;
-    /// Keeps its own length when its row or column runs out of room, even for
-    /// a box that would give up room, such as a line that cuts itself short:
-    /// `flex_none()`.
-    fn keep(self) -> Self;
-    /// Exactly as large as the [`layer`] it is in, which its other children
-    /// size, without counting toward that size: `absolute()` with `inset(0)`.
-    fn cover(self) -> Self;
 }
 
 impl Styled for Modifier {
@@ -134,10 +118,6 @@ impl Styled for Modifier {
 
     fn max_h_px(self, pixels: f32) -> Self {
         self.height_in(0.0, pixels)
-    }
-
-    fn grow(self) -> Self {
-        self.flex_grow(1.0)
     }
 
     fn fill(self, tone: impl Into<Tone>) -> Self {
@@ -218,22 +198,6 @@ impl Styled for Modifier {
 
     fn at(self, x: f32, y: f32) -> Self {
         self.offset(x, y)
-    }
-
-    fn placed(self, alignment: BoxAlignment) -> Self {
-        self.align(alignment)
-    }
-
-    fn shrink(self) -> Self {
-        rustle::Modifier::shrink(self, 1.0)
-    }
-
-    fn keep(self) -> Self {
-        rustle::Modifier::shrink(self, 0.0)
-    }
-
-    fn cover(self) -> Self {
-        self.match_parent_size()
     }
 }
 

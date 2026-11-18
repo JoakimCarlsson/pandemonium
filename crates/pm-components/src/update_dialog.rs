@@ -9,7 +9,7 @@ use crate::state::{Outgoing, WorkspaceState};
 use crate::update::{RUNNING, Update};
 use crate::{Button, Markdown};
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 /// Downloads the release and restarts into it.
 pub const UPDATE_NOW: FocusId = FocusId(7_019);
@@ -187,13 +187,19 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
         UpdateRun::Downloading { .. } | UpdateRun::Installing
     );
     let installing = matches!(state.update_run, UpdateRun::Installing);
-    flex_row(
-        Modifier::new().grow().fill(Role::Background).pad_x(6),
-        Flex::new(),
+    row_arranged(
+        Modifier::new().weight(1.0).fill(Role::Background).pad_x(6),
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            flex_column(
-                Modifier::new().grow().fill_max_width().pad_y(8),
-                Flex::new().gap(sp(3)),
+            column_arranged(
+                Modifier::new()
+                    .fill_max_height()
+                    .weight(1.0)
+                    .fill_max_width()
+                    .pad_y(8),
+                Arrangement::SpacedBy(sp(3)),
+                Alignment::Start,
                 || {
                     label(
                         name,
@@ -206,23 +212,32 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
                     line(format!("This is {RUNNING}{date}."), 13, 1.4, Role::Muted);
                     if let Some(notes) = body {
                         scroll_area(
-                            Modifier::new().grow().clip_to(Radius::None),
+                            Modifier::new()
+                                .fill_max_width()
+                                .weight(1.0)
+                                .clip_to(Radius::None),
                             Scroll::from_start(UPDATE_SCROLL, state.update_scroll),
                             || Markdown::new(notes, text_width).build(),
                         );
                     } else {
-                        rustle::spacer(Modifier::new().grow());
+                        rustle::spacer(Modifier::new().weight(1.0));
                     }
                     if let Some(said) = said {
-                        flex_column(Modifier::new(), Flex::new(), || {
-                            for words in wrap(&said, 13, text_width) {
-                                line(words, 13, 1.5, Role::Muted);
-                            }
-                        });
+                        column_arranged(
+                            Modifier::new(),
+                            Arrangement::Start,
+                            Alignment::Start,
+                            || {
+                                for words in wrap(&said, 13, text_width) {
+                                    line(words, 13, 1.5, Role::Muted);
+                                }
+                            },
+                        );
                     }
-                    flex_row(
-                        Modifier::new(),
-                        Flex::new().items_center().gap(sp(2)),
+                    row_arranged(
+                        Modifier::new().fill_max_width(),
+                        Arrangement::SpacedBy(sp(2)),
+                        Alignment::Center,
                         || {
                             button("View on GitHub", UPDATE_PAGE, Variant::Ghost);
                             spacer();

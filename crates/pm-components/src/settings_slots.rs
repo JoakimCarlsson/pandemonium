@@ -5,11 +5,11 @@ use crate::kit::{FocusId, Hovered, IconName, Radius, Role, Side, Styled, Type, l
 use pm_field::{Edit, Field};
 use pm_harness::{PresetInfo, SlotChange, SlotInfo, SlotScope, SlotSource};
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row, flex_wrap};
+use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
 use crate::button::Variant;
 use crate::input::{self, Input};
-use crate::parts::{clipped, line};
+use crate::parts::line;
 use crate::settings::SETTINGS_PICK_FILTER;
 use crate::settings_ids::{BACKUP_CONTROLS, PICKS, PRESET_CONTROLS, SINGLES, SLOT_CONTROLS};
 use crate::settings_row::{PICKER_WIDTH, choices, picker, picker_list, picker_shown};
@@ -966,11 +966,12 @@ fn backup_button(name: IconName, id: Option<FocusId>, disabled: bool) {
 /// Emits one backup of a slot as a chip: its place counted from one, `backup` itself, and the buttons `ids` names to move it up, move it down and remove it, the first greyed out when `first` and the second when `last`.
 #[track_caller]
 fn backup_chip(place: usize, backup: &str, ids: [Option<FocusId>; 3], first: bool, last: bool) {
-    flex_row(
+    row_arranged(
         Modifier::new()
             .stroke(Role::Border, Radius::Md)
             .pad_side(Side::Left, 2),
-        Flex::new().items_center().gap(sp(0.5)),
+        Arrangement::SpacedBy(sp(0.5)),
+        Alignment::Center,
         || {
             line(format!("{}", place + 1), 11, 1.4, Role::Subtle);
             label(
@@ -995,36 +996,42 @@ fn backups_node(state: &WorkspaceState, row: usize, slot: &SlotRow) {
     };
     let last = slot.backups.len().saturating_sub(1);
     let open = state.settings_page.slots.picking == Some(SlotPicking::Backup(row));
-    flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
-        flex_wrap(
-            Modifier::new(),
-            Flex::new().gap(sp(2)).items_center(),
-            || {
-                line("Backups", 12, 1.4, Role::Muted);
-                for (place, backup) in slot.backups.iter().enumerate() {
-                    backup_chip(
-                        place,
-                        backup,
-                        [cell(place, 0), cell(place, 1), cell(place, 2)],
-                        place == 0,
-                        place == last,
-                    );
-                }
-                if let Some(id) = SLOT_CONTROLS.cell(row, BACKUP_COLUMN, SLOT_COLUMNS) {
-                    picker("Add backup", BACKUP_PICKER_WIDTH, id, open);
-                }
-            },
-        );
-        open_list(state, row, SlotPicking::Backup(row));
-    });
+    column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Start,
+        || {
+            flow_row_with(
+                Modifier::new(),
+                FlowOptions::new(sp(2), sp(2)).item_alignment(Alignment::Center),
+                || {
+                    line("Backups", 12, 1.4, Role::Muted);
+                    for (place, backup) in slot.backups.iter().enumerate() {
+                        backup_chip(
+                            place,
+                            backup,
+                            [cell(place, 0), cell(place, 1), cell(place, 2)],
+                            place == 0,
+                            place == last,
+                        );
+                    }
+                    if let Some(id) = SLOT_CONTROLS.cell(row, BACKUP_COLUMN, SLOT_COLUMNS) {
+                        picker("Add backup", BACKUP_PICKER_WIDTH, id, open);
+                    }
+                },
+            );
+            open_list(state, row, SlotPicking::Backup(row));
+        },
+    );
 }
 
 /// Emits a box of a category under what it is called, the two as wide as the row: `label_text` above what `field` emits.
 #[track_caller]
 fn labelled(label_text: &str, field: impl FnOnce()) {
-    flex_column(
+    column_arranged(
         Modifier::new().fill_max_width(),
-        Flex::new().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Start,
         || {
             line(label_text, 12, 1.4, Role::Muted);
             field();
@@ -1036,9 +1043,10 @@ fn labelled(label_text: &str, field: impl FnOnce()) {
 #[track_caller]
 fn notes_node(row: usize, notes: &SlotNotes, room: f32) {
     let id = |column: usize| SLOT_CONTROLS.cell(row, column, SLOT_COLUMNS);
-    flex_column(
+    column_arranged(
         Modifier::new().fill_max_width(),
-        Flex::new().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Start,
         || {
             if let Some(id) = id(DESCRIPTION_COLUMN) {
                 labelled("Description", || {
@@ -1051,13 +1059,14 @@ fn notes_node(row: usize, notes: &SlotNotes, room: f32) {
             }
             if let Some(id) = id(PROMPT_COLUMN) {
                 labelled("Prompt addition", || {
-                    flex_column(
+                    column_arranged(
                         Modifier::new()
                             .fill_max_width()
                             .fill_rounded(Role::Background, Radius::Md)
                             .stroke_by_focus(id, Role::Border, Role::Accent, Radius::Md)
                             .focus_of(id),
-                        Flex::new(),
+                        Arrangement::Start,
+                        Alignment::Start,
                         || {
                             Input::new(&notes.prompt, id)
                                 .variant(input::Variant::Multiline)
@@ -1097,9 +1106,10 @@ pub(crate) fn slot_actions(state: &WorkspaceState, row: usize, slot: &SlotRow) {
         || page.plain.contains(&slot.name))
     .then(|| id(CLEAR_COLUMN))
     .flatten();
-    flex_row(
+    row_arranged(
         Modifier::new(),
-        Flex::new().items_center().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Center,
         || {
             if let Some((suggested, button)) = suggest {
                 Button::new(format!("Use suggested: {suggested}"), button)
@@ -1134,13 +1144,14 @@ pub(crate) fn slot_controls(state: &WorkspaceState, row: usize, slot: &SlotRow, 
             .map_or(0, |place| place + 1)
     });
     let width = (PICKER_WIDTH * 1.4).min(room);
-    flex_column(
+    column_arranged(
         Modifier::new().fill_max_width(),
-        Flex::new().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Start,
         || {
-            flex_wrap(
+            flow_row_with(
                 Modifier::new(),
-                Flex::new().gap(sp(2)).items_center(),
+                FlowOptions::new(sp(2), sp(2)).item_alignment(Alignment::Center),
                 || {
                     if let Some(button) = id(MODEL_COLUMN) {
                         picker(&model_shown(slot), width, button, open);
@@ -1162,17 +1173,21 @@ pub(crate) fn slot_controls(state: &WorkspaceState, row: usize, slot: &SlotRow, 
 /// Emits the row of the slot at `row` on the models and orchestration pages, `room` logical pixels across: its name, where its model comes from and, for a job slot, what it is for, its suggestion and clear buttons, then its controls.
 #[track_caller]
 pub(crate) fn slot_row(state: &WorkspaceState, row: usize, slot: &SlotRow, room: f32) {
-    flex_column(
+    column_arranged(
         Modifier::new().pad_x(3).pad_y(3),
-        Flex::new().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Start,
         || {
-            flex_wrap(
+            flow_row_with(
                 Modifier::new().fill_max_width(),
-                Flex::new().items_center().justify_between().gap(sp(2)),
+                FlowOptions::new(sp(2), sp(2))
+                    .arrangement(Arrangement::SpaceBetween)
+                    .item_alignment(Alignment::Center),
                 || {
-                    flex_row(
+                    row_arranged(
                         Modifier::new(),
-                        Flex::new().items_center().gap(sp(2)),
+                        Arrangement::SpacedBy(sp(2)),
+                        Alignment::Center,
                         || {
                             label(
                                 format!("@{}", slot.name),
@@ -1190,7 +1205,7 @@ pub(crate) fn slot_row(state: &WorkspaceState, row: usize, slot: &SlotRow, room:
                 },
             );
             if !slot.category {
-                clipped(pm_harness::slot_purpose(&slot.name), 12, Role::Muted);
+                line(pm_harness::slot_purpose(&slot.name), 12, 1.4, Role::Muted);
             }
             slot_controls(state, row, slot, room - ROW_INSET);
         },
@@ -1229,28 +1244,35 @@ fn preset_summary(preset: &PresetInfo) -> String {
 #[track_caller]
 fn preset_row(row: usize, preset: &PresetInfo) {
     let id = |column: usize| PRESET_CONTROLS.cell(row, column, PRESET_COLUMNS);
-    flex_row(
+    row_arranged(
         Modifier::new().pad_x(3).pad_y(3),
-        Flex::new().items_center().justify_between().gap(sp(3)),
+        Arrangement::SpacedBy(sp(3)),
+        Alignment::Center,
         || {
-            flex_column(Modifier::new().grow(), Flex::new().gap(sp(0.5)), || {
-                label(
-                    preset.name.clone(),
-                    Type::new(13)
-                        .ratio(1.4)
-                        .tone(Role::Text)
-                        .truncate()
-                        .medium(),
-                );
-                label_with(
-                    Modifier::new().grow(),
-                    preset_summary(preset),
-                    Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
-                );
-            });
-            flex_row(
+            column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::SpacedBy(sp(0.5)),
+                Alignment::Start,
+                || {
+                    label(
+                        preset.name.clone(),
+                        Type::new(13)
+                            .ratio(1.4)
+                            .tone(Role::Text)
+                            .truncate()
+                            .medium(),
+                    );
+                    label_with(
+                        Modifier::new(),
+                        preset_summary(preset),
+                        Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
+                    );
+                },
+            );
+            row_arranged(
                 Modifier::new(),
-                Flex::new().items_center().gap(sp(1)),
+                Arrangement::SpacedBy(sp(1)),
+                Alignment::Center,
                 || {
                     if let Some(button) = id(0) {
                         Button::new("Apply", button)
@@ -1273,14 +1295,15 @@ fn preset_row(row: usize, preset: &PresetInfo) {
 /// Emits a box and the button beside it that hands in what is written in it.
 #[track_caller]
 pub(crate) fn entry(field: &Field, id: FocusId, placeholder: &str, button: (&str, FocusId)) {
-    flex_row(
+    row_arranged(
         Modifier::new(),
-        Flex::new().items_center().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
         || {
             Input::new(field, id)
                 .size(Size::Sm)
                 .placeholder(placeholder)
-                .modifier(Modifier::new().grow())
+                .modifier(Modifier::new().weight(1.0))
                 .build();
             Button::new(button.0, button.1)
                 .variant(Variant::Outline)
@@ -1301,9 +1324,10 @@ const OWN_SLOT_NOTE: &str = "A slot of your own is also a work category: once it
 #[track_caller]
 pub(crate) fn scope_choice(state: &WorkspaceState) {
     let picked = usize::from(state.settings_page.slots.scope == SlotScope::Project);
-    flex_row(
+    row_arranged(
         Modifier::new(),
-        Flex::new().items_center().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
         || {
             line("Save changes to", 12, 1.4, Role::Muted);
             choices(&["User", "Project"], picked, |option| {
@@ -1317,9 +1341,9 @@ pub(crate) fn scope_choice(state: &WorkspaceState) {
 #[track_caller]
 pub(crate) fn provider_choice(state: &WorkspaceState) {
     let open = state.settings_page.slots.picking == Some(SlotPicking::Provider);
-    flex_wrap(
+    flow_row_with(
         Modifier::new(),
-        Flex::new().gap(sp(2)).items_center(),
+        FlowOptions::new(sp(2), sp(2)).item_alignment(Alignment::Center),
         || {
             line("Provider", 12, 1.4, Role::Muted);
             picker(
@@ -1365,9 +1389,11 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     paragraph(SUMMARY, room);
     provider_choice(state);
     error_note(state, room);
-    flex_wrap(
+    flow_row_with(
         Modifier::new().fill_max_width(),
-        Flex::new().items_center().justify_between().gap(sp(2)),
+        FlowOptions::new(sp(2), sp(2))
+            .arrangement(Arrangement::SpaceBetween)
+            .item_alignment(Alignment::Center),
         || {
             heading_only("Slots", rows.len());
             scope_choice(state);

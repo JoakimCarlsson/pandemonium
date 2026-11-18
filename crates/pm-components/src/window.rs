@@ -1,6 +1,6 @@
 //! The frame of a window beside the main one: the title bar that closes it over what it holds, with the border the window draws itself when it has no frame from the desktop.
 
-use rustle::{Flex, flex_column};
+use rustle::{Alignment, Arrangement, column_arranged};
 use std::cell::Cell;
 
 use rustle::Modifier;
@@ -77,7 +77,7 @@ pub fn shadowed(frame: impl FnOnce()) {
     let own = own
         .clip_rounded(FRAME_RADIUS)
         .border(1.0, color(Role::Border), FRAME_RADIUS);
-    flex_column(own, Flex::new(), frame);
+    column_arranged(own, Arrangement::Start, Alignment::Start, frame);
 }
 
 /// `modifier` with [`WINDOW_SHADOW`] drawn behind its box, its corners rounded by [`FRAME_RADIUS`].
@@ -161,21 +161,27 @@ impl<'a> Window<'a> {
             over,
             modifier,
         } = self;
-        flex_column(modifier.chain(own), Flex::new(), move || {
-            TitleBar::closing().build();
-            flex_column(
-                Modifier::new().grow().fill_max_width(),
-                Flex::new(),
-                move || {
-                    for child in body {
-                        child();
-                    }
-                },
-            );
-            for content in over {
-                content();
-            }
-        });
+        column_arranged(
+            modifier.chain(own),
+            Arrangement::Start,
+            Alignment::Start,
+            move || {
+                TitleBar::closing().build();
+                column_arranged(
+                    Modifier::new().weight(1.0).fill_max_width(),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    move || {
+                        for child in body {
+                            child();
+                        }
+                    },
+                );
+                for content in over {
+                    content();
+                }
+            },
+        );
     }
 }
 

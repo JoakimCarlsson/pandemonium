@@ -3,7 +3,7 @@
 use crate::kit::sp;
 use crate::kit::{IconName, Role, Styled};
 use rustle::Modifier;
-use rustle::{Flex, flex_row};
+use rustle::{Alignment, Arrangement, row_arranged};
 
 use crate::parts::{clipped, glyph};
 
@@ -34,9 +34,10 @@ pub fn fallback_words(from: &str, to: &str, reason: &str) -> String {
 #[track_caller]
 pub fn fallback_notice(from: &str, to: &str, reason: &str) {
     let words = fallback_words(from, to, reason);
-    flex_row(
+    row_arranged(
         Modifier::new().pad_x(1).pad_y(0.5),
-        Flex::new().items_center().gap(sp(1.5)),
+        Arrangement::SpacedBy(sp(1.5)),
+        Alignment::Center,
         move || {
             glyph(IconName::Zap, 3.5, Role::Warning);
             clipped(words, 12, Role::Muted);

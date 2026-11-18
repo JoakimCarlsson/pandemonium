@@ -2,7 +2,7 @@
 
 use crate::kit::sp;
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::kit::{Radius, Role, Styled, Tone};
 
@@ -100,17 +100,20 @@ impl BarRow {
             modifier,
             ..
         } = self;
-        flex_column(
+        column_arranged(
             modifier.chain(Modifier::new().width(width)),
-            Flex::new().gap(sp(1)),
+            Arrangement::SpacedBy(sp(1)),
+            Alignment::Start,
             move || {
-                flex_row(
-                    Modifier::new(),
-                    Flex::new().items_center().justify_between().gap(sp(3)),
+                row_arranged(
+                    Modifier::new().fill_max_width(),
+                    Arrangement::SpacedBy(sp(3)),
+                    Alignment::Center,
                     || {
-                        flex_column(
-                            Modifier::new().grow().clip_to(Radius::None),
-                            Flex::new(),
+                        column_arranged(
+                            Modifier::new().weight(1.0).clip_to(Radius::None),
+                            Arrangement::Start,
+                            Alignment::Start,
                             || {
                                 line(label, 13, 1.4, Role::Text);
                             },
@@ -121,13 +124,14 @@ impl BarRow {
                 if let Some(detail) = detail {
                     line(detail, 12, 1.4, Role::Muted);
                 }
-                flex_row(
+                row_arranged(
                     Modifier::new()
                         .width(width)
                         .height(BAR_HEIGHT)
                         .fill_rounded(Role::SurfaceHover, Radius::Sm)
                         .clip_to(Radius::None),
-                    Flex::new(),
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
                         if filled > 0.0 {
                             rustle::spacer(

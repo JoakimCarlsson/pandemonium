@@ -2,8 +2,9 @@
 
 use crate::kit::sp;
 use pm_field::Field;
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column, flex_row};
+
 use std::ops::{Deref, DerefMut};
 
 use crate::kit::{
@@ -702,22 +703,30 @@ impl WorkspaceState {
 #[track_caller]
 fn toolbar(browser: &Browser) {
     let zoomed = (browser.zoom - 1.0).abs() > 0.005;
-    flex_row(
+    row_arranged(
         Modifier::new()
+            .fill_max_width()
             .height(TOOLBAR)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(2),
-        Flex::new().items_center().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Center,
         || {
             Button::icon(IconName::ArrowLeft, BROWSER_BACK).build();
             Button::icon(IconName::ArrowRight, BROWSER_FORWARD).build();
             Button::icon(IconName::Refresh, BROWSER_RELOAD).build();
-            flex_column(Modifier::new().grow(), Flex::new(), || {
-                Input::new(&browser.address, BROWSER_ADDRESS)
-                    .size(Size::Sm)
-                    .placeholder("Search or enter an address")
-                    .build();
-            });
+            column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    Input::new(&browser.address, BROWSER_ADDRESS)
+                        .size(Size::Sm)
+                        .placeholder("Search or enter an address")
+                        .modifier(Modifier::new().fill_max_width())
+                        .build();
+                },
+            );
             if zoomed {
                 Button::new(format!("{}%", (browser.zoom * 100.0).round()), BROWSER_ZOOM)
                     .variant(Variant::Ghost)
@@ -790,7 +799,7 @@ fn surface(browser: &Browser, id: FocusId, shown: &Option<Picture>, wide: f32, t
         .target(id);
     match shown {
         Some(shown) if browser.notice.is_none() || id != BROWSER_BODY => picture(body, shown),
-        _ => flex_column(body, Flex::new(), || {
+        _ => column_arranged(body, Arrangement::Start, Alignment::Start, || {
             line(
                 browser.notice.as_deref().unwrap_or("Loading"),
                 12,
@@ -827,20 +836,22 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) {
         Some(tools) => ((width - tools - 1.0).max(0.0), tools + 1.0),
         None => (width, 0.0),
     };
-    flex_column(
+    column_arranged(
         Modifier::new()
             .fill_max_width()
             .height(height)
             .fill(Role::Background),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             tab_strip(browser, width);
             toolbar(browser);
             browser.safety.bar_nodes();
             rustle::stack_with(Modifier::new().fill_max_width().height(room), || {
-                flex_row(
+                row_arranged(
                     Modifier::new().fill_max_width().height(room),
-                    Flex::new(),
+                    Arrangement::Start,
+                    Alignment::Start,
                     || match tools {
                         Some(tools) => {
                             surface(browser, BROWSER_BODY, &browser.page, page_width, room);

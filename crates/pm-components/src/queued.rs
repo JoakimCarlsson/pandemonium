@@ -5,7 +5,7 @@
 use crate::kit::sp;
 use pm_field::Field;
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::kit::{
     FocusId, IconName, Radius, Role, Side, Styled, Tone, Tooltip, Type, label, wrap_lines,
@@ -176,25 +176,31 @@ fn clamped(content: &str, tone: Role, width: f32) {
     let lines = wrap_lines(content, kind, width.max(32.0));
     let cut = lines.len() > SHOWN_LINES;
     let shown = lines.len().min(SHOWN_LINES);
-    flex_column(Modifier::new(), Flex::new(), || {
-        for (at, part) in lines.into_iter().take(shown).enumerate() {
-            let words = content[part.start..part.end].trim_end();
-            match (cut && at + 1 == shown, words.is_empty()) {
-                (true, _) => line(format!("{words}\u{2026}"), TEXT_PIXELS, TEXT_LEADING, tone),
-                (false, true) => rustle::spacer(Modifier::new().h(3)),
-                (false, false) => label(words, kind.tone(tone)),
+    column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for (at, part) in lines.into_iter().take(shown).enumerate() {
+                let words = content[part.start..part.end].trim_end();
+                match (cut && at + 1 == shown, words.is_empty()) {
+                    (true, _) => line(format!("{words}\u{2026}"), TEXT_PIXELS, TEXT_LEADING, tone),
+                    (false, true) => rustle::spacer(Modifier::new().h(3)),
+                    (false, false) => label(words, kind.tone(tone)),
+                }
             }
-        }
-    });
+        },
+    );
 }
 
 /// Emits what a row shows of a waiting prompt's `content` in a column `width` logical pixels wide: the elements and captures it carries as chips, as a sent message shows them, then the first lines of what the reader typed, in `tone`.
 #[track_caller]
 fn body(content: &str, tone: Role, width: f32) {
     let (typed, labels) = crate::elements::split(content);
-    flex_column(
-        Modifier::new().grow().pad_side(Side::Top, 1),
-        Flex::new().gap(sp(1.5)),
+    column_arranged(
+        Modifier::new().weight(1.0).pad_side(Side::Top, 1),
+        Arrangement::SpacedBy(sp(1.5)),
+        Alignment::Start,
         || {
             if !labels.is_empty() {
                 crate::elements::sent_chips(&labels);
@@ -219,7 +225,7 @@ fn icon_button(icon: IconName, tooltip: &str, id: FocusId) {
 /// Emits the box a row of a waiting prompt is drawn in, its contents aligned to the top, holding what `content` emits.
 #[track_caller]
 fn frame(content: impl FnOnce()) {
-    flex_row(
+    row_arranged(
         Modifier::new()
             .fill_max_width()
             .fill_rounded(Role::Surface, Radius::Lg)
@@ -227,7 +233,8 @@ fn frame(content: impl FnOnce()) {
             .pad_side(Side::Left, 3)
             .pad_side(Side::Right, 1)
             .pad_y(1),
-        Flex::new().items_start().gap(sp(2)),
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Start,
         content,
     );
 }
@@ -235,9 +242,12 @@ fn frame(content: impl FnOnce()) {
 /// Emits `name` in `tone`, lowered by a step to sit on the first line of a row's text.
 #[track_caller]
 fn leading_glyph(name: IconName, tone: Role) {
-    flex_row(Modifier::new().pad_side(Side::Top, 1), Flex::new(), || {
-        glyph(name, 3.5, tone)
-    });
+    row_arranged(
+        Modifier::new().pad_side(Side::Top, 1),
+        Arrangement::Start,
+        Alignment::Start,
+        || glyph(name, 3.5, tone),
+    );
 }
 
 /// Emits one waiting prompt, at `index`, in a row `width` logical pixels wide: the first lines of its text and chips for what it carries, how many files go with it and buttons to edit it, send it now or remove it.
@@ -255,15 +265,17 @@ fn waiting(index: usize, queued: &Queued, width: f32) {
         if !queued.files.is_empty() {
             let count = queued.files.len();
             let files = if count == 1 { "file" } else { "files" };
-            flex_row(
+            row_arranged(
                 Modifier::new().pad_side(Side::Top, 1.5),
-                Flex::new(),
+                Arrangement::Start,
+                Alignment::Start,
                 || line(format!("{count} {files}"), 12, 1.4, Role::Muted),
             );
         }
-        flex_row(
+        row_arranged(
             Modifier::new(),
-            Flex::new().items_center().gap(sp(1)),
+            Arrangement::SpacedBy(sp(1)),
+            Alignment::Center,
             || {
                 icon_button(
                     IconName::Pencil,
@@ -311,9 +323,10 @@ pub fn queued(state: &WorkspaceState, session: &Session, width: f32) {
         .as_ref()
         .filter(|open| open.scope == session.scope)
         .map(|open| open.id);
-    flex_column(
+    column_arranged(
         Modifier::new().pad_side(Side::Bottom, 2),
-        Flex::new().gap(sp(1)),
+        Arrangement::SpacedBy(sp(1)),
+        Alignment::Start,
         || {
             let mut hidden = 0;
             for (index, waiting_prompt) in session.queued.iter().enumerate() {
@@ -332,14 +345,19 @@ pub fn queued(state: &WorkspaceState, session: &Session, width: f32) {
             }
             if hidden > 0 {
                 let prompts = if hidden == 1 { "prompt" } else { "prompts" };
-                flex_row(Modifier::new().pad_side(Side::Left, 3), Flex::new(), || {
-                    line(
-                        format!("+{hidden} more {prompts} waiting"),
-                        12,
-                        1.4,
-                        Role::Muted,
-                    )
-                });
+                row_arranged(
+                    Modifier::new().pad_side(Side::Left, 3),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        line(
+                            format!("+{hidden} more {prompts} waiting"),
+                            12,
+                            1.4,
+                            Role::Muted,
+                        )
+                    },
+                );
             }
         },
     );

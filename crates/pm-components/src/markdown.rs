@@ -1,7 +1,7 @@
 //! Markdown: a source laid out as paragraphs, headings, lists, code, quotes, fold-outs, rules and tables.
 
 use crate::kit::sp;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use pm_markdown::{Block, Inline, Span};
@@ -62,8 +62,8 @@ pub struct Markdown<'a> {
     place: Option<&'a str>,
     /// What the caller puts around the column of blocks.
     modifier: Modifier,
-    /// How the column of blocks lays them out.
-    flex: Flex,
+    /// How the column of blocks spreads them, and where it places them across.
+    arranged: (Arrangement, Alignment),
 }
 
 impl<'a> Markdown<'a> {
@@ -80,7 +80,7 @@ impl<'a> Markdown<'a> {
             figures: None,
             place: None,
             modifier: Modifier::new(),
-            flex: Flex::new().gap(sp(3)),
+            arranged: (Arrangement::SpacedBy(sp(3)), Alignment::Start),
         }
     }
 
@@ -123,9 +123,9 @@ impl<'a> Markdown<'a> {
         self
     }
 
-    /// The column of blocks laid out by `flex` instead of one under the other three steps apart.
-    pub fn flex(mut self, flex: Flex) -> Self {
-        self.flex = flex;
+    /// The column of blocks spread by `arrangement` and placed across by `alignment` instead of one under the other three steps apart.
+    pub fn arranged(mut self, arrangement: Arrangement, alignment: Alignment) -> Self {
+        self.arranged = (arrangement, alignment);
         self
     }
 
@@ -151,7 +151,8 @@ impl<'a> Markdown<'a> {
             self.place,
         ));
         let modifier = self.modifier.clone();
-        flex_column(modifier, self.flex, || {
+        let (arrangement, alignment) = self.arranged;
+        column_arranged(modifier, arrangement, alignment, || {
             rustle::key(whole, || {
                 rustle::skippable((whole, width.to_bits()), || {
                     let blocks = pm_markdown::parse(self.source);
@@ -231,11 +232,16 @@ impl Layout<'_> {
     /// `modifier`, `width` wide, running text in `tone`.
     #[track_caller]
     fn blocks(&mut self, modifier: Modifier, gap: f32, blocks: &[Block], tone: Role, width: f32) {
-        flex_column(modifier, Flex::new().gap(sp(gap)), || {
-            for block in blocks {
-                self.block(block, tone, width);
-            }
-        });
+        column_arranged(
+            modifier,
+            Arrangement::SpacedBy(sp(gap)),
+            Alignment::Start,
+            || {
+                for block in blocks {
+                    self.block(block, tone, width);
+                }
+            },
+        );
     }
 
     /// Emits one block, `width` wide, running text in `tone`.
@@ -266,7 +272,7 @@ impl Layout<'_> {
                 let own = Modifier::new()
                     .stroke_side(Side::Left, 2.0, Role::Border)
                     .pad_side(Side::Left, QUOTE_INDENT / 4.0 - 0.5);
-                flex_row(own, Flex::new(), || {
+                row_arranged(own, Arrangement::Start, Alignment::Start, || {
                     self.blocks(
                         Modifier::new(),
                         3.0,
@@ -322,44 +328,55 @@ impl Layout<'_> {
             head = head.target(FocusId(base + place as u64));
         }
         let pixels = self.pixels;
-        flex_column(Modifier::new(), Flex::new().gap(sp(2)), || {
-            flex_row(head, Flex::new().gap(sp(1.5)), || {
-                flex_row(
-                    Modifier::new().height(height),
-                    Flex::new().items_center(),
+        column_arranged(
+            Modifier::new().fill_max_width().width_in(0.0, width),
+            Arrangement::SpacedBy(sp(2)),
+            Alignment::Start,
+            || {
+                row_arranged(
+                    Modifier::new().fill_max_width().chain(head),
+                    Arrangement::SpacedBy(sp(1.5)),
+                    Alignment::Start,
                     || {
-                        glyph(
-                            if open {
-                                IconName::ChevronDown
-                            } else {
-                                IconName::ChevronRight
+                        row_arranged(
+                            Modifier::new().height(height),
+                            Arrangement::Start,
+                            Alignment::Center,
+                            || {
+                                glyph(
+                                    if open {
+                                        IconName::ChevronDown
+                                    } else {
+                                        IconName::ChevronRight
+                                    },
+                                    3.5,
+                                    Role::Subtle,
+                                );
                             },
-                            3.5,
-                            Role::Subtle,
+                        );
+                        self.text(
+                            Modifier::new().weight(1.0),
+                            summary,
+                            pixels,
+                            true,
+                            tone,
+                            width - 20.0,
                         );
                     },
                 );
-                self.text(
-                    Modifier::new().grow(),
-                    summary,
-                    pixels,
-                    true,
-                    tone,
-                    width - 20.0,
-                );
-            });
-            if !open {
-                self.seen += count_details(blocks);
-                return;
-            }
-            let bar = Modifier::new()
-                .pad_side(Side::Left, 1.5)
-                .stroke_side(Side::Left, 2.0, Role::Border)
-                .padding_each(INDENT - 8.0, 0.0, 0.0, 0.0);
-            flex_row(bar, Flex::new(), || {
-                self.blocks(Modifier::new(), 3.0, blocks, tone, width - INDENT);
-            });
-        });
+                if !open {
+                    self.seen += count_details(blocks);
+                    return;
+                }
+                let bar = Modifier::new()
+                    .pad_side(Side::Left, 1.5)
+                    .stroke_side(Side::Left, 2.0, Role::Border)
+                    .padding_each(INDENT - 8.0, 0.0, 0.0, 0.0);
+                row_arranged(bar, Arrangement::Start, Alignment::Start, || {
+                    self.blocks(Modifier::new(), 3.0, blocks, tone, width - INDENT);
+                });
+            },
+        );
     }
 
     /// Emits a list of `items`, numbered from `start` when it is ordered and dotted when not.
@@ -367,30 +384,47 @@ impl Layout<'_> {
     fn list(&mut self, start: Option<u64>, items: &[Vec<Block>], tone: Role, width: f32) {
         let height = self.line_height();
         let pixels = self.pixels;
-        flex_column(Modifier::new(), Flex::new().gap(sp(1.5)), || {
-            for (index, item) in items.iter().enumerate() {
-                flex_row(Modifier::new(), Flex::new(), || {
-                    flex_row(
-                        Modifier::new().width(INDENT).height(height),
-                        Flex::new().items_center(),
-                        || match start {
-                            Some(first) => line(
-                                format!("{}.", first + index as u64),
-                                pixels,
-                                LEADING,
-                                Role::Muted,
-                            ),
-                            None => rustle::spacer(
-                                Modifier::new()
-                                    .square(1)
-                                    .fill_rounded(Role::Subtle, Radius::Full),
-                            ),
+        column_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(sp(1.5)),
+            Alignment::Start,
+            || {
+                for (index, item) in items.iter().enumerate() {
+                    row_arranged(
+                        Modifier::new(),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            row_arranged(
+                                Modifier::new().width(INDENT).height(height),
+                                Arrangement::Start,
+                                Alignment::Center,
+                                || match start {
+                                    Some(first) => line(
+                                        format!("{}.", first + index as u64),
+                                        pixels,
+                                        LEADING,
+                                        Role::Muted,
+                                    ),
+                                    None => rustle::spacer(
+                                        Modifier::new()
+                                            .square(1)
+                                            .fill_rounded(Role::Subtle, Radius::Full),
+                                    ),
+                                },
+                            );
+                            self.blocks(
+                                Modifier::new().weight(1.0),
+                                1.5,
+                                item,
+                                tone,
+                                width - INDENT,
+                            );
                         },
                     );
-                    self.blocks(Modifier::new().grow(), 1.5, item, tone, width - INDENT);
-                });
-            }
-        });
+                }
+            },
+        );
     }
 
     /// Emits a block of code in a bordered box, its long lines broken to fit `width`.
@@ -410,12 +444,18 @@ impl Layout<'_> {
         }
         CodeBox::new(move || {
             for content in lines {
-                flex_row(Modifier::new().pad_x(3.5), Flex::new(), move || {
-                    label_with(Modifier::new(), content, kind);
-                });
+                row_arranged(
+                    Modifier::new().pad_x(3.5),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    move || {
+                        label_with(Modifier::new(), content, kind);
+                    },
+                );
             }
         })
         .max_height(UNCUT)
+        .modifier(Modifier::new().fill_max_width().width_in(0.0, width))
         .margin(0.0)
         .inner(Modifier::new().pad_y(2))
         .build();
@@ -428,10 +468,15 @@ impl Layout<'_> {
             Some(Ok(drawing)) => diagram_node(drawing, width),
             Some(Err(_)) => {
                 let pixels = self.pixels;
-                flex_column(Modifier::new(), Flex::new().gap(sp(1.5)), || {
-                    self.code(source, width);
-                    line(failed, pixels - 2, 1.4, Role::Subtle);
-                });
+                column_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(sp(1.5)),
+                    Alignment::Start,
+                    || {
+                        self.code(source, width);
+                        line(failed, pixels - 2, 1.4, Role::Subtle);
+                    },
+                );
             }
             None => self.code(source, width),
         }
@@ -452,16 +497,22 @@ impl Layout<'_> {
         let own = Modifier::new()
             .stroke(Role::Border, Radius::Lg)
             .clip_to(Radius::None);
-        flex_column(own, Flex::new(), || {
-            flex_row(Modifier::new().fill(Role::Surface), Flex::new(), || {
-                for cell in head {
-                    self.cell(cell, pixels, true, tone, cell_width);
-                }
-            });
+        column_arranged(own, Arrangement::Start, Alignment::Start, || {
+            row_arranged(
+                Modifier::new().fill(Role::Surface),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    for cell in head {
+                        self.cell(cell, pixels, true, tone, cell_width);
+                    }
+                },
+            );
             for cells in rows {
-                flex_row(
+                row_arranged(
                     Modifier::new().stroke_side(Side::Top, 1.0, Role::Border),
-                    Flex::new(),
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
                         for cell in cells {
                             self.cell(cell, pixels, false, tone, cell_width);
@@ -475,9 +526,10 @@ impl Layout<'_> {
     /// Emits one cell of a table, `width` wide, set heavier when it is a heading.
     #[track_caller]
     fn cell(&mut self, spans: &[Span], pixels: u32, strong: bool, tone: Role, width: f32) {
-        flex_column(
+        column_arranged(
             Modifier::new().width(width).pad_x(2.5).pad_y(1.5),
-            Flex::new(),
+            Arrangement::Start,
+            Alignment::Start,
             || self.text(Modifier::new(), spans, pixels, strong, tone, width - 20.0),
         );
     }
@@ -528,11 +580,12 @@ impl Layout<'_> {
         }
         let height = pixels as f32 * LEADING;
         let links = self.links;
-        flex_column(modifier, Flex::new(), move || {
+        column_arranged(modifier, Arrangement::Start, Alignment::Start, move || {
             for runs in lines {
-                flex_row(
+                row_arranged(
                     Modifier::new().height(height),
-                    Flex::new().items_center(),
+                    Arrangement::Start,
+                    Alignment::Center,
                     move || {
                         for (content, inline) in runs {
                             let pressed = match (links, inline.target) {

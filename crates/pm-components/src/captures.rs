@@ -7,7 +7,7 @@ use crate::kit::{
     FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, picture, scroll_area, sp,
 };
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row, flex_wrap};
+use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
 use crate::button::Variant;
 use crate::elements::{code, fence, one_line, section, words};
@@ -216,9 +216,10 @@ fn popover(capture: &Capture, state: &WorkspaceState) {
                     .height_in(0.0, sp(HEIGHT / 4.0)),
                 Scroll::from_start(MENU_SCROLL, state.menu_scroll),
                 || {
-                    flex_column(
+                    column_arranged(
                         Modifier::new().fill_max_width(),
-                        Flex::new().gap(sp(2)),
+                        Arrangement::SpacedBy(sp(2)),
+                        Alignment::Start,
                         || {
                             cards(capture, state);
                         },
@@ -253,11 +254,16 @@ fn cards(capture: &Capture, state: &WorkspaceState) {
             if capture.lines.is_empty() {
                 line("The console was empty.", 12, 1.4, Role::Muted);
             } else {
-                flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
-                    for text in &capture.lines {
-                        words(text, true, Role::Text, CARD_TEXT);
-                    }
-                });
+                column_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(sp(1)),
+                    Alignment::Start,
+                    || {
+                        for text in &capture.lines {
+                            words(text, true, Role::Text, CARD_TEXT);
+                        }
+                    },
+                );
             }
         });
     }
@@ -275,9 +281,9 @@ pub fn chips(state: &WorkspaceState) {
     };
     anchored(
         || {
-            flex_wrap(
+            flow_row_with(
                 Modifier::new().pad_x(3).pad_side(Side::Top, 3),
-                Flex::new().gap(sp(2)),
+                FlowOptions::new(sp(2), sp(2)),
                 || {
                     for (index, capture) in state.captures.iter().enumerate() {
                         rustle::key(CAPTURE_BASE + index as u64, || {
@@ -294,11 +300,12 @@ pub fn chips(state: &WorkspaceState) {
 /// Emits the chip of the capture at `index`: a button that opens its popover, filled while `selected`, and one that takes it off.
 #[track_caller]
 fn pill(index: usize, capture: &Capture, selected: bool) {
-    flex_row(
+    row_arranged(
         Modifier::new()
             .fill_rounded(Role::SurfaceHover, Radius::Lg)
             .pad_side(Side::Right, 1),
-        Flex::new().items_center().gap(sp(0.5)),
+        Arrangement::SpacedBy(sp(0.5)),
+        Alignment::Center,
         || {
             Button::new(capture.label(), FocusId(CAPTURE_BASE + index as u64))
                 .variant(Variant::Ghost)

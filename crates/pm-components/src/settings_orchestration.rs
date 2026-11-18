@@ -2,7 +2,7 @@
 
 use crate::kit::sp;
 use rustle::Modifier;
-use rustle::{Flex, flex_wrap};
+use rustle::{Alignment, Arrangement, FlowOptions, flow_row_with};
 
 use crate::settings::Section;
 use crate::settings_servers::{boxed, heading_only, note, paragraph};
@@ -95,9 +95,11 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     crate::settings_pages::page_rows(state, Section::Orchestration, room);
     provider_choice(state);
     error_note(state, room);
-    flex_wrap(
+    flow_row_with(
         Modifier::new().fill_max_width(),
-        Flex::new().items_center().justify_between().gap(sp(2)),
+        FlowOptions::new(sp(2), sp(2))
+            .arrangement(Arrangement::SpaceBetween)
+            .item_alignment(Alignment::Center),
         || {
             heading_only("Categories", rows.len());
             scope_choice(state);

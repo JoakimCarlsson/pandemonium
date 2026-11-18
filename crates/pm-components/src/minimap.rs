@@ -1,8 +1,8 @@
 //! The minimap: a map of the whole file drawn small beside it, each line a row of coloured blocks where the text is, with the stretch the view shows marked; pressing or dragging on it scrolls the file.
 
 use pm_treesitter::Kind;
+use rustle::{Alignment, Arrangement, column_arranged};
 use rustle::{CursorIcon, Modifier};
-use rustle::{Flex, flex_column};
 
 use crate::kit::{FocusId, Interactive, Radius, Role, Side, Styled, Tone, Type};
 use crate::marked::{CaretLook, Mark, Paint, marked_line};
@@ -170,15 +170,17 @@ pub(crate) fn minimap(
     let (top, size) = geometry.slider(scroll, row, height);
     let own = Modifier::new()
         .width(WIDTH)
+        .fill_max_height()
         .stroke_side(Side::Left, 1.0, Role::Border)
         .clip_to(Radius::None)
         .cursor(CursorIcon::Pointer)
         .target(MINIMAP)
         .draggable_id(MINIMAP);
     rustle::stack_with(own, || {
-        flex_column(
+        column_arranged(
             Modifier::new().at(0.0, first as f32 * ROW - geometry.offset),
-            Flex::new(),
+            Arrangement::Start,
+            Alignment::Start,
             || {
                 for index in &shown {
                     row_of(document, *index, &spans[index - low]);

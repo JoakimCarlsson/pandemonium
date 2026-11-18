@@ -1,7 +1,8 @@
 //! Searching the text of every file of the project from the review panel: the box the search is typed in, the ways of matching and the hits, grouped by file.
 
 use crate::kit::sp;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+
 use std::collections::HashSet;
 use std::ops::Range;
 
@@ -322,6 +323,7 @@ fn hit_row(index: usize, location: &Location, matcher: &Query) {
     let (before, found, after) = windowed(text, matcher.first_in(text));
     let id = FocusId(SEARCH_HIT_BASE + index as u64);
     let modifier = Modifier::new()
+        .fill_max_width()
         .h(6)
         .looks_of(Looks::new().hover(Role::SurfaceHover), id)
         .cursor(CursorIcon::Pointer)
@@ -329,31 +331,37 @@ fn hit_row(index: usize, location: &Location, matcher: &Query) {
         .pad_side(Side::Left, 9)
         .pad_side(Side::Right, 3);
     let code = Type::new(12).ratio(1.4).mono();
-    flex_row(modifier, Flex::new().items_center().gap(sp(2)), || {
-        flex_row(
-            Modifier::new().grow().clip_to(Radius::None),
-            Flex::new().items_center(),
-            || {
-                label(before, code.tone(Role::Muted));
-                if !found.is_empty() {
+    row_arranged(
+        modifier,
+        Arrangement::SpacedBy(sp(2)),
+        Alignment::Center,
+        || {
+            row_arranged(
+                Modifier::new().weight(1.0).clip_to(Radius::None),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    label(before, code.tone(Role::Muted));
+                    if !found.is_empty() {
+                        label_with(
+                            Modifier::new().fill(Role::SurfaceActive),
+                            found,
+                            code.tone(Role::Text).truncate(),
+                        );
+                    }
                     label_with(
-                        Modifier::new().fill(Role::SurfaceActive),
-                        found,
-                        code.tone(Role::Text).truncate(),
+                        Modifier::new().weight(1.0),
+                        after,
+                        code.tone(Role::Muted).truncate(),
                     );
-                }
-                label_with(
-                    Modifier::new().grow(),
-                    after,
-                    code.tone(Role::Muted).truncate(),
-                );
-            },
-        );
-        label(
-            (location.span.start.line + 1).to_string(),
-            Type::new(11).ratio(1.4).mono().tone(Role::Subtle),
-        );
-    });
+                },
+            );
+            label(
+                (location.span.start.line + 1).to_string(),
+                Type::new(11).ratio(1.4).mono().tone(Role::Subtle),
+            );
+        },
+    );
 }
 
 /// Emits the row that names a file and folds its hits.
@@ -368,22 +376,28 @@ fn group_row(place: usize, group: &Group, folded: bool) {
     };
     let id = FocusId(SEARCH_GROUP_BASE + place as u64);
     let modifier = Modifier::new()
+        .fill_max_width()
         .h(6)
         .looks_of(Looks::new().hover(Role::SurfaceHover), id)
         .cursor(CursorIcon::Pointer)
         .target(id)
         .pad_x(3);
-    flex_row(modifier, Flex::new().items_center().gap(sp(1.5)), || {
-        glyph(chevron, 3.5, Role::Muted);
-        file_icon(name, 4.0);
-        line(name, 13, 1.4, Role::Text);
-        label_with(
-            Modifier::new().grow(),
-            folder,
-            Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
-        );
-        line(group.hits.len().to_string(), 11, 1.4, Role::Muted);
-    });
+    row_arranged(
+        modifier,
+        Arrangement::SpacedBy(sp(1.5)),
+        Alignment::Center,
+        || {
+            glyph(chevron, 3.5, Role::Muted);
+            file_icon(name, 4.0);
+            line(name, 13, 1.4, Role::Text);
+            label_with(
+                Modifier::new().weight(1.0),
+                folder,
+                Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
+            );
+            line(group.hits.len().to_string(), 11, 1.4, Role::Muted);
+        },
+    );
 }
 
 /// What the search says under its box: how much it found, that it is looking, or why it cannot.
@@ -420,76 +434,88 @@ pub fn panel(state: &WorkspaceState) {
     let search = &state.project_search;
     let (said, tone) = tally(search, state.review_index().is_some());
     let matcher = search.matcher();
-    flex_column(Modifier::new().grow(), Flex::new(), || {
-        flex_column(
-            Modifier::new().pad_x(3).pad_y(2),
-            Flex::new().gap(sp(1.5)),
-            || {
-                flex_row(
-                    Modifier::new(),
-                    Flex::new().items_center().gap(sp(1)),
-                    || {
-                        Input::new(&search.query, PROJECT_SEARCH_FIELD)
-                            .size(Size::Sm)
-                            .placeholder("Search")
-                            .invalid(search.problem.is_some())
-                            .modifier(Modifier::new().grow())
-                            .build();
-                        if !search.query.text().is_empty() {
-                            crate::button::Button::icon(IconName::Close, PROJECT_SEARCH_CLEAR)
+    column_arranged(
+        Modifier::new().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            column_arranged(
+                Modifier::new().fill_max_width().pad_x(3).pad_y(2),
+                Arrangement::SpacedBy(sp(1.5)),
+                Alignment::Start,
+                || {
+                    row_arranged(
+                        Modifier::new().fill_max_width(),
+                        Arrangement::SpacedBy(sp(1)),
+                        Alignment::Center,
+                        || {
+                            Input::new(&search.query, PROJECT_SEARCH_FIELD)
+                                .size(Size::Sm)
+                                .placeholder("Search")
+                                .invalid(search.problem.is_some())
+                                .modifier(Modifier::new().weight(1.0))
+                                .build();
+                            if !search.query.text().is_empty() {
+                                crate::button::Button::icon(IconName::Close, PROJECT_SEARCH_CLEAR)
+                                    .variant(crate::button::Variant::Ghost)
+                                    .size(Size::Sm)
+                                    .build();
+                            }
+                            switch("Aa", PROJECT_SEARCH_CASE, search.case);
+                            switch(".*", PROJECT_SEARCH_REGEX, search.regex);
+                        },
+                    );
+                    row_arranged(
+                        Modifier::new().fill_max_width(),
+                        Arrangement::SpacedBy(sp(1)),
+                        Alignment::Center,
+                        || {
+                            label_with(
+                                Modifier::new().weight(1.0),
+                                said.as_str(),
+                                Type::new(12).ratio(1.4).tone(tone).truncate(),
+                            );
+                            if search.total() > 0 {
+                                crate::button::Button::icon(
+                                    IconName::FileCode,
+                                    PROJECT_SEARCH_EXCERPTS,
+                                )
                                 .variant(crate::button::Variant::Ghost)
                                 .size(Size::Sm)
+                                .modifier(Modifier::new().tooltip("Open Results in Editor"))
                                 .build();
-                        }
-                        switch("Aa", PROJECT_SEARCH_CASE, search.case);
-                        switch(".*", PROJECT_SEARCH_REGEX, search.regex);
-                    },
-                );
-                flex_row(
-                    Modifier::new(),
-                    Flex::new().items_center().gap(sp(1)),
-                    || {
-                        label_with(
-                            Modifier::new().grow(),
-                            said.as_str(),
-                            Type::new(12).ratio(1.4).tone(tone).truncate(),
-                        );
-                        if search.total() > 0 {
-                            crate::button::Button::icon(
-                                IconName::FileCode,
-                                PROJECT_SEARCH_EXCERPTS,
-                            )
-                            .variant(crate::button::Variant::Ghost)
-                            .size(Size::Sm)
-                            .modifier(Modifier::new().tooltip("Open Results in Editor"))
-                            .build();
-                        }
-                    },
-                );
-            },
-        );
-        scroll_area(
-            Modifier::new().grow().clip_to(Radius::None),
-            Scroll::from_start(TREE_SCROLL, state.tree_scroll),
-            || {
-                flex_column(
-                    Modifier::new().fill_max_width().pad_y(1),
-                    Flex::new(),
-                    || {
-                        let mut index = 0;
-                        for (place, group) in search.groups.iter().enumerate() {
-                            let folded = search.folded.contains(&group.path);
-                            group_row(place, group, folded);
-                            for location in &group.hits {
-                                if !folded {
-                                    hit_row(index, location, &matcher);
-                                }
-                                index += 1;
                             }
-                        }
-                    },
-                );
-            },
-        );
-    });
+                        },
+                    );
+                },
+            );
+            scroll_area(
+                Modifier::new()
+                    .fill_max_width()
+                    .weight(1.0)
+                    .clip_to(Radius::None),
+                Scroll::from_start(TREE_SCROLL, state.tree_scroll),
+                || {
+                    column_arranged(
+                        Modifier::new().fill_max_width().pad_y(1),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            let mut index = 0;
+                            for (place, group) in search.groups.iter().enumerate() {
+                                let folded = search.folded.contains(&group.path);
+                                group_row(place, group, folded);
+                                for location in &group.hits {
+                                    if !folded {
+                                        hit_row(index, location, &matcher);
+                                    }
+                                    index += 1;
+                                }
+                            }
+                        },
+                    );
+                },
+            );
+        },
+    );
 }

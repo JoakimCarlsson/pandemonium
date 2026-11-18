@@ -1,7 +1,7 @@
 //! The sidebar: ways to start and find work, the chats that belong to no project, and every project with its sessions.
 
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, BoxAlignment, column_arranged, row_arranged};
 
 use crate::kit::{
     FocusId, IconName, Radius, Role, Side, Styled, Tooltip, Type, at_window, label_with, sp,
@@ -71,9 +71,10 @@ pub const HEADING_HEIGHT: f32 = ROW;
 /// Emits the heading of a group of the list, saying `words`.
 #[track_caller]
 fn heading(words: &str) {
-    flex_row(
+    row_arranged(
         Modifier::new().h(9).pad_x(2),
-        Flex::new().items_center(),
+        Arrangement::Start,
+        Alignment::Center,
         || {
             line(words, 12, 1.4, Role::Subtle);
         },
@@ -117,9 +118,10 @@ pub fn status_icon(status: Status) {
         Status::Idle => "Idle",
         Status::Unreachable => "Server out of reach",
     };
-    flex_row(
+    row_arranged(
         Modifier::new().square(4).tooltip(meaning),
-        Flex::new().items_center().justify_center(),
+        Arrangement::Center,
+        Alignment::Center,
         move || match status {
             Status::Working => spinner(3.5, Role::Muted),
             Status::Unread => {
@@ -144,6 +146,7 @@ pub fn status_icon(status: Status) {
 fn entry(icon: IconName, label: &str, id: FocusId, selected: bool) {
     let tone = if selected { Role::Text } else { Role::Muted };
     Tile::new(id)
+        .modifier(Modifier::new().fill_max_width())
         .selected(selected)
         .inner(Modifier::new().pad_x(2))
         .build_with(|| {
@@ -156,6 +159,7 @@ fn entry(icon: IconName, label: &str, id: FocusId, selected: bool) {
 #[track_caller]
 fn session_row(index: usize, session: &Session, selected: bool, indent: f32) {
     Tile::new(FocusId(SESSION_BASE + index as u64))
+        .modifier(Modifier::new().fill_max_width())
         .selected(selected)
         .inner(
             Modifier::new()
@@ -188,6 +192,7 @@ fn submodule_row(project: &Project, relative: &str, position: usize, starting: b
         .rsplit_once('/')
         .map_or(("", relative), |(folder, name)| (folder, name));
     Tile::new(FocusId(NEW_IN_SUBMODULE_BASE + position as u64))
+        .modifier(Modifier::new().fill_max_width())
         .selected(starting)
         .inner(
             Modifier::new()
@@ -196,14 +201,15 @@ fn submodule_row(project: &Project, relative: &str, position: usize, starting: b
         )
         .build_with(|| {
             Avatar::new(name, project.color()).size(Size::Xs).build();
-            flex_row(
-                Modifier::new().grow().clip_to(Radius::None),
-                Flex::new().items_center().gap(sp(1.5)),
+            row_arranged(
+                Modifier::new().weight(1.0).clip_to(Radius::None),
+                Arrangement::SpacedBy(sp(1.5)),
+                Alignment::Center,
                 || {
                     line(name, 13, 1.4, Role::Text);
                     if !folder.is_empty() {
                         label_with(
-                            Modifier::new().grow(),
+                            Modifier::new().weight(1.0),
                             format!("{folder}/"),
                             Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
                         );
@@ -241,11 +247,13 @@ fn submodule_tree(
     if blocks.is_empty() {
         return;
     }
-    flex_column(
+    column_arranged(
         Modifier::new()
+            .fill_max_width()
             .pad_side(Side::Left, SUBMODULE_RAIL)
             .stroke_side(Side::Left, 1.0, project.color()),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             for (offset, path) in blocks {
                 let name = parent
@@ -254,15 +262,20 @@ fn submodule_tree(
                 let starting = state.page == Page::New(index)
                     && state.new_in.as_deref() == Some(path.as_str());
                 rustle::key(first + offset, || {
-                    flex_column(Modifier::new(), Flex::new(), || {
-                        submodule_row(project, name, first + offset, starting);
-                        for &(position, session) in members.iter().filter(|(_, session)| {
-                            listed_under(state, session) == Some(path.as_str())
-                        }) {
-                            session_row(position, session, open == Some(position), 3.5);
-                        }
-                        submodule_tree(state, index, Some(path), members, first);
-                    });
+                    column_arranged(
+                        Modifier::new().fill_max_width(),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            submodule_row(project, name, first + offset, starting);
+                            for &(position, session) in members.iter().filter(|(_, session)| {
+                                listed_under(state, session) == Some(path.as_str())
+                            }) {
+                                session_row(position, session, open == Some(position), 3.5);
+                            }
+                            submodule_tree(state, index, Some(path), members, first);
+                        },
+                    );
                 });
             }
         },
@@ -289,14 +302,15 @@ fn project(state: &WorkspaceState, index: usize) {
         _ => None,
     };
     let starting = state.page == Page::New(index) && state.new_in.is_none();
-    let section = Modifier::new().pad_side(Side::Bottom, 3);
+    let section = Modifier::new().fill_max_width().pad_side(Side::Bottom, 3);
     let section = if dragged {
         section.opacity(35.0)
     } else {
         section
     };
-    flex_column(section, Flex::new(), || {
+    column_arranged(section, Arrangement::Start, Alignment::Start, || {
         Tile::new(FocusId(PROJECT_BASE + index as u64))
+            .modifier(Modifier::new().fill_max_width())
             .selected(state.page == Page::Project(index))
             .inner(Modifier::new().pad_x(2))
             .build_with(|| {
@@ -313,6 +327,7 @@ fn project(state: &WorkspaceState, index: usize) {
         submodule_tree(state, index, None, &members, first_submodule);
         let tone = if starting { Role::Text } else { Role::Muted };
         Tile::new(FocusId(NEW_IN_BASE + index as u64))
+            .modifier(Modifier::new().fill_max_width())
             .selected(starting)
             .inner(Modifier::new().pad_side(Side::Left, 3))
             .build_with(|| {
@@ -333,9 +348,10 @@ fn chats(state: &WorkspaceState) {
         Page::Session(open) => Some(open),
         _ => None,
     };
-    flex_column(
-        Modifier::new().pad_side(Side::Bottom, 3),
-        Flex::new(),
+    column_arranged(
+        Modifier::new().fill_max_width().pad_side(Side::Bottom, 3),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             heading("Chats");
             for position in members {
@@ -353,20 +369,23 @@ fn chats(state: &WorkspaceState) {
 /// Emits the whole sidebar for `state`.
 #[track_caller]
 pub fn sidebar(state: &WorkspaceState) {
-    flex_column(
+    column_arranged(
         Modifier::new()
             .width(state.sidebar_width)
             .fill_max_height()
             .fill(Role::Sidebar)
             .stroke_side(Side::Right, 1.0, Role::Border),
-        Flex::new(),
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            flex_column(
+            column_arranged(
                 Modifier::new()
+                    .fill_max_width()
                     .pad_x(2)
                     .pad_side(Side::Top, 3)
                     .pad_side(Side::Bottom, 2),
-                Flex::new().gap(sp(0.5)),
+                Arrangement::SpacedBy(sp(0.5)),
+                Alignment::Start,
                 || {
                     entry(
                         IconName::Message,
@@ -391,16 +410,18 @@ pub fn sidebar(state: &WorkspaceState) {
             );
             rustle::stack_with(
                 Modifier::new()
-                    .grow()
+                    .weight(1.0)
                     .fill_max_width()
                     .clip_to(Radius::None),
                 || {
-                    flex_column(
+                    column_arranged(
                         Modifier::new()
                             .at(0.0, -state.sidebar_scroll)
+                            .wrap_content_height(BoxAlignment::TopStart, true)
                             .fill_max_width()
                             .pad_x(2),
-                        Flex::new(),
+                        Arrangement::Start,
+                        Alignment::Start,
                         || {
                             chats(state);
                             heading("Workspaces");
@@ -425,7 +446,7 @@ pub fn drag_ghost(state: &WorkspaceState) {
         return;
     };
     at_window(sp(2.0), drag.at.1 - ROW / 2.0, Modifier::new(), || {
-        flex_row(
+        row_arranged(
             Modifier::new()
                 .h(9)
                 .width(state.sidebar_width - 16.0)
@@ -433,7 +454,8 @@ pub fn drag_ghost(state: &WorkspaceState) {
                 .fill_rounded(Role::Surface, Radius::Md)
                 .stroke(Role::Border, Radius::Md)
                 .pad_x(2),
-            Flex::new().items_center().gap(sp(3)),
+            Arrangement::SpacedBy(sp(3)),
+            Alignment::Center,
             || {
                 Avatar::of(project).build();
                 clipped(&project.name, 14, Role::Text);

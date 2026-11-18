@@ -2,7 +2,7 @@
 
 use pm_components::kit::{Role, Styled};
 use rustle::Modifier;
-use rustle::{Flex, flex_column, flex_row};
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use pm_components::arrange::{
     PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectMenu, SESSION_MENU_CLOSE,
@@ -39,28 +39,34 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
     let plan_width = width - sidebar_width - review_width - main_width;
     let paned = state.paned();
     rustle::stack_with(Modifier::new().fill_max_size(), || {
-        flex_column(
+        column_arranged(
             Modifier::new().fill_max_size().fill(Role::Background),
-            Flex::new(),
+            Arrangement::Start,
+            Alignment::Start,
             || {
                 TitleBar::of(state).build();
-                flex_row(Modifier::new().grow().fill_max_width(), Flex::new(), || {
-                    if state.sidebar_open {
-                        sidebar::sidebar(state);
-                    }
-                    match state.page {
-                        _ if paned => panes::main_area(state, (width, height)),
-                        Page::History => history::history(state),
-                        Page::Extensions => pm_components::extensions::extensions(state),
-                        _ => panes::starting_page(state, main_width, page),
-                    }
-                    if let Some(source) = state.plan_shown() {
-                        plan::panel(state, source, plan_width);
-                    }
-                    if let Some(session) = state.review_session().filter(|_| reviewing) {
-                        review::review(state, session, page);
-                    }
-                });
+                row_arranged(
+                    Modifier::new().weight(1.0).fill_max_width(),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        if state.sidebar_open {
+                            sidebar::sidebar(state);
+                        }
+                        match state.page {
+                            _ if paned => panes::main_area(state, (width, height)),
+                            Page::History => history::history(state),
+                            Page::Extensions => pm_components::extensions::extensions(state),
+                            _ => panes::starting_page(state, main_width, page),
+                        }
+                        if let Some(source) = state.plan_shown() {
+                            plan::panel(state, source, plan_width);
+                        }
+                        if let Some(session) = state.review_session().filter(|_| reviewing) {
+                            review::review(state, session, page);
+                        }
+                    },
+                );
             },
         );
         if state.sidebar_open {

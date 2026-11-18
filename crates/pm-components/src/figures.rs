@@ -1,6 +1,6 @@
 //! The pictures a markdown source shows: diagrams written as fenced mermaid code, formulas written in TeX and images it names, each drawn or fetched into pixels and kept under a key.
 
-use rustle::{Flex, flex_row};
+use rustle::{Alignment, row_arranged};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -207,9 +207,10 @@ fn drawn(modifier: Modifier, drawing: &Drawing, across: f32, down: f32) {
 pub(crate) fn diagram_node(drawing: &Drawing, width: f32) {
     let (across, down) = drawing.size();
     let fit = (width / across.max(1.0)).min(1.0);
-    flex_row(
+    row_arranged(
         Modifier::new().fill_max_width(),
-        Flex::new().justify_center(),
+        Arrangement::Center,
+        Alignment::Start,
         || {
             drawn(Modifier::new(), drawing, across * fit, down * fit);
         },
@@ -248,7 +249,7 @@ pub(crate) fn images_node(
         Modifier::new().fill_max_width(),
         FlowOptions::new(sp(1.5), sp(1.5))
             .arrangement(arrangement)
-            .alignment(rustle::Alignment::End),
+            .item_alignment(rustle::Alignment::End),
         || {
             for image in images {
                 let modifier = match (links, image.target) {
