@@ -215,6 +215,20 @@ pub(crate) fn diagram_node(drawing: &Drawing, width: f32) {
     );
 }
 
+/// How big `image` is drawn from `drawing`: the size the source asks for, the other side following the picture's shape when only one is asked, or else the drawing's own size, shrunk to `width` logical pixels.
+fn image_size(image: &Image, drawing: &Drawing, width: f32) -> (f32, f32) {
+    let (across, down) = drawing.size();
+    let shape = down / across.max(1.0);
+    let (across, down) = match (image.width, image.height) {
+        (Some(wide), Some(tall)) => (wide as f32, tall as f32),
+        (Some(wide), None) => (wide as f32, wide as f32 * shape),
+        (None, Some(tall)) => (tall as f32 / shape.max(f32::EPSILON), tall as f32),
+        (None, None) => (across, down),
+    };
+    let fit = (width / across.max(1.0)).min(1.0);
+    (across * fit, down * fit)
+}
+
 /// Emits `images` side by side, wrapping onto more rows within `width` logical pixels and set in the middle when `centered`, each drawn as `figures` holds it under `key`, and its words in `pixels` tall type in its place until then; an image that is the face of a link answers to the link's name from `links` up.
 #[track_caller]
 pub(crate) fn images_node(

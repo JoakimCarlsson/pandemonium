@@ -137,7 +137,7 @@ fn excerpts_tab(state: &WorkspaceState, shown: bool) {
     };
     tab_with(
         excerpts.icon(),
-        excerpts.title(),
+        &excerpts.title(),
         TAB_EXCERPTS,
         shown,
         || {

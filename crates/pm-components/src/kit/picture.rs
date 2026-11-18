@@ -28,6 +28,13 @@ pub struct Picture {
     pub pixels: Arc<Vec<u8>>,
 }
 
+impl PartialEq for Picture {
+    /// Two pictures are equal when they carry the same key.
+    fn eq(&self, other: &Self) -> bool {
+        self.key == other.key
+    }
+}
+
 impl Picture {
     /// The bit of a key that marks a picture as one frame of a live surface.
     pub const LIVE: u64 = 1 << 63;

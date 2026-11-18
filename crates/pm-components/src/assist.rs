@@ -585,7 +585,7 @@ fn signature_card(signature: &pm_protocol::Signature, at: (f32, f32)) {
             block(Modifier::new().clip_to(Radius::None), || {
                 marked_line(
                     Modifier::new(),
-                    words,
+                    &words,
                     Type::code(12).ratio(1.5).tone(Role::Text),
                     marks,
                     CaretLook::default(),
