@@ -337,6 +337,7 @@ impl App {
         rustle_wgpu::set_legible_text(false);
         rustle_wgpu::set_gamma_blending(true);
         rustle_wgpu::set_linear_shadows(true);
+        rustle_wgpu::set_frame_latency(frame_latency());
         rustle::set_pixel_rounding(rustle::PixelRounding::Logical);
         rustle::set_close_handler(|| false);
         let size = Self::opening_size(event_loop);
@@ -835,4 +836,13 @@ impl Drop for Running {
         self.0.view_writer.flush();
         self.0.browser_shutdown();
     }
+}
+
+/// How many frames the window's surface may queue: what `PANDEMONIUM_FRAME_LATENCY` says when it is `1` or `2`, and otherwise two.
+fn frame_latency() -> u32 {
+    std::env::var("PANDEMONIUM_FRAME_LATENCY")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|value| matches!(value, 1 | 2))
+        .unwrap_or(2)
 }

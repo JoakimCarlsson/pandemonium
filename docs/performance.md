@@ -34,16 +34,18 @@ display latency. Keyboard timings begin before applying the edit and include
 coalesced input through the next successful submission. These are CPU
 measurements, not GPU timestamp queries.
 
-Run a workload with the timings on:
+For a hardware-specific comparison, run the same workload twice:
 
 ```sh
-PANDEMONIUM_FRAME_TIMINGS=1 CARGO_TARGET_DIR=build cargo run -p pandemonium
+PANDEMONIUM_FRAME_TIMINGS=1 PANDEMONIUM_FRAME_LATENCY=2 CARGO_TARGET_DIR=build cargo run -p pandemonium
+PANDEMONIUM_FRAME_TIMINGS=1 PANDEMONIUM_FRAME_LATENCY=1 CARGO_TARGET_DIR=build cargo run -p pandemonium
 ```
 
+The override accepts only `1` or `2`; the default remains `2`. Keep vsync on.
 Compare slow-frame percentiles while moving across a large expanded tree,
-scrolling, and receiving agent output. Rustle owns the surface and its frame
-queue, so the queue length is no longer a setting of the app. Headless
-snapshots cannot establish latency tradeoffs.
+scrolling, and receiving agent output. A smaller queue can reduce latency but
+can also reduce throughput, so choose it from measurements on the target GPU
+and compositor. Headless snapshots cannot establish this tradeoff.
 
 ## Streaming latency
 
