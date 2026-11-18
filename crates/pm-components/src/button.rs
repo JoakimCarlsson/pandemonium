@@ -86,6 +86,8 @@ pub struct Button {
     selected: bool,
     /// The colour of its words and icons in place of its variant's, if any.
     tone: Option<Role>,
+    /// Its fill at rest in place of its variant's, if any.
+    resting: Option<Role>,
     /// How far it reaches across its row.
     reach: Reach,
     /// The lines its label is broken into when it is set to wrap, one text line each.
@@ -115,6 +117,7 @@ impl Button {
             spinning: false,
             selected: false,
             tone: None,
+            resting: None,
             reach: Reach::Content,
             lines: Vec::new(),
             modifier: Modifier::new(),
@@ -139,6 +142,7 @@ impl Button {
             spinning: false,
             selected: false,
             tone: None,
+            resting: None,
             reach: Reach::Content,
             lines: Vec::new(),
             modifier: Modifier::new(),
@@ -159,7 +163,13 @@ impl Button {
         self
     }
 
-    /// The button with its words set in the code font.
+    /// The button filled with `role` at rest in place of its variant's fill; under the pointer and pressed it fills as its variant does.
+    pub fn resting(mut self, role: Role) -> Self {
+        self.resting = Some(role);
+        self
+    }
+
+    /// The button with its words set in the code font, and, like its medium weight, only while its words are not cut short to fill a width: a button that fills its row sets them in plain interface type.
     pub fn monospace(mut self) -> Self {
         self.monospace = true;
         self
@@ -282,6 +292,9 @@ impl Button {
             Reach::Fixed(width) => Modifier::new().width(width),
             Reach::Fill => Modifier::new().grow(),
         };
+        if self.disabled {
+            own = own.opacity(40.0);
+        }
         own = if self.label.is_none() {
             own.square(square)
         } else if several {
@@ -298,7 +311,7 @@ impl Button {
         };
         own = own.focus_ring(self.id, 2.0, radius);
         own = if self.disabled {
-            own.opacity(40.0).cursor(CursorIcon::NotAllowed)
+            own.cursor(CursorIcon::NotAllowed)
         } else {
             own.cursor(CursorIcon::Pointer).target(self.id)
         };
@@ -314,14 +327,16 @@ impl Button {
             Flex::new().center().middle().gap(2)
         });
         let mut kind = Type::new(font).ratio(1.4).tone(ink);
-        if self.variant != Variant::Field {
-            kind = kind.medium();
-        }
-        if self.variant == Variant::Link {
-            kind = kind.underline();
-        }
-        if self.monospace {
-            kind = kind.mono();
+        if !spread || several {
+            if self.variant != Variant::Field {
+                kind = kind.medium();
+            }
+            if self.variant == Variant::Link {
+                kind = kind.underline();
+            }
+            if self.monospace {
+                kind = kind.mono();
+            }
         }
         let spins_first = self.spinning && self.trailing.is_none();
         let (mark, leading, trailing, spinning, words, lines) = (
@@ -409,6 +424,7 @@ impl Button {
                 Variant::Link => (None, None, None),
             };
         let resting = match (self.variant, self.selected) {
+            _ if self.resting.is_some() => self.resting.map(Tone::from),
             (Variant::Field, _) => resting,
             (_, true) => Some(Role::SurfaceSelected.into()),
             _ => resting,

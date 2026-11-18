@@ -112,7 +112,7 @@ fn clipped_mono(content: &str, chip: bool) {
         let holder = if chip {
             Modifier::new()
                 .fill_rounded(Role::Surface, Radius::Md)
-                .clip_to(Radius::Md)
+                .clip_to(Radius::None)
                 .pad_x(1.5)
         } else {
             holder
@@ -306,23 +306,22 @@ fn worktree_chip(worktree: &Worktree) {
     );
 }
 
-/// Emits a small quiet label on a subagent's row, set as code: the kind of subagent.
+/// A small quiet label on a subagent's row naming the kind of subagent, set like its other labels.
 #[track_caller]
 fn quiet_chip(words: String) {
-    quiet_text(words, true);
+    quiet_text(words);
 }
 
 /// Emits a small quiet label on a subagent's row, such as the category and model it runs as.
 #[track_caller]
 fn quiet_label(words: String) {
-    quiet_text(words, false);
+    quiet_text(words);
 }
 
-/// Emits `words` small and muted on a chip, set as code when `mono`.
+/// Emits `words` small and muted on a chip.
 #[track_caller]
-fn quiet_text(words: String, mono: bool) {
+fn quiet_text(words: String) {
     let kind = Type::new(12).ratio(1.4).tone(Role::Muted);
-    let kind = if mono { kind.mono() } else { kind };
     row(
         Modifier::new()
             .fill_rounded(Role::SurfaceHover, Radius::Md)
@@ -406,7 +405,7 @@ pub fn subagents(
         Modifier::new()
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
-            .clip_to(Radius::Lg),
+            .clip_to(Radius::None),
         Flex::new(),
         || {
             row(
@@ -540,7 +539,7 @@ pub fn plan(items: &[PlanStep]) {
         Modifier::new()
             .fill_rounded(Role::Surface, Radius::Xl)
             .stroke(Role::Border, Radius::Xl)
-            .clip_to(Radius::Xl),
+            .clip_to(Radius::None),
         Flex::new(),
         || {
             row(
@@ -728,7 +727,9 @@ fn answers(ask: &Permission, width: f32) {
     choices.sort_by_key(|(_, choice)| order(&choice.verdict));
     rustle::flow_row_with(
         Modifier::new().fill_max_width(),
-        FlowOptions::new(sp(2), sp(2)).arrangement(Arrangement::End),
+        FlowOptions::new(sp(2), sp(2))
+            .arrangement(Arrangement::End)
+            .alignment(rustle::Alignment::Center),
         || {
             for (index, choice) in choices {
                 Button::new(&choice.name, FocusId(CHOICE_BASE + index as u64))

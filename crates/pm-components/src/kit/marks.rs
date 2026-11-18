@@ -95,6 +95,15 @@ impl Mark {
     }
 }
 
+/// Whether `content` holds right-to-left letters, whose line the text node lays
+/// out against its whole width, so its marks are placed from the line shaped
+/// alone instead, as it is drawn.
+fn right_to_left(content: &str) -> bool {
+    content
+        .chars()
+        .any(|letter| matches!(letter, '\u{0590}'..='\u{08FF}' | '\u{FB1D}'..='\u{FEFF}'))
+}
+
 /// Whether a blinking caret is lit at the frame's clock, asking for the frame at which it changes.
 pub fn caret_lit(look: CaretLook) -> bool {
     if look.steady {
@@ -278,12 +287,15 @@ fn marked(
     let space = rustle::layout_text(" ", &style, None).size().width;
     let size = style.font_size;
     let height = kind.line_height();
-    let shaped: Rc<RefCell<Option<Rc<TextLayout>>>> = Rc::default();
+    let unbroken =
+        right_to_left(content).then(|| Rc::new(rustle::layout_spans(&spans, &style, None)));
+    let shaped: Rc<RefCell<Option<Rc<TextLayout>>>> = Rc::new(RefCell::new(unbroken.clone()));
     let (stored, behind, over) = (shaped.clone(), shaped.clone(), shaped);
     let marks = Rc::new(marks);
     let (under, above) = (marks.clone(), marks);
     let theme_behind = theme.clone();
     let placed = stored.clone();
+    let scoped = stored.clone();
     let modifier = match piece {
         Some((owner, start)) => modifier.on_placed(move |rect, _| {
             let Some(layout) = placed.borrow().clone() else {
@@ -300,8 +312,16 @@ fn marked(
         }),
         None => modifier,
     };
+    let modifier = match crate::kit::select::scope() {
+        Some(id) => crate::kit::select::piece(modifier, id, Rc::from(content), scoped),
+        None => modifier,
+    };
     let modifier = modifier
-        .on_text_layout(move |layout| *stored.borrow_mut() = Some(layout))
+        .on_text_layout(move |layout| {
+            if unbroken.is_none() {
+                *stored.borrow_mut() = Some(layout);
+            }
+        })
         .draw_behind(move |canvas| {
             let Some(layout) = behind.borrow().clone() else {
                 return;

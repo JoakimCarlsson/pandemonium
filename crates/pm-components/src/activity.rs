@@ -8,7 +8,7 @@ use crate::Tally;
 use crate::button::Variant;
 use crate::kit::{
     Flex, FocusId, Hovered, IconName, Interactive, Looks, Placement, Radius, Role, Side, Styled,
-    anchored, column, gap_box, row, spinner, wrapping,
+    anchored, column, gap_box, row, spinner, wrapping_with,
 };
 use crate::parts::{clipped, line};
 use crate::sample::{Session, Step};
@@ -179,7 +179,7 @@ fn chips(
     awaiting: usize,
     working_agents: usize,
 ) {
-    wrapping(Modifier::new(), 2, || {
+    wrapping_with(Modifier::new(), Flex::new().gap(2).center(), || {
         if awaiting > 0 {
             chip(format!("{awaiting} awaiting approval"), APPROVALS_CHIP)
                 .mark(|| {

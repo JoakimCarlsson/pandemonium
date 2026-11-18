@@ -85,19 +85,41 @@ pub struct Piece {
     pub layout: Rc<TextLayout>,
 }
 
-/// Emits one line of `content` set in `kind` as a piece of the selectable
-/// text `id`, highlighting the part of it the frame's selection covers:
-/// `text(content).styles([...])` inside a box made `.selectable(id)`.
+/// The selectable text the views being composed belong to, if any.
+static SCOPE: rustle::CompositionLocal<Option<FocusId>> = rustle::CompositionLocal::new(|| None);
+
+/// Composes `content` with every line of text it emits a piece of the
+/// selectable text `id`, in the order they are painted: a box made
+/// `.selectable(id)`, whose text lines, from labels, paragraphs and marked
+/// lines alike, a selection runs through.
 #[track_caller]
-pub fn selectable(modifier: Modifier, id: FocusId, content: impl Into<String>, kind: Type) {
-    let content: String = content.into();
-    let shared: Rc<str> = Rc::from(content.as_str());
-    let shaped: Rc<RefCell<Option<Rc<TextLayout>>>> = Rc::default();
+pub fn selectable_scope(id: FocusId, content: impl FnOnce()) {
+    SCOPE.provide(Some(id), content);
+}
+
+/// The selectable text the line being composed belongs to, if it is inside
+/// a [`selectable_scope`].
+pub(crate) fn scope() -> Option<FocusId> {
+    if rustle::is_composing() {
+        SCOPE.current()
+    } else {
+        None
+    }
+}
+
+/// `modifier` recording the text it holds, `content`, whose shaped layout
+/// `shaped` holds once laid out, as a piece of the selectable text `id`, and
+/// highlighting behind it the part of it the frame's selection covers.
+pub(crate) fn piece(
+    modifier: Modifier,
+    id: FocusId,
+    content: Rc<str>,
+    shaped: Rc<RefCell<Option<Rc<TextLayout>>>>,
+) -> Modifier {
     let index: Rc<RefCell<usize>> = Rc::default();
     let highlight = theme::color(Tone::from(Role::Accent).alpha(0.3));
-    let (laid, placed, numbered) = (shaped.clone(), shaped.clone(), index.clone());
-    let modifier = modifier
-        .on_text_layout(move |layout| *laid.borrow_mut() = Some(layout))
+    let (placed, numbered) = (shaped.clone(), index.clone());
+    modifier
         .on_placed(move |rect, _| {
             let Some(layout) = placed.borrow().clone() else {
                 return;
@@ -108,7 +130,7 @@ pub fn selectable(modifier: Modifier, id: FocusId, content: impl Into<String>, k
                 report.pieces.push(Piece {
                     id,
                     index: next,
-                    content: shared.clone(),
+                    content: content.clone(),
                     rect,
                     layout,
                 });
@@ -125,7 +147,23 @@ pub fn selectable(modifier: Modifier, id: FocusId, content: impl Into<String>, k
             if let Some(range) = selection.covering(*index.borrow(), length) {
                 canvas.selection(0.0, 0.0, &layout, range.start, range.end, highlight);
             }
-        });
+        })
+}
+
+/// Emits one line of `content` set in `kind` as a piece of the selectable
+/// text `id`, highlighting the part of it the frame's selection covers:
+/// `text(content).styles([...])` inside a box made `.selectable(id)`.
+#[track_caller]
+pub fn selectable(modifier: Modifier, id: FocusId, content: impl Into<String>, kind: Type) {
+    let content: String = content.into();
+    let shaped: Rc<RefCell<Option<Rc<TextLayout>>>> = Rc::default();
+    let laid = shaped.clone();
+    let modifier = piece(
+        modifier.on_text_layout(move |layout| *laid.borrow_mut() = Some(layout)),
+        id,
+        Rc::from(content.as_str()),
+        shaped,
+    );
     rustle::text_styled(modifier, content, kind.style());
 }
 

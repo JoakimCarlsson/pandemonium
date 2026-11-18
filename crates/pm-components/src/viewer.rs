@@ -1003,7 +1003,7 @@ fn strip(viewer: &Viewer, live: bool) {
             file_icon(&viewer.path, 4.0);
             label(
                 &viewer.path,
-                Type::new(13).ratio(1.4).tone(Role::Text).mono(),
+                Type::new(13).ratio(1.4).tone(Role::Text).mono().truncate(),
             );
             if viewer.head {
                 line("HEAD", 11, 1.4, Role::Muted);
@@ -1014,17 +1014,15 @@ fn strip(viewer: &Viewer, live: bool) {
             {
                 line("Read only", 11, 1.4, Role::Muted);
             }
-            match &viewer.contents {
-                Contents::Text(document) => match breadcrumbs(document) {
-                    Some(crumbs) => label_with(
-                        Modifier::new().grow(),
-                        crumbs,
-                        Type::new(12).ratio(1.4).tone(Role::Muted).mono().truncate(),
-                    ),
-                    None => spacer(),
-                },
-                _ => spacer(),
+            if let Contents::Text(document) = &viewer.contents
+                && let Some(crumbs) = breadcrumbs(document)
+            {
+                label(
+                    crumbs,
+                    Type::new(12).ratio(1.4).tone(Role::Muted).mono().truncate(),
+                );
             }
+            spacer();
             crate::preview::dimensions(viewer);
             if let Contents::Text(document) = &viewer.contents
                 && viewer.rendering().is_none()

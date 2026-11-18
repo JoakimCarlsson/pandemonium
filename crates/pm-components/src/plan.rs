@@ -1,7 +1,8 @@
 //! The plan an agent proposes before it starts: the panel that reads it and the band above the prompt that answers it.
 
 use crate::kit::{
-    Flex, FocusId, IconName, Radius, Role, Scroll, Side, Styled, column, row, scroll_area, wrapping,
+    Flex, FocusId, IconName, Radius, Role, Scroll, Side, Styled, column, row, scroll_area,
+    wrapping_with,
 };
 use pm_harness::{Permission, Verdict};
 use rustle::Modifier;
@@ -101,7 +102,7 @@ pub fn proposal(ask: &Permission) -> bool {
                     .size(Size::Sm)
                     .build();
             });
-            wrapping(Modifier::new(), 2, || {
+            wrapping_with(Modifier::new(), Flex::new().gap(2).center(), || {
                 for (index, _) in ask
                     .choices
                     .iter()

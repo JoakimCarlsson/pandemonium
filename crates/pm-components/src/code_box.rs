@@ -78,7 +78,7 @@ impl<'a> CodeBox<'a> {
             .max_h_px(self.height)
             .fill_rounded(Role::Background, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
-            .clip_to(Radius::Lg)
+            .clip_to(Radius::None)
             .chain(self.inner.unwrap_or_default());
         column(self.modifier.chain(own), Flex::new(), self.lines);
     }

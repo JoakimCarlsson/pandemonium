@@ -245,7 +245,9 @@ pub(crate) fn images_node(
     };
     rustle::flow_row_with(
         Modifier::new().fill_max_width(),
-        FlowOptions::new(sp(1.5), sp(1.5)).arrangement(arrangement),
+        FlowOptions::new(sp(1.5), sp(1.5))
+            .arrangement(arrangement)
+            .alignment(rustle::Alignment::End),
         || {
             for image in images {
                 let modifier = match (links, image.target) {

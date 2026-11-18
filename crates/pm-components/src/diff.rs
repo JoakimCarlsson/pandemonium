@@ -703,7 +703,8 @@ fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
                     Role::Muted,
                 );
                 file_icon(change.name(), 4.0);
-                label(
+                label_with(
+                    Modifier::new().keep(),
                     change.name(),
                     Type::new(13)
                         .ratio(1.4)
@@ -711,8 +712,7 @@ fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
                         .truncate()
                         .medium(),
                 );
-                label_with(
-                    Modifier::new().grow(),
+                label(
                     change.directory(),
                     Type::new(11)
                         .ratio(1.4)
@@ -766,7 +766,7 @@ fn file(
             .pad_x(4)
             .pad_side(Side::Top, 4)
             .stroke(Role::Border, Radius::Lg)
-            .clip_to(Radius::Lg),
+            .clip_to(Radius::None),
         Flex::new(),
         || {
             file_header(change, index, open, mine.len());

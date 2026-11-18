@@ -3,9 +3,10 @@
 use pm_field::Field;
 use rustle::{CursorIcon, Modifier};
 
+use crate::kit::scroll::bar_of;
 use crate::kit::{
     FieldText, Flex, FocusId, Hovered, IconName, Interactive, Radius, Role, Side, Styled, Type,
-    column, row, theme,
+    block, column, row, theme,
 };
 use crate::parts::glyph;
 use crate::size::Size;
@@ -241,26 +242,32 @@ impl<'a> Input<'a> {
     fn build_multiline(self) {
         let minimum = self.rows as f32 * LINE + PADDING;
         let wrap_at = self.width.unwrap_or(UNWRAPPED_WIDTH);
-        let mut own = Modifier::new()
-            .fill_max_width()
-            .height_in(minimum, f32::INFINITY);
+        let (field, id, placeholder) = (self.field, self.id, self.placeholder);
+        let text = FieldText::new(field, id, typography().tone(Role::Text))
+            .placeholder(placeholder, Role::Subtle)
+            .wrap(wrap_at, Some(MAX_LINES));
+        let scrolls = self.inner.is_none() && text.layout().line_count() > MAX_LINES;
+        let mut own = Modifier::new().fill_max_width().min_h(minimum / 4.0);
         own = if self.disabled {
             own.opacity(40.0).cursor(CursorIcon::NotAllowed)
         } else {
             own.cursor(CursorIcon::Text).target(self.id)
         };
         own = own.chain(self.inner.unwrap_or_else(|| {
-            Modifier::new()
-                .pad_x(4)
+            let padded = Modifier::new()
                 .pad_side(Side::Top, 3.5)
-                .pad_side(Side::Bottom, 1)
+                .pad_side(Side::Bottom, 1);
+            if scrolls { padded } else { padded.pad_x(4) }
         }));
-        let (field, id, placeholder) = (self.field, self.id, self.placeholder);
         column(self.modifier.chain(own), Flex::new(), move || {
-            FieldText::new(field, id, typography().tone(Role::Text))
-                .placeholder(placeholder, Role::Subtle)
-                .wrap(wrap_at, Some(MAX_LINES))
-                .build(Modifier::new().fill_max_width());
+            if scrolls {
+                block(
+                    bar_of(Modifier::new().fill_max_width(), id).pad_x(4),
+                    || text.build(Modifier::new().fill_max_width()),
+                );
+            } else {
+                text.build(Modifier::new().fill_max_width());
+            }
         });
     }
 }

@@ -11,7 +11,7 @@ use crate::figures::Figures;
 use crate::input::{self, Input};
 use crate::kit::{
     Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Tooltip, Type,
-    column, grow, label, row, wrap_lines, wrapping,
+    column, grow, label, row, wrap_lines, wrapping, wrapping_with,
 };
 use crate::parts::line;
 use crate::size::Size;
@@ -200,7 +200,7 @@ fn tile(
                 id,
             )
             .stroke(if picked { Role::Accent } else { Role::Border }, Radius::Lg)
-            .clip_to(Radius::Lg)
+            .clip_to(Radius::None)
             .cursor(CursorIcon::Pointer)
             .target(id)
             .pad_x(2)
@@ -382,8 +382,8 @@ pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
                 }
                 other(draft, question.alternatives.len() + 1);
             });
-            row(
-                Modifier::new(),
+            wrapping_with(
+                Modifier::new().fill_max_width(),
                 Flex::new().center().trailing().gap(2),
                 || {
                     Button::new("Skip", SKIP)

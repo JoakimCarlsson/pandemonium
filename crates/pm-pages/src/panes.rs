@@ -51,6 +51,7 @@ fn tab_modifier(shown: bool, id: FocusId) -> Modifier {
     let surface = pm_components::kit::color(Role::Surface);
     let hover = pm_components::kit::color(Role::SurfaceHover);
     Modifier::new()
+        .keep()
         .h(10)
         .styled_by(move |canvas: &mut Canvas, interaction: Interaction| {
             if shown {

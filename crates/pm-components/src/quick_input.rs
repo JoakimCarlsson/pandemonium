@@ -56,7 +56,7 @@ pub fn quick_input(listing: &Listing) {
             .shadows(&SHADOW, Radius::Lg)
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
-            .clip_to(Radius::Lg)
+            .clip_to(Radius::None)
             .target(LISTING_BODY),
         Flex::new(),
         || {

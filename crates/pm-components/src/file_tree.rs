@@ -175,11 +175,11 @@ fn entry_row(
         None => Tone::from(Role::Text),
     };
     let mut around = Modifier::new();
-    if look.landing {
-        around = around.fill_rounded(Tone::from(Role::Accent).alpha(0.24), Radius::Sm);
-    }
     if look.cut {
         around = around.opacity(60.0);
+    }
+    if look.landing {
+        around = around.fill_rounded(Tone::from(Role::Accent).alpha(0.24), Radius::Sm);
     }
     let letter = look.changed.letter;
     Tile::new(id)

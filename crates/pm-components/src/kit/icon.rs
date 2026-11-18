@@ -201,7 +201,7 @@ impl IconName {
             Self::PanelLeftFilled => phosphor::fill::SIDEBAR_SIMPLE,
             Self::PanelRight => MIRRORED_SIDEBAR.clone(),
             Self::PanelRightFilled => MIRRORED_SIDEBAR_FILLED.clone(),
-            Self::PanelBottom => phosphor::SQUARE_HALF_BOTTOM,
+            Self::PanelBottom => UPENDED_BROWSER.clone(),
             Self::PanelBottomFilled => phosphor::fill::SQUARE_HALF_BOTTOM,
             Self::SquareSplit => phosphor::SQUARE_SPLIT_HORIZONTAL,
             Self::Play => phosphor::PLAY,
@@ -216,7 +216,7 @@ impl IconName {
             Self::GitFork => phosphor::GIT_FORK,
             Self::History => phosphor::CLOCK_COUNTER_CLOCKWISE,
             Self::Refresh => phosphor::ARROWS_CLOCKWISE,
-            Self::Pick => phosphor::CURSOR_CLICK,
+            Self::Pick => phosphor::SELECTION,
             Self::Globe => phosphor::GLOBE,
             Self::Undo => phosphor::ARROW_COUNTER_CLOCKWISE,
             Self::Message => phosphor::CHAT_CIRCLE,
@@ -232,7 +232,7 @@ impl IconName {
             Self::Collapse => phosphor::ARROWS_IN_LINE_VERTICAL,
             Self::Maximize => phosphor::ARROWS_OUT_SIMPLE,
             Self::Minimize => phosphor::ARROWS_IN_SIMPLE,
-            Self::Loading => phosphor::CIRCLE_NOTCH,
+            Self::Loading => phosphor::CIRCLE_DASHED,
             Self::Stop => phosphor::STOP,
             Self::GitCommit => phosphor::GIT_COMMIT,
             Self::GitFetch => phosphor::CLOUD_ARROW_DOWN,
@@ -247,9 +247,9 @@ impl IconName {
             Self::StepOver => phosphor::ARROW_ARC_RIGHT,
             Self::Lightbulb => phosphor::LIGHTBULB,
             Self::Camera => phosphor::CAMERA,
-            Self::Scan => phosphor::SCAN,
-            Self::Lock => phosphor::LOCK,
-            Self::LockOpen => phosphor::LOCK_OPEN,
+            Self::Scan => phosphor::FRAME_CORNERS,
+            Self::Lock => phosphor::LOCK_SIMPLE,
+            Self::LockOpen => phosphor::LOCK_SIMPLE_OPEN,
         }
     }
 }
@@ -257,23 +257,48 @@ impl IconName {
 /// Phosphor's regular sidebar mirrored left to right, made once.
 static MIRRORED_SIDEBAR: LazyLock<Path> = LazyLock::new(|| flipped(&phosphor::SIDEBAR_SIMPLE));
 
+/// Phosphor's browser window turned upside down, made once: a window with a
+/// band along its bottom, the panel at the bottom of the screen.
+static UPENDED_BROWSER: LazyLock<Path> = LazyLock::new(|| upended(&phosphor::BROWSER));
+
 /// Phosphor's filled sidebar mirrored left to right, made once.
 static MIRRORED_SIDEBAR_FILLED: LazyLock<Path> =
     LazyLock::new(|| flipped(&phosphor::fill::SIDEBAR_SIMPLE));
 
 /// `path` mirrored left to right, kept as constant data so renderers cache it.
 fn flipped(path: &Path) -> Path {
+    let (width, _) = path.size();
+    transformed(path, |x, y| (width - x, y))
+}
+
+/// `path` mirrored top to bottom, kept as constant data so renderers cache it.
+fn upended(path: &Path) -> Path {
+    let (_, height) = path.size();
+    transformed(path, |x, y| (x, height - y))
+}
+
+/// `path` with every point moved by `point`, kept as constant data so renderers cache it.
+fn transformed(path: &Path, point: impl Fn(f32, f32) -> (f32, f32)) -> Path {
     let (width, height) = path.size();
-    let flip = |x: f32| width - x;
     let commands: Vec<PathCommand> = path
         .commands()
         .iter()
         .map(|command| match *command {
-            PathCommand::MoveTo(x, y) => PathCommand::MoveTo(flip(x), y),
-            PathCommand::LineTo(x, y) => PathCommand::LineTo(flip(x), y),
-            PathCommand::QuadTo(cx, cy, x, y) => PathCommand::QuadTo(flip(cx), cy, flip(x), y),
+            PathCommand::MoveTo(x, y) => {
+                let (x, y) = point(x, y);
+                PathCommand::MoveTo(x, y)
+            }
+            PathCommand::LineTo(x, y) => {
+                let (x, y) = point(x, y);
+                PathCommand::LineTo(x, y)
+            }
+            PathCommand::QuadTo(cx, cy, x, y) => {
+                let ((cx, cy), (x, y)) = (point(cx, cy), point(x, y));
+                PathCommand::QuadTo(cx, cy, x, y)
+            }
             PathCommand::CubicTo(ax, ay, bx, by, x, y) => {
-                PathCommand::CubicTo(flip(ax), ay, flip(bx), by, flip(x), y)
+                let ((ax, ay), (bx, by), (x, y)) = (point(ax, ay), point(bx, by), point(x, y));
+                PathCommand::CubicTo(ax, ay, bx, by, x, y)
             }
             PathCommand::Close => PathCommand::Close,
         })
@@ -371,11 +396,12 @@ pub fn icon_with(modifier: Modifier, name: IconName, pixels: f32, tone: impl Int
 }
 
 /// Emits the vector outline `path`, such as `phosphor::X`, in a square
-/// `pixels` logical pixels on a side, tinted with `tone`, with `modifier` around it.
+/// `pixels` logical pixels on a side, tinted with `tone`, with `modifier` around it, giving
+/// up room when its row runs out of it as a CSS flex item does.
 #[track_caller]
 pub fn path_with(modifier: Modifier, path: Path, pixels: f32, tone: impl Into<Tone>) {
     let color = theme::color(tone);
-    rustle::canvas(modifier.size(pixels, pixels), move |canvas| {
+    rustle::canvas(modifier.size(pixels, pixels).shrink(1.0), move |canvas| {
         let side = canvas.width().min(canvas.height());
         let (x, y) = (
             (canvas.width() - side) / 2.0,

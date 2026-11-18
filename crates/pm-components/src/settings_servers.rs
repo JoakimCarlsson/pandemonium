@@ -802,7 +802,7 @@ pub(crate) fn boxed(rows: impl FnOnce()) {
         Modifier::new()
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
-            .clip_to(Radius::Lg),
+            .clip_to(Radius::None),
         Flex::new(),
         || {
             for (place, mut held) in rows.into_iter().enumerate() {
@@ -1194,11 +1194,7 @@ fn installed_row(shown: InstalledRow) {
                 }
                 label(
                     shown.detail.as_str(),
-                    Type::new(11)
-                        .ratio(1.4)
-                        .tone(Role::Subtle)
-                        .truncate()
-                        .mono(),
+                    Type::new(11).ratio(1.4).tone(Role::Subtle).truncate(),
                 );
             },
         );

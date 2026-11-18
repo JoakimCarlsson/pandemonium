@@ -444,7 +444,7 @@ impl Layout<'_> {
         let pixels = self.pixels - 1;
         let own = Modifier::new()
             .stroke(Role::Border, Radius::Lg)
-            .clip_to(Radius::Lg);
+            .clip_to(Radius::None);
         column(own, Flex::new(), || {
             row(Modifier::new().fill(Role::Surface), Flex::new(), || {
                 for cell in head {

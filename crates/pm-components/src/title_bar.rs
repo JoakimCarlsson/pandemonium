@@ -213,7 +213,8 @@ fn command_center(place: String) {
         .with_icon(IconName::Search)
         .tone(Role::Subtle)
         .width(COMMAND_CENTER_WIDTH)
-        .flex(Flex::new().center().middle())
+        .resting(Role::Background)
+        .flex(Flex::new().center().middle().gap(2))
         .modifier(
             Modifier::new()
                 .width_in(COMMAND_CENTER_MIN_WIDTH, COMMAND_CENTER_WIDTH)

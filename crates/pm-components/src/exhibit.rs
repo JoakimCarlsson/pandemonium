@@ -356,7 +356,7 @@ impl<'a> Preview<'a> {
                 .height(height)
                 .fill_rounded(Role::Background, Radius::Lg)
                 .stroke(Role::Border, Radius::Lg)
-                .clip_to(Radius::Lg)
+                .clip_to(Radius::None)
         };
         let flex = self.flex.unwrap_or(Flex::new().center().middle());
         match self.figure {

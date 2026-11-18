@@ -89,7 +89,7 @@ fn cast_shadow(modifier: Modifier) -> Modifier {
                 width + 2.0 * spread,
                 height + 2.0 * spread,
                 (FRAME_RADIUS + spread).max(0.0),
-                *blur,
+                blur * crate::kit::layout::SHADOW_SOFTNESS,
                 shade,
             );
         }

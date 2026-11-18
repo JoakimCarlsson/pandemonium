@@ -2,7 +2,7 @@
 
 use crate::kit::{
     Flex, FocusId, Hovered, IconName, Radius, Role, Side, Styled, Type, column, label, label_with,
-    row, wrapping,
+    row, wrapping_with,
 };
 use pm_field::{Edit, Field};
 use pm_harness::{PresetInfo, SlotChange, SlotInfo, SlotScope, SlotSource};
@@ -997,7 +997,7 @@ fn backups_node(state: &WorkspaceState, row: usize, slot: &SlotRow) {
     let last = slot.backups.len().saturating_sub(1);
     let open = state.settings_page.slots.picking == Some(SlotPicking::Backup(row));
     column(Modifier::new(), Flex::new().gap(1), || {
-        wrapping(Modifier::new(), 2.0, || {
+        wrapping_with(Modifier::new(), Flex::new().gap(2).center(), || {
             line("Backups", 12, 1.4, Role::Muted);
             for (place, backup) in slot.backups.iter().enumerate() {
                 backup_chip(
@@ -1120,7 +1120,7 @@ pub(crate) fn slot_controls(state: &WorkspaceState, row: usize, slot: &SlotRow, 
     });
     let width = (PICKER_WIDTH * 1.4).min(room);
     column(Modifier::new().fill_max_width(), Flex::new().gap(2), || {
-        wrapping(Modifier::new(), 2.0, || {
+        wrapping_with(Modifier::new(), Flex::new().gap(2).center(), || {
             if let Some(button) = id(MODEL_COLUMN) {
                 picker(&model_shown(slot), width, button, open);
             }
@@ -1143,11 +1143,11 @@ pub(crate) fn slot_row(state: &WorkspaceState, row: usize, slot: &SlotRow, room:
         Modifier::new().pad_x(3).pad_y(3),
         Flex::new().gap(2),
         || {
-            crate::kit::row(
-                Modifier::new(),
+            wrapping_with(
+                Modifier::new().fill_max_width(),
                 Flex::new().center().between().gap(2),
                 || {
-                    crate::kit::row(Modifier::new().grow(), Flex::new().center().gap(2), || {
+                    crate::kit::row(Modifier::new(), Flex::new().center().gap(2), || {
                         label(
                             format!("@{}", slot.name),
                             Type::new(13)
@@ -1218,7 +1218,7 @@ fn preset_row(row: usize, preset: &PresetInfo) {
                 label_with(
                     Modifier::new().grow(),
                     preset_summary(preset),
-                    Type::new(12).ratio(1.4).tone(Role::Muted).truncate().mono(),
+                    Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
                 );
             });
             crate::kit::row(Modifier::new(), Flex::new().center().gap(1), || {
@@ -1278,7 +1278,7 @@ pub(crate) fn scope_choice(state: &WorkspaceState) {
 #[track_caller]
 pub(crate) fn provider_choice(state: &WorkspaceState) {
     let open = state.settings_page.slots.picking == Some(SlotPicking::Provider);
-    wrapping(Modifier::new(), 2.0, || {
+    wrapping_with(Modifier::new(), Flex::new().gap(2).center(), || {
         line("Provider", 12, 1.4, Role::Muted);
         picker(
             &state.provider_shown(),
@@ -1322,8 +1322,8 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     paragraph(SUMMARY, room);
     provider_choice(state);
     error_note(state, room);
-    crate::kit::row(
-        Modifier::new(),
+    wrapping_with(
+        Modifier::new().fill_max_width(),
         Flex::new().center().between().gap(2),
         || {
             heading_only("Slots", rows.len());

@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use rustle::{
-    BoxAlignment, Children, Constraints, Layout, LayoutResult, Modifier, Offset, PointerButton,
+    Children, Constraints, Layout, LayoutResult, Modifier, Offset, PointerButton,
     PointerInputPhase, PointerPhase, Size,
 };
 
@@ -72,6 +72,45 @@ pub fn room_of(id: FocusId) -> f32 {
     MEASURED.with(|measured| measured.borrow().get(&id).map_or(0.0, |held| held.room))
 }
 
+/// Records that the box `id`, `viewport` logical pixels tall, can scroll
+/// `room` and is scrolled `offset` down, for a box that scrolls itself, such
+/// as a wrapped text field, so [`bar_of`] can draw its bar.
+pub(crate) fn remember(id: FocusId, room: f32, offset: f32, viewport: f32) {
+    MEASURED.with(|measured| {
+        measured.borrow_mut().insert(
+            id,
+            Measure {
+                room,
+                offset,
+                viewport,
+            },
+        )
+    });
+}
+
+/// `modifier` with the bar of the box `id`, which scrolls itself, drawn over
+/// the area's right edge as a scrolling box draws its own, while it can scroll:
+/// for the box around a wrapped text field, whose bar sat at the edge of the
+/// padded box rather than of the text.
+pub fn bar_of(modifier: Modifier, id: FocusId) -> Modifier {
+    let theme = theme::theme();
+    modifier.draw_with_content(move |canvas| {
+        canvas.draw_content();
+        let Some(mut measure) = MEASURED.with(|measured| measured.borrow().get(&id).copied())
+        else {
+            return;
+        };
+        if measure.room <= 0.0 {
+            return;
+        }
+        measure.viewport = canvas.height();
+        let (at, thumb, _) = thumb_of(measure);
+        let color = theme::color_in(&theme, Tone::from(Role::Muted).alpha(0.55));
+        let left = canvas.width() - BAR_INSET - BAR_WIDTH;
+        canvas.rounded_rect(left, at, BAR_WIDTH, thumb, BAR_WIDTH / 2.0, color);
+    })
+}
+
 /// A scrolling box being described.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Scroll {
@@ -113,8 +152,41 @@ impl Scroll {
     }
 }
 
-/// Lays the content out with no bound down its length and moves it up by the offset kept within
-/// the room, which is rounded to whole pixels as the edges it is measured between are.
+/// Lays out a scrolling box: the scrolled content first, as the box's own
+/// constraints say, as wide as the box may be when that is bounded, then the
+/// bar along the right edge, as tall as the box.
+struct Framed;
+
+impl Layout for Framed {
+    fn measure(&self, children: &mut Children, constraints: Constraints) -> LayoutResult {
+        if children.is_empty() {
+            return LayoutResult {
+                size: Size::new(constraints.min_width, constraints.min_height),
+                positions: Vec::new(),
+            };
+        }
+        let content = if constraints.max_width.is_finite() {
+            Constraints {
+                min_width: constraints.max_width,
+                ..constraints
+            }
+        } else {
+            constraints
+        };
+        let size = children.measure(0, content);
+        let mut positions = vec![Offset::new(0.0, 0.0)];
+        for index in 1..children.len() {
+            let bar = children.measure(index, Constraints::loose(size));
+            positions.push(Offset::new(size.width - bar.width, 0.0));
+        }
+        LayoutResult { size, positions }
+    }
+}
+
+/// Lays the content out with no bound down its length, and at least as tall as the box so
+/// what grows in it fills the box as a flex column in a scrolling box did, and moves it up by
+/// the offset kept within the room, which is rounded to whole pixels as the edges it is
+/// measured between are.
 struct Scrolled {
     /// The box.
     scroll: Scroll,
@@ -143,6 +215,15 @@ impl Layout for Scrolled {
         } else {
             content.height.max(constraints.min_height)
         };
+        if !children.is_empty() && content.height < height {
+            children.measure(
+                0,
+                Constraints {
+                    min_height: height,
+                    ..open
+                },
+            );
+        }
         let width = content
             .width
             .max(constraints.min_width)
@@ -208,12 +289,8 @@ pub fn scroll_area(modifier: Modifier, scroll: Scroll, content: impl FnOnce()) {
             });
             true
         });
-    rustle::stack_with(outer, move || {
-        rustle::layout(
-            Modifier::new().fill_max_width(),
-            Scrolled { scroll, out },
-            content,
-        );
+    rustle::layout(outer, Framed, move || {
+        rustle::layout(Modifier::new(), Scrolled { scroll, out }, content);
         if scroll.bar && previous > 0.0 {
             scrollbar(id, bar);
         }
@@ -231,7 +308,6 @@ fn scrollbar(id: FocusId, measure: Rc<Cell<Measure>>) {
     let strip = Modifier::new()
         .width(SCROLLBAR_GRIP)
         .fill_max_height()
-        .align(BoxAlignment::TopEnd)
         .on_pointer_button(PointerButton::Primary, move |event| {
             let y = event.window_position.y;
             match event.phase {

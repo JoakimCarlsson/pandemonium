@@ -5,7 +5,7 @@ use rustle::Modifier;
 
 use crate::kit::{
     Flex, FocusId, Radius, Role, Side, Styled, Tone, Tooltip, Type, column, gap_box, label, row,
-    wrapping,
+    wrapping, wrapping_with,
 };
 
 use crate::BarRow;
@@ -494,7 +494,7 @@ fn chart(report: &UsageReport, room: f32) {
             ends(report.days.first());
             ends(report.days.last());
         });
-        wrapping(Modifier::new(), 3, || {
+        wrapping_with(Modifier::new(), Flex::new().gap(3).center(), || {
             for (place, name) in series.iter().enumerate() {
                 legend_entry(name, series_tone(place));
             }
@@ -632,8 +632,8 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     };
     page();
     paragraph(SUMMARY, room);
-    row(
-        Modifier::new(),
+    wrapping_with(
+        Modifier::new().fill_max_width(),
         Flex::new().center().between().gap(2),
         || {
             choices(&RANGE_NAMES, picked, |option| USAGE_RANGES.id(option));

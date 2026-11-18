@@ -612,7 +612,7 @@ pub(crate) fn group(title: &str, rows: impl FnOnce()) {
             Modifier::new()
                 .fill_rounded(Role::Surface, Radius::Lg)
                 .stroke(Role::Border, Radius::Lg)
-                .clip_to(Radius::Lg),
+                .clip_to(Radius::None),
             Flex::new(),
             move || {
                 for (at, built) in rows.into_iter().enumerate() {

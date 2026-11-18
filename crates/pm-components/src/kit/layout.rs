@@ -164,10 +164,26 @@ pub fn wrapping(modifier: Modifier, gap: impl Into<f64> + Copy, content: impl Fn
     );
 }
 
+/// Emits a row whose children wrap onto further lines when they do not fit,
+/// laid out on each line by `flex`: its gap between neighbours and between
+/// lines, how the room left on a line is spread (`justify_*`) and where each
+/// child sits across its line (`items_*`): `flex_wrap()` with the rest of a
+/// flex box's styles.
+#[track_caller]
+pub fn wrapping_with(modifier: Modifier, flex: Flex, content: impl FnOnce()) {
+    rustle::flow_row_with(
+        modifier,
+        rustle::FlowOptions::new(flex.gap, flex.gap)
+            .arrangement(flex.main)
+            .alignment(flex.cross),
+        content,
+    );
+}
+
 /// Emits an empty box that takes the room left in its row or column: `spacer()` with `flex_1()`.
 #[track_caller]
 pub fn grow() {
-    rustle::spacer(Modifier::new().weight(1.0));
+    rustle::spacer(Modifier::new().flex_grow(1.0));
 }
 
 /// Emits an empty box sized by `modifier`, such as a fixed gap.
@@ -221,9 +237,9 @@ pub trait Styled: Sized {
     fn fill(self, tone: impl Into<Tone>) -> Self;
     /// Filled with `tone` inside corners rounded by `radius`: `bg(tone)` with `rounded(radius)`.
     fn fill_rounded(self, tone: impl Into<Tone>, radius: Radius) -> Self;
-    /// A one pixel outline in `tone` inside corners rounded by `radius`: `border()`, `border_color(tone)`.
+    /// A one pixel outline in `tone` inside corners rounded by `radius`, which takes a pixel of room on every side inside the box as a CSS border does: `border()`, `border_color(tone)`.
     fn stroke(self, tone: impl Into<Tone>, radius: Radius) -> Self;
-    /// A line `pixels` thick along one side in `tone`: `border_t()`, `border_b()`, `border_l()`, `border_r()`.
+    /// A line `pixels` thick along one side in `tone`, taking that much room on that side inside the box as a CSS border does: `border_t()`, `border_b()`, `border_l()`, `border_r()`.
     fn stroke_side(self, side: Side, pixels: f32, tone: impl Into<Tone>) -> Self;
     /// Everything inside kept inside corners rounded by `radius`: `masked()`; with [`Radius::None`] the rectangle: `overflow_hidden()`.
     fn clip_to(self, radius: Radius) -> Self;
@@ -239,6 +255,14 @@ pub trait Styled: Sized {
     fn at(self, x: f32, y: f32) -> Self;
     /// Placed at `alignment` in the [`layer`] it is in, or across its row or column: `absolute()` with insets of 0, `self_start()`, `self_end()`.
     fn placed(self, alignment: BoxAlignment) -> Self;
+    /// Gives up room when its row or column runs out of it, in proportion to
+    /// its length, as a CSS flex item does by default (`flex-shrink: 1`): for a
+    /// box whose text cuts itself short, so the row fits.
+    fn shrink(self) -> Self;
+    /// Keeps its own length when its row or column runs out of room, even for
+    /// a box that would give up room, such as a line that cuts itself short:
+    /// `flex_none()`.
+    fn keep(self) -> Self;
     /// Exactly as large as the [`layer`] it is in, which its other children
     /// size, without counting toward that size: `absolute()` with `inset(0)`.
     fn cover(self) -> Self;
@@ -293,7 +317,7 @@ impl Styled for Modifier {
     }
 
     fn grow(self) -> Self {
-        self.weight(1.0)
+        self.flex_grow(1.0)
     }
 
     fn fill(self, tone: impl Into<Tone>) -> Self {
@@ -306,11 +330,12 @@ impl Styled for Modifier {
 
     fn stroke(self, tone: impl Into<Tone>, radius: Radius) -> Self {
         self.border(1.0, theme::color(tone), radius.px())
+            .padding(1.0)
     }
 
     fn stroke_side(self, side: Side, pixels: f32, tone: impl Into<Tone>) -> Self {
         let color = theme::color(tone);
-        self.draw_behind(move |canvas| {
+        let drawn = self.draw_behind(move |canvas| {
             let (width, height) = (canvas.width(), canvas.height());
             match side {
                 Side::Top => canvas.rect(0.0, 0.0, width, pixels, color),
@@ -318,7 +343,13 @@ impl Styled for Modifier {
                 Side::Bottom => canvas.rect(0.0, height - pixels, width, pixels, color),
                 Side::Left => canvas.rect(0.0, 0.0, pixels, height, color),
             }
-        })
+        });
+        match side {
+            Side::Top => drawn.padding_each(0.0, pixels, 0.0, 0.0),
+            Side::Right => drawn.padding_each(0.0, 0.0, pixels, 0.0),
+            Side::Bottom => drawn.padding_each(0.0, 0.0, 0.0, pixels),
+            Side::Left => drawn.padding_each(pixels, 0.0, 0.0, 0.0),
+        }
     }
 
     fn clip_to(self, radius: Radius) -> Self {
@@ -352,7 +383,7 @@ impl Styled for Modifier {
                     width + 2.0 * spread,
                     height + 2.0 * spread,
                     (corner + spread).max(0.0),
-                    *blur,
+                    blur * SHADOW_SOFTNESS,
                     shade,
                 );
             }
@@ -367,10 +398,23 @@ impl Styled for Modifier {
         self.align(alignment)
     }
 
+    fn shrink(self) -> Self {
+        rustle::Modifier::shrink(self, 1.0)
+    }
+
+    fn keep(self) -> Self {
+        rustle::Modifier::shrink(self, 0.0)
+    }
+
     fn cover(self) -> Self {
         self.match_parent_size()
     }
 }
+
+/// How much farther a shadow fades than its blur says, as a share of the blur:
+/// a CSS box shadow fades over about twice its blur radius, which is softer
+/// than a Gaussian of half the blur as its deviation.
+pub const SHADOW_SOFTNESS: f32 = 1.3;
 
 /// The two layers of the short shadow under a compact surface, as `(x, y, blur, spread, alpha)`.
 const MEDIUM_SHADOW: [(f32, f32, f32, f32, f32); 2] =

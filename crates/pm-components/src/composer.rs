@@ -511,7 +511,10 @@ pub fn attached_file(state: &WorkspaceState, path: &str, side: f32) {
     row(Modifier::new(), Flex::new().center().gap(2), || {
         if let Some(shown) = shown {
             picture(
-                Modifier::new().width(side).height(side).clip_to(Radius::Md),
+                Modifier::new()
+                    .width(side)
+                    .height(side)
+                    .clip_to(Radius::None),
                 &shown,
             );
         }
@@ -554,7 +557,7 @@ pub fn sent_files(state: &WorkspaceState, files: &[String]) {
                     Modifier::new()
                         .width(SENT_PICTURE)
                         .height(SENT_PICTURE)
-                        .clip_to(Radius::Lg),
+                        .clip_to(Radius::None),
                     shown,
                 ),
                 None => attached_file(state, path, THUMBNAIL),

@@ -59,7 +59,9 @@ pub use frame::Frame;
 pub use icon::{Artwork, IconName, artwork_with, icon, icon_with, path_with};
 pub use interact::{Hovered, Looks};
 pub use keys::{Key, KeyEvent, Modifiers};
-pub use layout::{Flex, Side, Styled, block, column, gap_box, grow, layer, row, wrapping};
+pub use layout::{
+    Flex, Side, Styled, block, column, gap_box, grow, layer, row, wrapping, wrapping_with,
+};
 pub use marks::{CaretLook, CaretShape, Mark, Paint, marked_field_line, marked_line};
 pub use model::{State, Subscription};
 pub use overlay::{Placement, Tooltip, anchored, at_window, tooltips};
@@ -68,7 +70,7 @@ pub use pointer::{Button, PointerEvent, PointerState};
 pub use progress::{arc, rings, spinner, spinning_icon};
 pub use report::{FieldLine, Report, Step, root};
 pub use scroll::{SCROLLBAR_GRIP, Scroll, scroll_area};
-pub use select::{TextPoint, TextSelection, selectable};
+pub use select::{TextPoint, TextSelection, selectable, selectable_scope};
 pub use text::{
     Line, Type, code_ligatures, font_families, font_key, label, label_with, measure, paragraph,
     set_code_ligatures, wrap_lines,

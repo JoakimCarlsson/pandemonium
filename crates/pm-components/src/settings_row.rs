@@ -362,8 +362,14 @@ impl<'a> SettingRow<'a> {
                             }
                         },
                     );
-                    if let Some((control, _)) = control {
-                        block(Modifier::new().fill_max_width(), control);
+                    match control {
+                        Some((control, Some(_))) => {
+                            row(Modifier::new().fill_max_width(), Flex::new(), control);
+                        }
+                        Some((control, None)) => {
+                            block(Modifier::new().fill_max_width(), control);
+                        }
+                        None => {}
                     }
                 });
             } else {

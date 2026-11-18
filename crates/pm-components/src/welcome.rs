@@ -6,7 +6,7 @@ use crate::Button;
 use crate::button::Variant;
 use crate::composer::composer;
 use crate::kit::{
-    Flex, FocusId, IconName, Role, Styled, Tooltip, Type, column, label, layer, sp, wrapping,
+    Flex, FocusId, IconName, Role, Styled, Tooltip, Type, column, label, layer, sp, wrapping_with,
 };
 use crate::size::Size;
 use crate::state::{AGENT_BASE, Page, REVIEW, WorkspaceState};
@@ -64,17 +64,17 @@ pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32) {
                     || {
                         label(
                             heading(state),
-                            Type::new(28)
-                                .ratio(1.25)
-                                .semibold()
-                                .tracking(-0.4)
-                                .tone(Role::Text),
+                            Type::new(28).ratio(1.25).semibold().tone(Role::Text),
                         );
-                        wrapping(Modifier::new().fill_max_width(), 2.0, || {
-                            for index in state.startable_agents() {
-                                chip(state, index);
-                            }
-                        });
+                        wrapping_with(
+                            Modifier::new().fill_max_width(),
+                            Flex::new().gap(2).middle(),
+                            || {
+                                for index in state.startable_agents() {
+                                    chip(state, index);
+                                }
+                            },
+                        );
                         composer(
                             state,
                             "Describe a task, ask a question, or type / for commands",

@@ -167,12 +167,8 @@ fn stack(state: &WorkspaceState, run: &Run) {
                         Some(FocusId(DEBUG_FRAME_BASE + index as u64)),
                         view.frame == Some(frame.id),
                         || {
-                            label_with(
-                                Modifier::new().grow(),
-                                frame.name.clone(),
-                                small(12, Role::Text).mono(),
-                            );
-                            label(place, small(12, Role::Subtle));
+                            label(frame.name.clone(), small(12, Role::Text).mono().truncate());
+                            label_with(Modifier::new().keep(), place, small(12, Role::Subtle));
                         },
                     );
                 });

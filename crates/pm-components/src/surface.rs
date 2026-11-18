@@ -82,7 +82,7 @@ impl Surface {
             .fill_rounded(Role::Surface, radius)
             .stroke(Role::Border, radius);
         if self.variant == Variant::Dialog {
-            own = own.clip_to(radius);
+            own = own.clip_to(Radius::None);
         }
         column(
             self.modifier.chain(own.chain(self.inner)),

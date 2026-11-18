@@ -6,7 +6,7 @@ use rustle::{CursorIcon, Modifier};
 use crate::kit::{
     CaretLook, Flex, FocusId, Hovered, IconName, Interactive, Looks, Mark, Paint, Radius, Role,
     Scroll, Styled, Tone, Type, at_window, block, column, gap_box, label, marked_line, row,
-    scroll_area, selectable, sp, wrap_lines,
+    scroll_area, selectable, selectable_scope, sp, wrap_lines,
 };
 
 use crate::color_picker::{
@@ -125,7 +125,7 @@ fn framed(
         .shadows(&SHADOW, Radius::Md)
         .fill_rounded(Role::Surface, Radius::Md)
         .stroke(Role::Border, Radius::Md)
-        .clip_to(Radius::Md);
+        .clip_to(Radius::None);
     let own = match target {
         Some(id) => own.target(id),
         None => own,
@@ -417,7 +417,7 @@ fn hover_card(row_height: f32, card: &HoverCard, language: Option<&str>, height:
                         column(
                             Modifier::new().fill_max_width().pad_x(3).pad_y(2.5),
                             Flex::new().gap(2),
-                            || card_parts(card, language),
+                            || selectable_scope(HOVER_TEXT, || card_parts(card, language)),
                         );
                     },
                 );

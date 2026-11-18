@@ -167,7 +167,7 @@ fn session_row(state: &WorkspaceState, index: usize) {
                 label_with(
                     Modifier::new().grow(),
                     &session.branch,
-                    Type::new(12).ratio(1.4).tone(Role::Muted).truncate().mono(),
+                    Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
                 );
             },
         );
@@ -243,7 +243,7 @@ fn repository(state: &WorkspaceState) {
             label_with(
                 Modifier::new().grow(),
                 &home.branch,
-                Type::new(13).ratio(1.4).tone(Role::Text).truncate().mono(),
+                Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
             );
             line(standing, 13, 1.4, Role::Muted);
         });

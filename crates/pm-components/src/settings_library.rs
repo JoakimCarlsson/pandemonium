@@ -622,11 +622,7 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
                 label_with(
                     Modifier::new().fill_max_width(),
                     detail,
-                    Type::new(11)
-                        .ratio(1.4)
-                        .tone(Role::Subtle)
-                        .truncate()
-                        .mono(),
+                    Type::new(11).ratio(1.4).tone(Role::Subtle).truncate(),
                 );
             },
         );

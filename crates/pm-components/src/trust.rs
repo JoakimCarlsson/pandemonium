@@ -6,7 +6,7 @@ use crate::Button;
 use crate::button::Variant;
 use crate::kit::{
     Flex, FocusId, IconName, Radius, Role, Styled, Type, column, label, label_with, row,
-    wrap_lines, wrapping,
+    wrap_lines, wrapping_with,
 };
 use crate::parts::{glyph, line, paragraph};
 use crate::size::Size;
@@ -210,19 +210,23 @@ fn choices(width: f32) {
         Modifier::new().fill_max_width(),
         Flex::new().center().trailing(),
         || {
-            wrapping(Modifier::new(), 2, || {
-                for (label, id, variant) in [
-                    ("Don't trust", TRUST_DECLINE, Variant::Ghost),
-                    ("This session only", TRUST_SESSION, Variant::Outline),
-                    ("Trust", TRUST_ALWAYS, Variant::Default),
-                ] {
-                    Button::new(label, id)
-                        .variant(variant)
-                        .size(Size::Sm)
-                        .wrapped(width)
-                        .build();
-                }
-            });
+            wrapping_with(
+                Modifier::new().fill_max_width(),
+                Flex::new().gap(2).center().trailing(),
+                || {
+                    for (label, id, variant) in [
+                        ("Don't trust", TRUST_DECLINE, Variant::Ghost),
+                        ("This session only", TRUST_SESSION, Variant::Outline),
+                        ("Trust", TRUST_ALWAYS, Variant::Default),
+                    ] {
+                        Button::new(label, id)
+                            .variant(variant)
+                            .size(Size::Sm)
+                            .wrapped(width)
+                            .build();
+                    }
+                },
+            );
         },
     );
 }

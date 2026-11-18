@@ -2,7 +2,7 @@
 
 use rustle::Modifier;
 
-use crate::kit::{Flex, row};
+use crate::kit::{Flex, wrapping_with};
 use crate::settings::Section;
 use crate::settings_servers::{boxed, heading_only, note, paragraph};
 use crate::settings_slots::{
@@ -94,8 +94,8 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     crate::settings_pages::page_rows(state, Section::Orchestration, room);
     provider_choice(state);
     error_note(state, room);
-    row(
-        Modifier::new(),
+    wrapping_with(
+        Modifier::new().fill_max_width(),
         Flex::new().center().between().gap(2),
         || {
             heading_only("Categories", rows.len());

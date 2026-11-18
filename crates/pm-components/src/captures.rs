@@ -194,7 +194,7 @@ fn picture_card(state: &WorkspaceState, shot: &Shot) {
                     Modifier::new()
                         .width((shown.width as f32 * scale).floor().max(1.0))
                         .height((shown.height as f32 * scale).floor().max(1.0))
-                        .clip_to(Radius::Md),
+                        .clip_to(Radius::None),
                     shown,
                 );
             }

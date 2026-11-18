@@ -99,7 +99,8 @@ pub trait Hovered: Sized {
     /// `ring(2).focus()` with `ring_color(Role::Focused).focus()`.
     fn focus_ring(self, id: FocusId, width: f32, radius: Radius) -> Self;
     /// A one pixel outline in `idle`, or in `focused` while `id` holds keyboard
-    /// focus, inside corners rounded by `radius`: `border()`,
+    /// focus, inside corners rounded by `radius`, taking a pixel of room on
+    /// every side as a CSS border does: `border()`,
     /// `border_color(idle)`, `border_color(focused).focus()`.
     fn stroke_by_focus(
         self,
@@ -183,6 +184,7 @@ impl Hovered for Modifier {
                 let corner = corner.min(w.min(h) / 2.0);
                 canvas.stroke_rect(0.0, 0.0, w, h, corner, 1.0, color);
             })
+            .padding(1.0)
     }
 
     fn group(self) -> Self {

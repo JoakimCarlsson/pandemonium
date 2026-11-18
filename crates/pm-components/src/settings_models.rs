@@ -629,11 +629,7 @@ fn server_row(index: usize, server: &ModelServer) {
                     label_with(
                         Modifier::new().fill_max_width(),
                         server.models.join(", "),
-                        Type::new(11)
-                            .ratio(1.4)
-                            .tone(Role::Subtle)
-                            .truncate()
-                            .mono(),
+                        Type::new(11).ratio(1.4).tone(Role::Subtle).truncate(),
                     );
                 }
             });

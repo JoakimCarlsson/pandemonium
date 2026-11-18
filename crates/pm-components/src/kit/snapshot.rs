@@ -108,6 +108,7 @@ pub fn render(
     overlay::set_tooltip_delay(0.0);
     overlay::reset_tooltip();
     let tokens = Tokens::new(&shot.family, shot.appearance);
+    rustle_wgpu::set_gamma_blending(true);
     let mut renderer = rustle_wgpu::Renderer::offscreen(physical.0, physical.1)?;
     renderer.set_transparent(shot.transparent);
     let root = move || {

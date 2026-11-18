@@ -186,7 +186,15 @@ fn window_shadow() -> WindowShadow {
         radius: pm_components::FRAME_RADIUS,
         layers: pm_components::WINDOW_SHADOW
             .iter()
-            .map(|(x, y, blur, spread, alpha)| ShadowLayer::new(*x, *y, *blur, *spread, *alpha))
+            .map(|(x, y, blur, spread, alpha)| {
+                ShadowLayer::new(
+                    *x,
+                    *y,
+                    blur * pm_components::kit::layout::SHADOW_SOFTNESS,
+                    *spread,
+                    *alpha,
+                )
+            })
             .collect(),
     }
 }
@@ -262,6 +270,7 @@ impl App {
     fn open(&mut self, event_loop: &dyn ActiveEventLoop) {
         pm_components::set_shadow_outside(on_wayland(event_loop));
         rustle_wgpu::set_legible_text(false);
+        rustle_wgpu::set_gamma_blending(true);
         rustle::set_pixel_rounding(rustle::PixelRounding::Logical);
         rustle::set_close_handler(|| false);
         let size = Self::opening_size(event_loop);

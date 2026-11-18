@@ -73,8 +73,10 @@ impl<'a> FieldText<'a> {
         self
     }
 
-    /// Wraps the text at `width` logical pixels, showing at most `visible`
-    /// lines, scrolled by the field's own scroll, before it scrolls.
+    /// Wraps the text at `width` logical pixels, its placeholder kept to one
+    /// line cut short at that width, showing at most `visible`
+    /// lines before it scrolls, scrolled by the field's own scroll and kept on
+    /// the caret's line while the field follows its caret.
     pub fn wrap(mut self, width: f32, visible: Option<usize>) -> Self {
         self.wrap = Some(width.max(1.0));
         self.visible = visible;
@@ -122,10 +124,12 @@ impl<'a> FieldText<'a> {
             Some(_) => ink.wrap().style_in(&theme),
             None => ink.style_in(&theme),
         };
-        let drawn = if empty {
-            self.placeholder.to_owned()
-        } else {
-            shown.clone()
+        let drawn = match (empty, self.wrap) {
+            (true, Some(width)) => {
+                crate::kit::text::ellipsized(self.placeholder, &ink.style_in(&theme), width)
+            }
+            (true, None) => self.placeholder.to_owned(),
+            (false, _) => shown.clone(),
         };
         let layout = Rc::new(rustle::layout_text(&drawn, &style, self.wrap));
         let reported = if empty {
@@ -144,14 +148,19 @@ impl<'a> FieldText<'a> {
             None => 0.0,
         };
         let wraps = self.wrap.is_some();
+        let caret = field.to_shown(field.caret());
+        let caret_line = if empty {
+            0
+        } else {
+            layout.line_of_offset(caret, rustle::Affinity::Downstream)
+        };
         let (dx, dy) = match self.wrap {
             Some(_) => (
                 0.0,
-                field.scroll().min((line * lines as f32 - height).max(0.0)),
+                field.scroll_for_lines(caret_line, lines, self.visible.unwrap_or(lines), line),
             ),
             None => (field.scroll(), 0.0),
         };
-        let caret = field.to_shown(field.caret());
         let selection = field
             .selection()
             .map(|range| field.to_shown(range.start)..field.to_shown(range.end));
@@ -161,6 +170,9 @@ impl<'a> FieldText<'a> {
         let highlight = marks::selection_color(&theme);
         let size = style.font_size;
         let hit = reported.clone();
+        if wraps {
+            crate::kit::scroll::remember(id, room, dy, height);
+        }
         let modifier = modifier
             .height(height)
             .clip()

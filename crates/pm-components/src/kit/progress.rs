@@ -56,8 +56,14 @@ pub fn arc(
     rings(modifier, width, 0.0, track, &[(share, tone.into())]);
 }
 
-/// Emits a spinner `steps` of the spacing scale across in `tone`: an open
-/// ring turning once a second, read from the frame's clock when painted, so
+/// How many dashes the ring of a spinner is broken into, as Phosphor's dashed circle is.
+const DASHES: usize = 8;
+
+/// How much of the ring each dash of a spinner covers, as a share of the whole ring.
+const DASH_SHARE: f32 = 0.07;
+
+/// Emits a spinner `steps` of the spacing scale across in `tone`: a dashed
+/// ring, the loading icon, turning once a second, read from the frame's clock when painted, so
 /// it turns without composing: `glyph(IconName::Loading, steps, tone)` with `animate_spin()`.
 #[track_caller]
 pub fn spinner(steps: f32, tone: impl Into<Tone>) {
@@ -68,9 +74,12 @@ pub fn spinner(steps: f32, tone: impl Into<Tone>) {
         frame::animate();
         let turned = (now % TURN_MS) / TURN_MS * 360.0;
         let thickness = (side * 16.0 / 256.0).max(1.0);
-        let radius = side * 104.0 / 256.0;
+        let radius = side * 96.0 / 256.0;
         let (x, y) = (side / 2.0, side / 2.0);
-        canvas.arc(x, y, radius, thickness, turned + 25.0, 0.86, color);
+        for dash in 0..DASHES {
+            let start = turned + dash as f32 * 360.0 / DASHES as f32;
+            canvas.arc(x, y, radius, thickness, start, DASH_SHARE, color);
+        }
     });
 }
 

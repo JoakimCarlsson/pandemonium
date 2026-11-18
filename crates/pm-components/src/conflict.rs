@@ -383,7 +383,7 @@ impl<'a> Conflict<'a> {
             Modifier::new()
                 .height(self.card_height(region, row) - SPACE)
                 .stroke(Role::Border, Radius::Lg)
-                .clip_to(Radius::Lg),
+                .clip_to(Radius::None),
             Flex::new(),
             || {
                 crate::kit::row(
