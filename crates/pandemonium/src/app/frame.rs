@@ -8,8 +8,8 @@ use pm_components::title_bar::{
     FRAMELESS, TITLE_BAR, WINDOW_CLOSE, WINDOW_MAXIMIZE, WINDOW_MINIMIZE, is_window_control,
 };
 use pm_pages::Screen;
-use rustle::{CursorIcon, ResizeEdge};
-use winit::window::{ResizeDirection, Window};
+use rustle::CursorIcon;
+use winit::window::ResizeDirection;
 
 use super::{App, DOUBLE_CLICK};
 
@@ -46,11 +46,6 @@ fn band() -> f32 {
     }
 }
 
-/// Whether `window` floats, with room around it for a shadow: it does unless it is maximized or full screen.
-pub(super) fn floats(window: &dyn Window) -> bool {
-    !window.is_maximized() && window.fullscreen().is_none()
-}
-
 /// How large a window is whose frame is `size` logical pixels across.
 pub(super) fn with_band(size: (f32, f32)) -> (f32, f32) {
     (size.0 + band(), size.1 + band())
@@ -71,24 +66,10 @@ pub(super) fn edge_icon(direction: ResizeDirection) -> CursorIcon {
     }
 }
 
-/// The edge rustle resizes a window by for the edge or corner `direction`.
-fn edge_of(direction: ResizeDirection) -> ResizeEdge {
-    match direction {
-        ResizeDirection::North => ResizeEdge::North,
-        ResizeDirection::South => ResizeEdge::South,
-        ResizeDirection::West => ResizeEdge::West,
-        ResizeDirection::East => ResizeEdge::East,
-        ResizeDirection::NorthWest => ResizeEdge::NorthWest,
-        ResizeDirection::NorthEast => ResizeEdge::NorthEast,
-        ResizeDirection::SouthWest => ResizeEdge::SouthWest,
-        ResizeDirection::SouthEast => ResizeEdge::SouthEast,
-    }
-}
-
 impl App {
     /// Tells the windows built next whether they float, with a band around them for their shadow, composing them again when that changed: they float unless the window is maximized or full screen.
     pub(super) fn sync_floating(&mut self) {
-        let floating = self.window.as_deref().is_some_and(floats);
+        let floating = self.window.as_ref().is_some_and(|window| window.floats());
         if floating != pm_components::framed() && FRAMELESS {
             self.recompose = true;
         }
@@ -98,16 +79,16 @@ impl App {
     /// The edge or corner of the window the pointer is on, when the window draws its own frame and is not maximized.
     pub(super) fn frame_edge(&self) -> Option<ResizeDirection> {
         let window = self.window.as_ref()?;
-        if !FRAMELESS || !floats(&**window) {
+        if !FRAMELESS || !window.floats() {
             return None;
         }
         edge_at(self.pointer.position?, self.window_size())
     }
 
     /// Resizes the window when the left button goes down on its edge, moves it when it goes down on the title bar and maximizes or restores it when that is the second press there in a row. Says whether the press was taken.
-    pub(super) fn frame_press(&mut self, window: &dyn Window) -> bool {
+    pub(super) fn frame_press(&mut self, window: &dyn super::port::Port) -> bool {
         if let Some(direction) = self.frame_edge() {
-            self.handle.drag_resize_window(edge_of(direction));
+            window.drag_resize(direction);
             return true;
         }
         let on_bar = self
@@ -126,7 +107,7 @@ impl App {
             window.set_maximized(!window.is_maximized());
         } else {
             self.title_press = Some(Instant::now());
-            self.handle.drag_window();
+            window.drag_window();
         }
         true
     }

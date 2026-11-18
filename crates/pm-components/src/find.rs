@@ -392,6 +392,7 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
     let read_only = document.field.is_read_only();
     column(
         Modifier::new()
+            .unbounded_width()
             .placed(BoxAlignment::TopEnd)
             .at(-sp(6), sp(2))
             .z_index(40)
@@ -415,7 +416,7 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
                 switch(".*", FIND_REGEX, finding.regex);
                 switch("sel", FIND_IN_SELECTION, finding.scoped);
                 label_with(
-                    Modifier::new().width(84.0).pad_x(1),
+                    Modifier::new().keep().width(84.0).pad_x(1),
                     said,
                     Type::new(11).ratio(1.4).tone(tone).truncate(),
                 );

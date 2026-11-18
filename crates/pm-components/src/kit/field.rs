@@ -66,7 +66,8 @@ impl<'a> FieldText<'a> {
         }
     }
 
-    /// Shows `placeholder` in `tone` while the field is empty.
+    /// Shows `placeholder` in `tone` while the field is empty, cut short at the
+    /// edge of the field.
     pub fn placeholder(mut self, placeholder: &'a str, tone: impl Into<Tone>) -> Self {
         self.placeholder = placeholder;
         self.placeholder_tone = tone.into();
@@ -258,7 +259,16 @@ impl<'a> FieldText<'a> {
                     max_lines: None,
                     ..style
                 };
-                canvas.draw_text(x + line_left(line), y + line.top, piece, &single, None);
+                let piece = if empty && !wraps {
+                    std::borrow::Cow::Owned(crate::kit::text::ellipsized(
+                        piece,
+                        &single,
+                        canvas.width(),
+                    ))
+                } else {
+                    std::borrow::Cow::Borrowed(piece)
+                };
+                canvas.draw_text(x + line_left(line), y + line.top, &piece, &single, None);
             }
             if !focused {
                 return;

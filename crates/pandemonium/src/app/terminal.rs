@@ -189,7 +189,7 @@ impl App {
             && !text.is_empty()
             && let Some(clipboard) = self.clipboard()
         {
-            let _ = clipboard.set_text(text);
+            clipboard.set_text(text);
         }
     }
 
@@ -197,9 +197,7 @@ impl App {
     fn terminal_clip(&mut self, action: Clip, bracketed: bool) {
         match action {
             Clip::Paste => {
-                let pasted = self
-                    .clipboard()
-                    .and_then(|clipboard| clipboard.get_text().ok());
+                let pasted = self.clipboard().and_then(|clipboard| clipboard.text());
                 if let Some(text) = pasted {
                     self.type_into_terminal(terminal_keys::paste(&text, bracketed));
                 }
@@ -208,7 +206,7 @@ impl App {
                 if let Some(text) = self.model.read(|screen| screen.terminal_selection())
                     && let Some(clipboard) = self.clipboard()
                 {
-                    let _ = clipboard.set_text(text);
+                    clipboard.set_text(text);
                 }
             }
         }

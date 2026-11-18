@@ -1,6 +1,6 @@
 //! The frame of a window beside the main one: the title bar that closes it over what it holds, with the border the window draws itself when it has no frame from the desktop.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::cell::Cell;
 
 use rustle::Modifier;
 
@@ -23,30 +23,32 @@ pub const WINDOW_SHADOW: &[(f32, f32, f32, f32, f32)] = &[
     (0.0, 0.0, 2.0, 0.0, 0.28),
 ];
 
-/// Whether the windows are floating, which is when they are neither maximized nor full screen and so have room around them for a shadow.
-static FLOATING: AtomicBool = AtomicBool::new(false);
+thread_local! {
+    /// Whether the windows of this thread are floating, which is when they are neither maximized nor full screen and so have room around them for a shadow.
+    static FLOATING: Cell<bool> = const { Cell::new(false) };
 
-/// Whether the desktop shows the shadow of a floating window outside the window, so that the window leaves no band for it.
-static SHADOW_OUTSIDE: AtomicBool = AtomicBool::new(false);
+    /// Whether the desktop shows the shadow of a floating window of this thread outside the window, so that the window leaves no band for it.
+    static SHADOW_OUTSIDE: Cell<bool> = const { Cell::new(false) };
+}
 
-/// Says whether the windows built from now on float, with room around them for their shadow.
+/// Says whether the windows this thread builds from now on float, with room around them for their shadow.
 pub fn set_floating(floating: bool) {
-    FLOATING.store(floating, Ordering::Relaxed);
+    FLOATING.with(|held| held.set(floating));
 }
 
 /// Says whether the shadow of a floating window is shown outside it, by the desktop, rather than in a band inside the window.
 pub fn set_shadow_outside(outside: bool) {
-    SHADOW_OUTSIDE.store(outside, Ordering::Relaxed);
+    SHADOW_OUTSIDE.with(|held| held.set(outside));
 }
 
 /// Whether the shadow of a floating window is shown outside it, as [`set_shadow_outside`] last said.
 pub fn shadow_outside() -> bool {
-    SHADOW_OUTSIDE.load(Ordering::Relaxed)
+    SHADOW_OUTSIDE.with(Cell::get)
 }
 
 /// Whether the windows draw their own frame and float, and so have rounded corners, a border and a shadow.
 pub fn framed() -> bool {
-    FRAMELESS && FLOATING.load(Ordering::Relaxed)
+    FRAMELESS && FLOATING.with(Cell::get)
 }
 
 /// How wide the band around a window is that holds its shadow, in logical pixels: none when the desktop frames the window, it is maximized, or its shadow is shown outside it.

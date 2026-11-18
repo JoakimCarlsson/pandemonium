@@ -2,7 +2,6 @@
 
 use std::cell::Cell;
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use pm_components::adder::{ADDER_DOWN, ADDER_ESCAPE, ADDER_UP};
@@ -44,9 +43,7 @@ use pm_field::{Clicks, Edit, Gesture, Reach};
 use pm_pages::{
     ATTACH, DIFF_SCROLL, MENU_SCROLL, PLAN_SCROLL, PROMPT, Screen, TERMINAL_BODY, TREE_SCROLL,
 };
-use rustle::WindowHandle;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
-use winit::window::Window;
 
 mod asides;
 mod browser;
@@ -56,10 +53,15 @@ mod drops;
 mod editing;
 mod frame;
 mod gesture;
+#[cfg(test)]
+mod headless;
 mod host;
+#[cfg(test)]
+mod interactions;
 mod panes;
 mod paste;
 mod performance;
+pub(crate) mod port;
 mod select;
 mod terminal;
 mod tree;
@@ -113,9 +115,7 @@ pub struct App {
     /// The interface on rustle, its windows and what its root reads.
     shell: host::Shell,
     /// The window standing as the main one, once it is open.
-    window: Option<Arc<dyn Window>>,
-    /// The handle rustle controls the window standing as the main one by.
-    handle: WindowHandle,
+    window: Option<Rc<dyn port::Port>>,
     /// Whether something changed outside the model that the windows must be composed again for.
     recompose: bool,
     /// What the interface made of the event being handled.
@@ -164,8 +164,8 @@ pub struct App {
     on_aside: Option<asides::Aside>,
     /// When the application started, which animations run on.
     started: Instant,
-    /// The system clipboard, once something has needed it.
-    clipboard: Option<arboard::Clipboard>,
+    /// The clipboard, once something has needed it.
+    clipboard: Option<Box<dyn port::Board>>,
     /// The field a press began in, while the button is held, so dragging selects.
     dragging: Option<FocusId>,
     /// What the press held in a field took, so dragging extends by the same amount.
@@ -269,6 +269,8 @@ pub struct App {
     bulb_wait: Option<(editing::BulbKey, Instant)>,
     /// The selected text of the file shown that was pressed on, while the button is held.
     text_drag: Option<editing::TextDrag>,
+    /// Whether what the reader changed is written to disk, as it is unless the app runs headless.
+    keeps_to_disk: bool,
 }
 
 impl App {
@@ -328,20 +330,38 @@ impl App {
             &window_settings.appearance.interface_font,
             &window_settings.appearance.code_font,
         );
-        let model = State::new(
-            screen
-                .with_editor_settings(editor.clone())
-                .with_window_settings(window_settings.clone())
-                .with_fonts(all_fonts, mono_fonts),
-        );
+        let screen = screen
+            .with_editor_settings(editor.clone())
+            .with_window_settings(window_settings.clone())
+            .with_fonts(all_fonts, mono_fonts);
+        let mut app = Self::assemble(screen, work, window_settings, editor, Some(proxy));
+        app.keeps_to_disk = true;
+        app.saved = saved;
+        app.saved_choices = choices;
+        app.refocus = saved_view.as_ref().and_then(View::typing);
+        app.saved_view = saved_view;
         crate::startup::mark("fonts-model-ready");
+        app
+    }
+
+    /// An application showing `screen`, with no window yet and nothing read
+    /// from disk: `work` runs its agents, `window_settings` and `editor` are
+    /// the settings it starts with, and `proxy` wakes the event loop that
+    /// will open its windows, when there is one.
+    fn assemble(
+        screen: Screen,
+        work: Work,
+        window_settings: pm_config::WindowSettings,
+        editor: pm_editor::EditorSettings,
+        proxy: Option<EventLoopProxy>,
+    ) -> Self {
+        let model = State::new(screen);
         let dirty = Rc::new(Cell::new(false));
         let flag = Rc::clone(&dirty);
         model.subscribe(move |_| flag.set(true));
         Self {
             shell: host::Shell::new(model.clone(), proxy),
             window: None,
-            handle: WindowHandle::MAIN,
             recompose: true,
             actions: Vec::new(),
             fonts_applied: (
@@ -376,9 +396,9 @@ impl App {
             copied: None,
             clicks: Clicks::default(),
             composing_in: None,
-            saved,
-            refocus: saved_view.as_ref().and_then(View::typing),
-            saved_view,
+            saved: None,
+            refocus: None,
+            saved_view: None,
             view_writer: crate::view::Writer::default(),
             view_save_due: None,
             frame_due: None,
@@ -390,7 +410,7 @@ impl App {
             pane_dragging: false,
             tree_press: None,
             outside: drops::Outside::default(),
-            saved_choices: choices,
+            saved_choices: Vec::new(),
             saved_editor: editor,
             autosave_wait: None,
             release_asked: Instant::now(),
@@ -421,6 +441,7 @@ impl App {
             bulb_asked: None,
             bulb_wait: None,
             text_drag: None,
+            keeps_to_disk: false,
         }
     }
 }
@@ -449,12 +470,9 @@ impl App {
     }
 
     /// Keeps how large the frame of the window is for the next launch.
-    fn remember_size(window: &dyn Window) {
-        let size = window
-            .surface_size()
-            .to_logical::<f32>(window.scale_factor());
-        let size = (size.width, size.height);
-        let size = if frame::floats(window) {
+    fn remember_size(window: &dyn port::Port) {
+        let size = window.logical_size();
+        let size = if window.floats() {
             frame::without_band(size)
         } else {
             size
@@ -498,10 +516,8 @@ impl App {
     fn note_code_view(&mut self) {
         let Some((width, height)) = self
             .output
-            .regions
-            .iter()
-            .find(|region| region.id == VIEWER_SCROLL)
-            .map(|region| (region.rect.size.width, region.rect.size.height))
+            .scroller(VIEWER_SCROLL)
+            .map(|view| (view.rect.size.width, view.rect.size.height))
         else {
             return;
         };
@@ -643,7 +659,7 @@ impl App {
     fn deliver(&mut self) {
         for text in self.work.deliver(&self.model) {
             if let Some(clipboard) = self.clipboard() {
-                let _ = clipboard.set_text(text);
+                clipboard.set_text(text);
             }
         }
         if chosen_family(&self.saved_window.appearance) != self.family {
@@ -661,7 +677,9 @@ impl App {
         else {
             return;
         };
-        let _ = pm_store::save_text(EDITOR_SETTINGS, &settings.write());
+        if self.keeps_to_disk {
+            let _ = pm_store::save_text(EDITOR_SETTINGS, &settings.write());
+        }
         self.saved_editor = settings;
     }
 
@@ -674,7 +692,9 @@ impl App {
         else {
             return;
         };
-        let _ = pm_store::save_text(WINDOW_SETTINGS, &settings.write());
+        if self.keeps_to_disk {
+            let _ = pm_store::save_text(WINDOW_SETTINGS, &settings.write());
+        }
         self.work.set_servers(&settings.servers);
         self.saved_window = settings;
         self.apply_appearance();
@@ -731,7 +751,9 @@ impl App {
         }) else {
             return;
         };
-        self.work.save_choices(choices.clone());
+        if self.keeps_to_disk {
+            self.work.save_choices(choices.clone());
+        }
         self.saved_choices = choices;
     }
 
@@ -770,7 +792,9 @@ impl App {
         if self.saved_view.as_ref() == Some(&view) {
             return;
         }
-        self.view_writer.queue(view.clone());
+        if self.keeps_to_disk {
+            self.view_writer.queue(view.clone());
+        }
         self.saved_view = Some(view);
     }
 
@@ -801,7 +825,9 @@ impl App {
         if self.saved.as_ref() == Some(&paths) {
             return;
         }
-        self.work.save_projects(paths.clone());
+        if self.keeps_to_disk {
+            self.work.save_projects(paths.clone());
+        }
         self.saved = Some(paths);
     }
 
@@ -923,15 +949,13 @@ impl App {
         let Some(window) = self.window.as_ref() else {
             return (WIDTH, HEIGHT);
         };
-        let size = window
-            .surface_size()
-            .to_logical::<f32>(window.scale_factor());
+        let size = window.logical_size();
         let band = if self.on_aside.is_none() {
             2.0 * pm_components::shadow_margin()
         } else {
             0.0
         };
-        (size.width - band, size.height - band)
+        (size.0 - band, size.1 - band)
     }
 
     /// Takes hold of the handle on the edge of a panel when the pointer is down on it, and says whether it did.
@@ -990,21 +1014,18 @@ impl App {
         if !self.minimap_drag {
             return;
         }
-        let find = |id: FocusId| self.output.regions.iter().find(|region| region.id == id);
-        let (Some(map), Some(view)) = (find(MINIMAP), find(VIEWER_SCROLL)) else {
+        let (Some(map), Some(view)) = (
+            self.output.region(MINIMAP),
+            self.output.scroller(VIEWER_SCROLL),
+        ) else {
             return;
         };
-        let (down, height, shown) = (
-            y - map.rect.origin.y,
-            map.rect.size.height,
+        let (down, height, shown, room) = (
+            y - map.origin.y,
+            map.size.height,
             view.rect.size.height,
+            view.room,
         );
-        let room = self
-            .output
-            .scrollers
-            .iter()
-            .find(|scroller| scroller.id == VIEWER_SCROLL)
-            .map_or(f32::MAX, |scroller| scroller.room);
         self.model.update(|state| {
             *state = std::mem::take(state).minimap_pressed(down, height, shown, room)
         });
@@ -1726,10 +1747,8 @@ impl App {
     fn show_editor_caret(&mut self) {
         let drawn = self
             .output
-            .regions
-            .iter()
-            .find(|region| region.id == VIEWER_SCROLL)
-            .map(|region| region.rect.size.height + STRIP);
+            .scroller(VIEWER_SCROLL)
+            .map(|view| view.rect.size.height + STRIP);
         let window = self.window.as_ref().map(|_| self.window_size().1 - TABS);
         if let Some(height) = drawn.or(window) {
             self.model
@@ -1737,12 +1756,14 @@ impl App {
         }
     }
 
-    /// The system clipboard, opened on first use.
-    fn clipboard(&mut self) -> Option<&mut arboard::Clipboard> {
+    /// The clipboard, the system's opened on first use.
+    fn clipboard(&mut self) -> Option<&mut (dyn port::Board + 'static)> {
         if self.clipboard.is_none() {
-            self.clipboard = arboard::Clipboard::new().ok();
+            self.clipboard = arboard::Clipboard::new()
+                .ok()
+                .map(|clipboard| Box::new(clipboard) as Box<dyn port::Board>);
         }
-        self.clipboard.as_mut()
+        self.clipboard.as_deref_mut()
     }
 
     /// Carries out a clipboard shortcut in the field `id`.
@@ -1782,7 +1803,7 @@ impl App {
                     self.copied = Some((selected.clone(), indentation, whole_lines));
                 }
                 if let Some(clipboard) = self.clipboard() {
-                    let _ = clipboard.set_text(selected);
+                    clipboard.set_text(selected);
                 }
                 if action == Clip::Cut {
                     if whole_lines {
@@ -1799,9 +1820,7 @@ impl App {
                 if id == PROMPT && self.paste_attachments() {
                     return;
                 }
-                let pasted = self
-                    .clipboard()
-                    .and_then(|clipboard| clipboard.get_text().ok());
+                let pasted = self.clipboard().and_then(|clipboard| clipboard.text());
                 if let Some(text) = pasted {
                     let adjusted = (id == EDITOR_FIELD)
                         .then_some(self.copied.as_ref())
@@ -2041,8 +2060,9 @@ fn fail_to_start(reason: &str) -> ! {
 
 impl App {
     /// Does what waits for the loop to come to rest: the agents' work, the
-    /// model's requests, saving, and when the loop wakes next.
-    fn idle(&mut self, event_loop: &dyn ActiveEventLoop) {
+    /// model's requests and saving. Says how the loop is to wait and whether
+    /// the app is to quit.
+    fn rest(&mut self) -> (ControlFlow, bool) {
         self.work.discover();
         self.work.poll(&self.model);
         self.pump_drops();
@@ -2089,7 +2109,7 @@ impl App {
         if self.model.read(Screen::has_outbox) {
             self.deliver();
         }
-        event_loop.set_control_flow(match (waiting, hover) {
+        let flow = match (waiting, hover) {
             _ if browsing => ControlFlow::WaitUntil(Instant::now() + browser::PUMP),
             _ if self.work.hearing() => {
                 ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(2))
@@ -2097,14 +2117,11 @@ impl App {
             (true, _) => ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(50)),
             (false, Some(due)) => ControlFlow::WaitUntil(due),
             (false, None) => ControlFlow::Wait,
-        });
+        };
         if self.model.read(Screen::place_unrecorded) {
             self.model
                 .update(|screen| *screen = std::mem::take(screen).with_place_recorded());
         }
-        if self.closing || self.model.read(Screen::quitting) {
-            event_loop.exit();
-        }
-        self.tell_field_left();
+        (flow, self.closing || self.model.read(Screen::quitting))
     }
 }

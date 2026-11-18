@@ -201,9 +201,13 @@ fn variable_row(index: usize, entry: &crate::debug::VariableRow) {
         } else {
             Role::Text.into()
         };
-        label(entry.name.clone(), small(12, tone).mono());
+        label_with(
+            Modifier::new().keep(),
+            entry.name.clone(),
+            small(12, tone).mono(),
+        );
         if !entry.value.is_empty() {
-            label("=", small(12, Role::Subtle));
+            label_with(Modifier::new().keep(), "=", small(12, Role::Subtle));
             label_with(
                 Modifier::new().grow(),
                 entry.value.clone(),

@@ -35,7 +35,10 @@ pub struct Looks {
 impl Looks {
     /// No fill in any state, square corners.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            radius: Radius::None,
+            ..Self::default()
+        }
     }
 
     /// Filled with `tone` at rest.

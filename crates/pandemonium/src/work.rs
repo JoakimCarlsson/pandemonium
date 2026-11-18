@@ -71,7 +71,7 @@ fn entry_request(change: EntryChange, directory: String) -> Request {
 }
 
 /// A machine the servers run on: nothing for this one, or how a project's address names another.
-type Host = Option<String>;
+pub(crate) type Host = Option<String>;
 
 /// Whether `url` is what a server may say a shell serves: the root of a port of `localhost` over plain HTTP, nothing a server could use to send the browser elsewhere.
 fn is_served_address(url: &str) -> bool {
@@ -502,6 +502,8 @@ pub struct Work {
     release: Option<pm_components::update::Update>,
     /// Tells the event loop that a connection has something to look at.
     wake: pm_client::Wake,
+    /// What would have been sent to the servers, while the work reaches none.
+    offline: Option<Vec<(Host, Request)>>,
 }
 
 impl Work {
@@ -546,7 +548,33 @@ impl Work {
             palette: picture::Palette::default(),
             release: None,
             wake,
+            offline: None,
         }
+    }
+
+    /// Work that reaches no server: what it would ask one is kept, for
+    /// [`Work::asked`] to give, and nothing is answered.
+    #[cfg(test)]
+    pub fn offline(wake: pm_client::Wake) -> Self {
+        Self {
+            offline: Some(Vec::new()),
+            ..Self::new(wake)
+        }
+    }
+
+    /// Takes the shell of `tab` to be the one numbered `terminal` on this machine, as the server says once it opened it.
+    #[cfg(test)]
+    pub fn terminal_opened(&mut self, model: &State<Screen>, tab: u64, terminal: u64) {
+        self.opened_terminal(model, &None, tab, terminal);
+    }
+
+    /// Takes what offline work was asked to send, by machine, since the last time.
+    #[cfg(test)]
+    pub fn asked(&mut self) -> Vec<(Host, Request)> {
+        self.offline
+            .as_mut()
+            .map(std::mem::take)
+            .unwrap_or_default()
     }
 
     /// Has the window finish opening on `view` once the sessions it needs are listed.
@@ -624,6 +652,10 @@ impl Work {
     }
 
     fn ask(&mut self, host: &Host, request: Request, pending: Pending) {
+        if let Some(asked) = self.offline.as_mut() {
+            asked.push((host.clone(), request));
+            return;
+        }
         if !self.links.contains_key(host) {
             self.links.insert(host.clone(), Link::default());
             let host = host.clone();

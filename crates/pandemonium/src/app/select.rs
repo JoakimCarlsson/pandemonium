@@ -128,7 +128,7 @@ impl App {
         };
         let text = self.output.selected_text(&selection);
         if let Some(clipboard) = self.clipboard() {
-            let _ = clipboard.set_text(text);
+            clipboard.set_text(text);
         }
     }
 

@@ -113,7 +113,7 @@ impl TitleBar {
             .target(TITLE_BAR);
         row(own, Flex::new().center(), move || {
             row(
-                Modifier::new().grow().pad_x(2),
+                Modifier::new().grow().min_width_auto().pad_x(2),
                 Flex::new().center().gap(0.5),
                 || {
                     gap_box(Modifier::new().width(DESKTOP_CONTROLS));
@@ -131,7 +131,7 @@ impl TitleBar {
                 command_center(place);
             }
             row(
-                Modifier::new().grow().fill_max_height(),
+                Modifier::new().grow().min_width_auto().fill_max_height(),
                 Flex::new().center().trailing().gap(0.5),
                 || {
                     if self.language_update {

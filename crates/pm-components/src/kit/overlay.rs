@@ -9,6 +9,7 @@ use rustle::{Children, Constraints, Layout, LayoutResult, Modifier, Offset, Rect
 
 use crate::kit::frame;
 use crate::kit::layout::{Flex, Styled, column};
+use crate::kit::report;
 use crate::kit::text::{Type, label};
 use crate::kit::theme::{Radius, Role};
 
@@ -130,18 +131,21 @@ impl Layout for Detached {
     }
 }
 
-/// Emits `content` taking no room where it is declared, in the layer `z`,
-/// with its top left at (`x`, `y`) in the window, kept inside the window.
+/// Emits `content` in `modifier` taking no room where it is declared, in the
+/// layer `z`, with its top left at (`x`, `y`) in the window, kept inside the
+/// window's frame, clear of the band around it that holds its shadow, where a
+/// press resizes the window instead of reaching it.
 #[track_caller]
 fn detached_at(x: f32, y: f32, z: i32, modifier: Modifier, content: impl FnOnce()) {
+    let band = crate::shadow_margin();
     rustle::layout(Modifier::new(), Detached, move || {
         rustle::stack_with(
             Modifier::new()
                 .z_index_unclipped(z)
-                .in_window(x, y)
+                .in_window(x - band, y - band)
                 .keep_in_window()
-                .chain(modifier),
-            content,
+                .padding(band),
+            || rustle::stack_with(modifier, content),
         );
     });
 }
@@ -160,6 +164,8 @@ pub fn at_window(x: f32, y: f32, modifier: Modifier, content: impl FnOnce()) {
 struct Resting {
     /// Where the box is in the window.
     rect: Rect,
+    /// The window the box is in.
+    window: report::WindowKey,
     /// The words.
     words: String,
     /// When the pointer came to it, on the frame's clock.
@@ -194,16 +200,18 @@ pub trait Tooltip: Sized {
 impl Tooltip for Modifier {
     fn tooltip(self, words: impl Into<String>) -> Self {
         let words: String = words.into();
-        let rect = Rc::new(Cell::new(Rect::default()));
+        let rect = Rc::new(Cell::new((Rect::default(), report::MAIN)));
         let placed = rect.clone();
-        self.on_placed(move |at, _| placed.set(at))
+        self.on_placed(move |at, _| placed.set((at, report::painting())))
             .on_hover(move |inside| {
                 RESTING.with(|resting| {
                     let mut resting = resting.borrow_mut();
                     let mine = resting.as_ref().is_some_and(|held| held.words == words);
                     if inside {
+                        let (rect, window) = rect.get();
                         *resting = Some(Resting {
-                            rect: rect.get(),
+                            rect,
+                            window,
                             words: words.clone(),
                             since: frame::clock_ms(),
                         });
@@ -216,12 +224,15 @@ impl Tooltip for Modifier {
     }
 }
 
-/// Emits the tooltip the pointer rests on, once it has rested long enough,
-/// above its box or below it where there is no room above, over everything.
-/// Call it last in a window's root.
+/// Emits the tooltip the pointer rests on in the window `window`, once it
+/// has rested long enough, above its box or below it where there is no room
+/// above, over everything. Call it last in a window's root.
 #[track_caller]
-pub fn tooltips() {
-    let Some(resting) = RESTING.with(|resting| resting.borrow().clone()) else {
+pub fn tooltips(window: report::WindowKey) {
+    let Some(resting) = RESTING
+        .with(|resting| resting.borrow().clone())
+        .filter(|resting| resting.window == window)
+    else {
         return;
     };
     let due = resting.since + DELAY.with(Cell::get);

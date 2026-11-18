@@ -91,9 +91,7 @@ impl App {
             return;
         };
         let paths: Vec<String> = clipboard
-            .get()
-            .file_list()
-            .unwrap_or_default()
+            .files()
             .iter()
             .map(|file| file.to_string_lossy().into_owned())
             .collect();

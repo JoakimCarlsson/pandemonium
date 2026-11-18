@@ -45,7 +45,7 @@ impl<'a> CodeBox<'a> {
         }
     }
 
-    /// The box cut off at `pixels` logical pixels tall.
+    /// The box cut off at `pixels` logical pixels tall at the comfortable density, scaled with the spacing step as the old interface scaled it.
     pub fn max_height(mut self, pixels: f32) -> Self {
         self.height = pixels;
         self
@@ -75,7 +75,7 @@ impl<'a> CodeBox<'a> {
         let own = Modifier::new()
             .pad_side(Side::Top, self.margin)
             .pad_side(Side::Bottom, self.margin)
-            .max_h_px(self.height)
+            .height_in(0.0, crate::kit::sp(self.height / 4.0))
             .fill_rounded(Role::Background, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
             .clip_to(Radius::None)

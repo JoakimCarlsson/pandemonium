@@ -1,0 +1,152 @@
+//! The keyboard away from text: Tab walking the focus, Enter and Space
+//! pressing what has it, the arrows and Enter in the menu of commands the
+//! prompt offers, digits answering a question, and Escape closing what is
+//! open before letting go of the focus.
+
+use pm_components::kit::{FocusId, Key, Modifiers};
+use pm_components::state::{PROMPT, Page, SESSION_BASE, TAB_DIFF, Tab};
+
+use crate::app::headless::Rig;
+use crate::snapshot::Shot;
+
+/// Shift held.
+const SHIFT: Modifiers = Modifiers {
+    shift: true,
+    control: false,
+    alt: false,
+    logo: false,
+};
+
+/// The text of the prompt.
+fn prompt(rig: &Rig) -> String {
+    rig.read(|screen| screen.field(PROMPT).map(|field| field.text().to_owned()))
+        .unwrap_or_default()
+}
+
+/// Tab moves the focus on from the prompt along the order things are drawn
+/// in, and Shift+Tab brings it back.
+#[test]
+fn tab_walks_the_focus() {
+    let mut rig = Rig::shot(Shot::Workspace);
+    rig.click_on(PROMPT);
+    rig.key(Key::Tab);
+    let next = rig.focused();
+    assert!(next.is_some() && next != Some(PROMPT), "{next:?}");
+    let order = rig.report().focus_order();
+    let at = |id| order.iter().position(|held| *held == id);
+    assert_eq!(
+        at(next.unwrap_or(PROMPT)),
+        at(PROMPT).map(|index| index + 1)
+    );
+    rig.chord(SHIFT, Key::Tab);
+    assert_eq!(rig.focused(), Some(PROMPT));
+}
+
+/// Enter and Space press the control that has the keyboard.
+#[test]
+fn enter_and_space_press_what_has_the_keyboard() {
+    let mut rig = Rig::shot(Shot::Workspace);
+    rig.app.focus.focus(TAB_DIFF);
+    rig.key(Key::Enter);
+    assert_eq!(rig.state(|state| state.tab), Tab::Diff);
+    rig.app.focus.focus(FocusId(SESSION_BASE + 2));
+    rig.key(Key::Space);
+    assert_eq!(rig.state(|state| state.page), Page::Session(2));
+}
+
+/// A slash typed in the prompt offers the agent's commands; the arrows move
+/// along them and Enter types the one picked into the prompt.
+#[test]
+fn the_command_menu_takes_the_arrows_and_enter() {
+    let mut rig = Rig::shot(Shot::Slashing);
+    rig.click_on(PROMPT);
+    rig.key(Key::End);
+    assert!(rig.read(pm_pages::Screen::slash_open));
+    let first = rig.state(|state| state.slash);
+    rig.key(Key::ArrowDown);
+    assert_eq!(rig.state(|state| state.slash), first + 1);
+    rig.key(Key::ArrowUp);
+    assert_eq!(rig.state(|state| state.slash), first);
+    rig.key(Key::Enter);
+    assert!(!rig.read(pm_pages::Screen::slash_open));
+    let typed = prompt(&rig);
+    assert!(typed.starts_with('/') && typed.len() > 1, "{typed}");
+}
+
+/// Escape closes the menu of commands before it lets go of the prompt.
+#[test]
+fn escape_closes_before_letting_go() {
+    let mut rig = Rig::shot(Shot::Workspace);
+    rig.click_on(PROMPT);
+    let at = rig.center(PROMPT);
+    rig.right_click(at);
+    assert!(rig.state(|state| state.menu.is_some()));
+    rig.key(Key::Escape);
+    assert!(rig.state(|state| state.menu.is_none()));
+    assert_eq!(rig.focused(), Some(PROMPT));
+    rig.key(Key::Escape);
+    assert_eq!(rig.focused(), None);
+}
+
+/// While a question waits, a digit typed outside any field picks that answer.
+#[test]
+fn a_digit_answers_a_question() {
+    let mut rig = Rig::shot(Shot::Inquiring);
+    let picks = |rig: &Rig| rig.state(|state| state.draft().map(|draft| draft.picks.clone()));
+    let before = picks(&rig).expect("a question waits");
+    rig.key(Key::Character('1'));
+    let after = picks(&rig).expect("a question waits");
+    assert_ne!(before, after);
+}
+
+/// Enter in the prompt sends it; Shift+Enter breaks the line instead.
+#[test]
+fn enter_sends_and_shift_enter_breaks_the_line() {
+    let mut rig = Rig::shot(Shot::Workspace);
+    rig.click_on(PROMPT);
+    rig.type_text("first");
+    rig.chord(SHIFT, Key::Enter);
+    rig.type_text("second");
+    assert_eq!(prompt(&rig), "first\nsecond");
+    rig.key(Key::Enter);
+    assert_eq!(prompt(&rig), "");
+}
+
+/// After a press on a changed file, Ctrl+A marks every changed file rather
+/// than selecting text.
+#[test]
+fn select_all_marks_every_changed_file() {
+    let mut rig = Rig::shot(Shot::Workspace);
+    let row = FocusId(pm_components::state::FILE_BASE);
+    rig.click_on(row);
+    rig.chord(
+        Modifiers {
+            control: true,
+            ..Modifiers::default()
+        },
+        Key::Character('a'),
+    );
+    let marked = rig.state(|state| state.git.marked.len());
+    assert!(marked > 1, "{marked}");
+    assert!(rig.app.text_selection.is_none());
+}
+
+/// With modal editing on, keys move the caret of the file shown instead of
+/// typing, and `i` lets them type.
+#[test]
+fn modal_editing_moves_then_types() {
+    let mut rig = Rig::shot(Shot::Vim);
+    let editor = pm_components::open_files::EDITOR_FIELD;
+    let text = |rig: &Rig| {
+        rig.read(|screen| screen.field(editor).map(|field| field.text().to_owned()))
+            .unwrap_or_default()
+    };
+    rig.click_on(editor);
+    let before = text(&rig);
+    rig.key(Key::Escape);
+    rig.key(Key::Character('j'));
+    assert_eq!(text(&rig), before);
+    rig.key(Key::Character('i'));
+    rig.type_text("q");
+    assert_eq!(text(&rig).len(), before.len() + 1);
+}

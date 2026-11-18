@@ -2732,7 +2732,7 @@ impl Shot {
     }
 
     /// The screen this snapshot is of.
-    fn screen(self) -> Screen {
+    pub(crate) fn screen(self) -> Screen {
         let workspace = workspace_sample;
         match self {
             Self::Code => Screen::Workspace(code()),

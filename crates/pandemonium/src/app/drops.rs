@@ -66,7 +66,7 @@ impl App {
             };
 
             if !self.outside.tried
-                && let Some(window) = self.window.as_ref()
+                && let Some(window) = self.window.as_ref().and_then(|window| window.native())
             {
                 self.outside.tried = true;
                 let display = window.display_handle().map(|handle| handle.as_raw());

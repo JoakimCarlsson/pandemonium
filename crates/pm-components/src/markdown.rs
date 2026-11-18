@@ -410,6 +410,7 @@ impl Layout<'_> {
             }
         })
         .max_height(UNCUT)
+        .margin(0.0)
         .inner(Modifier::new().pad_y(2))
         .build();
     }

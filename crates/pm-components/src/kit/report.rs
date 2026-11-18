@@ -162,6 +162,11 @@ thread_local! {
     static PAINTING: Cell<WindowKey> = const { Cell::new(MAIN) };
 }
 
+/// The window whose frame is being painted.
+pub(crate) fn painting() -> WindowKey {
+    PAINTING.with(Cell::get)
+}
+
 /// Runs `record` on the report of the frame being painted.
 pub(crate) fn record(record: impl FnOnce(&mut Report)) {
     let window = PAINTING.with(Cell::get);

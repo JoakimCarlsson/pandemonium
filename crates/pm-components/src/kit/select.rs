@@ -249,7 +249,9 @@ pub(crate) fn unit_around(
     }
 }
 
-/// What `selection` covers of `pieces`, broken where the pieces were drawn on separate rows.
+/// What `selection` covers of `pieces`, broken where the pieces were drawn on
+/// separate rows; a piece the selection's ends no longer fall inside, since
+/// the text changed under it, is left out.
 pub(crate) fn text_of(pieces: &[Piece], selection: &TextSelection) -> String {
     let mut text = String::new();
     let mut last: Option<&Piece> = None;
@@ -257,10 +259,13 @@ pub(crate) fn text_of(pieces: &[Piece], selection: &TextSelection) -> String {
         let Some(range) = selection.covering(piece.index, piece.content.len()) else {
             continue;
         };
+        let Some(covered) = piece.content.get(range) else {
+            continue;
+        };
         if let Some(before) = last {
             text.push_str(separator(before, piece));
         }
-        text.push_str(&piece.content[range]);
+        text.push_str(covered);
         last = Some(piece);
     }
     text.trim_end().to_owned()

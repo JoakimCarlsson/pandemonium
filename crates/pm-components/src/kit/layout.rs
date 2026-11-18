@@ -237,7 +237,7 @@ pub trait Styled: Sized {
     fn fill(self, tone: impl Into<Tone>) -> Self;
     /// Filled with `tone` inside corners rounded by `radius`: `bg(tone)` with `rounded(radius)`.
     fn fill_rounded(self, tone: impl Into<Tone>, radius: Radius) -> Self;
-    /// A one pixel outline in `tone` inside corners rounded by `radius`, which takes a pixel of room on every side inside the box as a CSS border does: `border()`, `border_color(tone)`.
+    /// A one pixel outline in `tone` inside corners rounded by `radius`, which takes a pixel of room on every side inside the box and is drawn under what the box holds, as a CSS border is: `border()`, `border_color(tone)`.
     fn stroke(self, tone: impl Into<Tone>, radius: Radius) -> Self;
     /// A line `pixels` thick along one side in `tone`, taking that much room on that side inside the box as a CSS border does: `border_t()`, `border_b()`, `border_l()`, `border_r()`.
     fn stroke_side(self, side: Side, pixels: f32, tone: impl Into<Tone>) -> Self;
@@ -329,8 +329,14 @@ impl Styled for Modifier {
     }
 
     fn stroke(self, tone: impl Into<Tone>, radius: Radius) -> Self {
-        self.border(1.0, theme::color(tone), radius.px())
-            .padding(1.0)
+        let color = theme::color(tone);
+        let corner = radius.px();
+        self.draw_behind(move |canvas| {
+            let (width, height) = (canvas.width(), canvas.height());
+            let corner = corner.min(width.min(height) / 2.0);
+            canvas.stroke_rect(0.0, 0.0, width, height, corner, 1.0, color);
+        })
+        .padding(1.0)
     }
 
     fn stroke_side(self, side: Side, pixels: f32, tone: impl Into<Tone>) -> Self {

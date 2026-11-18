@@ -115,7 +115,7 @@ pub fn render(
         theme::provide(tokens.clone(), || {
             report::root(|| {
                 content();
-                overlay::tooltips();
+                overlay::tooltips(report::MAIN);
             })
         })
     };

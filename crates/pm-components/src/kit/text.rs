@@ -11,9 +11,11 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use rustle::{FontWeight, Modifier, TextLayout, TextStyle, TextWrap};
 
+use crate::kit::focus::FocusId;
 use crate::kit::theme::{self, Role, Tone};
 
 /// How a stretch of text is set: size, line height, weight, family, slant,
@@ -281,22 +283,24 @@ pub fn label(content: impl Into<String>, kind: Type) {
 #[track_caller]
 pub fn label_with(modifier: Modifier, content: impl Into<String>, kind: Type) {
     let content: String = content.into();
-    if let Some(id) = crate::kit::select::scope() {
-        return crate::kit::select::selectable(modifier, id, content, kind);
-    }
+    let scope = crate::kit::select::scope();
     if kind.truncate && !kind.underline && !kind.strike && !content.contains('\n') {
-        return shortened(modifier, content, kind);
+        return shortened(modifier, content, kind, scope);
+    }
+    if let Some(id) = scope {
+        return crate::kit::select::selectable(modifier, id, content, kind);
     }
     rustle::text_styled(modifier, content, kind.style());
 }
 
-/// Emits one line of `content` set in `kind`, as wide as it is or as its box
+/// Emits one line of `content` set in `kind`, a piece of the selectable text
+/// `scope` names when there is one, as wide as it is or as its box
 /// allows, giving up room when its row runs out of it as a CSS flex item
 /// does, cut short when it does not fit: the most of it that fits with an
 /// ellipsis after it, the spaces before the ellipsis left out, as the old
 /// interface cut its lines.
 #[track_caller]
-fn shortened(modifier: Modifier, content: String, kind: Type) {
+fn shortened(modifier: Modifier, content: String, kind: Type, scope: Option<FocusId>) {
     let style = TextStyle {
         max_lines: None,
         ..kind.style()
@@ -304,6 +308,14 @@ fn shortened(modifier: Modifier, content: String, kind: Type) {
     let natural = measure(&content, kind.untruncated()).0;
     let height = kind.line_height();
     let cut: RefCell<Option<(f32, String)>> = RefCell::new(None);
+    let modifier = match scope {
+        Some(id) => {
+            let whole = rustle::layout_text(&content, &style, None);
+            let shaped = Rc::new(RefCell::new(Some(Rc::new(whole))));
+            crate::kit::select::piece(modifier, id, Rc::from(content.as_str()), shaped)
+        }
+        None => modifier,
+    };
     rustle::layout(
         modifier.shrink(1.0),
         Shortened { natural, height },

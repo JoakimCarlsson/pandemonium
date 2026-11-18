@@ -11,18 +11,18 @@ use pm_pages::Screen;
 use super::App;
 
 /// The system clipboard, as modal editing reaches it.
-struct Desktop<'a>(&'a mut Option<arboard::Clipboard>);
+struct Desktop<'a>(&'a mut Option<Box<dyn super::port::Board>>);
 
 impl pm_vim::Clipboard for Desktop<'_> {
     /// What is on the clipboard, if it holds text.
     fn read(&mut self) -> Option<String> {
-        self.0.as_mut()?.get_text().ok()
+        self.0.as_mut()?.text()
     }
 
     /// Puts `text` on the clipboard.
     fn write(&mut self, text: String) {
         if let Some(clipboard) = self.0.as_mut() {
-            let _ = clipboard.set_text(text);
+            clipboard.set_text(text);
         }
     }
 }
@@ -79,15 +79,10 @@ impl App {
         let Some(key) = pm_components::vim::keystroke(&event) else {
             return false;
         };
-        let height = self
-            .output
-            .regions
-            .iter()
-            .find(|region| region.id == VIEWER_SCROLL)
-            .map_or_else(
-                || self.window_height(),
-                |region| region.rect.size.height + STRIP,
-            );
+        let height = self.output.scroller(VIEWER_SCROLL).map_or_else(
+            || self.window_height(),
+            |view| view.rect.size.height + STRIP,
+        );
         self.clipboard();
         let clipboard = &mut self.clipboard;
         let mut commands = None;

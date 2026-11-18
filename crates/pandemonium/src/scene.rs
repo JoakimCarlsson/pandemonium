@@ -87,7 +87,7 @@ pub fn main_root(
                 Modifier::new().fill_max_size().file_drop_id(DROP_AREA),
                 || main_frame(state, width, height),
             );
-            overlay::tooltips();
+            overlay::tooltips(report::MAIN);
             if let Some(cursor) = cursor {
                 rustle::spacer(Modifier::new().cover().cursor(cursor));
             }
@@ -104,7 +104,7 @@ pub fn aside_root(state: &Screen, window: WindowKey, width: f32, height: f32, to
     theme::provide(tokens, || {
         report::root_of(window, || {
             aside_frame(state, window, width, height);
-            overlay::tooltips();
+            overlay::tooltips(window);
         });
     });
 }

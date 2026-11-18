@@ -17,17 +17,13 @@ impl App {
         let Some(clipboard) = self.clipboard() else {
             return false;
         };
-        let files = clipboard
-            .get()
-            .file_list()
-            .ok()
-            .filter(|files| !files.is_empty());
+        let files = Some(clipboard.files()).filter(|files| !files.is_empty());
         let paths: Vec<String> = match files {
             Some(files) => files
                 .iter()
                 .map(|file| file.to_string_lossy().into_owned())
                 .collect(),
-            None => match clipboard.get_image().ok().and_then(save_picture) {
+            None => match clipboard.image().and_then(save_picture) {
                 Some(path) => vec![path.to_string_lossy().into_owned()],
                 None => return false,
             },

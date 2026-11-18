@@ -1,7 +1,7 @@
 //! What an agent puts in front of the reader to look at: the card of a diagram or a prototype it showed in the conversation, and the picture of a document it wrote, a prototype or the mockup of an answer, which the window has rendered sealed from the network.
 
 use crate::kit::{
-    Flex, FocusId, IconName, Radius, Role, Styled, Tooltip, Type, column, icon_with, label,
+    Flex, FocusId, IconName, Radius, Role, Styled, Tooltip, Type, column, icon_with, label, layer,
     picture, row, sp,
 };
 use pm_harness::{Exhibit, ExhibitKind};
@@ -363,12 +363,21 @@ impl<'a> Preview<'a> {
             Some(Ok(drawing)) => {
                 let (across, down) = drawing.size();
                 let height = (width * down / across.max(1.0)).round().max(1.0);
-                row(self.modifier.chain(own(height)), flex, || {
-                    picture(
-                        Modifier::new().width(width).height(height),
-                        &drawing.picture,
-                    );
-                });
+                layer(
+                    self.modifier.chain(
+                        Modifier::new()
+                            .width(width)
+                            .height(height)
+                            .fill_rounded(Role::Background, Radius::Lg)
+                            .clip_to(Radius::None),
+                    ),
+                    || {
+                        picture(
+                            Modifier::new().width(width).height(height),
+                            &drawing.picture,
+                        );
+                    },
+                );
             }
             other => {
                 let (across, down) = self.viewport;

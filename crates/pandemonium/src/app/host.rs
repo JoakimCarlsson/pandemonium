@@ -5,25 +5,26 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use pm_components::kit::frame::{self, Frame};
 use pm_components::kit::report::{self, Report};
+use pm_components::kit::theme::Appearance;
 use pm_components::kit::theme::Tokens;
-use pm_components::kit::{Action, Button, PointerEvent, State, bus};
+use pm_components::kit::{Action, Button, KeyEvent, Modifiers, PointerEvent, State, bus};
 use pm_field::Edit;
 use pm_pages::Screen;
 use rustle::{CursorIcon, Host, ShadowLayer, WindowHandle, WindowOptions, WindowShadow};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
 use winit::window::{
     ImeCapabilities, ImeEnableRequest, ImeRequest, ImeRequestData, Window, WindowId,
 };
 
 use super::asides::Aside;
+use super::port::{NativePort, Port};
 use super::{App, WHEEL_LINE, appearance, fail_to_start, frame as window_frame};
 use crate::{keys, scene};
 
@@ -44,18 +45,42 @@ pub(super) struct Shared {
     closed: Rc<RefCell<Vec<Aside>>>,
 }
 
+impl Shared {
+    /// How large the main window is, or `aside`'s, as the desktop last said, in logical pixels.
+    #[cfg(test)]
+    pub(super) fn size_of(&self, aside: Option<Aside>) -> (f32, f32) {
+        self.sizes.borrow()[aside.map_or(0, |aside| slot(aside) + 1)]
+    }
+
+    /// What `read` makes of the screen.
+    #[cfg(test)]
+    pub(super) fn reads<T>(&self, read: impl FnOnce(&Screen) -> T) -> T {
+        self.model.read(read)
+    }
+
+    /// The pointer shape the app decided on over the main window, if it decided.
+    #[cfg(test)]
+    pub(super) fn cursor(&self) -> Option<CursorIcon> {
+        self.cursor.get()
+    }
+}
+
 /// The rustle side of the app: the host that owns the windows, and what its root reads.
 pub(super) struct Shell {
     /// The interface and its windows, once the platform could make surfaces.
     pub(super) host: Option<Host>,
-    /// The event loop's proxy, which wakes it for the host and for the app's work.
-    proxy: EventLoopProxy,
+    /// The event loop's proxy, which wakes it for the host and for the app's work,
+    /// when the app runs in one.
+    proxy: Option<EventLoopProxy>,
     /// What the root reads.
     pub(super) shared: Shared,
+    /// The interface laid out with no window, when the app runs headless.
+    #[cfg(test)]
+    pub(super) headless: Option<super::headless::Screens>,
 }
 
 /// The index of `aside` among the windows beside the main one.
-fn slot(aside: Aside) -> usize {
+pub(super) fn slot(aside: Aside) -> usize {
     match aside {
         Aside::Settings => 0,
         Aside::Picker => 1,
@@ -72,8 +97,8 @@ pub(super) fn report_key(aside: Option<Aside>) -> report::WindowKey {
 }
 
 impl Shell {
-    /// A shell for `model`, its event loop woken through `proxy`, with no window yet.
-    pub(super) fn new(model: State<Screen>, proxy: EventLoopProxy) -> Self {
+    /// A shell for `model`, its event loop woken through `proxy` when there is one, with no window yet.
+    pub(super) fn new(model: State<Screen>, proxy: Option<EventLoopProxy>) -> Self {
         Self {
             host: None,
             proxy,
@@ -85,6 +110,8 @@ impl Shell {
                 handles: Rc::new(RefCell::new([None, None])),
                 closed: Rc::new(RefCell::new(Vec::new())),
             },
+            #[cfg(test)]
+            headless: None,
         }
     }
 
@@ -93,6 +120,21 @@ impl Shell {
         if let Some(host) = self.host.as_mut() {
             host.invalidate();
         }
+        #[cfg(test)]
+        if let Some(screens) = self.headless.as_mut() {
+            screens.invalidate();
+        }
+    }
+
+    /// Composes and lays out what changed now, in the windows or headless.
+    pub(super) fn wake(&mut self) {
+        if let Some(host) = self.host.as_mut() {
+            host.wake();
+        }
+        #[cfg(test)]
+        if let Some(screens) = self.headless.as_mut() {
+            screens.wake(&self.shared);
+        }
     }
 
     /// The handle of `aside`'s window, while it is composed.
@@ -100,9 +142,15 @@ impl Shell {
         self.shared.handles.borrow()[slot(aside)]
     }
 
-    /// The native window of `aside`, while it is open.
-    pub(super) fn window_of(&self, aside: Aside) -> Option<Arc<dyn Window>> {
-        self.handle_of(aside)?.native()
+    /// The window of `aside`, while it is open.
+    pub(super) fn port_of(&self, aside: Aside) -> Option<Rc<dyn Port>> {
+        #[cfg(test)]
+        if let Some(screens) = self.headless.as_ref() {
+            return screens.port_of(aside);
+        }
+        let handle = self.handle_of(aside)?;
+        let window = handle.native()?;
+        Some(Rc::new(NativePort::new(window, handle)))
     }
 
     /// Sets the theme every window is drawn in.
@@ -136,34 +184,53 @@ impl Shell {
 /// Emits every window for what `shared` holds: the main window's root and, while
 /// what they show is open, the settings window and the folder picker's.
 fn root(shared: &Shared) {
-    let tokens = shared.tokens.borrow().clone();
-    let sizes = *shared.sizes.borrow();
-    let cursor = shared.cursor.get();
-    shared.model.read(|screen| {
-        scene::main_root(screen, sizes[0].0, sizes[0].1, tokens.clone(), cursor);
-        for aside in Aside::ALL {
-            if !aside.is_open(screen) {
-                continue;
-            }
-            let handles = Rc::clone(&shared.handles);
-            let closed = Rc::clone(&shared.closed);
-            let tokens = tokens.clone();
-            let (width, height) = match sizes[slot(aside) + 1] {
-                (0.0, 0.0) => aside.opening_size(),
-                size => size,
-            };
-            rustle::key(slot(aside), || {
-                rustle::window(
-                    aside.options(),
-                    move || closed.borrow_mut().push(aside),
-                    || {
-                        handles.borrow_mut()[slot(aside)] = Some(rustle::current_window());
-                        scene::aside_root(screen, report_key(Some(aside)), width, height, tokens);
-                    },
-                );
-            });
+    main_view(shared);
+    for aside in Aside::ALL {
+        if !shared.model.read(|screen| aside.is_open(screen)) {
+            continue;
         }
+        let handles = Rc::clone(&shared.handles);
+        let closed = Rc::clone(&shared.closed);
+        let shared = shared.clone();
+        rustle::key(slot(aside), || {
+            rustle::window(
+                aside.options(),
+                move || closed.borrow_mut().push(aside),
+                move || {
+                    handles.borrow_mut()[slot(aside)] = Some(rustle::current_window());
+                    aside_view(&shared, aside);
+                },
+            );
+        });
+    }
+}
+
+/// Emits what the main window shows for what `shared` holds.
+pub(super) fn main_view(shared: &Shared) {
+    let tokens = shared.tokens.borrow().clone();
+    let size = shared.sizes.borrow()[0];
+    let cursor = shared.cursor.get();
+    shared
+        .model
+        .read(|screen| scene::main_root(screen, size.0, size.1, tokens, cursor));
+}
+
+/// Emits what the window of `aside` shows for what `shared` holds.
+pub(super) fn aside_view(shared: &Shared, aside: Aside) {
+    let tokens = shared.tokens.borrow().clone();
+    let (width, height) = aside_size(shared, aside);
+    shared.model.read(|screen| {
+        scene::aside_root(screen, report_key(Some(aside)), width, height, tokens);
     });
+}
+
+/// How large the window of `aside` is, in logical pixels: as the desktop
+/// last said, or as it opens.
+pub(super) fn aside_size(shared: &Shared, aside: Aside) -> (f32, f32) {
+    match shared.sizes.borrow()[slot(aside) + 1] {
+        (0.0, 0.0) => aside.opening_size(),
+        size => size,
+    }
 }
 
 /// Lets the platform's input methods compose text into `window`, telling
@@ -257,9 +324,7 @@ impl App {
             let started = self.timings.start();
             self.set_frame();
             self.shell.invalidate();
-            if let Some(host) = self.shell.host.as_mut() {
-                host.wake();
-            }
+            self.shell.wake();
             let painted = self.timings.start();
             self.timings.frame(started, painted, true);
         }
@@ -277,11 +342,10 @@ impl App {
         let shared = self.shell.shared.clone();
         self.shell.set_size(None, window_frame::with_band(size));
         self.set_frame();
-        let mut host = Host::new(
-            move || root(&shared),
-            Self::main_options(size),
-            self.shell.proxy.clone(),
-        );
+        let Some(proxy) = self.shell.proxy.clone() else {
+            fail_to_start("no event loop to open a window in");
+        };
+        let mut host = Host::new(move || root(&shared), Self::main_options(size), proxy);
         host.can_create_surfaces(event_loop);
         if let Some(error) = host.error() {
             fail_to_start(&format!("could not open a window: {error}"));
@@ -293,10 +357,9 @@ impl App {
         self.shell.host = Some(host);
         self.system_appearance = appearance(window.theme());
         enable_ime(&*window);
-        let scale = window.scale_factor();
-        let surface = window.surface_size().to_logical::<f32>(scale);
-        self.window = Some(window);
-        self.shell.set_size(None, (surface.width, surface.height));
+        let port: Rc<dyn Port> = Rc::new(NativePort::new(window, WindowHandle::MAIN));
+        self.shell.set_size(None, port.logical_size());
+        self.window = Some(port);
         self.apply_appearance();
         let (all, mono) = pm_components::kit::font_families();
         self.model
@@ -320,13 +383,7 @@ impl App {
         self.output = self.report_of(self.on_aside);
         let model = self.model.clone();
         let scroll_to = model.read(|state| {
-            let held_by_aside = self
-                .focus
-                .current()
-                .filter(|id| super::asides::is_aside(*id));
-            let mut order = self.output.focus_order();
-            order.extend(held_by_aside);
-            self.focus.set_order(order);
+            self.order_focus(None);
             if std::mem::take(&mut self.focus_terminal) {
                 self.focus.focus(pm_pages::TERMINAL_BODY);
             }
@@ -383,11 +440,7 @@ impl App {
                     let area = (rect.origin.x, rect.origin.y, 1.0, rect.size.height);
                     if self.ime_area != Some(area) {
                         self.ime_area = Some(area);
-                        let data = ImeRequestData::default().with_cursor_area(
-                            LogicalPosition::new(area.0 + band, area.1 + band).into(),
-                            LogicalSize::new(area.2, area.3).into(),
-                        );
-                        let _ = window.request_ime_update(ImeRequest::Update(data));
+                        window.set_ime_area((area.0 + band, area.1 + band, area.2, area.3));
                     }
                 }
             }
@@ -433,7 +486,8 @@ impl App {
     fn aside_of_window(&self, id: WindowId) -> Option<Aside> {
         Aside::ALL.into_iter().find(|aside| {
             self.shell
-                .window_of(*aside)
+                .handle_of(*aside)
+                .and_then(|handle| handle.native())
                 .is_some_and(|window| window.id() == id)
         })
     }
@@ -442,23 +496,44 @@ impl App {
     /// then the app's own logic, against the window it happened in.
     fn route(&mut self, event_loop: &dyn ActiveEventLoop, id: WindowId, event: WindowEvent) {
         self.set_frame();
-        let focus = self.focus.current();
         let aside = self.aside_of_window(id);
-        let main = self.window.as_ref().is_some_and(|window| window.id() == id);
+        let main = self
+            .window
+            .as_ref()
+            .is_some_and(|window| window.native().is_some_and(|native| native.id() == id));
         let closing = matches!(event, WindowEvent::CloseRequested);
         if !closing && let Some(host) = self.shell.host.as_mut() {
             host.window_event(event_loop, id, event.clone());
         }
+        let port = match aside {
+            Some(aside) => self.shell.port_of(aside),
+            None => self.window.clone(),
+        };
+        let input = port.and_then(|port| input_of(&event, &*port, self.modifiers));
+        if (aside.is_some() || main)
+            && let Some(input) = input
+        {
+            self.after_interface(aside, input);
+        }
+    }
+
+    /// Carries out `input` of the main window, or of `aside`'s, once the
+    /// interface has seen it: the app's own logic against the window it
+    /// happened in, the files the interface took, and a frame composed again
+    /// for what changed.
+    pub(super) fn after_interface(&mut self, aside: Option<Aside>, input: Input) {
+        let focus = self.focus.current();
         self.actions = bus::drain();
-        if let Some(aside) = aside {
-            self.aside_event(aside, event_loop, event);
-        } else if main {
-            if matches!(event, WindowEvent::Focused(true))
-                && self.focus.current().is_some_and(super::asides::is_aside)
-            {
-                self.focus.clear();
+        match aside {
+            Some(aside) => self.aside_input(aside, input),
+            None => {
+                if matches!(input, Input::Focused(true))
+                    && self.focus.current().is_some_and(super::asides::is_aside)
+                {
+                    self.focus.clear();
+                }
+                self.handle_input(input);
             }
-            self.handle_window_event(event_loop, event);
         }
         for dropped in std::mem::take(&mut self.actions) {
             if let Action::Dropped { path, .. } = dropped
@@ -473,50 +548,32 @@ impl App {
         self.flush();
     }
 
-    /// Routes an event of the window standing as the main one to the pointer and the keyboard.
-    pub(super) fn handle_window_event(
-        &mut self,
-        event_loop: &dyn ActiveEventLoop,
-        event: WindowEvent,
-    ) {
+    /// Carries out `input` of the window standing as the main one: the pointer, the keyboard and the window itself.
+    pub(super) fn handle_input(&mut self, input: Input) {
         let Some(window) = self.window.clone() else {
             return;
         };
-        let scale = window.scale_factor() as f32;
         let band = if self.on_aside.is_none() {
             pm_components::shadow_margin()
         } else {
             0.0
         };
-        match event {
-            WindowEvent::CloseRequested => {
-                if self.close_window() {
-                    event_loop.exit();
-                }
-            }
-            WindowEvent::ThemeChanged(theme) => {
-                self.system_appearance = appearance(Some(theme));
+        match input {
+            Input::Close => self.closing = self.close_window(),
+            Input::Focused(_) => {}
+            Input::Theme(appearance) => {
+                self.system_appearance = appearance;
                 self.apply_appearance();
             }
-            WindowEvent::SurfaceResized(size) => {
-                let logical = size.to_logical::<f32>(f64::from(scale));
-                self.shell
-                    .set_size(self.on_aside, (logical.width, logical.height));
-                if self.on_aside.is_none() {
+            Input::Resized(logical) => {
+                self.shell.set_size(self.on_aside, logical);
+                if self.on_aside.is_none() && self.keeps_to_disk {
                     Self::remember_size(&*window);
                 }
             }
-            WindowEvent::ScaleFactorChanged { .. } => {
-                let logical = window.surface_size().to_logical::<f32>(f64::from(scale));
-                self.shell
-                    .set_size(self.on_aside, (logical.width, logical.height));
-            }
-            WindowEvent::PointerMoved { position, .. } => {
+            Input::Moved(position) => {
                 let received = self.timings.start();
-                let at = (
-                    position.x as f32 / scale - band,
-                    position.y as f32 / scale - band,
-                );
+                let at = (position.0 - band, position.1 - band);
                 self.pointer(PointerEvent::Moved(at.0, at.1));
                 self.settle_drop();
                 self.browser_moved(at);
@@ -524,50 +581,27 @@ impl App {
                     self.timings.pointer(received);
                 }
             }
-            WindowEvent::PointerLeft { .. } => self.pointer(PointerEvent::Left),
-            WindowEvent::MouseWheel { delta, .. } => {
-                let (across, down) = match delta {
-                    MouseScrollDelta::LineDelta(across, down) => {
-                        (across * WHEEL_LINE, down * WHEEL_LINE)
-                    }
-                    MouseScrollDelta::PixelDelta(moved) => {
-                        (moved.x as f32 / scale, moved.y as f32 / scale)
-                    }
-                    _ => (0.0, 0.0),
-                };
+            Input::Left => self.pointer(PointerEvent::Left),
+            Input::Wheel(across, down) => {
                 if self.browser_wheel(across, down) {
                     return;
                 }
                 self.scroll(-down);
             }
-            WindowEvent::PointerButton {
-                state,
-                button,
-                position,
-                ..
-            } => {
-                let Some(button) = button.mouse_button() else {
-                    return;
-                };
-                let at = (
-                    position.x as f32 / scale - band,
-                    position.y as f32 / scale - band,
-                );
+            Input::Button(button, pressed, position) => {
+                let at = (position.0 - band, position.1 - band);
                 if self.pointer.position != Some(at) {
                     self.pointer(PointerEvent::Moved(at.0, at.1));
                 }
                 self.refocus = None;
-                if button == MouseButton::Left
-                    && state == ElementState::Pressed
-                    && self.frame_press(&*window)
-                {
+                if button == MouseButton::Left && pressed && self.frame_press(&*window) {
                     return;
                 }
                 let button = match button {
                     MouseButton::Left => Button::Left,
                     MouseButton::Right => Button::Right,
                     MouseButton::Back | MouseButton::Forward => {
-                        if state == ElementState::Pressed
+                        if pressed
                             && !(self.on_aside.is_none()
                                 && self.browser_history(button == MouseButton::Back))
                         {
@@ -577,20 +611,20 @@ impl App {
                     }
                     _ => return,
                 };
-                self.browser_button(button, state == ElementState::Pressed);
-                self.pointer(match state {
-                    ElementState::Pressed => PointerEvent::Pressed(button),
-                    ElementState::Released => PointerEvent::Released(button),
+                self.browser_button(button, pressed);
+                self.pointer(if pressed {
+                    PointerEvent::Pressed(button)
+                } else {
+                    PointerEvent::Released(button)
                 });
             }
-            WindowEvent::Ime(Ime::Preedit(composing, _)) => {
+            Input::Preedit(composing) => {
                 if self.on_aside.is_none() {
                     self.timings.keyboard();
                 }
                 self.compose(composing);
             }
-            WindowEvent::Ime(Ime::Disabled) => self.compose(String::new()),
-            WindowEvent::Ime(Ime::Commit(committed)) => {
+            Input::Commit(committed) => {
                 if self.on_aside.is_none() {
                     self.timings.keyboard();
                 }
@@ -601,22 +635,35 @@ impl App {
                     self.edit_field(id, Edit::Paste(committed));
                 }
             }
-            WindowEvent::ModifiersChanged(modifiers) => {
-                self.modifiers = keys::modifiers(modifiers.state());
+            Input::Modifiers(modifiers) => {
+                self.modifiers = modifiers;
                 self.editor_modifiers_changed();
                 self.reach_terminal_link();
             }
-            WindowEvent::KeyboardInput { event, .. } => {
+            Input::Key(event) => {
                 self.refocus = None;
-                if let Some(event) = keys::key_event(&event, self.modifiers) {
-                    if event.pressed && self.on_aside.is_none() {
-                        self.timings.keyboard();
-                    }
-                    self.key(event);
+                if event.pressed && self.on_aside.is_none() {
+                    self.timings.keyboard();
                 }
+                self.key(event);
             }
-            _ => {}
         }
+    }
+
+    /// What the app does each time the event loop comes to rest: its waiting
+    /// work, the windows beside the main one opened and closed as the state
+    /// says, and a frame composed for what changed. Says how the loop is to
+    /// wait and whether the app is to quit.
+    pub(super) fn come_to_rest(&mut self) -> (ControlFlow, bool) {
+        let rest = self.rest();
+        self.tell_field_left();
+        for aside in self.shell.take_closed() {
+            self.model
+                .update(|state| *state = aside.closed(std::mem::take(state)));
+        }
+        self.sync_asides();
+        self.flush();
+        rest
     }
 
     /// When the frame some drawing asked for is due, composing it once that time has come.
@@ -661,6 +708,83 @@ impl App {
     }
 }
 
+/// An event of a window, as the app's logic takes it once the interface has
+/// seen it: positions and sizes in logical pixels of the window's surface.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Input {
+    /// The desktop asked the window to close.
+    Close,
+    /// The window took the keyboard, or lost it.
+    Focused(bool),
+    /// The desktop changed between light and dark.
+    Theme(Appearance),
+    /// The window's surface is now this wide and tall.
+    Resized((f32, f32)),
+    /// The pointer moved to this place.
+    Moved((f32, f32)),
+    /// The pointer left the window.
+    Left,
+    /// The wheel or a trackpad scrolled across and down by this much.
+    Wheel(f32, f32),
+    /// A button went down, or up when not `pressed`, at this place.
+    Button(MouseButton, bool, (f32, f32)),
+    /// The input method is composing this, or ended composing when it is empty.
+    Preedit(String),
+    /// The input method produced this text.
+    Commit(String),
+    /// These modifier keys are now held.
+    Modifiers(Modifiers),
+    /// A key went down or up.
+    Key(KeyEvent),
+}
+
+/// The app's input for `event` of the window `port`, with `modifiers` held,
+/// or nothing for an event the app does not act on.
+fn input_of(event: &WindowEvent, port: &dyn Port, modifiers: Modifiers) -> Option<Input> {
+    let scale = port.scale();
+    let logical = |x: f64, y: f64| (x as f32 / scale, y as f32 / scale);
+    Some(match event {
+        WindowEvent::CloseRequested => Input::Close,
+        WindowEvent::Focused(focused) => Input::Focused(*focused),
+        WindowEvent::ThemeChanged(theme) => Input::Theme(appearance(Some(*theme))),
+        WindowEvent::SurfaceResized(size) => {
+            let size = size.to_logical::<f32>(f64::from(scale));
+            Input::Resized((size.width, size.height))
+        }
+        WindowEvent::ScaleFactorChanged { .. } => Input::Resized(port.logical_size()),
+        WindowEvent::PointerMoved { position, .. } => Input::Moved(logical(position.x, position.y)),
+        WindowEvent::PointerLeft { .. } => Input::Left,
+        WindowEvent::MouseWheel { delta, .. } => {
+            let (across, down) = match delta {
+                MouseScrollDelta::LineDelta(across, down) => {
+                    (across * WHEEL_LINE, down * WHEEL_LINE)
+                }
+                MouseScrollDelta::PixelDelta(moved) => logical(moved.x, moved.y),
+                _ => (0.0, 0.0),
+            };
+            Input::Wheel(across, down)
+        }
+        WindowEvent::PointerButton {
+            state,
+            button,
+            position,
+            ..
+        } => Input::Button(
+            button.clone().mouse_button()?,
+            *state == ElementState::Pressed,
+            logical(position.x, position.y),
+        ),
+        WindowEvent::Ime(Ime::Preedit(composing, _)) => Input::Preedit(composing.clone()),
+        WindowEvent::Ime(Ime::Disabled) => Input::Preedit(String::new()),
+        WindowEvent::Ime(Ime::Commit(committed)) => Input::Commit(committed.clone()),
+        WindowEvent::ModifiersChanged(changed) => {
+            Input::Modifiers(keys::modifiers(changed.state()))
+        }
+        WindowEvent::KeyboardInput { event, .. } => Input::Key(keys::key_event(event, modifiers)?),
+        _ => return None,
+    })
+}
+
 /// The app as the event loop drives it.
 pub struct Running(pub App);
 
@@ -695,13 +819,11 @@ impl ApplicationHandler for Running {
         if let Some(host) = app.shell.host.as_mut() {
             host.about_to_wait(event_loop);
         }
-        app.idle(event_loop);
-        for aside in app.shell.take_closed() {
-            app.model
-                .update(|state| *state = aside.closed(std::mem::take(state)));
+        let (flow, exit) = app.come_to_rest();
+        event_loop.set_control_flow(flow);
+        if exit {
+            event_loop.exit();
         }
-        app.sync_asides();
-        app.flush();
     }
 }
 

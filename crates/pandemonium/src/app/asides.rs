@@ -2,19 +2,19 @@
 //! folder picker's: each is opened while what it shows is open and closed
 //! with it, and is drawn from the same state as the main window.
 
-use std::sync::Arc;
+use std::rc::Rc;
 
 use pm_components::folder_picker::{PICKER_FIELD, is_picker};
 use pm_components::kit::{FocusId, PointerState, Report};
 use pm_components::settings::is_settings;
 use pm_components::state::SETTINGS;
 use pm_pages::Screen;
-use rustle::{WindowHandle, WindowOptions};
-use winit::event::WindowEvent;
-use winit::event_loop::ActiveEventLoop;
-use winit::window::{UserAttentionType, Window, WindowLevel};
+use rustle::WindowOptions;
+use winit::window::WindowLevel;
 
 use super::App;
+use super::host::Input;
+use super::port::Port;
 
 /// Which of the windows beside the main one.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -115,9 +115,7 @@ pub(super) fn is_aside(id: FocusId) -> bool {
 /// it resizes.
 pub(super) struct Surface {
     /// The window, once rustle opened it.
-    window: Option<Arc<dyn Window>>,
-    /// The handle rustle controls the window by.
-    handle: WindowHandle,
+    window: Option<Rc<dyn Port>>,
     /// What the last frame of the window found on screen.
     output: Report,
     /// The pointer as the window's events so far left it.
@@ -136,8 +134,8 @@ impl App {
     }
 
     /// The window of `aside`, while it is open.
-    fn window_of(&self, aside: Aside) -> Option<Arc<dyn Window>> {
-        self.shell.window_of(aside)
+    fn window_of(&self, aside: Aside) -> Option<Rc<dyn Port>> {
+        self.shell.port_of(aside)
     }
 
     /// Keeps a surface for each window whose state was opened, once rustle
@@ -146,19 +144,18 @@ impl App {
         for aside in Aside::ALL {
             let open = self.model.read(|screen| aside.is_open(screen));
             let showing = self.surface_of(aside).is_some();
-            match (open, showing, self.shell.handle_of(aside)) {
-                (true, false, Some(handle)) => {
-                    if let Some(window) = handle.native() {
-                        window.set_window_level(aside.level());
-                        super::host::enable_ime(&*window);
-                        *self.surface_of(aside) = Some(Surface {
-                            window: Some(window),
-                            handle,
-                            output: Report::default(),
-                            pointer: PointerState::default(),
-                            edge_cursor: None,
-                        });
+            match (open, showing, self.shell.port_of(aside)) {
+                (true, false, Some(window)) => {
+                    if let Some(native) = window.native() {
+                        native.set_window_level(aside.level());
+                        super::host::enable_ime(&*native);
                     }
+                    *self.surface_of(aside) = Some(Surface {
+                        window: Some(window),
+                        output: Report::default(),
+                        pointer: PointerState::default(),
+                        edge_cursor: None,
+                    });
                 }
                 (false, true, _) => {
                     *self.surface_of(aside) = None;
@@ -188,7 +185,7 @@ impl App {
         if let Some(window) = self.window_of(Aside::Picker) {
             window.set_minimized(false);
             window.focus_window();
-            window.request_user_attention(Some(UserAttentionType::Informational));
+            window.request_attention();
         }
     }
 
@@ -205,30 +202,25 @@ impl App {
     /// shows, taking the keyboard leaves any field of another window, and the
     /// rest is handled as the main window's events are, against the window's
     /// own frame and pointer.
-    pub(super) fn aside_event(
-        &mut self,
-        aside: Aside,
-        event_loop: &dyn ActiveEventLoop,
-        event: WindowEvent,
-    ) {
-        match event {
-            WindowEvent::CloseRequested => {
+    pub(super) fn aside_input(&mut self, aside: Aside, input: Input) {
+        match input {
+            Input::Close => {
                 self.model
                     .update(|state| *state = aside.closed(std::mem::take(state)));
             }
-            WindowEvent::Focused(true) => {
+            Input::Focused(true) => {
                 if self.focus.current().is_some_and(|id| !aside.owns(id)) {
                     self.focus.clear();
                 }
             }
-            event => {
-                self.in_aside(aside, |app| app.handle_window_event(event_loop, event));
+            input => {
+                self.in_aside(aside, |app| app.handle_input(input));
             }
         }
     }
 
     /// Runs `act` with the window of `aside` standing in for the main one: its
-    /// window, handle, frame, pointer and edge are swapped in for the time `act` runs.
+    /// window, frame, pointer and edge are swapped in for the time `act` runs.
     fn in_aside(&mut self, aside: Aside, act: impl FnOnce(&mut Self)) {
         let Some(mut surface) = self.surface_of(aside).take() else {
             return;
@@ -236,19 +228,33 @@ impl App {
         self.swap_surface(&mut surface);
         self.on_aside = Some(aside);
         self.output = self.report_of(Some(aside));
+        self.order_focus(Some(aside));
         act(self);
         self.on_aside = None;
         self.swap_surface(&mut surface);
         self.output = self.report_of(None);
+        self.order_focus(None);
         if self.model.read(|screen| aside.is_open(screen)) {
             *self.surface_of(aside) = Some(surface);
         }
     }
 
+    /// Makes Tab walk the controls the last frame of the main window, or of
+    /// `aside`'s, drew, in the order it drew them, with whatever of another
+    /// window holds the keyboard kept in the order so it is not lost.
+    pub(super) fn order_focus(&mut self, aside: Option<Aside>) {
+        let held_elsewhere = self.focus.current().filter(|id| match aside {
+            Some(aside) => !aside.owns(*id),
+            None => is_aside(*id),
+        });
+        let mut order = self.output.focus_order();
+        order.extend(held_elsewhere);
+        self.focus.set_order(order);
+    }
+
     /// Trades the main window's surface with `surface`.
     fn swap_surface(&mut self, surface: &mut Surface) {
         std::mem::swap(&mut self.window, &mut surface.window);
-        std::mem::swap(&mut self.handle, &mut surface.handle);
         std::mem::swap(&mut self.output, &mut surface.output);
         std::mem::swap(&mut self.pointer, &mut surface.pointer);
         std::mem::swap(&mut self.edge_cursor, &mut surface.edge_cursor);

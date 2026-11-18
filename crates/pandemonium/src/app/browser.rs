@@ -2045,10 +2045,7 @@ impl App {
         {
             return;
         }
-        let scale = self
-            .window
-            .as_ref()
-            .map_or(1.0, |window| window.scale_factor() as f32);
+        let scale = self.window.as_ref().map_or(1.0, |window| window.scale());
         for (host, url, owner) in pages {
             let mut entered = None;
             self.model.update(|screen| {
@@ -2068,10 +2065,7 @@ impl App {
 
     /// Does the browser's work for one turn of the event loop, and says whether a page is open, which wants the loop to turn again soon.
     pub(super) fn browser_tick(&mut self) -> bool {
-        let scale = self
-            .window
-            .as_ref()
-            .map_or(1.0, |window| window.scale_factor() as f32);
+        let scale = self.window.as_ref().map_or(1.0, |window| window.scale());
         if self.model.read(|screen| {
             let Screen::Workspace(state) = screen;
             state.browser_rescope_needed()

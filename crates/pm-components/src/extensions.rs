@@ -1,9 +1,9 @@
 //! The extensions page: what the server on this machine has installed, then what it can install, narrowed by a search, each a row saying what the extension gives the files of a project and whether it works, and the button that installs one from a folder.
 
-use crate::kit::theme::{family_from_colours, set_extension_families};
+use crate::kit::theme::{self, family_from_colours, set_extension_families};
 use crate::kit::{
     Artwork, Flex, FocusId, IconName, Radius, Role, Scroll, Side, Styled, Type, artwork_with,
-    column, gap_box, label, layout, scroll_area, sp,
+    block, column, label, layout, scroll_area, sp,
 };
 use pm_field::{Edit, Field};
 use pm_protocol::{ExtensionAssets, ExtensionCommand, ExtensionInfo};
@@ -599,7 +599,7 @@ fn preview_card(preview: &Preview) {
     );
 }
 
-/// Emits a titled group of the rows `rows` emits in one outlined box, with a line between rows, or nothing when it emits none.
+/// Emits a titled group of the rows `rows` emits in one outlined box, with a line drawn along the bottom edge of every row but the last, inside its height, or nothing when it emits none.
 #[track_caller]
 pub(crate) fn group(title: &str, rows: impl FnOnce()) {
     let rows = rustle::collect(rows);
@@ -615,11 +615,20 @@ pub(crate) fn group(title: &str, rows: impl FnOnce()) {
                 .clip_to(Radius::None),
             Flex::new(),
             move || {
+                let last = rows.len() - 1;
+                let color = theme::color(Role::Border);
                 for (at, built) in rows.into_iter().enumerate() {
-                    if at > 0 {
-                        gap_box(Modifier::new().height(1.0).fill(Role::Border));
+                    if at == last {
+                        rustle::emit(built);
+                        continue;
                     }
-                    rustle::emit(built);
+                    block(
+                        Modifier::new().draw_over_interactive(move |canvas, _| {
+                            let (width, height) = (canvas.width(), canvas.height());
+                            canvas.rect(0.0, height - 1.0, width, 1.0, color);
+                        }),
+                        move || rustle::emit(built),
+                    );
                 }
             },
         );

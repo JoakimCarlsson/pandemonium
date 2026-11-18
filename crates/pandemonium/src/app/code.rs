@@ -815,7 +815,7 @@ impl App {
             Action::CompareWithClipboard => {
                 let text = self
                     .clipboard()
-                    .and_then(|clipboard| clipboard.get_text().ok())
+                    .and_then(|clipboard| clipboard.text())
                     .unwrap_or_default();
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).compare_with_clipboard(text));
