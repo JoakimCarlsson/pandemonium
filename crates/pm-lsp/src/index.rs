@@ -96,9 +96,9 @@ pub struct Index {
     pub languages: Vec<Listing>,
 }
 
-/// The tag of the repository this build reads the languages from: this build's own release.
+/// The tag of the repository this build reads the languages from: this build's own release, whose tag is its version with nothing in front.
 fn tag() -> String {
-    format!("v{}", env!("CARGO_PKG_VERSION"))
+    env!("CARGO_PKG_VERSION").to_owned()
 }
 
 /// Whether this build reads the languages from the checkout it was built from: a debug build, and the preview and local installs, which are made from a checkout to be tried before it is released.
