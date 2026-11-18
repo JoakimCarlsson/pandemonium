@@ -1,10 +1,11 @@
 //! The list of branches under the branch of the repository the panel works on: to check one out, or to make a new one.
 
 use rustle::Modifier;
+use rustle::{Flex, flex_column};
 
 use crate::Input;
 use crate::git_controls::{BRANCH_BODY, BRANCH_CREATE, BRANCH_FILTER, BRANCH_PICK_BASE};
-use crate::kit::{Flex, FocusId, Interactive, Role, Side, Styled, block, column, sp};
+use crate::kit::{FocusId, Interactive, Role, Side, Styled, sp};
 use crate::parts::line;
 use crate::popover::{Popover, row};
 use crate::size::Size;
@@ -36,12 +37,13 @@ pub fn branch_menu(state: &WorkspaceState) {
                 .target(BRANCH_BODY),
         )
         .build_with(|| {
-            block(
+            flex_column(
                 Modifier::new()
                     .pad_side(Side::Top, 1)
                     .pad_side(Side::Left, 1)
                     .pad_side(Side::Right, 1)
                     .pad_side(Side::Bottom, 2),
+                Flex::new(),
                 || {
                     Input::new(&git.filter, BRANCH_FILTER)
                         .placeholder("Search branches, or name a new one")
@@ -58,12 +60,12 @@ pub fn branch_menu(state: &WorkspaceState) {
                 );
             }
             if matching.is_empty() && typed.is_empty() {
-                block(Modifier::new().pad_x(2.5).pad_y(1.5), || {
+                flex_column(Modifier::new().pad_x(2.5).pad_y(1.5), Flex::new(), || {
                     line("No branches.", 13, 1.4, Role::Subtle);
                 });
             }
             if !typed.is_empty() && !git.exists() {
-                column(
+                flex_column(
                     Modifier::new()
                         .pad_side(Side::Top, 1)
                         .stroke_side(Side::Top, 1.0, Role::Border)

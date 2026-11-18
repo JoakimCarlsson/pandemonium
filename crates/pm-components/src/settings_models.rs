@@ -1,12 +1,12 @@
 //! The model servers page of the settings window: the OpenAI-compatible servers declared on the server's machine, each offered as an agent with its models, the form a server is added or changed with, and the models a server is found to offer, picked from to make its list.
 
+use crate::kit::sp;
 use pm_field::{Edit, Field};
 use pm_harness::{ModelServer, ServerWire};
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row, flex_wrap};
 
-use crate::kit::{
-    Flex, FocusId, IconName, Radius, Role, Styled, Type, column, label, label_with, row, wrapping,
-};
+use crate::kit::{FocusId, IconName, Radius, Role, Styled, Type, label, label_with};
 
 use crate::agent_list::AgentEntry;
 use crate::button::Variant;
@@ -448,7 +448,7 @@ impl WorkspaceState {
 /// Emits a box of the form under the words that say what is written in it.
 #[track_caller]
 fn labelled(words: &str, field: &Field, id: FocusId, placeholder: &str) {
-    column(Modifier::new(), Flex::new().gap(1), || {
+    flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
         line(words, 12, 1.4, Role::Muted);
         Input::new(field, id)
             .size(Size::Sm)
@@ -473,7 +473,7 @@ fn found_node(form: &ModelServerForm, room: f32) {
         return;
     }
     let listed = form.listed();
-    column(Modifier::new(), Flex::new().gap(2), || {
+    flex_column(Modifier::new(), Flex::new().gap(sp(2)), || {
         wrapped_note(
             &format!(
                 "Found {} models; tick the ones to offer, or leave the list blank to offer every one.",
@@ -481,24 +481,28 @@ fn found_node(form: &ModelServerForm, room: f32) {
             ),
             (room - 48.0).max(160.0),
         );
-        wrapping(
+        flex_wrap(
             Modifier::new()
                 .fill_rounded(Role::Background, Radius::Md)
                 .stroke(Role::Border, Radius::Md)
                 .pad(3),
-            3,
+            Flex::new().gap(sp(3)),
             || {
                 for (place, model) in found.models.iter().enumerate() {
                     let Some(pick) = FOUND_MODEL_PICKS.id(place) else {
                         continue;
                     };
-                    row(Modifier::new(), Flex::new().center().gap(2), || {
-                        Checkbox::new(listed.contains(model), pick).build();
-                        label(
-                            model.clone(),
-                            Type::new(12).ratio(1.4).tone(Role::Text).truncate().mono(),
-                        );
-                    });
+                    flex_row(
+                        Modifier::new(),
+                        Flex::new().items_center().gap(sp(2)),
+                        || {
+                            Checkbox::new(listed.contains(model), pick).build();
+                            label(
+                                model.clone(),
+                                Type::new(12).ratio(1.4).tone(Role::Text).truncate().mono(),
+                            );
+                        },
+                    );
                 }
             },
         );
@@ -517,7 +521,7 @@ fn form_node(form: &ModelServerForm, room: f32) {
     } else {
         "sk-..."
     };
-    column(Modifier::new().pad(3), Flex::new().gap(3), || {
+    flex_column(Modifier::new().pad(3), Flex::new().gap(sp(3)), || {
         labelled("Name", &form.name, MODEL_NAME, "e.g. Company gateway");
         labelled(
             "Base URL",
@@ -525,9 +529,9 @@ fn form_node(form: &ModelServerForm, room: f32) {
             MODEL_URL,
             "e.g. http://localhost:8000/v1",
         );
-        column(Modifier::new(), Flex::new().gap(1), || {
+        flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
             line("API", 12, 1.4, Role::Muted);
-            row(Modifier::new(), Flex::new(), || {
+            flex_row(Modifier::new(), Flex::new(), || {
                 choices(&WIRES.map(|(_, name)| name), picked, |option| {
                     [MODEL_WIRE_CHAT, MODEL_WIRE_RESPONSES].get(option).copied()
                 });
@@ -547,9 +551,9 @@ fn form_node(form: &ModelServerForm, room: f32) {
             "e.g. qwen3-coder, gpt-oss-120b",
         );
         found_node(form, room);
-        row(
+        flex_row(
             Modifier::new(),
-            Flex::new().center().between().gap(2),
+            Flex::new().items_center().justify_between().gap(sp(2)),
             || {
                 Button::new("Find models", MODEL_FIND)
                     .variant(Variant::Outline)
@@ -557,9 +561,9 @@ fn form_node(form: &ModelServerForm, room: f32) {
                     .with_icon(IconName::Search)
                     .disabled(form.base_url.text().trim().is_empty() || form.found.asking.is_some())
                     .build();
-                row(
+                flex_row(
                     Modifier::new(),
-                    Flex::new().center().trailing().gap(2),
+                    Flex::new().items_center().justify_end().gap(sp(2)),
                     || {
                         Button::new("Cancel", MODEL_CANCEL)
                             .variant(Variant::Ghost)
@@ -606,24 +610,28 @@ fn key_badge(server: &ModelServer) -> Option<String> {
 #[track_caller]
 fn server_row(index: usize, server: &ModelServer) {
     let name = server.label.clone().unwrap_or_else(|| server.id.clone());
-    row(
+    flex_row(
         Modifier::new().pad_x(3).pad_y(3),
-        Flex::new().center().between().gap(3),
+        Flex::new().items_center().justify_between().gap(sp(3)),
         || {
-            column(Modifier::new().grow(), Flex::new().gap(0.5), || {
-                row(Modifier::new(), Flex::new().center().gap(2), || {
-                    label(
-                        name,
-                        Type::new(13)
-                            .ratio(1.4)
-                            .tone(Role::Text)
-                            .truncate()
-                            .medium(),
-                    );
-                    if let Some(said) = key_badge(server) {
-                        Badge::new(said).build();
-                    }
-                });
+            flex_column(Modifier::new().grow(), Flex::new().gap(sp(0.5)), || {
+                flex_row(
+                    Modifier::new(),
+                    Flex::new().items_center().gap(sp(2)),
+                    || {
+                        label(
+                            name,
+                            Type::new(13)
+                                .ratio(1.4)
+                                .tone(Role::Text)
+                                .truncate()
+                                .medium(),
+                        );
+                        if let Some(said) = key_badge(server) {
+                            Badge::new(said).build();
+                        }
+                    },
+                );
                 clipped(detail_of(server), 12, Role::Muted);
                 if !server.models.is_empty() {
                     label_with(
@@ -633,20 +641,24 @@ fn server_row(index: usize, server: &ModelServer) {
                     );
                 }
             });
-            row(Modifier::new(), Flex::new().center().gap(1), || {
-                if let Some(edit) = MODEL_SERVER_EDITS.id(index) {
-                    Button::new("Edit", edit)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .build();
-                }
-                if let Some(remove) = MODEL_SERVER_REMOVES.id(index) {
-                    Button::new("Remove", remove)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .build();
-                }
-            });
+            flex_row(
+                Modifier::new(),
+                Flex::new().items_center().gap(sp(1)),
+                || {
+                    if let Some(edit) = MODEL_SERVER_EDITS.id(index) {
+                        Button::new("Edit", edit)
+                            .variant(Variant::Ghost)
+                            .size(Size::Sm)
+                            .build();
+                    }
+                    if let Some(remove) = MODEL_SERVER_REMOVES.id(index) {
+                        Button::new("Remove", remove)
+                            .variant(Variant::Ghost)
+                            .size(Size::Sm)
+                            .build();
+                    }
+                },
+            );
         },
     );
 }
@@ -665,14 +677,18 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     if let Some(reason) = models.error.as_deref() {
         wrapped_note(&format!("Could not change the servers: {reason}"), room);
     }
-    row(Modifier::new(), Flex::new().center().between(), || {
-        heading_only("Servers", models.servers.len());
-        Button::new("Add Server", MODEL_ADD)
-            .variant(Variant::Outline)
-            .size(Size::Sm)
-            .disabled(adding)
-            .build();
-    });
+    flex_row(
+        Modifier::new(),
+        Flex::new().items_center().justify_between(),
+        || {
+            heading_only("Servers", models.servers.len());
+            Button::new("Add Server", MODEL_ADD)
+                .variant(Variant::Outline)
+                .size(Size::Sm)
+                .disabled(adding)
+                .build();
+        },
+    );
     if models.servers.is_empty() && !adding {
         note("No model servers are declared.");
         return;

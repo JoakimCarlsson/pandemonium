@@ -1,8 +1,10 @@
 //! The bar row: a name with a figure beside it and a bar under them, as long as the row's share of the longest.
 
+use crate::kit::sp;
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
-use crate::kit::{Flex, Radius, Role, Styled, Tone, block, column, gap_box, row};
+use crate::kit::{Radius, Role, Styled, Tone};
 
 use crate::parts::line;
 
@@ -98,24 +100,28 @@ impl BarRow {
             modifier,
             ..
         } = self;
-        column(
+        flex_column(
             modifier.chain(Modifier::new().width(width)),
-            Flex::new().gap(1),
+            Flex::new().gap(sp(1)),
             move || {
-                row(
+                flex_row(
                     Modifier::new(),
-                    Flex::new().center().between().gap(3),
+                    Flex::new().items_center().justify_between().gap(sp(3)),
                     || {
-                        block(Modifier::new().grow().clip_to(Radius::None), || {
-                            line(label, 13, 1.4, Role::Text);
-                        });
+                        flex_column(
+                            Modifier::new().grow().clip_to(Radius::None),
+                            Flex::new(),
+                            || {
+                                line(label, 13, 1.4, Role::Text);
+                            },
+                        );
                         line(value, 13, 1.4, Role::Text);
                     },
                 );
                 if let Some(detail) = detail {
                     line(detail, 12, 1.4, Role::Muted);
                 }
-                row(
+                flex_row(
                     Modifier::new()
                         .width(width)
                         .height(BAR_HEIGHT)
@@ -124,7 +130,7 @@ impl BarRow {
                     Flex::new(),
                     || {
                         if filled > 0.0 {
-                            gap_box(
+                            rustle::spacer(
                                 Modifier::new()
                                     .width(filled)
                                     .height(BAR_HEIGHT)

@@ -1,8 +1,9 @@
 //! The badge: a small label in a pill, filled, washed in its colour or quietly neutral.
 
 use rustle::Modifier;
+use rustle::{Flex, flex_row};
 
-use crate::kit::{Flex, Radius, Role, Styled, Tone, row};
+use crate::kit::{Radius, Role, Styled, Tone};
 
 use crate::parts::line;
 
@@ -95,9 +96,13 @@ impl Badge {
             .fill_rounded(fill, radius)
             .chain(self.inner.unwrap_or_else(|| Modifier::new().pad_x(2)));
         let label = self.label;
-        row(self.modifier.chain(own), Flex::new().center(), move || {
-            line(label, 11, 1.2, words);
-        });
+        flex_row(
+            self.modifier.chain(own),
+            Flex::new().items_center(),
+            move || {
+                line(label, 11, 1.2, words);
+            },
+        );
     }
 }
 

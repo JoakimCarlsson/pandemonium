@@ -1,7 +1,9 @@
 //! The card that puts the agent's questions to the reader one at a time, each with the answers it offers and a box for an answer of the reader's own.
 
+use crate::kit::sp;
 use pm_harness::Alternative;
 use rustle::{BoxAlignment, CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row, flex_wrap};
 
 use crate::Button;
 use crate::button::Variant;
@@ -10,8 +12,8 @@ use crate::exhibit::{MOCKUP_OFFER_BASE, MOCKUP_VIEWPORT, Offer, Preview, wanted_
 use crate::figures::Figures;
 use crate::input::{self, Input};
 use crate::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Tooltip, Type,
-    column, grow, label, row, wrap_lines, wrapping, wrapping_with,
+    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Tooltip, Type, label,
+    wrap_lines,
 };
 use crate::parts::line;
 use crate::size::Size;
@@ -21,7 +23,7 @@ use crate::size::Size;
 fn wrapped(content: &str, pixels: u32, tone: Role, width: f32) {
     let kind = Type::new(pixels).ratio(1.4);
     let lines = wrap_lines(content, kind, width.max(32.0));
-    column(Modifier::new(), Flex::new(), || {
+    flex_column(Modifier::new(), Flex::new(), || {
         for part in lines {
             label(&content[part.start..part.end], kind.tone(tone));
         }
@@ -31,12 +33,12 @@ fn wrapped(content: &str, pixels: u32, tone: Role, width: f32) {
 /// Emits the small box holding the number of the key that picks a row.
 #[track_caller]
 fn key(number: usize) {
-    row(
+    flex_row(
         Modifier::new()
             .square(7)
             .fill_rounded(Role::Background, Radius::Lg)
             .stroke(Role::Border, Radius::Lg),
-        Flex::new().center().middle(),
+        Flex::new().items_center().justify_center(),
         || line(number.to_string(), 13, 1.4, Role::Muted),
     );
 }
@@ -44,7 +46,7 @@ fn key(number: usize) {
 /// Emits the row offering `alternative`, which the key `number` picks, drawn as taken when `picked`, answering to `id`, its words wrapped to `width`.
 #[track_caller]
 fn choice(alternative: &Alternative, number: usize, picked: bool, id: FocusId, width: f32) {
-    row(
+    flex_row(
         Modifier::new()
             .looks_of(
                 Looks::new()
@@ -61,9 +63,9 @@ fn choice(alternative: &Alternative, number: usize, picked: bool, id: FocusId, w
             .target(id)
             .pad_x(3)
             .pad_y(2),
-        Flex::new().center().gap(2),
+        Flex::new().items_center().gap(sp(2)),
         || {
-            column(Modifier::new().grow(), Flex::new(), || {
+            flex_column(Modifier::new().grow(), Flex::new(), || {
                 wrapped(&alternative.label, 14, Role::Text, width);
                 if !alternative.description.is_empty() {
                     wrapped(&alternative.description, 13, Role::Muted, width);
@@ -157,12 +159,12 @@ fn mark(icon: IconName, words: &str, tone: Role, form: Marks, tip: &str) {
 /// Emits a small mark on a tile that shows `icon` in `tone`, followed by `words` when it has any, saying `tip` when hovered.
 #[track_caller]
 fn mark_node(icon: IconName, words: Option<&str>, tone: Role, tip: &str) {
-    row(
+    flex_row(
         Modifier::new()
             .tooltip(tip)
             .stroke(tone, Radius::Full)
             .pad_x(1.5),
-        Flex::new().center().gap(1),
+        Flex::new().items_center().gap(sp(1)),
         || {
             crate::parts::glyph(icon, 3.0, tone);
             if let Some(words) = words {
@@ -185,7 +187,7 @@ fn tile(
     let outdated = matches!(offer, Offer::Update(_));
     let form = marks_in(inner);
     let id = FocusId(PICK_BASE + index as u64);
-    column(
+    flex_column(
         Modifier::new()
             .width(width)
             .looks_of(
@@ -205,11 +207,11 @@ fn tile(
             .target(id)
             .pad_x(2)
             .pad_y(2),
-        Flex::new().gap(2),
+        Flex::new().gap(sp(2)),
         || {
-            row(
+            flex_row(
                 Modifier::new().fill_max_width().clip_to(Radius::None),
-                Flex::new().center().gap(1.5),
+                Flex::new().items_center().gap(sp(1.5)),
                 || {
                     key(index + 1);
                     if suggested {
@@ -224,7 +226,7 @@ fn tile(
                     if picked {
                         mark(IconName::Check, "Selected", Role::Accent, form, "Selected");
                     }
-                    grow();
+                    rustle::spacer(rustle::Modifier::new().flex_grow(1.0));
                     if alternative.mockup.is_some() && form != Marks::Hidden {
                         Button::icon(IconName::Maximize, FocusId(MOCKUP_OPEN_BASE + index as u64))
                             .disabled(outdated)
@@ -243,7 +245,7 @@ fn tile(
                     .offer(offer, FocusId(MOCKUP_OFFER_BASE + index as u64))
                     .build();
             }
-            column(Modifier::new(), Flex::new(), || {
+            flex_column(Modifier::new(), Flex::new(), || {
                 wrapped(label, 14, Role::Text, inner);
                 if !alternative.description.is_empty() {
                     wrapped(&alternative.description, 13, Role::Muted, inner);
@@ -257,25 +259,29 @@ fn tile(
 #[track_caller]
 fn tiles(alternatives: &[Alternative], pictures: (&Figures, &Offer), picked: &[usize], width: f32) {
     let each = tile_width(width, tiles_per_row(width, alternatives.len()));
-    wrapping(Modifier::new().fill_max_width(), TILE_GAP / 4.0, || {
-        for (index, alternative) in alternatives.iter().enumerate() {
-            rustle::key(index, || {
-                tile(
-                    alternative,
-                    pictures,
-                    (index, picked.contains(&index)),
-                    each,
-                );
-            });
-        }
-    });
+    flex_wrap(
+        Modifier::new().fill_max_width(),
+        Flex::new().gap(sp(TILE_GAP / 4.0)),
+        || {
+            for (index, alternative) in alternatives.iter().enumerate() {
+                rustle::key(index, || {
+                    tile(
+                        alternative,
+                        pictures,
+                        (index, picked.contains(&index)),
+                        each,
+                    );
+                });
+            }
+        },
+    );
 }
 
 /// Emits the row for an answer of the reader's own, with the box to type it in.
 #[track_caller]
 fn other(draft: &Draft, number: usize) {
     let field = &draft.others[draft.step];
-    column(
+    flex_column(
         Modifier::new()
             .fill_rounded(Role::SurfaceHover, Radius::Lg)
             .stroke(
@@ -288,15 +294,19 @@ fn other(draft: &Draft, number: usize) {
             )
             .pad_x(3)
             .pad_y(2),
-        Flex::new().gap(2),
+        Flex::new().gap(sp(2)),
         || {
-            row(Modifier::new(), Flex::new().center().gap(3), || {
-                row(Modifier::new().grow(), Flex::new(), || {
-                    line("Other", 15, 1.4, Role::Text);
-                });
-                key(number);
-            });
-            column(
+            flex_row(
+                Modifier::new(),
+                Flex::new().items_center().gap(sp(3)),
+                || {
+                    flex_row(Modifier::new().grow(), Flex::new(), || {
+                        line("Other", 15, 1.4, Role::Text);
+                    });
+                    key(number);
+                },
+            );
+            flex_column(
                 Modifier::new()
                     .fill_max_width()
                     .fill_rounded(Role::Background, Radius::Lg),
@@ -317,51 +327,55 @@ fn other(draft: &Draft, number: usize) {
 pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
     let question = draft.question();
     let count = draft.inquiry.questions.len();
-    column(
+    flex_column(
         Modifier::new()
             .fill_rounded(Role::Surface, Radius::Xl)
             .stroke(Role::Border, Radius::Xl)
             .pad_x(3)
             .pad_y(2.5),
-        Flex::new().gap(2),
+        Flex::new().gap(sp(2)),
         || {
-            row(Modifier::new(), Flex::new().start().gap(2), || {
-                if count > 1 {
-                    row(
-                        Modifier::new()
-                            .fill_rounded(Role::SurfaceHover, Radius::Full)
-                            .pad_x(3)
-                            .pad_y(1),
-                        Flex::new().center(),
-                        || {
-                            line(format!("{}/{count}", draft.step + 1), 13, 1.4, Role::Muted);
+            flex_row(
+                Modifier::new(),
+                Flex::new().items_start().gap(sp(2)),
+                || {
+                    if count > 1 {
+                        flex_row(
+                            Modifier::new()
+                                .fill_rounded(Role::SurfaceHover, Radius::Full)
+                                .pad_x(3)
+                                .pad_y(1),
+                            Flex::new().items_center(),
+                            || {
+                                line(format!("{}/{count}", draft.step + 1), 13, 1.4, Role::Muted);
+                            },
+                        );
+                    }
+                    flex_row(Modifier::new().grow(), Flex::new(), || {
+                        wrapped(
+                            &question.text,
+                            14,
+                            Role::Text,
+                            width - if count > 1 { 145.0 } else { 105.0 },
+                        );
+                    });
+                    Button::icon(
+                        if draft.folded {
+                            IconName::ChevronRight
+                        } else {
+                            IconName::ChevronDown
                         },
-                    );
-                }
-                row(Modifier::new().grow(), Flex::new(), || {
-                    wrapped(
-                        &question.text,
-                        14,
-                        Role::Text,
-                        width - if count > 1 { 145.0 } else { 105.0 },
-                    );
-                });
-                Button::icon(
-                    if draft.folded {
-                        IconName::ChevronRight
-                    } else {
-                        IconName::ChevronDown
-                    },
-                    FOLD,
-                )
-                .build();
-                Button::icon(IconName::Close, CLOSE).build();
-            });
+                        FOLD,
+                    )
+                    .build();
+                    Button::icon(IconName::Close, CLOSE).build();
+                },
+            );
             if draft.folded {
                 return;
             }
             let picked = &draft.picks[draft.step];
-            column(Modifier::new(), Flex::new().gap(1), || {
+            flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
                 if compares(&question.alternatives) {
                     tiles(
                         &question.alternatives,
@@ -382,9 +396,9 @@ pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
                 }
                 other(draft, question.alternatives.len() + 1);
             });
-            wrapping_with(
+            flex_wrap(
                 Modifier::new().fill_max_width(),
-                Flex::new().center().trailing().gap(2),
+                Flex::new().items_center().justify_end().gap(sp(2)),
                 || {
                     Button::new("Skip", SKIP)
                         .variant(Variant::Outline)
@@ -410,17 +424,17 @@ const ANSWERED_INSET: f32 = 34.0;
 #[track_caller]
 pub fn answered(answers: &[(String, Option<String>)], width: f32) {
     let room = width - ANSWERED_INSET;
-    column(
+    flex_column(
         Modifier::new()
             .placed(BoxAlignment::TopStart)
             .fill_rounded(Role::Background, Radius::Xl)
             .stroke(Role::Border, Radius::Xl)
             .pad_x(4)
             .pad_y(3.5),
-        Flex::new().gap(3),
+        Flex::new().gap(sp(3)),
         || {
             for (question, answer) in answers {
-                column(Modifier::new(), Flex::new().gap(0.5), || {
+                flex_column(Modifier::new(), Flex::new().gap(sp(0.5)), || {
                     wrapped(question, 15, Role::Muted, room);
                     wrapped(
                         answer.as_deref().unwrap_or("[No preference]"),

@@ -1,15 +1,15 @@
 //! The page that offers a newer release: its notes, and the button that downloads it and restarts into it.
 
 use crate::button::Variant;
-use crate::kit::{
-    Flex, FocusId, Radius, Role, Scroll, Styled, Type, column, gap_box, label, row, scroll_area,
-};
+use crate::kit::sp;
+use crate::kit::{FocusId, Radius, Role, Scroll, Styled, Type, label, scroll_area};
 use crate::parts::{line, spacer, wrap};
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::update::{RUNNING, Update};
 use crate::{Button, Markdown};
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
 /// Downloads the release and restarts into it.
 pub const UPDATE_NOW: FocusId = FocusId(7_019);
@@ -187,13 +187,13 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
         UpdateRun::Downloading { .. } | UpdateRun::Installing
     );
     let installing = matches!(state.update_run, UpdateRun::Installing);
-    row(
+    flex_row(
         Modifier::new().grow().fill(Role::Background).pad_x(6),
         Flex::new(),
         || {
-            column(
+            flex_column(
                 Modifier::new().grow().fill_max_width().pad_y(8),
-                Flex::new().gap(3),
+                Flex::new().gap(sp(3)),
                 || {
                     label(
                         name,
@@ -211,29 +211,33 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
                             || Markdown::new(notes, text_width).build(),
                         );
                     } else {
-                        gap_box(Modifier::new().grow());
+                        rustle::spacer(Modifier::new().grow());
                     }
                     if let Some(said) = said {
-                        column(Modifier::new(), Flex::new(), || {
+                        flex_column(Modifier::new(), Flex::new(), || {
                             for words in wrap(&said, 13, text_width) {
                                 line(words, 13, 1.5, Role::Muted);
                             }
                         });
                     }
-                    row(Modifier::new(), Flex::new().center().gap(2), || {
-                        button("View on GitHub", UPDATE_PAGE, Variant::Ghost);
-                        spacer();
-                        if !installing {
-                            button(
-                                if busy { "Cancel" } else { "Later" },
-                                UPDATE_LATER,
-                                Variant::Ghost,
-                            );
-                        }
-                        if !busy && blocker.is_none() {
-                            button("Update and Restart", UPDATE_NOW, Variant::Default);
-                        }
-                    });
+                    flex_row(
+                        Modifier::new(),
+                        Flex::new().items_center().gap(sp(2)),
+                        || {
+                            button("View on GitHub", UPDATE_PAGE, Variant::Ghost);
+                            spacer();
+                            if !installing {
+                                button(
+                                    if busy { "Cancel" } else { "Later" },
+                                    UPDATE_LATER,
+                                    Variant::Ghost,
+                                );
+                            }
+                            if !busy && blocker.is_none() {
+                                button("Update and Restart", UPDATE_NOW, Variant::Default);
+                            }
+                        },
+                    );
                 },
             );
         },

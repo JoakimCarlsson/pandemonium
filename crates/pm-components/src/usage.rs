@@ -2,8 +2,9 @@
 
 use pm_harness::{Limit, LimitUnit, Limits, Usage};
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_row};
 
-use crate::kit::{Flex, Hovered, Looks, Radius, Role, Tone, Tooltip, row};
+use crate::kit::{Hovered, Looks, Radius, Role, Tone, Tooltip};
 use crate::sample::Session;
 
 /// How wide the ring of a context that has no allowance beside it is, in logical pixels.
@@ -223,14 +224,14 @@ pub fn rings_of(context: Option<&Usage>, limits: Option<&Limits>) -> bool {
         .filter_map(|meter| meter.share)
         .take(MAX_RINGS)
         .collect();
-    row(
+    flex_row(
         Modifier::new()
             .width(32.0)
             .height(32.0)
             .looks(Looks::new().hover(Role::SurfaceHover).radius(Radius::Full))
             .cursor(CursorIcon::Default)
             .tooltip(tooltip),
-        Flex::new().center().middle(),
+        Flex::new().items_center().justify_center(),
         || rings(&shares),
     );
     true
@@ -243,15 +244,20 @@ fn rings(shares: &[f32]) {
         0 | 1 => (SINGLE_RING, SINGLE_WIDTH, 0.0),
         _ => (NESTED_RING, NESTED_WIDTH, NESTED_GAP),
     };
-    let filled: Vec<(f32, Tone)> = shares
+    let filled: Vec<(f32, rustle::Color)> = shares
         .iter()
-        .map(|share| (*share, tone((share * 100.0).round() as u32)))
+        .map(|share| {
+            (
+                *share,
+                crate::kit::color(tone((share * 100.0).round() as u32)),
+            )
+        })
         .collect();
-    crate::kit::rings(
+    rustle::progress_rings(
         Modifier::new().width(across).height(across),
         width,
         gap,
-        Role::Border,
+        crate::kit::color(Role::Border),
         &filled,
     );
 }

@@ -125,7 +125,7 @@ fn a_press_answers_only_the_question_it_was_for() {
 fn overlay_shown(safety: &Safety, now: Instant) -> bool {
     let safety = safety.clone();
     let report = crate::kit::snapshot::lay_out(400.0, 300.0, None, move || {
-        crate::kit::layer(rustle::Modifier::new(), || {
+        rustle::stack_with(rustle::Modifier::new(), || {
             safety.question_overlay(400.0, now)
         });
     });

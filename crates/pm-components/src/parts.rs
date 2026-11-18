@@ -1,9 +1,8 @@
 //! Small pieces the screens share: a line of text, a glyph, a check box.
 
-use crate::kit::{
-    Flex, IconName, Styled, Tone, Type, column, gap_box, grow, icon, label, label_with,
-};
+use crate::kit::{IconName, Styled, Tone, Type, icon, label, label_with};
 use rustle::Modifier;
+use rustle::{Flex, flex_column};
 
 /// How wide, as a share of its height, a character of body text is taken to be.
 const CHARACTER_WIDTH: f32 = 0.53;
@@ -37,7 +36,7 @@ pub fn clipped(content: impl Into<String>, pixels: u32, tone: impl Into<Tone>) {
 /// Emits a box that takes the room left in its row and holds nothing.
 #[track_caller]
 pub fn spacer() {
-    grow();
+    rustle::spacer(rustle::Modifier::new().flex_grow(1.0));
 }
 
 /// Emits the lines of `content` wrapped to `width`, one text line each, set in `pixels` tall type with a line height of `ratio` times that, in `tone`, with a gap where it has a blank line.
@@ -48,10 +47,10 @@ pub fn paragraph(content: &str, pixels: u32, ratio: f32, tone: impl Into<Tone>, 
     let kind = Type::new(pixels).ratio(ratio);
     let tone = tone.into();
     let lines = crate::kit::wrap_lines(content, kind, width.max(32.0));
-    column(Modifier::new(), Flex::new(), || {
+    flex_column(Modifier::new(), Flex::new(), || {
         for part in lines {
             if part.end == part.start {
-                gap_box(Modifier::new().h(3));
+                rustle::spacer(Modifier::new().h(3));
             } else {
                 label(&content[part.start..part.end], kind.tone(tone));
             }

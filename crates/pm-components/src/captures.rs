@@ -4,10 +4,10 @@
 //! console as a fenced block that everything the page said is set off inside.
 
 use crate::kit::{
-    Flex, FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, column, picture, row,
-    scroll_area, sp, wrapping,
+    FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, picture, scroll_area, sp,
 };
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row, flex_wrap};
 
 use crate::button::Variant;
 use crate::elements::{code, fence, one_line, section, words};
@@ -216,9 +216,13 @@ fn popover(capture: &Capture, state: &WorkspaceState) {
                     .height_in(0.0, sp(HEIGHT / 4.0)),
                 Scroll::from_start(MENU_SCROLL, state.menu_scroll),
                 || {
-                    column(Modifier::new().fill_max_width(), Flex::new().gap(2), || {
-                        cards(capture, state);
-                    });
+                    flex_column(
+                        Modifier::new().fill_max_width(),
+                        Flex::new().gap(sp(2)),
+                        || {
+                            cards(capture, state);
+                        },
+                    );
                 },
             );
         });
@@ -249,7 +253,7 @@ fn cards(capture: &Capture, state: &WorkspaceState) {
             if capture.lines.is_empty() {
                 line("The console was empty.", 12, 1.4, Role::Muted);
             } else {
-                column(Modifier::new(), Flex::new().gap(1), || {
+                flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
                     for text in &capture.lines {
                         words(text, true, Role::Text, CARD_TEXT);
                     }
@@ -271,13 +275,17 @@ pub fn chips(state: &WorkspaceState) {
     };
     anchored(
         || {
-            wrapping(Modifier::new().pad_x(3).pad_side(Side::Top, 3), 2, || {
-                for (index, capture) in state.captures.iter().enumerate() {
-                    rustle::key(CAPTURE_BASE + index as u64, || {
-                        pill(index, capture, open.is_some_and(|(held, _)| held == index));
-                    });
-                }
-            });
+            flex_wrap(
+                Modifier::new().pad_x(3).pad_side(Side::Top, 3),
+                Flex::new().gap(sp(2)),
+                || {
+                    for (index, capture) in state.captures.iter().enumerate() {
+                        rustle::key(CAPTURE_BASE + index as u64, || {
+                            pill(index, capture, open.is_some_and(|(held, _)| held == index));
+                        });
+                    }
+                },
+            );
         },
         open.map(|(_, capture)| move || popover(capture, state)),
     );
@@ -286,11 +294,11 @@ pub fn chips(state: &WorkspaceState) {
 /// Emits the chip of the capture at `index`: a button that opens its popover, filled while `selected`, and one that takes it off.
 #[track_caller]
 fn pill(index: usize, capture: &Capture, selected: bool) {
-    row(
+    flex_row(
         Modifier::new()
             .fill_rounded(Role::SurfaceHover, Radius::Lg)
             .pad_side(Side::Right, 1),
-        Flex::new().center().gap(0.5),
+        Flex::new().items_center().gap(sp(0.5)),
         || {
             Button::new(capture.label(), FocusId(CAPTURE_BASE + index as u64))
                 .variant(Variant::Ghost)

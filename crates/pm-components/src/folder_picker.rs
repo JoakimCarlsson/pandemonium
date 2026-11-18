@@ -4,6 +4,8 @@
 //! inside. It is what every part of the app that needs a folder opens, for this machine and for a
 //! remote one alike.
 
+use crate::kit::sp;
+use rustle::{Flex, flex_column, flex_row};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use pm_config::KnownServer;
@@ -13,8 +15,8 @@ use rustle::Modifier;
 use crate::adder::{Found, Kind, Listing, Status, status_line};
 use crate::button::Variant;
 use crate::kit::{
-    Flex, FocusId, IconName, Radius, Role, Scroll, Side, Styled, Tooltip, Type, column, icon,
-    label, label_with, row, scroll_area,
+    FocusId, IconName, Radius, Role, Scroll, Side, Styled, Tooltip, Type, icon, label, label_with,
+    scroll_area,
 };
 use crate::parts::spacer;
 use crate::size::Size;
@@ -423,10 +425,10 @@ impl FolderPicker {
     /// Emits what the window holds: the bar with the steps and the path, the places beside the folders, and the bar with the buttons.
     #[track_caller]
     pub fn view(&self) {
-        column(Modifier::new().grow().fill_max_width(), Flex::new(), || {
+        flex_column(Modifier::new().grow().fill_max_width(), Flex::new(), || {
             self.heading();
             self.bar();
-            row(
+            flex_row(
                 Modifier::new().grow().clip_to(Radius::None),
                 Flex::new(),
                 || {
@@ -441,12 +443,12 @@ impl FolderPicker {
     /// Emits the line naming what the folder is for, and the machine it is on when that is not this one.
     #[track_caller]
     fn heading(&self) {
-        row(
+        flex_row(
             Modifier::new()
                 .h(11)
                 .stroke_side(Side::Bottom, 1.0, Role::Border)
                 .pad_x(4),
-            Flex::new().center().gap(2),
+            Flex::new().items_center().gap(sp(2)),
             || {
                 label(
                     self.title(),
@@ -467,12 +469,12 @@ impl FolderPicker {
     fn bar(&self) {
         let crumbs = self.directory.as_deref().map(trail).unwrap_or_default();
         let last = crumbs.len().saturating_sub(1);
-        row(
+        flex_row(
             Modifier::new()
                 .h(12)
                 .stroke_side(Side::Bottom, 1.0, Role::Border)
                 .pad_x(3),
-            Flex::new().center().gap(2),
+            Flex::new().items_center().gap(sp(2)),
             || {
                 Button::icon(IconName::ArrowLeft, PICKER_BACK)
                     .disabled(!self.can_go_back())
@@ -486,9 +488,9 @@ impl FolderPicker {
                     .disabled(crumbs.len() < 2)
                     .modifier(Modifier::new().tooltip("Up"))
                     .build();
-                row(
+                flex_row(
                     Modifier::new().grow(),
-                    Flex::new().center().gap(0.5),
+                    Flex::new().items_center().gap(sp(0.5)),
                     || {
                         for (index, (name, _)) in crumbs.iter().enumerate() {
                             if index > 0 {
@@ -526,9 +528,9 @@ impl FolderPicker {
             Modifier::new().grow(),
             Scroll::from_start(PICKER_SCROLL, self.scroll),
             || {
-                column(
+                flex_column(
                     Modifier::new().fill_max_width().pad(2),
-                    Flex::new().gap(0.5),
+                    Flex::new().gap(sp(0.5)),
                     || {
                         for (index, found) in self.entries().into_iter().enumerate() {
                             folder_row(&found.name, index == self.selected, index);
@@ -545,12 +547,12 @@ impl FolderPicker {
     /// Emits the bar under the folders: the key that closes the picker, and the buttons that close it and that take the folder.
     #[track_caller]
     fn footer(&self) {
-        row(
+        flex_row(
             Modifier::new()
                 .h(14)
                 .stroke_side(Side::Top, 1.0, Role::Border)
                 .pad_x(4),
-            Flex::new().center().gap(2),
+            Flex::new().items_center().gap(sp(2)),
             || {
                 popover::key_hint("Esc", "Close");
                 spacer();
@@ -568,19 +570,23 @@ impl FolderPicker {
 /// Emits the column of places that are one press away.
 #[track_caller]
 fn places() {
-    column(
+    flex_column(
         Modifier::new()
             .width(PLACES_WIDTH)
             .stroke_side(Side::Right, 1.0, Role::Border)
             .pad(2),
-        Flex::new().gap(0.5),
+        Flex::new().gap(sp(0.5)),
         || {
-            row(Modifier::new().h(8).pad_x(2), Flex::new().center(), || {
-                label(
-                    "Places",
-                    Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
-                );
-            });
+            flex_row(
+                Modifier::new().h(8).pad_x(2),
+                Flex::new().items_center(),
+                || {
+                    label(
+                        "Places",
+                        Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
+                    );
+                },
+            );
             for (index, (name, _, glyph)) in PLACES.iter().enumerate() {
                 Tile::new(FocusId(PLACE_BASE + index as u64))
                     .height(8.0)

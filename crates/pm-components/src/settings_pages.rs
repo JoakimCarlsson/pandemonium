@@ -2,8 +2,9 @@
 
 use pm_field::{Edit, Field};
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
-use crate::kit::{Flex, FocusId, Role, Side, Styled, Type, column, label, row};
+use crate::kit::{FocusId, Role, Side, Styled, Type, label};
 use crate::parts::line;
 use crate::settings::{SETTINGS_PICK_FILTER, SETTINGS_PICK_FIRST, Section};
 use crate::settings_catalog::{self, LISTS, OPEN_LIST, RESET, Setting};
@@ -337,14 +338,14 @@ pub(crate) fn setting_row(state: &WorkspaceState, setting: Setting, room: f32) {
 #[track_caller]
 pub(crate) fn ruled<T>(items: Vec<T>, emit: impl Fn(T)) {
     let last = items.len().saturating_sub(1);
-    column(Modifier::new(), Flex::new(), || {
+    flex_column(Modifier::new(), Flex::new(), || {
         for (place, item) in items.into_iter().enumerate() {
             let modifier = if place < last {
                 Modifier::new().stroke_side(Side::Bottom, 1.0, Role::Border)
             } else {
                 Modifier::new()
             };
-            column(modifier, Flex::new(), || emit(item));
+            flex_column(modifier, Flex::new(), || emit(item));
         }
     });
 }
@@ -363,12 +364,12 @@ pub(crate) fn page_rows(state: &WorkspaceState, section: Section, room: f32) {
 /// Emits `title` over the rows `rows` emits of a group of settings, as the pages that hold several groups set it.
 #[track_caller]
 pub(crate) fn group(title: &str, rows: impl FnOnce()) {
-    column(Modifier::new().pad_side(Side::Top, 2), Flex::new(), || {
-        row(
+    flex_column(Modifier::new().pad_side(Side::Top, 2), Flex::new(), || {
+        flex_row(
             Modifier::new()
                 .stroke_side(Side::Bottom, 1.0, Role::Border)
                 .pad_side(Side::Bottom, 1),
-            Flex::new().center(),
+            Flex::new().items_center(),
             || {
                 label(
                     title,

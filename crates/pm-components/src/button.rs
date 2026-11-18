@@ -1,11 +1,13 @@
 //! The button: one component with a look per variant and a measure per size.
 
+use crate::kit::sp;
+use rustle::{Flex, flex_column, flex_row};
 use std::fmt;
 use std::rc::Rc;
 
 use crate::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Tone, Type, column,
-    icon, label, label_with, row, spinner, spinning_icon, wrap_lines,
+    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Tone, Type, icon, label,
+    label_with, spinner, spinning_icon, wrap_lines,
 };
 use rustle::{CursorIcon, Modifier};
 
@@ -322,9 +324,9 @@ impl Button {
             (None, false, _) => own,
         };
         let flex = self.flex.unwrap_or(if spread {
-            Flex::new().center().between().gap(2)
+            Flex::new().items_center().justify_between().gap(sp(2))
         } else {
-            Flex::new().center().middle().gap(2)
+            Flex::new().items_center().justify_center().gap(sp(2))
         });
         let mut kind = Type::new(font).ratio(1.4).tone(ink);
         if !spread || several {
@@ -347,7 +349,7 @@ impl Button {
             self.label,
             self.lines,
         );
-        row(self.modifier.chain(own), flex, move || {
+        flex_row(self.modifier.chain(own), flex, move || {
             if let Some(mark) = mark {
                 (mark.0)();
             } else if let Some(name) = leading {
@@ -355,7 +357,7 @@ impl Button {
             }
             if let Some(words) = words {
                 if lines.len() > 1 {
-                    column(Modifier::new(), Flex::new(), || {
+                    flex_column(Modifier::new(), Flex::new(), || {
                         for part in &lines {
                             label(part, kind);
                         }

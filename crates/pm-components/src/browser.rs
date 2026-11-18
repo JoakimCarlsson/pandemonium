@@ -1,12 +1,13 @@
 //! The browser pane: a page of the web beside the agent's work, with its address bar and, beside it, the developer tools of the page.
 
+use crate::kit::sp;
 use pm_field::Field;
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 use std::ops::{Deref, DerefMut};
 
 use crate::kit::{
-    Flex, FocusId, IconName, Interactive, Picture, Radius, Role, Side, Styled, Tooltip, block,
-    column, layer, picture, row,
+    FocusId, IconName, Interactive, Picture, Radius, Role, Side, Styled, Tooltip, picture,
 };
 
 use crate::browser_address::address_of;
@@ -701,17 +702,17 @@ impl WorkspaceState {
 #[track_caller]
 fn toolbar(browser: &Browser) {
     let zoomed = (browser.zoom - 1.0).abs() > 0.005;
-    row(
+    flex_row(
         Modifier::new()
             .height(TOOLBAR)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(2),
-        Flex::new().center().gap(1),
+        Flex::new().items_center().gap(sp(1)),
         || {
             Button::icon(IconName::ArrowLeft, BROWSER_BACK).build();
             Button::icon(IconName::ArrowRight, BROWSER_FORWARD).build();
             Button::icon(IconName::Refresh, BROWSER_RELOAD).build();
-            block(Modifier::new().grow(), || {
+            flex_column(Modifier::new().grow(), Flex::new(), || {
                 Input::new(&browser.address, BROWSER_ADDRESS)
                     .size(Size::Sm)
                     .placeholder("Search or enter an address")
@@ -789,7 +790,7 @@ fn surface(browser: &Browser, id: FocusId, shown: &Option<Picture>, wide: f32, t
         .target(id);
     match shown {
         Some(shown) if browser.notice.is_none() || id != BROWSER_BODY => picture(body, shown),
-        _ => block(body, || {
+        _ => flex_column(body, Flex::new(), || {
             line(
                 browser.notice.as_deref().unwrap_or("Loading"),
                 12,
@@ -803,7 +804,7 @@ fn surface(browser: &Browser, id: FocusId, shown: &Option<Picture>, wide: f32, t
 /// Emits the line between the page and the developer tools, `tall` logical pixels high, with the handle that drags it.
 #[track_caller]
 fn divider(tall: f32) {
-    layer(
+    rustle::stack_with(
         Modifier::new().width(1.0).height(tall).fill(Role::Border),
         || Sash::column(BROWSER_SASH).bare().build(),
     );
@@ -826,7 +827,7 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) {
         Some(tools) => ((width - tools - 1.0).max(0.0), tools + 1.0),
         None => (width, 0.0),
     };
-    column(
+    flex_column(
         Modifier::new()
             .fill_max_width()
             .height(height)
@@ -836,8 +837,8 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) {
             tab_strip(browser, width);
             toolbar(browser);
             browser.safety.bar_nodes();
-            layer(Modifier::new().fill_max_width().height(room), || {
-                row(
+            rustle::stack_with(Modifier::new().fill_max_width().height(room), || {
+                flex_row(
                     Modifier::new().fill_max_width().height(room),
                     Flex::new(),
                     || match tools {

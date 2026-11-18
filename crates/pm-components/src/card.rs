@@ -1,7 +1,9 @@
 //! The card: a rounded, bordered row that stands alone and holds its children side by side.
 
-use crate::kit::{Flex, Radius, Role, Styled, row};
+use crate::kit::sp;
+use crate::kit::{Radius, Role, Styled};
 use rustle::Modifier;
+use rustle::{Flex, flex_row};
 
 /// A card being described: how tall it is.
 ///
@@ -57,8 +59,8 @@ impl Card {
             .fill_max_width()
             .stroke(Role::Border, Radius::Xl);
         let own = own.chain(self.inner.unwrap_or_else(|| Modifier::new().pad_x(4)));
-        let flex = self.flex.unwrap_or(Flex::new().center().gap(3));
-        row(self.modifier.chain(own), flex, content);
+        let flex = self.flex.unwrap_or(Flex::new().items_center().gap(sp(3)));
+        flex_row(self.modifier.chain(own), flex, content);
     }
 
     /// Emits the empty card.

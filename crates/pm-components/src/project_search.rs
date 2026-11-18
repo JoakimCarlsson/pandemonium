@@ -1,11 +1,13 @@
 //! Searching the text of every file of the project from the review panel: the box the search is typed in, the ways of matching and the hits, grouped by file.
 
+use crate::kit::sp;
+use rustle::{Flex, flex_column, flex_row};
 use std::collections::HashSet;
 use std::ops::Range;
 
 use crate::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled,
-    Tooltip, Type, column, label, label_with, row, scroll_area,
+    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tooltip,
+    Type, label, label_with, scroll_area,
 };
 use pm_editor::Query;
 use pm_field::{Edit, Field};
@@ -327,10 +329,10 @@ fn hit_row(index: usize, location: &Location, matcher: &Query) {
         .pad_side(Side::Left, 9)
         .pad_side(Side::Right, 3);
     let code = Type::new(12).ratio(1.4).mono();
-    row(modifier, Flex::new().center().gap(2), || {
-        row(
+    flex_row(modifier, Flex::new().items_center().gap(sp(2)), || {
+        flex_row(
             Modifier::new().grow().clip_to(Radius::None),
-            Flex::new().center(),
+            Flex::new().items_center(),
             || {
                 label(before, code.tone(Role::Muted));
                 if !found.is_empty() {
@@ -371,7 +373,7 @@ fn group_row(place: usize, group: &Group, folded: bool) {
         .cursor(CursorIcon::Pointer)
         .target(id)
         .pad_x(3);
-    row(modifier, Flex::new().center().gap(1.5), || {
+    flex_row(modifier, Flex::new().items_center().gap(sp(1.5)), || {
         glyph(chevron, 3.5, Role::Muted);
         file_icon(name, 4.0);
         line(name, 13, 1.4, Role::Text);
@@ -418,48 +420,59 @@ pub fn panel(state: &WorkspaceState) {
     let search = &state.project_search;
     let (said, tone) = tally(search, state.review_index().is_some());
     let matcher = search.matcher();
-    column(Modifier::new().grow(), Flex::new(), || {
-        column(
+    flex_column(Modifier::new().grow(), Flex::new(), || {
+        flex_column(
             Modifier::new().pad_x(3).pad_y(2),
-            Flex::new().gap(1.5),
+            Flex::new().gap(sp(1.5)),
             || {
-                row(Modifier::new(), Flex::new().center().gap(1), || {
-                    Input::new(&search.query, PROJECT_SEARCH_FIELD)
-                        .size(Size::Sm)
-                        .placeholder("Search")
-                        .invalid(search.problem.is_some())
-                        .modifier(Modifier::new().grow())
-                        .build();
-                    if !search.query.text().is_empty() {
-                        crate::button::Button::icon(IconName::Close, PROJECT_SEARCH_CLEAR)
-                            .variant(crate::button::Variant::Ghost)
+                flex_row(
+                    Modifier::new(),
+                    Flex::new().items_center().gap(sp(1)),
+                    || {
+                        Input::new(&search.query, PROJECT_SEARCH_FIELD)
                             .size(Size::Sm)
+                            .placeholder("Search")
+                            .invalid(search.problem.is_some())
+                            .modifier(Modifier::new().grow())
                             .build();
-                    }
-                    switch("Aa", PROJECT_SEARCH_CASE, search.case);
-                    switch(".*", PROJECT_SEARCH_REGEX, search.regex);
-                });
-                row(Modifier::new(), Flex::new().center().gap(1), || {
-                    label_with(
-                        Modifier::new().grow(),
-                        said.as_str(),
-                        Type::new(12).ratio(1.4).tone(tone).truncate(),
-                    );
-                    if search.total() > 0 {
-                        crate::button::Button::icon(IconName::FileCode, PROJECT_SEARCH_EXCERPTS)
+                        if !search.query.text().is_empty() {
+                            crate::button::Button::icon(IconName::Close, PROJECT_SEARCH_CLEAR)
+                                .variant(crate::button::Variant::Ghost)
+                                .size(Size::Sm)
+                                .build();
+                        }
+                        switch("Aa", PROJECT_SEARCH_CASE, search.case);
+                        switch(".*", PROJECT_SEARCH_REGEX, search.regex);
+                    },
+                );
+                flex_row(
+                    Modifier::new(),
+                    Flex::new().items_center().gap(sp(1)),
+                    || {
+                        label_with(
+                            Modifier::new().grow(),
+                            said.as_str(),
+                            Type::new(12).ratio(1.4).tone(tone).truncate(),
+                        );
+                        if search.total() > 0 {
+                            crate::button::Button::icon(
+                                IconName::FileCode,
+                                PROJECT_SEARCH_EXCERPTS,
+                            )
                             .variant(crate::button::Variant::Ghost)
                             .size(Size::Sm)
                             .modifier(Modifier::new().tooltip("Open Results in Editor"))
                             .build();
-                    }
-                });
+                        }
+                    },
+                );
             },
         );
         scroll_area(
             Modifier::new().grow().clip_to(Radius::None),
             Scroll::from_start(TREE_SCROLL, state.tree_scroll),
             || {
-                column(
+                flex_column(
                     Modifier::new().fill_max_width().pad_y(1),
                     Flex::new(),
                     || {

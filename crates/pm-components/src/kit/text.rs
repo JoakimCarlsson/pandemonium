@@ -10,7 +10,6 @@
 //! which replaces building one line node per wrapped line.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::rc::Rc;
 
 use rustle::{FontWeight, Modifier, TextLayout, TextStyle, TextWrap};
@@ -174,12 +173,6 @@ impl Type {
         self
     }
 
-    /// The same type without cutting its line short.
-    fn untruncated(mut self) -> Self {
-        self.truncate = false;
-        self
-    }
-
     /// Lines break at the width of the box, between words where they can.
     pub fn wrap(mut self) -> Self {
         self.wrap = true;
@@ -293,122 +286,27 @@ pub fn label_with(modifier: Modifier, content: impl Into<String>, kind: Type) {
     rustle::text_styled(modifier, content, kind.style());
 }
 
-/// Emits one line of `content` set in `kind`, a piece of the selectable text
-/// `scope` names when there is one, as wide as it is or as its box
-/// allows, giving up room when its row runs out of it as a CSS flex item
-/// does, cut short when it does not fit: the most of it that fits with an
-/// ellipsis after it, the spaces before the ellipsis left out, as the old
-/// interface cut its lines.
+/// Emits one line of `content` set in `kind`, cut short with an ellipsis at
+/// its box, a piece of the selectable text `scope` names when there is one.
 #[track_caller]
 fn shortened(modifier: Modifier, content: String, kind: Type, scope: Option<FocusId>) {
-    let style = TextStyle {
-        max_lines: None,
-        ..kind.style()
-    };
-    let natural = measure(&content, kind.untruncated()).0;
-    let height = kind.line_height();
-    let cut: RefCell<Option<(f32, String)>> = RefCell::new(None);
     let modifier = match scope {
         Some(id) => {
+            let style = TextStyle {
+                max_lines: None,
+                ..kind.style()
+            };
             let whole = rustle::layout_text(&content, &style, None);
             let shaped = Rc::new(RefCell::new(Some(Rc::new(whole))));
             crate::kit::select::piece(modifier, id, Rc::from(content.as_str()), shaped)
         }
         None => modifier,
     };
-    rustle::layout(
-        modifier.shrink(1.0),
-        Shortened { natural, height },
-        move || {
-            rustle::canvas(Modifier::new().fill_max_size(), move |canvas| {
-                let room = canvas.width();
-                let mut held = cut.borrow_mut();
-                if held.as_ref().is_none_or(|(width, _)| *width != room) {
-                    *held = Some((room, ellipsized(&content, &style, room, 1.0)));
-                }
-                if let Some((_, words)) = held.as_ref() {
-                    canvas.draw_text(0.0, 0.0, words, &style, None);
-                }
-            });
-        },
-    );
-}
-
-/// `content` set in `style`, cut short to the most of it that fits in `room`
-/// logical pixels with an ellipsis after it, the spaces before the ellipsis
-/// left out; `content` itself when it fits, or overflows by no more than
-/// `slack` pixels, which a box sized to its line's rounded-up width allows.
-pub(crate) fn ellipsized(content: &str, style: &TextStyle, room: f32, slack: f32) -> String {
-    let width = |text: &str| rustle::layout_text(text, style, None).size().width;
-    if width(content) <= room + slack {
-        return content.to_owned();
-    }
-    let boundaries: Vec<usize> = content
-        .char_indices()
-        .map(|(at, _)| at)
-        .chain(std::iter::once(content.len()))
-        .collect();
-    let (mut low, mut high) = (0, boundaries.len() - 1);
-    while low < high {
-        let middle = (low + high).div_ceil(2);
-        let candidate = format!("{}…", content[..boundaries[middle]].trim_end());
-        if width(&candidate) <= room {
-            low = middle;
-        } else {
-            high = middle - 1;
-        }
-    }
-    format!("{}…", content[..boundaries[low]].trim_end())
-}
-
-/// Lays out a line cut short at its box: as wide as its words when they fit,
-/// else as wide as it may be, one line tall, its drawing filling it.
-struct Shortened {
-    /// How wide the whole line is.
-    natural: f32,
-    /// How tall a line is.
-    height: f32,
-}
-
-impl rustle::Layout for Shortened {
-    fn measure(
-        &self,
-        children: &mut rustle::Children,
-        constraints: rustle::Constraints,
-    ) -> rustle::LayoutResult {
-        let size = rustle::Size::new(
-            self.natural
-                .ceil()
-                .min(constraints.max_width)
-                .max(constraints.min_width),
-            self.height
-                .min(constraints.max_height)
-                .max(constraints.min_height),
-        );
-        for index in 0..children.len() {
-            children.measure(index, rustle::Constraints::tight(size));
-        }
-        rustle::LayoutResult {
-            size,
-            positions: vec![rustle::Offset::new(0.0, 0.0); children.len()],
-        }
-    }
-
-    fn min_intrinsic_width(&self, _: &mut rustle::Children, _: f32) -> f32 {
-        0.0
-    }
-
-    fn max_intrinsic_width(&self, _: &mut rustle::Children, _: f32) -> f32 {
-        self.natural.ceil()
-    }
-
-    fn min_intrinsic_height(&self, _: &mut rustle::Children, _: f32) -> f32 {
-        self.height
-    }
-
-    fn max_intrinsic_height(&self, _: &mut rustle::Children, _: f32) -> f32 {
-        self.height
-    }
+    let style = TextStyle {
+        line_height: kind.line_height(),
+        ..kind.style()
+    };
+    rustle::text_ellipsized(modifier, content, style);
 }
 
 /// Emits `content` wrapped at the width its box gives it, set in `kind`.
@@ -424,16 +322,7 @@ pub fn paragraph(modifier: Modifier, content: impl Into<String>, kind: Type) {
 }
 
 /// One line of wrapped text, as byte offsets into the text it was cut from.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Line {
-    /// Where the line starts.
-    pub start: usize,
-    /// Where it ends, after any spaces it keeps at the break but before a line break.
-    pub end: usize,
-    /// Where the next line starts: the same place when the line was cut for
-    /// want of room, past the line break when the text had one.
-    pub next: usize,
-}
+pub type Line = rustle::WrappedLine;
 
 /// How wide and tall `content` is on one line set in `kind`, in logical pixels.
 ///
@@ -455,163 +344,9 @@ pub fn shape(content: &str, kind: Type, width: Option<f32>) -> TextLayout {
 }
 
 /// The lines `content` breaks into at `width` logical pixels when set in
-/// `kind`. The lines tile the text and at least one is always returned.
-///
-/// A line break always breaks a line, and lines otherwise break only at
-/// spaces, each line keeping the spaces after its last word; a word wider
-/// than the width is cut where it must be.
+/// `kind`, broken at spaces as [`rustle::wrap_at_spaces`] breaks them.
 pub fn wrap_lines(content: &str, kind: Type, width: f32) -> Vec<Line> {
-    let key = (
-        crate::kit::text::font_key(),
-        width.to_bits(),
-        kind.size().to_bits(),
-        kind.weight,
-        kind.mono,
-        kind.italic,
-        kind.tracking.to_bits(),
-    );
-    if let Some(lines) =
-        WRAPPED.with_borrow(|held| held.get(&key).and_then(|items| items.get(content)).cloned())
-    {
-        return lines;
-    }
-    let lines = wrap_uncached(content, kind, width);
-    WRAPPED.with_borrow_mut(|held| {
-        if held.values().map(HashMap::len).sum::<usize>() >= WRAPPED_MOST {
-            held.clear();
-        }
-        held.entry(key)
-            .or_default()
-            .insert(content.to_owned(), lines.clone());
-    });
-    lines
-}
-
-/// How many wrapped texts are kept before the kept ones are dropped.
-const WRAPPED_MOST: usize = 4096;
-
-/// What a text is wrapped with besides its width: the fonts, the size, weight,
-/// family, slant and letter spacing.
-type WrapKey = (u64, u32, u32, u16, bool, bool, u32);
-
-thread_local! {
-    /// Texts wrapped so far, by what they were wrapped with.
-    static WRAPPED: RefCell<HashMap<WrapKey, HashMap<String, Vec<Line>>>> = RefCell::new(HashMap::new());
-}
-
-/// The lines `content` breaks into at `width` when set in `kind`, measured afresh.
-fn wrap_uncached(content: &str, kind: Type, width: f32) -> Vec<Line> {
-    let style = TextStyle {
-        max_lines: None,
-        wrap: TextWrap::None,
-        ..kind.style()
-    };
-    let mut fits = |piece: &str| {
-        rustle::layout_text(piece.trim_end(), &style, None)
-            .size()
-            .width
-            <= width
-    };
-    let mut lines = Vec::new();
-    let mut paragraph = 0;
-    for source in content.split('\n') {
-        let end = paragraph + source.len();
-        cut(source, paragraph, &mut fits, &mut lines);
-        if let Some(last) = lines.last_mut() {
-            last.next = end + 1;
-        }
-        paragraph = end + 1;
-    }
-    lines
-}
-
-/// Cuts the paragraph `source`, which starts at byte `base` of the text, into
-/// lines that `fits`, breaking after the spaces that end words and cutting a
-/// word too long for a line where it must be.
-fn cut(source: &str, base: usize, fits: &mut impl FnMut(&str) -> bool, lines: &mut Vec<Line>) {
-    let mut start = 0;
-    let mut cursor = 0;
-    for word_end in word_ends(source) {
-        if word_end - start <= 256 && fits(&source[start..word_end]) {
-            cursor = word_end;
-            continue;
-        }
-        if cursor > start {
-            lines.push(Line {
-                start: base + start,
-                end: base + cursor,
-                next: base + cursor,
-            });
-            start = cursor;
-        }
-        loop {
-            let split = start + fitting_prefix(&source[start..word_end], fits);
-            if split >= word_end {
-                break;
-            }
-            lines.push(Line {
-                start: base + start,
-                end: base + split,
-                next: base + split,
-            });
-            start = split;
-        }
-        cursor = word_end;
-    }
-    lines.push(Line {
-        start: base + start,
-        end: base + source.len(),
-        next: base + source.len(),
-    });
-}
-
-/// The length of the longest start of `source` that `fits`, at least one
-/// character, found with few measurements so a long unbroken word is not
-/// measured at every length.
-fn fitting_prefix(source: &str, fits: &mut impl FnMut(&str) -> bool) -> usize {
-    let mut boundaries = Vec::with_capacity(64);
-    let mut good = 0;
-    let mut next = 1;
-    for (at, character) in source.char_indices() {
-        boundaries.push(at + character.len_utf8());
-        if boundaries.len() == next || at + character.len_utf8() == source.len() {
-            if fits(&source[..boundaries[boundaries.len() - 1]]) {
-                good = boundaries.len();
-                next *= 2;
-            } else {
-                break;
-            }
-        }
-    }
-    if good == boundaries.len() {
-        return source.len();
-    }
-    let mut bad = boundaries.len();
-    while good + 1 < bad {
-        let middle = (good + bad) / 2;
-        if fits(&source[..boundaries[middle - 1]]) {
-            good = middle;
-        } else {
-            bad = middle;
-        }
-    }
-    boundaries[good.max(1) - 1]
-}
-
-/// Where each word of `source` ends, the spaces after it taken along.
-fn word_ends(source: &str) -> Vec<usize> {
-    let mut ends = Vec::new();
-    let mut spaced = false;
-    for (at, character) in source.char_indices() {
-        if character == ' ' {
-            spaced = true;
-        } else if spaced {
-            ends.push(at);
-            spaced = false;
-        }
-    }
-    ends.push(source.len());
-    ends
+    rustle::wrap_at_spaces(content, &kind.style(), width)
 }
 
 /// The lines of `layout`, the shaped form of a text `length` bytes long, as [`Line`]s.

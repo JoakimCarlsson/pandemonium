@@ -1,9 +1,11 @@
 //! The offer, at the top of a file, to install the language it is written in when the server's machine has not got it.
 
+use crate::kit::sp;
 use pm_protocol::ExtensionInfo;
 use rustle::Modifier;
+use rustle::{Flex, flex_row};
 
-use crate::kit::{Flex, FocusId, Role, Side, Styled, Type, label_with, row};
+use crate::kit::{FocusId, Role, Side, Styled, Type, label_with};
 
 use crate::Button;
 use crate::button::Variant;
@@ -67,13 +69,13 @@ pub(crate) fn offer(state: &WorkspaceState, viewer: &Viewer) {
     };
     let idle = extension.busy.is_none();
     let retry = extension.problem.is_some();
-    row(
+    flex_row(
         Modifier::new()
             .fill(Role::Surface)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(4)
             .pad_y(1),
-        Flex::new().center().gap(3),
+        Flex::new().items_center().gap(sp(3)),
         move || {
             label_with(
                 Modifier::new().grow().clip_to(crate::kit::Radius::None),

@@ -1,5 +1,7 @@
 //! The terminal dock under the session: tabs of shells above the window of the one showing.
 
+use crate::kit::sp;
+use rustle::{Flex, flex_column, flex_row};
 use std::hash::{Hash, Hasher};
 
 use pm_config::TerminalCursor;
@@ -9,8 +11,8 @@ use rustle::{CursorIcon, Modifier};
 use crate::Button;
 use crate::dock::{BottomTab, TerminalTab};
 use crate::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Side, Styled, Tone, Type,
-    column, label, label_with, measure, row,
+    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Side, Styled, Tone, Type, label,
+    label_with, measure,
 };
 use crate::parts::{glyph, line, spacer};
 use crate::sample::Session;
@@ -107,7 +109,7 @@ const SHELL_LIST_WIDTH: f32 = 160.0;
 pub fn terminal(state: &WorkspaceState, session: &Session, width: f32, page: f32) {
     let shown = state.bottom_tab();
     let (errors, warnings) = crate::problems_panel::tally(state);
-    column(
+    flex_column(
         Modifier::new()
             .fill_max_width()
             .height(height(state, page))
@@ -115,12 +117,12 @@ pub fn terminal(state: &WorkspaceState, session: &Session, width: f32, page: f32
             .stroke_side(Side::Top, 1.0, Role::Border),
         Flex::new(),
         || {
-            row(
+            flex_row(
                 Modifier::new()
                     .h(10)
                     .stroke_side(Side::Bottom, 1.0, Role::Border)
                     .pad_x(2),
-                Flex::new().center().gap(1),
+                Flex::new().items_center().gap(sp(1)),
                 || {
                     pane_tab(
                         "Problems",
@@ -169,7 +171,7 @@ pub fn terminal(state: &WorkspaceState, session: &Session, width: f32, page: f32
                         } else {
                             width
                         };
-                        row(Modifier::new().grow(), Flex::new(), || {
+                        flex_row(Modifier::new().grow(), Flex::new(), || {
                             window(tab, room - 2.0 * PADDING_X, Look::of(state));
                             if listed {
                                 shell_list(session);
@@ -192,22 +194,22 @@ fn pane_tab(label: &str, count: Option<usize>, shown: bool, id: FocusId) {
         Looks::new().hover(Role::SurfaceHover)
     }
     .radius(Radius::Lg);
-    row(
+    flex_row(
         Modifier::new()
             .h(8)
             .looks_of(looks, id)
             .cursor(CursorIcon::Pointer)
             .target(id)
             .pad_x(3),
-        Flex::new().center().gap(2),
+        Flex::new().items_center().gap(sp(2)),
         || {
             line(label, 13, 1.4, tone);
             if let Some(count) = count {
-                row(
+                flex_row(
                     Modifier::new()
                         .fill_rounded(Role::Accent, Radius::Lg)
                         .pad_x(1.5),
-                    Flex::new().center(),
+                    Flex::new().items_center(),
                     || line(count.to_string(), 11, 1.3, Role::OnAccent),
                 );
             }
@@ -218,7 +220,7 @@ fn pane_tab(label: &str, count: Option<usize>, shown: bool, id: FocusId) {
 /// Emits the shells of `session` as a list at the right of the dock, the one showing marked, each with the button that ends it.
 #[track_caller]
 fn shell_list(session: &Session) {
-    column(
+    flex_column(
         Modifier::new()
             .width(SHELL_LIST_WIDTH)
             .stroke_side(Side::Left, 1.0, Role::Border)
@@ -244,11 +246,11 @@ fn shell_row(index: usize, tab: &TerminalTab, shown: bool) {
         Looks::new().hover(Role::SurfaceHover)
     };
     let select = FocusId(TERMINAL_TAB_BASE + index as u64);
-    row(
+    flex_row(
         Modifier::new().h(7).looks(looks).pad_side(Side::Right, 1),
-        Flex::new().center().gap(2),
+        Flex::new().items_center().gap(sp(2)),
         || {
-            row(
+            flex_row(
                 Modifier::new()
                     .grow()
                     .h(7)
@@ -256,7 +258,7 @@ fn shell_row(index: usize, tab: &TerminalTab, shown: bool) {
                     .cursor(CursorIcon::Pointer)
                     .target(select)
                     .pad_side(Side::Left, 3),
-                Flex::new().center().gap(2),
+                Flex::new().items_center().gap(sp(2)),
                 || {
                     glyph(IconName::Terminal, 3.5, tone);
                     line(tab.name(), 13, 1.4, tone);
@@ -286,7 +288,7 @@ fn window(tab: &TerminalTab, width: f32, look: Look) {
     )
         .hash(&mut hasher);
     let key = hasher.finish();
-    column(
+    flex_column(
         Modifier::new()
             .grow()
             .fill(Role::Background)
@@ -328,7 +330,7 @@ fn lines(emulator: &Emulator, back: usize, composing: &str, link: Option<&Link>,
     let first = emulator.first_line(back);
     let cursor = emulator.cursor(back);
     let selection = emulator.selection().map(|marked| marked.ordered());
-    column(Modifier::new(), Flex::new(), || {
+    flex_column(Modifier::new(), Flex::new(), || {
         for row in 0..emulator.rows() {
             let at_cursor = cursor
                 .filter(|(line, _)| *line == row)
@@ -394,7 +396,7 @@ fn line_of(
         })
         .max(cursor.map_or(0, |column| column + 1))
         .min(cells.len());
-    row(
+    flex_row(
         Modifier::new().height(look.font * LEADING),
         Flex::new(),
         || {

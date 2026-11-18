@@ -1,11 +1,12 @@
 //! The questions and lists for publishing a branch, choosing what it follows, renaming, deleting, merging and rebasing it.
 
+use crate::kit::sp;
 use pm_field::Field;
+use rustle::flex_row;
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column};
 
-use crate::kit::{
-    Flex, FocusId, Interactive, Role, Side, Styled, Type, column, label, row as flex_row,
-};
+use crate::kit::{FocusId, Interactive, Role, Side, Styled, Type, label};
 
 use crate::button::Variant;
 use crate::git_prompts::{PROMPT_CANCEL, PROMPT_CONFIRM, PROMPT_INSIDE, PROMPT_OUTSIDE, Prompt};
@@ -371,7 +372,7 @@ fn tick(label: &str, checked: bool) {
             .cursor(CursorIcon::Pointer)
             .target(BRANCH_TASK_REMOTE)
             .pad_x(2),
-        Flex::new().center().gap(2),
+        Flex::new().items_center().gap(sp(2)),
         || {
             Checkbox::new(checked, BRANCH_TASK_REMOTE).build();
             line(label, 13, 1.4, Role::Text);
@@ -429,7 +430,7 @@ pub fn branch_prompt(state: &WorkspaceState, task: BranchTask) {
         .width(WIDTH)
         .build_with(|| {
             let mut confirm: Option<(&str, Variant)> = None;
-            column(Modifier::new().pad(5), Flex::new().gap(3), || {
+            flex_column(Modifier::new().pad(5), Flex::new().gap(sp(3)), || {
                 title_line(task.title(), 15);
                 if loading {
                     line("Reading the remotes…", 13, 1.4, Role::Subtle);
@@ -521,7 +522,7 @@ pub fn branch_prompt(state: &WorkspaceState, task: BranchTask) {
             });
             flex_row(
                 Modifier::new().pad_x(5).pad_side(Side::Bottom, 5),
-                Flex::new().center().gap(2),
+                Flex::new().items_center().gap(sp(2)),
                 || {
                     spacer();
                     button("Cancel", PROMPT_CANCEL, Variant::Ghost);

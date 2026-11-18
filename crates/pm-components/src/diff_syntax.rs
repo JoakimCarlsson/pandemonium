@@ -9,7 +9,8 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use pm_treesitter::{Grammar, Syntax, registry};
 
-use crate::kit::{Mark, Paint, Role, Tone};
+use crate::kit::{Role, Tone};
+use crate::marked::{Mark, Paint};
 
 use crate::sample::{DiffLine, Kind};
 use crate::viewer::highlight_marks;

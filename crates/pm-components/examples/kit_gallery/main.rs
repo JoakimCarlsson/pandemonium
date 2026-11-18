@@ -4,15 +4,17 @@
 //!
 //! Run it with `CARGO_TARGET_DIR=build cargo run -p pm-components --example kit_gallery`.
 
+use pm_components::kit::sp;
+use rustle::{Flex, flex_column, flex_row, flex_wrap};
 use std::sync::Arc;
 
 use pm_components::kit::snapshot::{Shot, lay_out, write_png};
 use pm_components::kit::{
-    Appearance, CaretLook, CaretShape, Flex, FocusId, IconName, Mark, Paint, Picture, Placement,
-    Radius, Role, Scroll, Side, Styled, TextPoint, TextSelection, Tone, Tooltip, Type, anchored,
-    block, column, gap_box, icon, label, label_with, layer, marked_field_line, marked_line,
-    paragraph, picture, rings, row, scroll_area, selectable, spinner, wrapping,
+    Appearance, FocusId, IconName, Picture, Placement, Radius, Role, Scroll, Side, Styled,
+    TextPoint, TextSelection, Tone, Tooltip, Type, anchored, color, icon, label, label_with,
+    paragraph, picture, scroll_area, selectable, spinner,
 };
+use pm_components::marked::{CaretLook, CaretShape, Mark, Paint, marked_field_line, marked_line};
 use pm_field::{Edit, Field, Motion};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
 
@@ -178,12 +180,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 /// A page on the background with a caption, holding `content` in a column.
 fn page(content: impl FnOnce()) {
-    column(
+    flex_column(
         Modifier::new()
             .fill_max_size()
             .fill(Role::Background)
             .pad(4),
-        Flex::new().gap(3),
+        Flex::new().gap(sp(3)),
         content,
     );
 }
@@ -197,13 +199,13 @@ fn caption(words: &str) {
 fn layout_shot() {
     page(|| {
         caption("row: items_center, gap(2), a flex_1 label cut short, flex_none badge");
-        row(
+        flex_row(
             Modifier::new()
                 .fill_max_width()
                 .h(9)
                 .fill_rounded(Role::Surface, Radius::Md)
                 .pad_x(2),
-            Flex::new().center().gap(2),
+            Flex::new().items_center().gap(sp(2)),
             || {
                 icon(IconName::Folder, 4.0, Role::Muted);
                 label_with(
@@ -217,15 +219,15 @@ fn layout_shot() {
         caption(
             "row: justify_between with gap; default stretch makes the boxes as tall as the tallest",
         );
-        row(
+        flex_row(
             Modifier::new()
                 .fill_max_width()
                 .stroke(Role::Border, Radius::Md)
                 .pad(2),
-            Flex::new().between().gap(2),
+            Flex::new().justify_between().gap(sp(2)),
             || {
                 for (index, height) in [6.0, 10.0, 8.0].into_iter().enumerate() {
-                    column(
+                    flex_column(
                         Modifier::new()
                             .w(16)
                             .fill_rounded(Role::SurfaceHover, Radius::Sm)
@@ -240,60 +242,70 @@ fn layout_shot() {
             },
         );
         caption("column: a block stretches children across; items_start, items_center, items_end");
-        row(Modifier::new().fill_max_width(), Flex::new().gap(3), || {
-            for (name, flex) in [
-                ("stretch", Flex::new().gap(1)),
-                ("start", Flex::new().gap(1).start()),
-                ("center", Flex::new().gap(1).center()),
-                ("end", Flex::new().gap(1).end()),
-            ] {
-                column(
-                    Modifier::new()
-                        .grow()
-                        .stroke(Role::Border, Radius::Md)
-                        .pad(2),
-                    flex,
-                    || {
-                        label(name, Type::new(12).ratio(1.4).tone(Role::Muted));
-                        block(
-                            Modifier::new()
-                                .fill_rounded(Role::SurfaceSelected, Radius::Sm)
-                                .pad_x(2),
-                            || label("child", Type::new(12).ratio(1.4)),
-                        );
-                    },
-                );
-            }
-        });
+        flex_row(
+            Modifier::new().fill_max_width(),
+            Flex::new().gap(sp(3)),
+            || {
+                for (name, flex) in [
+                    ("stretch", Flex::new().gap(sp(1))),
+                    ("start", Flex::new().gap(sp(1)).items_start()),
+                    ("center", Flex::new().gap(sp(1)).items_center()),
+                    ("end", Flex::new().gap(sp(1)).items_end()),
+                ] {
+                    flex_column(
+                        Modifier::new()
+                            .grow()
+                            .stroke(Role::Border, Radius::Md)
+                            .pad(2),
+                        flex,
+                        || {
+                            label(name, Type::new(12).ratio(1.4).tone(Role::Muted));
+                            flex_column(
+                                Modifier::new()
+                                    .fill_rounded(Role::SurfaceSelected, Radius::Sm)
+                                    .pad_x(2),
+                                Flex::new(),
+                                || label("child", Type::new(12).ratio(1.4)),
+                            );
+                        },
+                    );
+                }
+            },
+        );
         caption("flex_wrap: chips wrap onto further lines");
-        wrapping(Modifier::new().fill_max_width(), 1.5, || {
-            for word in [
-                "rustle",
-                "compose",
-                "flex",
-                "gap",
-                "stretch",
-                "truncate",
-                "scroll",
-                "popover",
-                "marks",
-                "caret",
-                "selection",
-                "ime",
-                "tooltip",
-                "spinner",
-            ] {
-                block(
-                    Modifier::new()
-                        .fill_rounded(Role::SurfaceHover, Radius::Full)
-                        .pad_x(2.5)
-                        .pad_y(0.5),
-                    || label(word, Type::new(12).ratio(1.4).tone(Role::Muted)),
-                );
-            }
-        });
+        flex_wrap(
+            Modifier::new().fill_max_width(),
+            Flex::new().gap(sp(1.5)),
+            || {
+                for word in [
+                    "rustle",
+                    "compose",
+                    "flex",
+                    "gap",
+                    "stretch",
+                    "truncate",
+                    "scroll",
+                    "popover",
+                    "marks",
+                    "caret",
+                    "selection",
+                    "ime",
+                    "tooltip",
+                    "spinner",
+                ] {
+                    flex_column(
+                        Modifier::new()
+                            .fill_rounded(Role::SurfaceHover, Radius::Full)
+                            .pad_x(2.5)
+                            .pad_y(0.5),
+                        Flex::new(),
+                        || label(word, Type::new(12).ratio(1.4).tone(Role::Muted)),
+                    );
+                }
+            },
+        );
         caption("layer: absolute children placed at the corners of a relative box");
-        layer(
+        rustle::stack_with(
             Modifier::new()
                 .fill_max_width()
                 .height(70.0)
@@ -305,21 +317,23 @@ fn layout_shot() {
                     (BoxAlignment::Center, "centre"),
                     (BoxAlignment::BottomEnd, "bottom right"),
                 ] {
-                    block(Modifier::new().placed(alignment).pad(1.5), || {
-                        label(words, Type::new(12).ratio(1.4).tone(Role::Muted))
-                    });
+                    flex_column(
+                        Modifier::new().placed(alignment).pad(1.5),
+                        Flex::new(),
+                        || label(words, Type::new(12).ratio(1.4).tone(Role::Muted)),
+                    );
                 }
             },
         );
         caption("cover: an absolute inset-0 tint sized by its sibling, not by the page");
-        layer(Modifier::new(), || {
-            block(Modifier::new().pad_x(3).pad_y(1.5), || {
+        rustle::stack_with(Modifier::new(), || {
+            flex_column(Modifier::new().pad_x(3).pad_y(1.5), Flex::new(), || {
                 label(
                     "content that sizes the layer",
                     Type::new(12).ratio(1.4).tone(Role::Text),
                 )
             });
-            gap_box(
+            rustle::spacer(
                 Modifier::new()
                     .cover()
                     .fill_rounded(Tone::from(Role::Accent).alpha(0.25), Radius::Md),
@@ -339,28 +353,36 @@ fn text_shot() {
             (16, 1.5),
             (22, 1.3),
         ] {
-            row(Modifier::new(), Flex::new().gap(4).center(), || {
-                label(format!("{size}px"), Type::code(12).tone(Role::Subtle));
-                label("The quick brown fox jumps", Type::new(size).ratio(ratio));
-                label(
-                    "medium",
-                    Type::new(size).ratio(ratio).medium().tone(Role::Muted),
-                );
-                label(
-                    "let mono = 1;",
-                    Type::code(size).ratio(ratio).tone(Role::SyntaxKeyword),
-                );
-            });
+            flex_row(
+                Modifier::new(),
+                Flex::new().gap(sp(4)).items_center(),
+                || {
+                    label(format!("{size}px"), Type::code(12).tone(Role::Subtle));
+                    label("The quick brown fox jumps", Type::new(size).ratio(ratio));
+                    label(
+                        "medium",
+                        Type::new(size).ratio(ratio).medium().tone(Role::Muted),
+                    );
+                    label(
+                        "let mono = 1;",
+                        Type::code(size).ratio(ratio).tone(Role::SyntaxKeyword),
+                    );
+                },
+            );
         }
-        row(Modifier::new(), Flex::new().gap(4).center(), || {
-            label("underline", Type::new(13).underline());
-            label("struck", Type::new(13).strike().tone(Role::Muted));
-            label("italic", Type::new(13).italic());
-            label("semibold", Type::new(13).semibold());
-            label("danger", Type::new(13).tone(Role::Danger));
-            label("success", Type::new(13).tone(Role::Success));
-            label("warning", Type::new(13).tone(Role::Warning));
-        });
+        flex_row(
+            Modifier::new(),
+            Flex::new().gap(sp(4)).items_center(),
+            || {
+                label("underline", Type::new(13).underline());
+                label("struck", Type::new(13).strike().tone(Role::Muted));
+                label("italic", Type::new(13).italic());
+                label("semibold", Type::new(13).semibold());
+                label("danger", Type::new(13).tone(Role::Danger));
+                label("success", Type::new(13).tone(Role::Success));
+                label("warning", Type::new(13).tone(Role::Warning));
+            },
+        );
         paragraph(
             Modifier::new().width(420.0),
             "A paragraph wraps at the width its box gives it, between words where it can. This replaces the shaper wrapping each line and one line node per wrapped line, which is what the old paragraph helper built.",
@@ -372,23 +394,31 @@ fn text_shot() {
 /// Every named icon, and the same icons in the tones views use.
 fn icons_shot() {
     page(|| {
-        wrapping(Modifier::new().fill_max_width(), 3, || {
-            for name in ALL_ICONS {
-                icon(name, 4.0, Role::Text);
-            }
-        });
-        row(Modifier::new(), Flex::new().gap(3).center(), || {
-            for tone in [
-                Role::Muted,
-                Role::Subtle,
-                Role::Accent,
-                Role::Danger,
-                Role::Success,
-            ] {
-                icon(IconName::GitFork, 5.0, tone);
-                icon(IconName::Bug, 5.0, tone);
-            }
-        });
+        flex_wrap(
+            Modifier::new().fill_max_width(),
+            Flex::new().gap(sp(3)),
+            || {
+                for name in ALL_ICONS {
+                    icon(name, 4.0, Role::Text);
+                }
+            },
+        );
+        flex_row(
+            Modifier::new(),
+            Flex::new().gap(sp(3)).items_center(),
+            || {
+                for tone in [
+                    Role::Muted,
+                    Role::Subtle,
+                    Role::Accent,
+                    Role::Danger,
+                    Role::Success,
+                ] {
+                    icon(IconName::GitFork, 5.0, tone);
+                    icon(IconName::Bug, 5.0, tone);
+                }
+            },
+        );
     });
 }
 
@@ -396,82 +426,98 @@ fn icons_shot() {
 fn buttons_shot() {
     page(|| {
         caption("variants; the second button is under the pointer, the outline one holds focus");
-        row(Modifier::new(), Flex::new().gap(2).center(), || {
-            let variants = [
-                ("Default", ported::Variant::Default),
-                ("Secondary", ported::Variant::Secondary),
-                ("Destructive", ported::Variant::Destructive),
-                ("Outline", ported::Variant::Outline),
-                ("Ghost", ported::Variant::Ghost),
-                ("Link", ported::Variant::Link),
-                ("Field", ported::Variant::Field),
-            ];
-            for (index, (name, variant)) in variants.into_iter().enumerate() {
-                Button::new(name, FocusId(10 + index as u64))
-                    .variant(variant)
-                    .build();
-            }
-        });
+        flex_row(
+            Modifier::new(),
+            Flex::new().gap(sp(2)).items_center(),
+            || {
+                let variants = [
+                    ("Default", ported::Variant::Default),
+                    ("Secondary", ported::Variant::Secondary),
+                    ("Destructive", ported::Variant::Destructive),
+                    ("Outline", ported::Variant::Outline),
+                    ("Ghost", ported::Variant::Ghost),
+                    ("Link", ported::Variant::Link),
+                    ("Field", ported::Variant::Field),
+                ];
+                for (index, (name, variant)) in variants.into_iter().enumerate() {
+                    Button::new(name, FocusId(10 + index as u64))
+                        .variant(variant)
+                        .build();
+                }
+            },
+        );
         caption("hovered (pointer on the left button)");
-        row(Modifier::new(), Flex::new().gap(2).center(), || {
-            Button::new("Hover me", FocusId(30))
-                .variant(ported::Variant::Secondary)
-                .build();
-            Button::new("Ghost", FocusId(31))
-                .variant(ported::Variant::Ghost)
-                .build();
-        });
-        caption("sizes Xs, Sm, Md, Lg");
-        row(Modifier::new(), Flex::new().gap(2).center(), || {
-            for (index, size) in [Size::Xs, Size::Sm, Size::Md, Size::Lg]
-                .into_iter()
-                .enumerate()
-            {
-                Button::new("Open Release Page", FocusId(40 + index as u64))
-                    .variant(ported::Variant::Outline)
-                    .size(size)
+        flex_row(
+            Modifier::new(),
+            Flex::new().gap(sp(2)).items_center(),
+            || {
+                Button::new("Hover me", FocusId(30))
+                    .variant(ported::Variant::Secondary)
                     .build();
-            }
-        });
+                Button::new("Ghost", FocusId(31))
+                    .variant(ported::Variant::Ghost)
+                    .build();
+            },
+        );
+        caption("sizes Xs, Sm, Md, Lg");
+        flex_row(
+            Modifier::new(),
+            Flex::new().gap(sp(2)).items_center(),
+            || {
+                for (index, size) in [Size::Xs, Size::Sm, Size::Md, Size::Lg]
+                    .into_iter()
+                    .enumerate()
+                {
+                    Button::new("Open Release Page", FocusId(40 + index as u64))
+                        .variant(ported::Variant::Outline)
+                        .size(size)
+                        .build();
+                }
+            },
+        );
         caption("icons, trailing icon, round, selected, disabled, spinning, monospace");
-        row(Modifier::new(), Flex::new().gap(2).center(), || {
-            Button::icon(IconName::Plus, FocusId(50)).build();
-            Button::icon(IconName::Settings, FocusId(51))
-                .tone(Role::Text)
-                .build();
-            Button::new("New session", FocusId(52))
-                .with_icon(IconName::Plus)
-                .variant(ported::Variant::Ghost)
-                .build();
-            Button::new("Auto", FocusId(53))
-                .trailing_icon(IconName::ChevronDown)
-                .variant(ported::Variant::Ghost)
-                .size(Size::Sm)
-                .build();
-            Button::icon(IconName::ArrowUp, FocusId(54))
-                .variant(ported::Variant::Default)
-                .round()
-                .build();
-            Button::new("Picked", FocusId(55))
-                .variant(ported::Variant::Ghost)
-                .selected(true)
-                .build();
-            Button::new("Disabled", FocusId(56)).disabled(true).build();
-            Button::new("Working", FocusId(57))
-                .with_icon(IconName::Loading)
-                .spinning(true)
-                .variant(ported::Variant::Secondary)
-                .build();
-            Button::new("task/227", FocusId(58))
-                .monospace()
-                .variant(ported::Variant::Ghost)
-                .size(Size::Sm)
-                .build();
-        });
+        flex_row(
+            Modifier::new(),
+            Flex::new().gap(sp(2)).items_center(),
+            || {
+                Button::icon(IconName::Plus, FocusId(50)).build();
+                Button::icon(IconName::Settings, FocusId(51))
+                    .tone(Role::Text)
+                    .build();
+                Button::new("New session", FocusId(52))
+                    .with_icon(IconName::Plus)
+                    .variant(ported::Variant::Ghost)
+                    .build();
+                Button::new("Auto", FocusId(53))
+                    .trailing_icon(IconName::ChevronDown)
+                    .variant(ported::Variant::Ghost)
+                    .size(Size::Sm)
+                    .build();
+                Button::icon(IconName::ArrowUp, FocusId(54))
+                    .variant(ported::Variant::Default)
+                    .round()
+                    .build();
+                Button::new("Picked", FocusId(55))
+                    .variant(ported::Variant::Ghost)
+                    .selected(true)
+                    .build();
+                Button::new("Disabled", FocusId(56)).disabled(true).build();
+                Button::new("Working", FocusId(57))
+                    .with_icon(IconName::Loading)
+                    .spinning(true)
+                    .variant(ported::Variant::Secondary)
+                    .build();
+                Button::new("task/227", FocusId(58))
+                    .monospace()
+                    .variant(ported::Variant::Ghost)
+                    .size(Size::Sm)
+                    .build();
+            },
+        );
         caption("fixed width, and fill: the label is cut short at the edge");
-        row(
+        flex_row(
             Modifier::new().width(360.0),
-            Flex::new().gap(2).center(),
+            Flex::new().gap(sp(2)).items_center(),
             || {
                 Button::new("Fixed", FocusId(61))
                     .variant(ported::Variant::Outline)
@@ -494,21 +540,25 @@ fn buttons_shot() {
 fn controls_shot() {
     page(|| {
         caption("check boxes: ticked, mixed, clear; switches on and off");
-        row(Modifier::new(), Flex::new().gap(4).center(), || {
-            Checkbox::new(true, FocusId(100)).build();
-            Checkbox::new(false, FocusId(101)).mixed(true).build();
-            Checkbox::new(false, FocusId(102)).build();
-            Checkbox::new(true, FocusId(103))
-                .variant(ported::CheckVariant::Switch)
-                .build();
-            Checkbox::new(false, FocusId(104))
-                .variant(ported::CheckVariant::Switch)
-                .build();
-            ported::switch(true, Some(FocusId(105)));
-            ported::switch(false, Some(FocusId(106)));
-        });
+        flex_row(
+            Modifier::new(),
+            Flex::new().gap(sp(4)).items_center(),
+            || {
+                Checkbox::new(true, FocusId(100)).build();
+                Checkbox::new(false, FocusId(101)).mixed(true).build();
+                Checkbox::new(false, FocusId(102)).build();
+                Checkbox::new(true, FocusId(103))
+                    .variant(ported::CheckVariant::Switch)
+                    .build();
+                Checkbox::new(false, FocusId(104))
+                    .variant(ported::CheckVariant::Switch)
+                    .build();
+                ported::switch(true, Some(FocusId(105)));
+                ported::switch(false, Some(FocusId(106)));
+            },
+        );
         caption("tiles: selected, hovered, plain");
-        column(Modifier::new().width(240.0), Flex::new().gap(1), || {
+        flex_column(Modifier::new().width(240.0), Flex::new().gap(sp(1)), || {
             for (index, (name, glyph)) in [
                 ("General", IconName::Settings),
                 ("Appearance", IconName::Pencil),
@@ -546,9 +596,9 @@ fn floating_shot() {
         caption(
             "a popover above a trigger at the right edge is moved left to stay inside the window",
         );
-        row(
+        flex_row(
             Modifier::new().fill_max_width().height(180.0),
-            Flex::new().trailing().end(),
+            Flex::new().justify_end().items_end(),
             || {
                 anchored(
                     Modifier::new(),
@@ -581,12 +631,16 @@ fn floating_shot() {
             },
         );
         caption("a tooltip shows over the button under the pointer");
-        row(Modifier::new(), Flex::new().gap(2).center(), || {
-            Button::icon(IconName::Refresh, FocusId(210))
-                .modifier(Modifier::new().tooltip("Refresh the list"))
-                .build();
-            Button::icon(IconName::Trash, FocusId(211)).build();
-        });
+        flex_row(
+            Modifier::new(),
+            Flex::new().gap(sp(2)).items_center(),
+            || {
+                Button::icon(IconName::Refresh, FocusId(210))
+                    .modifier(Modifier::new().tooltip("Refresh the list"))
+                    .build();
+                Button::icon(IconName::Trash, FocusId(211)).build();
+            },
+        );
         Menu::new(420.0, 250.0)
             .item("Cut", Some("Ctrl+X"), FocusId(220), false)
             .item("Copy", Some("Ctrl+C"), FocusId(221), false)
@@ -622,9 +676,9 @@ fn inputs_shot() {
         caption(
             "default (focused: composing with an input method, caret at the end); a disabled ghost input beside",
         );
-        row(
+        flex_row(
             Modifier::new().fill_max_width(),
-            Flex::new().gap(3).center(),
+            Flex::new().gap(sp(3)).items_center(),
             || {
                 Input::new(&typed, FocusId(300))
                     .modifier(Modifier::new().grow())
@@ -692,7 +746,7 @@ fn multiline_shot() {
 fn scroll_shot() {
     page(|| {
         caption("scroll_area at offset 140 of 40 rows; the pointer is on the bar, so it is wide");
-        row(Modifier::new(), Flex::new().gap(4), || {
+        flex_row(Modifier::new(), Flex::new().gap(sp(4)), || {
             scroll_area(
                 Modifier::new()
                     .width(340.0)
@@ -700,7 +754,7 @@ fn scroll_shot() {
                     .stroke(Role::Border, Radius::Md),
                 Scroll::from_start(FocusId(400), 140.0),
                 || {
-                    column(Modifier::new().fill_max_width().pad(1), Flex::new(), || {
+                    flex_column(Modifier::new().fill_max_width().pad(1), Flex::new(), || {
                         for index in 0..40 {
                             Tile::new(FocusId(410 + index))
                                 .height(8.0)
@@ -725,9 +779,9 @@ fn scroll_shot() {
                     .stroke(Role::Border, Radius::Md),
                 Scroll::from_end(FocusId(401), 0.0),
                 || {
-                    column(
+                    flex_column(
                         Modifier::new().fill_max_width().pad(3),
-                        Flex::new().gap(2),
+                        Flex::new().gap(sp(2)),
                         || {
                             for index in 0..12 {
                                 paragraph(
@@ -800,7 +854,7 @@ fn code_shot() {
     ];
     page(move || {
         caption("marked lines: ink, fill, wave, underline, selected, caret, guide, drop");
-        column(
+        flex_column(
             Modifier::new()
                 .fill_max_width()
                 .fill_rounded(Role::Surface, Radius::Md)
@@ -811,29 +865,33 @@ fn code_shot() {
                 for (number, (content, marks)) in lines.iter().enumerate() {
                     let begins = start;
                     start += content.len() + 1;
-                    row(Modifier::new(), Flex::new().center().gap(4), || {
-                        label_with(
-                            Modifier::new().width(28.0),
-                            format!("{:>3}", number + 1),
-                            Type::code(13).ratio(1.5).tone(Role::Subtle),
-                        );
-                        marked_field_line(
-                            Modifier::new(),
-                            FocusId(500),
-                            begins,
-                            content,
-                            Type::code(13).ratio(1.5),
-                            marks.clone(),
-                            CaretLook::default(),
-                        );
-                    });
+                    flex_row(
+                        Modifier::new(),
+                        Flex::new().items_center().gap(sp(4)),
+                        || {
+                            label_with(
+                                Modifier::new().width(28.0),
+                                format!("{:>3}", number + 1),
+                                Type::code(13).ratio(1.5).tone(Role::Subtle),
+                            );
+                            marked_field_line(
+                                Modifier::new(),
+                                FocusId(500),
+                                begins,
+                                content,
+                                Type::code(13).ratio(1.5),
+                                marks.clone(),
+                                CaretLook::default(),
+                            );
+                        },
+                    );
                 }
             },
         );
         caption(
             "terminal grid: one marked line per row, cells coloured with ink and fill, a block caret",
         );
-        column(
+        flex_column(
             Modifier::new()
                 .fill_max_width()
                 .fill_rounded(Role::Background, Radius::Md)
@@ -902,33 +960,35 @@ fn misc_shot() {
     };
     page(move || {
         caption("picture (cropped into a rounded box), spinner, rings, a ring with two fills");
-        row(Modifier::new(), Flex::new().gap(6).center(), || {
-            block(
-                Modifier::new().size(160.0, 90.0).clip_to(Radius::Lg),
-                || picture(Modifier::new().fill_max_size(), &still),
-            );
-            spinner(6.0, Role::Muted);
-            spinner(4.0, Role::Accent);
-            pm_components::kit::arc(
-                Modifier::new().size(40.0, 40.0),
-                0.65,
-                4.0,
-                Role::Accent,
-                Role::Border,
-            );
-            rings(
-                Modifier::new().size(56.0, 56.0),
-                5.0,
-                2.0,
-                Role::Border,
-                &[
-                    (0.8, Tone::from(Role::Success)),
-                    (0.4, Tone::from(Role::Warning)),
-                ],
-            );
-        });
+        flex_row(
+            Modifier::new(),
+            Flex::new().gap(sp(6)).items_center(),
+            || {
+                flex_column(
+                    Modifier::new().size(160.0, 90.0).clip_to(Radius::Lg),
+                    Flex::new(),
+                    || picture(Modifier::new().fill_max_size(), &still),
+                );
+                spinner(6.0, Role::Muted);
+                spinner(4.0, Role::Accent);
+                rustle::progress_rings(
+                    Modifier::new().size(40.0, 40.0),
+                    4.0,
+                    0.0,
+                    color(Role::Border),
+                    &[(0.65, color(Role::Accent))],
+                );
+                rustle::progress_rings(
+                    Modifier::new().size(56.0, 56.0),
+                    5.0,
+                    2.0,
+                    color(Role::Border),
+                    &[(0.8, color(Role::Success)), (0.4, color(Role::Warning))],
+                );
+            },
+        );
         caption("selectable text: one selection running from the first box into the second");
-        column(Modifier::new(), Flex::new().gap(1), || {
+        flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
             for line in SELECTABLE {
                 selectable(
                     Modifier::new(),
@@ -944,46 +1004,54 @@ fn misc_shot() {
 /// The settings window's general page, as `settings.png` of the old snapshots shows it.
 fn settings_shot() {
     let find = Field::new("");
-    column(
+    flex_column(
         Modifier::new().fill_max_size().fill(Role::Surface),
         Flex::new(),
         move || {
-            row(
+            flex_row(
                 Modifier::new().fill_max_width().height(40.0).stroke_side(
                     Side::Bottom,
                     1.0,
                     Role::Border,
                 ),
-                Flex::new().center().trailing(),
+                Flex::new().items_center().justify_end(),
                 || {
-                    block(Modifier::new().pad_x(4).cursor(CursorIcon::Pointer), || {
-                        icon(IconName::Close, 4.0, Role::Muted)
-                    });
+                    flex_column(
+                        Modifier::new().pad_x(4).cursor(CursorIcon::Pointer),
+                        Flex::new(),
+                        || icon(IconName::Close, 4.0, Role::Muted),
+                    );
                 },
             );
-            row(
+            flex_row(
                 Modifier::new().fill_max_width().weight(1.0),
                 Flex::new(),
                 || {
-                    column(
+                    flex_column(
                         Modifier::new()
                             .width(220.0)
                             .fill_max_height()
                             .stroke_side(Side::Right, 1.0, Role::Border)
                             .pad(3),
-                        Flex::new().gap(1),
+                        Flex::new().gap(sp(1)),
                         || {
-                            row(Modifier::new().h(9).pad_x(2), Flex::new().center(), || {
-                                label("Settings", Type::new(13).ratio(1.4).tone(Role::Subtle))
-                            });
-                            block(Modifier::new().pad_side(Side::Bottom, 2), || {
-                                Input::new(&find, FocusId(600))
-                                    .variant(InputVariant::Bordered)
-                                    .leading_icon(IconName::Search)
-                                    .size(Size::Sm)
-                                    .placeholder("Search settings")
-                                    .build();
-                            });
+                            flex_row(
+                                Modifier::new().h(9).pad_x(2),
+                                Flex::new().items_center(),
+                                || label("Settings", Type::new(13).ratio(1.4).tone(Role::Subtle)),
+                            );
+                            flex_column(
+                                Modifier::new().pad_side(Side::Bottom, 2),
+                                Flex::new(),
+                                || {
+                                    Input::new(&find, FocusId(600))
+                                        .variant(InputVariant::Bordered)
+                                        .leading_icon(IconName::Search)
+                                        .size(Size::Sm)
+                                        .placeholder("Search settings")
+                                        .build();
+                                },
+                            );
                             for (index, (name, glyph)) in [
                                 ("General", IconName::Settings),
                                 ("Appearance", IconName::Pencil),
@@ -1014,22 +1082,23 @@ fn settings_shot() {
                             }
                         },
                     );
-                    column(
+                    flex_column(
                         Modifier::new()
                             .grow()
                             .fill_max_height()
                             .fill(Role::Background),
                         Flex::new(),
                         || {
-                            block(
+                            flex_column(
                                 Modifier::new()
                                     .pad_side(Side::Left, 8)
                                     .pad_side(Side::Right, 8)
                                     .pad_side(Side::Top, 6)
                                     .pad_side(Side::Bottom, 4),
+                                Flex::new(),
                                 || label("General", Type::new(22).ratio(1.3).medium()),
                             );
-                            column(
+                            flex_column(
                                 Modifier::new().fill_max_width().pad_x(8),
                                 Flex::new(),
                                 || {
@@ -1072,9 +1141,9 @@ fn settings_shot() {
                                             });
                                         },
                                     );
-                                    row(
+                                    flex_row(
                                         Modifier::new().fill_max_width().pad_y(4),
-                                        Flex::new().center().between().gap(6),
+                                        Flex::new().items_center().justify_between().gap(sp(6)),
                                         || {
                                             label(
                                                 "Pandemonium 0.14.0 is available; this is 0.15.0-rc.4.",

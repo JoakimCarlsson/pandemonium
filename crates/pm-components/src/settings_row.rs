@@ -1,14 +1,15 @@
 //! A row of the settings window: what a setting is called and does beside, or above, its one control, and the button that puts it back as it comes once it was changed; with the controls a row is made of.
 
+use crate::kit::sp;
 use pm_field::Field;
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::Button;
 use crate::button::Variant;
 use crate::input::Input;
 use crate::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Side, Styled, Type, block,
-    column, label, row,
+    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Side, Styled, Type, label,
 };
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::settings_ids::PICKS;
@@ -58,11 +59,11 @@ pub fn switch(on: bool, id: Option<FocusId>) {
         modifier = modifier.cursor(CursorIcon::Pointer).target(id);
     }
     let flex = if on {
-        Flex::new().center().trailing()
+        Flex::new().items_center().justify_end()
     } else {
-        Flex::new().center()
+        Flex::new().items_center()
     };
-    row(modifier.pad(0.5), flex, || {
+    flex_row(modifier.pad(0.5), flex, || {
         rustle::spacer(
             Modifier::new()
                 .square(4)
@@ -86,7 +87,7 @@ pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> Option<Fo
         .h(8)
         .stroke(Role::Border, Radius::Md)
         .pad_x(0.5);
-    row(modifier, Flex::new().center().gap(0.5), || {
+    flex_row(modifier, Flex::new().items_center().gap(sp(0.5)), || {
         for (option, name) in names.iter().enumerate() {
             let Some(id) = id_of(option) else {
                 continue;
@@ -97,7 +98,7 @@ pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> Option<Fo
                 .height(6.5)
                 .radius(Radius::Sm)
                 .inner(Modifier::new().pad_x(2.5))
-                .flex(Flex::new().center().middle())
+                .flex(Flex::new().items_center().justify_center())
                 .build_with(|| {
                     line(*name, 12, 1.4, if on { Role::Text } else { Role::Muted });
                 });
@@ -117,20 +118,24 @@ pub fn number(shown: String, smaller: FocusId, bigger: FocusId) {
             .tone(Role::Text)
             .build();
     };
-    row(
+    flex_row(
         Modifier::new()
             .h(8)
             .stroke(Role::Border, Radius::Md)
             .pad_x(0.5),
-        Flex::new().center().gap(1),
+        Flex::new().items_center().gap(sp(1)),
         || {
             button(IconName::Minus, smaller);
-            row(Modifier::new().width(64.0), Flex::new().middle(), || {
-                label(
-                    shown,
-                    Type::new(12).ratio(1.4).tone(Role::Text).truncate().mono(),
-                );
-            });
+            flex_row(
+                Modifier::new().width(64.0),
+                Flex::new().justify_center(),
+                || {
+                    label(
+                        shown,
+                        Type::new(12).ratio(1.4).tone(Role::Text).truncate().mono(),
+                    );
+                },
+            );
             button(IconName::Plus, bigger);
         },
     );
@@ -168,15 +173,15 @@ pub fn picker_shown(options: &[String], filter: &Field) -> Vec<usize> {
 pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&Field, FocusId)) {
     let shown = picker_shown(options, filter.0);
     let more = shown.len().saturating_sub(MOST_LISTED);
-    column(
+    flex_column(
         Modifier::new()
             .fill_rounded(Role::Surface, Radius::Md)
             .stroke(Role::Border, Radius::Md)
             .pad(1),
-        Flex::new().gap(0.5),
+        Flex::new().gap(sp(0.5)),
         || {
             if options.len() >= FILTERED_FROM {
-                block(Modifier::new().pad(1), || {
+                flex_column(Modifier::new().pad(1), Flex::new(), || {
                     Input::search(filter.0, filter.1)
                         .size(Size::Sm)
                         .placeholder("Type to narrow the list")
@@ -194,7 +199,7 @@ pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&Field, F
                     .gap(2.0)
                     .radius(Radius::Sm)
                     .inner(Modifier::new().pad_x(2))
-                    .flex(Flex::new().center().between())
+                    .flex(Flex::new().items_center().justify_between())
                     .build_with(|| {
                         clipped(name.as_str(), 12, if on { Role::Text } else { Role::Muted });
                         if on {
@@ -203,14 +208,18 @@ pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&Field, F
                     });
             }
             if more > 0 {
-                row(Modifier::new().h(6).pad_x(2), Flex::new().center(), || {
-                    line(
-                        format!("{more} more; type to narrow"),
-                        11,
-                        1.4,
-                        Role::Subtle,
-                    );
-                });
+                flex_row(
+                    Modifier::new().h(6).pad_x(2),
+                    Flex::new().items_center(),
+                    || {
+                        line(
+                            format!("{more} more; type to narrow"),
+                            11,
+                            1.4,
+                            Role::Subtle,
+                        );
+                    },
+                );
             }
         },
     );
@@ -234,14 +243,14 @@ pub fn list(
     add: (FocusId, &str),
     placeholder: &str,
 ) {
-    column(Modifier::new(), Flex::new().gap(1), || {
+    flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
         for (place, text) in lines.iter().enumerate() {
-            row(
+            flex_row(
                 Modifier::new()
                     .h(6)
                     .looks(Looks::new().hover(Role::SurfaceHover).radius(Radius::Sm))
                     .pad_x(2),
-                Flex::new().center().between().gap(2),
+                Flex::new().items_center().justify_between().gap(sp(2)),
                 || {
                     label(
                         text.as_str(),
@@ -253,11 +262,11 @@ pub fn list(
                 },
             );
         }
-        row(
+        flex_row(
             Modifier::new().pad_side(Side::Top, 1),
-            Flex::new().center().gap(2),
+            Flex::new().items_center().gap(sp(2)),
             || {
-                block(Modifier::new().width(TEXT_WIDTH), || {
+                flex_column(Modifier::new().width(TEXT_WIDTH), Flex::new(), || {
                     text_box(field.0, field.1, placeholder);
                 });
                 Button::new(add.1.to_owned(), add.0).size(Size::Sm).build();
@@ -349,47 +358,59 @@ impl<'a> SettingRow<'a> {
         let control = self.control;
         let below = self.below;
         let modifier = self.modifier.chain(Modifier::new().pad_y(3));
-        column(modifier, Flex::new().gap(2), move || {
+        flex_column(modifier, Flex::new().gap(sp(2)), move || {
             if stacked {
-                column(Modifier::new().fill_max_width(), Flex::new().gap(2), || {
-                    row(
-                        Modifier::new().fill_max_width(),
-                        Flex::new().start().between().gap(2),
-                        || {
-                            about_words(&title, &about, words, Modifier::new().grow());
-                            if let Some(id) = reset {
-                                reset_button(id);
+                flex_column(
+                    Modifier::new().fill_max_width(),
+                    Flex::new().gap(sp(2)),
+                    || {
+                        flex_row(
+                            Modifier::new().fill_max_width(),
+                            Flex::new().items_start().justify_between().gap(sp(2)),
+                            || {
+                                about_words(&title, &about, words, Modifier::new().grow());
+                                if let Some(id) = reset {
+                                    reset_button(id);
+                                }
+                            },
+                        );
+                        match control {
+                            Some((control, Some(_))) => {
+                                flex_row(Modifier::new().fill_max_width(), Flex::new(), control);
                             }
-                        },
-                    );
-                    match control {
-                        Some((control, Some(_))) => {
-                            row(Modifier::new().fill_max_width(), Flex::new(), control);
+                            Some((control, None)) => {
+                                flex_column(Modifier::new().fill_max_width(), Flex::new(), control);
+                            }
+                            None => {}
                         }
-                        Some((control, None)) => {
-                            block(Modifier::new().fill_max_width(), control);
-                        }
-                        None => {}
-                    }
-                });
+                    },
+                );
             } else {
-                row(
+                flex_row(
                     Modifier::new(),
-                    Flex::new().center().between().gap(6),
+                    Flex::new().items_center().justify_between().gap(sp(6)),
                     || {
                         about_words(&title, &about, words, Modifier::new().grow());
-                        row(Modifier::new(), Flex::new().center().gap(2), || {
-                            if let Some(id) = reset {
-                                reset_button(id);
-                            }
-                            match control {
-                                Some((control, Some(_))) => control(),
-                                Some((control, None)) => {
-                                    block(Modifier::new().width(TEXT_WIDTH), control);
+                        flex_row(
+                            Modifier::new(),
+                            Flex::new().items_center().gap(sp(2)),
+                            || {
+                                if let Some(id) = reset {
+                                    reset_button(id);
                                 }
-                                None => {}
-                            }
-                        });
+                                match control {
+                                    Some((control, Some(_))) => control(),
+                                    Some((control, None)) => {
+                                        flex_column(
+                                            Modifier::new().width(TEXT_WIDTH),
+                                            Flex::new(),
+                                            control,
+                                        );
+                                    }
+                                    None => {}
+                                }
+                            },
+                        );
                     },
                 );
             }
@@ -403,7 +424,7 @@ impl<'a> SettingRow<'a> {
 /// Emits what a setting is called, `title`, over what it does, `about`, each wrapped to `words` logical pixels, in a column `modifier` sizes.
 #[track_caller]
 fn about_words(title: &str, about: &str, words: f32, modifier: Modifier) {
-    column(modifier, Flex::new().gap(0.5), || {
+    flex_column(modifier, Flex::new().gap(sp(0.5)), || {
         for part in wrap(title, 13, words) {
             line(part, 13, 1.4, Role::Text);
         }

@@ -10,8 +10,8 @@
 //!
 //! - [`theme`]: colour roles, tones, radii, the spacing step, the text scale
 //!   and font families, provided for a frame with [`theme::provide`].
-//! - [`layout`]: rows, columns, blocks and layers that lay out like the old
-//!   flex boxes, and the [`Styled`] modifier helpers.
+//! - [`layout`]: the [`Styled`] modifier helpers over the spacing scale, roles
+//!   and radii.
 //! - [`text`]: [`Type`], lines, paragraphs, measuring and wrapping.
 //! - [`icon`]: [`IconName`], drawn from rustle's Phosphor paths, and artwork
 //!   that arrives at run time.
@@ -21,11 +21,10 @@
 //! - [`report`]: what the frame painted where.
 //! - [`scroll`]: boxes scrolled by an offset kept in the model.
 //! - [`field`]: the text of an editable field drawn from its model.
-//! - [`marks`]: lines of text with marked stretches, carets and guides.
 //! - [`select`]: text selectable across many boxes.
 //! - [`overlay`]: popovers, menus at a point, tooltips.
 //! - [`picture`]: pictures, still and live.
-//! - [`progress`]: rings and spinners.
+//! - [`progress`]: the spinner and the turning icon on the frame's clock.
 //! - [`focus`], [`keys`], [`pointer`]: what names a control, the keys the
 //!   logic matches on, and the pointer as the host follows it.
 //! - [`model`]: the shared, observed value the host keeps the screen in.
@@ -39,7 +38,6 @@ pub mod icon;
 pub mod interact;
 pub mod keys;
 pub mod layout;
-pub mod marks;
 pub mod model;
 pub mod overlay;
 pub mod picture;
@@ -59,15 +57,12 @@ pub use frame::Frame;
 pub use icon::{Artwork, IconName, artwork_with, icon, icon_with, path_with};
 pub use interact::{Hovered, Looks};
 pub use keys::{Key, KeyEvent, Modifiers};
-pub use layout::{
-    Flex, Side, Styled, block, column, gap_box, grow, layer, row, wrapping, wrapping_with,
-};
-pub use marks::{CaretLook, CaretShape, Mark, Paint, marked_field_line, marked_line};
+pub use layout::{Side, Styled};
 pub use model::{State, Subscription};
 pub use overlay::{Placement, Tooltip, anchored, at_window, tooltips};
 pub use picture::{Picture, picture};
 pub use pointer::{Button, PointerEvent, PointerState};
-pub use progress::{arc, rings, spinner, spinning_icon};
+pub use progress::{spinner, spinning_icon};
 pub use report::{FieldLine, Report, Step, root};
 pub use scroll::{SCROLLBAR_GRIP, Scroll, scroll_area};
 pub use select::{TextPoint, TextSelection, selectable, selectable_scope};

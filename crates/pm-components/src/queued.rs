@@ -2,12 +2,13 @@
 //!
 //! Each row shows the first few lines of its prompt, with the elements and captures it carries as chips, and only the first few rows are shown, so that a long prompt or many of them never push the prompt box out of the window; the whole of a prompt is read by editing it.
 
+use crate::kit::sp;
 use pm_field::Field;
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::kit::{
-    Flex, FocusId, IconName, Radius, Role, Side, Styled, Tone, Tooltip, Type, column, gap_box,
-    label, row, wrap_lines,
+    FocusId, IconName, Radius, Role, Side, Styled, Tone, Tooltip, Type, label, wrap_lines,
 };
 
 use crate::Button;
@@ -175,12 +176,12 @@ fn clamped(content: &str, tone: Role, width: f32) {
     let lines = wrap_lines(content, kind, width.max(32.0));
     let cut = lines.len() > SHOWN_LINES;
     let shown = lines.len().min(SHOWN_LINES);
-    column(Modifier::new(), Flex::new(), || {
+    flex_column(Modifier::new(), Flex::new(), || {
         for (at, part) in lines.into_iter().take(shown).enumerate() {
             let words = content[part.start..part.end].trim_end();
             match (cut && at + 1 == shown, words.is_empty()) {
                 (true, _) => line(format!("{words}\u{2026}"), TEXT_PIXELS, TEXT_LEADING, tone),
-                (false, true) => gap_box(Modifier::new().h(3)),
+                (false, true) => rustle::spacer(Modifier::new().h(3)),
                 (false, false) => label(words, kind.tone(tone)),
             }
         }
@@ -191,9 +192,9 @@ fn clamped(content: &str, tone: Role, width: f32) {
 #[track_caller]
 fn body(content: &str, tone: Role, width: f32) {
     let (typed, labels) = crate::elements::split(content);
-    column(
+    flex_column(
         Modifier::new().grow().pad_side(Side::Top, 1),
-        Flex::new().gap(1.5),
+        Flex::new().gap(sp(1.5)),
         || {
             if !labels.is_empty() {
                 crate::elements::sent_chips(&labels);
@@ -218,7 +219,7 @@ fn icon_button(icon: IconName, tooltip: &str, id: FocusId) {
 /// Emits the box a row of a waiting prompt is drawn in, its contents aligned to the top, holding what `content` emits.
 #[track_caller]
 fn frame(content: impl FnOnce()) {
-    row(
+    flex_row(
         Modifier::new()
             .fill_max_width()
             .fill_rounded(Role::Surface, Radius::Lg)
@@ -226,7 +227,7 @@ fn frame(content: impl FnOnce()) {
             .pad_side(Side::Left, 3)
             .pad_side(Side::Right, 1)
             .pad_y(1),
-        Flex::new().start().gap(2),
+        Flex::new().items_start().gap(sp(2)),
         content,
     );
 }
@@ -234,7 +235,7 @@ fn frame(content: impl FnOnce()) {
 /// Emits `name` in `tone`, lowered by a step to sit on the first line of a row's text.
 #[track_caller]
 fn leading_glyph(name: IconName, tone: Role) {
-    row(Modifier::new().pad_side(Side::Top, 1), Flex::new(), || {
+    flex_row(Modifier::new().pad_side(Side::Top, 1), Flex::new(), || {
         glyph(name, 3.5, tone)
     });
 }
@@ -254,29 +255,33 @@ fn waiting(index: usize, queued: &Queued, width: f32) {
         if !queued.files.is_empty() {
             let count = queued.files.len();
             let files = if count == 1 { "file" } else { "files" };
-            row(
+            flex_row(
                 Modifier::new().pad_side(Side::Top, 1.5),
                 Flex::new(),
                 || line(format!("{count} {files}"), 12, 1.4, Role::Muted),
             );
         }
-        row(Modifier::new(), Flex::new().center().gap(1), || {
-            icon_button(
-                IconName::Pencil,
-                "Edit",
-                FocusId(EDIT_QUEUED_BASE + index as u64),
-            );
-            Button::new("Send now", FocusId(HURRY_BASE + index as u64))
-                .variant(Variant::Ghost)
-                .size(Size::Sm)
-                .with_icon(IconName::Zap)
-                .build();
-            Button::new("Remove", FocusId(REMOVE_QUEUED_BASE + index as u64))
-                .variant(Variant::Ghost)
-                .size(Size::Sm)
-                .with_icon(IconName::Trash)
-                .build();
-        });
+        flex_row(
+            Modifier::new(),
+            Flex::new().items_center().gap(sp(1)),
+            || {
+                icon_button(
+                    IconName::Pencil,
+                    "Edit",
+                    FocusId(EDIT_QUEUED_BASE + index as u64),
+                );
+                Button::new("Send now", FocusId(HURRY_BASE + index as u64))
+                    .variant(Variant::Ghost)
+                    .size(Size::Sm)
+                    .with_icon(IconName::Zap)
+                    .build();
+                Button::new("Remove", FocusId(REMOVE_QUEUED_BASE + index as u64))
+                    .variant(Variant::Ghost)
+                    .size(Size::Sm)
+                    .with_icon(IconName::Trash)
+                    .build();
+            },
+        );
     });
 }
 
@@ -306,9 +311,9 @@ pub fn queued(state: &WorkspaceState, session: &Session, width: f32) {
         .as_ref()
         .filter(|open| open.scope == session.scope)
         .map(|open| open.id);
-    column(
+    flex_column(
         Modifier::new().pad_side(Side::Bottom, 2),
-        Flex::new().gap(1),
+        Flex::new().gap(sp(1)),
         || {
             let mut hidden = 0;
             for (index, waiting_prompt) in session.queued.iter().enumerate() {
@@ -327,7 +332,7 @@ pub fn queued(state: &WorkspaceState, session: &Session, width: f32) {
             }
             if hidden > 0 {
                 let prompts = if hidden == 1 { "prompt" } else { "prompts" };
-                row(Modifier::new().pad_side(Side::Left, 3), Flex::new(), || {
+                flex_row(Modifier::new().pad_side(Side::Left, 3), Flex::new(), || {
                     line(
                         format!("+{hidden} more {prompts} waiting"),
                         12,

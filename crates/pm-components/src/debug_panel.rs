@@ -1,7 +1,9 @@
 //! The debug tab of the dock: the controls over a program being debugged, its stack, its variables and watches, and its console.
 
+use crate::kit::sp;
 use pm_protocol::{DebugCategory, DebugView, Standing};
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::Button;
 use crate::debug::{
@@ -12,8 +14,8 @@ use crate::debug::{
 };
 use crate::input::Input;
 use crate::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tone,
-    Tooltip, Type, block, column, gap_box, icon, label, label_with, row, scroll_area,
+    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tone,
+    Tooltip, Type, icon, label, label_with, scroll_area,
 };
 use crate::size::Size;
 use crate::state::WorkspaceState;
@@ -53,12 +55,12 @@ fn controls(run: &Run) {
     let view = &run.view;
     let paused = view.standing == Standing::Stopped;
     let live = view.standing != Standing::Ended;
-    row(
+    flex_row(
         Modifier::new()
             .h(9)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(3),
-        Flex::new().center().gap(1),
+        Flex::new().items_center().gap(sp(1)),
         || {
             if paused || !live {
                 control(IconName::Continue, DEBUG_CONTINUE, "Continue", paused);
@@ -95,13 +97,17 @@ fn section(title: &str, width: Option<f32>, body: impl FnOnce()) {
         Some(width) => Modifier::new().width(width),
         None => Modifier::new().grow(),
     };
-    column(
+    flex_column(
         size.stroke_side(Side::Left, 1.0, Role::Border),
         Flex::new(),
         || {
-            row(Modifier::new().h(7).pad_x(3), Flex::new().center(), || {
-                label(title, small(11, Role::Subtle));
-            });
+            flex_row(
+                Modifier::new().h(7).pad_x(3),
+                Flex::new().items_center(),
+                || {
+                    label(title, small(11, Role::Subtle));
+                },
+            );
             body();
         },
     );
@@ -113,7 +119,7 @@ fn rows_box(id: FocusId, scrolled: f32, content: impl FnOnce()) {
     scroll_area(
         Modifier::new().grow(),
         Scroll::from_start(id, scrolled),
-        || column(Modifier::new().fill_max_width(), Flex::new(), content),
+        || flex_column(Modifier::new().fill_max_width(), Flex::new(), content),
     );
 }
 
@@ -137,7 +143,7 @@ fn list_row(id: Option<FocusId>, selected: bool, content: impl FnOnce()) {
         None if selected => own.fill(Role::SurfaceSelected).clip_to(Radius::None),
         None => own.clip_to(Radius::None),
     };
-    row(own.pad_x(3), Flex::new().center().gap(2), content);
+    flex_row(own.pad_x(3), Flex::new().items_center().gap(sp(2)), content);
 }
 
 /// Emits the stack of the paused thread, the frame being looked at marked.
@@ -182,7 +188,7 @@ fn stack(state: &WorkspaceState, run: &Run) {
 fn variable_row(index: usize, entry: &crate::debug::VariableRow) {
     let id = (entry.reference != 0).then_some(FocusId(DEBUG_VARIABLE_BASE + index as u64));
     list_row(id, false, || {
-        gap_box(Modifier::new().width(entry.depth as f32 * 12.0));
+        rustle::spacer(Modifier::new().width(entry.depth as f32 * 12.0));
         if entry.reference != 0 {
             icon(
                 if entry.unfolded {
@@ -194,7 +200,7 @@ fn variable_row(index: usize, entry: &crate::debug::VariableRow) {
                 Role::Muted,
             );
         } else {
-            gap_box(Modifier::new().width(12.0));
+            rustle::spacer(Modifier::new().width(12.0));
         }
         let tone: Tone = if entry.value.is_empty() {
             Role::Muted.into()
@@ -223,7 +229,7 @@ fn variable_row(index: usize, entry: &crate::debug::VariableRow) {
 /// Emits a field, padded as the tab's fields are, from what `field` emits.
 #[track_caller]
 fn field_box(field: impl FnOnce()) {
-    block(Modifier::new().pad_x(2).pad_y(1), field);
+    flex_column(Modifier::new().pad_x(2).pad_y(1), Flex::new(), field);
 }
 
 /// Emits the variables of the frame being looked at over the expressions watched and the field that adds one.
@@ -241,9 +247,13 @@ fn variables(state: &WorkspaceState, run: &Run) {
             for (index, entry) in rows.iter().take(DEBUG_ROWS as usize).enumerate() {
                 rustle::key(index, || variable_row(index, entry));
             }
-            row(Modifier::new().h(6).pad_x(3), Flex::new().center(), || {
-                label("Watch", small(11, Role::Subtle));
-            });
+            flex_row(
+                Modifier::new().h(6).pad_x(3),
+                Flex::new().items_center(),
+                || {
+                    label("Watch", small(11, Role::Subtle));
+                },
+            );
             for (index, expression) in state
                 .debug
                 .watches
@@ -301,12 +311,12 @@ fn console_tone(category: DebugCategory) -> Role {
 #[track_caller]
 fn console(state: &WorkspaceState, run: &Run) {
     section("Console", None, || {
-        column(Modifier::new().grow(), Flex::new(), || {
+        flex_column(Modifier::new().grow(), Flex::new(), || {
             scroll_area(
                 Modifier::new().grow(),
                 Scroll::from_end(DEBUG_CONSOLE_SCROLL, state.debug.console_back),
                 || {
-                    column(
+                    flex_column(
                         Modifier::new().fill_max_width().pad_x(3),
                         Flex::new(),
                         || {
@@ -341,9 +351,9 @@ fn idle(state: &WorkspaceState) {
         .trouble
         .clone()
         .unwrap_or_else(|| "Nothing is being debugged.".to_owned());
-    column(
+    flex_column(
         Modifier::new().grow().pad_y(6),
-        Flex::new().center().gap(3),
+        Flex::new().items_center().gap(sp(3)),
         || {
             label(said, small(13, Role::Subtle));
             Button::new("Start debugging", DEBUG_START)
@@ -357,9 +367,9 @@ fn idle(state: &WorkspaceState) {
 #[track_caller]
 pub fn debug_tab(state: &WorkspaceState) {
     match &state.debug.run {
-        Some(run) => column(Modifier::new().grow(), Flex::new(), || {
+        Some(run) => flex_column(Modifier::new().grow(), Flex::new(), || {
             controls(run);
-            row(Modifier::new().grow(), Flex::new(), || {
+            flex_row(Modifier::new().grow(), Flex::new(), || {
                 stack(state, run);
                 variables(state, run);
                 console(state, run);

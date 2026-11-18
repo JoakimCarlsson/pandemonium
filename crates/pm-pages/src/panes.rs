@@ -1,10 +1,12 @@
 //! The main area of a page cut into panes: each pane's strip of tabs above the tab it shows, the handles between panes, and, while a tab is dragged, where it would land.
 
+use pm_components::kit::sp;
 use pm_components::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Side, Styled, Tooltip,
-    Type, column, gap_box, label, layer, row,
+    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Side, Styled, Tooltip, Type,
+    label,
 };
 use rustle::{Canvas, CursorIcon, Interaction, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 use pm_components::Menu;
 use pm_components::Size;
@@ -74,11 +76,15 @@ fn tab_tone(shown: bool) -> Role {
 #[track_caller]
 fn tab_with(icon: IconName, label: &str, id: FocusId, shown: bool, extra: impl FnOnce()) {
     let tone = tab_tone(shown);
-    row(tab_modifier(shown, id), Flex::new().center().gap(2), || {
-        glyph(icon, 3.5, tone);
-        line(label, 13, 1.4, tone);
-        extra();
-    });
+    flex_row(
+        tab_modifier(shown, id),
+        Flex::new().items_center().gap(sp(2)),
+        || {
+            glyph(icon, 3.5, tone);
+            line(label, 13, 1.4, tone);
+            extra();
+        },
+    );
 }
 
 /// Emits one tab of a pane's strip: a glyph and a label, filled while it is the one shown.
@@ -105,14 +111,14 @@ fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) {
     };
     let kind = Type::new(13).ratio(1.4).tone(tone).truncate();
     let kind = if viewer.preview { kind.italic() } else { kind };
-    row(
+    flex_row(
         tab_modifier(shown, FocusId(FILE_TAB_BASE + index as u64)),
-        Flex::new().center().gap(2),
+        Flex::new().items_center().gap(sp(2)),
         || {
             file_icon(&viewer.path, 3.5);
             label(label_text, kind);
             if viewer.is_dirty() {
-                gap_box(
+                rustle::spacer(
                     Modifier::new()
                         .square(2.0)
                         .fill_rounded(Role::Muted, Radius::Xs),
@@ -181,7 +187,7 @@ fn strip_button(icon: IconName, id: FocusId, on: bool, hint: &str) {
         looks
     };
     let tone = if on { Role::Text } else { Role::Muted };
-    row(
+    flex_row(
         Modifier::new()
             .pad_side(Side::Bottom, 1)
             .square(8.0)
@@ -189,7 +195,7 @@ fn strip_button(icon: IconName, id: FocusId, on: bool, hint: &str) {
             .tooltip(hint)
             .cursor(CursorIcon::Pointer)
             .target(id),
-        Flex::new().center().middle(),
+        Flex::new().items_center().justify_center(),
         || glyph(icon, 3.5, tone),
     );
 }
@@ -197,7 +203,7 @@ fn strip_button(icon: IconName, id: FocusId, on: bool, hint: &str) {
 /// Emits the buttons at the end of the strip of tabs: the one that opens the menu of panes.
 #[track_caller]
 fn strip_buttons(state: &WorkspaceState) {
-    row(Modifier::new(), Flex::new().end().gap(1), || {
+    flex_row(Modifier::new(), Flex::new().items_end().gap(sp(1)), || {
         strip_button(
             IconName::SquareSplit,
             PANE_MENU,
@@ -276,13 +282,13 @@ fn item_tab(state: &WorkspaceState, item: &Item, shown: bool) {
 /// Emits the strip above a pane: the tab of everything in `group`, and, in the pane at the top right, `toggle`, the button for the terminal.
 #[track_caller]
 fn strip(state: &WorkspaceState, group: &Group, toggle: bool) {
-    row(
+    flex_row(
         Modifier::new()
             .h(12)
             .clip_to(Radius::None)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(3),
-        Flex::new().end().gap(1),
+        Flex::new().items_end().gap(sp(1)),
         || {
             for (index, item) in group.items.iter().enumerate() {
                 rustle::key(index, || item_tab(state, item, index == group.active));
@@ -367,9 +373,9 @@ fn empty_pane(state: &WorkspaceState, index: usize) {
     let changed = state
         .open()
         .is_some_and(|session| !session.changes.is_empty());
-    column(
+    flex_column(
         Modifier::new().grow(),
-        Flex::new().center().middle().gap(4),
+        Flex::new().items_center().justify_center().gap(sp(4)),
         || {
             line(
                 "Bring something into this pane, or drag a tab here.",
@@ -377,18 +383,22 @@ fn empty_pane(state: &WorkspaceState, index: usize) {
                 1.4,
                 Role::Muted,
             );
-            column(Modifier::new(), Flex::new().center().gap(2), || {
-                put_button(&label_text, icon, put(0));
-                if changed {
-                    put_button("Diff", IconName::GitCompare, put(1));
-                }
-                put_button("Browser", IconName::Globe, put(4));
-                put_button("Open a file", IconName::File, put(2));
-                Button::new("Close pane", put(3))
-                    .variant(Variant::Ghost)
-                    .size(Size::Sm)
-                    .build();
-            });
+            flex_column(
+                Modifier::new(),
+                Flex::new().items_center().gap(sp(2)),
+                || {
+                    put_button(&label_text, icon, put(0));
+                    if changed {
+                        put_button("Diff", IconName::GitCompare, put(1));
+                    }
+                    put_button("Browser", IconName::Globe, put(4));
+                    put_button("Open a file", IconName::File, put(2));
+                    Button::new("Close pane", put(3))
+                        .variant(Variant::Ghost)
+                        .size(Size::Sm)
+                        .build();
+                },
+            );
         },
     );
 }
@@ -397,7 +407,7 @@ fn empty_pane(state: &WorkspaceState, index: usize) {
 #[track_caller]
 fn pane(state: &WorkspaceState, placed: &Placed, toggle: bool, extra: f32) {
     let group = placed.group;
-    column(
+    flex_column(
         Modifier::new()
             .grow()
             .clip_to(Radius::None)
@@ -443,10 +453,10 @@ fn laid(
                 Axis::Column => (Modifier::new().height(one_area.height), Side::Top),
             };
             let halves = || {
-                row(sized, Flex::new(), || {
+                flex_row(sized, Flex::new(), || {
                     laid(state, first, placed, next, (one_area, whole, extra));
                 });
-                row(
+                flex_row(
                     Modifier::new().grow().stroke_side(edge, 1.0, Role::Border),
                     Flex::new(),
                     || laid(state, second, placed, next, (two_area, whole, extra)),
@@ -454,8 +464,8 @@ fn laid(
             };
             let outer = Modifier::new().grow().clip_to(Radius::None);
             match axis {
-                Axis::Row => row(outer, Flex::new(), halves),
-                Axis::Column => column(outer, Flex::new(), halves),
+                Axis::Row => flex_row(outer, Flex::new(), halves),
+                Axis::Column => flex_column(outer, Flex::new(), halves),
             }
         }
     }
@@ -471,7 +481,7 @@ fn drag_marks(state: &WorkspaceState, placed: &[Placed]) {
         && let Some(here) = placed.get(index)
     {
         let zone = here.area.of_side(side);
-        gap_box(
+        rustle::spacer(
             Modifier::new()
                 .at(zone.x + 4.0, zone.y + 4.0)
                 .z_index_unclipped(50)
@@ -482,7 +492,7 @@ fn drag_marks(state: &WorkspaceState, placed: &[Placed]) {
         );
     }
     if has_tab(state, &drag.item) {
-        layer(
+        rustle::stack_with(
             Modifier::new()
                 .at(drag.at.0 + 8.0, drag.at.1 + 8.0)
                 .z_index_unclipped(60)
@@ -501,11 +511,11 @@ pub(crate) fn main_area(state: &WorkspaceState, window: (f32, f32)) {
     let placed = panes.layout.placed(area);
     let page = window.1 - TITLE_BAR_HEIGHT;
     let extra = page - area.height;
-    column(
+    flex_column(
         Modifier::new().grow().fill_max_height(),
         Flex::new(),
         || {
-            row(Modifier::new().grow(), Flex::new(), || {
+            flex_row(Modifier::new().grow(), Flex::new(), || {
                 let mut next = 0;
                 laid(
                     state,

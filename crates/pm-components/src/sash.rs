@@ -1,8 +1,9 @@
 //! The handles on the edges between panels, dragged to change how big a panel is, and the sizes they set.
 
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_row};
 
-use crate::kit::{Flex, FocusId, Hovered, Interactive, Looks, Role, Styled, gap_box, layer, row};
+use crate::kit::{FocusId, Hovered, Interactive, Looks, Role, Styled};
 
 use crate::git_controls::GRAPH_SASH;
 use crate::state::WorkspaceState;
@@ -160,18 +161,20 @@ impl Sash {
             .cursor(cursor)
             .target(self.id)
             .draggable_id(self.id);
-        let flex = self.flex.unwrap_or(Flex::new().center().middle());
+        let flex = self
+            .flex
+            .unwrap_or(Flex::new().items_center().justify_center());
         let modifier = self.modifier.chain(own);
         let handle = move || {
-            row(modifier, flex, move || {
-                gap_box(line.looks(Looks::new().group(Role::Accent)));
+            flex_row(modifier, flex, move || {
+                rustle::spacer(line.looks(Looks::new().group(Role::Accent)));
             });
         };
         match self.placed {
             Some(_) => handle(),
-            None if self.bare => layer(Modifier::new().cover(), handle),
-            None => layer(Modifier::new().fill_max_width().height(0.0), move || {
-                layer(Modifier::new().cover(), handle);
+            None if self.bare => rustle::stack_with(Modifier::new().cover(), handle),
+            None => rustle::stack_with(Modifier::new().fill_max_width().height(0.0), move || {
+                rustle::stack_with(Modifier::new().cover(), handle);
             }),
         }
     }

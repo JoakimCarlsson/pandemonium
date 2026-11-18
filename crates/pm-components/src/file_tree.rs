@@ -1,5 +1,7 @@
 //! Every file of the project as a tree of folders, folders first, with the files git sees changed marked.
 
+use crate::kit::sp;
+use rustle::{Flex, flex_column, flex_row};
 use std::collections::{HashMap, HashSet};
 
 use rustle::Modifier;
@@ -9,8 +11,8 @@ use crate::change_list::mark_color;
 use crate::file_icon::{file_icon, folder_icon};
 use crate::kit::theme::step_scale;
 use crate::kit::{
-    Flex, FocusId, IconName, Interactive, Radius, Role, Side, Styled, Tone, Type, column, gap_box,
-    icon as icon_of, label, label_with, row,
+    FocusId, IconName, Interactive, Radius, Role, Side, Styled, Tone, Type, icon as icon_of, label,
+    label_with,
 };
 use crate::size::Size;
 use crate::state::{TREE_BASE, WorkspaceState};
@@ -197,7 +199,7 @@ fn entry_row(
             match fold {
                 Some(true) => icon_of(IconName::ChevronDown, 3.5, Role::Muted),
                 Some(false) => icon_of(IconName::ChevronRight, 3.5, Role::Muted),
-                None => gap_box(Modifier::new().square(3.5)),
+                None => rustle::spacer(Modifier::new().square(3.5)),
             }
             icon();
             label_with(
@@ -230,7 +232,7 @@ pub fn drag_ghost(state: &WorkspaceState) {
     } else {
         format!("{count} items")
     };
-    row(
+    flex_row(
         Modifier::new()
             .at(drag.at.0 + 12.0, drag.at.1 + 10.0)
             .z_index_unclipped(60)
@@ -239,7 +241,7 @@ pub fn drag_ghost(state: &WorkspaceState) {
             .fill_rounded(Role::Surface, Radius::Md)
             .stroke(Role::Border, Radius::Md)
             .pad_x(2),
-        Flex::new().center().gap(1.5),
+        Flex::new().items_center().gap(sp(1.5)),
         || {
             if count != 1 {
                 icon_of(IconName::Copy, 4.0, Role::Muted);
@@ -261,14 +263,14 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) -> usize {
     };
     let problem = state.naming_problem();
     rustle::key(ENTRY_FIELD.0, || {
-        row(
+        flex_row(
             Modifier::new()
                 .h(6)
                 .pad_side(Side::Left, 3.0 + depth as f32 * INDENT)
                 .pad_side(Side::Right, 3),
-            Flex::new().center().gap(2),
+            Flex::new().items_center().gap(sp(2)),
             || {
-                gap_box(Modifier::new().square(3.5));
+                rustle::spacer(Modifier::new().square(3.5));
                 if folder {
                     folder_icon(false, 4.0);
                 } else {
@@ -285,7 +287,7 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) -> usize {
     let Some(problem) = problem else {
         return 1;
     };
-    column(
+    flex_column(
         Modifier::new()
             .pad_side(Side::Left, 3.0 + depth as f32 * INDENT + 8.0)
             .pad_side(Side::Right, 3)
@@ -359,7 +361,7 @@ impl Rows {
     #[track_caller]
     fn flush(&mut self) {
         if !self.skipped.is_empty() {
-            gap_box(
+            rustle::spacer(
                 Modifier::new()
                     .height(self.skipped.len() as f32 * self.height)
                     .virtual_focus(std::mem::take(&mut self.skipped)),

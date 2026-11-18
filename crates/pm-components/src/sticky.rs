@@ -1,10 +1,9 @@
 //! Sticky scroll: the lines that open the blocks the first line in view is inside of, kept at the top of the file as it scrolls; pressing one goes to it.
 
-use crate::kit::{
-    CaretLook, Flex, FocusId, Hovered, Interactive, Looks, Mark, Paint, Radius, Role, Side, Styled,
-    Type, column, gap_box, label, marked_line, row,
-};
+use crate::kit::{FocusId, Hovered, Interactive, Looks, Radius, Role, Side, Styled, Type, label};
+use crate::marked::{CaretLook, Mark, Paint, marked_line};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::state::WorkspaceState;
 use crate::viewer::kind_role;
@@ -41,30 +40,30 @@ fn kept_line(document: &Document, index: usize, place: usize, settings: &EditorS
     let id = FocusId(STICKY_BASE + place as u64);
     let kind = Type::code(font).ratio(1.4);
     let content = document.field.text()[line].to_string();
-    row(
+    flex_row(
         Modifier::new()
             .height(height)
             .looks_of(Looks::new().hover(Role::SurfaceHover), id)
             .cursor(CursorIcon::Pointer)
             .target(id),
-        Flex::new().center(),
+        Flex::new().items_center(),
         move || {
-            gap_box(Modifier::new().width(3.0));
+            rustle::spacer(Modifier::new().width(3.0));
             let gutter = if numbers {
                 Modifier::new().w(13)
             } else {
                 Modifier::new().w(2)
             };
-            row(
+            flex_row(
                 gutter.pad_side(Side::Right, 3),
-                Flex::new().center().trailing(),
+                Flex::new().items_center().justify_end(),
                 move || {
                     if numbers {
                         label((index + 1).to_string(), kind.tone(Role::Subtle));
                     }
                 },
             );
-            row(
+            flex_row(
                 Modifier::new().grow().clip_to(Radius::None).pad_x(2),
                 Flex::new(),
                 move || {
@@ -97,7 +96,7 @@ pub(crate) fn sticky(
     if lines.is_empty() {
         return;
     }
-    column(
+    flex_column(
         Modifier::new()
             .placed(BoxAlignment::TopStart)
             .fill_max_width()

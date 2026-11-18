@@ -1,12 +1,13 @@
 //! The quick input as it is drawn: a field over the command center it opens from, and under it the rows of what the field lists, the letters typed marked in their names and the keys of each command on caps.
 
+use crate::kit::sp;
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::assist::listing_cells;
 use crate::input::Input;
 use crate::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Side, Styled, Type, block,
-    column, label, row,
+    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Side, Styled, Type, label,
 };
 use crate::listing::{
     Destination, Items, LISTING_BODY, LISTING_FILTER, LISTING_ROW_BASE, LISTING_WIDTH, Listing,
@@ -48,7 +49,7 @@ pub fn quick_input(listing: &Listing) {
         .picked
         .saturating_sub(QUICK_SHOWN - 1)
         .min(count.saturating_sub(QUICK_SHOWN));
-    column(
+    flex_column(
         Modifier::new()
             .at(listing.at.0, listing.at.1)
             .z_index(60)
@@ -61,11 +62,12 @@ pub fn quick_input(listing: &Listing) {
         Flex::new(),
         || {
             if let Some(filter) = listing.items.filter() {
-                block(
+                flex_column(
                     Modifier::new()
                         .pad_x(1.5)
                         .pad_side(Side::Top, 1.5)
                         .pad_side(Side::Bottom, 1),
+                    Flex::new(),
                     || {
                         Input::new(filter, LISTING_FILTER)
                             .size(Size::Sm)
@@ -75,14 +77,14 @@ pub fn quick_input(listing: &Listing) {
                     },
                 );
             }
-            column(
+            flex_column(
                 Modifier::new().pad_x(1.5).pad_side(Side::Bottom, 1.75),
                 Flex::new(),
                 || {
                     if let Some(said) = status {
-                        row(
+                        flex_row(
                             Modifier::new().height(ROW).pad_x(1.5),
-                            Flex::new().center(),
+                            Flex::new().items_center(),
                             || line(said, 13, 1.4, Role::Muted),
                         );
                     }
@@ -118,7 +120,7 @@ fn empty_words(items: &Items) -> String {
 /// Emits `content` in a line of `pixels` tall type in `tone`, in a box `modifier` shapes that cuts it short at its edge.
 #[track_caller]
 fn cut(modifier: Modifier, content: impl Into<String>, pixels: u32, tone: Role) {
-    row(modifier.clip_to(Radius::None), Flex::new(), || {
+    flex_row(modifier.clip_to(Radius::None), Flex::new(), || {
         line(content, pixels, 1.4, tone)
     });
 }
@@ -305,9 +307,9 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
     } else {
         own
     };
-    row(
+    flex_row(
         own.cursor(CursorIcon::Pointer).target(id).pad_x(1.5),
-        Flex::new().center().gap(1.5),
+        Flex::new().items_center().gap(sp(1.5)),
         cells,
     );
 }
@@ -324,9 +326,9 @@ fn marked(modifier: Modifier, name: &str, query: &str) {
             _ => runs.push((character.to_string(), lit)),
         }
     }
-    row(
+    flex_row(
         modifier.clip_to(Radius::None),
-        Flex::new().center(),
+        Flex::new().items_center(),
         move || {
             let kind = Type::new(13).ratio(1.4);
             for (run, lit) in runs {
@@ -349,30 +351,38 @@ fn separator(said: &str) {
 /// Emits the keys `binding` is pressed with, such as `Ctrl+K Ctrl+I`, each on a cap of its own, joined by `+` within a chord and set apart between chords.
 #[track_caller]
 fn keycaps(binding: &str) {
-    row(Modifier::new(), Flex::new().center().gap(1.5), || {
-        for chord in binding.split(' ') {
-            row(Modifier::new(), Flex::new().center().gap(0.5), || {
-                for (place, key) in chord.split('+').enumerate() {
-                    if place > 0 {
-                        line("+", 11, 1.0, Role::Subtle);
-                    }
-                    keycap(key);
-                }
-            });
-        }
-    });
+    flex_row(
+        Modifier::new(),
+        Flex::new().items_center().gap(sp(1.5)),
+        || {
+            for chord in binding.split(' ') {
+                flex_row(
+                    Modifier::new(),
+                    Flex::new().items_center().gap(sp(0.5)),
+                    || {
+                        for (place, key) in chord.split('+').enumerate() {
+                            if place > 0 {
+                                line("+", 11, 1.0, Role::Subtle);
+                            }
+                            keycap(key);
+                        }
+                    },
+                );
+            }
+        },
+    );
 }
 
 /// Emits one key, on a cap.
 #[track_caller]
 fn keycap(key: &str) {
-    row(
+    flex_row(
         Modifier::new()
             .height(17.0)
             .fill_rounded(Role::Background, Radius::Sm)
             .stroke(Role::Border, Radius::Sm)
             .pad_x(1.25),
-        Flex::new().center(),
+        Flex::new().items_center(),
         || line(key, 11, 1.0, Role::Muted),
     );
 }

@@ -1,7 +1,8 @@
 //! The workspace window: the sidebar of projects and sessions beside the page the reader is on.
 
-use pm_components::kit::{Flex, Role, Styled, column, layer, row};
+use pm_components::kit::{Role, Styled};
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
 use pm_components::arrange::{
     PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectMenu, SESSION_MENU_CLOSE,
@@ -37,13 +38,13 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
     let main_width = state.pane_area((width, height)).width;
     let plan_width = width - sidebar_width - review_width - main_width;
     let paned = state.paned();
-    layer(Modifier::new().fill_max_size(), || {
-        column(
+    rustle::stack_with(Modifier::new().fill_max_size(), || {
+        flex_column(
             Modifier::new().fill_max_size().fill(Role::Background),
             Flex::new(),
             || {
                 TitleBar::of(state).build();
-                row(Modifier::new().grow().fill_max_width(), Flex::new(), || {
+                flex_row(Modifier::new().grow().fill_max_width(), Flex::new(), || {
                     if state.sidebar_open {
                         sidebar::sidebar(state);
                     }

@@ -5,7 +5,7 @@ use std::ops::Range;
 use pm_editor::{Document, EditorSettings, LineChange};
 use rustle::Modifier;
 
-use crate::kit::{Role, Styled, color, gap_box};
+use crate::kit::{Role, Styled, color};
 
 use crate::viewer::severity_role;
 
@@ -85,7 +85,7 @@ pub(crate) fn scroll_marks(document: &Document, found: &[Range<usize>], settings
         .into_iter()
         .map(|(share, tone)| (share.clamp(0.0, 1.0), color(tone)))
         .collect();
-    gap_box(Modifier::new().cover().draw_behind(move |canvas| {
+    rustle::spacer(Modifier::new().cover().draw_behind(move |canvas| {
         let left = canvas.width() - STRIP_WIDTH;
         let height = canvas.height();
         for (share, paint) in &painted {

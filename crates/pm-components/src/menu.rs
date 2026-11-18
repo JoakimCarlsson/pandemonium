@@ -1,11 +1,12 @@
 //! The menu: a floating list of actions opened at a point.
 
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_row};
 
 use crate::Surface;
 use crate::kit::{
-    Flex, FocusId, Hovered, Interactive, Looks, Radius, Role, Styled, Type, at_window, label,
-    label_with, row, sp,
+    FocusId, Hovered, Interactive, Looks, Radius, Role, Styled, Type, at_window, label, label_with,
+    sp,
 };
 
 /// How far a menu opened from a control hangs from it, in logical pixels.
@@ -209,16 +210,20 @@ fn menu_row(entry: Entry, height: f32) {
                     .cursor(CursorIcon::Pointer)
                     .target(id)
             };
-            row(modifier.pad_x(2), Flex::new().center().gap(4), move || {
-                label_with(
-                    Modifier::new().grow(),
-                    words,
-                    Type::new(13).ratio(1.4).tone(Role::Text),
-                );
-                if let Some(shortcut) = shortcut {
-                    label(shortcut, Type::new(12).ratio(1.4).tone(Role::Subtle));
-                }
-            });
+            flex_row(
+                modifier.pad_x(2),
+                Flex::new().items_center().gap(sp(4)),
+                move || {
+                    label_with(
+                        Modifier::new().grow(),
+                        words,
+                        Type::new(13).ratio(1.4).tone(Role::Text),
+                    );
+                    if let Some(shortcut) = shortcut {
+                        label(shortcut, Type::new(12).ratio(1.4).tone(Role::Subtle));
+                    }
+                },
+            );
         }
     }
 }

@@ -1,8 +1,9 @@
 //! The modal: a panel centred over a darkened window, which pressing outside closes.
 
 use rustle::Modifier;
+use rustle::{Flex, flex_row};
 
-use crate::kit::{Flex, FocusId, Interactive, Styled, Tone, row};
+use crate::kit::{FocusId, Interactive, Styled, Tone};
 use crate::{Surface, surface};
 
 /// How dark the window behind a modal is made, from 0.0 to 1.0.
@@ -79,9 +80,9 @@ impl<'a> Modal<'a> {
         }
         let panel = panel.target(self.inside);
         let parts = self.parts;
-        row(
+        flex_row(
             self.modifier.chain(own),
-            Flex::new().center().middle(),
+            Flex::new().items_center().justify_center(),
             move || {
                 Surface::new()
                     .variant(surface::Variant::Dialog)

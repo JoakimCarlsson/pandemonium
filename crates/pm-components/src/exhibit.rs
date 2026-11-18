@@ -1,11 +1,11 @@
 //! What an agent puts in front of the reader to look at: the card of a diagram or a prototype it showed in the conversation, and the picture of a document it wrote, a prototype or the mockup of an answer, which the window has rendered sealed from the network.
 
 use crate::kit::{
-    Flex, FocusId, IconName, Radius, Role, Styled, Tooltip, Type, column, icon_with, label, layer,
-    picture, row, sp,
+    FocusId, IconName, Radius, Role, Styled, Tooltip, Type, icon_with, label, picture, sp,
 };
 use pm_harness::{Exhibit, ExhibitKind};
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::button::Variant;
 use crate::figures::{Drawing, Figures, Wanted, diagram_key, diagram_node, prototype_key};
@@ -201,9 +201,9 @@ impl Offer {
         });
         let spelled = form == Marks::Words || (form == Marks::Icons && button.is_none());
         let lone = !spelled && button.is_none();
-        column(
+        flex_column(
             Modifier::new().fill_max_width(),
-            Flex::new().center().middle().gap(2),
+            Flex::new().items_center().justify_center().gap(sp(2)),
             || {
                 if spelled {
                     caption(self.words(), tone, Modifier::new().tooltip(hint.clone()));
@@ -237,9 +237,9 @@ fn failure(reason: &str, id: FocusId, form: Marks) {
             .with_icon(IconName::Refresh),
     };
     let hint = format!("{reason} · press to render it again");
-    column(
+    flex_column(
         Modifier::new().fill_max_width(),
-        Flex::new().center().middle().gap(2),
+        Flex::new().items_center().justify_center().gap(sp(2)),
         || {
             if form == Marks::Words {
                 caption(reason, Role::Danger, Modifier::new().tooltip(hint.clone()));
@@ -252,9 +252,9 @@ fn failure(reason: &str, id: FocusId, form: Marks) {
 /// Emits the line a placeholder says, `words` in `tone` after the globe, cut short where the placeholder is narrower than it, with `modifier` put around its box.
 #[track_caller]
 fn caption(words: &str, tone: Role, modifier: Modifier) {
-    row(
+    flex_row(
         modifier.fill_max_width().pad_x(3),
-        Flex::new().center().middle().gap(1.5),
+        Flex::new().items_center().justify_center().gap(sp(1.5)),
         || {
             glyph(IconName::Globe, 3.5, tone);
             label(words, Type::new(12).ratio(1.4).tone(tone).truncate());
@@ -358,12 +358,14 @@ impl<'a> Preview<'a> {
                 .stroke(Role::Border, Radius::Lg)
                 .clip_to(Radius::None)
         };
-        let flex = self.flex.unwrap_or(Flex::new().center().middle());
+        let flex = self
+            .flex
+            .unwrap_or(Flex::new().items_center().justify_center());
         match self.figure {
             Some(Ok(drawing)) => {
                 let (across, down) = drawing.size();
                 let height = (width * down / across.max(1.0)).round().max(1.0);
-                layer(
+                rustle::stack_with(
                     self.modifier.chain(
                         Modifier::new()
                             .width(width)
@@ -393,15 +395,15 @@ impl<'a> Preview<'a> {
                 let retried = self
                     .offer
                     .filter(|(offer, _)| !waits && other.is_some() && **offer == Offer::Nothing);
-                row(self.modifier.chain(own(height)), flex, || {
+                flex_row(self.modifier.chain(own(height)), flex, || {
                     if let Some((offer, id)) = offered {
                         offer.shown(id, marks_in(width));
                     } else if let Some((_, id)) = retried {
                         failure(words, id, marks_in(width));
                     } else {
-                        row(
+                        flex_row(
                             Modifier::new().pad_x(3),
-                            Flex::new().center().gap(1.5),
+                            Flex::new().items_center().gap(sp(1.5)),
                             || {
                                 glyph(IconName::Globe, 3.5, Role::Subtle);
                                 line(words, 12, 1.4, Role::Subtle);
@@ -505,9 +507,9 @@ impl<'a> ExhibitCard<'a> {
         let opens = self
             .open
             .filter(|_| self.exhibit.kind == ExhibitKind::Prototype);
-        row(
+        flex_row(
             Modifier::new().fill_max_width(),
-            Flex::new().center().gap(2),
+            Flex::new().items_center().gap(sp(2)),
             || {
                 glyph(icon, 3.5, Role::Subtle);
                 clipped(title, 13, Role::Text);
@@ -540,7 +542,7 @@ impl<'a> ExhibitCard<'a> {
         let source = fenced(&self.exhibit.content);
         match self.figures.get(&diagram_key(&self.exhibit.content)) {
             Some(Ok(drawing)) => diagram_node(drawing, inner),
-            Some(Err(reason)) => column(Modifier::new(), Flex::new().gap(1.5), || {
+            Some(Err(reason)) => flex_column(Modifier::new(), Flex::new().gap(sp(1.5)), || {
                 Markdown::new(&source, inner).build();
                 crate::parts::paragraph(reason, 12, 1.4, Role::Danger, inner);
             }),
@@ -576,8 +578,8 @@ impl<'a> ExhibitCard<'a> {
         let own = Modifier::new()
             .stroke(Role::Border, Radius::Xl)
             .chain(padding);
-        let flex = self.flex.unwrap_or(Flex::new().gap(2.5));
-        column(self.modifier.clone().chain(own), flex, || {
+        let flex = self.flex.unwrap_or(Flex::new().gap(sp(2.5)));
+        flex_column(self.modifier.clone().chain(own), flex, || {
             self.heading();
             self.body(inner);
         });

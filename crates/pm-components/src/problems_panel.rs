@@ -1,11 +1,12 @@
 //! The problems tab of the dock: what the language servers say is wrong with the files of the project, each a row that goes to its place.
 
+use crate::kit::sp;
 use crate::kit::{
-    Flex, FocusId, Hovered, Interactive, Looks, Radius, Role, Scroll, Styled, color, column, row,
-    scroll_area,
+    FocusId, Hovered, Interactive, Looks, Radius, Role, Scroll, Styled, color, scroll_area,
 };
 use pm_protocol::Severity;
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::parts::line;
 use crate::state::{PROBLEM_ROW_BASE, PROBLEMS_SCROLL, WorkspaceState};
@@ -49,7 +50,7 @@ fn problem_row(index: usize, problem: &pm_protocol::Problem) {
         .target(id)
         .pad_x(3);
     let dot = color(severity_role(diagnostic.severity));
-    row(modifier, Flex::new().center().gap(2), || {
+    flex_row(modifier, Flex::new().items_center().gap(sp(2)), || {
         rustle::spacer(Modifier::new().square(2).background_rounded(dot, 4.0));
         line(message.to_owned(), 12, 1.4, Role::Text);
         if let Some(source) = &diagnostic.source {
@@ -66,11 +67,15 @@ pub fn problems_tab(state: &WorkspaceState) {
         Modifier::new().grow().clip_to(Radius::None),
         Scroll::from_start(PROBLEMS_SCROLL, state.problems_scroll),
         || {
-            column(Modifier::new().fill_max_width(), Flex::new(), || {
+            flex_column(Modifier::new().fill_max_width(), Flex::new(), || {
                 if state.current_problems().is_empty() {
-                    row(Modifier::new().h(7).pad_x(3), Flex::new().center(), || {
-                        line(NOTHING_WRONG, 12, 1.4, Role::Subtle);
-                    });
+                    flex_row(
+                        Modifier::new().h(7).pad_x(3),
+                        Flex::new().items_center(),
+                        || {
+                            line(NOTHING_WRONG, 12, 1.4, Role::Subtle);
+                        },
+                    );
                     return;
                 }
                 for (index, problem) in state.current_problems().iter().take(MOST_ROWS).enumerate()

@@ -46,12 +46,12 @@ fn list(state: &WorkspaceState, content: impl FnOnce()) {
         Modifier::new().fill_max_size(),
         Scroll::from_start(crate::state::TREE_SCROLL, state.tree_scroll),
         || {
-            column(
+            rustle::flex_column(
                 Modifier::new().fill_max_width().pad_y(1),
-                Flex::new(),
+                rustle::Flex::new(),
                 || {
                     content();
-                    gap_box(
+                    rustle::spacer(
                         Modifier::new()
                             .grow()
                             .min_h(32.0)

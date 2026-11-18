@@ -1,8 +1,10 @@
 //! The tabs of the browser: what each tab holds, opening, showing and closing them, the lock that keeps agents out of a tab, and the strip that draws them.
 
+use crate::kit::sp;
+use rustle::{Flex, flex_row};
 use std::ops::Range;
 
-use crate::kit::{Flex, FocusId, IconName, Picture, Radius, Role, Side, Styled, row};
+use crate::kit::{FocusId, IconName, Picture, Radius, Role, Side, Styled};
 use pm_field::Field;
 use rustle::Modifier;
 
@@ -479,7 +481,7 @@ impl WorkspaceState {
 pub fn tab_strip(browser: &Browser, width: f32) {
     let (shown, each) = browser.strip_window(width);
     let scrolls = shown.len() < browser.tabs.len();
-    row(
+    flex_row(
         Modifier::new()
             .height(TAB_STRIP)
             .fill_max_width()
@@ -487,7 +489,7 @@ pub fn tab_strip(browser: &Browser, width: f32) {
             .fill(Role::Sidebar)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(2),
-        Flex::new().center().gap(1),
+        Flex::new().items_center().gap(sp(1)),
         || {
             if scrolls {
                 Button::icon(IconName::ArrowLeft, BROWSER_TABS_PREVIOUS)

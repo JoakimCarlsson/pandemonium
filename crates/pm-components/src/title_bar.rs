@@ -1,7 +1,9 @@
 //! The bar across the top of the window: back and forward, the command center naming where the window is, the button that opens a newer release while one is out, the settings, and the controls of a window the desktop draws no frame around.
 
-use crate::kit::{Flex, FocusId, IconName, Interactive, Role, Side, Styled, Tooltip, gap_box, row};
+use crate::kit::sp;
+use crate::kit::{FocusId, IconName, Interactive, Role, Side, Styled, Tooltip};
 use rustle::Modifier;
+use rustle::{Flex, flex_row};
 
 use crate::Button;
 use crate::button::Variant;
@@ -111,12 +113,12 @@ impl TitleBar {
             .fill(Role::Sidebar)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .target(TITLE_BAR);
-        row(own, Flex::new().center(), move || {
-            row(
+        flex_row(own, Flex::new().items_center(), move || {
+            flex_row(
                 Modifier::new().grow().min_width_auto().pad_x(2),
-                Flex::new().center().gap(0.5),
+                Flex::new().items_center().gap(sp(0.5)),
                 || {
-                    gap_box(Modifier::new().width(DESKTOP_CONTROLS));
+                    rustle::spacer(Modifier::new().width(DESKTOP_CONTROLS));
                     if navigation {
                         Button::icon(IconName::ArrowLeft, GO_BACK)
                             .modifier(Modifier::new().tooltip("Go Back"))
@@ -130,9 +132,9 @@ impl TitleBar {
             if let Some(place) = self.place {
                 command_center(place);
             }
-            row(
+            flex_row(
                 Modifier::new().grow().min_width_auto().fill_max_height(),
-                Flex::new().center().trailing().gap(0.5),
+                Flex::new().items_center().justify_end().gap(sp(0.5)),
                 || {
                     if self.language_update {
                         Button::new("Update languages", LANGUAGE_UPDATE)
@@ -214,7 +216,7 @@ fn command_center(place: String) {
         .tone(Role::Subtle)
         .width(COMMAND_CENTER_WIDTH)
         .resting(Role::Background)
-        .flex(Flex::new().center().middle().gap(2))
+        .flex(Flex::new().items_center().justify_center().gap(sp(2)))
         .modifier(
             Modifier::new()
                 .width_in(COMMAND_CENTER_MIN_WIDTH, COMMAND_CENTER_WIDTH)
@@ -227,9 +229,9 @@ fn command_center(place: String) {
 /// Emits the buttons that minimize, maximize and close a window the desktop draws no frame around, or only the one that closes it when `close_only` is set.
 #[track_caller]
 fn window_controls(close_only: bool) {
-    row(
+    flex_row(
         Modifier::new().pad_x(1.5).fill_max_height(),
-        Flex::new().center().gap(0.5),
+        Flex::new().items_center().gap(sp(0.5)),
         || {
             if !close_only {
                 control(IconName::Minus, WINDOW_MINIMIZE, "Minimize");

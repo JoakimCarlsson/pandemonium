@@ -1,7 +1,9 @@
 //! The stepper: stops along a line, the current one marked, as a track to press or as a bar that counts.
 
-use crate::kit::{Flex, FocusId, Interactive, Radius, Role, Styled, gap_box, row};
+use crate::kit::sp;
+use crate::kit::{FocusId, Interactive, Radius, Role, Styled};
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_row};
 
 use crate::parts::line;
 
@@ -81,27 +83,27 @@ impl Stepper {
             .h(6)
             .fill_rounded(Role::SurfaceHover, Radius::Full)
             .pad_x(1);
-        row(
+        flex_row(
             self.modifier.chain(own),
-            Flex::new().center().between(),
+            Flex::new().items_center().justify_between(),
             move || {
                 for position in 0..stops {
                     let id = FocusId(first + position as u64);
-                    row(
+                    flex_row(
                         Modifier::new()
                             .square(4)
                             .cursor(CursorIcon::Pointer)
                             .target(id),
-                        Flex::new().center().middle(),
+                        Flex::new().items_center().justify_center(),
                         move || {
                             if current == Some(position) {
-                                gap_box(
+                                rustle::spacer(
                                     Modifier::new()
                                         .square(4)
                                         .fill_rounded(Role::Text, Radius::Full),
                                 );
                             } else {
-                                gap_box(
+                                rustle::spacer(
                                     Modifier::new()
                                         .square(1)
                                         .fill_rounded(Role::Subtle, Radius::Full),
@@ -119,23 +121,33 @@ impl Stepper {
     fn bar(self) {
         let at = self.current.unwrap_or(0);
         let stops = self.stops;
-        row(self.modifier, Flex::new().center().gap(3), move || {
-            row(Modifier::new(), Flex::new().center().gap(2), move || {
-                for candidate in 0..stops {
-                    let tone = if candidate <= at {
-                        Role::Text
-                    } else {
-                        Role::SurfaceActive
-                    };
-                    gap_box(Modifier::new().w(8).h(1.5).fill_rounded(tone, Radius::Full));
-                }
-            });
-            line(
-                format!("Step {} of {}", at + 1, stops),
-                12,
-                1.4,
-                Role::Subtle,
-            );
-        });
+        flex_row(
+            self.modifier,
+            Flex::new().items_center().gap(sp(3)),
+            move || {
+                flex_row(
+                    Modifier::new(),
+                    Flex::new().items_center().gap(sp(2)),
+                    move || {
+                        for candidate in 0..stops {
+                            let tone = if candidate <= at {
+                                Role::Text
+                            } else {
+                                Role::SurfaceActive
+                            };
+                            rustle::spacer(
+                                Modifier::new().w(8).h(1.5).fill_rounded(tone, Radius::Full),
+                            );
+                        }
+                    },
+                );
+                line(
+                    format!("Step {} of {}", at + 1, stops),
+                    12,
+                    1.4,
+                    Role::Subtle,
+                );
+            },
+        );
     }
 }

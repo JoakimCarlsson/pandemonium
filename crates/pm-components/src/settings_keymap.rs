@@ -1,12 +1,11 @@
 //! The keymap page of the settings panel: the preset the keys start from, every action with its keys, and the reader's own keys recorded over the preset's.
 
+use crate::kit::sp;
 use pm_editor::{Action, shown};
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
-use crate::kit::{
-    Flex, FocusId, Hovered, Interactive, Looks, Radius, Role, Side, Styled, Type, column, gap_box,
-    label, row,
-};
+use crate::kit::{FocusId, Hovered, Interactive, Looks, Radius, Role, Side, Styled, Type, label};
 
 use crate::input::Input;
 use crate::parts::{clipped, line};
@@ -109,9 +108,11 @@ fn small(words: &str, id: Option<FocusId>) {
     let own = Modifier::new()
         .h(6)
         .looks(Looks::new().hover(Role::SurfaceHover).radius(Radius::Sm));
-    row(pressable(own, id).pad_x(2), Flex::new().center(), || {
-        line(words, 11, 1.4, Role::Muted)
-    });
+    flex_row(
+        pressable(own, id).pad_x(2),
+        Flex::new().items_center(),
+        || line(words, 11, 1.4, Role::Muted),
+    );
 }
 
 /// Emits the keys of `action`, each as a key cap, or what recording asks for while it records, answering to `id`.
@@ -127,9 +128,9 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: Option<FocusId>) {
         .fill_rounded(Role::Background, Radius::Sm)
         .stroke(edge, Radius::Sm);
     let code = Type::new(12).ratio(1.4).tone(Role::Text).truncate().mono();
-    row(
+    flex_row(
         pressable(own, id).pad_x(1.5),
-        Flex::new().center().gap(1),
+        Flex::new().items_center().gap(sp(1)),
         move || {
             if let Some(so_far) = recording {
                 let said = if so_far.is_empty() {
@@ -242,7 +243,7 @@ pub(crate) fn rows(state: &WorkspaceState, room: f32) {
     if !any {
         line("No action matches.", 13, 1.5, Role::Muted);
     }
-    gap_box(Modifier::new().width(1.0).h(2));
+    rustle::spacer(Modifier::new().width(1.0).h(2));
 }
 
 /// Emits the heading `group` over a bordered box holding the row of each of `members`, ruled between them.
@@ -257,7 +258,7 @@ fn section(group: &str, members: &[Found]) {
             .medium(),
     );
     let last = members.len().saturating_sub(1);
-    column(
+    flex_column(
         Modifier::new()
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg),
@@ -279,11 +280,11 @@ fn action_row(entry: &Found, ruled: bool) {
     } else {
         Modifier::new()
     };
-    row(
+    flex_row(
         own.pad_x(4).pad_y(2),
-        Flex::new().center().between().gap(6),
+        Flex::new().items_center().justify_between().gap(sp(6)),
         || {
-            column(Modifier::new().grow(), Flex::new().gap(0.5), || {
+            flex_column(Modifier::new().grow(), Flex::new().gap(sp(0.5)), || {
                 clipped(action.title(), 13, Role::Text);
                 if !entry.clashes.is_empty() {
                     line(
@@ -294,15 +295,19 @@ fn action_row(entry: &Found, ruled: bool) {
                     );
                 }
             });
-            row(Modifier::new(), Flex::new().center().gap(1), || {
-                caps(&entry.keys, entry.recording, id_of(action, Part::Record));
-                if entry.own {
-                    small("Reset", id_of(action, Part::Reset));
-                }
-                if !entry.keys.is_empty() {
-                    small("Clear", id_of(action, Part::Clear));
-                }
-            });
+            flex_row(
+                Modifier::new(),
+                Flex::new().items_center().gap(sp(1)),
+                || {
+                    caps(&entry.keys, entry.recording, id_of(action, Part::Record));
+                    if entry.own {
+                        small("Reset", id_of(action, Part::Reset));
+                    }
+                    if !entry.keys.is_empty() {
+                        small("Clear", id_of(action, Part::Clear));
+                    }
+                },
+            );
         },
     );
 }

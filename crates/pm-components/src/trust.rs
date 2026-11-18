@@ -1,13 +1,12 @@
 //! The card above the prompt box that asks the reader to trust the project a session works in, listing what the agent goes without until they do.
 
+use crate::kit::sp;
+use rustle::{Flex, flex_column, flex_row, flex_wrap};
 use std::path::Path;
 
 use crate::Button;
 use crate::button::Variant;
-use crate::kit::{
-    Flex, FocusId, IconName, Radius, Role, Styled, Type, column, label, label_with, row,
-    wrap_lines, wrapping_with,
-};
+use crate::kit::{FocusId, IconName, Radius, Role, Styled, Type, label, label_with, wrap_lines};
 use crate::parts::{glyph, line, paragraph};
 use crate::size::Size;
 use crate::state::{Outgoing, Page, WorkspaceState};
@@ -125,16 +124,20 @@ fn item(skipped: &Skipped, root: &Path, filed: bool, width: f32) {
         .mono()
         .truncate();
     if skipped.kind != Input::Hook {
-        row(Modifier::new(), Flex::new().center().gap(2), move || {
-            label(named, Type::new(12).ratio(1.5).tone(Role::Text).truncate());
-            if let Some(file) = beside {
-                label_with(Modifier::new().grow(), file, file_type);
-            }
-        });
+        flex_row(
+            Modifier::new(),
+            Flex::new().items_center().gap(sp(2)),
+            move || {
+                label(named, Type::new(12).ratio(1.5).tone(Role::Text).truncate());
+                if let Some(file) = beside {
+                    label_with(Modifier::new().grow(), file, file_type);
+                }
+            },
+        );
         return;
     }
     let mono = Type::new(12).ratio(1.5).mono().tone(Role::Text);
-    column(Modifier::new(), Flex::new(), move || {
+    flex_column(Modifier::new(), Flex::new(), move || {
         for piece in wrap_lines(&named, mono, width) {
             label(&named[piece.start..piece.end], mono);
         }
@@ -166,29 +169,33 @@ fn group(request: &TrustRequest, kind: Input, width: f32) {
             .iter()
             .all(|skipped| skipped.path == of_kind[0].path);
     let file = filed.then(|| from_root(&of_kind[0].path, &request.root));
-    column(Modifier::new(), Flex::new().gap(0.5), || {
-        row(Modifier::new(), Flex::new().center().gap(1.5), || {
-            if kind == Input::Hook {
-                glyph(IconName::Terminal, 3.5, Role::Warning);
-                label(
-                    format!("{title} · run commands"),
-                    Type::new(12).ratio(1.4).tone(Role::Warning).truncate(),
-                );
-            } else {
-                label(title, Type::new(12).ratio(1.4).tone(Role::Muted).truncate());
-            }
-            if let Some(file) = file {
-                label_with(
-                    Modifier::new().grow(),
-                    file,
-                    Type::new(11)
-                        .ratio(1.4)
-                        .tone(Role::Subtle)
-                        .mono()
-                        .truncate(),
-                );
-            }
-        });
+    flex_column(Modifier::new(), Flex::new().gap(sp(0.5)), || {
+        flex_row(
+            Modifier::new(),
+            Flex::new().items_center().gap(sp(1.5)),
+            || {
+                if kind == Input::Hook {
+                    glyph(IconName::Terminal, 3.5, Role::Warning);
+                    label(
+                        format!("{title} · run commands"),
+                        Type::new(12).ratio(1.4).tone(Role::Warning).truncate(),
+                    );
+                } else {
+                    label(title, Type::new(12).ratio(1.4).tone(Role::Muted).truncate());
+                }
+                if let Some(file) = file {
+                    label_with(
+                        Modifier::new().grow(),
+                        file,
+                        Type::new(11)
+                            .ratio(1.4)
+                            .tone(Role::Subtle)
+                            .mono()
+                            .truncate(),
+                    );
+                }
+            },
+        );
         for skipped in &of_kind[..shown] {
             item(skipped, &request.root, filed, width);
         }
@@ -206,13 +213,13 @@ fn group(request: &TrustRequest, kind: Input, width: f32) {
 /// Emits the buttons that answer the request, the refusal first and the boldest last, at the end of the line and wrapping when they do not fit one line.
 #[track_caller]
 fn choices(width: f32) {
-    row(
+    flex_row(
         Modifier::new().fill_max_width(),
-        Flex::new().center().trailing(),
+        Flex::new().items_center().justify_end(),
         || {
-            wrapping_with(
+            flex_wrap(
                 Modifier::new().fill_max_width(),
-                Flex::new().gap(2).center().trailing(),
+                Flex::new().gap(sp(2)).items_center().justify_end(),
                 || {
                     for (label, id, variant) in [
                         ("Don't trust", TRUST_DECLINE, Variant::Ghost),
@@ -242,35 +249,39 @@ pub fn card(request: &TrustRequest, width: f32) {
         .stroke(Role::Border, Radius::Xl)
         .pad_x(4)
         .pad_y(3);
-    column(own, Flex::new().gap(2.5), || {
-        row(Modifier::new(), Flex::new().center().gap(1.5), || {
-            glyph(IconName::Lock, 3.5, Role::Muted);
-            label(
-                "Project trust",
-                Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
-            );
-            label_with(
-                Modifier::new().grow(),
-                request.root.display().to_string(),
-                Type::new(11)
-                    .ratio(1.4)
-                    .tone(Role::Subtle)
-                    .mono()
-                    .truncate(),
-            );
-        });
-        column(Modifier::new(), Flex::new(), || {
+    flex_column(own, Flex::new().gap(sp(2.5)), || {
+        flex_row(
+            Modifier::new(),
+            Flex::new().items_center().gap(sp(1.5)),
+            || {
+                glyph(IconName::Lock, 3.5, Role::Muted);
+                label(
+                    "Project trust",
+                    Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
+                );
+                label_with(
+                    Modifier::new().grow(),
+                    request.root.display().to_string(),
+                    Type::new(11)
+                        .ratio(1.4)
+                        .tone(Role::Subtle)
+                        .mono()
+                        .truncate(),
+                );
+            },
+        );
+        flex_column(Modifier::new(), Flex::new(), || {
             for piece in wrap_lines(&title, title_type, inner) {
                 label(&title[piece.start..piece.end], title_type);
             }
         });
         paragraph(&said, 12, 1.5, Role::Muted, inner);
-        column(
+        flex_column(
             Modifier::new()
                 .fill_rounded(Role::Background, Radius::Lg)
                 .pad_x(3)
                 .pad_y(2.5),
-            Flex::new().gap(2.5),
+            Flex::new().gap(sp(2.5)),
             || {
                 for kind in KINDS {
                     group(request, kind, inner - LIST_INSET);

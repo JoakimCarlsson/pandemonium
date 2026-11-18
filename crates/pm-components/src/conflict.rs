@@ -1,5 +1,7 @@
 //! The resolver of a file that a merge, a rebase or a cherry-pick stopped on: each place where the two sides disagree with both sides shown and a choice to take ours, theirs or both, and under them the result, which is the file itself, edited by hand, until the file is marked resolved and staged.
 
+use crate::kit::sp;
+use rustle::{Flex, flex_column, flex_row};
 use std::ops::Range;
 
 use pm_field::Edit;
@@ -9,8 +11,7 @@ use crate::Button;
 use crate::button::Variant;
 use crate::excerpts::{Block, EXCERPTS_SCROLL, ExcerptFile, Source, plain_block};
 use crate::kit::{
-    Flex, FocusId, Radius, Role, Scroll, Side, Styled, Tone, Type, column, gap_box, label_with,
-    row, scroll_area,
+    FocusId, Radius, Role, Scroll, Side, Styled, Tone, Type, label_with, scroll_area,
 };
 use crate::open_files::Contents;
 use crate::parts::{line, spacer};
@@ -318,9 +319,9 @@ impl<'a> Conflict<'a> {
     /// Emits a row `height` pixels tall, padded `pad` steps at each end, holding `content` centred across it.
     #[track_caller]
     fn line_row(height: f32, pad: f32, content: impl FnOnce()) {
-        row(
+        flex_row(
             Modifier::new().height(height).pad_x(pad),
-            Flex::new().center(),
+            Flex::new().items_center(),
             content,
         );
     }
@@ -330,12 +331,12 @@ impl<'a> Conflict<'a> {
     fn side(&self, name: &str, text_of: &str, tint: Role, row: f32) {
         let font = self.state.editor.font_size;
         let more = text_of.lines().count().saturating_sub(MOST_LINES);
-        column(
+        flex_column(
             Modifier::new().grow().clip_to(Radius::None),
             Flex::new(),
             || {
                 Self::line_row(LABEL, 2.0, || line(name, 11, 1.4, Role::Muted));
-                column(
+                flex_column(
                     Modifier::new().grow().fill(Tone::from(tint).alpha(0.12)),
                     Flex::new(),
                     || {
@@ -368,8 +369,8 @@ impl<'a> Conflict<'a> {
         };
         let own = Modifier::new().keep().pad_x(3);
         match self.layout {
-            Layout::SideBySide => crate::kit::row(own, Flex::new().gap(2), both),
-            Layout::Stacked => column(own, Flex::new(), both),
+            Layout::SideBySide => flex_row(own, Flex::new().gap(sp(2)), both),
+            Layout::Stacked => flex_column(own, Flex::new(), both),
         }
     }
 
@@ -379,20 +380,20 @@ impl<'a> Conflict<'a> {
         let region = card.region;
         let ours = format!("Ours · {}", name_or(&region.ours_name, "HEAD"));
         let theirs = format!("Theirs · {}", name_or(&region.theirs_name, "incoming"));
-        column(
+        flex_column(
             Modifier::new()
                 .height(self.card_height(region, row) - SPACE)
                 .stroke(Role::Border, Radius::Lg)
                 .clip_to(Radius::None),
             Flex::new(),
             || {
-                crate::kit::row(
+                flex_row(
                     Modifier::new()
                         .height(LABEL)
                         .fill(Role::Surface)
                         .stroke_side(Side::Bottom, 1.0, Role::Border)
                         .pad_x(3),
-                    Flex::new().center(),
+                    Flex::new().items_center(),
                     || {
                         label_with(
                             Modifier::new().grow(),
@@ -411,9 +412,9 @@ impl<'a> Conflict<'a> {
                     },
                 );
                 self.sides(region, &ours, &theirs, row);
-                crate::kit::row(
+                flex_row(
                     Modifier::new().height(BUTTONS).pad_x(3),
-                    Flex::new().center().gap(2),
+                    Flex::new().items_center().gap(sp(2)),
                     || {
                         for (step, choice) in Choice::ALL.into_iter().enumerate() {
                             Button::new(
@@ -444,12 +445,12 @@ impl<'a> Conflict<'a> {
             (true, 1) => "1 conflict left".to_owned(),
             (true, left) => format!("{left} conflicts left"),
         };
-        row(
+        flex_row(
             Modifier::new()
                 .height(STRIP)
                 .stroke_side(Side::Bottom, 1.0, Role::Border)
                 .pad_x(4),
-            Flex::new().center().gap(3),
+            Flex::new().items_center().gap(sp(3)),
             || {
                 crate::kit::label(
                     name,
@@ -532,12 +533,12 @@ impl<'a> Conflict<'a> {
         let doc_top = top + LABEL;
         let whole = Block::whole();
         let flex = self.flex.unwrap_or_default();
-        column(
+        flex_column(
             self.modifier.clone().chain(Modifier::new().grow()),
             flex,
             || {
                 self.strip(resolver, regions.len(), text_now.is_some());
-                column(
+                flex_column(
                     Modifier::new()
                         .grow()
                         .clip_to(Radius::None)
@@ -548,23 +549,27 @@ impl<'a> Conflict<'a> {
                             Modifier::new().grow(),
                             Scroll::from_start(EXCERPTS_SCROLL, excerpts.scroll),
                             || {
-                                column(Modifier::new().fill_max_width(), Flex::new(), || {
-                                    gap_box(Modifier::new().height(before));
+                                flex_column(Modifier::new().fill_max_width(), Flex::new(), || {
+                                    rustle::spacer(Modifier::new().height(before));
                                     for card in &built {
                                         rustle::key(card.place, || {
-                                            column(Modifier::new().pad(3), Flex::new(), || {
-                                                self.card(card, row);
-                                            });
+                                            flex_column(
+                                                Modifier::new().pad(3),
+                                                Flex::new(),
+                                                || {
+                                                    self.card(card, row);
+                                                },
+                                            );
                                         });
                                     }
-                                    gap_box(Modifier::new().height(after));
-                                    crate::kit::row(
+                                    rustle::spacer(Modifier::new().height(after));
+                                    flex_row(
                                         Modifier::new()
                                             .height(LABEL)
                                             .fill(Role::Surface)
                                             .stroke_side(Side::Bottom, 1.0, Role::Border)
                                             .pad_x(3),
-                                        Flex::new().center(),
+                                        Flex::new().items_center(),
                                         || {
                                             crate::kit::label(
                                                 "Result",

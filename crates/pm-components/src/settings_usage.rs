@@ -1,12 +1,11 @@
 //! The usage page of the settings window: what the sessions of every connected server used over the last days, as headline totals, a bar for each day stacked by model, a row for each model and the sessions that used most.
 
+use crate::kit::sp;
 use pm_protocol::{UsageDay, UsageModel, UsageReport, UsageSession, UsageTotals};
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row, flex_wrap};
 
-use crate::kit::{
-    Flex, FocusId, Radius, Role, Side, Styled, Tone, Tooltip, Type, column, gap_box, label, row,
-    wrapping, wrapping_with,
-};
+use crate::kit::{FocusId, Radius, Role, Side, Styled, Tone, Tooltip, Type, label};
 
 use crate::BarRow;
 use crate::parts::line;
@@ -331,13 +330,13 @@ fn series_tone(place: usize) -> Tone {
 /// Emits one headline figure, `width` logical pixels across: what it is, how much, and a quiet line saying more.
 #[track_caller]
 fn headline(title: &str, value: String, more: String, width: f32) {
-    column(
+    flex_column(
         Modifier::new()
             .width(width)
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
             .pad(3),
-        Flex::new().gap(0.5),
+        Flex::new().gap(sp(0.5)),
         || {
             line(title, 12, 1.4, Role::Muted);
             label(
@@ -375,7 +374,7 @@ fn headlines(report: &UsageReport, room: f32) {
         1 => "in 1 session".to_owned(),
         count => format!("in {count} sessions"),
     };
-    wrapping(Modifier::new(), 2, || {
+    flex_wrap(Modifier::new(), Flex::new().gap(sp(2)), || {
         headline("Spend", spend.0, spend.1, width);
         headline(
             "Tokens",
@@ -400,12 +399,12 @@ fn day_bar(day: &UsageDay, series: &[String], measure: Measure, most: u64, width
     let whole: u64 = amounts.iter().sum();
     let parts = heights(&amounts, most, CHART_HEIGHT);
     let said = format!("{}: {}", day_label(&day.day), figure(whole, measure));
-    column(
+    flex_column(
         Modifier::new()
             .width(width)
             .height(CHART_HEIGHT)
             .tooltip(said),
-        Flex::new().trailing(),
+        Flex::new().justify_end(),
         move || {
             for (place, tall) in parts
                 .into_iter()
@@ -413,7 +412,7 @@ fn day_bar(day: &UsageDay, series: &[String], measure: Measure, most: u64, width
                 .rev()
                 .filter(|(_, tall)| *tall > 0.0)
             {
-                gap_box(
+                rustle::spacer(
                     Modifier::new()
                         .width(width)
                         .height(tall.max(1.0))
@@ -427,15 +426,19 @@ fn day_bar(day: &UsageDay, series: &[String], measure: Measure, most: u64, width
 /// Emits one entry of the chart's legend: a swatch of `tone` and the name it stands for.
 #[track_caller]
 fn legend_entry(name: &str, tone: Tone) {
-    row(Modifier::new(), Flex::new().center().gap(1.5), || {
-        gap_box(
-            Modifier::new()
-                .width(8.0)
-                .height(8.0)
-                .fill_rounded(tone, Radius::Sm),
-        );
-        line(name, 12, 1.4, Role::Muted);
-    });
+    flex_row(
+        Modifier::new(),
+        Flex::new().items_center().gap(sp(1.5)),
+        || {
+            rustle::spacer(
+                Modifier::new()
+                    .width(8.0)
+                    .height(8.0)
+                    .fill_rounded(tone, Radius::Sm),
+            );
+            line(name, 12, 1.4, Role::Muted);
+        },
+    );
 }
 
 /// Emits the chart of `report` in `room` logical pixels: what it measures and the most a day came to, a bar for each day stacked by model, the first and last day under them, and which colour is which model.
@@ -463,10 +466,10 @@ fn chart(report: &UsageReport, room: f32) {
             Role::Muted,
         );
     };
-    column(Modifier::new().width(room), Flex::new().gap(2), || {
-        row(
+    flex_column(Modifier::new().width(room), Flex::new().gap(sp(2)), || {
+        flex_row(
             Modifier::new(),
-            Flex::new().center().between().gap(3),
+            Flex::new().items_center().justify_between().gap(sp(3)),
             || {
                 label_grown(title);
                 line(
@@ -477,31 +480,39 @@ fn chart(report: &UsageReport, room: f32) {
                 );
             },
         );
-        row(
+        flex_row(
             Modifier::new()
                 .width(room)
                 .height(CHART_HEIGHT + 1.0)
                 .stroke_side(Side::Bottom, 1.0, Role::Border)
                 .padding_each(0.0, 0.0, 0.0, 1.0),
-            Flex::new().end().between(),
+            Flex::new().items_end().justify_between(),
             || {
                 for day in &report.days {
                     day_bar(day, &series, measure, most, width);
                 }
             },
         );
-        row(Modifier::new(), Flex::new().center().between(), || {
-            ends(report.days.first());
-            ends(report.days.last());
-        });
-        wrapping_with(Modifier::new(), Flex::new().gap(3).center(), || {
-            for (place, name) in series.iter().enumerate() {
-                legend_entry(name, series_tone(place));
-            }
-            if others {
-                legend_entry(OTHER, series_tone(MOST_SERIES));
-            }
-        });
+        flex_row(
+            Modifier::new(),
+            Flex::new().items_center().justify_between(),
+            || {
+                ends(report.days.first());
+                ends(report.days.last());
+            },
+        );
+        flex_wrap(
+            Modifier::new(),
+            Flex::new().gap(sp(3)).items_center(),
+            || {
+                for (place, name) in series.iter().enumerate() {
+                    legend_entry(name, series_tone(place));
+                }
+                if others {
+                    legend_entry(OTHER, series_tone(MOST_SERIES));
+                }
+            },
+        );
     });
 }
 
@@ -527,7 +538,7 @@ fn padded(last: bool, content: impl FnOnce()) {
     } else {
         Modifier::new().stroke_side(Side::Bottom, 1.0, Role::Border)
     };
-    row(own.pad_x(3).pad_y(3), Flex::new(), content);
+    flex_row(own.pad_x(3).pad_y(3), Flex::new(), content);
 }
 
 /// How wide a row inside a boxed list is when the page is `room` logical pixels across.
@@ -632,9 +643,9 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     };
     page();
     paragraph(SUMMARY, room);
-    wrapping_with(
+    flex_wrap(
         Modifier::new().fill_max_width(),
-        Flex::new().center().between().gap(2),
+        Flex::new().items_center().justify_between().gap(sp(2)),
         || {
             choices(&RANGE_NAMES, picked, |option| USAGE_RANGES.id(option));
             if let Some(said) = &status {

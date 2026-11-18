@@ -1,11 +1,12 @@
 //! The frame of a window beside the main one: the title bar that closes it over what it holds, with the border the window draws itself when it has no frame from the desktop.
 
+use rustle::{Flex, flex_column};
 use std::cell::Cell;
 
 use rustle::Modifier;
 
 use crate::TitleBar;
-use crate::kit::{Flex, Radius, Role, Styled, block, color, column};
+use crate::kit::{Radius, Role, Styled, color};
 use crate::title_bar::FRAMELESS;
 
 /// How wide the transparent band around a floating window is, in logical pixels, which is where its shadow is cast and where the window is grabbed to resize it.
@@ -76,7 +77,7 @@ pub fn shadowed(frame: impl FnOnce()) {
     let own = own
         .clip_rounded(FRAME_RADIUS)
         .border(1.0, color(Role::Border), FRAME_RADIUS);
-    block(own, frame);
+    flex_column(own, Flex::new(), frame);
 }
 
 /// `modifier` with [`WINDOW_SHADOW`] drawn behind its box, its corners rounded by [`FRAME_RADIUS`].
@@ -160,9 +161,9 @@ impl<'a> Window<'a> {
             over,
             modifier,
         } = self;
-        column(modifier.chain(own), Flex::new(), move || {
+        flex_column(modifier.chain(own), Flex::new(), move || {
             TitleBar::closing().build();
-            column(
+            flex_column(
                 Modifier::new().grow().fill_max_width(),
                 Flex::new(),
                 move || {

@@ -1,10 +1,11 @@
 //! What keeps the reader safe in the browser pane: the questions a page asks about the reader's machine, a site whose certificate is not trusted, and the files a page downloaded.
 
+use crate::kit::sp;
+use rustle::{Flex, flex_column, flex_row};
 use std::time::{Duration, Instant};
 
 use crate::kit::{
-    Flex, FocusId, IconName, Interactive, Radius, Role, Side, Styled, Type, column, label,
-    label_with, row,
+    FocusId, IconName, Interactive, Radius, Role, Side, Styled, Type, label, label_with,
 };
 use rustle::Modifier;
 
@@ -261,14 +262,14 @@ fn host_of(origin: &str) -> &str {
 /// Emits a bar as tall as [`BAR`] and as wide as its parent, with `modifier` around it, holding what `content` emits side by side: its words, then its buttons.
 #[track_caller]
 fn bar(modifier: Modifier, content: impl FnOnce()) {
-    row(
+    flex_row(
         modifier
             .height(BAR)
             .fill_max_width()
             .fill(Role::Surface)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(3),
-        Flex::new().center().gap(2),
+        Flex::new().items_center().gap(sp(2)),
         content,
     );
 }
@@ -341,7 +342,7 @@ fn reason(error: &str) -> &'static str {
 #[track_caller]
 fn paragraph(content: &str, pixels: u32, tone: Role, room: f32) {
     let lines = wrap(content, pixels, room);
-    column(Modifier::new(), Flex::new(), || {
+    flex_column(Modifier::new(), Flex::new(), || {
         for words in lines {
             line(words, pixels, 1.45, tone);
         }
@@ -354,14 +355,18 @@ fn detail(name: &str, value: &str, mono: bool) {
     let value = if value.is_empty() { "unknown" } else { value };
     let kind = Type::new(12).ratio(1.4).tone(Role::Text).truncate();
     let kind = if mono { kind.mono() } else { kind };
-    row(Modifier::new().fill_max_width(), Flex::new().gap(3), || {
-        label_with(
-            Modifier::new().width(108.0),
-            name,
-            Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
-        );
-        label_with(Modifier::new().grow(), value, kind);
-    });
+    flex_row(
+        Modifier::new().fill_max_width(),
+        Flex::new().gap(sp(3)),
+        || {
+            label_with(
+                Modifier::new().width(108.0),
+                name,
+                Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
+            );
+            label_with(Modifier::new().grow(), value, kind);
+        },
+    );
 }
 
 /// Emits the page that stands in for a site whose certificate is not trusted, `width` by `height` logical pixels: what is wrong with the certificate and the buttons that go back or, deliberately, go on.
@@ -381,21 +386,21 @@ pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) {
     };
     let across = (width - 48.0).clamp(0.0, 560.0);
     let room = (across - 40.0).max(0.0);
-    row(
+    flex_row(
         Modifier::new()
             .width(width)
             .height(height)
             .fill(Role::Background)
             .pad(6),
-        Flex::new().center().middle(),
+        Flex::new().items_center().justify_center(),
         || {
-            column(
+            flex_column(
                 Modifier::new()
                     .width(across)
                     .fill_rounded(Role::Surface, Radius::Xl)
                     .stroke(Role::Border, Radius::Xl)
                     .pad(5),
-                Flex::new().gap(3),
+                Flex::new().gap(sp(3)),
                 || {
                     label(
                         "Not secure: certificate not trusted",
@@ -419,26 +424,30 @@ pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) {
                         Role::Muted,
                         room,
                     );
-                    column(Modifier::new().pad_y(2), Flex::new().gap(1), || {
+                    flex_column(Modifier::new().pad_y(2), Flex::new().gap(sp(1)), || {
                         detail("Site", &certificate.url, false);
                         detail("Issued to", &certificate.subject, false);
                         detail("Issued by", &certificate.issuer, false);
                         detail("Expires", &certificate.expires, false);
                         detail("SHA-256", &certificate.fingerprint, true);
                     });
-                    row(Modifier::new(), Flex::new().center().gap(2), || {
-                        Button::new("Go back", BROWSER_CERT_BACK).build();
-                        if certificate.confirming {
-                            Button::new(proceed, BROWSER_CERT_PROCEED)
-                                .variant(Variant::Destructive)
-                                .build();
-                        } else {
-                            Button::new(proceed, BROWSER_CERT_PROCEED)
-                                .variant(Variant::Outline)
-                                .tone(Role::Danger)
-                                .build();
-                        }
-                    });
+                    flex_row(
+                        Modifier::new(),
+                        Flex::new().items_center().gap(sp(2)),
+                        || {
+                            Button::new("Go back", BROWSER_CERT_BACK).build();
+                            if certificate.confirming {
+                                Button::new(proceed, BROWSER_CERT_PROCEED)
+                                    .variant(Variant::Destructive)
+                                    .build();
+                            } else {
+                                Button::new(proceed, BROWSER_CERT_PROCEED)
+                                    .variant(Variant::Outline)
+                                    .tone(Role::Danger)
+                                    .build();
+                            }
+                        },
+                    );
                     paragraph(
                         if certificate.confirming {
                             "Press again to load the site. This is remembered for this site until the browser closes."

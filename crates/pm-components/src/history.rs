@@ -1,10 +1,11 @@
 //! The history page: every session of every project, newest first, grouped by when it last changed and narrowed by a search.
 
+use crate::kit::sp;
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::kit::{
-    Flex, FocusId, IconName, Radius, Role, Scroll, Side, Styled, Type, block, column, label,
-    label_with, row, scroll_area,
+    FocusId, IconName, Radius, Role, Scroll, Side, Styled, Type, label, label_with, scroll_area,
 };
 
 use crate::age::{self, Span};
@@ -49,14 +50,14 @@ const LOCAL_MACHINE: &str = "local";
 pub fn history(state: &WorkspaceState) {
     let now = age::now();
     let rows = matching(state);
-    column(Modifier::new().grow(), Flex::new(), || {
+    flex_column(Modifier::new().grow(), Flex::new(), || {
         heading();
         search(state);
         scroll_area(
             Modifier::new().grow(),
             Scroll::from_start(HISTORY_SCROLL, state.history_scroll),
             || {
-                column(
+                flex_column(
                     Modifier::new().fill_max_width().pad_x(5),
                     Flex::new(),
                     || {
@@ -73,12 +74,12 @@ pub fn history(state: &WorkspaceState) {
 /// Emits the bar across the top naming the page.
 #[track_caller]
 fn heading() {
-    row(
+    flex_row(
         Modifier::new()
             .h(12)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(5),
-        Flex::new().center(),
+        Flex::new().items_center(),
         || {
             label(
                 "History",
@@ -95,20 +96,21 @@ fn heading() {
 /// Emits the box the reader types into to narrow the list.
 #[track_caller]
 fn search(state: &WorkspaceState) {
-    block(
+    flex_column(
         Modifier::new()
             .pad_x(5)
             .pad_side(Side::Top, 5)
             .pad_side(Side::Bottom, 2),
+        Flex::new(),
         || {
-            row(
+            flex_row(
                 Modifier::new()
                     .width(SEARCH_WIDTH)
                     .h(10)
                     .fill_rounded(Role::Surface, Radius::Lg)
                     .stroke(Role::Border, Radius::Lg)
                     .pad_x(3),
-                Flex::new().center().gap(2),
+                Flex::new().items_center().gap(sp(2)),
                 || {
                     glyph(IconName::Search, 4.0, Role::Muted);
                     Input::new(&state.history_search, HISTORY_SEARCH)
@@ -161,20 +163,24 @@ fn group(state: &WorkspaceState, span: Span, rows: &[usize], now: u64) {
     if members.is_empty() {
         return;
     }
-    column(
+    flex_column(
         Modifier::new().pad_side(Side::Top, 5),
-        Flex::new().gap(0.5),
+        Flex::new().gap(sp(0.5)),
         || {
-            row(Modifier::new().h(8).pad_x(3), Flex::new().center(), || {
-                label(
-                    span.title(),
-                    Type::new(14)
-                        .ratio(1.4)
-                        .tone(Role::Text)
-                        .truncate()
-                        .medium(),
-                );
-            });
+            flex_row(
+                Modifier::new().h(8).pad_x(3),
+                Flex::new().items_center(),
+                || {
+                    label(
+                        span.title(),
+                        Type::new(14)
+                            .ratio(1.4)
+                            .tone(Role::Text)
+                            .truncate()
+                            .medium(),
+                    );
+                },
+            );
             for index in members {
                 rustle::key(index, || row_of(state, index));
             }
@@ -198,19 +204,23 @@ fn row_of(state: &WorkspaceState, index: usize) {
         .height(12.0)
         .inner(Modifier::new().pad_x(3))
         .build_with(|| {
-            row(Modifier::new().grow(), Flex::new().center().gap(2), || {
-                label_with(
-                    Modifier::new().max_w_px(560.0),
-                    &session.title,
-                    Type::new(14).ratio(1.4).tone(Role::Text).truncate(),
-                );
-                glyph(IconName::ChevronRight, 4.0, Role::Subtle);
-                glyph(agent.icon, 4.0, Role::Muted);
-                label(
-                    agent.name,
-                    Type::new(14).ratio(1.4).tone(Role::Muted).truncate(),
-                );
-            });
+            flex_row(
+                Modifier::new().grow(),
+                Flex::new().items_center().gap(sp(2)),
+                || {
+                    label_with(
+                        Modifier::new().max_w_px(560.0),
+                        &session.title,
+                        Type::new(14).ratio(1.4).tone(Role::Text).truncate(),
+                    );
+                    glyph(IconName::ChevronRight, 4.0, Role::Subtle);
+                    glyph(agent.icon, 4.0, Role::Muted);
+                    label(
+                        agent.name,
+                        Type::new(14).ratio(1.4).tone(Role::Muted).truncate(),
+                    );
+                },
+            );
             cell(project, PROJECT_WIDTH, false);
             cell(&machine, MACHINE_WIDTH, false);
             cell(&session.branch, BRANCH_WIDTH, false);
@@ -222,11 +232,11 @@ fn row_of(state: &WorkspaceState, index: usize) {
 #[track_caller]
 fn cell(content: &str, width: f32, end: bool) {
     let flex = if end {
-        Flex::new().trailing()
+        Flex::new().justify_end()
     } else {
         Flex::new()
     };
-    row(
+    flex_row(
         Modifier::new().width(width).clip_to(Radius::None),
         flex,
         || clipped(content, 14, Role::Muted),

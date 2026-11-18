@@ -1,5 +1,6 @@
 //! Message layout retained independently of the prompt and other workspace controls.
 
+use rustle::{Flex, flex_column};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -9,7 +10,7 @@ use rustle::Modifier;
 
 use crate::exhibit::Offer;
 use crate::figures::Figures;
-use crate::kit::{Picture, block, gap_box};
+use crate::kit::Picture;
 use crate::sample::{Message, Session, Status, Step};
 use crate::state::WorkspaceState;
 
@@ -213,7 +214,7 @@ pub(super) fn messages(state: &WorkspaceState, session: &Session, width: f32) {
             Some(node) => rustle::emit(node),
             None => {
                 let height = height_of(page, index, width).unwrap_or(average);
-                gap_box(Modifier::new().height(height.ceil()));
+                rustle::spacer(Modifier::new().height(height.ceil()));
             }
         }
     }
@@ -234,12 +235,13 @@ fn height_of(page: Option<usize>, index: usize, width: f32) -> Option<f32> {
 fn measured(page: Option<usize>, index: usize, width: f32, node: rustle::Node) -> rustle::Node {
     let bits = width.to_bits();
     rustle::compose(move || {
-        block(
+        flex_column(
             Modifier::new().on_size_changed(move |size| {
                 HEIGHTS.with_borrow_mut(|heights| {
                     heights.insert((page, index), (bits, size.height));
                 });
             }),
+            Flex::new(),
             move || rustle::emit(node),
         );
     })

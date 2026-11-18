@@ -1,6 +1,7 @@
 //! The conversation with an agent: its messages and the prompt box.
 
 use rustle::{BoxAlignment, CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::Button;
 use crate::Markdown;
@@ -13,9 +14,8 @@ use crate::exhibit::{
 use crate::input;
 use crate::inquiry::{answered, inquiry};
 use crate::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Radius, Role, Scroll, Side as Edge, Styled,
-    Tooltip, Type, block, column, gap_box, label, row, scroll_area, selectable, selectable_scope,
-    sp, wrap_lines,
+    FocusId, Hovered, IconName, Interactive, Radius, Role, Scroll, Side as Edge, Styled, Tooltip,
+    Type, label, scroll_area, selectable, selectable_scope, sp, wrap_lines,
 };
 use crate::parts::{clipped, glyph, line};
 use crate::queued::queued;
@@ -46,10 +46,10 @@ const GUTTER: f32 = 24.0;
 fn paragraph(content: &str, tone: Role, width: f32) {
     let kind = Type::new(14).ratio(1.57).tone(tone);
     let lines = wrap_lines(content, kind, width.max(32.0));
-    column(Modifier::new(), Flex::new(), || {
+    flex_column(Modifier::new(), Flex::new(), || {
         for part in lines {
             if part.end == part.start {
-                gap_box(Modifier::new().h(3));
+                rustle::spacer(Modifier::new().h(3));
             } else {
                 selectable(
                     Modifier::new(),
@@ -91,9 +91,9 @@ fn message_action(icon: IconName, tooltip: &str, id: u64, disabled: bool) {
 /// Emits the offer to put the files back as they were before a message of the reader's, in place of the buttons under it.
 #[track_caller]
 fn restore_offer() {
-    row(
+    flex_row(
         Modifier::new().placed(BoxAlignment::BottomEnd),
-        Flex::new().center().gap(2),
+        Flex::new().items_center().gap(sp(2)),
         || {
             chat_line("Restore files to before this turn?", 12, Role::Muted);
             Button::new("Restore", RESTORE_FILES)
@@ -115,18 +115,18 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
     let working = session.status == Status::Working;
     let restoring = state.restoring == Some(index);
     let (typed, elements) = crate::elements::split(&message.text);
-    column(
+    flex_column(
         Modifier::new().group().selectable_area(CHAT_TEXT),
-        Flex::new().gap(1),
+        Flex::new().gap(sp(1)),
         || {
             selectable_scope(CHAT_TEXT, || {
-                column(
+                flex_column(
                     Modifier::new()
                         .placed(BoxAlignment::BottomEnd)
                         .fill_rounded(Role::SurfaceHover, Radius::Xl2)
                         .pad_x(4)
                         .pad_y(2.5),
-                    Flex::new().gap(2),
+                    Flex::new().gap(sp(2)),
                     || {
                         if !message.attachments.is_empty() {
                             crate::composer::sent_files(state, &message.attachments);
@@ -142,9 +142,9 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
                 if restoring {
                     restore_offer();
                 } else {
-                    row(
+                    flex_row(
                         Modifier::new().placed(BoxAlignment::BottomEnd),
-                        Flex::new().center().gap(1),
+                        Flex::new().items_center().gap(sp(1)),
                         || {
                             if message.checkpoint {
                                 message_action(
@@ -195,20 +195,24 @@ fn side_note(side: &Side, content: &str, width: f32) {
         Side::Fallback { .. } => (IconName::Zap, "Switched to a backup model", None),
     };
     let inner = width - 34.0;
-    column(
+    flex_column(
         Modifier::new()
             .group()
             .selectable_area(CHAT_TEXT)
             .stroke(Role::Border, Radius::Xl)
             .pad_x(4)
             .pad_y(3),
-        Flex::new().gap(2),
+        Flex::new().gap(sp(2)),
         || {
             selectable_scope(CHAT_TEXT, || {
-                row(Modifier::new(), Flex::new().center().gap(2), || {
-                    glyph(icon, 3.5, Role::Subtle);
-                    chat_line(heading, 12, Role::Subtle);
-                });
+                flex_row(
+                    Modifier::new(),
+                    Flex::new().items_center().gap(sp(2)),
+                    || {
+                        glyph(icon, 3.5, Role::Subtle);
+                        chat_line(heading, 12, Role::Subtle);
+                    },
+                );
                 if let Some(question) = asked {
                     paragraph(question, Role::Muted, inner);
                 }
@@ -270,14 +274,14 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
         let count = (from..to)
             .filter(|position| !crate::steps::is_inside_card(&message.steps, *position))
             .count();
-        column(Modifier::new(), Flex::new().gap(1), || {
-            row(
+        flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
+            flex_row(
                 Modifier::new()
                     .placed(BoxAlignment::TopStart)
                     .h(7)
                     .cursor(CursorIcon::Pointer)
                     .target(FocusId(TURN_BASE + index as u64)),
-                Flex::new().center().gap(1.5),
+                Flex::new().items_center().gap(sp(1.5)),
                 || {
                     glyph(
                         if open {
@@ -311,9 +315,9 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
             }
         });
     };
-    column(
+    flex_column(
         Modifier::new().group().selectable_area(CHAT_TEXT),
-        Flex::new().gap(3),
+        Flex::new().gap(sp(3)),
         || {
             selectable_scope(CHAT_TEXT, || {
                 let mut shown = 0;
@@ -378,10 +382,10 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                     answered(answers, width);
                 }
                 if !message.bullets.is_empty() {
-                    column(Modifier::new(), Flex::new().gap(1.5), || {
+                    flex_column(Modifier::new(), Flex::new().gap(sp(1.5)), || {
                         for bullet in &message.bullets {
-                            row(Modifier::new(), Flex::new().gap(2.5), || {
-                                gap_box(
+                            flex_row(Modifier::new(), Flex::new().gap(sp(2.5)), || {
+                                rustle::spacer(
                                     Modifier::new()
                                         .pad_side(Edge::Top, 2.5)
                                         .square(1)
@@ -397,14 +401,14 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                     session.status == Status::Working && index + 1 == session.messages.len();
                 let fork = session.turn_of(index) > 0;
                 if copy || fork {
-                    row(
+                    flex_row(
                         Modifier::new().placed(BoxAlignment::TopStart).padding_each(
                             0.0,
                             -sp(1.0),
                             0.0,
                             0.0,
                         ),
-                        Flex::new().center().gap(1),
+                        Flex::new().items_center().gap(sp(1)),
                         || {
                             if copy {
                                 message_action(
@@ -429,10 +433,14 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                     && let Some(duration) =
                         message.duration.as_deref().filter(|took| !took.is_empty())
                 {
-                    row(Modifier::new(), Flex::new().center().gap(2), || {
-                        glyph(IconName::Progress, 3.5, Role::Subtle);
-                        chat_line(duration, 12, Role::Subtle);
-                    });
+                    flex_row(
+                        Modifier::new(),
+                        Flex::new().items_center().gap(sp(2)),
+                        || {
+                            glyph(IconName::Progress, 3.5, Role::Subtle);
+                            chat_line(duration, 12, Role::Subtle);
+                        },
+                    );
                 }
             })
         },
@@ -455,21 +463,21 @@ fn header(state: &WorkspaceState, session: &Session) {
         Some(model) => format!("{agent} · {model}"),
         None => agent.clone(),
     };
-    row(
+    flex_row(
         Modifier::new()
             .h(10)
             .stroke_side(Edge::Bottom, 1.0, Role::Border)
             .pad_x(5),
-        Flex::new().center().gap(3),
+        Flex::new().items_center().gap(sp(3)),
         || {
             status_icon(session.shown());
             clipped(&session.title, 14, Role::Text);
             if !session.branch.is_empty() {
-                row(
+                flex_row(
                     Modifier::new()
                         .fill_rounded(Role::Surface, Radius::Md)
                         .pad_x(2),
-                    Flex::new().center().gap(1),
+                    Flex::new().items_center().gap(sp(1)),
                     || {
                         glyph(IconName::GitFork, 3.0, Role::Muted);
                         label(
@@ -494,33 +502,35 @@ pub fn history_pending() -> bool {
 #[track_caller]
 pub fn chat(state: &WorkspaceState, session: &Session, width: f32, above: f32) {
     let text_width = width.min(COLUMN) - GUTTER * 2.0;
-    column(Modifier::new().grow(), Flex::new(), || {
+    flex_column(Modifier::new().grow(), Flex::new(), || {
         header(state, session);
         crate::pull_request_bar::bar(session);
         scroll_area(
             Modifier::new().grow(),
             Scroll::from_end(CHAT_SCROLL, state.chat_back),
             || {
-                column(
+                flex_column(
                     Modifier::new().fill_max_width(),
-                    Flex::new().center(),
+                    Flex::new().items_center(),
                     || {
                         messages(state, session, text_width);
                     },
                 );
             },
         );
-        column(
+        flex_column(
             Modifier::new().fill_max_width().pad_side(Edge::Bottom, 5),
-            Flex::new().center(),
+            Flex::new().items_center(),
             || {
-                block(
+                flex_column(
                     Modifier::new().max_w_px(COLUMN).fill_max_width().pad_x(6),
+                    Flex::new(),
                     || {
                         queued(state, session, text_width);
                         if let Some(draft) = session.inquiry.as_ref() {
-                            block(
+                            flex_column(
                                 Modifier::new().pad_side(Edge::Bottom, 2).fill_max_width(),
+                                Flex::new(),
                                 || {
                                     inquiry(
                                         draft,
@@ -551,13 +561,13 @@ pub fn chat(state: &WorkspaceState, session: &Session, width: f32, above: f32) {
 /// trust its folder, the question the agent asks, or what it is doing while it works.
 #[track_caller]
 fn messages(state: &WorkspaceState, session: &Session, width: f32) {
-    column(
+    flex_column(
         Modifier::new()
             .max_w_px(COLUMN)
             .fill_max_width()
             .pad_x(6)
             .pad_y(8),
-        Flex::new().gap(6),
+        Flex::new().gap(sp(6)),
         || {
             retained::messages(state, session, width);
             if let Some(request) = session.trust.as_ref() {
@@ -579,10 +589,14 @@ fn messages(state: &WorkspaceState, session: &Session, width: f32) {
                 } else {
                     "Thinking…"
                 };
-                row(Modifier::new(), Flex::new().center().gap(2), || {
-                    status_icon(session.shown());
-                    line(label, 13, 1.4, Role::Muted);
-                });
+                flex_row(
+                    Modifier::new(),
+                    Flex::new().items_center().gap(sp(2)),
+                    || {
+                        status_icon(session.shown());
+                        line(label, 13, 1.4, Role::Muted);
+                    },
+                );
             }
         },
     );

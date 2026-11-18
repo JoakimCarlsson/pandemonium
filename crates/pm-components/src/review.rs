@@ -1,10 +1,12 @@
 //! The source control panel: the branch, the commit message and its button, the changed files in groups, and the graph of commits.
 
+use crate::kit::sp;
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tone,
-    Tooltip, Type, column, gap_box, label, layer, row, scroll_area, spinner,
+    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tone,
+    Tooltip, Type, label, scroll_area, spinner,
 };
 
 use crate::branch_menu::branch_menu;
@@ -36,12 +38,12 @@ pub const WIDTHS: (f32, f32) = (260.0, 760.0);
 /// Emits a row of the panel `height` steps tall, with a rule beneath it, holding what `content` emits.
 #[track_caller]
 fn band(height: u32, content: impl FnOnce()) {
-    row(
+    flex_row(
         Modifier::new()
             .h(height)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(3),
-        Flex::new().center().gap(2),
+        Flex::new().items_center().gap(sp(2)),
         content,
     );
 }
@@ -53,7 +55,7 @@ fn scrolling_list(state: &WorkspaceState, content: impl FnOnce()) {
         Modifier::new().grow(),
         Scroll::from_start(TREE_SCROLL, state.tree_scroll),
         || {
-            column(
+            flex_column(
                 Modifier::new().fill_max_width().pad_y(1),
                 Flex::new(),
                 content,
@@ -65,7 +67,7 @@ fn scrolling_list(state: &WorkspaceState, content: impl FnOnce()) {
 /// Emits a line telling the list has nothing to show.
 #[track_caller]
 fn nothing(message: &str) {
-    row(Modifier::new().pad_x(4).pad_y(3), Flex::new(), || {
+    flex_row(Modifier::new().pad_x(4).pad_y(3), Flex::new(), || {
         line(message, 13, 1.4, Role::Subtle)
     });
 }
@@ -132,7 +134,7 @@ fn files(state: &WorkspaceState, height: f32) {
         .tree_drag
         .as_ref()
         .is_some_and(|drag| drag.into.as_deref() == Some(""));
-    column(Modifier::new().grow(), Flex::new(), || {
+    flex_column(Modifier::new().grow(), Flex::new(), || {
         files_header(state);
         scrolling_list(state, || {
             file_tree::rows(
@@ -152,7 +154,7 @@ fn files(state: &WorkspaceState, height: f32) {
             } else {
                 space
             };
-            gap_box(space.target(TREE_SPACE));
+            rustle::spacer(space.target(TREE_SPACE));
         });
     });
 }
@@ -174,25 +176,30 @@ fn primary_face(primary: &Primary) {
         Primary::Publish => (IconName::GitPush, "Publish Branch"),
         Primary::Busy(doing) => (IconName::Loading, *doing),
     };
-    row(Modifier::new(), Flex::new().center().gap(2), || {
-        if matches!(primary, Primary::Busy(_)) {
-            spinner(3.5, tone);
-        } else {
-            glyph(icon, 3.5, tone);
-        }
-        label(
-            words,
-            Type::new(13).ratio(1.4).tone(tone).truncate().medium(),
-        );
-        if let Primary::Sync { ahead, behind } = primary {
-            for (count, arrow) in [(*behind, IconName::ArrowDown), (*ahead, IconName::ArrowUp)] {
-                if count > 0 {
-                    line(count.to_string(), 13, 1.4, tone);
-                    glyph(arrow, 3.0, tone);
+    flex_row(
+        Modifier::new(),
+        Flex::new().items_center().gap(sp(2)),
+        || {
+            if matches!(primary, Primary::Busy(_)) {
+                spinner(3.5, tone);
+            } else {
+                glyph(icon, 3.5, tone);
+            }
+            label(
+                words,
+                Type::new(13).ratio(1.4).tone(tone).truncate().medium(),
+            );
+            if let Primary::Sync { ahead, behind } = primary {
+                for (count, arrow) in [(*behind, IconName::ArrowDown), (*ahead, IconName::ArrowUp)]
+                {
+                    if count > 0 {
+                        line(count.to_string(), 13, 1.4, tone);
+                        glyph(arrow, 3.0, tone);
+                    }
                 }
             }
-        }
-    });
+        },
+    );
 }
 
 /// Emits the control that commits, or syncs or publishes once there is nothing to commit, with the arrow that offers what else it can do.
@@ -224,21 +231,21 @@ fn commit_button(primary: &Primary) {
         COMMIT_CHEVRON,
     )
     .pad_x(2);
-    row(
+    flex_row(
         Modifier::new().pad_x(3).pad_side(Side::Bottom, 2),
         Flex::new(),
         || {
-            row(
+            flex_row(
                 Modifier::new()
                     .h(9)
                     .fill_max_width()
                     .fill_rounded(Role::SurfaceSelected, Radius::Md),
-                Flex::new().center(),
+                Flex::new().items_center(),
                 || {
-                    row(main, Flex::new().center().middle(), || {
+                    flex_row(main, Flex::new().items_center().justify_center(), || {
                         primary_face(primary)
                     });
-                    row(arrow, Flex::new().center(), || {
+                    flex_row(arrow, Flex::new().items_center(), || {
                         glyph(
                             IconName::ChevronDown,
                             3.0,
@@ -254,8 +261,8 @@ fn commit_button(primary: &Primary) {
 /// Emits the box the commit message is written in: several lines, wrapped to the panel.
 #[track_caller]
 fn message_box(state: &WorkspaceState) {
-    column(Modifier::new().pad_x(3).pad_y(2), Flex::new(), || {
-        column(
+    flex_column(Modifier::new().pad_x(3).pad_y(2), Flex::new(), || {
+        flex_column(
             Modifier::new()
                 .fill_max_width()
                 .fill_rounded(Role::Background, Radius::Lg)
@@ -284,17 +291,17 @@ fn message_box(state: &WorkspaceState) {
 fn section_heading(state: &WorkspaceState, primary: &Primary) {
     let open = state.git.changes_open;
     let committable = matches!(primary, Primary::Commit { stopped: None, .. });
-    row(
+    flex_row(
         Modifier::new().h(8).pad_x(2),
-        Flex::new().center().gap(1),
+        Flex::new().items_center().gap(sp(1)),
         || {
-            row(
+            flex_row(
                 Modifier::new()
                     .grow()
                     .fill_max_height()
                     .cursor(CursorIcon::Pointer)
                     .target(CHANGES_TOGGLE),
-                Flex::new().center().gap(1),
+                Flex::new().items_center().gap(sp(1)),
                 || {
                     glyph(
                         if open {
@@ -327,19 +334,19 @@ fn section_heading(state: &WorkspaceState, primary: &Primary) {
 /// Emits the banner saying what git refused to do, with a button that dismisses it, in a panel `width` logical pixels wide.
 #[track_caller]
 fn trouble(said: &str, width: f32) {
-    row(
+    flex_row(
         Modifier::new().pad_x(3).pad_side(Side::Bottom, 2),
         Flex::new(),
         || {
-            row(
+            flex_row(
                 Modifier::new()
                     .grow()
                     .fill_rounded(Tone::from(Role::Danger).alpha(0.12), Radius::Md)
                     .pad_x(3)
                     .pad_y(2),
-                Flex::new().gap(2),
+                Flex::new().gap(sp(2)),
                 || {
-                    column(Modifier::new().grow(), Flex::new(), || {
+                    flex_column(Modifier::new().grow(), Flex::new(), || {
                         for words in wrap(said, 12, width - 24.0 - 56.0) {
                             line(words, 12, 1.5, Role::Danger);
                         }
@@ -369,8 +376,8 @@ fn changes(state: &WorkspaceState, session: &Session) {
         return;
     }
     let primary = state.primary();
-    column(Modifier::new().grow(), Flex::new(), || {
-        column(Modifier::new().grow(), Flex::new(), || {
+    flex_column(Modifier::new().grow(), Flex::new(), || {
+        flex_column(Modifier::new().grow(), Flex::new(), || {
             section_heading(state, &primary);
             if let Some(said) = state.git.trouble.as_deref() {
                 trouble(said, state.review_width);
@@ -418,16 +425,18 @@ fn repositories(state: &WorkspaceState, session: &Session) {
                 .count()
         })
     };
-    column(
+    flex_column(
         Modifier::new()
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(1)
             .pad_side(Side::Bottom, 2),
         Flex::new(),
         || {
-            row(Modifier::new().h(7).pad_x(2), Flex::new().center(), || {
-                line("Repositories", 12, 1.4, Role::Subtle)
-            });
+            flex_row(
+                Modifier::new().h(7).pad_x(2),
+                Flex::new().items_center(),
+                || line("Repositories", 12, 1.4, Role::Subtle),
+            );
             for (place, repository) in repositories.iter().enumerate() {
                 let changed = session
                     .changes
@@ -510,18 +519,18 @@ pub fn review(state: &WorkspaceState, session: &Session, height: f32) {
         ReviewTab::Changes if !versioned => ReviewTab::Files,
         tab => tab,
     };
-    layer(
+    rustle::stack_with(
         Modifier::new()
             .width(state.review_width)
             .fill_max_height()
             .fill(Role::Background)
             .stroke_side(Side::Left, 1.0, Role::Border),
         || {
-            column(Modifier::new().fill_max_size(), Flex::new(), || {
+            flex_column(Modifier::new().fill_max_size(), Flex::new(), || {
                 band(12, || {
-                    row(
+                    flex_row(
                         Modifier::new().grow().clip_to(Radius::None),
-                        Flex::new().center().gap(2),
+                        Flex::new().items_center().gap(sp(2)),
                         || {
                             if versioned {
                                 panel_tab(

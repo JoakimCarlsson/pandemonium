@@ -1,10 +1,12 @@
 //! The servers page of the settings window: the server on this machine and the ones on other machines the window knows, each changed or taken out from its row, the form a server is added or changed with, and which one new projects go to.
 
+use crate::kit::sp;
 use pm_config::{KnownServer, Reach};
 use pm_field::{Edit, Field};
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
-use crate::kit::{Flex, FocusId, Role, Styled, column, row};
+use crate::kit::{FocusId, Role, Styled};
 
 use crate::Button;
 use crate::button::Variant;
@@ -192,7 +194,7 @@ impl WorkspaceState {
 /// Emits a box of the form under the words that say what is written in it.
 #[track_caller]
 fn labelled(words: &str, field: &Field, id: FocusId, placeholder: &str) {
-    column(Modifier::new(), Flex::new().gap(1), || {
+    flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
         line(words, 12, 1.4, Role::Muted);
         Input::new(field, id)
             .size(Size::Sm)
@@ -218,11 +220,11 @@ fn form_node(form: &MachineForm) {
         .iter()
         .position(|held| *held == form.reach)
         .unwrap_or(0);
-    column(Modifier::new().pad(3), Flex::new().gap(3), || {
+    flex_column(Modifier::new().pad(3), Flex::new().gap(sp(3)), || {
         labelled("Name", &form.name, MACHINE_NAME, "e.g. Build box");
-        column(Modifier::new(), Flex::new().gap(1), || {
+        flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
             line("Reached", 12, 1.4, Role::Muted);
-            row(Modifier::new(), Flex::new(), || {
+            flex_row(Modifier::new(), Flex::new(), || {
                 choices(
                     &["Direct", "SSH", "WSL", "Dev container", "Tunnel"],
                     picked,
@@ -239,9 +241,9 @@ fn form_node(form: &MachineForm) {
                 "As in server.json on that machine",
             );
         }
-        row(
+        flex_row(
             Modifier::new(),
-            Flex::new().center().trailing().gap(2),
+            Flex::new().items_center().justify_end().gap(sp(2)),
             || {
                 Button::new("Cancel", MACHINE_CANCEL)
                     .variant(Variant::Ghost)
@@ -259,29 +261,33 @@ fn form_node(form: &MachineForm) {
 /// Emits the row of a server: its name over how it is reached, and its buttons when it can be changed and the page has names for them.
 #[track_caller]
 fn machine_row(name: &str, reach: String, buttons: Option<usize>) {
-    row(
+    flex_row(
         Modifier::new().pad_x(3).pad_y(3),
-        Flex::new().center().between().gap(3),
+        Flex::new().items_center().justify_between().gap(sp(3)),
         || {
-            column(Modifier::new().grow(), Flex::new().gap(0.5), || {
+            flex_column(Modifier::new().grow(), Flex::new().gap(sp(0.5)), || {
                 clipped(name, 13, Role::Text);
                 clipped(reach, 12, Role::Muted);
             });
             if let Some(index) = buttons {
-                row(Modifier::new(), Flex::new().center().gap(1), || {
-                    if let Some(edit) = MACHINE_EDITS.id(index) {
-                        Button::new("Edit", edit)
-                            .variant(Variant::Ghost)
-                            .size(Size::Sm)
-                            .build();
-                    }
-                    if let Some(remove) = MACHINE_REMOVES.id(index) {
-                        Button::new("Remove", remove)
-                            .variant(Variant::Ghost)
-                            .size(Size::Sm)
-                            .build();
-                    }
-                });
+                flex_row(
+                    Modifier::new(),
+                    Flex::new().items_center().gap(sp(1)),
+                    || {
+                        if let Some(edit) = MACHINE_EDITS.id(index) {
+                            Button::new("Edit", edit)
+                                .variant(Variant::Ghost)
+                                .size(Size::Sm)
+                                .build();
+                        }
+                        if let Some(remove) = MACHINE_REMOVES.id(index) {
+                            Button::new("Remove", remove)
+                                .variant(Variant::Ghost)
+                                .size(Size::Sm)
+                                .build();
+                        }
+                    },
+                );
             }
         },
     );
@@ -304,14 +310,18 @@ pub(crate) fn body(state: &WorkspaceState, room: f32) {
     let form = state.settings_page.server_form.as_ref();
     let adding = form.is_some_and(|form| form.index.is_none());
     page_rows(state, Section::Servers, room);
-    row(Modifier::new(), Flex::new().center().between(), || {
-        crate::settings_servers::heading_only("Servers", state.window.servers.known.len() + 1);
-        Button::new("Add Server", MACHINE_ADD)
-            .variant(Variant::Outline)
-            .size(Size::Sm)
-            .disabled(adding)
-            .build();
-    });
+    flex_row(
+        Modifier::new(),
+        Flex::new().items_center().justify_between(),
+        || {
+            crate::settings_servers::heading_only("Servers", state.window.servers.known.len() + 1);
+            Button::new("Add Server", MACHINE_ADD)
+                .variant(Variant::Outline)
+                .size(Size::Sm)
+                .disabled(adding)
+                .build();
+        },
+    );
     crate::settings_servers::boxed(|| {
         machine_row(
             "This machine",

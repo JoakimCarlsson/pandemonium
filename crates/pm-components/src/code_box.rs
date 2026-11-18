@@ -1,7 +1,8 @@
 //! The code box: lines in the code font inside a bordered box that cuts them off at a height.
 
-use crate::kit::{Flex, Radius, Role, Side, Styled, column};
+use crate::kit::{Radius, Role, Side, Styled};
 use rustle::Modifier;
+use rustle::{Flex, flex_column};
 
 /// A code box being described: the lines it holds and how tall it may grow.
 ///
@@ -80,6 +81,6 @@ impl<'a> CodeBox<'a> {
             .stroke(Role::Border, Radius::Lg)
             .clip_to(Radius::None)
             .chain(self.inner.unwrap_or_default());
-        column(self.modifier.chain(own), Flex::new(), self.lines);
+        flex_column(self.modifier.chain(own), Flex::new(), self.lines);
     }
 }

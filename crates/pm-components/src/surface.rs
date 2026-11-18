@@ -1,7 +1,8 @@
 //! The surface: the raised, bordered column that menus, popovers and modals are drawn on.
 
-use crate::kit::{Flex, Radius, Role, Styled, column};
+use crate::kit::{Radius, Role, Styled};
 use rustle::Modifier;
+use rustle::{Flex, flex_column};
 
 /// The shadow under a floating surface: a tall, soft one that lifts it off what is behind,
 /// as `(x, y, blur, spread, alpha)`.
@@ -84,7 +85,7 @@ impl Surface {
         if self.variant == Variant::Dialog {
             own = own.clip_to(Radius::None);
         }
-        column(
+        flex_column(
             self.modifier.chain(own.chain(self.inner)),
             self.flex.unwrap_or_default(),
             content,

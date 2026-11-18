@@ -1,12 +1,14 @@
 //! The diff view: every changed file stacked, the old and the new side by side, with notes on lines for the agent.
 
+use crate::kit::sp;
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::kit::{
-    CaretLook, Flex, FocusId, Hovered, IconName, Interactive, Looks, Mark, Radius, Role, Scroll,
-    Side, Styled, Tone, Type, block, column, gap_box, icon, label, label_with, marked_line, row,
-    scroll_area,
+    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tone, Type,
+    icon, label, label_with, scroll_area,
 };
+use crate::marked::{CaretLook, Mark, marked_line};
 
 use crate::button::Variant;
 use crate::diff_syntax::{DiffColours, shown};
@@ -351,7 +353,7 @@ pub fn diff_line(kind: Kind, content: &str, marks: Vec<Mark>) {
         })
         .collect::<Vec<_>>();
     let content = format!("{marker}{}", shown(content));
-    row(own.pad_x(3), Flex::new().center(), move || {
+    flex_row(own.pad_x(3), Flex::new().items_center(), move || {
         marked_line(
             Modifier::new(),
             &content,
@@ -407,13 +409,17 @@ fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<FocusId>) {
         },
     };
     let shown_number = number.map(|number| number.to_string()).unwrap_or_default();
-    row(
+    flex_row(
         own.pad_side(Side::Right, 2),
-        Flex::new().start().trailing(),
+        Flex::new().items_start().justify_end(),
         move || {
-            row(Modifier::new().h(5), Flex::new().center(), move || {
-                label(shown_number, code_type(tone));
-            });
+            flex_row(
+                Modifier::new().h(5),
+                Flex::new().items_center(),
+                move || {
+                    label(shown_number, code_type(tone));
+                },
+            );
         },
     );
 }
@@ -422,7 +428,7 @@ fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<FocusId>) {
 #[track_caller]
 fn code(content: &str, marks: Vec<Mark>, columns: usize) {
     let content = shown(content);
-    column(
+    flex_column(
         Modifier::new().grow().clip_to(Radius::None).pad_x(3),
         Flex::new(),
         || {
@@ -437,15 +443,19 @@ fn code(content: &str, marks: Vec<Mark>, columns: usize) {
                     })
                     .collect();
                 let text = &content[piece];
-                row(Modifier::new().h(5), Flex::new().center(), move || {
-                    marked_line(
-                        Modifier::new().grow(),
-                        text,
-                        code_type(Role::Text).truncate(),
-                        within,
-                        CaretLook::default(),
-                    );
-                });
+                flex_row(
+                    Modifier::new().h(5),
+                    Flex::new().items_center(),
+                    move || {
+                        marked_line(
+                            Modifier::new().grow(),
+                            text,
+                            code_type(Role::Text).truncate(),
+                            within,
+                            CaretLook::default(),
+                        );
+                    },
+                );
             }
         },
     );
@@ -487,7 +497,7 @@ fn half(
     if new {
         own = own.stroke_side(Side::Left, 1.0, Role::Border);
     }
-    row(own.clip_to(Radius::None), Flex::new(), move || {
+    flex_row(own.clip_to(Radius::None), Flex::new(), move || {
         gutter(
             number,
             kind,
@@ -500,13 +510,13 @@ fn half(
 /// Emits the row of a hunk header.
 #[track_caller]
 fn hunk_row(header: &str) {
-    row(
+    flex_row(
         Modifier::new()
             .fill_max_width()
             .h(5)
             .fill(Role::Surface)
             .pad_x(3),
-        Flex::new().center(),
+        Flex::new().items_center(),
         || {
             label_with(
                 Modifier::new().grow(),
@@ -529,7 +539,7 @@ fn diff_row(
     let lines = row_height(row_of, columns);
     match row_of {
         Row::Hunk(header) => hunk_row(header),
-        Row::Pair(old, new) => row(
+        Row::Pair(old, new) => flex_row(
             Modifier::new().fill_max_width().h(5.0 * lines as f32),
             Flex::new(),
             || {
@@ -559,21 +569,21 @@ fn diff_row(
 /// Emits a card of a note, drawn by `card`, under the column it is about when it is about lines and across the file when it is not.
 #[track_caller]
 fn under(range: Option<Range>, card: impl FnOnce()) {
-    let blank = || gap_box(Modifier::new().grow());
+    let blank = || rustle::spacer(Modifier::new().grow());
     let boxed = Modifier::new().grow().pad(2);
-    row(
+    flex_row(
         Modifier::new().fill_max_width(),
         Flex::new(),
         move || match range {
             Some(range) if range.new => {
                 blank();
-                block(boxed, card);
+                flex_column(boxed, Flex::new(), card);
             }
             Some(_) => {
-                block(boxed, card);
+                flex_column(boxed, Flex::new(), card);
                 blank();
             }
-            None => block(boxed, card),
+            None => flex_column(boxed, Flex::new(), card),
         },
     );
 }
@@ -585,7 +595,7 @@ fn card(padded: bool, flex: Flex, content: impl FnOnce()) {
         .fill_rounded(Role::Surface, Radius::Lg)
         .stroke(Role::Border, Radius::Lg);
     let own = if padded { own.pad(3) } else { own };
-    column(own, flex, content);
+    flex_column(own, flex, content);
 }
 
 /// Emits a note waiting to be sent: which lines it is about, that it is unsent, a button to take it back, and what it says.
@@ -597,16 +607,17 @@ fn comment_card(index: usize, comment: &Comment, width: f32) {
     let body = wrap(&comment.text, 13, width);
     under(comment.range, || {
         card(false, Flex::new(), || {
-            row(
+            flex_row(
                 Modifier::new()
                     .h(8)
                     .stroke_side(Side::Bottom, 1.0, Role::Border)
                     .pad_x(3),
-                Flex::new().center().gap(2),
+                Flex::new().items_center().gap(sp(2)),
                 || {
                     line(about, 12, 1.4, Role::Subtle);
-                    block(
+                    flex_column(
                         Modifier::new().stroke(Role::Border, Radius::Full).pad_x(2),
+                        Flex::new(),
                         || line("Not sent", 11, 1.4, Role::Muted),
                     );
                     spacer();
@@ -614,7 +625,7 @@ fn comment_card(index: usize, comment: &Comment, width: f32) {
                         .build();
                 },
             );
-            column(Modifier::new().pad_x(3).pad_y(2.5), Flex::new(), || {
+            flex_column(Modifier::new().pad_x(3).pad_y(2.5), Flex::new(), || {
                 for text in &body {
                     line(text, 13, 1.54, Role::Text);
                 }
@@ -631,7 +642,7 @@ fn comment_box(state: &WorkspaceState, target: CommentTarget) {
         .map_or_else(|| "this file".to_owned(), |range| range.label());
     let ready = !state.comment_text.text().trim().is_empty();
     under(target.range, || {
-        card(true, Flex::new().gap(2.5), || {
+        card(true, Flex::new().gap(sp(2.5)), || {
             label(
                 format!("Comment on {about}"),
                 Type::new(13)
@@ -643,17 +654,21 @@ fn comment_box(state: &WorkspaceState, target: CommentTarget) {
             Input::new(&state.comment_text, COMMENT_FIELD)
                 .placeholder("Tell the agent what to change")
                 .build();
-            row(Modifier::new(), Flex::new().center().gap(2), || {
-                spacer();
-                Button::new("Cancel", COMMENT_CANCEL)
-                    .variant(Variant::Ghost)
-                    .size(Size::Sm)
-                    .build();
-                Button::new("Add comment", COMMENT_ADD)
-                    .size(Size::Sm)
-                    .disabled(!ready)
-                    .build();
-            });
+            flex_row(
+                Modifier::new(),
+                Flex::new().items_center().gap(sp(2)),
+                || {
+                    spacer();
+                    Button::new("Cancel", COMMENT_CANCEL)
+                        .variant(Variant::Ghost)
+                        .size(Size::Sm)
+                        .build();
+                    Button::new("Add comment", COMMENT_ADD)
+                        .size(Size::Sm)
+                        .disabled(!ready)
+                        .build();
+                },
+            );
         });
     });
 }
@@ -684,18 +699,18 @@ fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
     if open {
         own = own.stroke_side(Side::Bottom, 1.0, Role::Border);
     }
-    row(own.pad_x(3), Flex::new().center().gap(2), || {
-        row(
+    flex_row(own.pad_x(3), Flex::new().items_center().gap(sp(2)), || {
+        flex_row(
             Modifier::new()
                 .grow()
                 .clip_to(Radius::None)
                 .cursor(CursorIcon::Pointer)
                 .target(FocusId(DIFF_FOLD_BASE + index as u64)),
-            Flex::new().center().gap(2),
+            Flex::new().items_center().gap(sp(2)),
             || {
                 let giving = || Modifier::new().shrink(1.0).clip_to(Radius::None);
                 let first = || Modifier::new().shrink(1000.0).clip_to(Radius::None);
-                block(first(), || {
+                flex_column(first(), Flex::new(), || {
                     icon(
                         if open {
                             IconName::ChevronDown
@@ -706,7 +721,7 @@ fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
                         Role::Muted,
                     );
                 });
-                block(first(), || file_icon(change.name(), 4.0));
+                flex_column(first(), Flex::new(), || file_icon(change.name(), 4.0));
                 label_with(
                     Modifier::new().keep(),
                     change.name(),
@@ -716,7 +731,7 @@ fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
                         .truncate()
                         .medium(),
                 );
-                block(giving(), || {
+                flex_column(giving(), Flex::new(), || {
                     label(
                         change.directory(),
                         Type::new(11).ratio(1.4).mono().tone(Role::Subtle),
@@ -725,10 +740,14 @@ fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
             },
         );
         if notes > 0 {
-            row(Modifier::new(), Flex::new().center().gap(1), || {
-                icon(IconName::Message, 3.5, Role::Muted);
-                line(notes.to_string(), 11, 1.4, Role::Muted);
-            });
+            flex_row(
+                Modifier::new(),
+                Flex::new().items_center().gap(sp(1)),
+                || {
+                    icon(IconName::Message, 3.5, Role::Muted);
+                    line(notes.to_string(), 11, 1.4, Role::Muted);
+                },
+            );
         }
         Tally::new(change.added(), change.removed())
             .size(11)
@@ -750,7 +769,7 @@ fn file(
 ) {
     let height = section_height(state, session, index, width);
     if top + height < window.0 || top > window.1 {
-        gap_box(Modifier::new().h(height / (4.0 * pixels())));
+        rustle::spacer(Modifier::new().h(height / (4.0 * pixels())));
         return;
     }
     let change = &session.changes[index];
@@ -763,7 +782,7 @@ fn file(
         .filter(|(_, comment)| comment.path == change.path)
         .collect();
     let target = state.comment_target.filter(|target| target.change == index);
-    column(
+    flex_column(
         Modifier::new()
             .pad_x(4)
             .pad_side(Side::Top, 4)
@@ -776,7 +795,7 @@ fn file(
                 return;
             }
             if !change.loaded {
-                row(
+                flex_row(
                     Modifier::new()
                         .h(change.expected_rows() as f32 * ROW / 4.0)
                         .pad_x(3)
@@ -870,7 +889,7 @@ fn skip(rows: &mut usize) {
     if blank == 0 {
         return;
     }
-    gap_box(Modifier::new().h(blank as f32 * ROW / 4.0));
+    rustle::spacer(Modifier::new().h(blank as f32 * ROW / 4.0));
 }
 
 /// Emits the strip above the files: how many changed, how many are read, and the button that sends the notes to the agent.
@@ -883,12 +902,12 @@ fn summary(session: &Session) {
         .count();
     let count = session.changes.len();
     let waiting = session.comments.len();
-    row(
+    flex_row(
         Modifier::new()
             .h(10)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(4),
-        Flex::new().center().gap(3),
+        Flex::new().items_center().gap(sp(3)),
         || {
             line(
                 format!("{count} file{} changed", if count == 1 { "" } else { "s" }),
@@ -928,13 +947,13 @@ pub fn diff(state: &WorkspaceState, session: &Session, width: f32, height: f32) 
         state.diff_scroll.min(total - view) - OVERSCAN * pixels(),
         state.diff_scroll.min(total) + view + OVERSCAN * pixels(),
     );
-    column(Modifier::new().grow(), Flex::new(), || {
+    flex_column(Modifier::new().grow(), Flex::new(), || {
         summary(session);
         scroll_area(
             Modifier::new().grow(),
             Scroll::from_start(DIFF_SCROLL, state.diff_scroll),
             || {
-                column(
+                flex_column(
                     Modifier::new().fill_max_width().pad_side(Side::Bottom, 4),
                     Flex::new(),
                     || {

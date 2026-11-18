@@ -1,5 +1,7 @@
 //! A file open in the window: its lines, numbered, as they are in the folder or in the last commit, edited in place.
 
+use crate::kit::sp;
+use rustle::{Flex, flex_column, flex_row};
 use std::ops::Range;
 
 use pm_protocol::{HintKind, Severity};
@@ -14,10 +16,10 @@ use crate::debug::{Dot, Gutter, breakpoint_mark};
 use crate::file_icon::file_icon;
 use crate::git_controls::VIEWER_SCROLL;
 use crate::kit::{
-    CaretLook, CaretShape, Flex, FocusId, Hovered, IconName, Interactive, Looks, Mark, Paint,
-    Radius, Role, Scroll, Side, Styled, Tone, Type, block, column, frame, gap_box, label,
-    label_with, layer, marked_field_line, row, scroll_area,
+    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tone, Type,
+    frame, label, label_with, scroll_area,
 };
+use crate::marked::{CaretLook, CaretShape, Mark, Paint, marked_field_line};
 use crate::open_files::{Contents, EDITOR_FIELD, EDITOR_SAVE, FILE_TAB_BASE, STRIP, Viewer};
 use crate::panes::PEEK_SCROLL_BASE;
 use crate::parts::{glyph, line, spacer};
@@ -36,7 +38,7 @@ const OVERSCAN: f32 = 100.0;
 /// Emits a box as tall as `lines` lines `row` logical pixels tall, standing in for those left out.
 #[track_caller]
 fn blank(lines: usize, row: f32) {
-    gap_box(Modifier::new().height(lines as f32 * row));
+    rustle::spacer(Modifier::new().height(lines as f32 * row));
 }
 
 /// The part of `range` that falls on the line at `line`, as offsets into the line, or nothing when none of it does.
@@ -275,9 +277,9 @@ fn change_bar(change: Option<LineChange>, height: f32) {
         Some(LineChange::Modified) => holder.fill(Role::Warning),
         Some(LineChange::DeletedBefore) | None => holder,
     };
-    column(holder, Flex::new(), move || {
+    flex_column(holder, Flex::new(), move || {
         if matches!(change, Some(LineChange::DeletedBefore)) {
-            gap_box(Modifier::new().width(3.0).height(4.0).fill(Role::Danger));
+            rustle::spacer(Modifier::new().width(3.0).height(4.0).fill(Role::Danger));
         }
     });
 }
@@ -304,11 +306,15 @@ fn run_cell(file: usize, index: usize, gutter: &Gutter, height: f32) {
     } else {
         cell
     };
-    row(cell, Flex::new().center().middle(), move || {
-        if runs {
-            glyph(IconName::Play, 3.5, Role::Success);
-        }
-    });
+    flex_row(
+        cell,
+        Flex::new().items_center().justify_center(),
+        move || {
+            if runs {
+                glyph(IconName::Play, 3.5, Role::Success);
+            }
+        },
+    );
 }
 
 /// Emits the cells before a line number: the run button when the file has places that can be run, and the cell that sets or clears the breakpoint on the line when pressed, which shows the breakpoint, or the arrow where the program is paused.
@@ -318,7 +324,7 @@ pub(crate) fn breakpoint_cell(file: usize, index: usize, gutter: &Gutter, height
         breakpoint_only(file, index, gutter, height);
         return;
     }
-    row(Modifier::new().height(height), Flex::new(), || {
+    flex_row(Modifier::new().height(height), Flex::new(), || {
         run_cell(file, index, gutter, height);
         breakpoint_only(file, index, gutter, height);
     });
@@ -333,19 +339,23 @@ fn breakpoint_only(file: usize, index: usize, gutter: &Gutter, height: f32) {
         .cursor(CursorIcon::Pointer)
         .target(breakpoint_mark(file, index));
     let shown = (gutter.dot(index), gutter.paused == Some(index));
-    row(cell, Flex::new().center().middle(), move || match shown {
-        (Some(Dot::Plain), _) => dot(Role::Danger),
-        (Some(Dot::Conditional), _) => dot(Role::Warning),
-        (Some(Dot::Unplaced), _) => dot(Role::Subtle),
-        (None, true) => glyph(IconName::ArrowRight, 3.5, Role::Warning),
-        (None, false) => {}
-    });
+    flex_row(
+        cell,
+        Flex::new().items_center().justify_center(),
+        move || match shown {
+            (Some(Dot::Plain), _) => dot(Role::Danger),
+            (Some(Dot::Conditional), _) => dot(Role::Warning),
+            (Some(Dot::Unplaced), _) => dot(Role::Subtle),
+            (None, true) => glyph(IconName::ArrowRight, 3.5, Role::Warning),
+            (None, false) => {}
+        },
+    );
 }
 
 /// Emits the round dot of a breakpoint in `role`.
 #[track_caller]
 fn dot(role: Role) {
-    gap_box(
+    rustle::spacer(
         Modifier::new()
             .width(9.0)
             .height(9.0)
@@ -488,19 +498,19 @@ pub(crate) fn file_line(
     } else {
         Modifier::new().w(2)
     };
-    row(own.clip_to(Radius::None), Flex::new(), || {
+    flex_row(own.clip_to(Radius::None), Flex::new(), || {
         breakpoint();
         change_bar(
             document.line_change(index).filter(|_| settings.git_gutter),
             total,
         );
-        column(number_box.pad_side(Side::Right, 3), Flex::new(), || {
+        flex_column(number_box.pad_side(Side::Right, 3), Flex::new(), || {
             if lens_row {
-                gap_box(Modifier::new().height(height));
+                rustle::spacer(Modifier::new().height(height));
             }
-            row(
+            flex_row(
                 Modifier::new().height(height),
-                Flex::new().center().trailing(),
+                Flex::new().items_center().justify_end(),
                 || {
                     if bulb && settings.line_numbers {
                         bulb_button(height);
@@ -516,7 +526,7 @@ pub(crate) fn file_line(
                 },
             );
         });
-        column(
+        flex_column(
             Modifier::new().grow().clip_to(Radius::None).pad_x(2),
             Flex::new(),
             || {
@@ -599,75 +609,84 @@ fn segment_row(
     cuts.extend(standing.iter().map(|hint| hint.offset - line.start));
     cuts.push(segment.end);
     let pieces = cuts.len() - 1;
-    row(Modifier::new().height(height), Flex::new().center(), || {
-        for (step, bounds) in cuts.windows(2).enumerate() {
-            let piece = bounds[0]..bounds[1];
-            let piece_absolute = line.start + piece.start..line.start + piece.end;
-            let ends_segment = step + 1 == pieces;
-            let mut piece_marks = marks_in(marks, &piece, first && step == 0, last && ends_segment);
-            let after_start = if step == 0 {
-                piece_absolute.start <= caret
-            } else {
-                piece_absolute.start < caret
-            };
-            let before_end = if ends_segment {
-                caret < piece_absolute.end || (last && caret == piece_absolute.end)
-            } else {
-                caret <= piece_absolute.end
-            };
-            let holds_caret = after_start && before_end;
-            if focused {
-                if holds_caret {
-                    let at = caret - piece_absolute.start;
-                    piece_marks.push(Mark::new(at..at, Role::Text, Paint::Caret));
+    flex_row(
+        Modifier::new().height(height),
+        Flex::new().items_center(),
+        || {
+            for (step, bounds) in cuts.windows(2).enumerate() {
+                let piece = bounds[0]..bounds[1];
+                let piece_absolute = line.start + piece.start..line.start + piece.end;
+                let ends_segment = step + 1 == pieces;
+                let mut piece_marks =
+                    marks_in(marks, &piece, first && step == 0, last && ends_segment);
+                let after_start = if step == 0 {
+                    piece_absolute.start <= caret
+                } else {
+                    piece_absolute.start < caret
+                };
+                let before_end = if ends_segment {
+                    caret < piece_absolute.end || (last && caret == piece_absolute.end)
+                } else {
+                    caret <= piece_absolute.end
+                };
+                let holds_caret = after_start && before_end;
+                if focused {
+                    if holds_caret {
+                        let at = caret - piece_absolute.start;
+                        piece_marks.push(Mark::new(at..at, Role::Text, Paint::Caret));
+                    }
+                    if let Some(range) = clipped(&document.field.selection(), &piece_absolute) {
+                        piece_marks.push(Mark::new(range, Role::Text, Paint::Selected));
+                    }
+                    if let Some(range) = clipped(&document.field.marked(), &piece_absolute) {
+                        piece_marks.push(Mark::new(range, Role::Text, Paint::Underline));
+                    }
                 }
-                if let Some(range) = clipped(&document.field.selection(), &piece_absolute) {
-                    piece_marks.push(Mark::new(range, Role::Text, Paint::Selected));
-                }
-                if let Some(range) = clipped(&document.field.marked(), &piece_absolute) {
-                    piece_marks.push(Mark::new(range, Role::Text, Paint::Underline));
+                marked_field_line(
+                    Modifier::new(),
+                    owner,
+                    piece_absolute.start,
+                    &text_of[piece.clone()],
+                    Type::code(font).ratio(1.4).tone(Role::Text),
+                    piece_marks,
+                    caret_look(settings),
+                );
+                if let Some(hint) = standing.get(step) {
+                    hint_chip(hint, font);
                 }
             }
-            marked_field_line(
-                Modifier::new(),
-                owner,
-                piece_absolute.start,
-                &text_of[piece.clone()],
-                Type::code(font).ratio(1.4).tone(Role::Text),
-                piece_marks,
-                caret_look(settings),
-            );
-            if let Some(hint) = standing.get(step) {
-                hint_chip(hint, font);
-            }
-        }
-        tail();
-    });
+            tail();
+        },
+    );
 }
 
 /// Emits the row above a line that holds the links which run the line's place, each the `index`th of the links of the file, then the lenses `given` by the language server.
 #[track_caller]
 fn run_lens_row(lenses: &[(usize, String)], given: &[pm_editor::Lens], height: f32, font: u32) {
-    row(Modifier::new().height(height), Flex::new().center(), || {
-        for (place, (index, label)) in lenses.iter().enumerate() {
-            run_lens_chip(*index, label, font, place == 0);
-        }
-        for (place, lens) in given.iter().enumerate() {
-            lens_chip(lens, font, lenses.is_empty() && place == 0);
-        }
-    });
+    flex_row(
+        Modifier::new().height(height),
+        Flex::new().items_center(),
+        || {
+            for (place, (index, label)) in lenses.iter().enumerate() {
+                run_lens_chip(*index, label, font, place == 0);
+            }
+            for (place, lens) in given.iter().enumerate() {
+                lens_chip(lens, font, lenses.is_empty() && place == 0);
+            }
+        },
+    );
 }
 
 /// Emits the marker that says the language server offers changes on the line, which opens the list of them when pressed.
 #[track_caller]
 fn bulb_button(height: f32) {
-    row(
+    flex_row(
         Modifier::new()
             .width(16.0)
             .height(height)
             .cursor(CursorIcon::Pointer)
             .target(crate::lightbulb::LIGHTBULB),
-        Flex::new().center().middle(),
+        Flex::new().items_center().justify_center(),
         || glyph(IconName::Lightbulb, 3.5, Role::Warning),
     );
 }
@@ -681,14 +700,14 @@ fn hint_chip(hint: &Hint, font: u32) {
     }) = hint.swatch
     {
         let side = (font as f32 * 0.8).max(8.0);
-        row(
+        flex_row(
             Modifier::new()
                 .cursor(CursorIcon::Pointer)
                 .target(FocusId(COLOR_SWATCH_BASE + index as u64))
                 .pad_side(Side::Right, 1.0),
-            Flex::new().center(),
+            Flex::new().items_center(),
             || {
-                gap_box(Modifier::new().width(side).height(side).fill_rounded(
+                rustle::spacer(Modifier::new().width(side).height(side).fill_rounded(
                     Tone::rgb(red, green, blue).alpha(f32::from(alpha) / 255.0),
                     Radius::Sm,
                 ));
@@ -705,9 +724,9 @@ fn hint_chip(hint: &Hint, font: u32) {
     } else {
         Modifier::new()
     };
-    row(
+    flex_row(
         own.fill_rounded(Role::Surface, Radius::Sm).pad_x(1.0),
-        Flex::new().center(),
+        Flex::new().items_center(),
         || {
             label(
                 &hint.label,
@@ -731,7 +750,7 @@ fn run_lens_chip(index: usize, label: &str, font: u32, first: bool) {
         .looks(Looks::new().hover(Role::SurfaceHover).radius(Radius::Sm))
         .cursor(CursorIcon::Pointer)
         .target(crate::tasks::run_lens_mark(index));
-    row(chip_padding(own, first), Flex::new().center(), || {
+    flex_row(chip_padding(own, first), Flex::new().items_center(), || {
         crate::kit::label(
             label,
             Type::new((font - 1).max(8)).ratio(1.2).tone(Role::Muted),
@@ -750,7 +769,7 @@ fn lens_chip(lens: &Lens, font: u32, first: bool) {
     } else {
         own
     };
-    row(chip_padding(own, first), Flex::new().center(), || {
+    flex_row(chip_padding(own, first), Flex::new().items_center(), || {
         label(
             &lens.title,
             Type::new((font - 1).max(8)).ratio(1.2).tone(Role::Subtle),
@@ -767,7 +786,7 @@ pub const FOLD_END: u64 = 8_500_000;
 /// Emits the mark after the line at `index` standing for the lines folded away after it, which unfolds them when pressed.
 #[track_caller]
 fn fold_chip(index: usize) {
-    row(
+    flex_row(
         Modifier::new()
             .pad_side(Side::Left, 2)
             .h(4)
@@ -780,7 +799,7 @@ fn fold_chip(index: usize) {
             .cursor(CursorIcon::Pointer)
             .target(FocusId(FOLD_BASE + index as u64))
             .pad_x(1.5),
-        Flex::new().center(),
+        Flex::new().items_center(),
         || line("⋯", 11, 1.2, Role::Muted),
     );
 }
@@ -917,7 +936,7 @@ fn visible(document: &Document, scroll: f32, height: f32, look: &Look) {
     }
     blank(total.saturating_sub(drawn), row);
     if settings.scroll_beyond_last_line {
-        gap_box(Modifier::new().height((height - row * 2.0).max(0.0)));
+        rustle::spacer(Modifier::new().height((height - row * 2.0).max(0.0)));
     }
 }
 
@@ -977,11 +996,11 @@ fn tallies(document: &Document) {
     if words.is_empty() {
         return;
     }
-    row(
+    flex_row(
         Modifier::new()
             .cursor(CursorIcon::Pointer)
             .target(crate::state::BOTTOM_PROBLEMS_COUNT),
-        Flex::new().center().gap(2),
+        Flex::new().items_center().gap(sp(2)),
         move || {
             for (said, role) in words {
                 line(said, 11, 1.4, role);
@@ -993,12 +1012,12 @@ fn tallies(document: &Document) {
 /// Emits the strip above the file: its icon and name, and, while it is the file shown, `live`, the switch between its source and its rendering and the button that writes it when it has changes to write.
 #[track_caller]
 fn strip(viewer: &Viewer, live: bool) {
-    row(
+    flex_row(
         Modifier::new()
             .h(10)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(4),
-        Flex::new().center().gap(2),
+        Flex::new().items_center().gap(sp(2)),
         || {
             file_icon(&viewer.path, 4.0);
             label(
@@ -1102,7 +1121,7 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
         Contents::Message(message) => note(message),
         Contents::Picture(_) => {}
         Contents::Text(document) => {
-            column(
+            flex_column(
                 Modifier::new()
                     .min_h(lines_height / 4.0)
                     .cursor(CursorIcon::Text)
@@ -1130,7 +1149,7 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
                         },
                     );
                     if document.truncated {
-                        block(Modifier::new().pad_x(4).pad_y(2), || {
+                        flex_column(Modifier::new().pad_x(4).pad_y(2), Flex::new(), || {
                             line("The rest of the file is not shown.", 12, 1.4, Role::Subtle);
                         });
                     }
@@ -1138,21 +1157,21 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
             );
         }
     };
-    column(
+    flex_column(
         Modifier::new().grow().fill(Role::Background),
         Flex::new(),
         || {
             strip(viewer, live);
             crate::language_offer::offer(state, viewer);
-            row(
+            flex_row(
                 Modifier::new().grow().clip_to(Radius::None),
                 Flex::new(),
                 || {
-                    layer(Modifier::new().grow().clip_to(Radius::None), || {
+                    rustle::stack_with(Modifier::new().grow().clip_to(Radius::None), || {
                         scroll_area(
                             Modifier::new().fill_max_size(),
                             Scroll::from_start(scroller, viewer.scroll),
-                            || block(Modifier::new().fill_max_width(), body),
+                            || flex_column(Modifier::new().fill_max_width(), Flex::new(), body),
                         );
                         if let Some(document) = shown_text {
                             crate::scroll_marks::scroll_marks(document, &found.0, &state.editor);
@@ -1195,7 +1214,7 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
 /// Emits a line saying `message` where the file's lines would be.
 #[track_caller]
 fn note(message: &str) {
-    block(Modifier::new().pad_x(4).pad_y(4), || {
+    flex_column(Modifier::new().pad_x(4).pad_y(4), Flex::new(), || {
         line(message, 13, 1.4, Role::Subtle);
     });
 }
@@ -1217,13 +1236,13 @@ fn modal_shape(state: &WorkspaceState, document: &Document, live: bool) -> pm_ed
 #[track_caller]
 fn vim_bar(status: &crate::vim::VimStatus) {
     let kind = Type::new(12).ratio(1.4).mono();
-    row(
+    flex_row(
         Modifier::new()
             .h(6)
             .fill(Role::Surface)
             .stroke_side(Side::Top, 1.0, Role::Border)
             .pad_x(3),
-        Flex::new().center().gap(3),
+        Flex::new().items_center().gap(sp(3)),
         || {
             label(status.mode, kind.tone(Role::Text));
             if let Some(pending) = &status.pending {

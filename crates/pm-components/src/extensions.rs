@@ -2,12 +2,13 @@
 
 use crate::kit::theme::{self, family_from_colours, set_extension_families};
 use crate::kit::{
-    Artwork, Flex, FocusId, IconName, Radius, Role, Scroll, Side, Styled, Type, artwork_with,
-    block, column, label, layout, scroll_area, sp,
+    Artwork, FocusId, IconName, Radius, Role, Scroll, Side, Styled, Type, artwork_with, label,
+    scroll_area, sp,
 };
 use pm_field::{Edit, Field};
 use pm_protocol::{ExtensionAssets, ExtensionCommand, ExtensionInfo};
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::button::Variant;
 use crate::checkbox::Variant as CheckboxVariant;
@@ -412,12 +413,12 @@ fn line_type(pixels: u32, tone: Role) -> Type {
 /// Emits the title of the page and the button that installs an extension from a folder.
 #[track_caller]
 fn heading() {
-    layout::row(
+    flex_row(
         Modifier::new()
             .h(12)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(5),
-        Flex::new().center().between(),
+        Flex::new().items_center().justify_between(),
         || {
             label("Extensions", line_type(14, Role::Text).medium());
             Button::new("Install Extension…", INSTALL_EXTENSION)
@@ -483,24 +484,28 @@ pub(crate) fn row(extension: &ExtensionInfo, action: FocusId) {
         format!("{}  {}", extension.description, endings(extension))
     };
     let brings = wrapped(&extension.provides, ROW_LINE);
-    layout::row(
+    flex_row(
         Modifier::new().pad_x(4).pad_y(3),
-        Flex::new().center().gap(3),
+        Flex::new().items_center().gap(sp(3)),
         || {
             mark(extension);
-            column(
+            flex_column(
                 Modifier::new().grow().clip_to(Radius::None),
                 Flex::new(),
                 || {
-                    layout::row(Modifier::new(), Flex::new().center().gap(2), || {
-                        label(&extension.name, line_type(14, Role::Text).medium());
-                        if !extension.version.is_empty() {
-                            label(&extension.version, line_type(12, Role::Subtle).mono());
-                        }
-                        if extension.local {
-                            label("your own", line_type(12, Role::Subtle));
-                        }
-                    });
+                    flex_row(
+                        Modifier::new(),
+                        Flex::new().items_center().gap(sp(2)),
+                        || {
+                            label(&extension.name, line_type(14, Role::Text).medium());
+                            if !extension.version.is_empty() {
+                                label(&extension.version, line_type(12, Role::Subtle).mono());
+                            }
+                            if extension.local {
+                                label("your own", line_type(12, Role::Subtle));
+                            }
+                        },
+                    );
                     line(about, 12, 1.4, Role::Muted);
                     for said in brings {
                         line(said, 12, 1.4, Role::Subtle);
@@ -521,9 +526,9 @@ pub(crate) fn row(extension: &ExtensionInfo, action: FocusId) {
 /// Emits one line saying what a capability lets an extension do, with the switch, answering to `id`, that allows it or not.
 #[track_caller]
 fn permission(capability: &str, allowed: bool, id: FocusId) {
-    layout::row(
+    flex_row(
         Modifier::new().pad_y(1),
-        Flex::new().center().between().gap(3),
+        Flex::new().items_center().justify_between().gap(sp(3)),
         || {
             line(describe_capability(capability), 12, 1.4, Role::Muted);
             Checkbox::new(allowed, id)
@@ -539,7 +544,7 @@ fn permissions(extension: &ExtensionInfo, place: usize) {
     if extension.kind != "extension" || !extension.installed || extension.requests.is_empty() {
         return;
     }
-    column(
+    flex_column(
         Modifier::new().pad_x(4).pad_side(Side::Bottom, 3),
         Flex::new(),
         || {
@@ -563,13 +568,13 @@ fn preview_card(preview: &Preview) {
     if !extension.version.is_empty() {
         title = format!("{title} {}", extension.version);
     }
-    column(
+    flex_column(
         Modifier::new()
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
             .pad_x(4)
             .pad_y(4),
-        Flex::new().gap(3),
+        Flex::new().gap(sp(3)),
         || {
             label(title, line_type(14, Role::Text).medium());
             if !extension.description.is_empty() {
@@ -586,15 +591,19 @@ fn preview_card(preview: &Preview) {
                     FocusId(PREVIEW_GRANT_BASE + which as u64),
                 );
             }
-            layout::row(Modifier::new(), Flex::new().center().gap(2), || {
-                Button::new("Install", PREVIEW_INSTALL)
-                    .size(Size::Sm)
-                    .build();
-                Button::new("Cancel", PREVIEW_CANCEL)
-                    .variant(Variant::Ghost)
-                    .size(Size::Sm)
-                    .build();
-            });
+            flex_row(
+                Modifier::new(),
+                Flex::new().items_center().gap(sp(2)),
+                || {
+                    Button::new("Install", PREVIEW_INSTALL)
+                        .size(Size::Sm)
+                        .build();
+                    Button::new("Cancel", PREVIEW_CANCEL)
+                        .variant(Variant::Ghost)
+                        .size(Size::Sm)
+                        .build();
+                },
+            );
         },
     );
 }
@@ -624,9 +633,9 @@ fn lined_group(title: &str, inside: bool, rows: impl FnOnce()) {
     if rows.is_empty() {
         return;
     }
-    column(Modifier::new(), Flex::new().gap(2), move || {
+    flex_column(Modifier::new(), Flex::new().gap(sp(2)), move || {
         line(title.to_owned(), 12, 1.4, Role::Subtle);
-        column(
+        flex_column(
             Modifier::new()
                 .fill_rounded(Role::Surface, Radius::Lg)
                 .stroke(Role::Border, Radius::Lg)
@@ -649,7 +658,7 @@ fn lined_group(title: &str, inside: bool, rows: impl FnOnce()) {
                     } else {
                         lined.padding_each(0.0, 0.0, 0.0, 1.0)
                     };
-                    block(lined, move || rustle::emit(built));
+                    flex_column(lined, Flex::new(), move || rustle::emit(built));
                 }
             },
         );
@@ -659,7 +668,7 @@ fn lined_group(title: &str, inside: bool, rows: impl FnOnce()) {
 /// Emits the row of the extension listed at `place`, with the switches of what it is allowed under it.
 #[track_caller]
 fn entry(extension: &ExtensionInfo, place: usize) {
-    column(Modifier::new(), Flex::new(), || {
+    flex_column(Modifier::new(), Flex::new(), || {
         row(extension, FocusId(ROW_BASE + place as u64));
         permissions(extension, place);
     });
@@ -669,24 +678,24 @@ fn entry(extension: &ExtensionInfo, place: usize) {
 #[track_caller]
 pub fn extensions(state: &WorkspaceState) {
     let listed = state.listed_extensions();
-    column(Modifier::new().grow(), Flex::new(), || {
+    flex_column(Modifier::new().grow(), Flex::new(), || {
         heading();
         scroll_area(
             Modifier::new().grow(),
             Scroll::from_start(EXTENSIONS_SCROLL, state.extensions_page.scroll),
             || {
-                column(
+                flex_column(
                     Modifier::new().fill_max_width(),
-                    Flex::new().center(),
+                    Flex::new().items_center(),
                     || {
-                        column(
+                        flex_column(
                             Modifier::new()
                                 .max_w_px(PAGE_WIDTH)
                                 .fill_max_width()
                                 .pad_x(5)
                                 .pad_side(Side::Top, 5)
                                 .pad_side(Side::Bottom, 8),
-                            Flex::new().gap(6),
+                            Flex::new().gap(sp(6)),
                             || {
                                 search(state);
                                 if let Some(problem) = &state.extensions_page.problem {

@@ -2,12 +2,13 @@
 
 use pm_protocol::CompletionKind;
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::kit::{
-    CaretLook, Flex, FocusId, Hovered, IconName, Interactive, Looks, Mark, Paint, Radius, Role,
-    Scroll, Styled, Tone, Type, at_window, block, column, gap_box, label, marked_line, row,
-    scroll_area, selectable, selectable_scope, sp, wrap_lines,
+    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Styled, Tone, Type,
+    at_window, label, scroll_area, selectable, selectable_scope, sp, wrap_lines,
 };
+use crate::marked::{CaretLook, Mark, Paint, marked_line};
 
 use crate::color_picker::{
     COLOR_BOX, COLOR_FORMAT_BASE, COLOR_FORMATS_SHOWN, COLOR_HEX, ColorPicking,
@@ -130,13 +131,17 @@ fn framed(
         Some(id) => own.target(id),
         None => own,
     };
-    column(own.chain(padding), flex, content);
+    flex_column(own.chain(padding), flex, content);
 }
 
 /// Emits `content` in a box that takes the room left in its row and cuts it off at its edge.
 #[track_caller]
 fn clipped_box(content: impl FnOnce()) {
-    block(Modifier::new().grow().clip_to(Radius::None), content);
+    flex_column(
+        Modifier::new().grow().clip_to(Radius::None),
+        Flex::new(),
+        content,
+    );
 }
 
 /// Emits the row of the list of completions at `place`, for `item`, filled while it is `picked`.
@@ -150,18 +155,18 @@ fn completion_row(place: usize, item: &pm_protocol::Completion, picked: bool) {
     } else {
         looks
     };
-    row(
+    flex_row(
         Modifier::new()
             .h(6)
             .looks_of(looks, id)
             .cursor(CursorIcon::Pointer)
             .target(id)
             .pad_x(1.5),
-        Flex::new().center().gap(2),
+        Flex::new().items_center().gap(sp(2)),
         || {
-            row(
+            flex_row(
                 Modifier::new().square(4),
-                Flex::new().center().middle(),
+                Flex::new().items_center().justify_center(),
                 || label(letter, Type::code(11).ratio(1.2).tone(tone)),
             );
             clipped_box(|| {
@@ -172,10 +177,11 @@ fn completion_row(place: usize, item: &pm_protocol::Completion, picked: bool) {
             });
             if let Some(detail) = &item.detail {
                 let short: String = detail.chars().take(48).collect();
-                block(
+                flex_column(
                     Modifier::new()
                         .max_w_px(LIST_WIDTH * 0.45)
                         .clip_to(Radius::None),
+                    Flex::new(),
                     || {
                         label(
                             short,
@@ -254,7 +260,7 @@ fn completion_docs(completion: &Completions, shown: bool, language: Option<&str>
             .height_in(0.0, sp(list_height(completion).max(160.0) / 4.0)),
         None,
         Modifier::new().pad_x(3).pad_y(2),
-        Flex::new().gap(1.5),
+        Flex::new().gap(sp(1.5)),
         || {
             if let Some(detail) = &item.detail {
                 code_lines(detail, "", language, width);
@@ -263,7 +269,7 @@ fn completion_docs(completion: &Completions, shown: bool, language: Option<&str>
             for piece in pieces(said, DOCS_LINES) {
                 match piece {
                     Piece::Code(fence, body) => {
-                        column(Modifier::new().clip_to(Radius::None), Flex::new(), || {
+                        flex_column(Modifier::new().clip_to(Radius::None), Flex::new(), || {
                             code_lines(&body, &fence, language, width);
                         });
                     }
@@ -384,7 +390,7 @@ fn code_lines(body: &str, language: &str, fallback: Option<&str>, width: f32) {
 /// Emits a hairline across the card.
 #[track_caller]
 fn rule() {
-    gap_box(
+    rustle::spacer(
         Modifier::new()
             .height(1.0)
             .fill_max_width()
@@ -414,9 +420,9 @@ fn hover_card(row_height: f32, card: &HoverCard, language: Option<&str>, height:
                     Modifier::new().height_in(0.0, room),
                     Scroll::from_start(HOVER_SCROLL, card.scroll),
                     || {
-                        column(
+                        flex_column(
                             Modifier::new().fill_max_width().pad_x(3).pad_y(2.5),
-                            Flex::new().gap(2),
+                            Flex::new().gap(sp(2)),
                             || selectable_scope(HOVER_TEXT, || card_parts(card, language)),
                         );
                     },
@@ -432,9 +438,9 @@ fn hover_card(row_height: f32, card: &HoverCard, language: Option<&str>, height:
             card.at.1 - CARD_GAP - room,
             Modifier::new(),
             || {
-                column(
+                flex_column(
                     Modifier::new().width(CARD_WIDTH).height(room),
-                    Flex::new().trailing(),
+                    Flex::new().justify_end(),
                     body,
                 );
             },
@@ -453,7 +459,7 @@ fn card_parts(card: &HoverCard, language: Option<&str>) {
             .unwrap_or_default();
         let mut lines = diagnostic.message.lines();
         let first = lines.next().unwrap_or_default();
-        column(Modifier::new(), Flex::new(), || {
+        flex_column(Modifier::new(), Flex::new(), || {
             selectable(
                 Modifier::new(),
                 HOVER_TEXT,
@@ -481,7 +487,7 @@ fn card_parts(card: &HoverCard, language: Option<&str>) {
         for piece in pieces(said, CARD_LINES) {
             match piece {
                 Piece::Code(fence, body) => {
-                    column(Modifier::new().clip_to(Radius::None), Flex::new(), || {
+                    flex_column(Modifier::new().clip_to(Radius::None), Flex::new(), || {
                         code_lines(&body, &fence, language, CARD_TEXT);
                     });
                 }
@@ -580,9 +586,9 @@ fn signature_card(signature: &pm_protocol::Signature, at: (f32, f32)) {
         Modifier::new().max_w_px(CARD_WIDTH + 120.0),
         None,
         Modifier::new().pad_x(2).pad_y(1),
-        Flex::new().gap(0.5),
+        Flex::new().gap(sp(0.5)),
         || {
-            block(Modifier::new().clip_to(Radius::None), || {
+            flex_column(Modifier::new().clip_to(Radius::None), Flex::new(), || {
                 marked_line(
                     Modifier::new(),
                     &words,
@@ -592,7 +598,7 @@ fn signature_card(signature: &pm_protocol::Signature, at: (f32, f32)) {
                 );
             });
             if let Some(said) = first_line {
-                block(Modifier::new().clip_to(Radius::None), || {
+                flex_column(Modifier::new().clip_to(Radius::None), Flex::new(), || {
                     line(said, 11, 1.4, Role::Muted);
                 });
             }
@@ -608,7 +614,7 @@ fn go_to_line_box(going: &GoingTo, lines: usize) {
         Modifier::new().width(260.0),
         Some(GO_TO_LINE_BOX),
         Modifier::new().pad(1.5),
-        Flex::new().gap(1),
+        Flex::new().gap(sp(1)),
         || {
             Input::new(&going.field, GO_TO_LINE)
                 .size(Size::Sm)
@@ -637,10 +643,11 @@ fn cell(content: impl Into<String>, pixels: u32, tone: Role, code: bool) {
 #[track_caller]
 fn tag(content: impl Into<String>, pixels: u32, tone: Role) {
     let content = content.into();
-    block(
+    flex_column(
         Modifier::new()
             .max_w_px(LISTING_WIDTH * 0.5)
             .clip_to(Radius::None),
+        Flex::new(),
         move || line(content, pixels, 1.4, tone),
     );
 }
@@ -729,10 +736,14 @@ pub(crate) fn listing_cells(items: &Items, index: usize) {
             let Some(item) = items.get(index) else {
                 return;
             };
-            gap_box(Modifier::new().width(item.depth.min(8) as f32 * 14.0));
-            block(Modifier::new().width(52.0).clip_to(Radius::None), || {
-                line(item.context.clone(), 11, 1.4, Role::SyntaxKeyword);
-            });
+            rustle::spacer(Modifier::new().width(item.depth.min(8) as f32 * 14.0));
+            flex_column(
+                Modifier::new().width(52.0).clip_to(Radius::None),
+                Flex::new(),
+                || {
+                    line(item.context.clone(), 11, 1.4, Role::SyntaxKeyword);
+                },
+            );
             cell(item.name.clone(), 12, Role::Text, true);
         }
         Items::Places { locations, .. } | Items::Search { locations, .. } => {
@@ -851,16 +862,16 @@ fn listing_panel(listing: &Listing) {
         Flex::new(),
         || {
             if let Some((filter, hint)) = filter {
-                block(Modifier::new().pad_x(0.5).pad_y(0.5), || {
+                flex_column(Modifier::new().pad_x(0.5).pad_y(0.5), Flex::new(), || {
                     Input::new(filter, LISTING_FILTER)
                         .size(Size::Sm)
                         .placeholder(hint)
                         .build();
                 });
             }
-            row(
+            flex_row(
                 Modifier::new().h(7).pad_x(1.5),
-                Flex::new().center().gap(2),
+                Flex::new().items_center().gap(sp(2)),
                 || {
                     cell(listing.items.title(), 12, Role::Text, false);
                     if count > 0 {
@@ -869,7 +880,7 @@ fn listing_panel(listing: &Listing) {
                 },
             );
             if let Some(said) = status {
-                block(Modifier::new().pad_x(1.5).pad_y(1), || {
+                flex_column(Modifier::new().pad_x(1.5).pad_y(1), Flex::new(), || {
                     line(said, 12, 1.4, Role::Muted);
                 });
             }
@@ -882,14 +893,14 @@ fn listing_panel(listing: &Listing) {
                 } else {
                     looks
                 };
-                row(
+                flex_row(
                     Modifier::new()
                         .h(6.5)
                         .looks_of(looks, id)
                         .cursor(CursorIcon::Pointer)
                         .target(id)
                         .pad_x(1.5),
-                    Flex::new().center().gap(3),
+                    Flex::new().items_center().gap(sp(3)),
                     || listing_cells(&listing.items, index),
                 );
             }
@@ -910,7 +921,7 @@ fn rename_box(renaming: &Renaming) {
         Modifier::new().width(320.0),
         Some(RENAME_BOX),
         Modifier::new().pad(1.5),
-        Flex::new().gap(1),
+        Flex::new().gap(sp(1)),
         || {
             Input::new(&renaming.field, RENAME_SYMBOL)
                 .size(Size::Sm)
@@ -948,32 +959,36 @@ fn color_box(picking: &ColorPicking) {
         Modifier::new().width(260.0),
         Some(COLOR_BOX),
         Modifier::new().pad(1.5),
-        Flex::new().gap(1),
+        Flex::new().gap(sp(1)),
         || {
-            row(Modifier::new(), Flex::new().center().gap(2), || {
-                gap_box(
-                    Modifier::new()
-                        .square(7)
-                        .fill_rounded(
-                            Tone::rgb(red, green, blue).alpha(f32::from(alpha) / 255.0),
-                            Radius::Sm,
-                        )
-                        .stroke(Role::Border, Radius::Sm),
-                );
-                Input::new(&picking.hex, COLOR_HEX)
-                    .size(Size::Sm)
-                    .invalid(crate::color_picker::color_of(picking.hex.text()).is_none())
-                    .modifier(Modifier::new().grow())
-                    .build();
-            });
+            flex_row(
+                Modifier::new(),
+                Flex::new().items_center().gap(sp(2)),
+                || {
+                    rustle::spacer(
+                        Modifier::new()
+                            .square(7)
+                            .fill_rounded(
+                                Tone::rgb(red, green, blue).alpha(f32::from(alpha) / 255.0),
+                                Radius::Sm,
+                            )
+                            .stroke(Role::Border, Radius::Sm),
+                    );
+                    Input::new(&picking.hex, COLOR_HEX)
+                        .size(Size::Sm)
+                        .invalid(crate::color_picker::color_of(picking.hex.text()).is_none())
+                        .modifier(Modifier::new().grow())
+                        .build();
+                },
+            );
             if let Some(said) = status {
-                block(Modifier::new().pad_x(1.5).pad_y(1), || {
+                flex_column(Modifier::new().pad_x(1.5).pad_y(1), Flex::new(), || {
                     line(said, 11, 1.4, Role::Subtle);
                 });
             }
             for (place, format) in picking.formats.iter().take(COLOR_FORMATS_SHOWN).enumerate() {
                 let id = FocusId(COLOR_FORMAT_BASE + place as u64);
-                row(
+                flex_row(
                     Modifier::new()
                         .h(6.5)
                         .looks_of(
@@ -983,7 +998,7 @@ fn color_box(picking: &ColorPicking) {
                         .cursor(CursorIcon::Pointer)
                         .target(id)
                         .pad_x(1.5),
-                    Flex::new().center(),
+                    Flex::new().items_center(),
                     || {
                         label(
                             &format.label,

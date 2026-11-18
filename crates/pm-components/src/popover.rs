@@ -1,10 +1,11 @@
 //! The popover: a raised surface that floats over a screen, with a heading and rows of choices.
 
+use crate::kit::sp;
 use crate::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Looks, Placement, Radius, Role, Styled, Type,
-    column, label,
+    FocusId, Hovered, IconName, Interactive, Looks, Placement, Radius, Role, Styled, Type, label,
 };
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::parts::{glyph, line};
 use crate::{Surface, surface};
@@ -200,8 +201,8 @@ pub fn row(name: &str, description: &str, current: bool, id: FocusId) {
         .target(id)
         .pad_x(2.5)
         .pad_y(1.5);
-    crate::kit::row(modifier, Flex::new().center().gap(3), || {
-        column(Modifier::new().grow(), Flex::new(), || {
+    flex_row(modifier, Flex::new().items_center().gap(sp(3)), || {
+        flex_column(Modifier::new().grow(), Flex::new(), || {
             line(name, 13, 1.4, Role::Text);
             if !description.is_empty() {
                 line(description, 12, 1.4, Role::Subtle);
@@ -216,9 +217,9 @@ pub fn row(name: &str, description: &str, current: bool, id: FocusId) {
 /// Emits the small heading line of a popover, with `hint` at its right: a key to press, and what it does.
 #[track_caller]
 pub fn heading(title: &str, hint: Option<(&str, &str)>) {
-    crate::kit::row(
+    flex_row(
         Modifier::new().h(8).pad_x(2.5),
-        Flex::new().center().between(),
+        Flex::new().items_center().justify_between(),
         || {
             line(title, 12, 1.4, Role::Subtle);
             if let Some((key, does)) = hint {
@@ -231,14 +232,18 @@ pub fn heading(title: &str, hint: Option<(&str, &str)>) {
 /// Emits a key to press, in a small chip, and what it does.
 #[track_caller]
 pub fn key_hint(key: &str, does: &str) {
-    crate::kit::row(Modifier::new(), Flex::new().center().gap(1.5), || {
-        crate::kit::row(
-            Modifier::new()
-                .fill_rounded(Role::SurfaceHover, Radius::Md)
-                .pad_x(1.5),
-            Flex::new(),
-            || label(key, Type::new(11).ratio(1.6).mono().tone(Role::Muted)),
-        );
-        line(does, 12, 1.4, Role::Subtle);
-    });
+    flex_row(
+        Modifier::new(),
+        Flex::new().items_center().gap(sp(1.5)),
+        || {
+            flex_row(
+                Modifier::new()
+                    .fill_rounded(Role::SurfaceHover, Radius::Md)
+                    .pad_x(1.5),
+                Flex::new(),
+                || label(key, Type::new(11).ratio(1.6).mono().tone(Role::Muted)),
+            );
+            line(does, 12, 1.4, Role::Subtle);
+        },
+    );
 }

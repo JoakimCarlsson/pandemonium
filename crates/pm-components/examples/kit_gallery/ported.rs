@@ -3,11 +3,12 @@
 //! `modifier` adds to the outermost box; `build_with` takes the children.
 
 use pm_components::kit::{
-    FieldText, Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Side, Styled,
-    Tone, Type, at_window, column, icon, label, label_with, row, sp, spinner, spinning_icon,
+    FieldText, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Side, Styled, Tone,
+    Type, at_window, icon, label, label_with, sp, spinner, spinning_icon,
 };
 use pm_field::Field;
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 pub use pm_components::size::Size;
 
@@ -294,9 +295,9 @@ impl Button {
         }
         let modifier = self.modifier.chain(modifier);
         let flex = if spread {
-            Flex::new().center().between().gap(2)
+            Flex::new().items_center().justify_between().gap(sp(2))
         } else {
-            Flex::new().center().middle().gap(2)
+            Flex::new().items_center().justify_center().gap(sp(2))
         };
         let mut kind = Type::new(font).ratio(1.4).tone(ink);
         if self.variant != Variant::Field {
@@ -310,7 +311,7 @@ impl Button {
         }
         let (icon_name, trailing, spinning, label_text) =
             (self.icon, self.trailing, self.spinning, self.label);
-        row(modifier, flex, move || {
+        flex_row(modifier, flex, move || {
             if let Some(name) = icon_name {
                 glyph(name, ink, spinning && trailing.is_none());
             }
@@ -409,13 +410,17 @@ impl Checkbox {
             .focus_ring(self.id, 2.0, Radius::Sm)
             .target(self.id);
         let (checked, mixed) = (self.checked, self.mixed);
-        row(modifier, Flex::new().center().middle(), move || {
-            if checked {
-                icon(IconName::Check, 3.0, Role::OnAccent);
-            } else if mixed {
-                icon(IconName::Minus, 3.0, Role::OnAccent);
-            }
-        });
+        flex_row(
+            modifier,
+            Flex::new().items_center().justify_center(),
+            move || {
+                if checked {
+                    icon(IconName::Check, 3.0, Role::OnAccent);
+                } else if mixed {
+                    icon(IconName::Minus, 3.0, Role::OnAccent);
+                }
+            },
+        );
     }
 
     /// Emits the switch.
@@ -433,11 +438,11 @@ impl Checkbox {
             .target(self.id)
             .pad_x(0.5);
         let flex = if on {
-            Flex::new().center().trailing()
+            Flex::new().items_center().justify_end()
         } else {
-            Flex::new().center()
+            Flex::new().items_center()
         };
-        row(modifier, flex, move || {
+        flex_row(modifier, flex, move || {
             rustle::spacer(Modifier::new().square(4).fill_rounded(
                 if on { Role::Background } else { Role::Muted },
                 Radius::Full,
@@ -457,11 +462,11 @@ pub fn switch(on: bool, id: Option<FocusId>) {
         modifier = modifier.cursor(CursorIcon::Pointer).target(id);
     }
     let flex = if on {
-        Flex::new().center().trailing()
+        Flex::new().items_center().justify_end()
     } else {
-        Flex::new().center()
+        Flex::new().items_center()
     };
-    row(modifier.pad(0.5), flex, || {
+    flex_row(modifier.pad(0.5), flex, || {
         rustle::spacer(
             Modifier::new()
                 .square(4)
@@ -477,7 +482,7 @@ pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> Option<Fo
         .h(8)
         .stroke(Role::Border, Radius::Md)
         .pad_x(0.5);
-    row(modifier, Flex::new().center().gap(0.5), || {
+    flex_row(modifier, Flex::new().items_center().gap(sp(0.5)), || {
         for (option, name) in names.iter().enumerate() {
             let Some(id) = id_of(option) else {
                 continue;
@@ -488,7 +493,7 @@ pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> Option<Fo
                 .height(6.5)
                 .radius(Radius::Sm)
                 .inner(Modifier::new().pad_x(2.5))
-                .flex(Flex::new().center().middle())
+                .flex(Flex::new().items_center().justify_center())
                 .build_with(|| {
                     label(
                         *name,
@@ -597,8 +602,11 @@ impl Tile {
                 .target(self.id)
                 .chain(self.inner),
         );
-        let flex = self.flex.unwrap_or(Flex::new().center()).gap(self.gap);
-        row(modifier, flex, content);
+        let flex = self
+            .flex
+            .unwrap_or(Flex::new().items_center())
+            .gap(sp(self.gap));
+        flex_row(modifier, flex, content);
     }
 }
 
@@ -667,7 +675,7 @@ impl Surface {
         if self.variant == SurfaceVariant::Dialog {
             modifier = modifier.clip_to(radius);
         }
-        column(
+        flex_column(
             self.modifier.chain(modifier.chain(self.inner)),
             Flex::new(),
             content,
@@ -724,8 +732,8 @@ pub fn popover_row(name: &str, description: &str, current: bool, id: FocusId) {
         .target(id)
         .pad_x(2.5)
         .pad_y(1.5);
-    row(modifier, Flex::new().center().gap(3), || {
-        column(Modifier::new().grow(), Flex::new(), || {
+    flex_row(modifier, Flex::new().items_center().gap(sp(3)), || {
+        flex_column(Modifier::new().grow(), Flex::new(), || {
             label(name, Type::new(13).ratio(1.4).truncate());
             if !description.is_empty() {
                 label(
@@ -743,22 +751,26 @@ pub fn popover_row(name: &str, description: &str, current: bool, id: FocusId) {
 /// Emits a popover heading: `title`, and a key hint at its end.
 #[track_caller]
 pub fn popover_heading(title: &str, hint: Option<(&str, &str)>) {
-    row(
+    flex_row(
         Modifier::new().h(8).pad_x(2.5),
-        Flex::new().center().between(),
+        Flex::new().items_center().justify_between(),
         || {
             label(title, Type::new(12).ratio(1.4).tone(Role::Subtle));
             if let Some((key, does)) = hint {
-                row(Modifier::new(), Flex::new().center().gap(1.5), || {
-                    row(
-                        Modifier::new()
-                            .fill_rounded(Role::SurfaceHover, Radius::Md)
-                            .pad_x(1.5),
-                        Flex::new(),
-                        || label(key, Type::new(11).ratio(1.6).mono().tone(Role::Muted)),
-                    );
-                    label(does, Type::new(12).ratio(1.4).tone(Role::Subtle));
-                });
+                flex_row(
+                    Modifier::new(),
+                    Flex::new().items_center().gap(sp(1.5)),
+                    || {
+                        flex_row(
+                            Modifier::new()
+                                .fill_rounded(Role::SurfaceHover, Radius::Md)
+                                .pad_x(1.5),
+                            Flex::new(),
+                            || label(key, Type::new(11).ratio(1.6).mono().tone(Role::Muted)),
+                        );
+                        label(does, Type::new(12).ratio(1.4).tone(Role::Subtle));
+                    },
+                );
             }
         },
     );
@@ -884,12 +896,16 @@ fn menu_row(entry: Entry, height: f32) {
                     .cursor(CursorIcon::Pointer)
                     .target(id)
             };
-            row(modifier.pad_x(2), Flex::new().center().gap(4), move || {
-                label_with(Modifier::new().grow(), words, Type::new(13).ratio(1.4));
-                if let Some(shortcut) = shortcut {
-                    label(shortcut, Type::new(12).ratio(1.4).tone(Role::Subtle));
-                }
-            });
+            flex_row(
+                modifier.pad_x(2),
+                Flex::new().items_center().gap(sp(4)),
+                move || {
+                    label_with(Modifier::new().grow(), words, Type::new(13).ratio(1.4));
+                    if let Some(shortcut) = shortcut {
+                        label(shortcut, Type::new(12).ratio(1.4).tone(Role::Subtle));
+                    }
+                },
+            );
         }
     }
 }
@@ -1056,14 +1072,18 @@ impl<'a> Input<'a> {
         let modifier = self
             .modifier
             .chain(Modifier::new().fill_max_width().chain(modifier));
-        row(modifier.pad_x(3), Flex::new().center().gap(2), move || {
-            if let Some(name) = leading {
-                icon(name, 4.0, Role::Muted);
-            }
-            FieldText::new(field, id, kind)
-                .placeholder(placeholder, Role::Subtle)
-                .build(Modifier::new().grow());
-        });
+        flex_row(
+            modifier.pad_x(3),
+            Flex::new().items_center().gap(sp(2)),
+            move || {
+                if let Some(name) = leading {
+                    icon(name, 4.0, Role::Muted);
+                }
+                FieldText::new(field, id, kind)
+                    .placeholder(placeholder, Role::Subtle)
+                    .build(Modifier::new().grow());
+            },
+        );
     }
 
     /// Emits the wrapped lines of a multiline input.
@@ -1080,7 +1100,7 @@ impl<'a> Input<'a> {
             .pad_side(Side::Top, 3.5)
             .pad_side(Side::Bottom, 1);
         let (field, id, placeholder) = (self.field, self.id, self.placeholder);
-        column(modifier, Flex::new(), move || {
+        flex_column(modifier, Flex::new(), move || {
             FieldText::new(field, id, kind)
                 .placeholder(placeholder, Role::Subtle)
                 .wrap(inner, Some(8))
@@ -1101,18 +1121,18 @@ fn theme_colors() -> (rustle::Color, rustle::Color, rustle::Color) {
 /// Emits one row of a settings page: `title` over `about` on the left and `control` on the right: `SettingRow::new(..).control(..).build(room)`.
 #[track_caller]
 pub fn setting_row(title: &str, about: &str, control: impl FnOnce()) {
-    column(
+    flex_column(
         Modifier::new()
             .fill_max_width()
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_y(3),
-        Flex::new().gap(2),
+        Flex::new().gap(sp(2)),
         || {
-            row(
+            flex_row(
                 Modifier::new().fill_max_width(),
-                Flex::new().center().between().gap(6),
+                Flex::new().items_center().justify_between().gap(sp(6)),
                 || {
-                    column(Modifier::new().grow(), Flex::new().gap(0.5), || {
+                    flex_column(Modifier::new().grow(), Flex::new().gap(sp(0.5)), || {
                         label(title, Type::new(13).ratio(1.4));
                         pm_components::kit::paragraph(
                             Modifier::new().width_in(0.0, 360.0),
@@ -1120,7 +1140,11 @@ pub fn setting_row(title: &str, about: &str, control: impl FnOnce()) {
                             Type::new(12).ratio(1.4).tone(Role::Muted),
                         );
                     });
-                    row(Modifier::new(), Flex::new().center().gap(2), control);
+                    flex_row(
+                        Modifier::new(),
+                        Flex::new().items_center().gap(sp(2)),
+                        control,
+                    );
                 },
             );
         },

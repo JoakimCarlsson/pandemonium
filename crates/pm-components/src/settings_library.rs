@@ -1,13 +1,14 @@
 //! The pages of the settings window that list what agents are given in a project: an overview, the skills, instructions, agent definitions and hooks found in the folders the agent reads, and the tools it may call, each with a switch that leaves it out of new sessions.
 
+use crate::kit::sp;
+use rustle::{Flex, flex_column, flex_row};
 use std::path::Path;
 
 use pm_protocol::library::{Item, Kind, Product, Scope, Source, ToolSet, locations};
 use rustle::{CursorIcon, Modifier};
 
 use crate::kit::{
-    Flex, FocusId, IconName, Interactive, Radius, Role, Side, Styled, Type, column, label,
-    label_with, row,
+    FocusId, IconName, Interactive, Radius, Role, Side, Styled, Type, label, label_with,
 };
 
 use crate::button::Variant;
@@ -449,7 +450,7 @@ fn context(state: &WorkspaceState, room: f32) {
             format!("Read for {read_for}; the app does not know how to read this agent's files.")
         }
     };
-    column(Modifier::new(), Flex::new().gap(2), || {
+    flex_column(Modifier::new(), Flex::new().gap(sp(2)), || {
         wrapped_note(&said, room)
     });
 }
@@ -554,12 +555,16 @@ fn items_page(state: &WorkspaceState, kind: Kind, room: f32) {
 /// Emits the heading over the customizations of `kind` found, with how many show, and the button for a new one when one can be written.
 #[track_caller]
 fn found_heading(state: &WorkspaceState, kind: Kind, shown: usize) {
-    row(Modifier::new(), Flex::new().center().between(), || {
-        heading_only("Found", shown);
-        if draftable(kind) {
-            new_button(state, kind);
-        }
-    });
+    flex_row(
+        Modifier::new(),
+        Flex::new().items_center().justify_between(),
+        || {
+            heading_only("Found", shown);
+            if draftable(kind) {
+                new_button(state, kind);
+            }
+        },
+    );
 }
 
 /// Emits one customization as its row shows it: its name with its scope, what it is for, what it says about itself in the code font, its switch and the button that opens its file.
@@ -599,23 +604,27 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
     };
     let name_tone = if on { Role::Text } else { Role::Muted };
     flat_row(|| {
-        column(
+        flex_column(
             Modifier::new().grow().clip_to(Radius::None),
-            Flex::new().gap(1),
+            Flex::new().gap(sp(1)),
             || {
-                row(Modifier::new(), Flex::new().center().gap(2), || {
-                    label(
-                        item.name.clone(),
-                        Type::new(13).ratio(1.4).tone(name_tone).truncate().medium(),
-                    );
-                    Badge::new(item.scope.label()).tone(Role::Subtle).build();
-                    if !item.tool.is_empty() {
-                        Badge::new(&item.tool).tone(Role::Subtle).build();
-                    }
-                    if !on {
-                        Badge::new("Off").tone(Role::Subtle).build();
-                    }
-                });
+                flex_row(
+                    Modifier::new(),
+                    Flex::new().items_center().gap(sp(2)),
+                    || {
+                        label(
+                            item.name.clone(),
+                            Type::new(13).ratio(1.4).tone(name_tone).truncate().medium(),
+                        );
+                        Badge::new(item.scope.label()).tone(Role::Subtle).build();
+                        if !item.tool.is_empty() {
+                            Badge::new(&item.tool).tone(Role::Subtle).build();
+                        }
+                        if !on {
+                            Badge::new("Off").tone(Role::Subtle).build();
+                        }
+                    },
+                );
                 if !description.is_empty() {
                     clipped(description, 12, Role::Muted);
                 }
@@ -626,18 +635,22 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
                 );
             },
         );
-        row(Modifier::new(), Flex::new().center().gap(2), || {
-            if item.kind.switchable(library.product) {
-                switch(on, ITEM_SWITCHES.id(index));
-            }
-            if let Some(open) = ITEM_OPENS.id(index) {
-                Button::new("Open", open)
-                    .variant(Variant::Outline)
-                    .size(Size::Sm)
-                    .disabled(!openable(state, item))
-                    .build();
-            }
-        });
+        flex_row(
+            Modifier::new(),
+            Flex::new().items_center().gap(sp(2)),
+            || {
+                if item.kind.switchable(library.product) {
+                    switch(on, ITEM_SWITCHES.id(index));
+                }
+                if let Some(open) = ITEM_OPENS.id(index) {
+                    Button::new("Open", open)
+                        .variant(Variant::Outline)
+                        .size(Size::Sm)
+                        .disabled(!openable(state, item))
+                        .build();
+                }
+            },
+        );
     });
 }
 
@@ -753,19 +766,23 @@ fn set_row(set: &ToolSet, place: usize, open: bool, product: Option<Product>, wi
     };
     let name_tone = if on { Role::Text } else { Role::Muted };
     flat_row(|| {
-        row(heading, Flex::new().center().gap(2), || {
+        flex_row(heading, Flex::new().items_center().gap(sp(2)), || {
             glyph(chevron, 4.0, Role::Muted);
-            column(
+            flex_column(
                 Modifier::new().grow().clip_to(Radius::None),
-                Flex::new().gap(1),
+                Flex::new().gap(sp(1)),
                 || {
-                    row(Modifier::new(), Flex::new().center().gap(2), || {
-                        label(
-                            set.name.clone(),
-                            Type::new(13).ratio(1.4).tone(name_tone).truncate().medium(),
-                        );
-                        Badge::new(count).build();
-                    });
+                    flex_row(
+                        Modifier::new(),
+                        Flex::new().items_center().gap(sp(2)),
+                        || {
+                            label(
+                                set.name.clone(),
+                                Type::new(13).ratio(1.4).tone(name_tone).truncate().medium(),
+                            );
+                            Badge::new(count).build();
+                        },
+                    );
                     clipped(about, 12, Role::Muted);
                 },
             );
@@ -787,16 +804,16 @@ fn tool_row(
 ) {
     let on = set.tool_enabled(&tool.name, withheld);
     let name_tone = if on { Role::Text } else { Role::Muted };
-    row(
+    flex_row(
         Modifier::new()
             .pad_side(Side::Left, 10)
             .pad_side(Side::Right, 3)
             .pad_y(3),
-        Flex::new().center().between().gap(3),
+        Flex::new().items_center().justify_between().gap(sp(3)),
         || {
-            column(
+            flex_column(
                 Modifier::new().grow().clip_to(Radius::None),
-                Flex::new().gap(1),
+                Flex::new().gap(sp(1)),
                 || {
                     label(
                         tool.name.clone(),

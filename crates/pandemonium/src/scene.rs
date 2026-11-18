@@ -3,9 +3,10 @@
 
 use pm_components::kit::report::{self, WindowKey};
 use pm_components::kit::theme::{self, Tokens};
-use pm_components::kit::{Interactive, Styled, block, overlay};
+use pm_components::kit::{Interactive, Styled, overlay};
 use pm_pages::{Screen, picker_screen, screen, settings_window};
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column};
 
 /// The window key the settings window keeps its report under.
 pub const SETTINGS_WINDOW: WindowKey = 1;
@@ -38,9 +39,11 @@ pub fn scale_for(state: &Screen) {
 #[track_caller]
 pub fn banded(content: impl FnOnce(f32, f32), width: f32, height: f32) {
     let band = pm_components::shadow_margin();
-    block(Modifier::new().fill_max_size().padding(band), || {
-        content(width - 2.0 * band, height - 2.0 * band)
-    });
+    flex_column(
+        Modifier::new().fill_max_size().padding(band),
+        Flex::new(),
+        || content(width - 2.0 * band, height - 2.0 * band),
+    );
 }
 
 /// Emits the main window's frame for `state` in a window `width` by `height`
@@ -83,8 +86,9 @@ pub fn main_root(
     scale_for(state);
     theme::provide(tokens, || {
         report::root(|| {
-            block(
+            flex_column(
                 Modifier::new().fill_max_size().file_drop_id(DROP_AREA),
+                Flex::new(),
                 || main_frame(state, width, height),
             );
             overlay::tooltips(report::MAIN);

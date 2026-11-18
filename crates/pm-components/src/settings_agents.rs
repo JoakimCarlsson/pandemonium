@@ -1,12 +1,12 @@
 //! The page of the agents and their accounts: a card for each agent with how it signs in, its switch, and its accounts or its API key.
 
+use crate::kit::sp;
 use pm_field::{Edit, Field};
 use pm_harness::SignIn;
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
-use crate::kit::{
-    Flex, FocusId, IconName, Radius, Role, Side, Styled, Tooltip, Type, column, label, row,
-};
+use crate::kit::{FocusId, IconName, Radius, Role, Side, Styled, Tooltip, Type, label};
 
 use crate::button::Variant;
 use crate::input::Input;
@@ -337,11 +337,11 @@ fn how_it_signs_in(sign_in: Option<SignIn>, keyed: bool, credentials: Option<&st
 
 /// Emits the square an agent's glyph sits in at the start of its card, the glyph quieter when `dim`.
 fn emblem(icon: IconName, dim: bool) {
-    row(
+    flex_row(
         Modifier::new()
             .square(8)
             .fill_rounded(Role::SurfaceActive, Radius::Md),
-        Flex::new().center().middle(),
+        Flex::new().items_center().justify_center(),
         || glyph(icon, 4.5, if dim { Role::Subtle } else { Role::Text }),
     );
 }
@@ -349,17 +349,21 @@ fn emblem(icon: IconName, dim: bool) {
 /// Emits a name `title` in `tone` followed by `badges`, over a quieter line `under` when it says something.
 #[track_caller]
 fn titled(title: &str, under: &str, tone: Role, badges: impl FnOnce()) {
-    column(
+    flex_column(
         Modifier::new().grow().clip_to(Radius::None),
-        Flex::new().gap(1),
+        Flex::new().gap(sp(1)),
         || {
-            row(Modifier::new(), Flex::new().center().gap(2), || {
-                label(
-                    title,
-                    Type::new(13).ratio(1.4).tone(tone).truncate().medium(),
-                );
-                badges();
-            });
+            flex_row(
+                Modifier::new(),
+                Flex::new().items_center().gap(sp(2)),
+                || {
+                    label(
+                        title,
+                        Type::new(13).ratio(1.4).tone(tone).truncate().medium(),
+                    );
+                    badges();
+                },
+            );
             if !under.is_empty() {
                 clipped(under, 12, Role::Muted);
             }
@@ -370,7 +374,11 @@ fn titled(title: &str, under: &str, tone: Role, badges: impl FnOnce()) {
 /// Emits the buttons `buttons` emits at the end of a row, side by side.
 #[track_caller]
 fn actions(buttons: impl FnOnce()) {
-    row(Modifier::new(), Flex::new().center().gap(2), buttons);
+    flex_row(
+        Modifier::new(),
+        Flex::new().items_center().gap(sp(2)),
+        buttons,
+    );
 }
 
 /// Emits a small button of a row saying `label` in the look of `variant`, answering to `id`.
@@ -395,12 +403,12 @@ fn icon_button(icon: IconName, tooltip: &str, id: FocusId) {
 /// Emits a row of a boxed list, as the list's own rows are, set in from the left by `inset` steps and holding what `content` emits.
 #[track_caller]
 fn inset_row(inset: u32, content: impl FnOnce()) {
-    row(
+    flex_row(
         Modifier::new()
             .pad_side(Side::Left, inset)
             .pad_side(Side::Right, 3)
             .pad_y(3),
-        Flex::new().center().between().gap(3),
+        Flex::new().items_center().justify_between().gap(sp(3)),
         content,
     );
 }
@@ -424,19 +432,23 @@ fn header(
     let look = state.agent_look(index);
     let under = how_it_signs_in(sign_in, keyed, credentials);
     flat_row(|| {
-        row(Modifier::new().grow(), Flex::new().center().gap(3), || {
-            emblem(look.icon, !shown);
-            titled(
-                name,
-                &under,
-                if shown { Role::Text } else { Role::Muted },
-                || {
-                    if !shown {
-                        Badge::new("Hidden").tone(Role::Subtle).build();
-                    }
-                },
-            );
-        });
+        flex_row(
+            Modifier::new().grow(),
+            Flex::new().items_center().gap(sp(3)),
+            || {
+                emblem(look.icon, !shown);
+                titled(
+                    name,
+                    &under,
+                    if shown { Role::Text } else { Role::Muted },
+                    || {
+                        if !shown {
+                            Badge::new("Hidden").tone(Role::Subtle).build();
+                        }
+                    },
+                );
+            },
+        );
         switch(shown, AGENT_SWITCHES.id(index));
     });
 }

@@ -1,10 +1,11 @@
 //! The sidebar: ways to start and find work, the chats that belong to no project, and every project with its sessions.
 
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::kit::{
-    Flex, FocusId, IconName, Radius, Role, Side, Styled, Tooltip, Type, at_window, column, gap_box,
-    label_with, layer, row, sp, spinner,
+    FocusId, IconName, Radius, Role, Side, Styled, Tooltip, Type, at_window, label_with, sp,
+    spinner,
 };
 
 use crate::Avatar;
@@ -70,9 +71,13 @@ pub const HEADING_HEIGHT: f32 = ROW;
 /// Emits the heading of a group of the list, saying `words`.
 #[track_caller]
 fn heading(words: &str) {
-    row(Modifier::new().h(9).pad_x(2), Flex::new().center(), || {
-        line(words, 12, 1.4, Role::Subtle);
-    });
+    flex_row(
+        Modifier::new().h(9).pad_x(2),
+        Flex::new().items_center(),
+        || {
+            line(words, 12, 1.4, Role::Subtle);
+        },
+    );
 }
 
 /// Every submodule row of the sidebar, project by project in the order they were added: the project's position and the submodule's path. The place of a row in this list is what it answers to.
@@ -112,13 +117,13 @@ pub fn status_icon(status: Status) {
         Status::Idle => "Idle",
         Status::Unreachable => "Server out of reach",
     };
-    row(
+    flex_row(
         Modifier::new().square(4).tooltip(meaning),
-        Flex::new().center().middle(),
+        Flex::new().items_center().justify_center(),
         move || match status {
             Status::Working => spinner(3.5, Role::Muted),
             Status::Unread => {
-                gap_box(
+                rustle::spacer(
                     Modifier::new()
                         .square(2)
                         .fill_rounded(Role::Accent, Radius::Full),
@@ -128,7 +133,7 @@ pub fn status_icon(status: Status) {
             Status::NeedsInput => glyph(IconName::Message, 3.5, Role::Warning),
             Status::Unreachable => glyph(IconName::Plug, 3.5, Role::Warning),
             Status::Idle => {
-                gap_box(Modifier::new().square(2).stroke(Role::Subtle, Radius::Full));
+                rustle::spacer(Modifier::new().square(2).stroke(Role::Subtle, Radius::Full));
             }
         },
     );
@@ -191,9 +196,9 @@ fn submodule_row(project: &Project, relative: &str, position: usize, starting: b
         )
         .build_with(|| {
             Avatar::new(name, project.color()).size(Size::Xs).build();
-            row(
+            flex_row(
                 Modifier::new().grow().clip_to(Radius::None),
-                Flex::new().center().gap(1.5),
+                Flex::new().items_center().gap(sp(1.5)),
                 || {
                     line(name, 13, 1.4, Role::Text);
                     if !folder.is_empty() {
@@ -236,7 +241,7 @@ fn submodule_tree(
     if blocks.is_empty() {
         return;
     }
-    column(
+    flex_column(
         Modifier::new()
             .pad_side(Side::Left, SUBMODULE_RAIL)
             .stroke_side(Side::Left, 1.0, project.color()),
@@ -249,7 +254,7 @@ fn submodule_tree(
                 let starting = state.page == Page::New(index)
                     && state.new_in.as_deref() == Some(path.as_str());
                 rustle::key(first + offset, || {
-                    column(Modifier::new(), Flex::new(), || {
+                    flex_column(Modifier::new(), Flex::new(), || {
                         submodule_row(project, name, first + offset, starting);
                         for &(position, session) in members.iter().filter(|(_, session)| {
                             listed_under(state, session) == Some(path.as_str())
@@ -290,7 +295,7 @@ fn project(state: &WorkspaceState, index: usize) {
     } else {
         section
     };
-    column(section, Flex::new(), || {
+    flex_column(section, Flex::new(), || {
         Tile::new(FocusId(PROJECT_BASE + index as u64))
             .selected(state.page == Page::Project(index))
             .inner(Modifier::new().pad_x(2))
@@ -328,7 +333,7 @@ fn chats(state: &WorkspaceState) {
         Page::Session(open) => Some(open),
         _ => None,
     };
-    column(
+    flex_column(
         Modifier::new().pad_side(Side::Bottom, 3),
         Flex::new(),
         || {
@@ -348,7 +353,7 @@ fn chats(state: &WorkspaceState) {
 /// Emits the whole sidebar for `state`.
 #[track_caller]
 pub fn sidebar(state: &WorkspaceState) {
-    column(
+    flex_column(
         Modifier::new()
             .width(state.sidebar_width)
             .fill_max_height()
@@ -356,12 +361,12 @@ pub fn sidebar(state: &WorkspaceState) {
             .stroke_side(Side::Right, 1.0, Role::Border),
         Flex::new(),
         || {
-            column(
+            flex_column(
                 Modifier::new()
                     .pad_x(2)
                     .pad_side(Side::Top, 3)
                     .pad_side(Side::Bottom, 2),
-                Flex::new().gap(0.5),
+                Flex::new().gap(sp(0.5)),
                 || {
                     entry(
                         IconName::Message,
@@ -384,13 +389,13 @@ pub fn sidebar(state: &WorkspaceState) {
                     );
                 },
             );
-            layer(
+            rustle::stack_with(
                 Modifier::new()
                     .grow()
                     .fill_max_width()
                     .clip_to(Radius::None),
                 || {
-                    column(
+                    flex_column(
                         Modifier::new()
                             .at(0.0, -state.sidebar_scroll)
                             .fill_max_width()
@@ -420,7 +425,7 @@ pub fn drag_ghost(state: &WorkspaceState) {
         return;
     };
     at_window(sp(2.0), drag.at.1 - ROW / 2.0, Modifier::new(), || {
-        row(
+        flex_row(
             Modifier::new()
                 .h(9)
                 .width(state.sidebar_width - 16.0)
@@ -428,7 +433,7 @@ pub fn drag_ghost(state: &WorkspaceState) {
                 .fill_rounded(Role::Surface, Radius::Md)
                 .stroke(Role::Border, Radius::Md)
                 .pad_x(2),
-            Flex::new().center().gap(3),
+            Flex::new().items_center().gap(sp(3)),
             || {
                 Avatar::of(project).build();
                 clipped(&project.name, 14, Role::Text);

@@ -1,8 +1,9 @@
 //! The avatar: a project's colour with its first letter, at a measure per size.
 
 use rustle::Modifier;
+use rustle::{Flex, flex_row};
 
-use crate::kit::{Flex, Radius, Styled, Tone, Type, label, row};
+use crate::kit::{Radius, Styled, Tone, Type, label};
 
 use crate::Project;
 use crate::size::Size;
@@ -68,9 +69,9 @@ impl Avatar {
             .square(side)
             .fill_rounded(self.color, Radius::Md);
         let initial = self.initial;
-        row(
+        flex_row(
             self.modifier.chain(own),
-            Flex::new().center().middle(),
+            Flex::new().items_center().justify_center(),
             move || {
                 label(
                     initial,

@@ -2,11 +2,10 @@
 
 use pm_treesitter::Kind;
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column};
 
-use crate::kit::{
-    CaretLook, Flex, FocusId, Interactive, Mark, Paint, Radius, Role, Side, Styled, Tone, Type,
-    column, gap_box, layer, marked_line,
-};
+use crate::kit::{FocusId, Interactive, Radius, Role, Side, Styled, Tone, Type};
+use crate::marked::{CaretLook, Mark, Paint, marked_line};
 use crate::state::WorkspaceState;
 use crate::viewer::kind_role;
 use pm_editor::Document;
@@ -176,8 +175,8 @@ pub(crate) fn minimap(
         .cursor(CursorIcon::Pointer)
         .target(MINIMAP)
         .draggable_id(MINIMAP);
-    layer(own, || {
-        column(
+    rustle::stack_with(own, || {
+        flex_column(
             Modifier::new().at(0.0, first as f32 * ROW - geometry.offset),
             Flex::new(),
             || {
@@ -186,7 +185,7 @@ pub(crate) fn minimap(
                 }
             },
         );
-        gap_box(
+        rustle::spacer(
             Modifier::new()
                 .at(0.0, top)
                 .width(WIDTH)

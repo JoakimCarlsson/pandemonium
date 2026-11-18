@@ -24,10 +24,10 @@ use crate::kit::bus::{self, Action, Phase};
 use crate::kit::focus::FocusId;
 use crate::kit::frame;
 use crate::kit::keys::Modifiers;
-use crate::kit::marks::{self, CaretLook};
 use crate::kit::report::{self, FieldBox, Region, Scroller};
 use crate::kit::text::Type;
 use crate::kit::theme::{self, Role, Tone};
+use crate::marked::{self as marks, CaretLook};
 
 /// The text of a field being described: the model, what names it, how its
 /// text is set, what it shows while empty, and whether it wraps.
@@ -127,7 +127,7 @@ impl<'a> FieldText<'a> {
         };
         let drawn = match (empty, self.wrap) {
             (true, Some(width)) => {
-                crate::kit::text::ellipsized(self.placeholder, &ink.style_in(&theme), width, 0.0)
+                rustle::ellipsize(self.placeholder, &ink.style_in(&theme), width, 0.0)
             }
             (true, None) => self.placeholder.to_owned(),
             (false, _) => shown.clone(),
@@ -247,7 +247,7 @@ impl<'a> FieldText<'a> {
                 && !empty
                 && let Some(range) = selection.clone()
             {
-                marks::draw_fill(canvas, &layout, (x, y), range, highlight);
+                canvas.selection(x, y, &layout, range.start, range.end, highlight);
             }
             let first = layout.line_at_y(dy);
             let last = layout.line_at_y(dy + canvas.height());
@@ -260,12 +260,7 @@ impl<'a> FieldText<'a> {
                     ..style
                 };
                 let piece = if empty && !wraps {
-                    std::borrow::Cow::Owned(crate::kit::text::ellipsized(
-                        piece,
-                        &single,
-                        canvas.width(),
-                        0.0,
-                    ))
+                    std::borrow::Cow::Owned(rustle::ellipsize(piece, &single, canvas.width(), 0.0))
                 } else {
                     std::borrow::Cow::Borrowed(piece)
                 };
@@ -275,11 +270,19 @@ impl<'a> FieldText<'a> {
                 return;
             }
             if let Some(range) = marked.clone() {
-                marks::draw_underline(canvas, &layout, (x, y), range, size, false, text_color);
+                rustle::draw_text_underline(
+                    canvas,
+                    &layout,
+                    (x, y),
+                    range,
+                    size,
+                    false,
+                    text_color,
+                );
             }
             if marks::caret_lit(look) {
                 let at = if empty { 0 } else { caret };
-                marks::draw_caret(canvas, &layout, (x, y), at, look.shape, text_color);
+                rustle::draw_text_caret(canvas, &layout, (x, y), at, look.shape, text_color);
             }
         });
     }

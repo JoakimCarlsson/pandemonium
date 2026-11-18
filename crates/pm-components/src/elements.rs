@@ -3,10 +3,11 @@
 //! sections.
 
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row, flex_wrap};
 
 use crate::kit::{
-    Flex, FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, Tone, Type, column,
-    gap_box, label, row, scroll_area, sp, wrap_lines, wrapping,
+    FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, Tone, Type, label,
+    scroll_area, sp, wrap_lines,
 };
 
 use crate::button::Variant;
@@ -202,15 +203,15 @@ pub fn split(text: &str) -> (&str, Vec<String>) {
 /// Emits the elements of a sent message as chips, which only say what they are.
 #[track_caller]
 pub fn sent_chips(labels: &[String]) {
-    wrapping(Modifier::new(), 2, || {
+    flex_wrap(Modifier::new(), Flex::new().gap(sp(2)), || {
         for label in labels {
-            row(
+            flex_row(
                 Modifier::new()
                     .fill_rounded(Role::Surface, Radius::Lg)
                     .stroke(Role::Border, Radius::Lg)
                     .pad_x(2)
                     .pad_y(1),
-                Flex::new().center().gap(1.5),
+                Flex::new().items_center().gap(sp(1.5)),
                 || {
                     crate::parts::glyph(
                         crate::captures::Capture::icon_of_label(label),
@@ -327,9 +328,9 @@ fn css_color(value: &str) -> Option<Tone> {
 /// Emits a card of the popover: a small title over what `body` emits.
 #[track_caller]
 pub(crate) fn section(title: &str, body: impl FnOnce()) {
-    column(
+    flex_column(
         Modifier::new().stroke(Role::Border, Radius::Lg).pad(2.5),
-        Flex::new().gap(1.5),
+        Flex::new().gap(sp(1.5)),
         || {
             line(title, 11, 1.4, Role::Subtle);
             body();
@@ -345,7 +346,7 @@ pub(crate) fn words(content: &str, mono: bool, tone: Role, width: f32) {
     let kind = Type::new(12).ratio(1.5);
     let kind = if mono { kind.mono() } else { kind };
     let lines = wrap_lines(&content, kind, width);
-    column(Modifier::new(), Flex::new(), || {
+    flex_column(Modifier::new(), Flex::new(), || {
         for piece in lines {
             label(&content[piece.start..piece.end], kind.tone(tone));
         }
@@ -362,30 +363,38 @@ fn pair(name: &str, value: &str) {
     } else {
         VALUE_TEXT + 18.0
     };
-    row(Modifier::new(), Flex::new().start().gap(3), || {
-        column(Modifier::new().width(NAME_WIDTH), Flex::new(), || {
-            words(name, false, Role::Muted, NAME_WIDTH);
-        });
-        row(Modifier::new().grow(), Flex::new().start().gap(1.5), || {
-            if let Some(tone) = swatch {
-                gap_box(
-                    Modifier::new()
-                        .width(12.0)
-                        .height(12.0)
-                        .fill_rounded(tone, Radius::Sm)
-                        .stroke(Role::Border, Radius::Sm)
-                        .pad_side(Side::Top, 0.5),
-                );
-            }
-            words(value, false, Role::Text, room);
-        });
-    });
+    flex_row(
+        Modifier::new(),
+        Flex::new().items_start().gap(sp(3)),
+        || {
+            flex_column(Modifier::new().width(NAME_WIDTH), Flex::new(), || {
+                words(name, false, Role::Muted, NAME_WIDTH);
+            });
+            flex_row(
+                Modifier::new().grow(),
+                Flex::new().items_start().gap(sp(1.5)),
+                || {
+                    if let Some(tone) = swatch {
+                        rustle::spacer(
+                            Modifier::new()
+                                .width(12.0)
+                                .height(12.0)
+                                .fill_rounded(tone, Radius::Sm)
+                                .stroke(Role::Border, Radius::Sm)
+                                .pad_side(Side::Top, 0.5),
+                        );
+                    }
+                    words(value, false, Role::Text, room);
+                },
+            );
+        },
+    );
 }
 
 /// Emits a list of rows, one for each name and value of `rows`.
 #[track_caller]
 fn pairs(rows: &[(String, String)]) {
-    column(Modifier::new(), Flex::new().gap(1.5), || {
+    flex_column(Modifier::new(), Flex::new().gap(sp(1.5)), || {
         for (name, value) in rows {
             pair(name, value);
         }
@@ -413,33 +422,37 @@ fn popover(element: &Element, state: &WorkspaceState) {
                     .height_in(0.0, sp(HEIGHT / 4.0)),
                 Scroll::from_start(MENU_SCROLL, state.menu_scroll),
                 || {
-                    column(Modifier::new().fill_max_width(), Flex::new().gap(2), || {
-                        section("ELEMENT", || {
-                            column(Modifier::new(), Flex::new().gap(1), || {
-                                words(&element.opening_tag(), true, Role::Text, CARD_TEXT);
-                                words(&element.size(), false, Role::Muted, CARD_TEXT);
+                    flex_column(
+                        Modifier::new().fill_max_width(),
+                        Flex::new().gap(sp(2)),
+                        || {
+                            section("ELEMENT", || {
+                                flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
+                                    words(&element.opening_tag(), true, Role::Text, CARD_TEXT);
+                                    words(&element.size(), false, Role::Muted, CARD_TEXT);
+                                });
                             });
-                        });
-                        section("PATH", || {
-                            words(&element.selector, true, Role::Text, CARD_TEXT);
-                        });
-                        if let Some(component) = element.component_tag() {
-                            section("COMPONENT", || {
-                                words(&component, true, Role::Text, CARD_TEXT);
+                            section("PATH", || {
+                                words(&element.selector, true, Role::Text, CARD_TEXT);
                             });
-                        }
-                        if !element.attributes.is_empty() {
-                            section("ATTRIBUTES", || pairs(&element.attributes));
-                        }
-                        if !styles.is_empty() {
-                            section("COMPUTED STYLES", || pairs(&styles));
-                        }
-                        if !element.text.is_empty() {
-                            section("INNER TEXT", || {
-                                words(&element.text, false, Role::Text, CARD_TEXT);
-                            });
-                        }
-                    });
+                            if let Some(component) = element.component_tag() {
+                                section("COMPONENT", || {
+                                    words(&component, true, Role::Text, CARD_TEXT);
+                                });
+                            }
+                            if !element.attributes.is_empty() {
+                                section("ATTRIBUTES", || pairs(&element.attributes));
+                            }
+                            if !styles.is_empty() {
+                                section("COMPUTED STYLES", || pairs(&styles));
+                            }
+                            if !element.text.is_empty() {
+                                section("INNER TEXT", || {
+                                    words(&element.text, false, Role::Text, CARD_TEXT);
+                                });
+                            }
+                        },
+                    );
                 },
             );
         });
@@ -452,35 +465,42 @@ pub fn chips(state: &WorkspaceState) {
     if state.elements.is_empty() {
         return;
     }
-    wrapping(Modifier::new().pad_x(3).pad_side(Side::Top, 3), 2, || {
-        for (index, element) in state.elements.iter().enumerate() {
-            let open = state.picker == Some(Picker::Element(index));
-            rustle::key(ELEMENT_BASE + index as u64, || {
-                anchored(
-                    || {
-                        row(
-                            Modifier::new()
-                                .fill_rounded(Role::SurfaceHover, Radius::Lg)
-                                .pad_side(Side::Right, 1),
-                            Flex::new().center().gap(0.5),
-                            || {
-                                Button::new(element.label(), FocusId(ELEMENT_BASE + index as u64))
+    flex_wrap(
+        Modifier::new().pad_x(3).pad_side(Side::Top, 3),
+        Flex::new().gap(sp(2)),
+        || {
+            for (index, element) in state.elements.iter().enumerate() {
+                let open = state.picker == Some(Picker::Element(index));
+                rustle::key(ELEMENT_BASE + index as u64, || {
+                    anchored(
+                        || {
+                            flex_row(
+                                Modifier::new()
+                                    .fill_rounded(Role::SurfaceHover, Radius::Lg)
+                                    .pad_side(Side::Right, 1),
+                                Flex::new().items_center().gap(sp(0.5)),
+                                || {
+                                    Button::new(
+                                        element.label(),
+                                        FocusId(ELEMENT_BASE + index as u64),
+                                    )
                                     .variant(Variant::Ghost)
                                     .size(Size::Xs)
                                     .with_icon(IconName::Pick)
                                     .selected(open)
                                     .build();
-                                Button::icon(
-                                    IconName::Close,
-                                    FocusId(ELEMENT_REMOVE_BASE + index as u64),
-                                )
-                                .build();
-                            },
-                        );
-                    },
-                    open.then_some(|| popover(element, state)),
-                );
-            });
-        }
-    });
+                                    Button::icon(
+                                        IconName::Close,
+                                        FocusId(ELEMENT_REMOVE_BASE + index as u64),
+                                    )
+                                    .build();
+                                },
+                            );
+                        },
+                        open.then_some(|| popover(element, state)),
+                    );
+                });
+            }
+        },
+    );
 }

@@ -1,5 +1,7 @@
 //! Markdown: a source laid out as paragraphs, headings, lists, code, quotes, fold-outs, rules and tables.
 
+use crate::kit::sp;
+use rustle::{Flex, flex_column, flex_row};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use pm_markdown::{Block, Inline, Span};
@@ -11,8 +13,8 @@ use crate::figures::{
     is_diagram,
 };
 use crate::kit::{
-    Flex, FocusId, IconName, Interactive, Radius, Role, Side, Styled, Type, block, column, gap_box,
-    label_with, measure, row, wrap_lines,
+    FocusId, IconName, Interactive, Radius, Role, Side, Styled, Type, label_with, measure,
+    wrap_lines,
 };
 use crate::parts::{glyph, line};
 
@@ -78,7 +80,7 @@ impl<'a> Markdown<'a> {
             figures: None,
             place: None,
             modifier: Modifier::new(),
-            flex: Flex::new().gap(3),
+            flex: Flex::new().gap(sp(3)),
         }
     }
 
@@ -149,7 +151,7 @@ impl<'a> Markdown<'a> {
             self.place,
         ));
         let modifier = self.modifier.clone();
-        column(modifier, self.flex, || {
+        flex_column(modifier, self.flex, || {
             rustle::key(whole, || {
                 rustle::skippable((whole, width.to_bits()), || {
                     let blocks = pm_markdown::parse(self.source);
@@ -229,7 +231,7 @@ impl Layout<'_> {
     /// `modifier`, `width` wide, running text in `tone`.
     #[track_caller]
     fn blocks(&mut self, modifier: Modifier, gap: f32, blocks: &[Block], tone: Role, width: f32) {
-        column(modifier, Flex::new().gap(gap), || {
+        flex_column(modifier, Flex::new().gap(sp(gap)), || {
             for block in blocks {
                 self.block(block, tone, width);
             }
@@ -264,7 +266,7 @@ impl Layout<'_> {
                 let own = Modifier::new()
                     .stroke_side(Side::Left, 2.0, Role::Border)
                     .pad_side(Side::Left, QUOTE_INDENT / 4.0 - 0.5);
-                row(own, Flex::new(), || {
+                flex_row(own, Flex::new(), || {
                     self.blocks(
                         Modifier::new(),
                         3.0,
@@ -275,7 +277,7 @@ impl Layout<'_> {
                 });
             }
             Block::Details { summary, blocks } => self.fold_out(summary, blocks, tone, width),
-            Block::Rule => gap_box(
+            Block::Rule => rustle::spacer(
                 Modifier::new()
                     .pad_y(1)
                     .height(1.0)
@@ -320,19 +322,23 @@ impl Layout<'_> {
             head = head.target(FocusId(base + place as u64));
         }
         let pixels = self.pixels;
-        column(Modifier::new(), Flex::new().gap(2), || {
-            row(head, Flex::new().gap(1.5), || {
-                row(Modifier::new().height(height), Flex::new().center(), || {
-                    glyph(
-                        if open {
-                            IconName::ChevronDown
-                        } else {
-                            IconName::ChevronRight
-                        },
-                        3.5,
-                        Role::Subtle,
-                    );
-                });
+        flex_column(Modifier::new(), Flex::new().gap(sp(2)), || {
+            flex_row(head, Flex::new().gap(sp(1.5)), || {
+                flex_row(
+                    Modifier::new().height(height),
+                    Flex::new().items_center(),
+                    || {
+                        glyph(
+                            if open {
+                                IconName::ChevronDown
+                            } else {
+                                IconName::ChevronRight
+                            },
+                            3.5,
+                            Role::Subtle,
+                        );
+                    },
+                );
                 self.text(
                     Modifier::new().grow(),
                     summary,
@@ -350,7 +356,7 @@ impl Layout<'_> {
                 .pad_side(Side::Left, 1.5)
                 .stroke_side(Side::Left, 2.0, Role::Border)
                 .padding_each(INDENT - 8.0, 0.0, 0.0, 0.0);
-            row(bar, Flex::new(), || {
+            flex_row(bar, Flex::new(), || {
                 self.blocks(Modifier::new(), 3.0, blocks, tone, width - INDENT);
             });
         });
@@ -361,12 +367,12 @@ impl Layout<'_> {
     fn list(&mut self, start: Option<u64>, items: &[Vec<Block>], tone: Role, width: f32) {
         let height = self.line_height();
         let pixels = self.pixels;
-        column(Modifier::new(), Flex::new().gap(1.5), || {
+        flex_column(Modifier::new(), Flex::new().gap(sp(1.5)), || {
             for (index, item) in items.iter().enumerate() {
-                row(Modifier::new(), Flex::new(), || {
-                    row(
+                flex_row(Modifier::new(), Flex::new(), || {
+                    flex_row(
                         Modifier::new().width(INDENT).height(height),
-                        Flex::new().center(),
+                        Flex::new().items_center(),
                         || match start {
                             Some(first) => line(
                                 format!("{}.", first + index as u64),
@@ -374,7 +380,7 @@ impl Layout<'_> {
                                 LEADING,
                                 Role::Muted,
                             ),
-                            None => gap_box(
+                            None => rustle::spacer(
                                 Modifier::new()
                                     .square(1)
                                     .fill_rounded(Role::Subtle, Radius::Full),
@@ -404,7 +410,7 @@ impl Layout<'_> {
         }
         CodeBox::new(move || {
             for content in lines {
-                row(Modifier::new().pad_x(3.5), Flex::new(), move || {
+                flex_row(Modifier::new().pad_x(3.5), Flex::new(), move || {
                     label_with(Modifier::new(), content, kind);
                 });
             }
@@ -422,7 +428,7 @@ impl Layout<'_> {
             Some(Ok(drawing)) => diagram_node(drawing, width),
             Some(Err(_)) => {
                 let pixels = self.pixels;
-                column(Modifier::new(), Flex::new().gap(1.5), || {
+                flex_column(Modifier::new(), Flex::new().gap(sp(1.5)), || {
                     self.code(source, width);
                     line(failed, pixels - 2, 1.4, Role::Subtle);
                 });
@@ -446,14 +452,14 @@ impl Layout<'_> {
         let own = Modifier::new()
             .stroke(Role::Border, Radius::Lg)
             .clip_to(Radius::None);
-        column(own, Flex::new(), || {
-            row(Modifier::new().fill(Role::Surface), Flex::new(), || {
+        flex_column(own, Flex::new(), || {
+            flex_row(Modifier::new().fill(Role::Surface), Flex::new(), || {
                 for cell in head {
                     self.cell(cell, pixels, true, tone, cell_width);
                 }
             });
             for cells in rows {
-                row(
+                flex_row(
                     Modifier::new().stroke_side(Side::Top, 1.0, Role::Border),
                     Flex::new(),
                     || {
@@ -469,9 +475,11 @@ impl Layout<'_> {
     /// Emits one cell of a table, `width` wide, set heavier when it is a heading.
     #[track_caller]
     fn cell(&mut self, spans: &[Span], pixels: u32, strong: bool, tone: Role, width: f32) {
-        block(Modifier::new().width(width).pad_x(2.5).pad_y(1.5), || {
-            self.text(Modifier::new(), spans, pixels, strong, tone, width - 20.0)
-        });
+        flex_column(
+            Modifier::new().width(width).pad_x(2.5).pad_y(1.5),
+            Flex::new(),
+            || self.text(Modifier::new(), spans, pixels, strong, tone, width - 20.0),
+        );
     }
 
     /// Emits `spans` broken into lines that fit `width`, set in `pixels` tall
@@ -520,11 +528,11 @@ impl Layout<'_> {
         }
         let height = pixels as f32 * LEADING;
         let links = self.links;
-        column(modifier, Flex::new(), move || {
+        flex_column(modifier, Flex::new(), move || {
             for runs in lines {
-                row(
+                flex_row(
                     Modifier::new().height(height),
-                    Flex::new().center(),
+                    Flex::new().items_center(),
                     move || {
                         for (content, inline) in runs {
                             let pressed = match (links, inline.target) {

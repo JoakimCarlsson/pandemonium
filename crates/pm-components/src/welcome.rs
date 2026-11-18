@@ -1,13 +1,12 @@
 //! The empty page of a new session or a new chat: pick an agent, then describe the work.
 
 use rustle::{BoxAlignment, Modifier};
+use rustle::{Flex, flex_column, flex_wrap};
 
 use crate::Button;
 use crate::button::Variant;
 use crate::composer::composer;
-use crate::kit::{
-    Flex, FocusId, IconName, Role, Styled, Tooltip, Type, column, label, layer, sp, wrapping_with,
-};
+use crate::kit::{FocusId, IconName, Role, Styled, Tooltip, Type, label, sp};
 use crate::size::Size;
 use crate::state::{AGENT_BASE, Page, REVIEW, WorkspaceState};
 
@@ -53,22 +52,22 @@ fn heading(state: &WorkspaceState) -> String {
 #[track_caller]
 pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32) {
     let reviewable = state.review_session().is_some();
-    layer(Modifier::new().grow(), || {
-        column(
+    rustle::stack_with(Modifier::new().grow(), || {
+        flex_column(
             Modifier::new().fill_max_size().pad_x(6).pad_y(10),
-            Flex::new().center().middle(),
+            Flex::new().items_center().justify_center(),
             || {
-                column(
+                flex_column(
                     Modifier::new().max_w_px(680.0).fill_max_width(),
-                    Flex::new().center().gap(7),
+                    Flex::new().items_center().gap(sp(7)),
                     || {
                         label(
                             heading(state),
                             Type::new(28).ratio(1.25).semibold().tone(Role::Text),
                         );
-                        wrapping_with(
+                        flex_wrap(
                             Modifier::new().fill_max_width(),
-                            Flex::new().gap(2).middle(),
+                            Flex::new().gap(sp(2)).justify_center(),
                             || {
                                 for index in state.startable_agents() {
                                     chip(state, index);

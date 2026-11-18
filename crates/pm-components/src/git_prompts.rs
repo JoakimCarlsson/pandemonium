@@ -1,7 +1,9 @@
 //! The questions the source control panel asks before it does something that cannot be taken back, and the lists it asks a choice from.
 
-use crate::kit::{Flex, FocusId, Role, Side, Styled, Type, block, column, grow, label, row};
+use crate::kit::sp;
+use crate::kit::{FocusId, Role, Side, Styled, Type, label};
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::button::Variant;
 use crate::parts::{line, wrap};
@@ -305,11 +307,11 @@ fn title_type() -> Type {
 /// Emits the row of a question's buttons, pushed to its right end: the one that says no, then `confirm` when there is one.
 #[track_caller]
 fn buttons(cancel: FocusId, confirm: Option<(&str, FocusId, Variant)>) {
-    row(
+    flex_row(
         Modifier::new().pad_x(5).pad_side(Side::Bottom, 5),
-        Flex::new().center().gap(2),
+        Flex::new().items_center().gap(sp(2)),
         || {
-            grow();
+            rustle::spacer(rustle::Modifier::new().flex_grow(1.0));
             button("Cancel", cancel, Variant::Ghost);
             if let Some((words, id, variant)) = confirm {
                 button(words, id, variant);
@@ -330,7 +332,7 @@ pub(crate) fn question_of(
     Modal::new(ids.outside, ids.inside)
         .width(WIDTH)
         .build_with(|| {
-            column(Modifier::new().pad(5), Flex::new().gap(2), || {
+            flex_column(Modifier::new().pad(5), Flex::new().gap(sp(2)), || {
                 for title in wrap(&title, 15, WIDTH - 40.0) {
                     label(title, title_type());
                 }
@@ -348,7 +350,7 @@ fn naming_box(title: &str, field: &pm_field::Field, id: FocusId, placeholder: &s
     Modal::new(PROMPT_OUTSIDE, PROMPT_INSIDE)
         .width(WIDTH)
         .build_with(|| {
-            column(Modifier::new().pad(5), Flex::new().gap(3), || {
+            flex_column(Modifier::new().pad(5), Flex::new().gap(sp(3)), || {
                 label(title, title_type());
                 Input::new(field, id)
                     .placeholder(placeholder)
@@ -368,14 +370,18 @@ fn stash_list(state: &WorkspaceState, action: StashAction) {
     Modal::new(PROMPT_OUTSIDE, PROMPT_INSIDE)
         .width(WIDTH)
         .build_with(|| {
-            column(Modifier::new().pad(3), Flex::new().gap(1), || {
-                block(Modifier::new().pad_x(2).pad_side(Side::Bottom, 2), || {
-                    label(action.title(), title_type())
-                });
+            flex_column(Modifier::new().pad(3), Flex::new().gap(sp(1)), || {
+                flex_column(
+                    Modifier::new().pad_x(2).pad_side(Side::Bottom, 2),
+                    Flex::new(),
+                    || label(action.title(), title_type()),
+                );
                 if state.git.stashes.is_empty() {
-                    block(Modifier::new().pad_x(2).pad_side(Side::Bottom, 2), || {
-                        line("There are no stashes.", 13, 1.4, Role::Subtle)
-                    });
+                    flex_column(
+                        Modifier::new().pad_x(2).pad_side(Side::Bottom, 2),
+                        Flex::new(),
+                        || line("There are no stashes.", 13, 1.4, Role::Subtle),
+                    );
                 }
                 for (position, stash) in state.git.stashes.iter().take(STASH_ROWS).enumerate() {
                     crate::popover::row(

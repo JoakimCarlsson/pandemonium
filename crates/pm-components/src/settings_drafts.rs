@@ -1,12 +1,14 @@
 //! The form on the pages of skills, instruction files and agent definitions that writes a new one from a template, in the project's folder or the reader's own, and opens it to be filled in.
 
+use crate::kit::sp;
 use pm_field::{Edit, Field};
 use pm_protocol::library::{
     APPENDS_PROMPT, Item, Kind, PromptFile, REPLACES_PROMPT, Scope, valid_name,
 };
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
-use crate::kit::{Flex, FocusId, Radius, Role, Styled, Type, column, label, row};
+use crate::kit::{FocusId, Radius, Role, Styled, Type, label};
 
 use crate::button::Variant;
 use crate::parts::line;
@@ -303,7 +305,7 @@ pub(crate) fn prompt_node(state: &WorkspaceState, room: f32) {
             None => format!("{about} Not written yet."),
         };
         flat_row(|| {
-            column(Modifier::new().grow(), Flex::new().gap(1), || {
+            flex_column(Modifier::new().grow(), Flex::new().gap(sp(1)), || {
                 line(title, 13, 1.4, Role::Text);
                 wrapped_note(&said, (room - 160.0).max(120.0));
             });
@@ -314,8 +316,8 @@ pub(crate) fn prompt_node(state: &WorkspaceState, room: f32) {
                 .build();
         });
     };
-    column(Modifier::new(), Flex::new().gap(2), || {
-        row(Modifier::new().h(9), Flex::new().center(), || {
+    flex_column(Modifier::new(), Flex::new().gap(sp(2)), || {
+        flex_row(Modifier::new().h(9), Flex::new().items_center(), || {
             label(
                 "System prompt",
                 Type::new(15)
@@ -405,12 +407,12 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) {
         }
         (None, true) => None,
     };
-    column(
+    flex_column(
         Modifier::new()
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
             .pad(4),
-        Flex::new().gap(3),
+        Flex::new().gap(sp(3)),
         || {
             labelled("Name", &form.name, DRAFT_NAME, name_hint);
             labelled(
@@ -420,9 +422,9 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) {
                 description_hint,
             );
             if form.in_project {
-                column(Modifier::new(), Flex::new().gap(1), || {
+                flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
                     line("Where", 12, 1.4, Role::Muted);
-                    row(Modifier::new(), Flex::new(), || {
+                    flex_row(Modifier::new(), Flex::new(), || {
                         choices(&["This project", "Every project"], picked, |place| {
                             DRAFT_SCOPES.id(place)
                         });
@@ -433,16 +435,20 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) {
             if let Some(message) = message {
                 line(message, 12, 1.4, Role::Danger);
             }
-            row(Modifier::new(), Flex::new().center().gap(2), || {
-                Button::new(if form.busy { "Creating…" } else { "Create" }, DRAFT_CREATE)
-                    .size(Size::Sm)
-                    .disabled(!form.complete())
-                    .build();
-                Button::new("Cancel", DRAFT_CANCEL)
-                    .variant(Variant::Ghost)
-                    .size(Size::Sm)
-                    .build();
-            });
+            flex_row(
+                Modifier::new(),
+                Flex::new().items_center().gap(sp(2)),
+                || {
+                    Button::new(if form.busy { "Creating…" } else { "Create" }, DRAFT_CREATE)
+                        .size(Size::Sm)
+                        .disabled(!form.complete())
+                        .build();
+                    Button::new("Cancel", DRAFT_CANCEL)
+                        .variant(Variant::Ghost)
+                        .size(Size::Sm)
+                        .build();
+                },
+            );
         },
     );
 }
@@ -451,7 +457,7 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) {
 #[track_caller]
 fn labelled(label: &str, field: &Field, id: FocusId, placeholder: &str) {
     rustle::key(id.0, || {
-        column(Modifier::new(), Flex::new().gap(1), || {
+        flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
             line(label, 12, 1.4, Role::Muted);
             Input::new(field, id)
                 .size(Size::Sm)

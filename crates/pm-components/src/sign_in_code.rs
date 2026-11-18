@@ -1,7 +1,9 @@
 //! The code a sign-in waits for the reader to enter on a web page: the dialog that shows it while the sign-in runs, and what its buttons do.
 
-use crate::kit::{Flex, FocusId, Role, Side, Styled, Type, column, label, row};
+use crate::kit::sp;
+use crate::kit::{FocusId, Role, Side, Styled, Type, label};
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::button::Variant;
 use crate::parts::{line, spacer, wrap};
@@ -106,7 +108,7 @@ pub fn code_dialog(state: &WorkspaceState) {
     Modal::new(SIGN_IN_CODE_OUTSIDE, SIGN_IN_CODE_INSIDE)
         .width(WIDTH)
         .build_with(move || {
-            column(Modifier::new().pad(5), Flex::new().gap(2), || {
+            flex_column(Modifier::new().pad(5), Flex::new().gap(sp(2)), || {
                 label(
                     title,
                     Type::new(15)
@@ -118,7 +120,7 @@ pub fn code_dialog(state: &WorkspaceState) {
                 for words in wrap(&words, 13, WIDTH - 40.0) {
                     line(words, 13, 1.5, Role::Muted);
                 }
-                row(Modifier::new(), Flex::new().center(), || {
+                flex_row(Modifier::new(), Flex::new().items_center(), || {
                     label(
                         code,
                         Type::new(24)
@@ -130,9 +132,9 @@ pub fn code_dialog(state: &WorkspaceState) {
                     );
                 });
             });
-            row(
+            flex_row(
                 Modifier::new().pad_x(5).pad_side(Side::Bottom, 5),
-                Flex::new().center().gap(2),
+                Flex::new().items_center().gap(sp(2)),
                 || {
                     button("Hide", SIGN_IN_CODE_HIDE, Variant::Ghost);
                     spacer();

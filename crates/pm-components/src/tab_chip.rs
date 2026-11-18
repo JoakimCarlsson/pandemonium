@@ -1,9 +1,9 @@
 //! The tab chip: one tab of a strip inside a pane, with its glyph, its words, marks for what it is and a button that closes it.
 
-use crate::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Tooltip, row,
-};
+use crate::kit::sp;
+use crate::kit::{FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Tooltip};
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_row};
 
 use crate::Button;
 use crate::parts::{clipped, glyph};
@@ -133,9 +133,9 @@ impl TabChip {
         let own = own.pad_x(2);
         let (variant, icon, label, locked, close) =
             (self.variant, self.icon, self.label, self.locked, self.close);
-        row(
+        flex_row(
             self.modifier.chain(own),
-            Flex::new().center().gap(1),
+            Flex::new().items_center().gap(sp(1)),
             move || {
                 match variant {
                     TabVariant::Agent => glyph(IconName::Sparkles, 3.5, Role::Accent),

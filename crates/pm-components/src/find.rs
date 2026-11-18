@@ -1,5 +1,6 @@
 //! Finding and replacing text in the file shown: the bar over its top right corner, what it looks for, and the matches it steps through.
 
+use rustle::{Flex, flex_column, flex_row};
 use std::ops::Range;
 
 use pm_editor::{Document, Query};
@@ -9,8 +10,7 @@ use rustle::{BoxAlignment, CursorIcon, Modifier};
 use crate::button::{Button, Variant};
 use crate::input::Input;
 use crate::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Type, column,
-    gap_box, label_with, row, sp,
+    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Type, label_with, sp,
 };
 use crate::size::Size;
 use crate::state::WorkspaceState;
@@ -356,7 +356,7 @@ pub(crate) fn switch(label: &str, id: FocusId, on: bool) {
         .ratio(1.2)
         .mono()
         .tone(if on { Role::Text } else { Role::Subtle });
-    row(own, Flex::new().center().middle(), || {
+    flex_row(own, Flex::new().items_center().justify_center(), || {
         crate::kit::label(label, kind);
     });
 }
@@ -390,7 +390,7 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
         IconName::ChevronRight
     };
     let read_only = document.field.is_read_only();
-    column(
+    flex_column(
         Modifier::new()
             .unbounded_width()
             .placed(BoxAlignment::TopEnd)
@@ -401,48 +401,56 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
             .stroke(Role::Border, Radius::Md)
             .target(FIND_BAR)
             .pad(1),
-        Flex::new().gap(1),
+        Flex::new().gap(sp(1)),
         || {
-            row(Modifier::new(), Flex::new().center().gap(1), || {
-                Button::icon(toggle, FIND_TOGGLE_REPLACE).build();
-                Input::new(&finding.query, FIND_FIELD)
-                    .size(Size::Sm)
-                    .placeholder("Find")
-                    .invalid(found.is_err())
-                    .modifier(Modifier::new().width(194.0))
-                    .build();
-                switch("Aa", FIND_CASE, finding.case);
-                switch("ab", FIND_WORD, finding.word);
-                switch(".*", FIND_REGEX, finding.regex);
-                switch("sel", FIND_IN_SELECTION, finding.scoped);
-                label_with(
-                    Modifier::new().keep().width(84.0).pad_x(1),
-                    said,
-                    Type::new(11).ratio(1.4).tone(tone).truncate(),
-                );
-                Button::icon(IconName::ArrowUp, FIND_PREVIOUS).build();
-                Button::icon(IconName::ArrowDown, FIND_NEXT).build();
-                Button::icon(IconName::Close, FIND_CLOSE).build();
-            });
-            if finding.replacing {
-                row(Modifier::new(), Flex::new().center().gap(1), || {
-                    gap_box(Modifier::new().w(7));
-                    Input::new(&finding.replacement, REPLACE_FIELD)
+            flex_row(
+                Modifier::new(),
+                Flex::new().items_center().gap(sp(1)),
+                || {
+                    Button::icon(toggle, FIND_TOGGLE_REPLACE).build();
+                    Input::new(&finding.query, FIND_FIELD)
                         .size(Size::Sm)
-                        .placeholder("Replace")
+                        .placeholder("Find")
+                        .invalid(found.is_err())
                         .modifier(Modifier::new().width(194.0))
                         .build();
-                    Button::new("Replace", REPLACE_ONE)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .disabled(read_only)
-                        .build();
-                    Button::new("Replace all", REPLACE_ALL)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .disabled(read_only)
-                        .build();
-                });
+                    switch("Aa", FIND_CASE, finding.case);
+                    switch("ab", FIND_WORD, finding.word);
+                    switch(".*", FIND_REGEX, finding.regex);
+                    switch("sel", FIND_IN_SELECTION, finding.scoped);
+                    label_with(
+                        Modifier::new().keep().width(84.0).pad_x(1),
+                        said,
+                        Type::new(11).ratio(1.4).tone(tone).truncate(),
+                    );
+                    Button::icon(IconName::ArrowUp, FIND_PREVIOUS).build();
+                    Button::icon(IconName::ArrowDown, FIND_NEXT).build();
+                    Button::icon(IconName::Close, FIND_CLOSE).build();
+                },
+            );
+            if finding.replacing {
+                flex_row(
+                    Modifier::new(),
+                    Flex::new().items_center().gap(sp(1)),
+                    || {
+                        rustle::spacer(Modifier::new().w(7));
+                        Input::new(&finding.replacement, REPLACE_FIELD)
+                            .size(Size::Sm)
+                            .placeholder("Replace")
+                            .modifier(Modifier::new().width(194.0))
+                            .build();
+                        Button::new("Replace", REPLACE_ONE)
+                            .variant(Variant::Ghost)
+                            .size(Size::Sm)
+                            .disabled(read_only)
+                            .build();
+                        Button::new("Replace all", REPLACE_ALL)
+                            .variant(Variant::Ghost)
+                            .size(Size::Sm)
+                            .disabled(read_only)
+                            .build();
+                    },
+                );
             }
         },
     );

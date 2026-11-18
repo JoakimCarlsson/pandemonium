@@ -84,7 +84,7 @@ impl FieldBox {
 }
 
 /// One line, or one piece of a line, of a text field drawn line by line with
-/// [`marked_field_line`](crate::kit::marks::marked_field_line).
+/// [`marked_field_line`](crate::marked::marked_field_line).
 #[derive(Clone, Debug)]
 pub struct FieldLine {
     /// The field.

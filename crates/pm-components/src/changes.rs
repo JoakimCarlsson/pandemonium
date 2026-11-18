@@ -1,13 +1,15 @@
 //! The changes of a commit or of a branch, and a file set against one of the states it was saved in, as one scrollable view of every file: each folded away from its header, and, in the folder, edited in place.
 
+use crate::kit::sp;
 use pm_field::Edit;
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::button::Variant;
 use crate::excerpts::{
     Block, EXCERPTS_FOLD_ALL, EXCERPTS_UNDO_ALL, ExcerptFile, Source, file_list, restore_button,
 };
-use crate::kit::{Flex, IconName, Role, Side, Styled, Tooltip, column, row};
+use crate::kit::{IconName, Role, Side, Styled, Tooltip};
 use crate::open_files::Contents;
 use crate::parts::{glyph, line, spacer};
 use crate::sample::{Change, DiffLine, Kind};
@@ -116,12 +118,12 @@ impl<'a> Changes<'a> {
         let undoes =
             matches!(&excerpts.source, Source::Revision { turn: Some(_), .. }) && count > 0;
         let mode = self.mode;
-        row(
+        flex_row(
             Modifier::new()
                 .height(STRIP)
                 .stroke_side(Side::Bottom, 1.0, Role::Border)
                 .pad_x(4),
-            Flex::new().center().gap(3),
+            Flex::new().items_center().gap(sp(3)),
             move || match mode {
                 Mode::Timeline => {
                     glyph(IconName::History, 3.5, Role::Muted);
@@ -164,7 +166,7 @@ impl<'a> Changes<'a> {
     #[track_caller]
     pub fn build(self) {
         let own = Modifier::new().grow();
-        column(self.modifier.clone().chain(own), self.flex, || {
+        flex_column(self.modifier.clone().chain(own), self.flex, || {
             self.strip();
             file_list(self.state, (self.height - STRIP).max(0.0), self.size);
         });

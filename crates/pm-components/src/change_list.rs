@@ -1,13 +1,12 @@
 //! The changed files in groups: staged, tracked and untracked, each file with how it changed, a way to open it and a box that stages it.
 
 use rustle::Modifier;
+use rustle::{Flex, flex_row};
 use std::collections::HashSet;
 
 use crate::file_icon::file_icon;
 use crate::git_controls::{GROUP_TRACKED, GROUP_UNTRACKED, OPEN_ARROW_BASE};
-use crate::kit::{
-    Flex, FocusId, IconName, Radius, Role, Side, Styled, Tone, Type, label, label_with, row,
-};
+use crate::kit::{FocusId, IconName, Radius, Role, Side, Styled, Tone, Type, label, label_with};
 use crate::parts::glyph;
 use crate::sample::{Change, Session};
 use crate::size::Size;
@@ -97,13 +96,13 @@ fn heading(changes: &[Change], group: Group, repository: Option<&str>) {
         .iter()
         .filter(|&&index| changes[index].fully_staged())
         .count();
-    row(
+    flex_row(
         Modifier::new()
             .pad_side(Side::Left, 3)
             .pad_side(Side::Right, 3)
             .pad_side(Side::Top, 2)
             .pad_side(Side::Bottom, 1),
-        Flex::new().center().between(),
+        Flex::new().items_center().justify_between(),
         || {
             label(
                 format!("{} ({})", group.label(), files.len()),

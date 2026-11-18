@@ -1,11 +1,14 @@
 //! Lines of files shown as one document, one under another, each edited in place in the file it comes from: the lines around the hits of a search, the lines a set of changes touched, or a file set against one of the states it was saved in.
 
+use crate::kit::sp;
+use rustle::{Flex, flex_column, flex_row};
 use std::ops::Range;
 
 use crate::kit::{
-    Flex, FocusId, IconName, Interactive, Mark, Paint, Radius, Role, Scroll, Side, Styled, Tone,
-    Tooltip, Type, block as block_box, column, gap_box, label, label_with, row, scroll_area,
+    FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, Tone, Tooltip, Type, label,
+    label_with, scroll_area,
 };
+use crate::marked::{Mark, Paint};
 use pm_protocol::Location;
 use rustle::{CursorIcon, Modifier};
 
@@ -525,21 +528,21 @@ fn header(
 ) {
     let name = name_of(&file.path);
     let folder = file.path.strip_suffix(name).unwrap_or_default();
-    row(
+    flex_row(
         Modifier::new()
             .height(header_height(size))
             .fill(Role::Surface)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(3),
-        Flex::new().center().gap(2),
+        Flex::new().items_center().gap(sp(2)),
         || {
-            row(
+            flex_row(
                 Modifier::new()
                     .grow()
                     .clip_to(Radius::None)
                     .cursor(CursorIcon::Pointer)
                     .target(FocusId(EXCERPTS_FILE_BASE + position as u64)),
-                Flex::new().center().gap(2),
+                Flex::new().items_center().gap(sp(2)),
                 || {
                     if excerpts.folds() {
                         glyph(
@@ -649,15 +652,15 @@ fn removed_row(content: &str, settings: &pm_editor::EditorSettings) {
     };
     let kind = Type::code(settings.font_size).ratio(1.4).tone(Role::Muted);
     let shown = crate::diff_syntax::shown(content);
-    row(
+    flex_row(
         Modifier::new()
             .height(height)
             .fill(Tone::from(Role::Danger).alpha(0.12))
             .clip_to(Radius::None),
-        Flex::new().center(),
+        Flex::new().items_center(),
         move || {
-            gap_box(Modifier::new().width(BREAKPOINT_CELL + 3.0));
-            gap_box(numbers.pad_side(Side::Right, 3));
+            rustle::spacer(Modifier::new().width(BREAKPOINT_CELL + 3.0));
+            rustle::spacer(numbers.pad_side(Side::Right, 3));
             label_with(
                 Modifier::new().grow().clip_to(Radius::None).pad_x(2),
                 shown,
@@ -670,7 +673,7 @@ fn removed_row(content: &str, settings: &pm_editor::EditorSettings) {
 /// Emits a box as tall as `rows` rows of `row` logical pixels, standing in for those left out.
 #[track_caller]
 fn blank(rows: usize, row: f32) {
-    gap_box(Modifier::new().height(rows as f32 * row));
+    rustle::spacer(Modifier::new().height(rows as f32 * row));
 }
 
 impl Drawing<'_> {
@@ -681,7 +684,7 @@ impl Drawing<'_> {
         let row_height = state.editor.row_height();
         let Some(Contents::Text(document)) = state.git.viewers.get(index).map(|v| &v.contents)
         else {
-            gap_box(Modifier::new().height(GAP + row_height));
+            rustle::spacer(Modifier::new().height(GAP + row_height));
             return;
         };
         let live = state.git.shown == Some(index);
@@ -774,8 +777,9 @@ impl Drawing<'_> {
                     );
                 };
                 if hit && self.matcher.is_none() {
-                    block_box(
+                    flex_column(
                         Modifier::new().fill(Tone::from(Role::Success).alpha(0.12)),
+                        Flex::new(),
                         shown,
                     );
                 } else {
@@ -783,8 +787,8 @@ impl Drawing<'_> {
                 }
             }
         };
-        column(Modifier::new(), Flex::new(), || {
-            column(
+        flex_column(Modifier::new(), Flex::new(), || {
+            flex_column(
                 Modifier::new().cursor(CursorIcon::Text).target(owner),
                 Flex::new(),
                 || {
@@ -795,7 +799,7 @@ impl Drawing<'_> {
                     blank(rows.len() - last.max(first), row_height);
                 },
             );
-            gap_box(Modifier::new().height(GAP));
+            rustle::spacer(Modifier::new().height(GAP));
         });
     }
 }
@@ -904,9 +908,9 @@ pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: Size) {
         }
         Entry::Block(place, usize::MAX) => {
             let file = &excerpts.files[*place];
-            column(Modifier::new(), Flex::new(), || {
+            flex_column(Modifier::new(), Flex::new(), || {
                 diff_rows(file);
-                gap_box(Modifier::new().height(GAP));
+                rustle::spacer(Modifier::new().height(GAP));
             });
         }
         Entry::Block(place, step) => {
@@ -914,11 +918,11 @@ pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: Size) {
             match state.viewer_at(&file.path).filter(|_| file.editable) {
                 Some(index) => drawing.block(index, &file.blocks[*step], start, (low, high)),
                 None if !file.editable => gone_block(&file.blocks[*step], &settings),
-                None => gap_box(Modifier::new().height(size)),
+                None => rustle::spacer(Modifier::new().height(size)),
             }
         }
     };
-    column(
+    flex_column(
         Modifier::new()
             .grow()
             .clip_to(Radius::None)
@@ -929,8 +933,8 @@ pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: Size) {
                 Modifier::new().grow(),
                 Scroll::from_start(EXCERPTS_SCROLL, excerpts.scroll),
                 || {
-                    column(Modifier::new().fill_max_width(), Flex::new(), || {
-                        gap_box(Modifier::new().height(before));
+                    flex_column(Modifier::new().fill_max_width(), Flex::new(), || {
+                        rustle::spacer(Modifier::new().height(before));
                         for (entry, start, size) in built {
                             let identity = match entry {
                                 Entry::Header(place) => (*place, None),
@@ -938,7 +942,7 @@ pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: Size) {
                             };
                             rustle::key(identity, || draw(entry, start, size));
                         }
-                        gap_box(Modifier::new().height(after));
+                        rustle::spacer(Modifier::new().height(after));
                     });
                 },
             );
@@ -972,11 +976,11 @@ fn size_of(height: f32) -> Size {
 /// Emits the lines a change took out of a file that is gone, drawn as taken out, with the space under them.
 #[track_caller]
 fn gone_block(block: &Block, settings: &pm_editor::EditorSettings) {
-    column(Modifier::new(), Flex::new(), || {
+    flex_column(Modifier::new(), Flex::new(), || {
         for text in block.removed.iter().flat_map(|(_, lines)| lines.iter()) {
             removed_row(text, settings);
         }
-        gap_box(Modifier::new().height(GAP));
+        rustle::spacer(Modifier::new().height(GAP));
     });
 }
 

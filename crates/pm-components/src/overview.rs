@@ -1,11 +1,13 @@
 //! A project's overview: its sessions grouped by where they stand, and how its own repository is.
 
+use crate::kit::sp;
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::extensions::group_of_fixed_rows as group;
 use crate::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled,
-    Tooltip, Type, column, label, label_with, row, scroll_area,
+    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tooltip,
+    Type, label, label_with, scroll_area,
 };
 use crate::parts::{clipped, glyph, line, spacer};
 use crate::sample::{Session, Status};
@@ -53,24 +55,24 @@ impl WorkspaceState {
 /// Emits the overview of the project at `project`.
 #[track_caller]
 pub fn overview(state: &WorkspaceState, project: usize) {
-    column(Modifier::new().grow(), Flex::new(), || {
+    flex_column(Modifier::new().grow(), Flex::new(), || {
         heading(state, project);
         scroll_area(
             Modifier::new().grow(),
             Scroll::from_start(OVERVIEW_SCROLL, state.overview_scroll),
             || {
-                column(
+                flex_column(
                     Modifier::new().fill_max_width(),
-                    Flex::new().center(),
+                    Flex::new().items_center(),
                     || {
-                        column(
+                        flex_column(
                             Modifier::new()
                                 .fill_max_width()
                                 .max_w_px(PAGE_WIDTH)
                                 .pad_x(5)
                                 .pad_side(Side::Top, 5)
                                 .pad_side(Side::Bottom, 8),
-                            Flex::new().gap(6),
+                            Flex::new().gap(sp(6)),
                             || {
                                 sessions(state, project);
                                 repository(state);
@@ -87,12 +89,12 @@ pub fn overview(state: &WorkspaceState, project: usize) {
 /// Emits the bar across the top: the project, where it lives, and the button that starts a session in it.
 #[track_caller]
 fn heading(state: &WorkspaceState, project: usize) {
-    row(
+    flex_row(
         Modifier::new()
             .h(12)
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(5),
-        Flex::new().center().gap(3),
+        Flex::new().items_center().gap(sp(3)),
         || {
             if let Some(held) = state.projects.get(project) {
                 Avatar::of(held).build();
@@ -154,13 +156,13 @@ fn session_row(state: &WorkspaceState, index: usize) {
     card_row(own, || {
         status_icon(session.shown());
         clipped(&session.title, 14, Role::Text);
-        row(Modifier::new().tooltip(agent.name), Flex::new(), || {
+        flex_row(Modifier::new().tooltip(agent.name), Flex::new(), || {
             glyph(agent.icon, 3.5, Role::Muted);
         });
         if !session.changes.is_empty() {
             tally(session);
         }
-        row(
+        flex_row(
             Modifier::new().width(BRANCH_WIDTH).clip_to(Radius::None),
             Flex::new(),
             || {
@@ -171,9 +173,9 @@ fn session_row(state: &WorkspaceState, index: usize) {
                 );
             },
         );
-        row(
+        flex_row(
             Modifier::new().width(AGE_WIDTH),
-            Flex::new().trailing(),
+            Flex::new().justify_end(),
             || line(session.age(), 13, 1.4, Role::Subtle),
         );
     });
@@ -182,24 +184,28 @@ fn session_row(state: &WorkspaceState, index: usize) {
 /// Emits the lines `session` adds and takes away, in their colours.
 #[track_caller]
 fn tally(session: &Session) {
-    row(Modifier::new(), Flex::new().center().gap(1.5), || {
-        label(
-            format!("+{}", session.added()),
-            Type::new(12)
-                .ratio(1.4)
-                .tone(Role::Success)
-                .truncate()
-                .mono(),
-        );
-        label(
-            format!("−{}", session.removed()),
-            Type::new(12)
-                .ratio(1.4)
-                .tone(Role::Danger)
-                .truncate()
-                .mono(),
-        );
-    });
+    flex_row(
+        Modifier::new(),
+        Flex::new().items_center().gap(sp(1.5)),
+        || {
+            label(
+                format!("+{}", session.added()),
+                Type::new(12)
+                    .ratio(1.4)
+                    .tone(Role::Success)
+                    .truncate()
+                    .mono(),
+            );
+            label(
+                format!("−{}", session.removed()),
+                Type::new(12)
+                    .ratio(1.4)
+                    .tone(Role::Danger)
+                    .truncate()
+                    .mono(),
+            );
+        },
+    );
 }
 
 /// Emits the project's own folder: the branch it is on and how far it is from what it follows, and what is not committed.
@@ -299,9 +305,9 @@ fn commits(state: &WorkspaceState) {
 /// box before its padding, holding what `content` emits.
 #[track_caller]
 fn card_row(modifier: Modifier, content: impl FnOnce()) {
-    row(
+    flex_row(
         Modifier::new().h(11).chain(modifier).pad_x(4),
-        Flex::new().center().gap(3),
+        Flex::new().items_center().gap(sp(3)),
         content,
     );
 }

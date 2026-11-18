@@ -1,11 +1,10 @@
 //! The plan an agent proposes before it starts: the panel that reads it and the band above the prompt that answers it.
 
-use crate::kit::{
-    Flex, FocusId, IconName, Radius, Role, Scroll, Side, Styled, column, row, scroll_area,
-    wrapping_with,
-};
+use crate::kit::sp;
+use crate::kit::{FocusId, IconName, Radius, Role, Scroll, Side, Styled, scroll_area};
 use pm_harness::{Permission, Verdict};
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row, flex_wrap};
 
 use crate::button::Variant;
 use crate::parts::{line, spacer};
@@ -28,7 +27,7 @@ pub fn width_in(state: &WorkspaceState, room: f32) -> f32 {
 /// Emits the panel `width` logical pixels wide that reads `source`, the plan the agent proposed, as markdown beside the conversation.
 #[track_caller]
 pub fn panel(state: &WorkspaceState, source: &str, width: f32) {
-    column(
+    flex_column(
         Modifier::new()
             .width(width)
             .fill_max_height()
@@ -36,12 +35,12 @@ pub fn panel(state: &WorkspaceState, source: &str, width: f32) {
             .stroke_side(Side::Left, 1.0, Role::Border),
         Flex::new(),
         || {
-            row(
+            flex_row(
                 Modifier::new()
                     .h(12)
                     .stroke_side(Side::Bottom, 1.0, Role::Border)
                     .pad_x(4),
-                Flex::new().center().gap(2),
+                Flex::new().items_center().gap(sp(2)),
                 || {
                     line("Plan", 13, 1.4, Role::Muted);
                     spacer();
@@ -52,7 +51,7 @@ pub fn panel(state: &WorkspaceState, source: &str, width: f32) {
                 Modifier::new().grow().clip_to(Radius::None),
                 Scroll::from_start(PLAN_SCROLL, state.plan_scroll),
                 || {
-                    column(
+                    flex_column(
                         Modifier::new().fill_max_width().pad_x(4).pad_y(4),
                         Flex::new(),
                         || {
@@ -86,15 +85,15 @@ pub fn proposal(ask: &Permission) -> bool {
     if ask.plan.is_none() {
         return false;
     }
-    column(
+    flex_column(
         Modifier::new()
             .fill_rounded(Role::Surface, Radius::Xl)
             .stroke(Role::Border, Radius::Xl)
             .pad_x(4)
             .pad_y(3),
-        Flex::new().gap(2),
+        Flex::new().gap(sp(2)),
         || {
-            row(Modifier::new(), Flex::new().center(), || {
+            flex_row(Modifier::new(), Flex::new().items_center(), || {
                 line("The agent proposed a plan", 14, 1.4, Role::Text);
                 spacer();
                 Button::new("Open plan", OPEN_PLAN)
@@ -102,30 +101,34 @@ pub fn proposal(ask: &Permission) -> bool {
                     .size(Size::Sm)
                     .build();
             });
-            wrapping_with(Modifier::new(), Flex::new().gap(2).center(), || {
-                for (index, _) in ask
-                    .choices
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, choice)| choice.verdict == Verdict::Reject)
-                    .take(1)
-                {
-                    answer(index, "Reject", &Verdict::Reject);
-                }
-                Button::new("Revise…", REVISE)
-                    .variant(Variant::Ghost)
-                    .size(Size::Sm)
-                    .build();
-                spacer();
-                for (index, choice) in ask
-                    .choices
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, choice)| choice.verdict != Verdict::Reject)
-                {
-                    answer(index, &choice.name, &choice.verdict);
-                }
-            });
+            flex_wrap(
+                Modifier::new(),
+                Flex::new().gap(sp(2)).items_center(),
+                || {
+                    for (index, _) in ask
+                        .choices
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, choice)| choice.verdict == Verdict::Reject)
+                        .take(1)
+                    {
+                        answer(index, "Reject", &Verdict::Reject);
+                    }
+                    Button::new("Revise…", REVISE)
+                        .variant(Variant::Ghost)
+                        .size(Size::Sm)
+                        .build();
+                    spacer();
+                    for (index, choice) in ask
+                        .choices
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, choice)| choice.verdict != Verdict::Reject)
+                    {
+                        answer(index, &choice.name, &choice.verdict);
+                    }
+                },
+            );
         },
     );
     true

@@ -3,9 +3,10 @@
 //! The server asks the chat's agent for a handoff summary and starts the session with it, so the window only says where the work goes on and is told the outcome.
 
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::Button;
-use crate::kit::{Flex, FocusId, IconName, Interactive, Role, Side, Styled, block, row};
+use crate::kit::{FocusId, IconName, Interactive, Role, Side, Styled};
 use crate::parts::line;
 use crate::popover::{Popover, anchored, heading};
 use crate::sample::{Message, Session, Status};
@@ -219,9 +220,9 @@ fn ruled() -> Modifier {
 /// Emits a line of the choice saying `words`, where rows would be.
 #[track_caller]
 fn said(words: &str) {
-    row(
+    flex_row(
         Modifier::new().pad_x(2.5).pad_y(1.5),
-        Flex::new().center(),
+        Flex::new().items_center(),
         || line(words, 13, 1.4, Role::Subtle),
     );
 }
@@ -246,7 +247,7 @@ fn menu(state: &WorkspaceState, chat: &Session) {
     let ready = chosen.is_some() && listed.is_some_and(|branches| !branches.is_empty());
     menu.modifier(Modifier::new().target(MENU_BODY))
         .build_with(|| {
-            block(ruled(), || {
+            flex_column(ruled(), Flex::new(), || {
                 heading("Branch from", None);
                 match listed {
                     None => said("Reading the branches…"),
@@ -256,12 +257,16 @@ fn menu(state: &WorkspaceState, chat: &Session) {
                     }
                 }
             });
-            row(ruled().pad_x(1).pad_y(1.5), Flex::new().trailing(), || {
-                Button::new("Continue", CONTINUE_START)
-                    .size(Size::Sm)
-                    .disabled(!ready)
-                    .build();
-            });
+            flex_row(
+                ruled().pad_x(1).pad_y(1.5),
+                Flex::new().justify_end(),
+                || {
+                    Button::new("Continue", CONTINUE_START)
+                        .size(Size::Sm)
+                        .disabled(!ready)
+                        .build();
+                },
+            );
         });
 }
 

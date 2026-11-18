@@ -1,12 +1,13 @@
 //! The input: a box holding editable text, one line or several, with a look per variant and a measure per size.
 
+use crate::kit::sp;
 use pm_field::Field;
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::kit::scroll::bar_of;
 use crate::kit::{
-    FieldText, Flex, FocusId, Hovered, IconName, Interactive, Radius, Role, Side, Styled, Type,
-    block, column, row, theme,
+    FieldText, FocusId, Hovered, IconName, Interactive, Radius, Role, Side, Styled, Type, theme,
 };
 use crate::parts::glyph;
 use crate::size::Size;
@@ -224,9 +225,9 @@ impl<'a> Input<'a> {
             kind.ratio(1.57)
         };
         let (field, placeholder, leading) = (self.field, self.placeholder, self.leading);
-        row(
+        flex_row(
             self.modifier.chain(own),
-            Flex::new().center().gap(2),
+            Flex::new().items_center().gap(sp(2)),
             move || {
                 if let Some(icon) = leading {
                     glyph(icon, 4.0, Role::Muted);
@@ -262,10 +263,11 @@ impl<'a> Input<'a> {
                 .pad_side(Side::Bottom, 1);
             if scrolls { padded } else { padded.pad_x(4) }
         }));
-        column(self.modifier.chain(own), Flex::new(), move || {
+        flex_column(self.modifier.chain(own), Flex::new(), move || {
             if scrolls {
-                block(
+                flex_column(
                     bar_of(Modifier::new().fill_max_width(), id).pad_x(4),
+                    Flex::new(),
                     || text.build(Modifier::new().fill_max_width()),
                 );
             } else {

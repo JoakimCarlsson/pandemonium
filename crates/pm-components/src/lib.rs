@@ -87,6 +87,7 @@ pub mod lightbulb;
 pub mod line_edits;
 pub mod listing;
 pub mod markdown;
+pub mod marked;
 pub mod marks;
 pub mod menu;
 pub mod message_menu;

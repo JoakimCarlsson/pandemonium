@@ -1,7 +1,9 @@
 //! The tile: a row of a list that holds its children side by side, answers to a press and fills under the pointer and while it is selected.
 
-use crate::kit::{Flex, FocusId, Hovered, Interactive, Looks, Radius, Role, Styled, row};
+use crate::kit::sp;
+use crate::kit::{FocusId, Hovered, Interactive, Looks, Radius, Role, Styled};
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_row};
 
 /// A tile being described: what it answers to, how tall it is and whether it is selected.
 ///
@@ -103,8 +105,11 @@ impl Tile {
                 .target(self.id)
                 .chain(self.inner),
         );
-        let flex = self.flex.unwrap_or(Flex::new().center()).gap(self.gap);
-        row(modifier, flex, content);
+        let flex = self
+            .flex
+            .unwrap_or(Flex::new().items_center())
+            .gap(sp(self.gap));
+        flex_row(modifier, flex, content);
     }
 
     /// Emits the tile holding nothing.

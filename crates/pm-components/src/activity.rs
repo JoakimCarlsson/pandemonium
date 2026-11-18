@@ -1,14 +1,16 @@
 //! The chips above the prompt box that sum up what the agent is doing, each opening its details.
 
+use crate::kit::sp;
 use pm_harness::Progress;
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row, flex_wrap};
 
 use crate::Button;
 use crate::Tally;
 use crate::button::Variant;
 use crate::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Looks, Placement, Radius, Role, Side, Styled,
-    anchored, column, gap_box, row, spinner, wrapping_with,
+    FocusId, Hovered, IconName, Interactive, Looks, Placement, Radius, Role, Side, Styled,
+    anchored, spinner,
 };
 use crate::parts::{clipped, line};
 use crate::sample::{Session, Step};
@@ -42,13 +44,13 @@ pub(crate) fn latest_plan(session: &Session) -> Option<&[pm_harness::PlanStep]> 
 
 /// Emits the card of the commands the agent left running, with how long each has gone on.
 fn shells(session: &Session) {
-    column(
+    flex_column(
         Modifier::new()
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
             .pad_x(3.5)
             .pad_y(3),
-        Flex::new().gap(2),
+        Flex::new().gap(sp(2)),
         || {
             line(
                 format!("{} running", session.shells.len()),
@@ -57,16 +59,20 @@ fn shells(session: &Session) {
                 Role::Muted,
             );
             for shell in &session.shells {
-                row(Modifier::new(), Flex::new().center().gap(2.5), || {
-                    spinner(3.5, Role::Muted);
-                    clipped(&shell.label, 13, Role::Text);
-                    line(
-                        elapsed(shell.started.elapsed().as_secs()),
-                        12,
-                        1.4,
-                        Role::Subtle,
-                    );
-                });
+                flex_row(
+                    Modifier::new(),
+                    Flex::new().items_center().gap(sp(2.5)),
+                    || {
+                        spinner(3.5, Role::Muted);
+                        clipped(&shell.label, 13, Role::Text);
+                        line(
+                            elapsed(shell.started.elapsed().as_secs()),
+                            12,
+                            1.4,
+                            Role::Subtle,
+                        );
+                    },
+                );
             }
         },
     );
@@ -117,7 +123,7 @@ fn has_panel(session: &Session, open: Activity) -> bool {
 /// Emits the open panel `open` for `session`, `width` logical pixels wide, hanging over the chips.
 #[track_caller]
 fn panel(state: &WorkspaceState, session: &Session, open: Activity, width: f32) {
-    column(
+    flex_column(
         Modifier::new()
             .width(width)
             .shadow_md(Radius::Xl)
@@ -179,67 +185,71 @@ fn chips(
     awaiting: usize,
     working_agents: usize,
 ) {
-    wrapping_with(Modifier::new(), Flex::new().gap(2).center(), || {
-        if awaiting > 0 {
-            chip(format!("{awaiting} awaiting approval"), APPROVALS_CHIP)
-                .mark(|| {
-                    gap_box(
-                        Modifier::new()
-                            .square(1.5)
-                            .fill_rounded(Role::Danger, Radius::Full),
-                    )
-                })
-                .selected(state.activity == Some(Activity::Approvals))
-                .build();
-        }
-        if let Some(items) = plan_items {
-            let done = items
-                .iter()
-                .filter(|item| item.progress == Progress::Done)
-                .count();
-            chip(format!("{done}/{} tasks", items.len()), PLAN_CHIP)
-                .with_icon(IconName::CheckCircle)
-                .selected(state.activity == Some(Activity::Plan))
-                .build();
-        }
-        if working_agents > 0 {
-            chip(format!("{working_agents} running"), SUBAGENTS_CHIP)
+    flex_wrap(
+        Modifier::new(),
+        Flex::new().gap(sp(2)).items_center(),
+        || {
+            if awaiting > 0 {
+                chip(format!("{awaiting} awaiting approval"), APPROVALS_CHIP)
+                    .mark(|| {
+                        rustle::spacer(
+                            Modifier::new()
+                                .square(1.5)
+                                .fill_rounded(Role::Danger, Radius::Full),
+                        )
+                    })
+                    .selected(state.activity == Some(Activity::Approvals))
+                    .build();
+            }
+            if let Some(items) = plan_items {
+                let done = items
+                    .iter()
+                    .filter(|item| item.progress == Progress::Done)
+                    .count();
+                chip(format!("{done}/{} tasks", items.len()), PLAN_CHIP)
+                    .with_icon(IconName::CheckCircle)
+                    .selected(state.activity == Some(Activity::Plan))
+                    .build();
+            }
+            if working_agents > 0 {
+                chip(format!("{working_agents} running"), SUBAGENTS_CHIP)
+                    .mark(|| spinner(3.5, Role::Muted))
+                    .selected(state.activity == Some(Activity::Subagents))
+                    .build();
+            }
+            if !session.shells.is_empty() {
+                let count = session.shells.len();
+                chip(
+                    format!(
+                        "{count} {} running",
+                        if count == 1 { "command" } else { "commands" }
+                    ),
+                    SHELLS_CHIP,
+                )
                 .mark(|| spinner(3.5, Role::Muted))
-                .selected(state.activity == Some(Activity::Subagents))
+                .selected(state.activity == Some(Activity::Shells))
                 .build();
-        }
-        if !session.shells.is_empty() {
-            let count = session.shells.len();
-            chip(
-                format!(
-                    "{count} {} running",
-                    if count == 1 { "command" } else { "commands" }
-                ),
-                SHELLS_CHIP,
-            )
-            .mark(|| spinner(3.5, Role::Muted))
-            .selected(state.activity == Some(Activity::Shells))
-            .build();
-        }
-        if !session.changes.is_empty() {
-            row(
-                Modifier::new()
-                    .h(7)
-                    .looks_of(
-                        Looks::new().hover(Role::SurfaceHover).radius(Radius::Full),
-                        OPEN_DIFF,
-                    )
-                    .stroke(Role::Border, Radius::Full)
-                    .cursor(CursorIcon::Pointer)
-                    .target(OPEN_DIFF)
-                    .pad_x(3),
-                Flex::new().center(),
-                || {
-                    Tally::new(session.added(), session.removed())
-                        .size(12)
-                        .build();
-                },
-            );
-        }
-    });
+            }
+            if !session.changes.is_empty() {
+                flex_row(
+                    Modifier::new()
+                        .h(7)
+                        .looks_of(
+                            Looks::new().hover(Role::SurfaceHover).radius(Radius::Full),
+                            OPEN_DIFF,
+                        )
+                        .stroke(Role::Border, Radius::Full)
+                        .cursor(CursorIcon::Pointer)
+                        .target(OPEN_DIFF)
+                        .pad_x(3),
+                    Flex::new().items_center(),
+                    || {
+                        Tally::new(session.added(), session.removed())
+                            .size(12)
+                            .build();
+                    },
+                );
+            }
+        },
+    );
 }

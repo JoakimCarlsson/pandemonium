@@ -1,15 +1,16 @@
 //! The pages of the settings panel that list servers: the agents that can be started and the tool servers every agent is started with, each with the ones added, a form to add or change one, and what the public registry offers.
 
+use crate::kit::sp;
 use pm_field::{Edit, Field};
 use pm_protocol::{McpServer, ToolListing};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::agent_list::AgentEntry;
 use crate::button::Variant;
 use crate::input::Input;
 use crate::kit::{
-    Flex, FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, Type, column, label,
-    row, scroll_area,
+    FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, Type, label, scroll_area,
 };
 use crate::menu::Menu;
 use crate::parts::{glyph, line, wrap};
@@ -621,7 +622,7 @@ fn title_type(pixels: u32, tone: Role) -> Type {
 /// Emits the words `content` breaks into, one line under another, in no more than `room` logical pixels across.
 #[track_caller]
 pub(crate) fn paragraph(content: &str, room: f32) {
-    column(Modifier::new(), Flex::new(), || {
+    flex_column(Modifier::new(), Flex::new(), || {
         for words in wrap(content, 13, room.min(PARAGRAPH_WIDTH)) {
             line(words, 13, 1.5, Role::Muted);
         }
@@ -631,7 +632,7 @@ pub(crate) fn paragraph(content: &str, room: f32) {
 /// Emits the breadcrumb over the title of `section`'s page, and the title.
 #[track_caller]
 pub(crate) fn page_title(section: Section) {
-    column(Modifier::new(), Flex::new().gap(1), || {
+    flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
         if let Some(parent) = section.parent() {
             line(parent.title(), 12, 1.4, Role::Muted);
         }
@@ -653,16 +654,20 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) {
         Modifier::new().grow().clip_to(Radius::None),
         Scroll::from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
         || {
-            column(
+            flex_column(
                 Modifier::new()
                     .fill_max_width()
                     .pad_x(8)
                     .pad_side(Side::Bottom, 6),
                 Flex::new(),
                 || {
-                    column(Modifier::new().fill_max_width(), Flex::new().gap(4), || {
-                        section_content(state, section, room);
-                    });
+                    flex_column(
+                        Modifier::new().fill_max_width(),
+                        Flex::new().gap(sp(4)),
+                        || {
+                            section_content(state, section, room);
+                        },
+                    );
                 },
             );
         },
@@ -765,9 +770,9 @@ fn release_note(state: &WorkspaceState, room: f32) {
             false,
         ),
     };
-    row(
+    flex_row(
         Modifier::new(),
-        Flex::new().center().between().gap(3),
+        Flex::new().items_center().justify_between().gap(sp(3)),
         || {
             wrapped_note(&said, (room - 160.0).max(120.0));
             if newer {
@@ -798,7 +803,7 @@ fn count_of(state: &WorkspaceState, section: Section) -> String {
 pub(crate) fn boxed(rows: impl FnOnce()) {
     let rows = rustle::collect(rows);
     let last = rows.len().saturating_sub(1);
-    column(
+    flex_column(
         Modifier::new()
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
@@ -835,28 +840,32 @@ pub(crate) fn card(section: Section, count: String) {
         .radius(Radius::Lg)
         .modifier(Modifier::new().fill_rounded(Role::Surface, Radius::Lg))
         .inner(Modifier::new().stroke(Role::Border, Radius::Lg).pad(4))
-        .flex(Flex::new().start())
+        .flex(Flex::new().items_start())
         .build_with(|| {
-            column(Modifier::new().grow(), Flex::new().start().gap(1), || {
-                row(
-                    Modifier::new().fill_max_width(),
-                    Flex::new().center().between(),
-                    || {
-                        label(section.title(), title_type(14, Role::Text));
-                        line(count, 12, 1.4, Role::Muted);
-                    },
-                );
-                line(about, 12, 1.4, Role::Muted);
-            });
+            flex_column(
+                Modifier::new().grow(),
+                Flex::new().items_start().gap(sp(1)),
+                || {
+                    flex_row(
+                        Modifier::new().fill_max_width(),
+                        Flex::new().items_center().justify_between(),
+                        || {
+                            label(section.title(), title_type(14, Role::Text));
+                            line(count, 12, 1.4, Role::Muted);
+                        },
+                    );
+                    line(about, 12, 1.4, Role::Muted);
+                },
+            );
         });
 }
 
 /// Emits a row of a boxed list: what `content` emits side by side, with room around it.
 #[track_caller]
 pub(crate) fn flat_row(content: impl FnOnce()) {
-    row(
+    flex_row(
         Modifier::new().pad_x(3).pad_y(3),
-        Flex::new().center().between().gap(3),
+        Flex::new().items_center().justify_between().gap(sp(3)),
         content,
     );
 }
@@ -881,19 +890,23 @@ fn list(state: &WorkspaceState, section: Section, room: f32) {
         form_node(form, section);
     }
     let installed = installed_rows(state, &needle);
-    row(Modifier::new(), Flex::new().center().between(), || {
-        heading(
-            "Installed",
-            installed.len(),
-            !settings.installed_folded,
-            SETTINGS_TOGGLE_INSTALLED,
-        );
-        Button::new("Add Server", SETTINGS_ADD)
-            .variant(Variant::Outline)
-            .size(Size::Sm)
-            .disabled(adding)
-            .build();
-    });
+    flex_row(
+        Modifier::new(),
+        Flex::new().items_center().justify_between(),
+        || {
+            heading(
+                "Installed",
+                installed.len(),
+                !settings.installed_folded,
+                SETTINGS_TOGGLE_INSTALLED,
+            );
+            Button::new("Add Server", SETTINGS_ADD)
+                .variant(Variant::Outline)
+                .size(Size::Sm)
+                .disabled(adding)
+                .build();
+        },
+    );
     if !settings.installed_folded {
         if installed.is_empty() {
             note("Nothing installed matches.");
@@ -968,12 +981,12 @@ fn heading(title: &str, count: usize, open: bool, toggle: FocusId) {
     } else {
         IconName::ChevronRight
     };
-    row(
+    flex_row(
         Modifier::new()
             .h(9)
             .cursor(CursorIcon::Pointer)
             .target(toggle),
-        Flex::new().center().gap(2),
+        Flex::new().items_center().gap(sp(2)),
         || {
             glyph(chevron, 4.0, Role::Muted);
             label(title, title_type(15, Role::Text));
@@ -985,10 +998,14 @@ fn heading(title: &str, count: usize, open: bool, toggle: FocusId) {
 /// Emits the name of a list that does not fold, with how many rows it holds.
 #[track_caller]
 pub(crate) fn heading_only(title: &str, count: usize) {
-    row(Modifier::new().h(9), Flex::new().center().gap(2), || {
-        label(title, title_type(15, Role::Text));
-        Badge::new(count.to_string()).build();
-    });
+    flex_row(
+        Modifier::new().h(9),
+        Flex::new().items_center().gap(sp(2)),
+        || {
+            label(title, title_type(15, Role::Text));
+            Badge::new(count.to_string()).build();
+        },
+    );
 }
 
 /// Emits a line that only says something.
@@ -1000,7 +1017,7 @@ pub(crate) fn note(message: &str) {
 /// Emits a quiet note saying `message`, broken into lines no more than `room` logical pixels across.
 #[track_caller]
 pub(crate) fn wrapped_note(message: &str, room: f32) {
-    column(Modifier::new(), Flex::new(), || {
+    flex_column(Modifier::new(), Flex::new(), || {
         for words in wrap(message, 12, room) {
             line(words, 12, 1.4, Role::Muted);
         }
@@ -1139,9 +1156,9 @@ fn offer(index: usize, title: &str, description: &str, how: &str, action: &str, 
         }
     });
     flat_row(|| {
-        column(
+        flex_column(
             Modifier::new().grow().clip_to(Radius::None),
-            Flex::new().gap(1),
+            Flex::new().gap(sp(1)),
             || {
                 label(title, title_type(13, Role::Text));
                 label(
@@ -1150,21 +1167,25 @@ fn offer(index: usize, title: &str, description: &str, how: &str, action: &str, 
                 );
             },
         );
-        row(Modifier::new(), Flex::new().center().gap(3), || {
-            if !how.is_empty() {
-                label(
-                    how,
-                    Type::new(11)
-                        .ratio(1.5)
-                        .tone(Role::Subtle)
-                        .truncate()
-                        .mono(),
-                );
-            }
-            if let Some(button) = button {
-                button.build();
-            }
-        });
+        flex_row(
+            Modifier::new(),
+            Flex::new().items_center().gap(sp(3)),
+            || {
+                if !how.is_empty() {
+                    label(
+                        how,
+                        Type::new(11)
+                            .ratio(1.5)
+                            .tone(Role::Subtle)
+                            .truncate()
+                            .mono(),
+                    );
+                }
+                if let Some(button) = button {
+                    button.build();
+                }
+            },
+        );
     });
 }
 
@@ -1173,19 +1194,23 @@ fn offer(index: usize, title: &str, description: &str, how: &str, action: &str, 
 fn installed_row(shown: InstalledRow) {
     let dim = shown.enabled == Some(false);
     flat_row(|| {
-        column(
+        flex_column(
             Modifier::new().grow().clip_to(Radius::None),
-            Flex::new().gap(1),
+            Flex::new().gap(sp(1)),
             || {
-                row(Modifier::new(), Flex::new().center().gap(2), || {
-                    label(
-                        shown.title.as_str(),
-                        title_type(13, if dim { Role::Muted } else { Role::Text }),
-                    );
-                    for (words, tone) in &shown.badges {
-                        Badge::new(*words).tone(*tone).build();
-                    }
-                });
+                flex_row(
+                    Modifier::new(),
+                    Flex::new().items_center().gap(sp(2)),
+                    || {
+                        label(
+                            shown.title.as_str(),
+                            title_type(13, if dim { Role::Muted } else { Role::Text }),
+                        );
+                        for (words, tone) in &shown.badges {
+                            Badge::new(*words).tone(*tone).build();
+                        }
+                    },
+                );
                 if !shown.description.is_empty() {
                     label(
                         shown.description.as_str(),
@@ -1198,14 +1223,20 @@ fn installed_row(shown: InstalledRow) {
                 );
             },
         );
-        row(Modifier::new(), Flex::new().center().gap(2), || {
-            if let (Some(place), Some(on), true) = (shown.place, shown.enabled, shown.switchable) {
-                switch(on, SERVER_SWITCHES.id(place));
-            }
-            if let Some(more) = shown.place.and_then(|place| SERVER_MORES.id(place)) {
-                Button::icon(IconName::More, more).size(Size::Sm).build();
-            }
-        });
+        flex_row(
+            Modifier::new(),
+            Flex::new().items_center().gap(sp(2)),
+            || {
+                if let (Some(place), Some(on), true) =
+                    (shown.place, shown.enabled, shown.switchable)
+                {
+                    switch(on, SERVER_SWITCHES.id(place));
+                }
+                if let Some(more) = shown.place.and_then(|place| SERVER_MORES.id(place)) {
+                    Button::icon(IconName::More, more).size(Size::Sm).build();
+                }
+            },
+        );
     });
 }
 
@@ -1220,26 +1251,30 @@ fn form_node(form: &ServerForm, section: Section) {
         Section::AgentServers => "Environment (NAME=value, separated by spaces)",
         _ => "Environment or headers (NAME=value, separated by spaces)",
     };
-    column(
+    flex_column(
         Modifier::new()
             .fill_rounded(Role::Surface, Radius::Lg)
             .stroke(Role::Border, Radius::Lg)
             .pad(4),
-        Flex::new().gap(3),
+        Flex::new().gap(sp(3)),
         || {
             labelled("Name", &form.name, SETTINGS_NAME, "My server");
             labelled(target, &form.target, SETTINGS_TARGET, "npx my-server");
             labelled(environment, &form.env, SETTINGS_ENV, "TOKEN=abc");
-            row(Modifier::new(), Flex::new().center().gap(2), || {
-                Button::new("Save", SETTINGS_SAVE)
-                    .size(Size::Sm)
-                    .disabled(!form.complete())
-                    .build();
-                Button::new("Cancel", SETTINGS_CANCEL)
-                    .variant(Variant::Ghost)
-                    .size(Size::Sm)
-                    .build();
-            });
+            flex_row(
+                Modifier::new(),
+                Flex::new().items_center().gap(sp(2)),
+                || {
+                    Button::new("Save", SETTINGS_SAVE)
+                        .size(Size::Sm)
+                        .disabled(!form.complete())
+                        .build();
+                    Button::new("Cancel", SETTINGS_CANCEL)
+                        .variant(Variant::Ghost)
+                        .size(Size::Sm)
+                        .build();
+                },
+            );
         },
     );
 }
@@ -1247,7 +1282,7 @@ fn form_node(form: &ServerForm, section: Section) {
 /// Emits a box under the words that say what is written in it.
 #[track_caller]
 fn labelled(words: &str, field: &Field, id: FocusId, placeholder: &str) {
-    column(Modifier::new(), Flex::new().gap(1), || {
+    flex_column(Modifier::new(), Flex::new().gap(sp(1)), || {
         line(words, 12, 1.4, Role::Muted);
         Input::new(field, id)
             .size(Size::Sm)

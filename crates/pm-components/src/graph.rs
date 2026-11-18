@@ -2,8 +2,10 @@
 //!
 //! Each row paints its own slice of the lanes: the lines that cross its upper and lower halves and the dot of its commit. A line that changes lane runs down its own lane and across to the commit it meets, so rows stacked on each other join into one picture without any row knowing about its neighbours.
 
+use crate::kit::sp;
 use pm_git::{Commit, Edge, Half, Lanes};
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::Sash;
 use crate::git_controls::{
@@ -11,8 +13,8 @@ use crate::git_controls::{
     GRAPH_TARGET, GRAPH_TOGGLE,
 };
 use crate::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tone,
-    Tooltip, Type, block, column, gap_box, label, label_with, layer, row, scroll_area,
+    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tone,
+    Tooltip, Type, label, label_with, scroll_area,
 };
 use crate::parts::{glyph, line, spacer};
 use crate::size::Size;
@@ -67,7 +69,7 @@ fn lane_x(lane: usize) -> f32 {
 /// Emits a filled rectangle `width` by `height` at `x`, `y` in its cell, with corners rounded by `radius`.
 #[track_caller]
 fn rect(x: f32, y: f32, width: f32, height: f32, color: Tone, radius: Radius) {
-    gap_box(
+    rustle::spacer(
         Modifier::new()
             .at(x, y)
             .width(width.max(0.0))
@@ -131,7 +133,7 @@ fn edge(edge: &Edge) {
 /// Emits one commit's slice of the graph, in a column `columns` lanes wide.
 #[track_caller]
 fn cell(lanes: &Lanes, columns: usize) {
-    layer(
+    rustle::stack_with(
         Modifier::new()
             .width(columns.max(1) as f32 * LANE)
             .height(ROW),
@@ -176,14 +178,14 @@ fn reference_badge(decorated: &str, color: Tone) {
 fn commit_row(commit: &Commit, columns: usize, position: usize) {
     let color = lane_color(commit.lanes.color);
     let id = FocusId(HISTORY_ROW_BASE + position as u64);
-    row(
+    flex_row(
         Modifier::new()
             .height(ROW)
             .clip_to(Radius::None)
             .looks_of(Looks::new().hover(Role::SurfaceHover), id)
             .target(id)
             .pad_x(3),
-        Flex::new().center().gap(2),
+        Flex::new().items_center().gap(sp(2)),
         || {
             cell(&commit.lanes, columns);
             label(
@@ -211,7 +213,7 @@ fn commit_row(commit: &Commit, columns: usize, position: usize) {
 /// Emits a box as tall as `rows` rows, standing in for those left out.
 #[track_caller]
 fn blank(rows: usize) {
-    gap_box(Modifier::new().height(rows as f32 * ROW));
+    rustle::spacer(Modifier::new().height(rows as f32 * ROW));
 }
 
 /// Emits the rows of `commits` that are in a body `height` tall scrolled `scroll` down, with a blank for those above and below.
@@ -231,7 +233,7 @@ fn visible(commits: &[Commit], columns: usize, scroll: f32, height: f32) {
 /// Emits the button saying which references the graph lists, which switches between the checked out branch and all of them, with `tip` shown while it is hovered.
 #[track_caller]
 fn refs_button(all: bool, tip: &str) {
-    row(
+    flex_row(
         Modifier::new()
             .h(6)
             .tooltip(tip)
@@ -242,7 +244,7 @@ fn refs_button(all: bool, tip: &str) {
             .cursor(CursorIcon::Pointer)
             .target(GRAPH_REFS)
             .pad_x(2),
-        Flex::new().center().gap(1),
+        Flex::new().items_center().gap(sp(1)),
         || {
             glyph(IconName::GitFork, 3.5, Role::Muted);
             line(if all { "All" } else { "Auto" }, 12, 1.4, Role::Text);
@@ -266,9 +268,9 @@ fn strip_button(icon: IconName, id: FocusId, spinning: bool, tip: &str) {
 fn strip(state: &WorkspaceState) {
     let git = &state.git;
     let open = git.graph_open;
-    row(
+    flex_row(
         Modifier::new().h(7).pad_x(2),
-        Flex::new().center().gap(0.5),
+        Flex::new().items_center().gap(sp(0.5)),
         || {
             strip_button(
                 if open {
@@ -312,11 +314,11 @@ pub fn graph(state: &WorkspaceState) {
     let git = &state.git;
     let open = git.graph_open;
     let height = git.graph_height.clamp(HEIGHTS.0, HEIGHTS.1);
-    column(Modifier::new(), Flex::new(), || {
+    flex_column(Modifier::new(), Flex::new(), || {
         if open {
             Sash::row(GRAPH_SASH).build();
         }
-        column(
+        flex_column(
             Modifier::new()
                 .height(if open { height } else { 28.0 })
                 .stroke_side(Side::Top, 1.0, Role::Border)
@@ -337,9 +339,9 @@ pub fn graph(state: &WorkspaceState) {
                     Modifier::new().grow(),
                     Scroll::from_start(GRAPH_SCROLL, git.graph_scroll),
                     || {
-                        column(Modifier::new().fill_max_width(), Flex::new(), || {
+                        flex_column(Modifier::new().fill_max_width(), Flex::new(), || {
                             if git.history.is_empty() {
-                                block(Modifier::new().pad_x(4).pad_y(2), || {
+                                flex_column(Modifier::new().pad_x(4).pad_y(2), Flex::new(), || {
                                     line("No commits.", 12, 1.4, Role::Subtle);
                                 });
                             } else {

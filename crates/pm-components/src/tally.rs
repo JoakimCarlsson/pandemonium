@@ -1,7 +1,9 @@
 //! The tally: how many lines were added and how many removed.
 
-use crate::kit::{Flex, Role, Type, label, row};
+use crate::kit::sp;
+use crate::kit::{Role, Type, label};
 use rustle::Modifier;
+use rustle::{Flex, flex_row};
 
 /// A tally being described: the two counts and how big they are set.
 ///
@@ -47,9 +49,13 @@ impl Tally {
     pub fn build(self) {
         let kind = Type::new(self.pixels).ratio(1.4).mono();
         let (added, removed) = (self.added, self.removed);
-        row(self.modifier, Flex::new().center().gap(1.5), move || {
-            label(format!("+{added}"), kind.tone(Role::Success));
-            label(format!("−{removed}"), kind.tone(Role::Danger));
-        });
+        flex_row(
+            self.modifier,
+            Flex::new().items_center().gap(sp(1.5)),
+            move || {
+                label(format!("+{added}"), kind.tone(Role::Success));
+                label(format!("−{removed}"), kind.tone(Role::Danger));
+            },
+        );
     }
 }

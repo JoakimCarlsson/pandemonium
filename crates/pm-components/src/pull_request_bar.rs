@@ -1,8 +1,10 @@
 //! The bar under a session's header that tells how the pull request of its branch stands, with its checks and review, and offers what can be done next: push, open, update, mark ready, merge, reopen, and delete the branch from its remote. It names the review as the code host its repository is on does, and offers only pushing when that host is not supported.
 
-use crate::kit::{Flex, FocusId, IconName, Radius, Role, Side, Styled, Tooltip, row};
+use crate::kit::sp;
+use crate::kit::{FocusId, IconName, Radius, Role, Side, Styled, Tooltip};
 use pm_git::{CheckState, CodeHost, PullRequestStatus, ReviewDecision};
 use rustle::Modifier;
+use rustle::{Flex, flex_row};
 
 use crate::Button;
 use crate::badge::{Badge, Variant as BadgeVariant};
@@ -106,10 +108,14 @@ fn tally(icon: IconName, tone: Role, count: usize) {
     if count == 0 {
         return;
     }
-    row(Modifier::new(), Flex::new().center().gap(1), || {
-        glyph(icon, 3.5, tone);
-        line(count.to_string(), 12, 1.4, tone);
-    });
+    flex_row(
+        Modifier::new(),
+        Flex::new().items_center().gap(sp(1)),
+        || {
+            glyph(icon, 3.5, tone);
+            line(count.to_string(), 12, 1.4, tone);
+        },
+    );
 }
 
 /// Emits the button counting the checks by how they stand, whose tooltip names the first that failed; it opens the page of the checks.
@@ -144,11 +150,15 @@ fn checks(request: &PullRequestStatus) {
     .variant(Variant::Ghost)
     .size(Size::Xs)
     .mark(move || {
-        row(Modifier::new(), Flex::new().center().gap(2), || {
-            tally(IconName::CheckCircle, Role::Success, counts.0);
-            tally(IconName::Close, Role::Danger, counts.1);
-            tally(IconName::Progress, Role::Warning, counts.2);
-        });
+        flex_row(
+            Modifier::new(),
+            Flex::new().items_center().gap(sp(2)),
+            || {
+                tally(IconName::CheckCircle, Role::Success, counts.0);
+                tally(IconName::Close, Role::Danger, counts.1);
+                tally(IconName::Progress, Role::Warning, counts.2);
+            },
+        );
     })
     .modifier(Modifier::new().tooltip(format!("{summary}: Open the Checks")))
     .build();
@@ -253,7 +263,7 @@ pub fn bar(session: &Session) {
         .clip_to(Radius::None)
         .stroke_side(Side::Bottom, 1.0, Role::Border)
         .pad_x(5);
-    row(modifier, Flex::new().center().gap(3), || {
+    flex_row(modifier, Flex::new().items_center().gap(sp(3)), || {
         match (&session.pull_request, unsupported(session)) {
             (_, Some(host)) => {
                 let said = if host.name.is_empty() {

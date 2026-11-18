@@ -1,9 +1,9 @@
 //! A file shown rendered rather than as its source: markdown laid out as a page, and pictures drawn whole.
 
-use crate::kit::{
-    Flex, FocusId, Picture, Radius, Role, Styled, block, picture as picture_box, row,
-};
+use crate::kit::sp;
+use crate::kit::{FocusId, Picture, Radius, Role, Styled, picture as picture_box};
 use rustle::Modifier;
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::Button;
 use crate::button::Variant;
@@ -101,18 +101,22 @@ pub fn switch(viewer: &Viewer) {
         return;
     }
     let shown = viewer.rendering() == Some(rendering);
-    row(Modifier::new(), Flex::new().center().gap(1), || {
-        Button::new("Preview", PREVIEW_SHOW)
-            .variant(Variant::Ghost)
-            .size(Size::Xs)
-            .selected(shown)
-            .build();
-        Button::new("Source", SOURCE_SHOW)
-            .variant(Variant::Ghost)
-            .size(Size::Xs)
-            .selected(!shown)
-            .build();
-    });
+    flex_row(
+        Modifier::new(),
+        Flex::new().items_center().gap(sp(1)),
+        || {
+            Button::new("Preview", PREVIEW_SHOW)
+                .variant(Variant::Ghost)
+                .size(Size::Xs)
+                .selected(shown)
+                .build();
+            Button::new("Source", SOURCE_SHOW)
+                .variant(Variant::Ghost)
+                .size(Size::Xs)
+                .selected(!shown)
+                .build();
+        },
+    );
 }
 
 /// Emits what the strip says about the picture of the file shown: how many pixels it has across and down.
@@ -156,7 +160,7 @@ pub fn rendered(viewer: &Viewer, figures: &Figures, (width, height): (f32, f32))
 /// Emits a line saying `message` where the rendering would be.
 #[track_caller]
 fn note(message: &str) {
-    block(Modifier::new().pad_x(4).pad_y(4), || {
+    flex_column(Modifier::new().pad_x(4).pad_y(4), Flex::new(), || {
         line(message, 13, 1.4, Role::Subtle);
     });
 }
@@ -165,14 +169,18 @@ fn note(message: &str) {
 #[track_caller]
 fn page(path: &str, source: &str, figures: &Figures, width: f32) {
     let column = (width - 2.0 * MARGIN).clamp(120.0, PAGE_WIDTH);
-    row(Modifier::new().pad_y(8), Flex::new().middle(), || {
-        block(Modifier::new().width(column), || {
-            Markdown::new(source, column)
-                .links(PREVIEW_LINK_BASE)
-                .figures(figures, Some(path))
-                .build();
-        });
-    });
+    flex_row(
+        Modifier::new().pad_y(8),
+        Flex::new().justify_center(),
+        || {
+            flex_column(Modifier::new().width(column), Flex::new(), || {
+                Markdown::new(source, column)
+                    .links(PREVIEW_LINK_BASE)
+                    .figures(figures, Some(path))
+                    .build();
+            });
+        },
+    );
 }
 
 /// Emits `picture`, `density` of its pixels to a logical pixel, shrunk to fit a view `room` logical pixels across and down and set in its middle on a plain backing.
@@ -187,9 +195,9 @@ fn framed(picture: &Picture, density: f32, room: (f32, f32)) {
         (room.1 - 2.0 * MARGIN).max(16.0),
     );
     let fit = (wide / across.max(1.0)).min(tall / down.max(1.0)).min(1.0);
-    row(
+    flex_row(
         Modifier::new().grow(),
-        Flex::new().center().middle(),
+        Flex::new().items_center().justify_center(),
         || {
             picture_box(
                 Modifier::new()

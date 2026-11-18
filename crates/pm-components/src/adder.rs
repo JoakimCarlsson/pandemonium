@@ -2,14 +2,15 @@
 
 use pm_field::{Edit, Field};
 use rustle::{CursorIcon, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
 use crate::Input;
 use crate::Modal;
 use crate::folder_picker::Purpose;
 use crate::input;
 use crate::kit::{
-    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Type,
-    column, label, label_with, row, scroll_area, sp, spinner,
+    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Type,
+    label, label_with, scroll_area, sp, spinner,
 };
 use crate::parts::{glyph, line};
 
@@ -330,14 +331,14 @@ fn panel(open: &Adder, scrolled: f32) {
             .stroke_side(Side::Bottom, 1.0, Role::Border)
             .pad_x(4)
     };
-    row(banded(), Flex::new().center().gap(2), || {
+    flex_row(banded(), Flex::new().items_center().gap(sp(2)), || {
         line("Add project", 13, 1.4, Role::Text);
         if let Some(hint) = heading_hint(open) {
             line(hint, 13, 1.4, Role::Subtle);
         }
     });
     if open.step != Step::Choices {
-        row(banded(), Flex::new().center(), || {
+        flex_row(banded(), Flex::new().items_center(), || {
             Input::new(&open.field, ADDER_FIELD)
                 .variant(input::Variant::Ghost)
                 .placeholder(open.placeholder())
@@ -349,7 +350,7 @@ fn panel(open: &Adder, scrolled: f32) {
         Modifier::new().height_in(0.0, sp(LIST_HEIGHT / 4.0)),
         Scroll::from_start(MENU_SCROLL, scrolled),
         || {
-            column(
+            flex_column(
                 Modifier::new().fill_max_width().pad(1.5),
                 Flex::new(),
                 || {
@@ -381,9 +382,9 @@ fn heading_hint(open: &Adder) -> Option<String> {
 /// Emits the line under the rows: a spinner and what is being waited for, or what is the matter.
 #[track_caller]
 pub(crate) fn status_line(status: Status) {
-    row(
+    flex_row(
         Modifier::new().pad_x(2.5).pad_y(2),
-        Flex::new().center().gap(3),
+        Flex::new().items_center().gap(sp(3)),
         || match status {
             Status::Loading(message) => {
                 spinner(4.0, Role::Muted);
@@ -403,17 +404,17 @@ fn entry(row_of: &Row, id: FocusId, selected: bool) {
     } else {
         looks
     };
-    row(
+    flex_row(
         Modifier::new()
             .looks_of(looks, id)
             .cursor(CursorIcon::Pointer)
             .target(id)
             .pad_x(2.5)
             .pad_y(1.5),
-        Flex::new().center().gap(3),
+        Flex::new().items_center().gap(sp(3)),
         || {
             glyph(row_of.icon, 4.0, Role::Muted);
-            column(Modifier::new().grow(), Flex::new(), || {
+            flex_column(Modifier::new().grow(), Flex::new(), || {
                 label(
                     row_of.name.clone(),
                     Type::new(13).ratio(1.4).tone(Role::Text).truncate(),

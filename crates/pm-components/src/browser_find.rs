@@ -2,8 +2,9 @@
 
 use pm_field::{Edit, Field};
 use rustle::{BoxAlignment, Modifier};
+use rustle::{Flex, flex_column, flex_row};
 
-use crate::kit::{Flex, IconName, Interactive, Radius, Role, Styled, block, row, sp};
+use crate::kit::{IconName, Interactive, Radius, Role, Styled, sp};
 
 use crate::browser::{
     BROWSER_FIND_BAR, BROWSER_FIND_CLOSE, BROWSER_FIND_FIELD, BROWSER_FIND_NEXT,
@@ -153,7 +154,7 @@ impl WorkspaceState {
 pub fn find_bar(search: &PageSearch, page: f32, beside: f32) {
     let (said, tone) = search.tally();
     let field = (page - 2.0 * EDGE - BAR_EXTRA).clamp(FIELD_LEAST, FIELD_WIDTH);
-    row(
+    flex_row(
         Modifier::new()
             .placed(BoxAlignment::TopEnd)
             .at(-sp((EDGE + beside) / 4.0), sp(2))
@@ -163,18 +164,22 @@ pub fn find_bar(search: &PageSearch, page: f32, beside: f32) {
             .stroke(Role::Border, Radius::Md)
             .target(BROWSER_FIND_BAR)
             .pad(1),
-        Flex::new().center().gap(1),
+        Flex::new().items_center().gap(sp(1)),
         || {
-            block(Modifier::new().width(field), || {
+            flex_column(Modifier::new().width(field), Flex::new(), || {
                 Input::new(&search.query, BROWSER_FIND_FIELD)
                     .size(Size::Sm)
                     .placeholder("Find in page")
                     .invalid(!search.query.text().is_empty() && search.counted && search.total == 0)
                     .build();
             });
-            block(Modifier::new().width(COUNT_WIDTH).pad_x(1), || {
-                line(said, 11, 1.4, tone);
-            });
+            flex_column(
+                Modifier::new().width(COUNT_WIDTH).pad_x(1),
+                Flex::new(),
+                || {
+                    line(said, 11, 1.4, tone);
+                },
+            );
             Button::icon(IconName::ArrowUp, BROWSER_FIND_PREVIOUS).build();
             Button::icon(IconName::ArrowDown, BROWSER_FIND_NEXT).build();
             Button::icon(IconName::Close, BROWSER_FIND_CLOSE).build();
