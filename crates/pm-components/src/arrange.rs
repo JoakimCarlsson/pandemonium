@@ -1,8 +1,7 @@
 //! Arranging the projects: the menu on each one, putting them in another order by dragging, and taking one away.
 
-use pm_input::FocusId;
-
 use crate::git_prompts::Prompt;
+use crate::kit::FocusId;
 use crate::state::{NEW_IN_BASE, Outgoing, PROJECT_BASE, Page, SESSION_BASE, WorkspaceState};
 
 /// The first of the buttons opening the menu of a project; the rest follow it.
@@ -169,7 +168,7 @@ impl WorkspaceState {
                 self
             }
             SESSION_MENU_RENAME => {
-                self.git.rename = pm_text::Field::new(held.title.clone());
+                self.git.rename = pm_field::Field::new(held.title.clone());
                 self.ask(Prompt::Rename(open.session));
                 self
             }

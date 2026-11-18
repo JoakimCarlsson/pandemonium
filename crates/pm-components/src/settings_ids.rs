@@ -11,7 +11,7 @@
 //! A row past the end of its range gets no name from [`IdRange::id`], so it is
 //! drawn without its control rather than answering to a name of another one.
 
-use pm_input::FocusId;
+use crate::kit::FocusId;
 
 /// The first name the settings window answers to.
 pub const SETTINGS_START: u64 = 20_000_000;

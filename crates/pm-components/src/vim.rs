@@ -1,7 +1,7 @@
 //! Modal editing in the window: the keys of the reader carried out by vim's engine on the file shown, the effects it asks of the window, and what its status bar says.
 
+use crate::kit::{Key, KeyEvent};
 use pm_editor::{ModalView, VimClipboard};
-use pm_input::{Key, KeyEvent};
 use pm_vim::{Clipboard, Command, Effect, Keystroke, Placement, Vim};
 
 use crate::state::WorkspaceState;

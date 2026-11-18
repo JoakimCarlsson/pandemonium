@@ -1,12 +1,9 @@
 //! Finding text in the page of the browser: the search the engine runs, and the bar over the top right corner of the page that drives it.
 
-use pm_icon::IconName;
-use pm_style::{
-    Radius, Role, absolute, bg, border, border_color, flex, flex_none, gap, items_center, p, px,
-    right, rounded, shadow_layers, top, w_px, z,
-};
-use pm_text::{Edit, Field};
-use pm_ui::{Node, node};
+use pm_field::{Edit, Field};
+use rustle::{BoxAlignment, Modifier};
+
+use crate::kit::{Flex, IconName, Interactive, Radius, Role, Styled, block, row, sp};
 
 use crate::browser::{
     BROWSER_FIND_BAR, BROWSER_FIND_CLOSE, BROWSER_FIND_FIELD, BROWSER_FIND_NEXT,
@@ -149,42 +146,38 @@ impl WorkspaceState {
     }
 }
 
-/// The bar for finding in the page, over the top right corner of the page, which is `page` logical pixels wide and has `beside` logical pixels of the pane to its right; the line the text is typed in narrows to keep the bar inside a narrow page.
-pub fn find_bar(search: &PageSearch, page: f32, beside: f32) -> Node {
+/// Emits the bar for finding in the page, over the top right corner of the page, which is `page` logical pixels wide and has `beside` logical pixels of the pane to its right; the line the text is typed in narrows to keep the bar inside a narrow page.
+///
+/// It is placed in the layer that holds the page.
+#[track_caller]
+pub fn find_bar(search: &PageSearch, page: f32, beside: f32) {
     let (said, tone) = search.tally();
     let field = (page - 2.0 * EDGE - BAR_EXTRA).clamp(FIELD_LEAST, FIELD_WIDTH);
-    node()
-        .styles([
-            absolute(),
-            top(2),
-            right((EDGE + beside) / 4.0),
-            z(40),
-            flex(),
-            items_center(),
-            gap(1),
-            p(1),
-            rounded(Radius::Md),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-            shadow_layers(&SHADOW),
-        ])
-        .focusable(BROWSER_FIND_BAR)
-        .child(
-            node().styles([w_px(field), flex_none()]).child(
+    row(
+        Modifier::new()
+            .placed(BoxAlignment::TopEnd)
+            .at(-sp((EDGE + beside) / 4.0), sp(2))
+            .z_index(40)
+            .shadows(&SHADOW, Radius::Md)
+            .fill_rounded(Role::Surface, Radius::Md)
+            .stroke(Role::Border, Radius::Md)
+            .target(BROWSER_FIND_BAR)
+            .pad(1),
+        Flex::new().center().gap(1),
+        || {
+            block(Modifier::new().width(field), || {
                 Input::new(&search.query, BROWSER_FIND_FIELD)
                     .size(Size::Sm)
                     .placeholder("Find in page")
                     .invalid(!search.query.text().is_empty() && search.counted && search.total == 0)
-                    .build(),
-            ),
-        )
-        .child(
-            node()
-                .styles([w_px(COUNT_WIDTH), flex_none(), px(1)])
-                .child(line(said, 11, 1.4, tone)),
-        )
-        .child(Button::icon(IconName::ArrowUp, BROWSER_FIND_PREVIOUS).build())
-        .child(Button::icon(IconName::ArrowDown, BROWSER_FIND_NEXT).build())
-        .child(Button::icon(IconName::Close, BROWSER_FIND_CLOSE).build())
+                    .build();
+            });
+            block(Modifier::new().width(COUNT_WIDTH).pad_x(1), || {
+                line(said, 11, 1.4, tone);
+            });
+            Button::icon(IconName::ArrowUp, BROWSER_FIND_PREVIOUS).build();
+            Button::icon(IconName::ArrowDown, BROWSER_FIND_NEXT).build();
+            Button::icon(IconName::Close, BROWSER_FIND_CLOSE).build();
+        },
+    );
 }

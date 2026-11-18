@@ -1,7 +1,6 @@
 //! The menus of the source control panel: on changed files, under the commit button, over the panel's own actions, on the graph's references and on a commit.
 
-use pm_input::FocusId;
-use pm_ui::Node;
+use crate::kit::FocusId;
 
 use crate::Menu;
 use crate::branch_tasks::BranchTask;
@@ -501,10 +500,12 @@ impl WorkspaceState {
         ]
     }
 
-    /// The node that draws the menu that is open.
-    pub fn git_menu_node(&self) -> Option<Node> {
-        let open = self.git.menu?;
-        Some(self.git_menu(open.kind, open.at).build())
+    /// Emits the menu that is open, and nothing when none is.
+    #[track_caller]
+    pub fn git_menu_node(&self) {
+        if let Some(open) = self.git.menu {
+            self.git_menu(open.kind, open.at).build();
+        }
     }
 
     /// The point at which the menu `kind`, opened from the control occupying `trigger` as `(x, y, width, height)`, lies below it or above it inside a window `window` wide and tall.

@@ -1,17 +1,13 @@
 //! The changes of a commit or of a branch, and a file set against one of the states it was saved in, as one scrollable view of every file: each folded away from its header, and, in the folder, edited in place.
 
-use pm_icon::IconName;
-use pm_style::{
-    Role, border_b, border_color, flex, flex_1, flex_col, flex_none, gap, h_px, items_center,
-    min_h, min_w_px, px,
-};
-use pm_text::Edit;
-use pm_ui::{Node, node};
+use pm_field::Edit;
+use rustle::Modifier;
 
 use crate::button::Variant;
 use crate::excerpts::{
     Block, EXCERPTS_FOLD_ALL, EXCERPTS_UNDO_ALL, ExcerptFile, Source, file_list, restore_button,
 };
+use crate::kit::{Flex, IconName, Role, Side, Styled, Tooltip, column, row};
 use crate::open_files::Contents;
 use crate::parts::{glyph, line, spacer};
 use crate::sample::{Change, DiffLine, Kind};
@@ -38,8 +34,8 @@ pub enum Mode {
 /// The view of the changes being shown, being described: what it is of, how big it is and how tall the room for it is.
 ///
 /// Build it with [`Changes::new`], change it with the methods that follow, and
-/// turn it into a node with [`Changes::build`].
-#[derive(Clone, Copy)]
+/// emit it with [`Changes::build`].
+#[derive(Clone)]
 pub struct Changes<'a> {
     /// The state the files are drawn from.
     state: &'a WorkspaceState,
@@ -49,6 +45,10 @@ pub struct Changes<'a> {
     mode: Mode,
     /// How big it is.
     size: Size,
+    /// What the caller puts around its box.
+    modifier: Modifier,
+    /// How the column holding the strip and the files lays them out.
+    flex: Flex,
 }
 
 impl<'a> Changes<'a> {
@@ -63,6 +63,8 @@ impl<'a> Changes<'a> {
             height,
             mode,
             size: Size::default(),
+            modifier: Modifier::new(),
+            flex: Flex::new(),
         }
     }
 
@@ -78,10 +80,23 @@ impl<'a> Changes<'a> {
         self
     }
 
-    /// The strip above the files: how many there are and how far the changes went, then what the mode offers.
-    fn strip(&self) -> Node {
+    /// The view with `modifier` chained outside its own, for what the caller puts around it.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
+    }
+
+    /// The view laying out the strip and the files as `flex` says instead of its own way.
+    pub fn flex(mut self, flex: Flex) -> Self {
+        self.flex = flex;
+        self
+    }
+
+    /// Emits the strip above the files: how many there are and how far the changes went, then what the mode offers.
+    #[track_caller]
+    fn strip(&self) {
         let Some(excerpts) = self.state.excerpts.as_ref() else {
-            return node();
+            return;
         };
         let count = excerpts.files.len();
         let (added, removed) = excerpts
@@ -90,16 +105,6 @@ impl<'a> Changes<'a> {
             .fold((0, 0), |(added, removed), file| {
                 (added + file.tally.0, removed + file.tally.1)
             });
-        let mut strip = node().styles([
-            flex(),
-            items_center(),
-            gap(3),
-            h_px(STRIP),
-            px(4),
-            flex_none(),
-            border_b(),
-            border_color(Role::Border),
-        ]);
         let when = match &excerpts.source {
             Source::Timeline { when, .. } => when.as_str(),
             _ => "",
@@ -110,50 +115,59 @@ impl<'a> Changes<'a> {
         };
         let undoes =
             matches!(&excerpts.source, Source::Revision { turn: Some(_), .. }) && count > 0;
-        strip = match self.mode {
-            Mode::Timeline => strip
-                .child(glyph(IconName::History, 3.5, Role::Muted))
-                .child(line(
-                    format!("Saved {when}, against the file as it is now"),
-                    12,
-                    1.4,
-                    Role::Muted,
-                ))
-                .child(Tally::new(added, removed).size(12).build())
-                .child(spacer())
-                .child(restore_button()),
-            Mode::Revision => strip
-                .child(line(what, 12, 1.4, Role::Muted))
-                .child(Tally::new(added, removed).size(12).build())
-                .child(spacer())
-                .children(undoes.then(|| {
-                    Button::new("Undo turn", EXCERPTS_UNDO_ALL)
-                        .with_icon(IconName::Undo)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .build()
-                        .tooltip("Take everything this turn changed back out of the files")
-                }))
-                .child(
+        let mode = self.mode;
+        row(
+            Modifier::new()
+                .height(STRIP)
+                .stroke_side(Side::Bottom, 1.0, Role::Border)
+                .pad_x(4),
+            Flex::new().center().gap(3),
+            move || match mode {
+                Mode::Timeline => {
+                    glyph(IconName::History, 3.5, Role::Muted);
+                    line(
+                        format!("Saved {when}, against the file as it is now"),
+                        12,
+                        1.4,
+                        Role::Muted,
+                    );
+                    Tally::new(added, removed).size(12).build();
+                    spacer();
+                    restore_button();
+                }
+                Mode::Revision => {
+                    line(what, 12, 1.4, Role::Muted);
+                    Tally::new(added, removed).size(12).build();
+                    spacer();
+                    if undoes {
+                        Button::new("Undo turn", EXCERPTS_UNDO_ALL)
+                            .with_icon(IconName::Undo)
+                            .variant(Variant::Ghost)
+                            .size(Size::Sm)
+                            .modifier(
+                                Modifier::new().tooltip(
+                                    "Take everything this turn changed back out of the files",
+                                ),
+                            )
+                            .build();
+                    }
                     Button::new("Fold all", EXCERPTS_FOLD_ALL)
                         .variant(Variant::Ghost)
                         .size(Size::Sm)
-                        .build(),
-                ),
-        };
-        strip
+                        .build();
+                }
+            },
+        );
     }
 
-    /// The view: the strip, then every file with its lines.
-    pub fn build(self) -> Node {
-        node()
-            .styles([flex(), flex_col(), flex_1(), min_w_px(0), min_h(0)])
-            .child(self.strip())
-            .child(file_list(
-                self.state,
-                (self.height - STRIP).max(0.0),
-                self.size,
-            ))
+    /// Emits the view: the strip, then every file with its lines.
+    #[track_caller]
+    pub fn build(self) {
+        let own = Modifier::new().grow();
+        column(self.modifier.clone().chain(own), self.flex, || {
+            self.strip();
+            file_list(self.state, (self.height - STRIP).max(0.0), self.size);
+        });
     }
 }
 

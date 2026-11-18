@@ -1,11 +1,7 @@
 //! The stepper: stops along a line, the current one marked, as a track to press or as a bar that counts.
 
-use pm_input::FocusId;
-use pm_style::{
-    Role, bg, cursor_pointer, flex, gap, h, items_center, justify_between, justify_center, px,
-    rounded_full, size, w, w_px,
-};
-use pm_ui::{Node, node};
+use crate::kit::{Flex, FocusId, Interactive, Radius, Role, Styled, gap_box, row};
+use rustle::{CursorIcon, Modifier};
 
 use crate::parts::line;
 
@@ -22,8 +18,8 @@ pub enum Variant {
 /// A stepper being described: how many stops it has, which is current, and what its stops answer to.
 ///
 /// Build it with [`Stepper::new`], change it with [`Stepper::current`] and
-/// [`Stepper::variant`], and turn it into a node with [`Stepper::build`].
-#[derive(Clone, Copy, Debug)]
+/// [`Stepper::variant`], and emit it with [`Stepper::build`].
+#[derive(Clone, Debug)]
 pub struct Stepper {
     /// How many stops the track has.
     stops: usize,
@@ -33,6 +29,8 @@ pub struct Stepper {
     first: u64,
     /// How it looks.
     variant: Variant,
+    /// What the caller puts around its box.
+    modifier: Modifier,
 }
 
 impl Stepper {
@@ -43,6 +41,7 @@ impl Stepper {
             current: None,
             first,
             variant: Variant::default(),
+            modifier: Modifier::new(),
         }
     }
 
@@ -58,68 +57,85 @@ impl Stepper {
         self
     }
 
-    /// The node that draws the stepper.
-    pub fn build(self) -> Node {
+    /// The stepper with `modifier` put around its box, outside its own: sizes, weight, placement.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
+    }
+
+    /// Emits the stepper.
+    #[track_caller]
+    pub fn build(self) {
         match self.variant {
             Variant::Track => self.track(),
             Variant::Bar => self.bar(),
         }
     }
 
-    /// The track: a stop for each level, each a target for a press.
-    fn track(self) -> Node {
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                justify_between(),
-                w_px(112.0),
-                h(6),
-                px(1),
-                rounded_full(),
-                bg(Role::SurfaceHover),
-            ])
-            .children((0..self.stops).map(|position| {
-                let dot = if self.current == Some(position) {
-                    node().styles([size(4), rounded_full(), bg(Role::Text)])
-                } else {
-                    node().styles([size(1), rounded_full(), bg(Role::Subtle)])
-                };
-                node()
-                    .styles([
-                        flex(),
-                        items_center(),
-                        justify_center(),
-                        size(4),
-                        cursor_pointer(),
-                    ])
-                    .child(dot)
-                    .focusable(FocusId(self.first + position as u64))
-            }))
+    /// Emits the track: a stop for each level, each a target for a press.
+    #[track_caller]
+    fn track(self) {
+        let (stops, current, first) = (self.stops, self.current, self.first);
+        let own = Modifier::new()
+            .width(112.0)
+            .h(6)
+            .fill_rounded(Role::SurfaceHover, Radius::Full)
+            .pad_x(1);
+        row(
+            self.modifier.chain(own),
+            Flex::new().center().between(),
+            move || {
+                for position in 0..stops {
+                    let id = FocusId(first + position as u64);
+                    row(
+                        Modifier::new()
+                            .square(4)
+                            .cursor(CursorIcon::Pointer)
+                            .target(id),
+                        Flex::new().center().middle(),
+                        move || {
+                            if current == Some(position) {
+                                gap_box(
+                                    Modifier::new()
+                                        .square(4)
+                                        .fill_rounded(Role::Text, Radius::Full),
+                                );
+                            } else {
+                                gap_box(
+                                    Modifier::new()
+                                        .square(1)
+                                        .fill_rounded(Role::Subtle, Radius::Full),
+                                );
+                            }
+                        },
+                    );
+                }
+            },
+        );
     }
 
-    /// The bar: a segment for each step up to the current one filled, and the step in words.
-    fn bar(self) -> Node {
+    /// Emits the bar: a segment for each step up to the current one filled, and the step in words.
+    #[track_caller]
+    fn bar(self) {
         let at = self.current.unwrap_or(0);
-        node()
-            .styles([flex(), items_center(), gap(3)])
-            .child(
-                node()
-                    .styles([flex(), items_center(), gap(2)])
-                    .children((0..self.stops).map(|candidate| {
-                        let tone = if candidate <= at {
-                            Role::Text
-                        } else {
-                            Role::SurfaceActive
-                        };
-                        node().styles([w(8), h(1.5), rounded_full(), bg(tone)])
-                    })),
-            )
-            .child(line(
-                format!("Step {} of {}", at + 1, self.stops),
+        let stops = self.stops;
+        row(self.modifier, Flex::new().center().gap(3), move || {
+            row(Modifier::new(), Flex::new().center().gap(2), move || {
+                for candidate in 0..stops {
+                    let tone = if candidate <= at {
+                        Role::Text
+                    } else {
+                        Role::SurfaceActive
+                    };
+                    gap_box(Modifier::new().w(8).h(1.5).fill_rounded(tone, Radius::Full));
+                }
+            });
+            line(
+                format!("Step {} of {}", at + 1, stops),
                 12,
                 1.4,
                 Role::Subtle,
-            ))
+            );
+        });
     }
 }

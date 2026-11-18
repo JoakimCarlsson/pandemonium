@@ -1,8 +1,9 @@
 //! Finding one's way around code through its language server: the places a search from the caret finds, the thing at the caret renamed across its project, and the changes the server offers at the caret.
 
-use pm_input::FocusId;
+use pm_field::{Edit, Field};
 use pm_protocol::{CodeAction, FileEdit, Location, Position, Seek};
-use pm_text::{Edit, Field};
+
+use crate::kit::FocusId;
 
 use crate::listing::{Items, Listing};
 use crate::state::{Outgoing, WorkspaceState};

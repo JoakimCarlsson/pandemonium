@@ -1,22 +1,18 @@
 //! The pages of the settings panel that list servers: the agents that can be started and the tool servers every agent is started with, each with the ones added, a form to add or change one, and what the public registry offers.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
+use pm_field::{Edit, Field};
 use pm_protocol::{McpServer, ToolListing};
+use rustle::{BoxAlignment, CursorIcon, Modifier};
 
 use crate::agent_list::AgentEntry;
-use pm_style::{
-    Radius, Role, bg, border, border_b, border_color, cursor_pointer, flex, flex_1, flex_col,
-    flex_none, gap, h, items_center, items_start, justify_between, min_h, min_w_px,
-    overflow_hidden, p, px, rounded, self_start, w_full,
-};
-use pm_text::{Edit, Field, Shaper};
-use pm_ui::{Node, node};
-
 use crate::button::Variant;
 use crate::input::Input;
+use crate::kit::{
+    Flex, FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, Type, column, label,
+    row, scroll_area,
+};
 use crate::menu::Menu;
-use crate::parts::{clipped, glyph, line, wrap};
+use crate::parts::{glyph, line, wrap};
 use crate::settings::{
     SETTINGS_ADD, SETTINGS_CANCEL, SETTINGS_DOCS, SETTINGS_ENV, SETTINGS_MENU_COPY,
     SETTINGS_MENU_EDIT, SETTINGS_MENU_REMOVE, SETTINGS_MENU_TOGGLE, SETTINGS_MENU_WEBSITE,
@@ -497,8 +493,16 @@ fn configuration_of(tool: &McpServer) -> String {
         .unwrap_or_default()
 }
 
-/// The menu of a server of the list showing, when one is open.
-pub fn server_menu(state: &WorkspaceState) -> Option<Node> {
+/// Emits the menu of a server of the list showing, when one is open.
+#[track_caller]
+pub fn server_menu(state: &WorkspaceState) {
+    if let Some(menu) = server_menu_of(state) {
+        menu.build();
+    }
+}
+
+/// The menu of a server of the list showing, described, when one is open.
+fn server_menu_of(state: &WorkspaceState) -> Option<Menu> {
     let open = state.settings_servers.menu?;
     let menu = Menu::new(open.at.0, open.at.1);
     Some(match state.settings? {
@@ -512,8 +516,7 @@ pub fn server_menu(state: &WorkspaceState) -> Option<Node> {
                             None,
                             SETTINGS_MENU_WEBSITE,
                             tool.website.is_empty(),
-                        )
-                        .build(),
+                        ),
                 );
             }
             menu.item(
@@ -533,13 +536,11 @@ pub fn server_menu(state: &WorkspaceState) -> Option<Node> {
             )
             .separator()
             .item("Uninstall", None, SETTINGS_MENU_REMOVE, false)
-            .build()
         }
         _ => menu
             .item("Edit…", None, SETTINGS_MENU_EDIT, false)
             .separator()
-            .item("Remove", None, SETTINGS_MENU_REMOVE, false)
-            .build(),
+            .item("Remove", None, SETTINGS_MENU_REMOVE, false),
     })
 }
 
@@ -612,128 +613,151 @@ fn summary(section: Section) -> &'static str {
     }
 }
 
-/// The words `content` breaks into, one line under another, in no more than `room` logical pixels across.
-pub(crate) fn paragraph(content: &str, room: f32) -> Node {
-    node().styles([flex(), flex_col(), min_w_px(0)]).children(
-        wrap(content, 13, room.min(PARAGRAPH_WIDTH))
-            .into_iter()
-            .map(|words| line(words, 13, 1.5, Role::Muted)),
-    )
+/// The type of the title of a list or a row: `pixels` tall, medium weight, in `tone`, cut short at the edge of its box.
+fn title_type(pixels: u32, tone: Role) -> Type {
+    Type::new(pixels).ratio(1.4).tone(tone).truncate().medium()
 }
 
-/// The breadcrumb over the title of `section`'s page, and the title.
-pub(crate) fn page_title(section: Section) -> Node {
-    node()
-        .styles([flex(), flex_col(), gap(1), flex_none()])
-        .children(
-            section
-                .parent()
-                .map(|parent| line(parent.title(), 12, 1.4, Role::Muted)),
-        )
-        .child(line(section.title(), 22, 1.3, Role::Text).styles([pm_style::font_medium()]))
+/// Emits the words `content` breaks into, one line under another, in no more than `room` logical pixels across.
+#[track_caller]
+pub(crate) fn paragraph(content: &str, room: f32) {
+    column(Modifier::new(), Flex::new(), || {
+        for words in wrap(content, 13, room.min(PARAGRAPH_WIDTH)) {
+            line(words, 13, 1.5, Role::Muted);
+        }
+    });
 }
 
-/// What the right side of the window holds under the title of `section`: what it is for, then its settings, `room` logical pixels across, with `shaper` measuring the text of its boxes of several lines.
-pub(crate) fn body(
-    state: &WorkspaceState,
-    section: Section,
-    room: f32,
-    shaper: &mut Shaper,
-) -> Node {
-    let page = node().styles([
-        flex(),
-        flex_col(),
-        flex_1(),
-        min_w_px(0),
-        min_h(0),
-        overflow_hidden(),
-        px(8),
-        pm_style::pb(6),
-    ]);
-    let inner = node().styles([flex(), flex_col(), gap(4), flex_none(), w_full()]);
-    let about = paragraph(summary(section), room);
-    let filled = match section {
-        Section::Results => inner.children(crate::settings_pages::results(state, room)),
-        Section::General => inner
-            .child(about)
-            .child(crate::settings_pages::page_rows(state, section, room))
-            .children(release_note(state, room)),
-        Section::Browser => inner
-            .child(about)
-            .child(crate::settings_pages::page_rows(state, section, room))
-            .children(
-                state
-                    .settings_page
-                    .browser
-                    .as_deref()
-                    .map(|said| wrapped_note(said, room)),
-            ),
-        Section::Appearance | Section::Terminal | Section::Git | Section::Worktrees => inner
-            .child(about)
-            .child(crate::settings_pages::page_rows(state, section, room)),
+/// Emits the breadcrumb over the title of `section`'s page, and the title.
+#[track_caller]
+pub(crate) fn page_title(section: Section) {
+    column(Modifier::new(), Flex::new().gap(1), || {
+        if let Some(parent) = section.parent() {
+            line(parent.title(), 12, 1.4, Role::Muted);
+        }
+        label(
+            section.title(),
+            Type::new(22)
+                .ratio(1.3)
+                .tone(Role::Text)
+                .truncate()
+                .medium(),
+        );
+    });
+}
+
+/// Emits what the right side of the window holds under the title of `section`: what it is for, then its settings, `room` logical pixels across, scrolled as the page showing is.
+#[track_caller]
+pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) {
+    scroll_area(
+        Modifier::new().grow().clip_to(Radius::None),
+        Scroll::from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
+        || {
+            column(
+                Modifier::new()
+                    .fill_max_width()
+                    .pad_x(8)
+                    .pad_side(Side::Bottom, 6),
+                Flex::new(),
+                || {
+                    column(Modifier::new().fill_max_width(), Flex::new().gap(4), || {
+                        section_content(state, section, room);
+                    });
+                },
+            );
+        },
+    );
+}
+
+/// Emits what the page of `section` holds, one part under another, `room` logical pixels across.
+#[track_caller]
+fn section_content(state: &WorkspaceState, section: Section, room: f32) {
+    let about = || paragraph(summary(section), room);
+    match section {
+        Section::Results => crate::settings_pages::results(state, room),
+        Section::General => {
+            about();
+            crate::settings_pages::page_rows(state, section, room);
+            release_note(state, room);
+        }
+        Section::Browser => {
+            about();
+            crate::settings_pages::page_rows(state, section, room);
+            if let Some(said) = state.settings_page.browser.as_deref() {
+                wrapped_note(said, room);
+            }
+        }
+        Section::Appearance | Section::Terminal | Section::Git | Section::Worktrees => {
+            about();
+            crate::settings_pages::page_rows(state, section, room);
+        }
         Section::Editor => {
-            inner
-                .child(about)
-                .children(crate::settings_editor::PAGES.into_iter().map(|page| {
-                    crate::settings_pages::group(
-                        page.title(),
-                        crate::settings_pages::page_rows(state, page, room),
-                    )
-                }))
+            about();
+            for page in crate::settings_editor::PAGES {
+                crate::settings_pages::group(page.title(), || {
+                    crate::settings_pages::page_rows(state, page, room);
+                });
+            }
         }
         Section::EditorAppearance
         | Section::EditorEditing
         | Section::EditorSaving
         | Section::EditorIntelligence
         | Section::EditorSearch
-        | Section::EditorVim => inner
-            .child(about)
-            .child(crate::settings_pages::page_rows(state, section, room)),
-        Section::Languages => inner
-            .child(about)
-            .children(crate::settings_languages::body(state, room)),
-        Section::Keymap => inner
-            .child(about)
-            .children(crate::settings_keymap::rows(state, room)),
-        Section::Agents => inner
-            .child(about)
-            .child(crate::settings_pages::page_rows(state, section, room))
-            .child(line("Explore", 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
-            .children(
-                [
-                    Section::AgentServers,
-                    Section::McpServers,
-                    Section::ModelServers,
-                    Section::ModelSlots,
-                    Section::Orchestration,
-                    Section::Usage,
-                ]
-                .map(|part| card(part, count_of(state, part))),
-            ),
-        Section::Servers => inner
-            .child(about)
-            .children(crate::settings_machines::body(state, room)),
-        Section::AgentServers => crate::settings_agents::body(state, inner, room),
-        Section::McpServers => list(state, section, inner, room),
-        Section::ModelServers => crate::settings_models::body(state, inner, room),
-        Section::ModelSlots => crate::settings_slots::body(state, inner, room, shaper),
-        Section::Orchestration => crate::settings_orchestration::body(state, inner, room, shaper),
-        Section::Usage => crate::settings_usage::body(state, inner, room),
+        | Section::EditorVim => {
+            about();
+            crate::settings_pages::page_rows(state, section, room);
+        }
+        Section::Languages => {
+            about();
+            crate::settings_languages::body(state, room);
+        }
+        Section::Keymap => {
+            about();
+            crate::settings_keymap::rows(state, room);
+        }
+        Section::Agents => {
+            about();
+            crate::settings_pages::page_rows(state, section, room);
+            label("Explore", title_type(15, Role::Text));
+            for part in [
+                Section::AgentServers,
+                Section::McpServers,
+                Section::ModelServers,
+                Section::ModelSlots,
+                Section::Orchestration,
+                Section::Usage,
+            ] {
+                card(part, count_of(state, part));
+            }
+        }
+        Section::Servers => {
+            about();
+            crate::settings_machines::body(state, room);
+        }
+        Section::AgentServers => crate::settings_agents::body(state, || {}, room),
+        Section::McpServers => list(state, section, room),
+        Section::ModelServers => crate::settings_models::body(state, || {}, room),
+        Section::ModelSlots => crate::settings_slots::body(state, || {}, room),
+        Section::Orchestration => crate::settings_orchestration::body(state, || {}, room),
+        Section::Usage => crate::settings_usage::body(state, || {}, room),
         Section::Customizations
         | Section::Skills
         | Section::Instructions
         | Section::AgentDefinitions
         | Section::Hooks
-        | Section::Tools => crate::settings_library::body(state, section, inner, room),
-    };
-    page.child(filled)
-        .scroll_from_start(SETTINGS_SCROLL, state.settings_servers.scroll)
+        | Section::Tools => crate::settings_library::body(state, section, || {}, room),
+    }
 }
 
-/// What looking for a newer release on the channel followed found, beside the version running, once it was looked for; with the button that opens its page when one is newer.
-fn release_note(state: &WorkspaceState, room: f32) -> Option<Node> {
+/// Emits what looking for a newer release on the channel followed found, beside the version running, once it was looked for; with the button that opens its page when one is newer.
+#[track_caller]
+fn release_note(state: &WorkspaceState, room: f32) {
     let running = crate::update::RUNNING;
-    let (said, newer) = match state.settings_page.release.as_ref()? {
+    let Some(release) = state.settings_page.release.as_ref() else {
+        return;
+    };
+    let (said, newer) = match release {
         Update::Newer { name, .. } => (format!("{name} is available; this is {running}."), true),
         Update::Current => (format!("Pandemonium {running} is up to date."), false),
         Update::Unknown => (
@@ -741,23 +765,19 @@ fn release_note(state: &WorkspaceState, room: f32) -> Option<Node> {
             false,
         ),
     };
-    Some(
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                justify_between(),
-                gap(3),
-                flex_none(),
-            ])
-            .child(wrapped_note(&said, (room - 160.0).max(120.0)))
-            .children(newer.then(|| {
+    row(
+        Modifier::new(),
+        Flex::new().center().between().gap(3),
+        || {
+            wrapped_note(&said, (room - 160.0).max(120.0));
+            if newer {
                 Button::new("Open Release Page", SETTINGS_RELEASE)
                     .variant(Variant::Outline)
                     .size(Size::Sm)
-                    .build()
-            })),
-    )
+                    .build();
+            }
+        },
+    );
 }
 
 /// How many servers `section` lists, in words.
@@ -773,161 +793,158 @@ fn count_of(state: &WorkspaceState, section: Section) -> String {
     }
 }
 
-/// A box with an outline around rows that have a hairline between each and the next.
-pub(crate) fn boxed(rows: Vec<Node>) -> Node {
+/// Emits a box with an outline around the rows `rows` emits, with a hairline between each and the next.
+#[track_caller]
+pub(crate) fn boxed(rows: impl FnOnce()) {
+    let rows = rustle::collect(rows);
     let last = rows.len().saturating_sub(1);
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_none(),
-            rounded(Radius::Lg),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-            overflow_hidden(),
-        ])
-        .children(rows.into_iter().enumerate().map(|(place, row)| {
-            if place == last {
-                row
-            } else {
-                row.styles([border_b(), border_color(Role::Border)])
-            }
-        }))
-}
-
-/// A card of the overview: what `section` is called and for, and how much is set in it; pressing it opens it.
-pub(crate) fn card(section: Section, count: String) -> Node {
-    Tile::new(section.id())
-        .build()
-        .styles([
-            flex_col(),
-            items_start(),
-            flex_none(),
-            h(20),
-            p(4),
-            gap(1),
-            rounded(Radius::Lg),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-        ])
-        .child(
-            node()
-                .styles([flex(), items_center(), justify_between(), w_full()])
-                .child(line(section.title(), 14, 1.4, Role::Text).styles([pm_style::font_medium()]))
-                .child(line(count, 12, 1.4, Role::Muted)),
-        )
-        .child(line(
-            match section {
-                Section::AgentServers => "The agents that can be started, and their accounts.",
-                Section::McpServers => "Tool servers every agent is started with.",
-                Section::ModelServers => "OpenAI-compatible servers offered as agents.",
-                Section::ModelSlots => "The model each kind of work asks, with backups.",
-                Section::Orchestration => "The work categories a lead agent hands work to.",
-                Section::Usage => "Tokens and spend across every session.",
-                other if crate::settings_library::lists(other) => {
-                    crate::settings_library::blurb(other)
+    column(
+        Modifier::new()
+            .fill_rounded(Role::Surface, Radius::Lg)
+            .stroke(Role::Border, Radius::Lg)
+            .clip_to(Radius::Lg),
+        Flex::new(),
+        || {
+            for (place, mut held) in rows.into_iter().enumerate() {
+                if place != last {
+                    held.modifier = Modifier::new()
+                        .stroke_side(Side::Bottom, 1.0, Role::Border)
+                        .chain(held.modifier);
                 }
-                other => crate::settings_editor::summary(other),
-            },
-            12,
-            1.4,
-            Role::Muted,
-        ))
+                rustle::emit(held);
+            }
+        },
+    );
 }
 
-/// A row of a boxed list: its contents side by side, with room around them.
-pub(crate) fn flat_row() -> Node {
-    node().styles([
-        flex(),
-        items_center(),
-        justify_between(),
-        gap(3),
-        flex_none(),
-        px(3),
-        pm_style::py(3),
-    ])
+/// Emits a card of the overview: what `section` is called and for, and how much is set in it; pressing it opens it.
+#[track_caller]
+pub(crate) fn card(section: Section, count: String) {
+    let about = match section {
+        Section::AgentServers => "The agents that can be started, and their accounts.",
+        Section::McpServers => "Tool servers every agent is started with.",
+        Section::ModelServers => "OpenAI-compatible servers offered as agents.",
+        Section::ModelSlots => "The model each kind of work asks, with backups.",
+        Section::Orchestration => "The work categories a lead agent hands work to.",
+        Section::Usage => "Tokens and spend across every session.",
+        other if crate::settings_library::lists(other) => crate::settings_library::blurb(other),
+        other => crate::settings_editor::summary(other),
+    };
+    Tile::new(section.id())
+        .height(20.0)
+        .radius(Radius::Lg)
+        .modifier(Modifier::new().fill_rounded(Role::Surface, Radius::Lg))
+        .inner(Modifier::new().stroke(Role::Border, Radius::Lg).pad(4))
+        .flex(Flex::new().start())
+        .build_with(|| {
+            column(Modifier::new().grow(), Flex::new().start().gap(1), || {
+                row(
+                    Modifier::new().fill_max_width(),
+                    Flex::new().center().between(),
+                    || {
+                        label(section.title(), title_type(14, Role::Text));
+                        line(count, 12, 1.4, Role::Muted);
+                    },
+                );
+                line(about, 12, 1.4, Role::Muted);
+            });
+        });
 }
 
-/// The page of one list, `room` logical pixels across: what it is for, the search box, the form while one is open, the servers that are installed and what the registry offers.
-fn list(state: &WorkspaceState, section: Section, page: Node, room: f32) -> Node {
+/// Emits a row of a boxed list: what `content` emits side by side, with room around it.
+#[track_caller]
+pub(crate) fn flat_row(content: impl FnOnce()) {
+    row(
+        Modifier::new().pad_x(3).pad_y(3),
+        Flex::new().center().between().gap(3),
+        content,
+    );
+}
+
+/// Emits the page of one list, `room` logical pixels across: what it is for, the search box, the form while one is open, the servers that are installed and what the registry offers.
+#[track_caller]
+fn list(state: &WorkspaceState, section: Section, room: f32) {
     let settings = &state.settings_servers;
     let form = settings.form.as_ref();
     let adding = form.is_some_and(|form| form.index.is_none());
     let needle = state.needle();
-    let mut page = page.child(paragraph(summary(section), room));
+    paragraph(summary(section), room);
     if section == Section::McpServers {
-        page = page.child(
-            Button::new("Learn more about MCP servers", SETTINGS_DOCS)
-                .variant(Variant::Ghost)
-                .size(Size::Sm)
-                .build()
-                .styles([flex_none(), self_start()]),
-        );
+        Button::new("Learn more about MCP servers", SETTINGS_DOCS)
+            .variant(Variant::Ghost)
+            .size(Size::Sm)
+            .modifier(Modifier::new().placed(BoxAlignment::TopStart))
+            .build();
     }
-    page = page.child(search_box(state, section));
+    search_box(state, section);
     if let (Some(form), true) = (form, adding) {
-        page = page.child(form_node(form, section));
+        form_node(form, section);
     }
-    let installed: Vec<Node> = installed_rows(state, &needle)
-        .into_iter()
-        .map(|shown| {
-            let editing =
-                form.is_some_and(|form| shown.place.is_some() && form.index == shown.place);
-            match (editing, form) {
-                (true, Some(form)) => form_node(form, section),
-                _ => row(shown),
-            }
-        })
-        .collect();
-    page = page.child(
-        node()
-            .styles([flex(), items_center(), justify_between(), flex_none()])
-            .child(heading(
-                "Installed",
-                installed.len(),
-                !settings.installed_folded,
-                SETTINGS_TOGGLE_INSTALLED,
-            ))
-            .child(
-                Button::new("Add Server", SETTINGS_ADD)
-                    .variant(Variant::Outline)
-                    .size(Size::Sm)
-                    .disabled(adding)
-                    .build(),
-            ),
-    );
+    let installed = installed_rows(state, &needle);
+    row(Modifier::new(), Flex::new().center().between(), || {
+        heading(
+            "Installed",
+            installed.len(),
+            !settings.installed_folded,
+            SETTINGS_TOGGLE_INSTALLED,
+        );
+        Button::new("Add Server", SETTINGS_ADD)
+            .variant(Variant::Outline)
+            .size(Size::Sm)
+            .disabled(adding)
+            .build();
+    });
     if !settings.installed_folded {
-        page = page.child(if installed.is_empty() {
-            note("Nothing installed matches.")
+        if installed.is_empty() {
+            note("Nothing installed matches.");
         } else {
-            boxed(installed)
-        });
+            boxed(|| {
+                for shown in installed {
+                    let editing =
+                        form.is_some_and(|form| shown.place.is_some() && form.index == shown.place);
+                    match (editing, form) {
+                        (true, Some(form)) => form_node(form, section),
+                        _ => installed_row(shown),
+                    }
+                }
+            });
+        }
     }
     let offers = offered_rows(state);
-    page = page
-        .child(heading(
-            "Available",
-            offers.rows.len(),
-            !settings.available_folded,
-            SETTINGS_TOGGLE_AVAILABLE,
-        ))
-        .child(wrapped_note(
-            "Featured MCP servers from the marketplace. Search to find more.",
-            room,
-        ));
+    heading(
+        "Available",
+        offers.rows.len(),
+        !settings.available_folded,
+        SETTINGS_TOGGLE_AVAILABLE,
+    );
+    wrapped_note(
+        "Featured MCP servers from the marketplace. Search to find more.",
+        room,
+    );
     if !settings.available_folded {
         if !offers.rows.is_empty() {
-            page = page.child(boxed(offers.rows));
+            boxed(|| {
+                for shown in offers.rows {
+                    offer(
+                        shown.index,
+                        &shown.title,
+                        &shown.description,
+                        "",
+                        shown.action,
+                        shown.installed,
+                    );
+                }
+            });
         }
-        page = page.children(offers.status.map(|status| note(&status)));
+        if let Some(status) = offers.status {
+            note(&status);
+        }
     }
-    page
 }
 
-/// The box the list is narrowed with, and, for tool servers, the registry searched with.
-pub(crate) fn search_box(state: &WorkspaceState, section: Section) -> Node {
+/// Emits the box the list is narrowed with, and, for tool servers, the registry searched with.
+#[track_caller]
+pub(crate) fn search_box(state: &WorkspaceState, section: Section) {
     let placeholder = match section {
         Section::AgentServers => "Search agents",
         Section::Skills => "Search skills",
@@ -940,51 +957,54 @@ pub(crate) fn search_box(state: &WorkspaceState, section: Section) -> Node {
     Input::search(&state.settings_servers.search, SETTINGS_SEARCH)
         .size(Size::Lg)
         .placeholder(placeholder)
-        .build()
+        .build();
 }
 
-/// The name of a list that opens and folds it, with how many rows it holds.
-fn heading(title: &str, count: usize, open: bool, toggle: FocusId) -> Node {
+/// Emits the name of a list that opens and folds it, with how many rows it holds.
+#[track_caller]
+fn heading(title: &str, count: usize, open: bool, toggle: FocusId) {
     let chevron = if open {
         IconName::ChevronDown
     } else {
         IconName::ChevronRight
     };
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(2),
-            flex_none(),
-            h(9),
-            cursor_pointer(),
-        ])
-        .focusable(toggle)
-        .child(glyph(chevron, 4.0, Role::Muted))
-        .child(line(title, 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
-        .child(Badge::new(count.to_string()).build())
+    row(
+        Modifier::new()
+            .h(9)
+            .cursor(CursorIcon::Pointer)
+            .target(toggle),
+        Flex::new().center().gap(2),
+        || {
+            glyph(chevron, 4.0, Role::Muted);
+            label(title, title_type(15, Role::Text));
+            Badge::new(count.to_string()).build();
+        },
+    );
 }
 
-/// The name of a list that does not fold, with how many rows it holds.
-pub(crate) fn heading_only(title: &str, count: usize) -> Node {
-    node()
-        .styles([flex(), items_center(), gap(2), flex_none(), h(9)])
-        .child(line(title, 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
-        .child(Badge::new(count.to_string()).build())
+/// Emits the name of a list that does not fold, with how many rows it holds.
+#[track_caller]
+pub(crate) fn heading_only(title: &str, count: usize) {
+    row(Modifier::new().h(9), Flex::new().center().gap(2), || {
+        label(title, title_type(15, Role::Text));
+        Badge::new(count.to_string()).build();
+    });
 }
 
-/// A line that only says something.
-pub(crate) fn note(message: &str) -> Node {
-    line(message, 12, 1.4, Role::Muted).styles([flex_none()])
+/// Emits a line that only says something.
+#[track_caller]
+pub(crate) fn note(message: &str) {
+    line(message, 12, 1.4, Role::Muted);
 }
 
-/// A quiet note saying `message`, broken into lines no more than `room` logical pixels across.
-pub(crate) fn wrapped_note(message: &str, room: f32) -> Node {
-    node().styles([flex(), flex_col(), flex_none()]).children(
-        wrap(message, 12, room)
-            .into_iter()
-            .map(|words| line(words, 12, 1.4, Role::Muted)),
-    )
+/// Emits a quiet note saying `message`, broken into lines no more than `room` logical pixels across.
+#[track_caller]
+pub(crate) fn wrapped_note(message: &str, room: f32) {
+    column(Modifier::new(), Flex::new(), || {
+        for words in wrap(message, 12, room) {
+            line(words, 12, 1.4, Role::Muted);
+        }
+    });
 }
 
 /// How a tool server is reached, in the words of its row: what kind it is, where, and how many variables it takes.
@@ -1054,10 +1074,24 @@ fn installed_rows(state: &WorkspaceState, needle: &str) -> Vec<InstalledRow> {
         .collect()
 }
 
+/// One entry the registry offers, as its row shows it.
+struct OfferedRow {
+    /// Its place among what the registry offers, which names its install button.
+    index: usize,
+    /// What it is called.
+    title: String,
+    /// What it is for.
+    description: String,
+    /// What its button says.
+    action: &'static str,
+    /// Whether it is installed already.
+    installed: bool,
+}
+
 /// What the registry of a list offers, as rows, and the line to show under them when it has something to say.
 struct Offered {
     /// The rows, each with its button.
-    rows: Vec<Node>,
+    rows: Vec<OfferedRow>,
     /// That the registry is being asked, could not answer, or has nothing.
     status: Option<String>,
 }
@@ -1065,25 +1099,20 @@ struct Offered {
 /// The rows of what the tool registry offers, with the ones already installed marked.
 fn offered_rows(state: &WorkspaceState) -> Offered {
     let settings = &state.settings_servers;
-    let rows: Vec<Node> = settings
+    let rows: Vec<OfferedRow> = settings
         .listings
         .items
         .iter()
         .enumerate()
-        .map(|(index, offered)| {
-            let installed = settings
+        .map(|(index, offered)| OfferedRow {
+            index,
+            title: offered.title.clone(),
+            description: offered.description.clone(),
+            action: if offered.asks { "Configure" } else { "Install" },
+            installed: settings
                 .tools
                 .iter()
-                .any(|tool| tool.name == offered.name && tool.target == offered.target);
-            let button = if offered.asks { "Configure" } else { "Install" };
-            offer(
-                index,
-                &offered.title,
-                &offered.description,
-                "",
-                button,
-                installed,
-            )
+                .any(|tool| tool.name == offered.name && tool.target == offered.target),
         })
         .collect();
     let (loading, error) = (settings.listings.loading, &settings.listings.error);
@@ -1096,15 +1125,9 @@ fn offered_rows(state: &WorkspaceState) -> Offered {
     Offered { rows, status }
 }
 
-/// One row of what a registry offers: its name over what it is, and the button that installs it, or says that it is installed; a row past the room for install buttons has none.
-fn offer(
-    index: usize,
-    title: &str,
-    description: &str,
-    how: &str,
-    action: &str,
-    installed: bool,
-) -> Node {
+/// Emits one row of what a registry offers: its name over what it is, and the button that installs it, or says that it is installed; a row past the room for install buttons has none.
+#[track_caller]
+fn offer(index: usize, title: &str, description: &str, how: &str, action: &str, installed: bool) {
     let button = INSTALLS.id(index).map(|install| {
         if installed {
             Button::new("Installed", install)
@@ -1115,82 +1138,84 @@ fn offer(
             Button::new(action, install).size(Size::Sm)
         }
     });
-    flat_row()
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    flex_col(),
-                    gap(1),
-                    flex_1(),
-                    min_w_px(0),
-                    overflow_hidden(),
-                ])
-                .child(line(title, 13, 1.4, Role::Text).styles([pm_style::font_medium()]))
-                .child(clipped(description, 12, Role::Muted)),
-        )
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(3), flex_none()])
-                .children(
-                    (!how.is_empty())
-                        .then(|| line(how, 11, 1.5, Role::Subtle).styles([pm_style::font_mono()])),
-                )
-                .children(button.map(Button::build)),
-        )
-}
-
-/// One row of a list: a name with its labels over what it is for and what runs it, and, for a server that can be changed, its switch and menu.
-fn row(shown: InstalledRow) -> Node {
-    let dim = shown.enabled == Some(false);
-    let mut text_column = node()
-        .styles([
-            flex(),
-            flex_col(),
-            gap(1),
-            flex_1(),
-            min_w_px(0),
-            overflow_hidden(),
-        ])
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(2)])
-                .child(
-                    line(
-                        shown.title,
-                        13,
-                        1.4,
-                        if dim { Role::Muted } else { Role::Text },
-                    )
-                    .styles([pm_style::font_medium()]),
-                )
-                .children(
-                    shown
-                        .badges
-                        .into_iter()
-                        .map(|(label, tone)| Badge::new(label).tone(tone).build()),
-                ),
+    flat_row(|| {
+        column(
+            Modifier::new().grow().clip_to(Radius::None),
+            Flex::new().gap(1),
+            || {
+                label(title, title_type(13, Role::Text));
+                label(
+                    description,
+                    Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
+                );
+            },
         );
-    if !shown.description.is_empty() {
-        text_column = text_column.child(clipped(shown.description, 12, Role::Muted));
-    }
-    let mut actions = node().styles([flex(), items_center(), gap(2), flex_none()]);
-    if let (Some(place), Some(on), true) = (shown.place, shown.enabled, shown.switchable) {
-        actions = actions.child(switch(on, SERVER_SWITCHES.id(place)));
-    }
-    if let Some(more) = shown.place.and_then(|place| SERVER_MORES.id(place)) {
-        actions = actions.child(Button::icon(IconName::More, more).size(Size::Sm).build());
-    }
-    flat_row()
-        .child(
-            text_column
-                .child(clipped(shown.detail, 11, Role::Subtle).styles([pm_style::font_mono()])),
-        )
-        .child(actions)
+        row(Modifier::new(), Flex::new().center().gap(3), || {
+            if !how.is_empty() {
+                label(
+                    how,
+                    Type::new(11)
+                        .ratio(1.5)
+                        .tone(Role::Subtle)
+                        .truncate()
+                        .mono(),
+                );
+            }
+            if let Some(button) = button {
+                button.build();
+            }
+        });
+    });
 }
 
-/// The form: a labelled box for each part of a server, and the buttons that keep it or put it away.
-fn form_node(form: &ServerForm, section: Section) -> Node {
+/// Emits one row of a list: a name with its labels over what it is for and what runs it, and, for a server that can be changed, its switch and menu.
+#[track_caller]
+fn installed_row(shown: InstalledRow) {
+    let dim = shown.enabled == Some(false);
+    flat_row(|| {
+        column(
+            Modifier::new().grow().clip_to(Radius::None),
+            Flex::new().gap(1),
+            || {
+                row(Modifier::new(), Flex::new().center().gap(2), || {
+                    label(
+                        shown.title.as_str(),
+                        title_type(13, if dim { Role::Muted } else { Role::Text }),
+                    );
+                    for (words, tone) in &shown.badges {
+                        Badge::new(*words).tone(*tone).build();
+                    }
+                });
+                if !shown.description.is_empty() {
+                    label(
+                        shown.description.as_str(),
+                        Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
+                    );
+                }
+                label(
+                    shown.detail.as_str(),
+                    Type::new(11)
+                        .ratio(1.4)
+                        .tone(Role::Subtle)
+                        .truncate()
+                        .mono(),
+                );
+            },
+        );
+        row(Modifier::new(), Flex::new().center().gap(2), || {
+            if let (Some(place), Some(on), true) = (shown.place, shown.enabled, shown.switchable) {
+                switch(on, SERVER_SWITCHES.id(place));
+            }
+            if let Some(more) = shown.place.and_then(|place| SERVER_MORES.id(place)) {
+                Button::icon(IconName::More, more).size(Size::Sm).build();
+            }
+        });
+    });
+}
+
+/// Emits the form: a labelled box for each part of a server, and the buttons that keep it or put it away.
+#[track_caller]
+fn form_node(form: &ServerForm, section: Section) {
     let target = match section {
         Section::AgentServers => "Command",
         _ => "Command or address",
@@ -1199,53 +1224,38 @@ fn form_node(form: &ServerForm, section: Section) -> Node {
         Section::AgentServers => "Environment (NAME=value, separated by spaces)",
         _ => "Environment or headers (NAME=value, separated by spaces)",
     };
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            gap(3),
-            p(4),
-            rounded(Radius::Lg),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-            flex_none(),
-        ])
-        .child(labelled("Name", &form.name, SETTINGS_NAME, "My server"))
-        .child(labelled(
-            target,
-            &form.target,
-            SETTINGS_TARGET,
-            "npx my-server",
-        ))
-        .child(labelled(environment, &form.env, SETTINGS_ENV, "TOKEN=abc"))
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(2)])
-                .child(
-                    Button::new("Save", SETTINGS_SAVE)
-                        .size(Size::Sm)
-                        .disabled(!form.complete())
-                        .build(),
-                )
-                .child(
-                    Button::new("Cancel", SETTINGS_CANCEL)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .build(),
-                ),
-        )
+    column(
+        Modifier::new()
+            .fill_rounded(Role::Surface, Radius::Lg)
+            .stroke(Role::Border, Radius::Lg)
+            .pad(4),
+        Flex::new().gap(3),
+        || {
+            labelled("Name", &form.name, SETTINGS_NAME, "My server");
+            labelled(target, &form.target, SETTINGS_TARGET, "npx my-server");
+            labelled(environment, &form.env, SETTINGS_ENV, "TOKEN=abc");
+            row(Modifier::new(), Flex::new().center().gap(2), || {
+                Button::new("Save", SETTINGS_SAVE)
+                    .size(Size::Sm)
+                    .disabled(!form.complete())
+                    .build();
+                Button::new("Cancel", SETTINGS_CANCEL)
+                    .variant(Variant::Ghost)
+                    .size(Size::Sm)
+                    .build();
+            });
+        },
+    );
 }
 
-/// A box under the words that say what is written in it.
-fn labelled(label: &str, field: &Field, id: FocusId, placeholder: &str) -> Node {
-    node()
-        .styles([flex(), flex_col(), gap(1)])
-        .child(line(label, 12, 1.4, Role::Muted))
-        .child(
-            Input::new(field, id)
-                .size(Size::Sm)
-                .placeholder(placeholder)
-                .build(),
-        )
+/// Emits a box under the words that say what is written in it.
+#[track_caller]
+fn labelled(words: &str, field: &Field, id: FocusId, placeholder: &str) {
+    column(Modifier::new(), Flex::new().gap(1), || {
+        line(words, 12, 1.4, Role::Muted);
+        Input::new(field, id)
+            .size(Size::Sm)
+            .placeholder(placeholder)
+            .build();
+    });
 }

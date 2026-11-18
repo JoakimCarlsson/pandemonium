@@ -2,10 +2,8 @@
 //! selected, the message as it reads or as the markdown it was written in,
 //! and selecting the whole conversation.
 
-use pm_input::FocusId;
-use pm_ui::Node;
-
 use crate::Menu;
+use crate::kit::FocusId;
 use crate::state::{Outgoing, WorkspaceState};
 
 /// Copies the selected text of the conversation.
@@ -42,8 +40,9 @@ pub fn is_message_menu_item(id: FocusId) -> bool {
     .contains(&id)
 }
 
-/// The menu opened at `open`.
-pub fn message_menu(open: MessageMenu) -> Node {
+/// Emits the menu opened at `open`.
+#[track_caller]
+pub fn message_menu(open: MessageMenu) {
     Menu::new(open.at.0, open.at.1)
         .item("Copy", Some("Ctrl+C"), MESSAGE_MENU_COPY, !open.selected)
         .separator()
@@ -56,7 +55,7 @@ pub fn message_menu(open: MessageMenu) -> Node {
         )
         .separator()
         .item("Select all", Some("Ctrl+A"), MESSAGE_MENU_SELECT_ALL, false)
-        .build()
+        .build();
 }
 
 impl WorkspaceState {

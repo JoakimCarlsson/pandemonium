@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use pm_config::WindowSettings;
 use pm_editor::EditorSettings;
+use pm_field::Field;
 use pm_protocol::MachineSettings;
-use pm_text::Field;
 
 use crate::settings_catalog::{Keeper, Setting};
 use crate::state::{Outgoing, WorkspaceState};

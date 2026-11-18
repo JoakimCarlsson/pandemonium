@@ -1,6 +1,6 @@
 //! The sessions the quick input lists: those waiting for the reader first while nothing is typed, the sessions and projects whose names match what is typed, and the chats whose conversations hold it, as the servers found them, with a preview of the message that matched; and turning what is typed into the prompt of a new session.
 
-use pm_input::FocusId;
+use crate::kit::FocusId;
 use pm_protocol::{ChatField, ChatHit};
 
 use crate::listing::{Destination, Items};

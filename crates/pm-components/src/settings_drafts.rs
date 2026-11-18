@@ -1,15 +1,12 @@
 //! The form on the pages of skills, instruction files and agent definitions that writes a new one from a template, in the project's folder or the reader's own, and opens it to be filled in.
 
-use pm_input::FocusId;
+use pm_field::{Edit, Field};
 use pm_protocol::library::{
     APPENDS_PROMPT, Item, Kind, PromptFile, REPLACES_PROMPT, Scope, valid_name,
 };
-use pm_style::{
-    Radius, Role, bg, border, border_color, flex, flex_1, flex_col, flex_none, gap, items_center,
-    min_w_px, p, rounded,
-};
-use pm_text::{Edit, Field};
-use pm_ui::{Node, node};
+use rustle::Modifier;
+
+use crate::kit::{Flex, FocusId, Radius, Role, Styled, Type, column, label, row};
 
 use crate::button::Variant;
 use crate::parts::line;
@@ -296,60 +293,64 @@ fn prompt_item(state: &WorkspaceState, file: PromptFile) -> Option<&Item> {
         })
 }
 
-/// The box of crab's own prompt files on the page of instructions: the one replacing its built-in instructions and the one added to every prompt, each with the button that opens or makes it.
-pub(crate) fn prompt_node(state: &WorkspaceState, room: f32) -> Node {
-    let row = |file: PromptFile, title: &str, about: &str, id: FocusId| {
+/// Emits the box of crab's own prompt files on the page of instructions, `room` logical pixels across: the one replacing its built-in instructions and the one added to every prompt, each with the button that opens or makes it.
+#[track_caller]
+pub(crate) fn prompt_node(state: &WorkspaceState, room: f32) {
+    let prompt_row = |file: PromptFile, title: &str, about: &str, id: FocusId| {
         let found = prompt_item(state, file);
         let said = match found {
             Some(_) => format!("{about} Written."),
             None => format!("{about} Not written yet."),
         };
-        flat_row()
-            .child(
-                node()
-                    .styles([flex(), flex_col(), gap(1), flex_1(), min_w_px(0)])
-                    .child(line(title, 13, 1.4, Role::Text))
-                    .child(wrapped_note(&said, (room - 160.0).max(120.0))),
-            )
-            .child(
-                Button::new(if found.is_some() { "Open" } else { "Write" }, id)
-                    .variant(Variant::Outline)
-                    .size(Size::Sm)
-                    .disabled(state.settings_page.library.of.is_none())
-                    .build(),
-            )
+        flat_row(|| {
+            column(Modifier::new().grow(), Flex::new().gap(1), || {
+                line(title, 13, 1.4, Role::Text);
+                wrapped_note(&said, (room - 160.0).max(120.0));
+            });
+            Button::new(if found.is_some() { "Open" } else { "Write" }, id)
+                .variant(Variant::Outline)
+                .size(Size::Sm)
+                .disabled(state.settings_page.library.of.is_none())
+                .build();
+        });
     };
-    node()
-        .styles([flex(), flex_col(), gap(2), flex_none()])
-        .child(
-            node()
-                .styles([flex(), items_center(), flex_none(), pm_style::h(9)])
-                .child(line("System prompt", 15, 1.4, Role::Text).styles([pm_style::font_medium()])),
-        )
-        .child(boxed(vec![
-            row(
+    column(Modifier::new(), Flex::new().gap(2), || {
+        row(Modifier::new().h(9), Flex::new().center(), || {
+            label(
+                "System prompt",
+                Type::new(15)
+                    .ratio(1.4)
+                    .tone(Role::Text)
+                    .truncate()
+                    .medium(),
+            );
+        });
+        boxed(|| {
+            prompt_row(
                 PromptFile::Replace,
                 "Replace crab's instructions",
                 "SYSTEM.md takes the place of crab's built-in instructions; its tools, skills and the project's details are still added.",
                 PROMPT_REPLACE,
-            ),
-            row(
+            );
+            prompt_row(
                 PromptFile::Append,
                 "Add to every prompt",
                 "APPEND_SYSTEM.md is added to the end of every prompt, subagents' too.",
                 PROMPT_APPEND,
-            ),
-        ]))
+            );
+        });
+    });
 }
 
-/// The button that opens the form for a new customization of `kind`, turned off while the form is open or nothing can be written.
-pub(crate) fn new_button(state: &WorkspaceState, kind: Kind) -> Node {
+/// Emits the button that opens the form for a new customization of `kind`, turned off while the form is open or nothing can be written.
+#[track_caller]
+pub(crate) fn new_button(state: &WorkspaceState, kind: Kind) {
     let library = &state.settings_page.library;
     Button::new(new_label(kind), DRAFT_NEW)
         .variant(Variant::Outline)
         .size(Size::Sm)
         .disabled(library.draft.is_some() || library.of.is_none())
-        .build()
+        .build();
 }
 
 /// What the form says about where `scope` puts a new customization of `kind`.
@@ -372,8 +373,9 @@ fn place_note(kind: Kind, scope: Scope) -> String {
     )
 }
 
-/// The form for a new customization, `room` logical pixels across.
-pub(crate) fn draft_node(form: &DraftForm, room: f32) -> Node {
+/// Emits the form for a new customization `form`, `room` logical pixels across.
+#[track_caller]
+pub(crate) fn draft_node(form: &DraftForm, room: f32) {
     let (name_hint, description_label, description_hint) = match form.kind {
         Kind::Skill => (
             "release-notes",
@@ -403,66 +405,60 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) -> Node {
         }
         (None, true) => None,
     };
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            gap(3),
-            p(4),
-            rounded(Radius::Lg),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-            flex_none(),
-        ])
-        .child(labelled("Name", &form.name, DRAFT_NAME, name_hint))
-        .child(labelled(
-            description_label,
-            &form.description,
-            DRAFT_DESCRIPTION,
-            description_hint,
-        ))
-        .children(form.in_project.then(|| {
-            node()
-                .styles([flex(), flex_col(), gap(1)])
-                .child(line("Where", 12, 1.4, Role::Muted))
-                .child(node().styles([flex()]).child(choices(
-                    &["This project", "Every project"],
-                    picked,
-                    |place| DRAFT_SCOPES.id(place),
-                )))
-        }))
-        .child(wrapped_note(&place_note(form.kind, form.scope), room))
-        .children(message.map(|message| line(message, 12, 1.4, Role::Danger)))
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(2)])
-                .child(
-                    Button::new(if form.busy { "Creating…" } else { "Create" }, DRAFT_CREATE)
-                        .size(Size::Sm)
-                        .disabled(!form.complete())
-                        .build(),
-                )
-                .child(
-                    Button::new("Cancel", DRAFT_CANCEL)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .build(),
-                ),
-        )
+    column(
+        Modifier::new()
+            .fill_rounded(Role::Surface, Radius::Lg)
+            .stroke(Role::Border, Radius::Lg)
+            .pad(4),
+        Flex::new().gap(3),
+        || {
+            labelled("Name", &form.name, DRAFT_NAME, name_hint);
+            labelled(
+                description_label,
+                &form.description,
+                DRAFT_DESCRIPTION,
+                description_hint,
+            );
+            if form.in_project {
+                column(Modifier::new(), Flex::new().gap(1), || {
+                    line("Where", 12, 1.4, Role::Muted);
+                    row(Modifier::new(), Flex::new(), || {
+                        choices(&["This project", "Every project"], picked, |place| {
+                            DRAFT_SCOPES.id(place)
+                        });
+                    });
+                });
+            }
+            wrapped_note(&place_note(form.kind, form.scope), room);
+            if let Some(message) = message {
+                line(message, 12, 1.4, Role::Danger);
+            }
+            row(Modifier::new(), Flex::new().center().gap(2), || {
+                Button::new(if form.busy { "Creating…" } else { "Create" }, DRAFT_CREATE)
+                    .size(Size::Sm)
+                    .disabled(!form.complete())
+                    .build();
+                Button::new("Cancel", DRAFT_CANCEL)
+                    .variant(Variant::Ghost)
+                    .size(Size::Sm)
+                    .build();
+            });
+        },
+    );
 }
 
-/// A box under the words that say what is written in it.
-fn labelled(label: &str, field: &Field, id: FocusId, placeholder: &str) -> Node {
-    node()
-        .styles([flex(), flex_col(), gap(1)])
-        .child(line(label, 12, 1.4, Role::Muted))
-        .child(
+/// Emits a box `id` holding `field`, showing `placeholder` while empty, under the words `label` that say what is written in it.
+#[track_caller]
+fn labelled(label: &str, field: &Field, id: FocusId, placeholder: &str) {
+    rustle::key(id.0, || {
+        column(Modifier::new(), Flex::new().gap(1), || {
+            line(label, 12, 1.4, Role::Muted);
             Input::new(field, id)
                 .size(Size::Sm)
                 .placeholder(placeholder)
-                .build(),
-        )
+                .build();
+        });
+    });
 }
 
 #[cfg(test)]

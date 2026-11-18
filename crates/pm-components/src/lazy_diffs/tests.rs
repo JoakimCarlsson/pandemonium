@@ -1,6 +1,6 @@
 //! Tests of keeping an opened file at the top of the diff while the diffs of the files above it arrive.
 
-use pm_input::FocusId;
+use crate::kit::FocusId;
 
 use crate::diff::offset_of;
 use crate::sample::Change;

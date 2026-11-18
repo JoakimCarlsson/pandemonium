@@ -1,12 +1,12 @@
 //! The usage page of the settings window: what the sessions of every connected server used over the last days, as headline totals, a bar for each day stacked by model, a row for each model and the sessions that used most.
 
-use pm_input::FocusId;
 use pm_protocol::{UsageDay, UsageModel, UsageReport, UsageSession, UsageTotals};
-use pm_style::{
-    Color, Radius, Role, bg, border, border_b, border_color, flex, flex_col, flex_none, flex_wrap,
-    gap, h_px, items_center, items_end, justify_between, justify_end, p, px, rounded, w_px,
+use rustle::Modifier;
+
+use crate::kit::{
+    Flex, FocusId, Radius, Role, Side, Styled, Tone, Tooltip, Type, column, gap_box, label, row,
+    wrapping,
 };
-use pm_ui::{Node, node};
 
 use crate::BarRow;
 use crate::parts::line;
@@ -321,35 +321,41 @@ pub(crate) fn bar_width(room: f32, count: usize) -> f32 {
 }
 
 /// The colour of the part of a bar at `place` among the chart's models; the one every other model shares past the last of them.
-fn series_tone(place: usize) -> Color {
+fn series_tone(place: usize) -> Tone {
     match SERIES_HUES.get(place) {
-        Some(hue) => Color::oklch(0.72, 0.15, *hue),
+        Some(hue) => Tone::oklch(0.72, 0.15, *hue),
         None => Role::Subtle.into(),
     }
 }
 
-/// One headline figure, `width` logical pixels across: what it is, how much, and a quiet line saying more.
-fn headline(title: &str, value: String, more: String, width: f32) -> Node {
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_none(),
-            gap(0.5),
-            p(3),
-            w_px(width),
-            rounded(Radius::Lg),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-        ])
-        .child(line(title, 12, 1.4, Role::Muted))
-        .child(line(value, 18, 1.3, Role::Text).styles([pm_style::font_medium()]))
-        .child(line(more, 12, 1.4, Role::Muted))
+/// Emits one headline figure, `width` logical pixels across: what it is, how much, and a quiet line saying more.
+#[track_caller]
+fn headline(title: &str, value: String, more: String, width: f32) {
+    column(
+        Modifier::new()
+            .width(width)
+            .fill_rounded(Role::Surface, Radius::Lg)
+            .stroke(Role::Border, Radius::Lg)
+            .pad(3),
+        Flex::new().gap(0.5),
+        || {
+            line(title, 12, 1.4, Role::Muted);
+            label(
+                value,
+                Type::new(18)
+                    .ratio(1.3)
+                    .tone(Role::Text)
+                    .truncate()
+                    .medium(),
+            );
+            line(more, 12, 1.4, Role::Muted);
+        },
+    );
 }
 
-/// The headline figures of `report` in `room` logical pixels: spend, tokens, requests and how much of the input was read from the cache, four side by side or two when the page is narrow.
-fn headlines(report: &UsageReport, room: f32) -> Node {
+/// Emits the headline figures of `report` in `room` logical pixels: spend, tokens, requests and how much of the input was read from the cache, four side by side or two when the page is narrow.
+#[track_caller]
+fn headlines(report: &UsageReport, room: f32) {
     let total = &report.total;
     let columns = if room >= WIDE_HEADLINE { 4.0 } else { 2.0 };
     let width = ((room - 8.0 * (columns - 1.0)) / columns).floor() - 4.0;
@@ -369,75 +375,72 @@ fn headlines(report: &UsageReport, room: f32) -> Node {
         1 => "in 1 session".to_owned(),
         count => format!("in {count} sessions"),
     };
-    node()
-        .styles([flex(), flex_wrap(), flex_none(), gap(2)])
-        .child(headline("Spend", spend.0, spend.1, width))
-        .child(headline(
+    wrapping(Modifier::new(), 2, || {
+        headline("Spend", spend.0, spend.1, width);
+        headline(
             "Tokens",
             tokens(total.tokens()),
             format!("{} in · {} out", tokens(sent), tokens(total.output)),
             width,
-        ))
-        .child(headline(
-            "Requests",
-            total.requests.to_string(),
-            sessions,
-            width,
-        ))
-        .child(headline(
+        );
+        headline("Requests", total.requests.to_string(), sessions, width);
+        headline(
             "Cache read",
             cache_share(total).map_or_else(|| "—".to_owned(), |share| format!("{share}%")),
             format!("{} of input", tokens(total.cache_read)),
             width,
-        ))
+        );
+    });
 }
 
-/// The bar of `day`, `width` logical pixels across: a part for each of `series` and one for the rest, the first at the bottom, as tall as their share of `most`; resting on it says the day and what it came to.
-fn day_bar(day: &UsageDay, series: &[String], measure: Measure, most: u64, width: f32) -> Node {
+/// Emits the bar of `day`, `width` logical pixels across: a part for each of `series` and one for the rest, the first at the bottom, as tall as their share of `most`; resting on it says the day and what it came to.
+#[track_caller]
+fn day_bar(day: &UsageDay, series: &[String], measure: Measure, most: u64, width: f32) {
     let amounts = stack(day, series, measure);
     let whole: u64 = amounts.iter().sum();
     let parts = heights(&amounts, most, CHART_HEIGHT);
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            justify_end(),
-            flex_none(),
-            w_px(width),
-            h_px(CHART_HEIGHT),
-        ])
-        .children(
-            parts
+    let said = format!("{}: {}", day_label(&day.day), figure(whole, measure));
+    column(
+        Modifier::new()
+            .width(width)
+            .height(CHART_HEIGHT)
+            .tooltip(said),
+        Flex::new().trailing(),
+        move || {
+            for (place, tall) in parts
                 .into_iter()
                 .enumerate()
                 .rev()
                 .filter(|(_, tall)| *tall > 0.0)
-                .map(|(place, tall)| {
-                    node().styles([
-                        flex_none(),
-                        w_px(width),
-                        h_px(tall.max(1.0)),
-                        bg(series_tone(place)),
-                    ])
-                }),
-        )
-        .tooltip(format!(
-            "{}: {}",
-            day_label(&day.day),
-            figure(whole, measure)
-        ))
+            {
+                gap_box(
+                    Modifier::new()
+                        .width(width)
+                        .height(tall.max(1.0))
+                        .fill(series_tone(place)),
+                );
+            }
+        },
+    );
 }
 
-/// One entry of the chart's legend: a swatch of `tone` and the name it stands for.
-fn legend_entry(name: &str, tone: Color) -> Node {
-    node()
-        .styles([flex(), items_center(), flex_none(), gap(1.5)])
-        .child(node().styles([flex_none(), w_px(8), h_px(8), rounded(Radius::Sm), bg(tone)]))
-        .child(line(name, 12, 1.4, Role::Muted))
+/// Emits one entry of the chart's legend: a swatch of `tone` and the name it stands for.
+#[track_caller]
+fn legend_entry(name: &str, tone: Tone) {
+    row(Modifier::new(), Flex::new().center().gap(1.5), || {
+        gap_box(
+            Modifier::new()
+                .width(8.0)
+                .height(8.0)
+                .fill_rounded(tone, Radius::Sm),
+        );
+        line(name, 12, 1.4, Role::Muted);
+    });
 }
 
-/// The chart of `report` in `room` logical pixels: what it measures and the most a day came to, a bar for each day stacked by model, the first and last day under them, and which colour is which model.
-fn chart(report: &UsageReport, room: f32) -> Node {
+/// Emits the chart of `report` in `room` logical pixels: what it measures and the most a day came to, a bar for each day stacked by model, the first and last day under them, and which colour is which model.
+#[track_caller]
+fn chart(report: &UsageReport, room: f32) {
     let measure = measure(report);
     let series = series(report);
     let most = report
@@ -458,68 +461,73 @@ fn chart(report: &UsageReport, room: f32) -> Node {
             12,
             1.4,
             Role::Muted,
-        )
-        .styles([flex_none()])
+        );
     };
-    node()
-        .styles([flex(), flex_col(), flex_none(), gap(2), w_px(room)])
-        .child(
-            node()
-                .styles([flex(), items_center(), justify_between(), gap(3)])
-                .child(line(title, 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
-                .child(
-                    line(
-                        format!("most {}", figure(most, measure)),
-                        12,
-                        1.4,
-                        Role::Muted,
-                    )
-                    .styles([flex_none()]),
-                ),
-        )
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    items_end(),
-                    justify_between(),
-                    flex_none(),
-                    w_px(room),
-                    h_px(CHART_HEIGHT + 1.0),
-                    border_b(),
-                    border_color(Role::Border),
-                ])
-                .children(
-                    report
-                        .days
-                        .iter()
-                        .map(|day| day_bar(day, &series, measure, most, width)),
-                ),
-        )
-        .child(
-            node()
-                .styles([flex(), items_center(), justify_between()])
-                .child(ends(report.days.first()))
-                .child(ends(report.days.last())),
-        )
-        .child(
-            node()
-                .styles([flex(), flex_wrap(), items_center(), gap(3)])
-                .children(
-                    series
-                        .iter()
-                        .enumerate()
-                        .map(|(place, name)| legend_entry(name, series_tone(place))),
-                )
-                .children(others.then(|| legend_entry(OTHER, series_tone(MOST_SERIES)))),
-        )
+    column(Modifier::new().width(room), Flex::new().gap(2), || {
+        row(
+            Modifier::new(),
+            Flex::new().center().between().gap(3),
+            || {
+                label_grown(title);
+                line(
+                    format!("most {}", figure(most, measure)),
+                    12,
+                    1.4,
+                    Role::Muted,
+                );
+            },
+        );
+        row(
+            Modifier::new()
+                .width(room)
+                .height(CHART_HEIGHT + 1.0)
+                .stroke_side(Side::Bottom, 1.0, Role::Border)
+                .padding_each(0.0, 0.0, 0.0, 1.0),
+            Flex::new().end().between(),
+            || {
+                for day in &report.days {
+                    day_bar(day, &series, measure, most, width);
+                }
+            },
+        );
+        row(Modifier::new(), Flex::new().center().between(), || {
+            ends(report.days.first());
+            ends(report.days.last());
+        });
+        wrapping(Modifier::new(), 3, || {
+            for (place, name) in series.iter().enumerate() {
+                legend_entry(name, series_tone(place));
+            }
+            if others {
+                legend_entry(OTHER, series_tone(MOST_SERIES));
+            }
+        });
+    });
 }
 
-/// A row of a boxed list holding `row`, with room around it.
-fn padded(row: Node) -> Node {
-    node()
-        .styles([flex(), flex_none(), px(3), pm_style::py(3)])
-        .child(row)
+/// Emits the title of the chart, set medium, taking the room its row leaves and cut short at its edge.
+#[track_caller]
+fn label_grown(title: &str) {
+    crate::kit::label_with(
+        Modifier::new().grow(),
+        title,
+        Type::new(15)
+            .ratio(1.4)
+            .tone(Role::Text)
+            .truncate()
+            .medium(),
+    );
+}
+
+/// Emits a row of a boxed list holding what `content` emits, with room around it and a hairline under it unless it is the `last`.
+#[track_caller]
+fn padded(last: bool, content: impl FnOnce()) {
+    let own = if last {
+        Modifier::new()
+    } else {
+        Modifier::new().stroke_side(Side::Bottom, 1.0, Role::Border)
+    };
+    row(own.pad_x(3).pad_y(3), Flex::new(), content);
 }
 
 /// How wide a row inside a boxed list is when the page is `room` logical pixels across.
@@ -536,8 +544,9 @@ fn counts(totals: &UsageTotals) -> String {
     )
 }
 
-/// The models of `report`, one to a row in `room` logical pixels, the costliest first, each with a bar as long as its share of the costliest and in its colour of the chart.
-fn model_rows(report: &UsageReport, room: f32) -> Vec<Node> {
+/// Emits the models of `report`, one to a row in `room` logical pixels, the costliest first, each with a bar as long as its share of the costliest and in its colour of the chart.
+#[track_caller]
+fn model_rows(report: &UsageReport, room: f32) {
     let measure = measure(report);
     let most = report
         .models
@@ -545,26 +554,22 @@ fn model_rows(report: &UsageReport, room: f32) -> Vec<Node> {
         .map(|model| amount(&model.totals, measure))
         .max()
         .unwrap_or(0);
-    report
-        .models
-        .iter()
-        .enumerate()
-        .map(|(place, model)| {
-            let unpriced = measure == Measure::Cost && model.totals.cost.is_none();
-            let detail = if unpriced {
-                format!("{} · no known prices", counts(&model.totals))
-            } else {
-                counts(&model.totals)
-            };
-            padded(
-                BarRow::new(&model.model, spend_label(&model.totals), row_width(room))
-                    .detail(detail)
-                    .share(share_of(amount(&model.totals, measure), most))
-                    .tone(series_tone(place))
-                    .build(),
-            )
-        })
-        .collect()
+    let last = report.models.len().saturating_sub(1);
+    for (place, model) in report.models.iter().enumerate() {
+        let unpriced = measure == Measure::Cost && model.totals.cost.is_none();
+        let detail = if unpriced {
+            format!("{} · no known prices", counts(&model.totals))
+        } else {
+            counts(&model.totals)
+        };
+        padded(place == last, || {
+            BarRow::new(&model.model, spend_label(&model.totals), row_width(room))
+                .detail(detail)
+                .share(share_of(amount(&model.totals, measure), most))
+                .tone(series_tone(place))
+                .build();
+        });
+    }
 }
 
 /// How much of `most` `amount` is, from nought to one; nothing when `most` is.
@@ -576,8 +581,9 @@ pub(crate) fn share_of(amount: u64, most: u64) -> f32 {
     }
 }
 
-/// The sessions of `report` that used most, one to a row in `room` logical pixels, each with its title, its project, what it used and a bar as long as its share of the first.
-fn session_rows(report: &UsageReport, room: f32) -> Vec<Node> {
+/// Emits the sessions of `report` that used most, one to a row in `room` logical pixels, each with its title, its project, what it used and a bar as long as its share of the first.
+#[track_caller]
+fn session_rows(report: &UsageReport, room: f32) {
     let measure = measure(report);
     let most = report
         .sessions
@@ -585,27 +591,23 @@ fn session_rows(report: &UsageReport, room: f32) -> Vec<Node> {
         .map(|session| amount(&session.totals, measure))
         .max()
         .unwrap_or(0);
-    report
-        .sessions
-        .iter()
-        .take(TOP_SESSIONS)
-        .map(|session| {
-            padded(
-                BarRow::new(
-                    session_name(session),
-                    spend_label(&session.totals),
-                    row_width(room),
-                )
-                .detail(format!(
-                    "{} · {}",
-                    project_name(&session.project),
-                    counts(&session.totals)
-                ))
-                .share(share_of(amount(&session.totals, measure), most))
-                .build(),
+    let last = report.sessions.len().min(TOP_SESSIONS).saturating_sub(1);
+    for (place, session) in report.sessions.iter().take(TOP_SESSIONS).enumerate() {
+        padded(place == last, || {
+            BarRow::new(
+                session_name(session),
+                spend_label(&session.totals),
+                row_width(room),
             )
-        })
-        .collect()
+            .detail(format!(
+                "{} · {}",
+                project_name(&session.project),
+                counts(&session.totals)
+            ))
+            .share(share_of(amount(&session.totals, measure), most))
+            .build();
+        });
+    }
 }
 
 /// What the machine `host` is called in a note: its name, or this machine.
@@ -613,8 +615,9 @@ fn host_name(host: Option<&str>) -> &str {
     host.unwrap_or("This machine")
 }
 
-/// The body of the usage page, `room` logical pixels across: what it is for, the choice of days, then the headline figures, the chart, the models and the top sessions; or that the servers are being asked, that nothing was used, or why a server could not say.
-pub(crate) fn body(state: &WorkspaceState, page: Node, room: f32) -> Node {
+/// Emits the body of the usage page, `room` logical pixels across, after what `page` emits: what it is for, the choice of days, then the headline figures, the chart, the models and the top sessions; or that the servers are being asked, that nothing was used, or why a server could not say.
+#[track_caller]
+pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     let usage = &state.settings_page.usage;
     let picked = RANGES
         .iter()
@@ -627,47 +630,40 @@ pub(crate) fn body(state: &WorkspaceState, page: Node, room: f32) -> Node {
     } else {
         None
     };
-    let page = page
-        .child(paragraph(SUMMARY, room))
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    justify_between(),
-                    flex_wrap(),
-                    flex_none(),
-                    gap(2),
-                ])
-                .child(choices(&RANGE_NAMES, picked, |option| {
-                    USAGE_RANGES.id(option)
-                }))
-                .children(status.map(|said| note(&said))),
-        )
-        .children(usage.errors.iter().map(|(host, reason)| {
-            wrapped_note(&format!("{}: {reason}", host_name(host.as_deref())), room)
-        }));
+    page();
+    paragraph(SUMMARY, room);
+    row(
+        Modifier::new(),
+        Flex::new().center().between().gap(2),
+        || {
+            choices(&RANGE_NAMES, picked, |option| USAGE_RANGES.id(option));
+            if let Some(said) = &status {
+                note(said);
+            }
+        },
+    );
+    for (host, reason) in &usage.errors {
+        wrapped_note(&format!("{}: {reason}", host_name(host.as_deref())), room);
+    }
     if usage.reports.is_empty() {
-        return if usage.loading {
-            page.child(note("Reading usage…"))
+        if usage.loading {
+            note("Reading usage…");
         } else if usage.errors.is_empty() {
-            page.child(note("No usage recorded yet"))
-        } else {
-            page
-        };
+            note("No usage recorded yet");
+        }
+        return;
     }
     let report = merged(&usage.reports);
     if report.total.is_empty() {
-        return page.child(note("No usage recorded yet"));
+        note("No usage recorded yet");
+        return;
     }
-    let models = model_rows(&report, room);
-    let sessions = session_rows(&report, room);
-    page.child(headlines(&report, room))
-        .child(chart(&report, room))
-        .child(heading_only("Models", models.len()))
-        .child(boxed(models))
-        .child(heading_only("Top sessions", sessions.len()))
-        .child(boxed(sessions))
+    headlines(&report, room);
+    chart(&report, room);
+    heading_only("Models", report.models.len());
+    boxed(|| model_rows(&report, room));
+    heading_only("Top sessions", report.sessions.len().min(TOP_SESSIONS));
+    boxed(|| session_rows(&report, room));
 }
 
 /// What was spent over the days the page covers, in words, for the page's card on the Agents overview; nothing until a server reported.

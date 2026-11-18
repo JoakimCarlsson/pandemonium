@@ -1,14 +1,7 @@
 //! The debug tab of the dock: the controls over a program being debugged, its stack, its variables and watches, and its console.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
 use pm_protocol::{DebugCategory, DebugView, Standing};
-use pm_style::{
-    Color, Role, bg, border_b, border_color, border_l, cursor_pointer, flex, flex_1, flex_col,
-    flex_none, font_mono, gap, h, items_center, min_h, min_w_px, overflow_hidden, pl, px, py,
-    text_color, truncate, w_px,
-};
-use pm_ui::{Node, node, text};
+use rustle::{CursorIcon, Modifier};
 
 use crate::Button;
 use crate::debug::{
@@ -18,7 +11,10 @@ use crate::debug::{
     DEBUG_WATCH_REMOVE_BASE, Run, variable_rows,
 };
 use crate::input::Input;
-use crate::parts::{glyph, line};
+use crate::kit::{
+    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tone,
+    Tooltip, Type, block, column, gap_box, icon, label, label_with, row, scroll_area,
+};
 use crate::size::Size;
 use crate::state::WorkspaceState;
 
@@ -36,256 +32,258 @@ fn standing_words(view: &DebugView) -> String {
     }
 }
 
-/// The controls over the program: run on or pause, the three steps and stop, with what the program is doing beside them.
-fn controls(run: &Run) -> Node {
+/// The type of a line of the tab: `pixels` tall with a line height of 1.4 times that, in `tone`, cut short at the edge of its box.
+fn small(pixels: u32, tone: impl Into<Tone>) -> Type {
+    Type::new(pixels).ratio(1.4).tone(tone).truncate()
+}
+
+/// Emits one icon button of the controls: `icon` answering to `id`, explained by `tip`, pressable while `enabled`.
+#[track_caller]
+fn control(icon: IconName, id: FocusId, tip: &'static str, enabled: bool) {
+    Button::icon(icon, id)
+        .size(Size::Sm)
+        .disabled(!enabled)
+        .modifier(Modifier::new().tooltip(tip))
+        .build();
+}
+
+/// Emits the controls over the program: run on or pause, the three steps and stop, with what the program is doing beside them.
+#[track_caller]
+fn controls(run: &Run) {
     let view = &run.view;
     let paused = view.standing == Standing::Stopped;
     let live = view.standing != Standing::Ended;
-    let button = |icon: IconName, id: FocusId, tip: &'static str, enabled: bool| {
-        Button::icon(icon, id)
-            .size(Size::Sm)
-            .disabled(!enabled)
-            .build()
-            .tooltip(tip)
-    };
-    let run_on = if paused || !live {
-        button(IconName::Continue, DEBUG_CONTINUE, "Continue", paused)
-    } else {
-        button(
-            IconName::Pause,
-            DEBUG_PAUSE,
-            "Pause",
-            view.standing == Standing::Running,
-        )
-    };
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(1),
-            h(9),
-            px(3),
-            flex_none(),
-            border_b(),
-            border_color(Role::Border),
-        ])
-        .child(run_on)
-        .child(button(
-            IconName::StepOver,
-            DEBUG_STEP_OVER,
-            "Step over",
-            paused,
-        ))
-        .child(button(
-            IconName::StepInto,
-            DEBUG_STEP_IN,
-            "Step into",
-            paused,
-        ))
-        .child(button(
-            IconName::StepOut,
-            DEBUG_STEP_OUT,
-            "Step out",
-            paused,
-        ))
-        .child(button(IconName::Stop, DEBUG_STOP, "Stop", live))
-        .child(line(view.label.clone(), 12, 1.4, Role::Muted).styles([pl(2), flex_none()]))
-        .child(line(standing_words(view), 12, 1.4, Role::Subtle).styles([pl(2), flex_none()]))
-}
-
-/// A column of the tab under `title`, holding `body`, `width` logical pixels wide when it is given one.
-fn column(title: &str, width: Option<f32>, body: Node) -> Node {
-    let mut column = node()
-        .styles([
-            flex(),
-            flex_col(),
-            min_w_px(0),
-            min_h(0),
-            border_l(),
-            border_color(Role::Border),
-        ])
-        .child(
-            node()
-                .styles([flex(), items_center(), h(7), px(3), flex_none()])
-                .child(line(title, 11, 1.4, Role::Subtle)),
-        )
-        .child(body);
-    column = match width {
-        Some(width) => column.styles([w_px(width), flex_none()]),
-        None => column.styles([flex_1()]),
-    };
-    column
-}
-
-/// A box that holds rows and scrolls them from the top.
-fn rows_box(id: FocusId, scrolled: f32) -> Node {
-    node()
-        .styles([flex(), flex_col(), flex_1(), min_h(0), overflow_hidden()])
-        .scroll_from_start(id, scrolled)
-}
-
-/// One row of a list: `content`, pressed as `id` when it is given one.
-fn row(content: Vec<Node>, id: Option<FocusId>, selected: bool) -> Node {
-    let mut row = node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(2),
-            h(6),
-            px(3),
-            flex_none(),
-            overflow_hidden(),
-        ])
-        .children(content);
-    if selected {
-        row = row.styles([bg(Role::SurfaceSelected)]);
-    }
-    match id {
-        Some(id) => row
-            .styles([cursor_pointer(), bg(Role::SurfaceHover).hover()])
-            .focusable(id),
-        None => row,
-    }
-}
-
-/// The stack of the paused thread, the frame being looked at marked.
-fn stack(state: &WorkspaceState, run: &Run) -> Node {
-    let view = &run.view;
-    let mut body = rows_box(DEBUG_STACK_SCROLL, state.debug.stack_scroll);
-    if view.frames.is_empty() {
-        let said = if view.standing == Standing::Running {
-            "Running"
-        } else {
-            "Not paused"
-        };
-        return column(
-            "Call stack",
-            Some(STACK_WIDTH),
-            body.child(row(vec![line(said, 12, 1.4, Role::Subtle)], None, false)),
-        );
-    }
-    for (index, frame) in view.frames.iter().take(DEBUG_ROWS as usize).enumerate() {
-        let place = frame
-            .path
-            .as_ref()
-            .and_then(|path| path.file_name())
-            .map(|name| format!("{}:{}", name.to_string_lossy(), frame.line + 1))
-            .unwrap_or_default();
-        body = body.child(row(
-            vec![
-                line(frame.name.clone(), 12, 1.4, Role::Text).styles([font_mono(), min_w_px(0)]),
-                line(place, 12, 1.4, Role::Subtle).styles([flex_none()]),
-            ],
-            Some(FocusId(DEBUG_FRAME_BASE + index as u64)),
-            view.frame == Some(frame.id),
-        ));
-    }
-    column("Call stack", Some(STACK_WIDTH), body)
-}
-
-/// One variable or scope, indented by its depth, with a chevron when it has members.
-fn variable_row(index: usize, entry: &crate::debug::VariableRow) -> Node {
-    let mut content = vec![node().styles([w_px(entry.depth as f32 * 12.0), flex_none()])];
-    content.push(if entry.reference != 0 {
-        glyph(
-            if entry.unfolded {
-                IconName::ChevronDown
-            } else {
-                IconName::ChevronRight
-            },
-            3.0,
-            Role::Muted,
-        )
-    } else {
-        node().styles([w_px(12.0), flex_none()])
-    });
-    let tone: Color = if entry.value.is_empty() {
-        Role::Muted.into()
-    } else {
-        Role::Text.into()
-    };
-    content.push(line(entry.name.clone(), 12, 1.4, tone).styles([font_mono(), flex_none()]));
-    if !entry.value.is_empty() {
-        content.push(line("=", 12, 1.4, Role::Subtle).styles([flex_none()]));
-        content.push(
-            line(entry.value.clone(), 12, 1.4, Role::SyntaxString).styles([
-                font_mono(),
-                flex_1(),
-                min_w_px(0),
-            ]),
-        );
-    }
-    if let Some(kind) = &entry.kind {
-        content.push(line(kind.clone(), 11, 1.4, Role::Subtle).styles([min_w_px(0)]));
-    }
     row(
-        content,
-        (entry.reference != 0).then_some(FocusId(DEBUG_VARIABLE_BASE + index as u64)),
-        false,
-    )
+        Modifier::new()
+            .h(9)
+            .stroke_side(Side::Bottom, 1.0, Role::Border)
+            .pad_x(3),
+        Flex::new().center().gap(1),
+        || {
+            if paused || !live {
+                control(IconName::Continue, DEBUG_CONTINUE, "Continue", paused);
+            } else {
+                control(
+                    IconName::Pause,
+                    DEBUG_PAUSE,
+                    "Pause",
+                    view.standing == Standing::Running,
+                );
+            }
+            control(IconName::StepOver, DEBUG_STEP_OVER, "Step over", paused);
+            control(IconName::StepInto, DEBUG_STEP_IN, "Step into", paused);
+            control(IconName::StepOut, DEBUG_STEP_OUT, "Step out", paused);
+            control(IconName::Stop, DEBUG_STOP, "Stop", live);
+            label_with(
+                Modifier::new().pad_side(Side::Left, 2),
+                view.label.clone(),
+                small(12, Role::Muted),
+            );
+            label_with(
+                Modifier::new().pad_side(Side::Left, 2),
+                standing_words(view),
+                small(12, Role::Subtle),
+            );
+        },
+    );
 }
 
-/// The variables of the frame being looked at over the expressions watched and the field that adds one.
-fn variables(state: &WorkspaceState, run: &Run) -> Node {
+/// Emits a column of the tab under `title`, holding what `body` emits, `width` logical pixels wide when it is given one and taking the room left otherwise.
+#[track_caller]
+fn section(title: &str, width: Option<f32>, body: impl FnOnce()) {
+    let size = match width {
+        Some(width) => Modifier::new().width(width),
+        None => Modifier::new().grow(),
+    };
+    column(
+        size.stroke_side(Side::Left, 1.0, Role::Border),
+        Flex::new(),
+        || {
+            row(Modifier::new().h(7).pad_x(3), Flex::new().center(), || {
+                label(title, small(11, Role::Subtle));
+            });
+            body();
+        },
+    );
+}
+
+/// Emits a box scrolled `scrolled` pixels from the top by the list `id`, holding the rows `content` emits.
+#[track_caller]
+fn rows_box(id: FocusId, scrolled: f32, content: impl FnOnce()) {
+    scroll_area(
+        Modifier::new().grow(),
+        Scroll::from_start(id, scrolled),
+        || column(Modifier::new().fill_max_width(), Flex::new(), content),
+    );
+}
+
+/// Emits one row of a list holding what `content` emits, pressed as `id` when it is given one, marked while `selected`.
+#[track_caller]
+fn list_row(id: Option<FocusId>, selected: bool, content: impl FnOnce()) {
+    let mut own = Modifier::new().h(6);
+    own = match id {
+        Some(id) => {
+            let looks = Looks::new().hover(Role::SurfaceHover);
+            let looks = if selected {
+                looks.idle(Role::SurfaceSelected)
+            } else {
+                looks
+            };
+            own.looks(looks)
+                .clip_to(Radius::None)
+                .cursor(CursorIcon::Pointer)
+                .target(id)
+        }
+        None if selected => own.fill(Role::SurfaceSelected).clip_to(Radius::None),
+        None => own.clip_to(Radius::None),
+    };
+    row(own.pad_x(3), Flex::new().center().gap(2), content);
+}
+
+/// Emits the stack of the paused thread, the frame being looked at marked.
+#[track_caller]
+fn stack(state: &WorkspaceState, run: &Run) {
     let view = &run.view;
-    let mut body = rows_box(DEBUG_VARIABLES_SCROLL, state.debug.variables_scroll);
-    let rows = variable_rows(view, &state.debug.unfolded);
-    if rows.is_empty() {
-        body = body.child(row(
-            vec![line("Nothing to show", 12, 1.4, Role::Subtle)],
-            None,
-            false,
-        ));
-    }
-    for (index, entry) in rows.iter().take(DEBUG_ROWS as usize).enumerate() {
-        body = body.child(variable_row(index, entry));
-    }
-    body = body.child(
-        node()
-            .styles([h(6), px(3), flex(), items_center(), flex_none()])
-            .child(line("Watch", 11, 1.4, Role::Subtle)),
-    );
-    for (index, expression) in state
-        .debug
-        .watches
-        .iter()
-        .take(DEBUG_ROWS as usize)
-        .enumerate()
-    {
-        let shown = match view
-            .watched
-            .iter()
-            .find(|held| &held.expression == expression)
-        {
-            Some(held) => match &held.value {
-                Ok(value) => (value.value.clone(), Role::SyntaxString),
-                Err(reason) => (reason.clone(), Role::Danger),
-            },
-            None => (String::new(), Role::Subtle),
+    section("Call stack", Some(STACK_WIDTH), || {
+        rows_box(DEBUG_STACK_SCROLL, state.debug.stack_scroll, || {
+            if view.frames.is_empty() {
+                let said = if view.standing == Standing::Running {
+                    "Running"
+                } else {
+                    "Not paused"
+                };
+                list_row(None, false, || label(said, small(12, Role::Subtle)));
+                return;
+            }
+            for (index, frame) in view.frames.iter().take(DEBUG_ROWS as usize).enumerate() {
+                let place = frame
+                    .path
+                    .as_ref()
+                    .and_then(|path| path.file_name())
+                    .map(|name| format!("{}:{}", name.to_string_lossy(), frame.line + 1))
+                    .unwrap_or_default();
+                rustle::key(index, || {
+                    list_row(
+                        Some(FocusId(DEBUG_FRAME_BASE + index as u64)),
+                        view.frame == Some(frame.id),
+                        || {
+                            label_with(
+                                Modifier::new().grow(),
+                                frame.name.clone(),
+                                small(12, Role::Text).mono(),
+                            );
+                            label(place, small(12, Role::Subtle));
+                        },
+                    );
+                });
+            }
+        });
+    });
+}
+
+/// Emits one variable or scope, the row at `index`, indented by its depth, with a chevron when it has members.
+#[track_caller]
+fn variable_row(index: usize, entry: &crate::debug::VariableRow) {
+    let id = (entry.reference != 0).then_some(FocusId(DEBUG_VARIABLE_BASE + index as u64));
+    list_row(id, false, || {
+        gap_box(Modifier::new().width(entry.depth as f32 * 12.0));
+        if entry.reference != 0 {
+            icon(
+                if entry.unfolded {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                },
+                3.0,
+                Role::Muted,
+            );
+        } else {
+            gap_box(Modifier::new().width(12.0));
+        }
+        let tone: Tone = if entry.value.is_empty() {
+            Role::Muted.into()
+        } else {
+            Role::Text.into()
         };
-        body = body.child(row(
-            vec![
-                line(expression.clone(), 12, 1.4, Role::Text).styles([font_mono(), flex_none()]),
-                line("=", 12, 1.4, Role::Subtle).styles([flex_none()]),
-                line(shown.0, 12, 1.4, shown.1).styles([font_mono(), flex_1(), min_w_px(0)]),
-                Button::icon(
-                    IconName::Close,
-                    FocusId(DEBUG_WATCH_REMOVE_BASE + index as u64),
-                )
-                .size(Size::Sm)
-                .build(),
-            ],
-            None,
-            false,
-        ));
-    }
-    let add = node().styles([px(2), py(1), flex_none()]).child(
-        Input::new(&state.debug.watch, DEBUG_WATCH_FIELD)
-            .size(Size::Sm)
-            .placeholder("Add an expression to watch")
-            .build(),
-    );
-    column("Variables", None, body.child(add))
+        label(entry.name.clone(), small(12, tone).mono());
+        if !entry.value.is_empty() {
+            label("=", small(12, Role::Subtle));
+            label_with(
+                Modifier::new().grow(),
+                entry.value.clone(),
+                small(12, Role::SyntaxString).mono(),
+            );
+        }
+        if let Some(kind) = &entry.kind {
+            label(kind.clone(), small(11, Role::Subtle));
+        }
+    });
+}
+
+/// Emits a field, padded as the tab's fields are, from what `field` emits.
+#[track_caller]
+fn field_box(field: impl FnOnce()) {
+    block(Modifier::new().pad_x(2).pad_y(1), field);
+}
+
+/// Emits the variables of the frame being looked at over the expressions watched and the field that adds one.
+#[track_caller]
+fn variables(state: &WorkspaceState, run: &Run) {
+    let view = &run.view;
+    let rows = variable_rows(view, &state.debug.unfolded);
+    section("Variables", None, || {
+        rows_box(DEBUG_VARIABLES_SCROLL, state.debug.variables_scroll, || {
+            if rows.is_empty() {
+                list_row(None, false, || {
+                    label("Nothing to show", small(12, Role::Subtle))
+                });
+            }
+            for (index, entry) in rows.iter().take(DEBUG_ROWS as usize).enumerate() {
+                rustle::key(index, || variable_row(index, entry));
+            }
+            row(Modifier::new().h(6).pad_x(3), Flex::new().center(), || {
+                label("Watch", small(11, Role::Subtle));
+            });
+            for (index, expression) in state
+                .debug
+                .watches
+                .iter()
+                .take(DEBUG_ROWS as usize)
+                .enumerate()
+            {
+                let shown = match view
+                    .watched
+                    .iter()
+                    .find(|held| &held.expression == expression)
+                {
+                    Some(held) => match &held.value {
+                        Ok(value) => (value.value.clone(), Role::SyntaxString),
+                        Err(reason) => (reason.clone(), Role::Danger),
+                    },
+                    None => (String::new(), Role::Subtle),
+                };
+                rustle::key(("watch", index), || {
+                    list_row(None, false, || {
+                        label(expression.clone(), small(12, Role::Text).mono());
+                        label("=", small(12, Role::Subtle));
+                        label_with(Modifier::new().grow(), shown.0, small(12, shown.1).mono());
+                        Button::icon(
+                            IconName::Close,
+                            FocusId(DEBUG_WATCH_REMOVE_BASE + index as u64),
+                        )
+                        .size(Size::Sm)
+                        .build();
+                    });
+                });
+            }
+            field_box(|| {
+                Input::new(&state.debug.watch, DEBUG_WATCH_FIELD)
+                    .size(Size::Sm)
+                    .placeholder("Add an expression to watch")
+                    .build();
+            });
+        });
+    });
 }
 
 /// What a console line of `category` is drawn in.
@@ -299,74 +297,74 @@ fn console_tone(category: DebugCategory) -> Role {
     }
 }
 
-/// The console: what the program and the adapter printed, scrolled back from its end, and the field that asks the program what an expression comes to.
-fn console(state: &WorkspaceState, run: &Run) -> Node {
-    let mut body = node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_1(),
-            min_h(0),
-            overflow_hidden(),
-            px(3),
-        ])
-        .scroll_from_end(DEBUG_CONSOLE_SCROLL, state.debug.console_back);
-    for entry in &run.view.lines {
-        body = body.child(text(entry.text.clone()).styles([
-            pm_style::code_px(12),
-            pm_style::leading_ratio(1.4),
-            font_mono(),
-            text_color(console_tone(entry.category)),
-            flex_none(),
-            truncate(),
-        ]));
-    }
-    let ask = node().styles([px(2), py(1), flex_none()]).child(
-        Input::new(&state.debug.console, DEBUG_CONSOLE_FIELD)
-            .size(Size::Sm)
-            .placeholder("Evaluate an expression")
-            .build(),
-    );
-    column(
-        "Console",
-        None,
-        node()
-            .styles([flex(), flex_col(), flex_1(), min_h(0)])
-            .child(body)
-            .child(ask),
-    )
+/// Emits the console: what the program and the adapter printed, scrolled back from its end, and the field that asks the program what an expression comes to.
+#[track_caller]
+fn console(state: &WorkspaceState, run: &Run) {
+    section("Console", None, || {
+        column(Modifier::new().grow(), Flex::new(), || {
+            scroll_area(
+                Modifier::new().grow(),
+                Scroll::from_end(DEBUG_CONSOLE_SCROLL, state.debug.console_back),
+                || {
+                    column(
+                        Modifier::new().fill_max_width().pad_x(3),
+                        Flex::new(),
+                        || {
+                            for entry in &run.view.lines {
+                                label(
+                                    entry.text.clone(),
+                                    Type::code(12)
+                                        .ratio(1.4)
+                                        .tone(console_tone(entry.category))
+                                        .truncate(),
+                                );
+                            }
+                        },
+                    );
+                },
+            );
+            field_box(|| {
+                Input::new(&state.debug.console, DEBUG_CONSOLE_FIELD)
+                    .size(Size::Sm)
+                    .placeholder("Evaluate an expression")
+                    .build();
+            });
+        });
+    });
 }
 
-/// What the tab holds while nothing is being debugged: the way to start.
-fn idle(state: &WorkspaceState) -> Node {
+/// Emits what the tab holds while nothing is being debugged: the way to start.
+#[track_caller]
+fn idle(state: &WorkspaceState) {
     let said = state
         .debug
         .trouble
         .clone()
         .unwrap_or_else(|| "Nothing is being debugged.".to_owned());
-    node()
-        .styles([flex(), flex_col(), items_center(), gap(3), py(6), flex_1()])
-        .child(line(said, 13, 1.4, Role::Subtle))
-        .child(
+    column(
+        Modifier::new().grow().pad_y(6),
+        Flex::new().center().gap(3),
+        || {
+            label(said, small(13, Role::Subtle));
             Button::new("Start debugging", DEBUG_START)
                 .size(Size::Sm)
-                .build(),
-        )
+                .build();
+        },
+    );
 }
 
-/// The body of the debug tab.
-pub fn debug_tab(state: &WorkspaceState) -> Node {
+/// Emits the body of the debug tab.
+#[track_caller]
+pub fn debug_tab(state: &WorkspaceState) {
     match &state.debug.run {
-        Some(run) => node()
-            .styles([flex(), flex_col(), flex_1(), min_h(0)])
-            .child(controls(run))
-            .child(
-                node()
-                    .styles([flex(), flex_1(), min_h(0)])
-                    .child(stack(state, run))
-                    .child(variables(state, run))
-                    .child(console(state, run)),
-            ),
+        Some(run) => column(Modifier::new().grow(), Flex::new(), || {
+            controls(run);
+            row(Modifier::new().grow(), Flex::new(), || {
+                stack(state, run);
+                variables(state, run);
+                console(state, run);
+            });
+        }),
         None => idle(state),
     }
 }

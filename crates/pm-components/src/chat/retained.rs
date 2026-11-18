@@ -5,11 +5,11 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use pm_text::Shaper;
-use pm_ui::{Node, Picture};
+use rustle::Modifier;
 
 use crate::exhibit::Offer;
 use crate::figures::Figures;
+use crate::kit::{Picture, Styled, block, gap_box};
 use crate::sample::{Message, Session, Status, Step};
 use crate::state::WorkspaceState;
 
@@ -63,8 +63,8 @@ struct Cached {
     previews: HashMap<String, Picture>,
     /// Fonts, width, density, text scale and running-timer second.
     geometry: (u64, u32, u32, u32, u64),
-    /// The already built and laid-out message wrapper.
-    node: Node,
+    /// What the message emitted when it was last built.
+    node: rustle::Node,
     /// Estimated owned source and control bytes, excluding shared pixel buffers.
     bytes: usize,
 }
@@ -172,34 +172,30 @@ pub(super) fn pending() -> bool {
     PENDING.replace(false)
 }
 
-/// The messages of `session` as boxes, the newest first built.
+/// Emits the messages of `session` as boxes, the newest first built.
 ///
 /// Messages within [`HORIZON`] of what the reader is looking at are built now.
 /// Older ones are built while the frame has time to spare, [`CATCH_UP`] at a
 /// time, and stand as spaces as tall as they were or are likely to be until
-/// then, so opening a long conversation shows its end at once.
-pub(super) fn messages(
-    state: &WorkspaceState,
-    session: &Session,
-    width: f32,
-    shaper: &mut Shaper,
-) -> Vec<Node> {
+/// then, so opening a long conversation shows its end at once. How tall each
+/// built message is gets recorded when it is laid out, for the frames after.
+#[track_caller]
+pub(super) fn messages(state: &WorkspaceState, session: &Session, width: f32) {
     let page = state.open_index();
     let started = Instant::now();
     let wanted = state.chat_back + HORIZON;
-    let mut built: Vec<Option<Node>> = (0..session.messages.len()).map(|_| None).collect();
+    let mut built: Vec<Option<rustle::Node>> = (0..session.messages.len()).map(|_| None).collect();
     let mut covered = 0.0;
     let (mut total, mut counted) = (0.0, 0);
     for index in (0..built.len()).rev() {
         if covered >= wanted && started.elapsed() >= CATCH_UP {
             break;
         }
-        let node = message(state, session, index, width, shaper);
-        let height = node.laid_height();
+        let node = rustle::key(("conversation-message-box", index), || {
+            measured(page, index, width, message(state, session, index, width))
+        });
+        let height = height_of(page, index, width);
         if let Some(height) = height {
-            HEIGHTS.with_borrow_mut(|heights| {
-                heights.insert((page, index), (width.to_bits(), height));
-            });
             total += height;
             counted += 1;
         }
@@ -212,31 +208,51 @@ pub(super) fn messages(
         GUESS
     };
     PENDING.set(built.iter().any(Option::is_none));
-    built
-        .into_iter()
-        .enumerate()
-        .map(|(index, node)| {
-            node.unwrap_or_else(|| {
-                let height = HEIGHTS.with_borrow(|heights| {
-                    heights
-                        .get(&(page, index))
-                        .filter(|(held, _)| *held == width.to_bits())
-                        .map_or(average, |(_, height)| *height)
-                });
-                pm_ui::node().styles([pm_style::h_px(height.ceil()), pm_style::flex_none()])
-            })
-        })
-        .collect()
+    for (index, node) in built.into_iter().enumerate() {
+        match node {
+            Some(node) => rustle::emit(node),
+            None => {
+                let height = height_of(page, index, width).unwrap_or(average);
+                gap_box(Modifier::new().height(height.ceil()));
+            }
+        }
+    }
 }
 
-/// Reuses a message's construction and layout when only its surrounding input changed.
+/// How tall the message at `index` of the session at `page` was when it was last laid out `width` logical pixels wide, when it was.
+fn height_of(page: Option<usize>, index: usize, width: f32) -> Option<f32> {
+    HEIGHTS.with_borrow(|heights| {
+        heights
+            .get(&(page, index))
+            .filter(|(held, _)| *held == width.to_bits())
+            .map(|(_, height)| *height)
+    })
+}
+
+/// `node`, the message at `index` of the session at `page` built `width` logical pixels wide, in a box that
+/// records how tall it is laid out each time layout runs.
+fn measured(page: Option<usize>, index: usize, width: f32, node: rustle::Node) -> rustle::Node {
+    let bits = width.to_bits();
+    rustle::compose(move || {
+        block(
+            Modifier::new().on_size_changed(move |size| {
+                HEIGHTS.with_borrow_mut(|heights| {
+                    heights.insert((page, index), (bits, size.height));
+                });
+            }),
+            move || rustle::emit(node),
+        );
+    })
+}
+
+/// The message at `index` of `session` built `width` logical pixels wide, reusing what it emitted last time when
+/// only its surrounding input changed.
 pub(super) fn message(
     state: &WorkspaceState,
     session: &Session,
     index: usize,
     width: f32,
-    shaper: &mut Shaper,
-) -> Node {
+) -> rustle::Node {
     let message = &session.messages[index];
     let project = state
         .project_of(session)
@@ -254,10 +270,10 @@ pub(super) fn message(
         0
     };
     let geometry = (
-        shaper.font_key(),
+        crate::kit::font_key(),
         width.to_bits(),
-        pm_style::step_scale().to_bits(),
-        pm_style::text_scale().to_bits(),
+        crate::kit::theme::step_scale().to_bits(),
+        crate::kit::theme::text_scale().to_bits(),
         second,
     );
     let offer = (!message.exhibits.is_empty()).then(|| state.preview_offer());
@@ -291,11 +307,13 @@ pub(super) fn message(
         + (state.opened.len() + state.unfolded.len())
             * std::mem::size_of::<(usize, usize, usize)>();
     if bytes > 1024 * 1024 {
-        return if message.from_user {
-            super::user_message(state, session, index, width, shaper)
-        } else {
-            super::agent_message(state, session, index, width, shaper)
-        };
+        return rustle::compose(|| {
+            if message.from_user {
+                super::user_message(state, session, index, width)
+            } else {
+                super::agent_message(state, session, index, width)
+            }
+        });
     }
     let sequence = NEXT.with(|next| {
         let value = next.get();
@@ -304,12 +322,17 @@ pub(super) fn message(
     });
     let mut hash = DefaultHasher::new();
     ("conversation-message", sequence).hash(&mut hash);
-    let node = pm_ui::retained(hash.finish(), width, shaper, |shaper| {
-        if message.from_user {
-            super::user_message(state, session, index, width, shaper)
-        } else {
-            super::agent_message(state, session, index, width, shaper)
-        }
+    let key = hash.finish();
+    let node = rustle::compose(|| {
+        rustle::key(key, || {
+            rustle::skippable((key, width.to_bits()), || {
+                if message.from_user {
+                    super::user_message(state, session, index, width)
+                } else {
+                    super::agent_message(state, session, index, width)
+                }
+            })
+        })
     });
     CACHE.with_borrow_mut(|cache| {
         cache.keep(Cached {
@@ -338,28 +361,41 @@ pub(super) fn message(
 /// Retained message tests compare prompt edits and streamed changes against fresh message construction.
 #[cfg(test)]
 mod tests {
-    use pm_renderer::DrawList;
-    use pm_ui::{Input, Output, draw};
+    use std::rc::Rc;
+
+    use crate::kit::Report;
+    use crate::kit::snapshot::lay_out;
 
     use super::*;
 
-    /// Captures message text and action targets without creating a window.
-    fn paint(node: Node, shaper: &mut Shaper) -> Output {
-        draw(
-            &node,
-            600.0,
-            1000.0,
-            &Input::default(),
-            &pm_theme::default_family().dark,
-            shaper,
-            &mut DrawList::new(),
-        )
+    /// Lays `content` out 600 by 1000 logical pixels, capturing message text and action targets without creating a window.
+    fn paint(content: impl Fn() + 'static) -> Report {
+        lay_out(600.0, 1000.0, None, content)
+    }
+
+    /// Lays out the conversation of the first session of `state` once, 600 logical pixels wide, and returns how many boxes it emitted.
+    fn frame(state: &Rc<WorkspaceState>) -> usize {
+        let count = Rc::new(Cell::new(0));
+        let (held, counted) = (state.clone(), count.clone());
+        paint(move || {
+            let nodes = rustle::collect(|| messages(&held, &held.sessions[0], 600.0));
+            counted.set(nodes.len());
+            for node in nodes {
+                rustle::emit(node);
+            }
+        });
+        count.get()
+    }
+
+    /// Whether the message at `index` of the first session of `state` has been laid out at 600 logical pixels wide.
+    fn laid(state: &WorkspaceState, index: usize) -> bool {
+        height_of(state.open_index(), index, 600.0).is_some()
     }
 
     /// A long conversation shows its newest message built at once, keeps one box per message while older ones wait, and ends with every message built.
     #[test]
     fn long_history_is_built_newest_first_and_completes() {
-        let mut shaper = Shaper::new();
+        HEIGHTS.with_borrow_mut(HashMap::clear);
         let mut state = WorkspaceState::sample();
         let reply = state.sessions[0]
             .messages
@@ -368,26 +404,24 @@ mod tests {
             .unwrap()
             .clone();
         state.sessions[0].messages = vec![reply; 400];
-        let session = &state.sessions[0];
-        let first = messages(&state, session, 600.0, &mut shaper);
-        assert_eq!(first.len(), 400);
-        assert!(first[399].laid_height().is_some());
-        assert!(first[0].laid_height().is_none() == pending());
+        let state = Rc::new(state);
+        assert_eq!(frame(&state), 400);
+        assert!(laid(&state, 399));
+        assert_eq!(!laid(&state, 0), pending());
         let mut frames = 0;
         while pending() || frames == 0 {
             frames += 1;
             assert!(frames < 10_000, "the history never finished building");
-            messages(&state, session, 600.0, &mut shaper);
+            frame(&state);
         }
-        let done = messages(&state, session, 600.0, &mut shaper);
+        frame(&state);
         assert!(!pending());
-        assert!(done.iter().all(|node| node.laid_height().is_some()));
+        assert!((0..400).all(|index| laid(&state, index)));
     }
 
     /// Prompt edits reuse a reply, while streaming, details and geometry updates produce current contents.
     #[test]
     fn prompt_edits_do_not_stale_message_content() {
-        let mut shaper = Shaper::new();
         let mut state = WorkspaceState::sample();
         let index = state.sessions[0]
             .messages
@@ -396,7 +430,7 @@ mod tests {
             .unwrap();
         for change in 0..4 {
             match change {
-                1 => state.prompt.apply(pm_text::Edit::Insert('x')),
+                1 => state.prompt.apply(pm_field::Edit::Insert('x')),
                 2 => {
                     let reply = &mut state.sessions[0].messages[index];
                     reply.text.push_str("\n\nNew streamed paragraph.");
@@ -405,14 +439,18 @@ mod tests {
                 3 => state.unfolded.push((state.open_index().unwrap(), index, 0)),
                 _ => {}
             }
-            let session = &state.sessions[0];
-            let cached = message(&state, session, index, 600.0, &mut shaper);
-            let fresh = super::super::agent_message(&state, session, index, 600.0, &mut shaper);
-            let actual = paint(cached, &mut shaper);
-            let expected = paint(fresh, &mut shaper);
-            let text = |output: &Output| {
-                output
-                    .pieces()
+            let held = Rc::new(state.clone());
+            let cached = held.clone();
+            let actual = paint(move || {
+                rustle::emit(message(&cached, &cached.sessions[0], index, 600.0));
+            });
+            let fresh = held.clone();
+            let expected = paint(move || {
+                super::super::agent_message(&fresh, &fresh.sessions[0], index, 600.0);
+            });
+            let text = |report: &Report| {
+                report
+                    .pieces
                     .iter()
                     .map(|piece| piece.content.as_ref())
                     .collect::<Vec<_>>()

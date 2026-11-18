@@ -2,18 +2,16 @@
 
 use std::collections::{HashMap, HashSet};
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Color, Radius, Role, flex, flex_1, flex_col, font_mono, gap, h, items_center, min_w_px,
-    overflow_hidden, pl, pr, truncate,
-};
-use pm_ui::{Node, node};
+use rustle::Modifier;
 
 use crate::Input;
 use crate::change_list::mark_color;
 use crate::file_icon::{file_icon, folder_icon};
-use crate::parts::{glyph, line};
+use crate::kit::theme::step_scale;
+use crate::kit::{
+    Flex, FocusId, IconName, Interactive, Radius, Role, Side, Styled, Tone, Type, column, gap_box,
+    icon as icon_of, label, label_with, row,
+};
 use crate::size::Size;
 use crate::state::{TREE_BASE, WorkspaceState};
 use crate::tile::Tile;
@@ -85,7 +83,7 @@ struct Changed {
     /// The letter git's status is written with, for a file.
     letter: Option<&'static str>,
     /// The colour the name is written in, when there is a change.
-    tone: Option<Color>,
+    tone: Option<Tone>,
 }
 
 impl Changed {
@@ -101,7 +99,7 @@ impl Changed {
     fn ignored() -> Self {
         Self {
             letter: None,
-            tone: Some(Color::from(Role::Muted)),
+            tone: Some(Tone::from(Role::Muted)),
         }
     }
 
@@ -161,135 +159,146 @@ fn look(
     }
 }
 
-/// One row: a name beside the icon of what it is, `depth` levels down, and the letter it is marked with.
-fn row(icon: Node, name: &str, depth: usize, fold: Option<bool>, id: FocusId, look: &Look) -> Node {
-    let chevron = match fold {
-        Some(true) => glyph(IconName::ChevronDown, 3.5, Role::Muted),
-        Some(false) => glyph(IconName::ChevronRight, 3.5, Role::Muted),
-        None => node().styles([pm_style::size(3.5)]),
-    };
+/// Emits one row: a name beside `icon`, the icon of what it is, `depth` levels down, with a chevron when `fold` says whether it is an open or closed folder, answering to `id`, drawn as `look` says, and the letter it is marked with.
+#[track_caller]
+fn entry_row(
+    icon: impl FnOnce(),
+    name: &str,
+    depth: usize,
+    fold: Option<bool>,
+    id: FocusId,
+    look: &Look,
+) {
     let tone = match look.changed.tone {
-        _ if look.cut => Color::from(Role::Subtle),
+        _ if look.cut => Tone::from(Role::Subtle),
         Some(tone) => tone,
-        None => Color::from(Role::Text),
+        None => Tone::from(Role::Text),
     };
-    let mut row = Tile::new(id)
+    let mut around = Modifier::new();
+    if look.landing {
+        around = around.fill_rounded(Tone::from(Role::Accent).alpha(0.24), Radius::Sm);
+    }
+    if look.cut {
+        around = around.opacity(60.0);
+    }
+    let letter = look.changed.letter;
+    Tile::new(id)
         .selected(look.selected)
         .height(6.0)
         .gap(1.5)
         .radius(Radius::Sm)
-        .build()
-        .styles([
-            pm_style::flex_none(),
-            pl(3.0 + depth as f32 * INDENT),
-            pr(3),
-        ])
-        .child(chevron)
-        .child(icon)
-        .child(
-            node()
-                .styles([flex_1(), min_w_px(0), overflow_hidden()])
-                .child(line(name, 13, 1.4, tone).styles([truncate()])),
-        );
-    if look.landing {
-        row = row.styles([pm_style::bg(Color::from(Role::Accent).alpha(0.24))]);
-    }
-    if look.cut {
-        row = row.styles([pm_style::opacity(60)]);
-    }
-    if let Some(letter) = look.changed.letter {
-        row = row.child(line(letter, 11, 1.4, tone).styles([font_mono()]));
-    }
-    row
-}
-
-/// What the pointer holds over the tree, named beside it: the row being dragged, or how many there are.
-pub fn drag_ghost(state: &WorkspaceState) -> Option<Node> {
-    let drag = state.git.tree_drag.as_ref()?;
-    let first = drag.targets.first()?;
-    let (icon, label) = if drag.targets.len() == 1 {
-        let name = crate::tree_actions::name_of(&first.path);
-        let icon = if first.folder {
-            folder_icon(false, 4.0)
-        } else {
-            file_icon(name, 4.0)
-        };
-        (icon, name.to_owned())
-    } else {
-        (
-            glyph(IconName::Copy, 4.0, Role::Muted),
-            format!("{} items", drag.targets.len()),
+        .modifier(around)
+        .inner(
+            Modifier::new()
+                .pad_side(Side::Left, 3.0 + depth as f32 * INDENT)
+                .pad_side(Side::Right, 3),
         )
-    };
-    Some(
-        node()
-            .styles([
-                pm_style::absolute(),
-                pm_style::left_px(drag.at.0 + 12.0),
-                pm_style::top_px(drag.at.1 + 10.0),
-                pm_style::z(60),
-                flex(),
-                items_center(),
-                gap(1.5),
-                h(7),
-                pm_style::px(2),
-                pm_style::rounded(Radius::Md),
-                pm_style::bg(Role::Surface),
-                pm_style::border(),
-                pm_style::border_color(Role::Border),
-                pm_style::shadow_md(),
-            ])
-            .child(icon)
-            .child(line(&label, 13, 1.4, Role::Text)),
-    )
+        .build_with(|| {
+            match fold {
+                Some(true) => icon_of(IconName::ChevronDown, 3.5, Role::Muted),
+                Some(false) => icon_of(IconName::ChevronRight, 3.5, Role::Muted),
+                None => gap_box(Modifier::new().square(3.5)),
+            }
+            icon();
+            label_with(
+                Modifier::new().grow(),
+                name,
+                Type::new(13).ratio(1.4).tone(tone).truncate(),
+            );
+            if let Some(letter) = letter {
+                label(
+                    letter,
+                    Type::new(11).ratio(1.4).tone(tone).truncate().mono(),
+                );
+            }
+        });
 }
 
-/// The field a name is typed into where its row will be, `depth` levels down, with what is wrong with the name under it.
-fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) -> Vec<Node> {
+/// Emits what the pointer holds over the tree, named beside it: the row being dragged, or how many there are; nothing while no row is dragged.
+#[track_caller]
+pub fn drag_ghost(state: &WorkspaceState) {
+    let Some(drag) = state.git.tree_drag.as_ref() else {
+        return;
+    };
+    let Some(first) = drag.targets.first() else {
+        return;
+    };
+    let count = drag.targets.len();
+    let name = crate::tree_actions::name_of(&first.path);
+    let words = if count == 1 {
+        name.to_owned()
+    } else {
+        format!("{count} items")
+    };
+    row(
+        Modifier::new()
+            .at(drag.at.0 + 12.0, drag.at.1 + 10.0)
+            .z_index_unclipped(60)
+            .h(7)
+            .shadow_md(Radius::Md)
+            .fill_rounded(Role::Surface, Radius::Md)
+            .stroke(Role::Border, Radius::Md)
+            .pad_x(2),
+        Flex::new().center().gap(1.5),
+        || {
+            if count != 1 {
+                icon_of(IconName::Copy, 4.0, Role::Muted);
+            } else if first.folder {
+                folder_icon(false, 4.0);
+            } else {
+                file_icon(name, 4.0);
+            }
+            label(&words, Type::new(13).ratio(1.4).tone(Role::Text).truncate());
+        },
+    );
+}
+
+/// Emits the field a name is typed into where its row will be, `depth` levels down, with what is wrong with the name under it; returns how many lines it emitted, none while nothing is being named.
+#[track_caller]
+fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) -> usize {
     let Some((_, field)) = state.git.naming.as_ref() else {
-        return Vec::new();
+        return 0;
     };
     let problem = state.naming_problem();
-    let icon = if folder {
-        folder_icon(false, 4.0)
-    } else {
-        file_icon(field.text(), 4.0)
-    };
-    let mut lines = vec![
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                gap(2),
-                h(6),
-                pl(3.0 + depth as f32 * INDENT),
-                pr(3),
-            ])
-            .child(node().styles([pm_style::size(3.5)]))
-            .child(icon)
-            .child(
-                node().styles([flex_1(), min_w_px(0)]).child(
-                    Input::new(field, ENTRY_FIELD)
-                        .size(Size::Sm)
-                        .invalid(problem.is_some())
-                        .build(),
-                ),
-            ),
-    ];
-    if let Some(problem) = problem {
-        lines.push(
-            node()
-                .styles([
-                    flex(),
-                    flex_col(),
-                    pl(3.0 + depth as f32 * INDENT + 8.0),
-                    pr(3),
-                    pm_style::pb(1),
-                ])
-                .child(line(problem, 12, 1.4, Role::Danger)),
+    rustle::key(ENTRY_FIELD.0, || {
+        row(
+            Modifier::new()
+                .h(6)
+                .pad_side(Side::Left, 3.0 + depth as f32 * INDENT)
+                .pad_side(Side::Right, 3),
+            Flex::new().center().gap(2),
+            || {
+                gap_box(Modifier::new().square(3.5));
+                if folder {
+                    folder_icon(false, 4.0);
+                } else {
+                    file_icon(field.text(), 4.0);
+                }
+                Input::new(field, ENTRY_FIELD)
+                    .size(Size::Sm)
+                    .invalid(problem.is_some())
+                    .modifier(Modifier::new().grow())
+                    .build();
+            },
         );
-    }
-    lines
+    });
+    let Some(problem) = problem else {
+        return 1;
+    };
+    column(
+        Modifier::new()
+            .pad_side(Side::Left, 3.0 + depth as f32 * INDENT + 8.0)
+            .pad_side(Side::Right, 3)
+            .pad_side(Side::Bottom, 1),
+        Flex::new(),
+        || {
+            label(
+                problem,
+                Type::new(12).ratio(1.4).tone(Role::Danger).truncate(),
+            )
+        },
+    );
+    2
 }
 
 /// What is being named in the tree, if it is a new entry in `directory`: whether it is a folder.
@@ -318,9 +327,9 @@ fn picked(picked: &[TreeTarget], path: &str, folder: bool) -> bool {
         .any(|target| target.path == path && target.folder == folder)
 }
 
-/// Visible row nodes and compact spacers for entries outside the viewport.
+/// The rows of the tree being emitted: only those near the viewport are drawn, and runs of the others become one spacer each.
 struct Rows {
-    /// The row indices built, with a small margin around the viewport.
+    /// The row indices drawn, with a small margin around the viewport.
     visible: std::ops::Range<usize>,
     /// The next row's position in the expanded tree.
     index: usize,
@@ -328,38 +337,40 @@ struct Rows {
     height: f32,
     /// Offscreen entries awaiting a single spacer.
     skipped: Vec<FocusId>,
-    /// The visible nodes and spacers in tree order.
-    nodes: Vec<Node>,
+    /// How many rows, name lines and spacers have been emitted so far.
+    emitted: usize,
 }
 
 impl Rows {
-    /// Adds a row, constructing its contents only when it can be seen.
-    fn push(&mut self, id: FocusId, build: impl FnOnce() -> Node) {
+    /// Adds the row answering to `id`, emitting it with `build` only when it can be seen.
+    #[track_caller]
+    fn push(&mut self, id: FocusId, build: impl FnOnce()) {
         if self.visible.contains(&self.index) {
             self.flush();
-            self.nodes.push(build());
+            rustle::key(id.0, build);
+            self.emitted += 1;
         } else {
             self.skipped.push(id);
         }
         self.index += 1;
     }
 
-    /// Replaces consecutive offscreen rows with their total height and keyboard identities.
+    /// Emits the consecutive offscreen rows held as one spacer of their total height that keeps their keyboard identities.
+    #[track_caller]
     fn flush(&mut self) {
         if !self.skipped.is_empty() {
-            self.nodes.push(
-                node()
-                    .styles([
-                        pm_style::h_px(self.skipped.len() as f32 * self.height),
-                        pm_style::flex_none(),
-                    ])
+            gap_box(
+                Modifier::new()
+                    .height(self.skipped.len() as f32 * self.height)
                     .virtual_focus(std::mem::take(&mut self.skipped)),
             );
+            self.emitted += 1;
         }
     }
 }
 
-/// Adds the entries in open folders, building only the rows inside `rows`' viewport.
+/// Emits the entries in open folders, drawing only the rows inside `rows`' viewport.
+#[track_caller]
 fn rows_of(
     state: &WorkspaceState,
     marks: &HashMap<&str, &'static str>,
@@ -373,7 +384,7 @@ fn rows_of(
             Entry::File { name, index } => {
                 let path = state.files.get(*index).map_or("", String::as_str);
                 if renaming(state, path) {
-                    rows.nodes.extend(name_lines(state, false, depth));
+                    rows.emitted += name_lines(state, false, depth);
                     continue;
                 }
                 let id = FocusId(TREE_FILE_BASE + *index as u64);
@@ -383,20 +394,20 @@ fn rows_of(
                         None if state.tree_ignored.contains(path) => Changed::ignored(),
                         None => Changed::none(),
                     };
-                    row(
-                        file_icon(name, 4.0),
+                    entry_row(
+                        || file_icon(name, 4.0),
                         name,
                         depth,
                         None,
                         id,
                         &look(state, chosen, path, false, changed),
-                    )
+                    );
                 });
             }
             Entry::Folder(folder) => {
                 let open = state.open_tree.contains(&folder.path);
                 if renaming(state, &folder.path) {
-                    rows.nodes.extend(name_lines(state, true, depth));
+                    rows.emitted += name_lines(state, true, depth);
                 } else {
                     let id = FocusId(TREE_BASE + folder.position as u64);
                     rows.push(id, || {
@@ -412,19 +423,19 @@ fn rows_of(
                         } else {
                             Changed::none()
                         };
-                        row(
-                            folder_icon(open, 4.0),
+                        entry_row(
+                            || folder_icon(open, 4.0),
                             &folder.name,
                             depth,
                             Some(open),
                             id,
                             &look(state, chosen, &folder.path, true, changed),
-                        )
+                        );
                     });
                 }
                 if open {
                     if let Some(is_folder) = new_in(state, &folder.path) {
-                        rows.nodes.extend(name_lines(state, is_folder, depth + 1));
+                        rows.emitted += name_lines(state, is_folder, depth + 1);
                     }
                     rows_of(state, marks, chosen, &folder.entries, depth + 1, rows);
                 }
@@ -448,12 +459,19 @@ fn row_count(entries: &[Entry], open: &HashSet<String>) -> usize {
         .sum()
 }
 
-/// The rows of the files of the project the open session works in, with the field a name is typed in where it goes.
-pub fn rows(state: &WorkspaceState, viewport: f32) -> Vec<Node> {
+/// Emits the rows of the files of the project the open session works in, with the field a name is typed in where it goes, drawing only those that fall within `viewport` logical pixels of the list's scroll offset.
+#[track_caller]
+pub fn rows(state: &WorkspaceState, viewport: f32) {
+    emit_rows(state, viewport);
+}
+
+/// Emits what [`rows`] emits and returns how many rows, name lines and spacers that was.
+#[track_caller]
+fn emit_rows(state: &WorkspaceState, viewport: f32) -> usize {
     let entries = tree(&state.files, &state.tree_folders);
-    let height = 24.0 * pm_style::step_scale();
+    let height = 24.0 * step_scale();
     let count = row_count(&entries, &state.open_tree);
-    let room = (count as f32 * height + 128.0 * pm_style::step_scale() - viewport).max(0.0);
+    let room = (count as f32 * height + 128.0 * step_scale() - viewport).max(0.0);
     let offset = state.tree_scroll.clamp(0.0, room);
     let first = (offset / height).floor() as usize;
     let visible = if state.git.naming.is_some() {
@@ -466,10 +484,10 @@ pub fn rows(state: &WorkspaceState, viewport: f32) -> Vec<Node> {
         index: 0,
         height,
         skipped: Vec::new(),
-        nodes: Vec::new(),
+        emitted: 0,
     };
     if let Some(is_folder) = new_in(state, "") {
-        rows.nodes.extend(name_lines(state, is_folder, 0));
+        rows.emitted += name_lines(state, is_folder, 0);
     }
     rows_of(
         state,
@@ -480,7 +498,7 @@ pub fn rows(state: &WorkspaceState, viewport: f32) -> Vec<Node> {
         &mut rows,
     );
     rows.flush();
-    rows.nodes
+    rows.emitted
 }
 
 #[cfg(test)]

@@ -1,6 +1,6 @@
 //! Tests of what the prompt does with screenshots and console lines of a page.
 
-use pm_input::FocusId;
+use crate::kit::FocusId;
 
 use super::{CAPTURE_REMOVE_BASE, Capture, Kind, Shot, message};
 use crate::elements::split;

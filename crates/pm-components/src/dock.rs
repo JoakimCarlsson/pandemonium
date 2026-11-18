@@ -3,9 +3,10 @@
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 
-use pm_input::FocusId;
+use pm_field::Reach;
 use pm_terminal::{Emulator, Link};
-use pm_text::Reach;
+
+use crate::kit::FocusId;
 
 use crate::sample::Session;
 

@@ -1,10 +1,8 @@
 //! The bar row: a name with a figure beside it and a bar under them, as long as the row's share of the longest.
 
-use pm_style::{
-    Color, Radius, Role, bg, flex, flex_1, flex_col, flex_none, gap, h_px, items_center,
-    justify_between, min_w_px, overflow_hidden, rounded, w_px,
-};
-use pm_ui::{Node, node};
+use rustle::Modifier;
+
+use crate::kit::{Flex, Radius, Role, Styled, Tone, block, column, gap_box, row};
 
 use crate::parts::line;
 
@@ -17,7 +15,7 @@ const LEAST_BAR: f32 = 2.0;
 /// A bar row being described: what it names, the figure beside the name, the line under it, and how long and in which colour its bar is.
 ///
 /// Build it with [`BarRow::new`], change it with the methods that follow, and
-/// turn it into a node with [`BarRow::build`].
+/// emit it with [`BarRow::build`].
 #[derive(Clone, Debug)]
 pub struct BarRow {
     /// What the row names.
@@ -29,9 +27,11 @@ pub struct BarRow {
     /// How much of the track the bar fills, from nought to one.
     share: f32,
     /// The colour of the bar.
-    tone: Color,
+    tone: Tone,
     /// How wide the row is, in logical pixels.
     width: f32,
+    /// What the caller puts around its box, outside its own.
+    modifier: Modifier,
 }
 
 impl BarRow {
@@ -44,6 +44,7 @@ impl BarRow {
             share: 0.0,
             tone: Role::Accent.into(),
             width,
+            modifier: Modifier::new(),
         }
     }
 
@@ -64,7 +65,7 @@ impl BarRow {
     }
 
     /// The row with its bar in `tone`.
-    pub fn tone(mut self, tone: impl Into<Color>) -> Self {
+    pub fn tone(mut self, tone: impl Into<Tone>) -> Self {
         self.tone = tone.into();
         self
     }
@@ -78,42 +79,62 @@ impl BarRow {
         }
     }
 
-    /// The node that draws the row: the name and the figure on one line, the detail under them, and the bar on its track.
-    pub fn build(self) -> Node {
+    /// The row with `modifier` put around its box, outside its own: margins, placement.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
+    }
+
+    /// Emits the row: the name and the figure on one line, the detail under them, and the bar on its track.
+    #[track_caller]
+    pub fn build(self) {
         let filled = self.filled();
-        let track = node()
-            .styles([
-                flex(),
-                flex_none(),
-                w_px(self.width),
-                h_px(BAR_HEIGHT),
-                rounded(Radius::Sm),
-                bg(Role::SurfaceHover),
-                overflow_hidden(),
-            ])
-            .children((filled > 0.0).then(|| {
-                node().styles([
-                    flex_none(),
-                    w_px(filled),
-                    h_px(BAR_HEIGHT),
-                    rounded(Radius::Sm),
-                    bg(self.tone),
-                ])
-            }));
-        node()
-            .styles([flex(), flex_col(), flex_none(), gap(1), w_px(self.width)])
-            .child(
-                node()
-                    .styles([flex(), items_center(), justify_between(), gap(3)])
-                    .child(
-                        node()
-                            .styles([flex_1(), min_w_px(0), overflow_hidden()])
-                            .child(line(self.label, 13, 1.4, Role::Text)),
-                    )
-                    .child(line(self.value, 13, 1.4, Role::Text).styles([flex_none()])),
-            )
-            .children(self.detail.map(|detail| line(detail, 12, 1.4, Role::Muted)))
-            .child(track)
+        let Self {
+            label,
+            value,
+            detail,
+            tone,
+            width,
+            modifier,
+            ..
+        } = self;
+        column(
+            modifier.chain(Modifier::new().width(width)),
+            Flex::new().gap(1),
+            move || {
+                row(
+                    Modifier::new(),
+                    Flex::new().center().between().gap(3),
+                    || {
+                        block(Modifier::new().grow().clip_to(Radius::None), || {
+                            line(label, 13, 1.4, Role::Text);
+                        });
+                        line(value, 13, 1.4, Role::Text);
+                    },
+                );
+                if let Some(detail) = detail {
+                    line(detail, 12, 1.4, Role::Muted);
+                }
+                row(
+                    Modifier::new()
+                        .width(width)
+                        .height(BAR_HEIGHT)
+                        .fill_rounded(Role::SurfaceHover, Radius::Sm)
+                        .clip_to(Radius::None),
+                    Flex::new(),
+                    || {
+                        if filled > 0.0 {
+                            gap_box(
+                                Modifier::new()
+                                    .width(filled)
+                                    .height(BAR_HEIGHT)
+                                    .fill_rounded(tone, Radius::Sm),
+                            );
+                        }
+                    },
+                );
+            },
+        );
     }
 }
 

@@ -1,9 +1,9 @@
 //! The list that hangs over the file shown to pick from: the places a search from the caret found, the changes the language server offers there, the commits that changed the file, or what the problems are; and the quick input over the command center, whose first character says what it lists: the files of the project, `>` the commands of the window, `#` the symbols of the project, `@` the items of the file's outline and `%` the lines of the project holding what is typed.
 
+use crate::kit::FocusId;
 use pm_editor::Action;
-use pm_input::FocusId;
+use pm_field::{Edit, Field};
 use pm_protocol::{CodeAction, ExtensionCommand, Location, Seek, Task};
-use pm_text::{Edit, Field};
 
 use crate::state::{Outgoing, WorkspaceState};
 
@@ -1169,7 +1169,7 @@ impl WorkspaceState {
                     return self;
                 };
                 self.remember_spot();
-                self.file_edited(pm_text::Edit::Place(item.name_start, false));
+                self.file_edited(Edit::Place(item.name_start, false));
                 self
             }
             Items::Symbols { locations, .. } | Items::Search { locations, .. } => {

@@ -2,12 +2,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use pm_input::FocusId;
+use pm_field::{Edit, Field};
 use pm_protocol::{
     Breakpoint, DebugAction, DebugAdapter, DebugEvent, DebugFile, DebugProcess, DebugScenario,
     DebugView, Location, Position, Span, Standing,
 };
-use pm_text::{Edit, Field};
+
+use crate::kit::FocusId;
 
 use crate::listing::{Items, Listing};
 use crate::quick_choices::Choosing;

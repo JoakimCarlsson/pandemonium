@@ -1,18 +1,12 @@
 //! The input: a box holding editable text, one line or several, with a look per variant and a measure per size.
 
-use std::sync::Arc;
+use pm_field::Field;
+use rustle::{CursorIcon, Modifier};
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, Utility, bg, border, border_color, cursor_not_allowed, cursor_text, flex, flex_1,
-    flex_col, flex_none, font_mono, gap, h, h_full, items_center, leading_ratio, min_h, min_w_px,
-    opacity, overflow_hidden, pb, pt, px, ring, ring_color, rounded, text_color, text_px, truncate,
-    w_full,
+use crate::kit::{
+    FieldText, Flex, FocusId, Hovered, IconName, Interactive, Radius, Role, Side, Styled, Type,
+    column, row, theme,
 };
-use pm_text::{Field, Shaper};
-use pm_ui::{FieldLayout, Line, Node, node, text, wrap};
-
 use crate::parts::glyph;
 use crate::size::Size;
 
@@ -28,9 +22,12 @@ const PADDING: f32 = 18.0;
 /// How many lines a multiline input shows at most; longer text scrolls to keep the caret in view.
 const MAX_LINES: usize = 8;
 
+/// The width the lines of a multiline input wrap at when no [`Input::wrap`] gave one, in logical pixels.
+const UNWRAPPED_WIDTH: f32 = 400.0;
+
 /// The size and leading every line of a multiline input is set in.
-fn typography() -> [Utility; 2] {
-    [text_px(14), leading_ratio(LINE_RATIO)]
+fn typography() -> Type {
+    Type::new(14).ratio(LINE_RATIO)
 }
 
 /// How wide the lines of a multiline input `outer` logical pixels wide are, inside its border and padding.
@@ -56,7 +53,7 @@ pub enum Variant {
 /// how it looks and whether it is switched off.
 ///
 /// Build it with [`Input::new`], change it with the methods that follow, and
-/// turn it into a node with [`Input::build`].
+/// emit it with [`Input::build`].
 #[derive(Clone, Debug)]
 pub struct Input<'a> {
     /// The line being edited.
@@ -77,8 +74,12 @@ pub struct Input<'a> {
     invalid: bool,
     /// How many lines tall a multiline box is at least.
     rows: u32,
-    /// The text cut into the lines a multiline box shows.
-    lines: Arc<[Line]>,
+    /// The width in logical pixels the lines of a multiline box wrap at, once given.
+    width: Option<f32>,
+    /// What the caller puts around its box: sizes, growth, margins, placement.
+    modifier: Modifier,
+    /// The padding that replaces the box's own, when the caller gave one.
+    inner: Option<Modifier>,
 }
 
 impl<'a> Input<'a> {
@@ -94,7 +95,9 @@ impl<'a> Input<'a> {
             disabled: false,
             invalid: false,
             rows: 1,
-            lines: Arc::from([]),
+            width: None,
+            modifier: Modifier::new(),
+            inner: None,
         }
     }
 
@@ -118,8 +121,8 @@ impl<'a> Input<'a> {
     }
 
     /// The multiline input with its text wrapped to `width` logical pixels.
-    pub fn wrap(mut self, width: f32, shaper: &mut Shaper) -> Self {
-        self.lines = wrap(shaper, &self.field.shown(), typography(), width).into();
+    pub fn wrap(mut self, width: f32) -> Self {
+        self.width = Some(width);
         self
     }
 
@@ -154,219 +157,121 @@ impl<'a> Input<'a> {
         self
     }
 
-    /// The node that draws the input: a ring and a blinking caret while it
-    /// holds keyboard focus, and the selection highlighted.
-    pub fn build(self) -> Node {
+    /// The input with `modifier` put around its box, outside its own look:
+    /// sizes, growth, margins, placement, tooltips. Calls accumulate.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
+    }
+
+    /// The input with `modifier` in place of its own padding, innermost in its box.
+    pub fn inner(mut self, modifier: Modifier) -> Self {
+        self.inner = Some(modifier);
+        self
+    }
+
+    /// Emits the input: a ring and a blinking caret while it holds keyboard
+    /// focus, and the selection highlighted.
+    #[track_caller]
+    pub fn build(self) {
         if self.variant == Variant::Multiline {
             return self.build_multiline();
         }
-        let shown = self.field.shown();
-        let (content, tone, caret) = if shown.is_empty() {
-            (self.placeholder, Role::Subtle, 0)
-        } else {
-            (&*shown, Role::Text, self.field.to_shown(self.field.caret()))
-        };
         let (height, font) = match (self.variant, self.size) {
-            (Variant::Bordered, Size::Xs) => (7, 12),
-            (Variant::Bordered, Size::Sm) => (8, 12),
-            (Variant::Bordered, Size::Md) => (9, 12),
-            (Variant::Bordered, Size::Lg) => (10, 12),
-            (_, Size::Xs) => (7, 12),
-            (_, Size::Sm) => (8, 12),
-            (_, Size::Md) => (10, 13),
-            (_, Size::Lg) => (12, 14),
+            (Variant::Bordered, Size::Xs) => (7.0, 12),
+            (Variant::Bordered, Size::Sm) => (8.0, 12),
+            (Variant::Bordered, Size::Md) => (9.0, 12),
+            (Variant::Bordered, Size::Lg) => (10.0, 12),
+            (_, Size::Xs) => (7.0, 12),
+            (_, Size::Sm) => (8.0, 12),
+            (_, Size::Md) => (10.0, 13),
+            (_, Size::Lg) => (12.0, 14),
         };
-        let mut line = text(content)
-            .styles([text_px(font), leading_ratio(1.4), text_color(tone)])
-            .caret(caret, self.id);
-        if shown.is_empty() {
-            line = line.styles([truncate(), min_w_px(0)]);
+        let id = self.id;
+        let invalid = self.invalid;
+        let boxed = matches!(self.variant, Variant::Default | Variant::Bordered);
+        let mut own = Modifier::new().fill_max_width().h(height);
+        if boxed {
+            own = own.fill_rounded(Role::Surface, Radius::Lg);
         }
-        if self.variant == Variant::Default {
-            line = line.styles([font_mono()]);
+        let (rest, focused, danger) = border_colors();
+        own = own.focus_of(id).styled_by(move |canvas, interaction| {
+            let tone = match (invalid, interaction.focused) {
+                (true, _) => danger,
+                (false, true) => focused,
+                (false, false) => rest,
+            };
+            if boxed || invalid {
+                let (width, height) = (canvas.width(), canvas.height());
+                canvas.stroke_rect(0.0, 0.0, width, height, Radius::Lg.px(), 1.0, tone);
+            }
+        });
+        own = own.focus_ring(id, 2.0, Radius::Lg);
+        own = if self.disabled {
+            own.opacity(40.0).cursor(CursorIcon::NotAllowed)
         } else {
-            line = line.styles([leading_ratio(1.57)]);
-        }
-        if let Some(range) = self.field.selection() {
-            line = line.selection(
-                self.field.to_shown(range.start)..self.field.to_shown(range.end),
-                self.id,
-            );
-        }
-        if let Some(range) = self.field.marked() {
-            line = line.marked(range, self.id);
-        }
-        let mut styles = vec![
-            flex(),
-            items_center(),
-            w_full(),
-            min_w_px(0),
-            h(height),
-            gap(2),
-            px(3),
-            rounded(Radius::Lg),
-            ring(2).focus(),
-            ring_color(Role::Focused).focus(),
-        ];
-        if matches!(self.variant, Variant::Default | Variant::Bordered) {
-            styles.extend([
-                bg(Role::Surface),
-                border(),
-                border_color(Role::Border),
-                border_color(Role::Focused).focus(),
-            ]);
-        }
-        if self.invalid {
-            styles.extend([
-                border(),
-                border_color(Role::Danger),
-                ring_color(Role::Danger).focus(),
-            ]);
-        }
-        if self.disabled {
-            styles.extend([opacity(40), cursor_not_allowed()]);
+            own.cursor(CursorIcon::Text).target(id)
+        };
+        own = own.chain(self.inner.unwrap_or_else(|| Modifier::new().pad_x(3)));
+        let mut kind = Type::new(font).ratio(1.4).tone(Role::Text);
+        kind = if self.variant == Variant::Default {
+            kind.mono()
         } else {
-            styles.push(cursor_text());
-        }
-        let view = node()
-            .styles([
-                flex(),
-                flex_1(),
-                h_full(),
-                items_center(),
-                overflow_hidden(),
-            ])
-            .scroll_x(self.field.scroll())
-            .child(line);
-        let mut input = node().styles(styles);
-        if let Some(icon) = self.leading {
-            input = input.child(glyph(icon, 4.0, Role::Muted));
-        }
-        let input = input.child(view);
-        if self.disabled {
-            input
-        } else {
-            input.focusable(self.id)
-        }
+            kind.ratio(1.57)
+        };
+        let (field, placeholder, leading) = (self.field, self.placeholder, self.leading);
+        row(
+            self.modifier.chain(own),
+            Flex::new().center().gap(2),
+            move || {
+                if let Some(icon) = leading {
+                    glyph(icon, 4.0, Role::Muted);
+                }
+                FieldText::new(field, id, kind)
+                    .placeholder(placeholder, Role::Subtle)
+                    .build(Modifier::new().grow());
+            },
+        );
     }
 
-    /// The node that draws a multiline input: its wrapped lines in a column, the caret and selection placed in them.
-    fn build_multiline(self) -> Node {
-        let content = self.field.shown();
-        let caret = self.field.to_shown(self.field.caret());
-        let caret_line = self
-            .lines
-            .iter()
-            .position(|line| caret < line.next)
-            .unwrap_or(self.lines.len().saturating_sub(1));
-        let measured = pm_style::Style::new(typography()).base().typography;
-        let height = measured.line_height_px();
-        let offset = self
-            .field
-            .scroll_for_lines(caret_line, self.lines.len(), MAX_LINES, height);
-        let selection = self
-            .field
-            .selection()
-            .map(|range| self.field.to_shown(range.start)..self.field.to_shown(range.end));
-        let marked = self.field.marked();
-        let column = node()
-            .styles([
-                flex(),
-                flex_col(),
-                w_full(),
-                min_w_px(0),
-                px(4),
-                pt(3.5),
-                pb(1),
-                min_h((self.rows as f32 * LINE + PADDING) / 4.0),
-                cursor_text(),
-            ])
-            .focusable(self.id)
-            .field_layout(FieldLayout {
-                id: self.id,
-                content: Arc::from(content.as_ref()),
-                lines: self.lines.clone(),
-                typography: measured,
-            });
-        if content.is_empty() {
-            return column.child(
-                text(self.placeholder)
-                    .styles(typography())
-                    .styles([text_color(Role::Subtle), truncate(), min_w_px(0)])
-                    .caret(0, self.id)
-                    .field_line(self.id, 0),
-            );
-        }
-        let first = if self.lines.len() > MAX_LINES {
-            (offset / height).floor() as usize
+    /// Emits a multiline input: its wrapped lines in a column at least
+    /// [`Input::rows`] lines tall, showing [`MAX_LINES`] at most and scrolled
+    /// to keep the caret in view, the caret and selection placed in them.
+    #[track_caller]
+    fn build_multiline(self) {
+        let minimum = self.rows as f32 * LINE + PADDING;
+        let wrap_at = self.width.unwrap_or(UNWRAPPED_WIDTH);
+        let mut own = Modifier::new()
+            .fill_max_width()
+            .height_in(minimum, f32::INFINITY);
+        own = if self.disabled {
+            own.opacity(40.0).cursor(CursorIcon::NotAllowed)
         } else {
-            0
-        }
-        .saturating_sub(1);
-        let last = if self.lines.len() > MAX_LINES {
-            (first + MAX_LINES + 3).min(self.lines.len())
-        } else {
-            self.lines.len()
+            own.cursor(CursorIcon::Text).target(self.id)
         };
-        let rows = self.lines[first..last]
-            .iter()
-            .enumerate()
-            .map(|(index, line)| {
-                let index = first + index;
-                let mut row = text(&content[line.start..line.end])
-                    .styles(typography())
-                    .styles([text_color(Role::Text), flex_none(), pm_style::h_px(height)])
-                    .field_line(self.id, line.start);
-                if index == caret_line {
-                    row = row.caret(caret - line.start, self.id);
-                }
-                if let Some(range) = clipped(&selection, line) {
-                    row = row.selection(range, self.id);
-                }
-                if let Some(range) = clipped(&marked, line) {
-                    row = row.marked(range, self.id);
-                }
-                row
-            });
-        if self.lines.len() > MAX_LINES {
-            column.styles([px(0)]).child(
-                node()
-                    .styles([
-                        flex(),
-                        flex_col(),
-                        w_full(),
-                        min_w_px(0),
-                        px(4),
-                        pm_style::max_h_px(MAX_LINES as f32 * height),
-                        overflow_hidden(),
-                    ])
-                    .scroll_from_start(self.id, offset)
-                    .child(node().styles([pm_style::h_px(first as f32 * height), flex_none()]))
-                    .children(rows)
-                    .child(node().styles([
-                        pm_style::h_px((self.lines.len() - last) as f32 * height),
-                        flex_none(),
-                    ])),
-            )
-        } else {
-            column.children(rows)
-        }
+        own = own.chain(self.inner.unwrap_or_else(|| {
+            Modifier::new()
+                .pad_x(4)
+                .pad_side(Side::Top, 3.5)
+                .pad_side(Side::Bottom, 1)
+        }));
+        let (field, id, placeholder) = (self.field, self.id, self.placeholder);
+        column(self.modifier.chain(own), Flex::new(), move || {
+            FieldText::new(field, id, typography().tone(Role::Text))
+                .placeholder(placeholder, Role::Subtle)
+                .wrap(wrap_at, Some(MAX_LINES))
+                .build(Modifier::new().fill_max_width());
+        });
     }
 }
 
-/// The part of `range` that falls on `line`, as offsets into the line, or
-/// nothing when none of it does.
-fn clipped(range: &Option<std::ops::Range<usize>>, line: &Line) -> Option<std::ops::Range<usize>> {
-    let range = range.as_ref()?;
-    let (low, high) = (range.start.max(line.start), range.end.min(line.end));
-    (low < high).then(|| low - line.start..high - line.start)
-}
-
-impl From<Input<'_>> for Node {
-    /// The node that draws the input.
-    fn from(input: Input<'_>) -> Self {
-        input.build()
-    }
+/// The border colours of a boxed input at rest, focused and holding something not acceptable.
+fn border_colors() -> (rustle::Color, rustle::Color, rustle::Color) {
+    (
+        theme::role(Role::Border),
+        theme::role(Role::Focused),
+        theme::role(Role::Danger),
+    )
 }
 
 #[cfg(test)]

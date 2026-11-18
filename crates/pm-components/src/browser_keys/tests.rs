@@ -1,6 +1,6 @@
 //! Tests of which keys the browser takes for itself.
 
-use pm_input::{Key, KeyEvent, Modifiers};
+use crate::kit::{Key, KeyEvent, Modifiers};
 
 use super::{Shortcut, shortcut_of};
 use crate::browser::{Command, ZoomStep};
@@ -112,7 +112,7 @@ fn find_opens_steps_and_closes() {
     state.browser_shortcut(Shortcut::Find);
     assert!(state.browser_find_open());
     assert!(commands(&mut state).is_empty());
-    state.browser_find_edited(pm_text::Edit::Paste("ab".to_owned()));
+    state.browser_find_edited(pm_field::Edit::Paste("ab".to_owned()));
     assert_eq!(
         commands(&mut state),
         vec![Command::Find {

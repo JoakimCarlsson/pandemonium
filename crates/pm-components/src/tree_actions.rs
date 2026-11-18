@@ -1,9 +1,8 @@
 //! What the reader does to the project's files from the Files tab: make a file or folder, rename, cut, copy, paste, duplicate, delete, copy a path, drag entries into another folder and bring files in from outside the window.
 
-use pm_input::FocusId;
-
 use crate::git_controls::Pick;
 use crate::git_prompts::Prompt;
+use crate::kit::FocusId;
 use crate::state::{Outgoing, WorkspaceState};
 
 /// Asks for a name for a new file at the root of the project.
@@ -406,7 +405,7 @@ impl WorkspaceState {
                 String::new()
             }
         };
-        self.git.naming = Some((naming, pm_text::Field::new(current)));
+        self.git.naming = Some((naming, pm_field::Field::new(current)));
     }
 
     /// Whether the tree is asking for a name.

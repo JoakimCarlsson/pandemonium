@@ -1,13 +1,10 @@
 //! The servers page of the settings window: the server on this machine and the ones on other machines the window knows, each changed or taken out from its row, the form a server is added or changed with, and which one new projects go to.
 
 use pm_config::{KnownServer, Reach};
-use pm_input::FocusId;
-use pm_style::{
-    Role, flex, flex_1, flex_col, flex_none, gap, items_center, justify_between, justify_end,
-    min_w_px, p,
-};
-use pm_text::{Edit, Field};
-use pm_ui::{Node, node};
+use pm_field::{Edit, Field};
+use rustle::Modifier;
+
+use crate::kit::{Flex, FocusId, Role, Styled, column, row};
 
 use crate::Button;
 use crate::button::Variant;
@@ -192,21 +189,21 @@ impl WorkspaceState {
     }
 }
 
-/// A box of the form under the words that say what is written in it.
-fn labelled(label: &str, field: &Field, id: FocusId, placeholder: &str) -> Node {
-    node()
-        .styles([flex(), flex_col(), gap(1)])
-        .child(line(label, 12, 1.4, Role::Muted))
-        .child(
-            Input::new(field, id)
-                .size(Size::Sm)
-                .placeholder(placeholder)
-                .build(),
-        )
+/// Emits a box of the form under the words that say what is written in it.
+#[track_caller]
+fn labelled(words: &str, field: &Field, id: FocusId, placeholder: &str) {
+    column(Modifier::new(), Flex::new().gap(1), || {
+        line(words, 12, 1.4, Role::Muted);
+        Input::new(field, id)
+            .size(Size::Sm)
+            .placeholder(placeholder)
+            .build();
+    });
 }
 
-/// The form a server is added or changed with.
-fn form_node(form: &MachineForm) -> Node {
+/// Emits the form a server is added or changed with.
+#[track_caller]
+fn form_node(form: &MachineForm) {
     let (address_label, address_hint) = match form.reach {
         Reach::Direct => ("Address", "host:port, e.g. 100.64.0.7:6868"),
         Reach::Ssh => ("SSH destination", "user@host, or a host of ~/.ssh/config"),
@@ -217,91 +214,77 @@ fn form_node(form: &MachineForm) -> Node {
         ),
         Reach::Tunnel => ("Tunnel hostname", "e.g. build.example.com"),
     };
-    let reach = choices(
-        &["Direct", "SSH", "WSL", "Dev container", "Tunnel"],
-        REACHES
-            .iter()
-            .position(|held| *held == form.reach)
-            .unwrap_or(0),
-        |option| MACHINE_REACHES.id(option),
-    );
-    let mut fields = node()
-        .styles([flex(), flex_col(), gap(3), p(3)])
-        .child(labelled("Name", &form.name, MACHINE_NAME, "e.g. Build box"))
-        .child(
-            node()
-                .styles([flex(), flex_col(), gap(1)])
-                .child(line("Reached", 12, 1.4, Role::Muted))
-                .child(node().styles([flex()]).child(reach)),
-        )
-        .child(labelled(
-            address_label,
-            &form.address,
-            MACHINE_ADDRESS,
-            address_hint,
-        ));
-    if form.reach.keeps_token() {
-        fields = fields.child(labelled(
-            "Token",
-            &form.token,
-            MACHINE_TOKEN,
-            "As in server.json on that machine",
-        ));
-    }
-    fields.child(
-        node()
-            .styles([flex(), items_center(), justify_end(), gap(2)])
-            .child(
+    let picked = REACHES
+        .iter()
+        .position(|held| *held == form.reach)
+        .unwrap_or(0);
+    column(Modifier::new().pad(3), Flex::new().gap(3), || {
+        labelled("Name", &form.name, MACHINE_NAME, "e.g. Build box");
+        column(Modifier::new(), Flex::new().gap(1), || {
+            line("Reached", 12, 1.4, Role::Muted);
+            row(Modifier::new(), Flex::new(), || {
+                choices(
+                    &["Direct", "SSH", "WSL", "Dev container", "Tunnel"],
+                    picked,
+                    |option| MACHINE_REACHES.id(option),
+                );
+            });
+        });
+        labelled(address_label, &form.address, MACHINE_ADDRESS, address_hint);
+        if form.reach.keeps_token() {
+            labelled(
+                "Token",
+                &form.token,
+                MACHINE_TOKEN,
+                "As in server.json on that machine",
+            );
+        }
+        row(
+            Modifier::new(),
+            Flex::new().center().trailing().gap(2),
+            || {
                 Button::new("Cancel", MACHINE_CANCEL)
                     .variant(Variant::Ghost)
                     .size(Size::Sm)
-                    .build(),
-            )
-            .child(
+                    .build();
                 Button::new("Save", MACHINE_SAVE)
                     .size(Size::Sm)
                     .disabled(form.server().is_none())
-                    .build(),
-            ),
-    )
+                    .build();
+            },
+        );
+    });
 }
 
-/// The row of a server: its name over how it is reached, and its buttons when it can be changed and the page has names for them.
-fn machine_row(name: &str, reach: String, buttons: Option<usize>) -> Node {
-    let words = node()
-        .styles([flex(), flex_col(), gap(0.5), flex_1(), min_w_px(0)])
-        .child(clipped(name, 13, Role::Text))
-        .child(clipped(reach, 12, Role::Muted));
-    let row = node()
-        .styles([
-            flex(),
-            items_center(),
-            justify_between(),
-            gap(3),
-            flex_none(),
-            pm_style::px(3),
-            pm_style::py(3),
-        ])
-        .child(words);
-    match buttons {
-        Some(index) => row.child(
-            node()
-                .styles([flex(), items_center(), gap(1), flex_none()])
-                .children(MACHINE_EDITS.id(index).map(|edit| {
-                    Button::new("Edit", edit)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .build()
-                }))
-                .children(MACHINE_REMOVES.id(index).map(|remove| {
-                    Button::new("Remove", remove)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .build()
-                })),
-        ),
-        None => row,
-    }
+/// Emits the row of a server: its name over how it is reached, and its buttons when it can be changed and the page has names for them.
+#[track_caller]
+fn machine_row(name: &str, reach: String, buttons: Option<usize>) {
+    row(
+        Modifier::new().pad_x(3).pad_y(3),
+        Flex::new().center().between().gap(3),
+        || {
+            column(Modifier::new().grow(), Flex::new().gap(0.5), || {
+                clipped(name, 13, Role::Text);
+                clipped(reach, 12, Role::Muted);
+            });
+            if let Some(index) = buttons {
+                row(Modifier::new(), Flex::new().center().gap(1), || {
+                    if let Some(edit) = MACHINE_EDITS.id(index) {
+                        Button::new("Edit", edit)
+                            .variant(Variant::Ghost)
+                            .size(Size::Sm)
+                            .build();
+                    }
+                    if let Some(remove) = MACHINE_REMOVES.id(index) {
+                        Button::new("Remove", remove)
+                            .variant(Variant::Ghost)
+                            .size(Size::Sm)
+                            .build();
+                    }
+                });
+            }
+        },
+    );
 }
 
 /// How `server` is reached, in the words of its row.
@@ -315,45 +298,34 @@ fn reach_of(server: &KnownServer) -> String {
     }
 }
 
-/// The body of the servers page, `room` logical pixels across: where new projects go, then every server with the form while it is open.
-pub(crate) fn body(state: &WorkspaceState, room: f32) -> Vec<Node> {
+/// Emits the body of the servers page, `room` logical pixels across: where new projects go, then every server with the form while it is open.
+#[track_caller]
+pub(crate) fn body(state: &WorkspaceState, room: f32) {
     let form = state.settings_page.server_form.as_ref();
     let adding = form.is_some_and(|form| form.index.is_none());
-    let mut rows = vec![machine_row(
-        "This machine",
-        "Local · started by the window when none is running".to_owned(),
-        None,
-    )];
-    rows.extend(
-        state
-            .window
-            .servers
-            .known
-            .iter()
-            .enumerate()
-            .map(|(index, server)| match form {
+    page_rows(state, Section::Servers, room);
+    row(Modifier::new(), Flex::new().center().between(), || {
+        crate::settings_servers::heading_only("Servers", state.window.servers.known.len() + 1);
+        Button::new("Add Server", MACHINE_ADD)
+            .variant(Variant::Outline)
+            .size(Size::Sm)
+            .disabled(adding)
+            .build();
+    });
+    crate::settings_servers::boxed(|| {
+        machine_row(
+            "This machine",
+            "Local · started by the window when none is running".to_owned(),
+            None,
+        );
+        for (index, server) in state.window.servers.known.iter().enumerate() {
+            rustle::key(index, || match form {
                 Some(form) if form.index == Some(index) => form_node(form),
                 _ => machine_row(&server.name, reach_of(server), Some(index)),
-            }),
-    );
-    if let (Some(form), true) = (form, adding) {
-        rows.push(form_node(form));
-    }
-    vec![
-        page_rows(state, Section::Servers, room),
-        node()
-            .styles([flex(), items_center(), justify_between(), flex_none()])
-            .child(crate::settings_servers::heading_only(
-                "Servers",
-                state.window.servers.known.len() + 1,
-            ))
-            .child(
-                Button::new("Add Server", MACHINE_ADD)
-                    .variant(Variant::Outline)
-                    .size(Size::Sm)
-                    .disabled(adding)
-                    .build(),
-            ),
-        crate::settings_servers::boxed(rows),
-    ]
+            });
+        }
+        if let (Some(form), true) = (form, adding) {
+            form_node(form);
+        }
+    });
 }

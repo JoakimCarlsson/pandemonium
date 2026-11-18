@@ -1,18 +1,26 @@
 //! The button: one component with a look per variant and a measure per size.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Color, Radius, Role, animate_spin, bg, border, border_color, cursor_not_allowed,
-    cursor_pointer, flex, flex_1, flex_col, flex_none, font_medium, font_mono, gap, h,
-    items_center, justify_between, justify_center, leading_ratio, min_h, min_w_px, opacity, px, py,
-    ring, ring_color, rounded, rounded_full, size, text_color, text_px, underline, w_px,
-};
-use pm_text::Shaper;
-use pm_ui::{Node, node, text};
+use std::fmt;
+use std::rc::Rc;
 
-use crate::parts::{clipped, glyph};
+use crate::kit::{
+    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Tone, Type, column,
+    icon, label, label_with, row, spinner, spinning_icon, wrap_lines,
+};
+use rustle::{CursorIcon, Modifier};
+
 use crate::size::Size;
+
+/// Content drawn before a button's words in place of an icon: a closure that emits it.
+#[derive(Clone)]
+struct Mark(Rc<dyn Fn()>);
+
+impl fmt::Debug for Mark {
+    /// Writes a placeholder, since the content is a closure.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("Mark(..)")
+    }
+}
 
 /// How a button looks, which says what it is for.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -49,15 +57,15 @@ enum Reach {
 /// A button being described: what it says, how it looks, and what it does.
 ///
 /// Build it with [`Button::new`] or [`Button::icon`], change it with the
-/// methods that follow, and turn it into a node with [`Button::build`].
+/// methods that follow, and draw it with [`Button::build`].
 #[derive(Clone, Debug)]
 pub struct Button {
     /// The words on the button, if any.
     label: Option<String>,
     /// The icon before the words, or alone.
     icon: Option<IconName>,
-    /// A node before the words in place of an icon, if any.
-    mark: Option<Node>,
+    /// What is drawn before the words in place of an icon, if anything.
+    mark: Option<Mark>,
     /// The icon after the words, if any.
     trailing: Option<IconName>,
     /// How it looks.
@@ -82,6 +90,12 @@ pub struct Button {
     reach: Reach,
     /// The lines its label is broken into when it is set to wrap, one text line each.
     lines: Vec<String>,
+    /// What the caller puts around the button's box, outside its own.
+    modifier: Modifier,
+    /// The padding that replaces the button's own, when the caller gave one.
+    inner: Option<Modifier>,
+    /// How the button lays out what it holds, in place of its own, when the caller gave one.
+    flex: Option<Flex>,
 }
 
 impl Button {
@@ -103,6 +117,9 @@ impl Button {
             tone: None,
             reach: Reach::Content,
             lines: Vec::new(),
+            modifier: Modifier::new(),
+            inner: None,
+            flex: None,
         }
     }
 
@@ -124,6 +141,9 @@ impl Button {
             tone: None,
             reach: Reach::Content,
             lines: Vec::new(),
+            modifier: Modifier::new(),
+            inner: None,
+            flex: None,
         }
     }
 
@@ -157,9 +177,9 @@ impl Button {
         self
     }
 
-    /// The button with `mark` before its words in place of an icon.
-    pub fn mark(mut self, mark: Node) -> Self {
-        self.mark = Some(mark);
+    /// The button with what `mark` emits before its words in place of an icon.
+    pub fn mark(mut self, mark: impl Fn() + 'static) -> Self {
+        self.mark = Some(Mark(Rc::new(mark)));
         self
     }
 
@@ -216,110 +236,134 @@ impl Button {
         }
     }
 
+    /// The button with `modifier` put around its box, outside its own: sizes, growth, margins, placement, a tooltip.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
+    }
+
+    /// The button with `modifier` in place of its own padding, innermost on its box.
+    pub fn inner(mut self, modifier: Modifier) -> Self {
+        self.inner = Some(modifier);
+        self
+    }
+
+    /// The button laying out what it holds by `flex` in place of its own.
+    pub fn flex(mut self, flex: Flex) -> Self {
+        self.flex = Some(flex);
+        self
+    }
+
     /// The button with its label broken into lines that fit `width` logical pixels, so that a long label grows the button taller instead of running out of it.
-    pub fn wrapped(mut self, width: f32, shaper: &mut Shaper) -> Self {
+    pub fn wrapped(mut self, width: f32) -> Self {
         let Some(label) = self.label.as_deref() else {
             return self;
         };
         let (_, side, font, _) = self.measure();
         let inner = (width - 2.0 * side * 4.0).max(32.0);
-        let styles = [text_px(font), leading_ratio(1.4), font_medium()];
-        self.lines = pm_ui::wrap(shaper, label, styles, inner)
+        let kind = Type::new(font).ratio(1.4).medium();
+        self.lines = wrap_lines(label, kind, inner)
             .into_iter()
             .map(|part| label[part.start..part.end].trim_end().to_owned())
             .collect();
         self
     }
 
-    /// The node that draws the button.
-    pub fn build(self) -> Node {
+    /// Emits the button.
+    #[track_caller]
+    pub fn build(self) {
         let ink = self.ink();
         let (height, side, font, square) = self.measure();
         let spread = self.reach != Reach::Content;
-        let mut styles = vec![
-            flex(),
-            items_center(),
-            if spread {
-                justify_between()
-            } else {
-                justify_center()
-            },
-            gap(2),
-            if self.round {
-                rounded_full()
-            } else {
-                rounded(Radius::Md)
-            },
-            ring(2).focus(),
-            ring_color(Role::Focused).focus(),
-        ];
-        if self.label.is_none() {
-            styles.push(size(square));
-        } else if self.lines.len() > 1 {
-            styles.extend([min_h(height), px(side), py(1.5)]);
+        let radius = if self.round { Radius::Full } else { Radius::Md };
+        let several = self.lines.len() > 1;
+        let mut own = match self.reach {
+            Reach::Content => Modifier::new(),
+            Reach::Fixed(width) => Modifier::new().width(width),
+            Reach::Fill => Modifier::new().grow(),
+        };
+        own = if self.label.is_none() {
+            own.square(square)
+        } else if several {
+            own.min_h(height)
         } else {
-            styles.extend([h(height), px(side)]);
-        }
-        match self.reach {
-            Reach::Content => {}
-            Reach::Fixed(width) => styles.extend([w_px(width), flex_none()]),
-            Reach::Fill => styles.extend([flex_1(), min_w_px(0)]),
-        }
-        styles.extend(self.look());
-        if self.disabled {
-            styles.extend([opacity(40), cursor_not_allowed()]);
+            own.h(height)
+        };
+        own = own.looks_of(self.looks(radius), self.id);
+        own = match (self.variant, self.selected) {
+            (Variant::Outline, true) => own.stroke(Role::Muted, radius),
+            (Variant::Outline, false) | (Variant::Field, false) => own.stroke(Role::Border, radius),
+            (Variant::Field, true) => own.stroke(Role::Focused, radius),
+            _ => own,
+        };
+        own = own.focus_ring(self.id, 2.0, radius);
+        own = if self.disabled {
+            own.opacity(40.0).cursor(CursorIcon::NotAllowed)
         } else {
-            styles.push(cursor_pointer());
-        }
-        let mut button = node().styles(styles);
-        if let Some(mark) = self.mark {
-            button = button.child(mark);
-        } else if let Some(icon) = self.icon {
-            let spinning = self.spinning && self.trailing.is_none();
-            button = button.child(Self::glyph(icon, ink, spinning));
-        }
-        if let Some(label) = self.label {
-            let mut words = Vec::new();
-            if self.variant != Variant::Field {
-                words.push(font_medium());
-            }
-            if self.variant == Variant::Link {
-                words.push(underline());
-            }
-            if self.monospace {
-                words.push(font_mono());
-            }
-            button = button.child(if self.lines.len() > 1 {
-                words.extend([text_px(font), leading_ratio(1.4), text_color(ink)]);
-                node().styles([flex(), flex_col(), min_w_px(0)]).children(
-                    self.lines
-                        .iter()
-                        .map(|part| text(part).styles(words.clone())),
-                )
-            } else if spread {
-                clipped(label, font, ink).styles(words)
-            } else {
-                words.extend([text_px(font), leading_ratio(1.4), text_color(ink)]);
-                text(label).styles(words)
-            });
-        }
-        if let Some(icon) = self.trailing {
-            button = button.child(Self::glyph(icon, ink, self.spinning));
-        }
-        if self.disabled {
-            button
+            own.cursor(CursorIcon::Pointer).target(self.id)
+        };
+        own = match (self.inner, self.label.is_some(), several) {
+            (Some(inner), _, _) => own.chain(inner),
+            (None, true, true) => own.pad_x(side).pad_y(1.5),
+            (None, true, false) => own.pad_x(side),
+            (None, false, _) => own,
+        };
+        let flex = self.flex.unwrap_or(if spread {
+            Flex::new().center().between().gap(2)
         } else {
-            button.focusable(self.id)
+            Flex::new().center().middle().gap(2)
+        });
+        let mut kind = Type::new(font).ratio(1.4).tone(ink);
+        if self.variant != Variant::Field {
+            kind = kind.medium();
         }
+        if self.variant == Variant::Link {
+            kind = kind.underline();
+        }
+        if self.monospace {
+            kind = kind.mono();
+        }
+        let spins_first = self.spinning && self.trailing.is_none();
+        let (mark, leading, trailing, spinning, words, lines) = (
+            self.mark,
+            self.icon,
+            self.trailing,
+            self.spinning,
+            self.label,
+            self.lines,
+        );
+        row(self.modifier.chain(own), flex, move || {
+            if let Some(mark) = mark {
+                (mark.0)();
+            } else if let Some(name) = leading {
+                Self::glyph(name, ink, spins_first);
+            }
+            if let Some(words) = words {
+                if lines.len() > 1 {
+                    column(Modifier::new(), Flex::new(), || {
+                        for part in &lines {
+                            label(part, kind);
+                        }
+                    });
+                } else if spread {
+                    label_with(Modifier::new().grow(), words, kind.truncate());
+                } else {
+                    label(words, kind);
+                }
+            }
+            if let Some(name) = trailing {
+                Self::glyph(name, ink, spinning);
+            }
+        });
     }
 
-    /// An icon in `ink`, turning while `spinning` is true.
-    fn glyph(icon: IconName, ink: Role, spinning: bool) -> Node {
-        let mark = glyph(icon, 4.0, ink);
-        if spinning {
-            mark.styles([animate_spin()])
-        } else {
-            mark
+    /// Emits `name` four steps across in `ink`, turning while `spinning` is true.
+    #[track_caller]
+    fn glyph(name: IconName, ink: Role, spinning: bool) {
+        match (spinning, name) {
+            (true, IconName::Loading) => spinner(4.0, ink),
+            (true, name) => spinning_icon(name, 4.0, ink),
+            (false, name) => icon(name, 4.0, ink),
         }
     }
 
@@ -333,15 +377,14 @@ impl Button {
         })
     }
 
-    /// The fill, the outline, and, while the button is on, how they change
-    /// under the pointer.
-    fn look(&self) -> Vec<pm_style::Utility> {
-        let (resting, hovered, pressed): (Option<Color>, Option<Color>, Option<Color>) =
+    /// The fill of the button at rest and, while it is on, under the pointer and pressed, with its corners `radius` round.
+    fn looks(&self, radius: Radius) -> Looks {
+        let (resting, hovered, pressed): (Option<Tone>, Option<Tone>, Option<Tone>) =
             match self.variant {
                 Variant::Default => (
                     Some(Role::Accent.into()),
                     Some(Role::AccentHover.into()),
-                    Some(Color::from(Role::Accent).alpha(0.8)),
+                    Some(Tone::from(Role::Accent).alpha(0.8)),
                 ),
                 Variant::Secondary => (
                     Some(Role::SurfaceHover.into()),
@@ -350,8 +393,8 @@ impl Button {
                 ),
                 Variant::Destructive => (
                     Some(Role::Danger.into()),
-                    Some(Color::from(Role::Danger).alpha(0.9)),
-                    Some(Color::from(Role::Danger).alpha(0.8)),
+                    Some(Tone::from(Role::Danger).alpha(0.9)),
+                    Some(Tone::from(Role::Danger).alpha(0.8)),
                 ),
                 Variant::Outline | Variant::Ghost => (
                     None,
@@ -365,30 +408,23 @@ impl Button {
                 ),
                 Variant::Link => (None, None, None),
             };
-        let mut utilities = Vec::new();
-        match (self.variant, self.selected) {
-            (Variant::Outline, true) => utilities.extend([border(), border_color(Role::Muted)]),
-            (Variant::Outline, false) => utilities.extend([border(), border_color(Role::Border)]),
-            (Variant::Field, true) => utilities.extend([border(), border_color(Role::Focused)]),
-            (Variant::Field, false) => utilities.extend([border(), border_color(Role::Border)]),
-            _ => {}
-        }
-        match (self.variant, self.selected) {
-            (Variant::Field, _) => utilities.extend(resting.map(bg)),
-            (_, true) => utilities.push(bg(Role::SurfaceSelected)),
-            _ => utilities.extend(resting.map(bg)),
+        let resting = match (self.variant, self.selected) {
+            (Variant::Field, _) => resting,
+            (_, true) => Some(Role::SurfaceSelected.into()),
+            _ => resting,
+        };
+        let mut looks = Looks::new().radius(radius);
+        if let Some(tone) = resting {
+            looks = looks.idle(tone);
         }
         if !self.disabled {
-            utilities.extend(hovered.map(|color| bg(color).hover()));
-            utilities.extend(pressed.map(|color| bg(color).active()));
+            if let Some(tone) = hovered {
+                looks = looks.hover(tone);
+            }
+            if let Some(tone) = pressed {
+                looks = looks.active(tone);
+            }
         }
-        utilities
-    }
-}
-
-impl From<Button> for Node {
-    /// The node that draws the button.
-    fn from(button: Button) -> Self {
-        button.build()
+        looks
     }
 }

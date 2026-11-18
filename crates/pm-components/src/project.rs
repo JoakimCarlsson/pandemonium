@@ -1,6 +1,6 @@
 //! A project: a folder or repository the work happens in.
 
-use pm_style::Color;
+use crate::kit::Tone;
 
 /// The perceptual lightness every avatar shares, so white letters read on all of them.
 const LIGHTNESS: f32 = 0.55;
@@ -77,10 +77,10 @@ impl Project {
     }
 
     /// The colour of the project's avatar, which the same path always gets.
-    pub fn color(&self) -> Color {
+    pub fn color(&self) -> Tone {
         let hash = self.path.bytes().fold(FNV_OFFSET, |hash, byte| {
             (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME)
         });
-        Color::oklch(LIGHTNESS, CHROMA, (hash % 360) as f32)
+        Tone::oklch(LIGHTNESS, CHROMA, (hash % 360) as f32)
     }
 }

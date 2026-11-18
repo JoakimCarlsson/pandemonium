@@ -1,6 +1,6 @@
 //! Every setting the settings window shows as a row: the page it is on, what it is called and does, and who keeps it.
 
-use pm_input::FocusId;
+use crate::kit::FocusId;
 
 use crate::settings::Section;
 use crate::settings_ids::{PER_SETTING, SETTING_CONTROLS};

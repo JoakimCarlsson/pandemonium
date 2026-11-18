@@ -42,10 +42,10 @@ impl WorkspaceState {
 mod tests {
     use super::*;
     use crate::arrange::SESSION_MENU_READ;
+    use crate::kit::FocusId;
     use crate::sample::{Session, Status};
     use crate::state::{Page, SESSION_BASE};
     use pm_harness::{Event, Permission};
-    use pm_input::FocusId;
 
     /// A fresh session whose server events can be replayed deterministically.
     fn session() -> Session {

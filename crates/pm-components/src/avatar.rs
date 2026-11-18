@@ -1,10 +1,8 @@
 //! The avatar: a project's colour with its first letter, at a measure per size.
 
-use pm_style::{
-    Color, Radius, bg, flex, font_semibold, items_center, justify_center, leading_ratio, rounded,
-    size, text_color, text_px,
-};
-use pm_ui::{Node, node, text};
+use rustle::Modifier;
+
+use crate::kit::{Flex, Radius, Styled, Tone, Type, label, row};
 
 use crate::Project;
 use crate::size::Size;
@@ -12,20 +10,22 @@ use crate::size::Size;
 /// An avatar being described: the letter it shows, its colour and its size.
 ///
 /// Build it with [`Avatar::new`] or [`Avatar::of`], change it with
-/// [`Avatar::size`], and turn it into a node with [`Avatar::build`].
+/// [`Avatar::size`], and emit it with [`Avatar::build`].
 #[derive(Clone, Debug)]
 pub struct Avatar {
     /// The first letter of the name, in capitals.
     initial: String,
     /// What it is filled with.
-    color: Color,
+    color: Tone,
     /// How big it is.
     size: Size,
+    /// What the caller puts around its box, outside its own.
+    modifier: Modifier,
 }
 
 impl Avatar {
     /// An avatar showing the first letter of `name` on `color`.
-    pub fn new(name: &str, color: Color) -> Self {
+    pub fn new(name: &str, color: Tone) -> Self {
         Self {
             initial: name
                 .chars()
@@ -34,6 +34,7 @@ impl Avatar {
                 .unwrap_or_default(),
             color,
             size: Size::Sm,
+            modifier: Modifier::new(),
         }
     }
 
@@ -48,35 +49,41 @@ impl Avatar {
         self
     }
 
-    /// The node that draws the avatar.
-    pub fn build(self) -> Node {
+    /// The avatar with `modifier` put around its box, outside its own: sizes, weight, placement.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
+    }
+
+    /// Emits the avatar: its letter centred on its colour.
+    #[track_caller]
+    pub fn build(self) {
         let (side, font) = match self.size {
             Size::Xs => (4.0, 11),
             Size::Sm => (5.0, 13),
             Size::Md => (6.0, 15),
             Size::Lg => (8.0, 18),
         };
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                justify_center(),
-                size(side),
-                rounded(Radius::Md),
-                bg(self.color),
-            ])
-            .child(text(self.initial).styles([
-                text_px(font),
-                leading_ratio(1.2),
-                font_semibold(),
-                text_color(Color::White),
-            ]))
+        let own = Modifier::new()
+            .square(side)
+            .fill_rounded(self.color, Radius::Md);
+        let initial = self.initial;
+        row(
+            self.modifier.chain(own),
+            Flex::new().center().middle(),
+            move || {
+                label(
+                    initial,
+                    Type::new(font).ratio(1.2).semibold().tone(Tone::White),
+                );
+            },
+        );
     }
 }
 
-impl From<Avatar> for Node {
-    /// The node that draws the avatar.
+impl From<Avatar> for rustle::Node {
+    /// The drawn avatar, held as a value.
     fn from(avatar: Avatar) -> Self {
-        avatar.build()
+        rustle::compose(move || avatar.build())
     }
 }

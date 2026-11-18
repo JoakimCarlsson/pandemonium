@@ -2,18 +2,9 @@
 
 use std::ops::Range;
 
-use pm_icon::IconName;
-use pm_input::FocusId;
 use pm_protocol::{HintKind, Severity};
-use pm_style::{
-    Color, Radius, Role, bg, border_b, border_color, border_t, code_px, cursor_pointer,
-    cursor_text, flex, flex_1, flex_col, flex_none, font_mono, gap, h, h_px, items_center,
-    justify_center, justify_end, leading_ratio, min_h, min_w_px, ml, overflow_hidden, pl, pr, px,
-    py, relative, rounded, rounded_full, text_color, w, w_px,
-};
-use pm_text::Shaper;
 use pm_treesitter::{Highlight, Kind};
-use pm_ui::{Mark, Node, Paint, node, text};
+use rustle::{CursorIcon, Modifier};
 
 use crate::Button;
 use crate::annotations::lens_mark;
@@ -22,9 +13,15 @@ use crate::color_picker::COLOR_SWATCH_BASE;
 use crate::debug::{Dot, Gutter, breakpoint_mark};
 use crate::file_icon::file_icon;
 use crate::git_controls::VIEWER_SCROLL;
+use crate::kit::{
+    CaretLook, CaretShape, Flex, FocusId, Hovered, IconName, Interactive, Looks, Mark, Paint,
+    Radius, Role, Scroll, Side, Styled, Tone, Type, block, column, frame, gap_box, label,
+    label_with, layer, marked_field_line, row, scroll_area,
+};
 use crate::open_files::{Contents, EDITOR_FIELD, EDITOR_SAVE, FILE_TAB_BASE, STRIP, Viewer};
 use crate::panes::PEEK_SCROLL_BASE;
 use crate::parts::{glyph, line, spacer};
+use crate::preview::Rendering;
 use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::tasks::run_mark;
@@ -36,9 +33,10 @@ const MINIMAP_ROOM: f32 = 420.0;
 /// How far beyond the view, above and below, lines are still built, in logical pixels.
 const OVERSCAN: f32 = 100.0;
 
-/// A box as tall as `lines` lines `row` logical pixels tall, standing in for those left out.
-fn blank(lines: usize, row: f32) -> Node {
-    node().styles([h_px(lines as f32 * row), flex_none()])
+/// Emits a box as tall as `lines` lines `row` logical pixels tall, standing in for those left out.
+#[track_caller]
+fn blank(lines: usize, row: f32) {
+    gap_box(Modifier::new().height(lines as f32 * row));
 }
 
 /// The part of `range` that falls on the line at `line`, as offsets into the line, or nothing when none of it does.
@@ -74,7 +72,7 @@ pub(crate) fn highlight_marks(highlights: &[Highlight], range: Range<usize>) -> 
             let role = kind_role(highlight.kind)?;
             (low < high).then(|| Mark {
                 range: low - range.start..high - range.start,
-                color: role.into(),
+                tone: role.into(),
                 paint: Paint::Ink,
             })
         })
@@ -121,7 +119,7 @@ fn recolor(marks: &mut Vec<Mark>, range: Range<usize>, role: Role) {
             if piece.start < piece.end {
                 kept.push(Mark {
                     range: piece,
-                    color: mark.color,
+                    tone: mark.tone,
                     paint: Paint::Ink,
                 });
             }
@@ -129,7 +127,7 @@ fn recolor(marks: &mut Vec<Mark>, range: Range<usize>, role: Role) {
     }
     kept.push(Mark {
         range,
-        color: role.into(),
+        tone: role.into(),
         paint: Paint::Ink,
     });
     *marks = kept;
@@ -153,7 +151,7 @@ pub(crate) fn line_marks(
         .filter_map(|(place, held)| {
             clipped(&Some(held.clone()), &line).map(|range| Mark {
                 range,
-                color: if Some(place) == *selected {
+                tone: if Some(place) == *selected {
                     Role::Warning.into()
                 } else {
                     Role::SurfaceActive.into()
@@ -171,14 +169,14 @@ pub(crate) fn line_marks(
         .filter_map(|(range, kind)| {
             kind_role(kind).map(|role| Mark {
                 range,
-                color: role.into(),
+                tone: role.into(),
                 paint: Paint::Ink,
             })
         })
         .collect();
     marks.extend(clipped(&document.find_scope(), &line).map(|range| Mark {
         range,
-        color: Role::SurfaceHover.into(),
+        tone: Role::SurfaceHover.into(),
         paint: Paint::Fill,
     }));
     if settings.bracket_colors {
@@ -192,7 +190,7 @@ pub(crate) fn line_marks(
                 recolor(&mut marks, range.clone(), Role::Muted);
                 marks.push(Mark {
                     range,
-                    color: Role::Muted.into(),
+                    tone: Role::Muted.into(),
                     paint: Paint::Fill,
                 });
             }
@@ -201,7 +199,7 @@ pub(crate) fn line_marks(
     marks.extend(pair.iter().filter_map(|bracket| {
         clipped(&Some(bracket.clone()), &line).map(|range| Mark {
             range,
-            color: Role::SurfaceActive.into(),
+            tone: Role::SurfaceActive.into(),
             paint: Paint::Fill,
         })
     }));
@@ -219,7 +217,7 @@ pub(crate) fn line_marks(
         {
             marks.push(Mark {
                 range,
-                color: Role::Focused.into(),
+                tone: Role::Focused.into(),
                 paint: Paint::Selected,
             });
         }
@@ -227,7 +225,7 @@ pub(crate) fn line_marks(
             let at = caret - line.start;
             marks.push(Mark {
                 range: at..at,
-                color: Role::Text.into(),
+                tone: Role::Text.into(),
                 paint: Paint::Caret,
             });
         }
@@ -235,7 +233,7 @@ pub(crate) fn line_marks(
     marks.extend(document.occurrences().iter().filter_map(|used| {
         clipped(&Some(used.clone()), &line).map(|range| Mark {
             range,
-            color: Role::SurfaceHover.into(),
+            tone: Role::SurfaceHover.into(),
             paint: Paint::Fill,
         })
     }));
@@ -245,13 +243,13 @@ pub(crate) fn line_marks(
             .filter(|at| (line.start..=line.end).contains(at))
             .map(|at| Mark {
                 range: at - line.start..at - line.start,
-                color: Role::Accent.into(),
+                tone: Role::Accent.into(),
                 paint: Paint::Drop,
             }),
     );
     marks.extend(clipped(&document.reach, &line).map(|range| Mark {
         range,
-        color: Role::SyntaxFunction.into(),
+        tone: Role::SyntaxFunction.into(),
         paint: Paint::Underline,
     }));
     marks.extend(
@@ -261,24 +259,27 @@ pub(crate) fn line_marks(
             .filter(|(_, diagnostic)| settings.diagnostics.shows(diagnostic.severity))
             .map(|(range, diagnostic)| Mark {
                 range,
-                color: severity_role(diagnostic.severity).into(),
+                tone: severity_role(diagnostic.severity).into(),
                 paint: Paint::Wave,
             }),
     );
     marks
 }
 
-/// The mark beside a line number saying how the line differs from the last commit: a bar for a line added or changed, and a short bar at its top where lines were taken out before it.
-fn change_bar(change: Option<LineChange>, height: f32) -> Node {
-    let holder = node().styles([flex(), flex_col(), flex_none(), w_px(3.0), h_px(height)]);
-    match change {
-        Some(LineChange::Added) => holder.styles([bg(Role::Success)]),
-        Some(LineChange::Modified) => holder.styles([bg(Role::Warning)]),
-        Some(LineChange::DeletedBefore) => {
-            holder.child(node().styles([w_px(3.0), h_px(4.0), bg(Role::Danger)]))
+/// Emits the mark beside a line number saying how the line differs from the last commit: a bar for a line added or changed, and a short bar at its top where lines were taken out before it.
+#[track_caller]
+fn change_bar(change: Option<LineChange>, height: f32) {
+    let holder = Modifier::new().width(3.0).height(height);
+    let holder = match change {
+        Some(LineChange::Added) => holder.fill(Role::Success),
+        Some(LineChange::Modified) => holder.fill(Role::Warning),
+        Some(LineChange::DeletedBefore) | None => holder,
+    };
+    column(holder, Flex::new(), move || {
+        if matches!(change, Some(LineChange::DeletedBefore)) {
+            gap_box(Modifier::new().width(3.0).height(4.0).fill(Role::Danger));
         }
-        None => holder,
-    }
+    });
 }
 
 /// How tall the rows of a line broken into `segments` are together, in logical pixels.
@@ -292,67 +293,73 @@ pub const BREAKPOINT_CELL: f32 = 16.0;
 /// How wide the cell for the run button of a line is, in logical pixels, in a file that has places that can be run.
 pub const RUN_CELL: f32 = 16.0;
 
-/// The cell before the breakpoint of a line that runs the place that starts on the line when pressed, and is empty on the lines where none starts.
-fn run_cell(file: usize, index: usize, gutter: &Gutter, height: f32) -> Node {
-    let cell = node().styles([
-        flex(),
-        items_center(),
-        justify_center(),
-        flex_none(),
-        w_px(RUN_CELL),
-        h_px(height),
-    ]);
-    if !gutter.runs.contains(&index) {
-        return cell;
-    }
-    cell.styles([cursor_pointer()])
-        .focusable(run_mark(file, index))
-        .child(glyph(IconName::Play, 3.5, Role::Success))
+/// Emits the cell before the breakpoint of a line that runs the place that starts on the line when pressed, and is empty on the lines where none starts.
+#[track_caller]
+fn run_cell(file: usize, index: usize, gutter: &Gutter, height: f32) {
+    let runs = gutter.runs.contains(&index);
+    let cell = Modifier::new().width(RUN_CELL).height(height);
+    let cell = if runs {
+        cell.cursor(CursorIcon::Pointer)
+            .target(run_mark(file, index))
+    } else {
+        cell
+    };
+    row(cell, Flex::new().center().middle(), move || {
+        if runs {
+            glyph(IconName::Play, 3.5, Role::Success);
+        }
+    });
 }
 
-/// The cells before a line number: the run button when the file has places that can be run, and the cell that sets or clears the breakpoint on the line when pressed, which shows the breakpoint, or the arrow where the program is paused.
-pub(crate) fn breakpoint_cell(file: usize, index: usize, gutter: &Gutter, height: f32) -> Node {
-    let cell = breakpoint_only(file, index, gutter, height);
+/// Emits the cells before a line number: the run button when the file has places that can be run, and the cell that sets or clears the breakpoint on the line when pressed, which shows the breakpoint, or the arrow where the program is paused.
+#[track_caller]
+pub(crate) fn breakpoint_cell(file: usize, index: usize, gutter: &Gutter, height: f32) {
     if gutter.runs.is_empty() {
-        return cell;
+        breakpoint_only(file, index, gutter, height);
+        return;
     }
-    node()
-        .styles([flex(), flex_none(), h_px(height)])
-        .child(run_cell(file, index, gutter, height))
-        .child(cell)
+    row(Modifier::new().height(height), Flex::new(), || {
+        run_cell(file, index, gutter, height);
+        breakpoint_only(file, index, gutter, height);
+    });
 }
 
-/// The cell before a line number that sets or clears the breakpoint on the line when pressed, and shows the breakpoint, or the arrow where the program is paused.
-fn breakpoint_only(file: usize, index: usize, gutter: &Gutter, height: f32) -> Node {
-    let cell = node()
-        .styles([
-            flex(),
-            items_center(),
-            justify_center(),
-            flex_none(),
-            w_px(BREAKPOINT_CELL),
-            h_px(height),
-            cursor_pointer(),
-        ])
-        .focusable(breakpoint_mark(file, index));
-    let dot =
-        |role: Role| node().styles([w_px(9.0), h_px(9.0), flex_none(), rounded_full(), bg(role)]);
-    match (gutter.dot(index), gutter.paused == Some(index)) {
-        (Some(Dot::Plain), _) => cell.child(dot(Role::Danger)),
-        (Some(Dot::Conditional), _) => cell.child(dot(Role::Warning)),
-        (Some(Dot::Unplaced), _) => cell.child(dot(Role::Subtle)),
-        (None, true) => cell.child(glyph(IconName::ArrowRight, 3.5, Role::Warning)),
-        (None, false) => cell,
-    }
+/// Emits the cell before a line number that sets or clears the breakpoint on the line when pressed, and shows the breakpoint, or the arrow where the program is paused.
+#[track_caller]
+fn breakpoint_only(file: usize, index: usize, gutter: &Gutter, height: f32) {
+    let cell = Modifier::new()
+        .width(BREAKPOINT_CELL)
+        .height(height)
+        .cursor(CursorIcon::Pointer)
+        .target(breakpoint_mark(file, index));
+    let shown = (gutter.dot(index), gutter.paused == Some(index));
+    row(cell, Flex::new().center().middle(), move || match shown {
+        (Some(Dot::Plain), _) => dot(Role::Danger),
+        (Some(Dot::Conditional), _) => dot(Role::Warning),
+        (Some(Dot::Unplaced), _) => dot(Role::Subtle),
+        (None, true) => glyph(IconName::ArrowRight, 3.5, Role::Warning),
+        (None, false) => {}
+    });
+}
+
+/// Emits the round dot of a breakpoint in `role`.
+#[track_caller]
+fn dot(role: Role) {
+    gap_box(
+        Modifier::new()
+            .width(9.0)
+            .height(9.0)
+            .fill_rounded(role, Radius::Full),
+    );
 }
 
 /// How the carets of a file are drawn, as `settings` say.
-fn caret_look(settings: &EditorSettings) -> pm_ui::CaretLook {
-    pm_ui::CaretLook {
+fn caret_look(settings: &EditorSettings) -> CaretLook {
+    CaretLook {
         shape: match settings.cursor_shape {
-            pm_editor::CursorShape::Bar => pm_ui::CaretShape::Bar,
-            pm_editor::CursorShape::Block => pm_ui::CaretShape::Block,
-            pm_editor::CursorShape::Underline => pm_ui::CaretShape::Underline,
+            pm_editor::CursorShape::Bar => CaretShape::Bar,
+            pm_editor::CursorShape::Block => CaretShape::Block,
+            pm_editor::CursorShape::Underline => CaretShape::Underline,
         },
         steady: !settings.cursor_blink,
     }
@@ -380,7 +387,7 @@ fn marks_in(marks: &[Mark], segment: &Range<usize>, first: bool, last: bool) -> 
                         .min(segment.end)
                         .max(range.start.max(segment.start))
                         - segment.start,
-                color: mark.color,
+                tone: mark.tone,
                 paint: mark.paint,
             })
         })
@@ -388,27 +395,28 @@ fn marks_in(marks: &[Mark], segment: &Range<usize>, first: bool, last: bool) -> 
 }
 
 /// What stands beside a line: who last changed it, and the cell that sets its breakpoint.
-pub(crate) struct Beside {
+pub(crate) struct Beside<F: FnOnce()> {
     /// Who last changed the line, when it is said.
     pub(crate) blamed: Option<String>,
-    /// The cell before the line number.
-    pub(crate) breakpoint: Node,
+    /// Emits the cell before the line number.
+    pub(crate) breakpoint: F,
     /// Whether the marker for the changes the language server offers stands beside the line number.
     pub(crate) bulb: bool,
     /// Whether a program being debugged is paused on the line.
     pub(crate) paused: bool,
 }
 
-/// One numbered line of the file, broken into the rows `segments` of it hold, with the caret and selection placed in it for the field `owner`, coloured by `marks`.
+/// Emits one numbered line of the file, broken into the rows `segments` of it hold, with the caret and selection placed in it for the field `owner`, coloured by `marks`.
+#[track_caller]
 pub(crate) fn file_line(
     document: &Document,
     index: usize,
     marks: Vec<Mark>,
     segments: Vec<Range<usize>>,
-    beside: Beside,
+    beside: Beside<impl FnOnce()>,
     settings: &EditorSettings,
     owner: FocusId,
-) -> Node {
+) {
     let Beside {
         blamed,
         breakpoint,
@@ -416,7 +424,6 @@ pub(crate) fn file_line(
         paused,
     } = beside;
     let line = document.line(index);
-    let text_of = &document.field.text()[line.clone()];
     let caret = document.field.caret();
     let caret_line = document.line_of(caret);
     let worst = document
@@ -459,266 +466,296 @@ pub(crate) fn file_line(
         &[]
     };
     let lens_row = lens_row && (!run_lenses.is_empty() || !lenses.is_empty());
-    let rows = text_segments.iter().enumerate().map(|(place, segment)| {
-        let absolute = line.start + segment.start..line.start + segment.end;
-        let standing: Vec<&Hint> = hints
-            .iter()
-            .filter(|hint| {
-                (absolute.start <= hint.offset && hint.offset < absolute.end)
-                    || (place == last && hint.offset == absolute.end)
-            })
-            .copied()
-            .collect();
-        let mut cuts: Vec<usize> = vec![segment.start];
-        cuts.extend(standing.iter().map(|hint| hint.offset - line.start));
-        cuts.push(segment.end);
-        let pieces = cuts.len() - 1;
-        let mut held = node().styles([
-            flex(),
-            items_center(),
-            h_px(height),
-            flex_none(),
-            min_w_px(0),
-        ]);
+    let total = height * segments.len().max(1) as f32;
+    let own = Modifier::new().height(total);
+    let own = if paused {
+        own.fill(Role::SurfaceActive)
+    } else if settings.current_line_highlight
+        && index == caret_line
+        && document.field.selection().is_none()
+    {
+        own.fill(Role::Surface)
+    } else {
+        own
+    };
+    let number_tone = if index == caret_line {
+        Role::Muted
+    } else {
+        Role::Subtle
+    };
+    let number_box = if settings.line_numbers {
+        Modifier::new().w(13)
+    } else {
+        Modifier::new().w(2)
+    };
+    row(own.clip_to(Radius::None), Flex::new(), || {
+        breakpoint();
+        change_bar(
+            document.line_change(index).filter(|_| settings.git_gutter),
+            total,
+        );
+        column(number_box.pad_side(Side::Right, 3), Flex::new(), || {
+            if lens_row {
+                gap_box(Modifier::new().height(height));
+            }
+            row(
+                Modifier::new().height(height),
+                Flex::new().center().trailing(),
+                || {
+                    if bulb && settings.line_numbers {
+                        bulb_button(height);
+                    }
+                    if settings.line_numbers {
+                        label(
+                            number.to_string(),
+                            Type::code(font)
+                                .ratio(1.4)
+                                .tone(worst.map_or(number_tone, severity_role)),
+                        );
+                    }
+                },
+            );
+        });
+        column(
+            Modifier::new().grow().clip_to(Radius::None).pad_x(2),
+            Flex::new(),
+            || {
+                if lens_row {
+                    run_lens_row(&run_lenses, lenses, height, font);
+                }
+                for (place, segment) in text_segments.iter().enumerate() {
+                    let at = Segment {
+                        line: &line,
+                        segment,
+                        first: place == 0,
+                        last: place == last,
+                    };
+                    if place < last {
+                        segment_row(document, &at, &hints, &marks, settings, owner, || {});
+                        continue;
+                    }
+                    segment_row(document, &at, &hints, &marks, settings, owner, || {
+                        if document.is_folded_at(index) {
+                            fold_chip(index);
+                        }
+                        if let Some(said) = blamed.clone() {
+                            label_with(
+                                Modifier::new().pad_side(Side::Left, 8).grow(),
+                                said,
+                                Type::new(font).ratio(1.4).tone(Role::Subtle).truncate(),
+                            );
+                        }
+                    });
+                }
+            },
+        );
+    });
+}
+
+/// Where one row of a line broken into rows lies in the line and in the file.
+struct Segment<'a> {
+    /// Where the line lies in the file's text.
+    line: &'a Range<usize>,
+    /// Where the row lies in the line.
+    segment: &'a Range<usize>,
+    /// Whether it is the line's first row of text.
+    first: bool,
+    /// Whether it is the line's last row.
+    last: bool,
+}
+
+/// Emits one row of a line, `at` saying where it lies: its text cut into pieces at the inlay `hints` that stand in it, each piece coloured by the `marks` of the line and holding the caret and selection of the field `owner` while that field has focus, with the hint after each piece, then what `tail` emits.
+#[track_caller]
+fn segment_row(
+    document: &Document,
+    at: &Segment,
+    hints: &[&Hint],
+    marks: &[Mark],
+    settings: &EditorSettings,
+    owner: FocusId,
+    tail: impl FnOnce(),
+) {
+    let Segment {
+        line,
+        segment,
+        first,
+        last,
+    } = *at;
+    let text_of = &document.field.text()[line.clone()];
+    let caret = document.field.caret();
+    let font = settings.font_size;
+    let height = settings.row_height();
+    let focused = frame::is_focused(owner);
+    let absolute = line.start + segment.start..line.start + segment.end;
+    let standing: Vec<&Hint> = hints
+        .iter()
+        .filter(|hint| {
+            (absolute.start <= hint.offset && hint.offset < absolute.end)
+                || (last && hint.offset == absolute.end)
+        })
+        .copied()
+        .collect();
+    let mut cuts: Vec<usize> = vec![segment.start];
+    cuts.extend(standing.iter().map(|hint| hint.offset - line.start));
+    cuts.push(segment.end);
+    let pieces = cuts.len() - 1;
+    row(Modifier::new().height(height), Flex::new().center(), || {
         for (step, bounds) in cuts.windows(2).enumerate() {
             let piece = bounds[0]..bounds[1];
             let piece_absolute = line.start + piece.start..line.start + piece.end;
             let ends_segment = step + 1 == pieces;
-            let mut content = text(&text_of[piece.clone()])
-                .styles([
-                    code_px(font),
-                    leading_ratio(1.4),
-                    font_mono(),
-                    text_color(Role::Text),
-                    flex_none(),
-                ])
-                .field_line(owner, piece_absolute.start)
-                .marks(marks_in(
-                    &marks,
-                    &piece,
-                    place == 0 && step == 0,
-                    place == last && ends_segment,
-                ))
-                .caret_look(caret_look(settings));
+            let mut piece_marks = marks_in(marks, &piece, first && step == 0, last && ends_segment);
             let after_start = if step == 0 {
                 piece_absolute.start <= caret
             } else {
                 piece_absolute.start < caret
             };
             let before_end = if ends_segment {
-                caret < piece_absolute.end || (place == last && caret == piece_absolute.end)
+                caret < piece_absolute.end || (last && caret == piece_absolute.end)
             } else {
                 caret <= piece_absolute.end
             };
             let holds_caret = after_start && before_end;
-            if holds_caret {
-                content = content.caret(caret - piece_absolute.start, owner);
+            if focused {
+                if holds_caret {
+                    let at = caret - piece_absolute.start;
+                    piece_marks.push(Mark::new(at..at, Role::Text, Paint::Caret));
+                }
+                if let Some(range) = clipped(&document.field.selection(), &piece_absolute) {
+                    piece_marks.push(Mark::new(range, Role::Text, Paint::Selected));
+                }
+                if let Some(range) = clipped(&document.field.marked(), &piece_absolute) {
+                    piece_marks.push(Mark::new(range, Role::Text, Paint::Underline));
+                }
             }
-            if let Some(range) = clipped(&document.field.selection(), &piece_absolute) {
-                content = content.selection(range, owner);
-            }
-            if let Some(range) = clipped(&document.field.marked(), &piece_absolute) {
-                content = content.marked(range, owner);
-            }
-            held = held.child(content);
+            marked_field_line(
+                Modifier::new(),
+                owner,
+                piece_absolute.start,
+                &text_of[piece.clone()],
+                Type::code(font).ratio(1.4).tone(Role::Text),
+                piece_marks,
+                caret_look(settings),
+            );
             if let Some(hint) = standing.get(step) {
-                held = held.child(hint_chip(hint, font));
+                hint_chip(hint, font);
             }
         }
-        if place < last {
-            return held;
-        }
-        held.children(document.is_folded_at(index).then(|| fold_chip(index)))
-            .children(blamed.clone().map(|said| {
-                node()
-                    .styles([flex_1(), ml(8), min_w_px(0), overflow_hidden()])
-                    .child(crate::parts::line(said, font, 1.4, Role::Subtle))
-            }))
+        tail();
     });
-    let mut row = node()
-        .styles([
-            flex(),
-            h_px(height * segments.len().max(1) as f32),
-            flex_none(),
-            overflow_hidden(),
-        ])
-        .child(breakpoint)
-        .child(change_bar(
-            document.line_change(index).filter(|_| settings.git_gutter),
-            height * segments.len().max(1) as f32,
-        ));
-    if paused {
-        row = row.styles([bg(Role::SurfaceActive)]);
-    } else if settings.current_line_highlight
-        && index == caret_line
-        && document.field.selection().is_none()
-    {
-        row = row.styles([bg(Role::Surface)]);
-    }
-    let number_tone = if index == caret_line {
-        Role::Muted
-    } else {
-        Role::Subtle
-    };
-    row.child(
-        node()
-            .styles([flex(), flex_col(), flex_none(), pr(3)])
-            .styles([if settings.line_numbers { w(13) } else { w(2) }])
-            .children(lens_row.then(|| node().styles([h_px(height), flex_none()])))
-            .child(
-                node()
-                    .styles([flex(), items_center(), justify_end(), h_px(height)])
-                    .children((bulb && settings.line_numbers).then(|| bulb_button(height)))
-                    .children(settings.line_numbers.then(|| {
-                        text(number.to_string()).styles([
-                            code_px(font),
-                            leading_ratio(1.4),
-                            font_mono(),
-                            text_color(worst.map_or(number_tone, severity_role)),
-                        ])
-                    })),
-            ),
-    )
-    .child(
-        node()
-            .styles([
-                flex(),
-                flex_col(),
-                flex_1(),
-                min_w_px(0),
-                overflow_hidden(),
-                px(2),
-            ])
-            .children(lens_row.then(|| run_lens_row(&run_lenses, lenses, height, font)))
-            .children(rows),
-    )
 }
 
-/// The row above a line that holds the links which run the line's place, each the `index`th of the links of the file.
-fn run_lens_row(
-    lenses: &[(usize, String)],
-    given: &[pm_editor::Lens],
-    height: f32,
-    font: u32,
-) -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            h_px(height),
-            flex_none(),
-            min_w_px(0),
-        ])
-        .children(
-            lenses
-                .iter()
-                .enumerate()
-                .map(|(place, (index, label))| run_lens_chip(*index, label, font, place == 0)),
-        )
-        .children(
-            given
-                .iter()
-                .enumerate()
-                .map(|(place, lens)| lens_chip(lens, font, lenses.is_empty() && place == 0)),
-        )
+/// Emits the row above a line that holds the links which run the line's place, each the `index`th of the links of the file, then the lenses `given` by the language server.
+#[track_caller]
+fn run_lens_row(lenses: &[(usize, String)], given: &[pm_editor::Lens], height: f32, font: u32) {
+    row(Modifier::new().height(height), Flex::new().center(), || {
+        for (place, (index, label)) in lenses.iter().enumerate() {
+            run_lens_chip(*index, label, font, place == 0);
+        }
+        for (place, lens) in given.iter().enumerate() {
+            lens_chip(lens, font, lenses.is_empty() && place == 0);
+        }
+    });
 }
 
-/// The marker that says the language server offers changes on the line, which opens the list of them when pressed.
-fn bulb_button(height: f32) -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            justify_center(),
-            flex_none(),
-            w_px(16.0),
-            h_px(height),
-            cursor_pointer(),
-        ])
-        .focusable(crate::lightbulb::LIGHTBULB)
-        .child(glyph(IconName::Lightbulb, 3.5, Role::Warning))
+/// Emits the marker that says the language server offers changes on the line, which opens the list of them when pressed.
+#[track_caller]
+fn bulb_button(height: f32) {
+    row(
+        Modifier::new()
+            .width(16.0)
+            .height(height)
+            .cursor(CursorIcon::Pointer)
+            .target(crate::lightbulb::LIGHTBULB),
+        Flex::new().center().middle(),
+        || glyph(IconName::Lightbulb, 3.5, Role::Warning),
+    );
 }
 
-/// The text of `hint` written inside a line in a smaller, quieter hand than the code around it.
-fn hint_chip(hint: &Hint, font: u32) -> Node {
+/// Emits the text of `hint` written inside a line in a smaller, quieter hand than the code around it, or the swatch of the colour it stands for, pressed to pick another.
+#[track_caller]
+fn hint_chip(hint: &Hint, font: u32) {
     if let Some(Swatch {
         color: [red, green, blue, alpha],
         index,
     }) = hint.swatch
     {
         let side = (font as f32 * 0.8).max(8.0);
-        return node()
-            .styles([
-                flex(),
-                items_center(),
-                flex_none(),
-                pr(1.0),
-                cursor_pointer(),
-            ])
-            .focusable(FocusId(COLOR_SWATCH_BASE + index as u64))
-            .child(node().styles([
-                w_px(side),
-                h_px(side),
-                flex_none(),
-                rounded(Radius::Sm),
-                bg(Color::rgb(red, green, blue).alpha(f32::from(alpha) / 255.0)),
-            ]));
+        row(
+            Modifier::new()
+                .cursor(CursorIcon::Pointer)
+                .target(FocusId(COLOR_SWATCH_BASE + index as u64))
+                .pad_side(Side::Right, 1.0),
+            Flex::new().center(),
+            || {
+                gap_box(Modifier::new().width(side).height(side).fill_rounded(
+                    Tone::rgb(red, green, blue).alpha(f32::from(alpha) / 255.0),
+                    Radius::Sm,
+                ));
+            },
+        );
+        return;
     }
     let tone = match hint.kind {
         HintKind::Type | HintKind::Value => Role::Subtle,
         HintKind::Parameter | HintKind::Other => Role::Muted,
     };
-    let mut chip = node().styles([
-        flex(),
-        items_center(),
-        flex_none(),
-        px(1.0),
-        rounded(Radius::Sm),
-        bg(Role::Surface),
-    ]);
-    if hint.pad_left {
-        chip = chip.styles([ml(1)]);
-    }
-    chip.child(line(&hint.label, (font - 1).max(8), 1.2, tone).styles([font_mono(), flex_none()]))
-}
-
-/// The link at the end of its line that runs a place with the task `label`, the `index`th of the links of the file.
-fn run_lens_chip(index: usize, label: &str, font: u32, first: bool) -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            flex_none(),
-            pl(if first { 0.0 } else { 1.5 }),
-            pr(1.5),
-            h(4),
-            rounded(Radius::Sm),
-            cursor_pointer(),
-            bg(Role::SurfaceHover).hover(),
-        ])
-        .focusable(crate::tasks::run_lens_mark(index))
-        .child(line(label, (font - 1).max(8), 1.2, Role::Muted).styles([flex_none()]))
-}
-
-/// The text of `lens` on the row above its line, pressed to do what the server says when it can be.
-fn lens_chip(lens: &Lens, font: u32, first: bool) -> Node {
-    let chip = node().styles([
-        flex(),
-        items_center(),
-        flex_none(),
-        pl(if first { 0.0 } else { 1.5 }),
-        pr(1.5),
-        h(4),
-        rounded(Radius::Sm),
-    ]);
-    let words = line(&lens.title, (font - 1).max(8), 1.2, Role::Subtle).styles([flex_none()]);
-    if lens.pressable {
-        chip.styles([cursor_pointer(), bg(Role::SurfaceHover).hover()])
-            .focusable(lens_mark(lens.index))
-            .child(words)
+    let own = if hint.pad_left {
+        Modifier::new().pad_side(Side::Left, 1)
     } else {
-        chip.child(words)
-    }
+        Modifier::new()
+    };
+    row(
+        own.fill_rounded(Role::Surface, Radius::Sm).pad_x(1.0),
+        Flex::new().center(),
+        || {
+            label(
+                &hint.label,
+                Type::new((font - 1).max(8)).ratio(1.2).tone(tone).mono(),
+            );
+        },
+    );
+}
+
+/// The padding inside a chip of the row above a line: none at the left of the `first`, a step and a half otherwise and at the right.
+fn chip_padding(own: Modifier, first: bool) -> Modifier {
+    own.pad_side(Side::Left, if first { 0.0 } else { 1.5 })
+        .pad_side(Side::Right, 1.5)
+}
+
+/// Emits the link at the end of its line that runs a place with the task `label`, the `index`th of the links of the file.
+#[track_caller]
+fn run_lens_chip(index: usize, label: &str, font: u32, first: bool) {
+    let own = Modifier::new()
+        .h(4)
+        .looks(Looks::new().hover(Role::SurfaceHover).radius(Radius::Sm))
+        .cursor(CursorIcon::Pointer)
+        .target(crate::tasks::run_lens_mark(index));
+    row(chip_padding(own, first), Flex::new().center(), || {
+        crate::kit::label(
+            label,
+            Type::new((font - 1).max(8)).ratio(1.2).tone(Role::Muted),
+        );
+    });
+}
+
+/// Emits the text of `lens` on the row above its line, pressed to do what the server says when it can be.
+#[track_caller]
+fn lens_chip(lens: &Lens, font: u32, first: bool) {
+    let own = Modifier::new().h(4);
+    let own = if lens.pressable {
+        own.looks(Looks::new().hover(Role::SurfaceHover).radius(Radius::Sm))
+            .cursor(CursorIcon::Pointer)
+            .target(lens_mark(lens.index))
+    } else {
+        own
+    };
+    row(chip_padding(own, first), Flex::new().center(), || {
+        label(
+            &lens.title,
+            Type::new((font - 1).max(8)).ratio(1.2).tone(Role::Subtle),
+        );
+    });
 }
 
 /// The first of the marks standing for folded lines, each following it by the index of the line it is on.
@@ -727,23 +764,25 @@ pub const FOLD_BASE: u64 = 7_500_000;
 /// One past the last mark standing for folded lines.
 pub const FOLD_END: u64 = 8_500_000;
 
-/// The mark after the line at `index` standing for the lines folded away after it, which unfolds them when pressed.
-fn fold_chip(index: usize) -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            flex_none(),
-            ml(2),
-            px(1.5),
-            h(4),
-            rounded(Radius::Sm),
-            bg(Role::SurfaceActive),
-            bg(Role::SurfaceHover).hover(),
-            cursor_pointer(),
-        ])
-        .focusable(FocusId(FOLD_BASE + index as u64))
-        .child(line("⋯", 11, 1.2, Role::Muted))
+/// Emits the mark after the line at `index` standing for the lines folded away after it, which unfolds them when pressed.
+#[track_caller]
+fn fold_chip(index: usize) {
+    row(
+        Modifier::new()
+            .pad_side(Side::Left, 2)
+            .h(4)
+            .looks(
+                Looks::new()
+                    .idle(Role::SurfaceActive)
+                    .hover(Role::SurfaceHover)
+                    .radius(Radius::Sm),
+            )
+            .cursor(CursorIcon::Pointer)
+            .target(FocusId(FOLD_BASE + index as u64))
+            .pad_x(1.5),
+        Flex::new().center(),
+        || line("⋯", 11, 1.2, Role::Muted),
+    );
 }
 
 /// The line whose folded lines the mark `id` stands for.
@@ -810,8 +849,9 @@ struct Look<'a> {
     bulb: Option<usize>,
 }
 
-/// The lines of `document` that are in or near a view `height` tall scrolled `scroll` down, drawn as `look` says, with a blank for those above and below.
-fn visible(document: &Document, scroll: f32, height: f32, look: &Look) -> Vec<Node> {
+/// Emits the lines of `document` that are in or near a view `height` tall scrolled `scroll` down, drawn as `look` says, with a blank for those above and below.
+#[track_caller]
+fn visible(document: &Document, scroll: f32, height: f32, look: &Look) {
     let Look {
         found,
         blamed,
@@ -833,7 +873,7 @@ fn visible(document: &Document, scroll: f32, height: f32, look: &Look) -> Vec<No
         .and_then(|syntax| syntax.bracket_pair(document.field.text(), document.field.caret()))
         .map(|(open, close)| vec![open, close])
         .unwrap_or_default();
-    let mut rows = vec![blank(starts, row)];
+    blank(starts, row);
     let mut drawn = starts;
     for run in runs(&shown) {
         let painted = document.highlights(run.clone());
@@ -847,42 +887,38 @@ fn visible(document: &Document, scroll: f32, height: f32, look: &Look) -> Vec<No
                 columns.push(settings.preferred_line_length);
             }
         }
-        rows.extend(
-            run.zip(painted)
-                .zip(standing)
-                .map(|((index, spans), guides_at)| {
-                    let mut marks = line_marks(document, index, spans, &pair, found, settings);
-                    marks.extend(guides_at.into_iter().map(|column| Mark {
-                        range: column..column,
-                        color: Role::Border.into(),
-                        paint: Paint::Guide,
-                    }));
-                    let segments = document.line_segments(index, columns);
-                    drawn += segments.len();
-                    let cell =
-                        breakpoint_cell(file, index, gutter, document_row(settings, &segments));
-                    file_line(
-                        document,
-                        index,
-                        marks,
-                        segments,
-                        Beside {
-                            blamed: blamed(index),
-                            breakpoint: cell,
-                            bulb: bulb == Some(index),
-                            paused: gutter.paused == Some(index),
-                        },
-                        settings,
-                        owner,
-                    )
-                }),
-        );
+        for ((index, spans), guides_at) in run.zip(painted).zip(standing) {
+            let mut marks = line_marks(document, index, spans, &pair, found, settings);
+            marks.extend(
+                guides_at
+                    .into_iter()
+                    .map(|column| Mark::new(column..column, Role::Border, Paint::Guide)),
+            );
+            let segments = document.line_segments(index, columns);
+            drawn += segments.len();
+            let cell_height = document_row(settings, &segments);
+            rustle::key(index, || {
+                file_line(
+                    document,
+                    index,
+                    marks,
+                    segments,
+                    Beside {
+                        blamed: blamed(index),
+                        breakpoint: || breakpoint_cell(file, index, gutter, cell_height),
+                        bulb: bulb == Some(index),
+                        paused: gutter.paused == Some(index),
+                    },
+                    settings,
+                    owner,
+                );
+            });
+        }
     }
-    rows.push(blank(total.saturating_sub(drawn), row));
+    blank(total.saturating_sub(drawn), row);
     if settings.scroll_beyond_last_line {
-        rows.push(node().styles([h_px((height - row * 2.0).max(0.0)), flex_none()]));
+        gap_box(Modifier::new().height((height - row * 2.0).max(0.0)));
     }
-    rows
 }
 
 /// The lines `shown`, in order, as runs of lines that follow one another.
@@ -918,8 +954,9 @@ fn breadcrumbs(document: &Document) -> Option<String> {
     (!words.is_empty()).then(|| words.join("  ›  "))
 }
 
-/// How many errors and warnings the language server finds in `document`, as short words in their colours, pressed to show the problems of the project; nothing when it finds none.
-fn tallies(document: &Document) -> Option<Node> {
+/// Emits how many errors and warnings the language server finds in `document`, as short words in their colours, pressed to show the problems of the project; emits nothing when it finds none.
+#[track_caller]
+fn tallies(document: &Document) {
     let count = |wanted: Severity| {
         document
             .diagnostics
@@ -927,107 +964,115 @@ fn tallies(document: &Document) -> Option<Node> {
             .filter(|diagnostic| diagnostic.severity == wanted)
             .count()
     };
-    let words: Vec<Node> = [(Severity::Error, "error"), (Severity::Warning, "warning")]
+    let words: Vec<(String, Role)> = [(Severity::Error, "error"), (Severity::Warning, "warning")]
         .into_iter()
         .filter_map(|(severity, word)| {
             let found = count(severity);
             (found > 0).then(|| {
                 let plural = if found == 1 { "" } else { "s" };
-                line(
-                    format!("{found} {word}{plural}"),
-                    11,
-                    1.4,
-                    severity_role(severity),
-                )
+                (format!("{found} {word}{plural}"), severity_role(severity))
             })
         })
         .collect();
-    (!words.is_empty()).then(|| {
-        node()
-            .styles([flex(), items_center(), gap(2), cursor_pointer()])
-            .children(words)
-            .focusable(crate::state::BOTTOM_PROBLEMS_COUNT)
-    })
+    if words.is_empty() {
+        return;
+    }
+    row(
+        Modifier::new()
+            .cursor(CursorIcon::Pointer)
+            .target(crate::state::BOTTOM_PROBLEMS_COUNT),
+        Flex::new().center().gap(2),
+        move || {
+            for (said, role) in words {
+                line(said, 11, 1.4, role);
+            }
+        },
+    );
 }
 
-/// The strip above the file: its icon and name, and, while it is the file shown, `live`, the switch between its source and its rendering and the button that writes it when it has changes to write.
-fn strip(viewer: &Viewer, live: bool) -> Node {
-    let mut strip = node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(2),
-            h(10),
-            px(4),
-            flex_none(),
-            border_b(),
-            border_color(Role::Border),
-        ])
-        .child(file_icon(&viewer.path, 4.0))
-        .child(line(&viewer.path, 13, 1.4, Role::Text).styles([font_mono()]));
-    if viewer.head {
-        strip = strip.child(line("HEAD", 11, 1.4, Role::Muted));
-    }
-    if let Contents::Text(document) = &viewer.contents
-        && document.field.is_read_only()
-        && !viewer.head
-    {
-        strip = strip.child(line("Read only", 11, 1.4, Role::Muted));
-    }
-    if let Contents::Text(document) = &viewer.contents
-        && let Some(crumbs) = breadcrumbs(document)
-    {
-        strip = strip.child(line(crumbs, 12, 1.4, Role::Muted).styles([
-            font_mono(),
-            min_w_px(0),
-            overflow_hidden(),
-        ]));
-    }
-    strip = strip.child(spacer());
-    strip = strip.children(crate::preview::dimensions(viewer));
-    if let Contents::Text(document) = &viewer.contents
-        && viewer.rendering().is_none()
-    {
-        strip = strip.children(tallies(document));
-        if let Some(problem) = &document.server_problem {
-            let short: String = problem.chars().take(60).collect();
-            strip = strip
-                .child(line(short, 11, 1.4, Role::Subtle).styles([min_w_px(0), overflow_hidden()]));
-        }
-    }
-    if !live {
-        return strip;
-    }
-    strip = strip.children(crate::preview::switch(viewer));
-    if viewer.is_dirty() {
-        strip = strip.child(
-            Button::new("Save", EDITOR_SAVE)
-                .variant(Variant::Secondary)
-                .size(Size::Sm)
-                .build(),
-        );
-    }
-    strip
+/// Emits the strip above the file: its icon and name, and, while it is the file shown, `live`, the switch between its source and its rendering and the button that writes it when it has changes to write.
+#[track_caller]
+fn strip(viewer: &Viewer, live: bool) {
+    row(
+        Modifier::new()
+            .h(10)
+            .stroke_side(Side::Bottom, 1.0, Role::Border)
+            .pad_x(4),
+        Flex::new().center().gap(2),
+        || {
+            file_icon(&viewer.path, 4.0);
+            label(
+                &viewer.path,
+                Type::new(13).ratio(1.4).tone(Role::Text).mono(),
+            );
+            if viewer.head {
+                line("HEAD", 11, 1.4, Role::Muted);
+            }
+            if let Contents::Text(document) = &viewer.contents
+                && document.field.is_read_only()
+                && !viewer.head
+            {
+                line("Read only", 11, 1.4, Role::Muted);
+            }
+            match &viewer.contents {
+                Contents::Text(document) => match breadcrumbs(document) {
+                    Some(crumbs) => label_with(
+                        Modifier::new().grow(),
+                        crumbs,
+                        Type::new(12).ratio(1.4).tone(Role::Muted).mono().truncate(),
+                    ),
+                    None => spacer(),
+                },
+                _ => spacer(),
+            }
+            crate::preview::dimensions(viewer);
+            if let Contents::Text(document) = &viewer.contents
+                && viewer.rendering().is_none()
+            {
+                tallies(document);
+                if let Some(problem) = &document.server_problem {
+                    let short: String = problem.chars().take(60).collect();
+                    line(short, 11, 1.4, Role::Subtle);
+                }
+            }
+            if !live {
+                return;
+            }
+            crate::preview::switch(viewer);
+            if viewer.is_dirty() {
+                Button::new("Save", EDITOR_SAVE)
+                    .variant(Variant::Secondary)
+                    .size(Size::Sm)
+                    .build();
+            }
+        },
+    );
 }
 
-/// The file shown, in a view `width` by `height` logical pixels: a strip naming it, then the file rendered when it is shown so, or else its lines, which are edited in place unless the file is read only.
-pub fn viewer(state: &WorkspaceState, width: f32, height: f32, shaper: &mut Shaper) -> Node {
-    match state.git.shown.filter(|_| state.shown_viewer().is_some()) {
-        Some(index) => file_view(state, index, width, height, shaper),
-        None => node(),
+/// Whether `viewer` is shown rendered rather than as its source: the cases in which [`crate::preview::rendered`] draws it.
+fn shows_rendering(viewer: &Viewer) -> bool {
+    matches!(
+        (viewer.rendering(), &viewer.contents),
+        (
+            Some(Rendering::Markdown | Rendering::Vector),
+            Contents::Text(_)
+        ) | (Some(Rendering::Picture), Contents::Picture(_))
+    )
+}
+
+/// Emits the file shown, in a view `width` by `height` logical pixels: a strip naming it, then the file rendered when it is shown so, or else its lines, which are edited in place unless the file is read only.
+#[track_caller]
+pub fn viewer(state: &WorkspaceState, width: f32, height: f32) {
+    if let Some(index) = state.git.shown.filter(|_| state.shown_viewer().is_some()) {
+        file_view(state, index, width, height);
     }
 }
 
-/// The open file at `index`, in a view `width` by `height` logical pixels: the file shown, edited in place, or one shown in a pane other than the one being worked in, which a press on makes the file shown.
-pub fn file_view(
-    state: &WorkspaceState,
-    index: usize,
-    width: f32,
-    height: f32,
-    shaper: &mut Shaper,
-) -> Node {
+/// Emits the open file at `index`, in a view `width` by `height` logical pixels: the file shown, edited in place, or one shown in a pane other than the one being worked in, which a press on makes the file shown.
+#[track_caller]
+pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) {
     let Some(viewer) = state.git.viewers.get(index) else {
-        return node();
+        return;
     };
     let live = state.shown_viewer().is_some() && state.git.shown == Some(index);
     let owner = if live {
@@ -1046,147 +1091,115 @@ pub fn file_view(
         (Vec::new(), None)
     };
     let lines_height = (height - STRIP).max(0.0);
-    let rendered = crate::preview::rendered(viewer, &state.figures, (width, height), shaper);
-    let source = rendered.is_none();
-    let body = match (rendered, &viewer.contents) {
-        (Some(rendered), _) => rendered,
-        (None, Contents::Loading) => {
-            node()
-                .styles([px(4), py(4)])
-                .child(line("Reading the file.", 13, 1.4, Role::Subtle))
+    let source = !shows_rendering(viewer);
+    let shown_text = match &viewer.contents {
+        Contents::Text(document) if source => Some(document),
+        _ => None,
+    };
+    let body = || match &viewer.contents {
+        _ if !source => {
+            crate::preview::rendered(viewer, &state.figures, (width, height));
         }
-        (None, Contents::Message(message)) => {
-            node()
-                .styles([px(4), py(4)])
-                .child(line(message, 13, 1.4, Role::Subtle))
-        }
-        (None, Contents::Picture(_)) => node(),
-        (None, Contents::Text(document)) => {
-            let mut rows = node()
-                .styles([
-                    flex(),
-                    flex_col(),
-                    flex_none(),
-                    py(2),
-                    min_h(lines_height / 4.0),
-                    cursor_text(),
-                ])
-                .focusable(owner)
-                .children(visible(
-                    document,
-                    viewer.scroll,
-                    lines_height,
-                    &Look {
-                        found: &found,
-                        blamed: &|line| state.blame_of_line(line).filter(|_| live),
-                        settings: &pm_editor::EditorSettings {
-                            git_gutter: state.shows_gutter(),
-                            cursor_shape: modal_shape(state, document, live),
-                            ..state.editor.clone()
+        Contents::Loading => note("Reading the file."),
+        Contents::Message(message) => note(message),
+        Contents::Picture(_) => {}
+        Contents::Text(document) => {
+            column(
+                Modifier::new()
+                    .min_h(lines_height / 4.0)
+                    .cursor(CursorIcon::Text)
+                    .target(owner)
+                    .pad_y(2),
+                Flex::new(),
+                || {
+                    visible(
+                        document,
+                        viewer.scroll,
+                        lines_height,
+                        &Look {
+                            found: &found,
+                            blamed: &|line| state.blame_of_line(line).filter(|_| live),
+                            settings: &pm_editor::EditorSettings {
+                                git_gutter: state.shows_gutter(),
+                                cursor_shape: modal_shape(state, document, live),
+                                ..state.editor.clone()
+                            },
+                            columns: state.wrap_columns(),
+                            owner,
+                            file: index,
+                            gutter: &state.gutter_of(index),
+                            bulb: state.lightbulb_line().filter(|_| live),
                         },
-                        columns: state.wrap_columns(),
-                        owner,
-                        file: index,
-                        gutter: &state.gutter_of(index),
-                        bulb: state.lightbulb_line().filter(|_| live),
-                    },
-                ));
-            if document.truncated {
-                rows = rows.child(node().styles([px(4), py(2)]).child(line(
-                    "The rest of the file is not shown.",
-                    12,
-                    1.4,
-                    Role::Subtle,
-                )));
-            }
-            rows
+                    );
+                    if document.truncated {
+                        block(Modifier::new().pad_x(4).pad_y(2), || {
+                            line("The rest of the file is not shown.", 12, 1.4, Role::Subtle);
+                        });
+                    }
+                },
+            );
         }
     };
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_1(),
-            min_w_px(0),
-            min_h(0),
-            bg(Role::Background),
-        ])
-        .child(strip(viewer, live))
-        .children(crate::language_offer::offer(state, viewer))
-        .child(
-            node()
-                .styles([flex(), flex_1(), min_h(0), overflow_hidden()])
-                .child(
-                    node()
-                        .styles([
-                            flex(),
-                            flex_1(),
-                            min_w_px(0),
-                            min_h(0),
-                            overflow_hidden(),
-                            relative(),
-                        ])
-                        .child(
-                            node()
-                                .styles([
-                                    flex(),
-                                    flex_col(),
-                                    flex_1(),
-                                    min_w_px(0),
-                                    min_h(0),
-                                    overflow_hidden(),
-                                ])
-                                .scroll_from_start(scroller, viewer.scroll)
-                                .child(body),
-                        )
-                        .children(match &viewer.contents {
-                            Contents::Text(document) if source => {
-                                crate::scroll_marks::scroll_marks(document, &found.0, &state.editor)
-                            }
-                            _ => None,
-                        })
-                        .children(match &viewer.contents {
-                            Contents::Text(document) if source => crate::sticky::sticky(
+    column(
+        Modifier::new().grow().fill(Role::Background),
+        Flex::new(),
+        || {
+            strip(viewer, live);
+            crate::language_offer::offer(state, viewer);
+            row(
+                Modifier::new().grow().clip_to(Radius::None),
+                Flex::new(),
+                || {
+                    layer(Modifier::new().grow().clip_to(Radius::None), || {
+                        scroll_area(
+                            Modifier::new().fill_max_size(),
+                            Scroll::from_start(scroller, viewer.scroll),
+                            || block(Modifier::new().fill_max_width(), body),
+                        );
+                        if let Some(document) = shown_text {
+                            crate::scroll_marks::scroll_marks(document, &found.0, &state.editor);
+                            crate::sticky::sticky(
                                 document,
                                 viewer.scroll,
                                 state.wrap_columns(),
                                 &state.editor,
-                            ),
-                            _ => None,
-                        })
-                        .children(state.finding.as_ref().filter(|_| live).and_then(|finding| {
-                            match &viewer.contents {
-                                Contents::Text(document) if source => Some(crate::find::find_bar(
-                                    finding,
-                                    document,
-                                    state.editor.smartcase,
-                                )),
-                                _ => None,
+                            );
+                            if let Some(finding) = state.finding.as_ref().filter(|_| live) {
+                                crate::find::find_bar(finding, document, state.editor.smartcase);
                             }
-                        })),
-                )
-                .children(match &viewer.contents {
-                    Contents::Text(document)
-                        if source && state.editor.minimap && width >= MINIMAP_ROOM =>
+                        }
+                    });
+                    if let Some(document) = shown_text
+                        && state.editor.minimap
+                        && width >= MINIMAP_ROOM
                     {
-                        Some(crate::minimap::minimap(
+                        crate::minimap::minimap(
                             document,
                             viewer.scroll,
                             lines_height,
                             state.editor.row_height(),
                             state.wrap_columns(),
                             lines_height,
-                        ))
+                        );
                     }
-                    _ => None,
-                }),
-        )
-        .children(
-            state
+                },
+            );
+            if let Some(status) = state
                 .vim_status()
                 .filter(|_| live && source && matches!(viewer.contents, Contents::Text(_)))
-                .map(|status| vim_bar(&status)),
-        )
+            {
+                vim_bar(&status);
+            }
+        },
+    );
+}
+
+/// Emits a line saying `message` where the file's lines would be.
+#[track_caller]
+fn note(message: &str) {
+    block(Modifier::new().pad_x(4).pad_y(4), || {
+        line(message, 13, 1.4, Role::Subtle);
+    });
 }
 
 /// How the caret of `document` is drawn: as the mode of modal editing says while it is on and the file is the one being edited, and as the reader chose otherwise.
@@ -1202,26 +1215,29 @@ fn modal_shape(state: &WorkspaceState, document: &Document, live: bool) -> pm_ed
     }
 }
 
-/// The bar under the file that says which mode modal editing is in, the keys typed towards a command or the line being typed after `:` or `/`, and the register being recorded.
-fn vim_bar(status: &crate::vim::VimStatus) -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(3),
-            h(6),
-            px(3),
-            flex_none(),
-            border_t(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-        ])
-        .child(line(status.mode, 12, 1.4, Role::Text).styles([font_mono(), flex_none()]))
-        .children(status.pending.as_ref().map(|pending| {
-            line(pending, 12, 1.4, Role::Muted).styles([font_mono(), flex_1(), min_w_px(0)])
-        }))
-        .children(status.recording.map(|register| {
-            line(format!("recording @{register}"), 12, 1.4, Role::Danger)
-                .styles([font_mono(), flex_none()])
-        }))
+/// Emits the bar under the file that says which mode modal editing is in, the keys typed towards a command or the line being typed after `:` or `/`, and the register being recorded.
+#[track_caller]
+fn vim_bar(status: &crate::vim::VimStatus) {
+    let kind = Type::new(12).ratio(1.4).mono();
+    row(
+        Modifier::new()
+            .h(6)
+            .fill(Role::Surface)
+            .stroke_side(Side::Top, 1.0, Role::Border)
+            .pad_x(3),
+        Flex::new().center().gap(3),
+        || {
+            label(status.mode, kind.tone(Role::Text));
+            if let Some(pending) = &status.pending {
+                label_with(
+                    Modifier::new().grow(),
+                    pending,
+                    kind.tone(Role::Muted).truncate(),
+                );
+            }
+            if let Some(register) = status.recording {
+                label(format!("recording @{register}"), kind.tone(Role::Danger));
+            }
+        },
+    );
 }

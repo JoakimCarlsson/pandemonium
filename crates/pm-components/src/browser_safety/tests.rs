@@ -121,21 +121,45 @@ fn a_press_answers_only_the_question_it_was_for() {
     );
 }
 
+/// Whether the question bar of `safety` is drawn over a page 400 logical pixels wide at the time `now`.
+fn overlay_shown(safety: &Safety, now: Instant) -> bool {
+    let safety = safety.clone();
+    let report = crate::kit::snapshot::lay_out(400.0, 300.0, None, move || {
+        crate::kit::layer(rustle::Modifier::new(), || {
+            safety.question_overlay(400.0, now)
+        });
+    });
+    report
+        .regions
+        .iter()
+        .any(|region| region.id == BROWSER_QUESTION_BAR)
+}
+
+/// Whether `safety` draws any bar above the page: the note about a download has a button that dismisses it.
+fn bars_shown(safety: &Safety) -> bool {
+    let safety = safety.clone();
+    let report = crate::kit::snapshot::lay_out(400.0, 300.0, None, move || safety.bar_nodes());
+    report
+        .regions
+        .iter()
+        .any(|region| region.id == BROWSER_DISMISS)
+}
+
 /// A press on the bar itself, or with no question asked, answers nothing, and the question does not move the page.
 #[test]
 fn the_bar_takes_presses_and_leaves_the_page_where_it_is() {
     let start = Instant::now();
     let mut safety = Safety::default();
     assert!(safety.press_at(BROWSER_QUESTION_BAR, start));
-    assert!(safety.question_overlay(400.0, start).is_none());
+    assert!(!overlay_shown(&safety, start));
     safety.ask_at(asked(3, "https://a.example"), start);
     assert!(safety.press_at(BROWSER_QUESTION_BAR, start + ALLOW_DELAY));
     assert!(safety.press_at(allow_id(3), start + ALLOW_DELAY * 4));
     assert!(safety.answers.len() == 1);
     safety.ask_at(asked(4, "https://a.example"), start);
     assert_eq!(safety.bars(), 0.0);
-    assert!(safety.bar_nodes().is_empty());
-    assert!(safety.question_overlay(400.0, start).is_some());
+    assert!(!bars_shown(&safety));
+    assert!(overlay_shown(&safety, start));
 }
 
 /// A question the helper cancelled is no longer asked, and no answer is sent for it.
@@ -190,5 +214,5 @@ fn the_download_note_can_be_dismissed() {
     assert_eq!(safety.bars(), super::BAR);
     assert!(safety.press(BROWSER_DISMISS));
     assert!(safety.download.is_none());
-    assert!(!safety.press(pm_input::FocusId(1)));
+    assert!(!safety.press(crate::kit::FocusId(1)));
 }

@@ -1,11 +1,9 @@
 //! The tab chip: one tab of a strip inside a pane, with its glyph, its words, marks for what it is and a button that closes it.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, bg, flex, flex_none, gap, h_px, items_center, px, rounded, text_color, w_px,
+use crate::kit::{
+    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Tooltip, row,
 };
-use pm_ui::{Node, node};
+use rustle::{CursorIcon, Modifier};
 
 use crate::Button;
 use crate::parts::{clipped, glyph};
@@ -21,7 +19,7 @@ pub enum TabVariant {
     Agent,
 }
 
-/// A tab chip being described: build it with [`TabChip::new`], change it with the methods that follow, and turn it into a node with [`TabChip::build`].
+/// A tab chip being described: build it with [`TabChip::new`], change it with the methods that follow, and emit it with [`TabChip::build`].
 #[derive(Clone, Debug)]
 pub struct TabChip {
     /// The words on the tab.
@@ -44,6 +42,8 @@ pub struct TabChip {
     width: f32,
     /// What it says when the pointer rests on it, if anything.
     hint: Option<String>,
+    /// What the caller puts around its box.
+    modifier: Modifier,
 }
 
 impl TabChip {
@@ -60,6 +60,7 @@ impl TabChip {
             locked: false,
             width: 160.0,
             hint: None,
+            modifier: Modifier::new(),
         }
     }
 
@@ -99,48 +100,56 @@ impl TabChip {
         self
     }
 
-    /// The tab as a node.
-    pub fn build(self) -> Node {
+    /// The tab with `modifier` put around its box, outside its own: sizes, weight, placement.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
+    }
+
+    /// Emits the tab.
+    #[track_caller]
+    pub fn build(self) {
         let tone = if self.selected {
             Role::Text
         } else {
             Role::Muted
         };
         let height = if self.size == Size::Xs { 24.0 } else { 28.0 };
-        let mut chip = node().styles([
-            if self.selected {
-                bg(Role::SurfaceSelected)
-            } else {
-                bg(Role::SurfaceHover).hover()
-            },
-            flex(),
-            flex_none(),
-            items_center(),
-            gap(1),
-            px(2),
-            h_px(height),
-            w_px(self.width),
-            rounded(Radius::Md),
-            pm_style::cursor_pointer(),
-            text_color(tone),
-        ]);
-        chip = chip.child(match self.variant {
-            TabVariant::Agent => glyph(IconName::Sparkles, 3.5, Role::Accent),
-            TabVariant::Page => glyph(self.icon, 3.5, tone),
-        });
-        chip = chip.child(clipped(self.label, 12, tone));
-        if self.locked {
-            chip = chip.child(glyph(IconName::Lock, 3.0, Role::Warning));
+        let looks = if self.selected {
+            Looks::new().idle(Role::SurfaceSelected)
+        } else {
+            Looks::new().hover(Role::SurfaceHover)
         }
-        chip = chip.child(
-            Button::icon(IconName::Close, self.close)
-                .variant(crate::button::Variant::Ghost)
-                .size(Size::Xs)
-                .build(),
-        );
+        .radius(Radius::Md);
+        let mut own = Modifier::new()
+            .width(self.width)
+            .height(height)
+            .looks_of(looks, self.select)
+            .cursor(CursorIcon::Pointer)
+            .target(self.select);
         if let Some(hint) = self.hint {
-            chip = chip.tooltip(hint);
+            own = own.tooltip(hint);
         }
-        chip.focusable(self.select)
+        let own = own.pad_x(2);
+        let (variant, icon, label, locked, close) =
+            (self.variant, self.icon, self.label, self.locked, self.close);
+        row(
+            self.modifier.chain(own),
+            Flex::new().center().gap(1),
+            move || {
+                match variant {
+                    TabVariant::Agent => glyph(IconName::Sparkles, 3.5, Role::Accent),
+                    TabVariant::Page => glyph(icon, 3.5, tone),
+                }
+                clipped(label, 12, tone);
+                if locked {
+                    glyph(IconName::Lock, 3.0, Role::Warning);
+                }
+                Button::icon(IconName::Close, close)
+                    .variant(crate::button::Variant::Ghost)
+                    .size(Size::Xs)
+                    .build();
+            },
+        );
     }
 }

@@ -1,11 +1,10 @@
 //! The questions the source control panel asks before it does something that cannot be taken back, and the lists it asks a choice from.
 
-use pm_input::FocusId;
-use pm_style::{Role, flex, flex_col, gap, items_center, p, pb, px};
-use pm_ui::{Node, node};
+use crate::kit::{Flex, FocusId, Role, Side, Styled, Type, block, column, grow, label, row};
+use rustle::Modifier;
 
 use crate::button::Variant;
-use crate::parts::{line, spacer, wrap};
+use crate::parts::{line, wrap};
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::tree_actions::{EntryChange, TreeTarget, name_of};
@@ -120,7 +119,7 @@ impl WorkspaceState {
         self.git.menu = None;
         self.git.branch_menu = false;
         if prompt == Prompt::StashMessage {
-            self.git.stash_message = pm_text::Field::default();
+            self.git.stash_message = pm_field::Field::default();
         }
         self.git.prompt = Some(prompt);
     }
@@ -258,12 +257,13 @@ impl WorkspaceState {
     }
 }
 
-/// A button of a question, saying `label`.
-fn button(label: &str, id: FocusId, variant: Variant) -> Node {
+/// Emits a button of a question, saying `label`.
+#[track_caller]
+fn button(label: &str, id: FocusId, variant: Variant) {
     Button::new(label, id)
         .variant(variant)
         .size(Size::Sm)
-        .build()
+        .build();
 }
 
 /// What a question answers to: the dimmed window behind it, its panel, and the buttons that say yes and no.
@@ -287,113 +287,112 @@ const GIT_QUESTION: QuestionIds = QuestionIds {
     cancel: PROMPT_CANCEL,
 };
 
-/// A question of the source control panel: a title, the words that explain it, and the button that says yes beside the one that says no.
-fn question(title: String, words: &str, confirm: &str, variant: Variant) -> Node {
-    question_of(GIT_QUESTION, title, words, confirm, variant)
+/// Emits a question of the source control panel: a title, the words that explain it, and the button that says yes beside the one that says no.
+#[track_caller]
+fn question(title: String, words: &str, confirm: &str, variant: Variant) {
+    question_of(GIT_QUESTION, title, words, confirm, variant);
 }
 
-/// A question answering to `ids`: a title, the words that explain it, and the button that says yes beside the one that says no.
+/// The type a question's title is set in.
+fn title_type() -> Type {
+    Type::new(15)
+        .ratio(1.4)
+        .tone(Role::Text)
+        .truncate()
+        .medium()
+}
+
+/// Emits the row of a question's buttons, pushed to its right end: the one that says no, then `confirm` when there is one.
+#[track_caller]
+fn buttons(cancel: FocusId, confirm: Option<(&str, FocusId, Variant)>) {
+    row(
+        Modifier::new().pad_x(5).pad_side(Side::Bottom, 5),
+        Flex::new().center().gap(2),
+        || {
+            grow();
+            button("Cancel", cancel, Variant::Ghost);
+            if let Some((words, id, variant)) = confirm {
+                button(words, id, variant);
+            }
+        },
+    );
+}
+
+/// Emits a question answering to `ids`: a title, the words that explain it, and the button that says yes beside the one that says no.
+#[track_caller]
 pub(crate) fn question_of(
     ids: QuestionIds,
     title: String,
     words: &str,
     confirm: &str,
     variant: Variant,
-) -> Node {
+) {
     Modal::new(ids.outside, ids.inside)
         .width(WIDTH)
-        .child(
-            node()
-                .styles([flex(), flex_col(), gap(2), p(5)])
-                .children(wrap(&title, 15, WIDTH - 40.0).iter().map(|title| {
-                    line(title, 15, 1.4, Role::Text).styles([pm_style::font_medium()])
-                }))
-                .children(
-                    wrap(words, 13, WIDTH - 40.0)
-                        .iter()
-                        .map(|words| line(words, 13, 1.5, Role::Muted)),
-                ),
-        )
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(2), px(5), pb(5)])
-                .child(spacer())
-                .child(button("Cancel", ids.cancel, Variant::Ghost))
-                .child(button(confirm, ids.confirm, variant)),
-        )
-        .build()
+        .build_with(|| {
+            column(Modifier::new().pad(5), Flex::new().gap(2), || {
+                for title in wrap(&title, 15, WIDTH - 40.0) {
+                    label(title, title_type());
+                }
+                for words in wrap(words, 13, WIDTH - 40.0) {
+                    line(words, 13, 1.5, Role::Muted);
+                }
+            });
+            buttons(ids.cancel, Some((confirm, ids.confirm, variant)));
+        });
 }
 
-/// A box named `title` for `field` to be typed in, with the button `confirm` that accepts it.
-fn naming_box(
-    title: &str,
-    field: &pm_text::Field,
-    id: FocusId,
-    placeholder: &str,
-    confirm: &str,
-) -> Node {
+/// Emits a box named `title` for `field` to be typed in, with the button `confirm` that accepts it.
+#[track_caller]
+fn naming_box(title: &str, field: &pm_field::Field, id: FocusId, placeholder: &str, confirm: &str) {
     Modal::new(PROMPT_OUTSIDE, PROMPT_INSIDE)
         .width(WIDTH)
-        .child(
-            node()
-                .styles([flex(), flex_col(), gap(3), p(5)])
-                .child(line(title, 15, 1.4, Role::Text).styles([pm_style::font_medium()]))
-                .child(
-                    Input::new(field, id)
-                        .placeholder(placeholder)
-                        .size(Size::Md)
-                        .build(),
-                ),
-        )
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(2), px(5), pb(5)])
-                .child(spacer())
-                .child(button("Cancel", PROMPT_CANCEL, Variant::Ghost))
-                .child(button(confirm, PROMPT_CONFIRM, Variant::Default)),
-        )
-        .build()
+        .build_with(|| {
+            column(Modifier::new().pad(5), Flex::new().gap(3), || {
+                label(title, title_type());
+                Input::new(field, id)
+                    .placeholder(placeholder)
+                    .size(Size::Md)
+                    .build();
+            });
+            buttons(
+                PROMPT_CANCEL,
+                Some((confirm, PROMPT_CONFIRM, Variant::Default)),
+            );
+        });
 }
 
-/// The list of stashes to `action` one of, with the button that leaves it.
-fn stash_list(state: &WorkspaceState, action: StashAction) -> Node {
-    let mut panel = node().styles([flex(), flex_col(), gap(1), p(3)]).child(
-        node()
-            .styles([px(2), pb(2)])
-            .child(line(action.title(), 15, 1.4, Role::Text).styles([pm_style::font_medium()])),
-    );
-    if state.git.stashes.is_empty() {
-        panel = panel.child(node().styles([px(2), pb(2)]).child(line(
-            "There are no stashes.",
-            13,
-            1.4,
-            Role::Subtle,
-        )));
-    }
-    panel = panel.children(state.git.stashes.iter().take(STASH_ROWS).enumerate().map(
-        |(row, stash)| {
-            crate::popover::row(
-                &format!("stash@{{{}}}", stash.index),
-                &stash.message,
-                false,
-                FocusId(PROMPT_ROW_BASE + row as u64),
-            )
-        },
-    ));
+/// Emits the list of stashes to `action` one of, with the button that leaves it.
+#[track_caller]
+fn stash_list(state: &WorkspaceState, action: StashAction) {
     Modal::new(PROMPT_OUTSIDE, PROMPT_INSIDE)
         .width(WIDTH)
-        .child(panel)
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(2), px(5), pb(5)])
-                .child(spacer())
-                .child(button("Cancel", PROMPT_CANCEL, Variant::Ghost)),
-        )
-        .build()
+        .build_with(|| {
+            column(Modifier::new().pad(3), Flex::new().gap(1), || {
+                block(Modifier::new().pad_x(2).pad_side(Side::Bottom, 2), || {
+                    label(action.title(), title_type())
+                });
+                if state.git.stashes.is_empty() {
+                    block(Modifier::new().pad_x(2).pad_side(Side::Bottom, 2), || {
+                        line("There are no stashes.", 13, 1.4, Role::Subtle)
+                    });
+                }
+                for (position, stash) in state.git.stashes.iter().take(STASH_ROWS).enumerate() {
+                    crate::popover::row(
+                        &format!("stash@{{{}}}", stash.index),
+                        &stash.message,
+                        false,
+                        FocusId(PROMPT_ROW_BASE + position as u64),
+                    );
+                }
+            });
+            buttons(PROMPT_CANCEL, None);
+        });
 }
 
-/// The question or list open, as a node.
-pub fn prompt(state: &WorkspaceState, open: &Prompt) -> Node {
+/// Emits the question or list open.
+#[track_caller]
+pub fn prompt(state: &WorkspaceState, open: &Prompt) {
     match open {
         Prompt::Discard(indices) => {
             let paths = state.paths_of(indices);

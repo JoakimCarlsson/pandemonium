@@ -1,14 +1,10 @@
 //! The list of branches under the branch of the repository the panel works on: to check one out, or to make a new one.
 
-use pm_input::FocusId;
-use pm_style::{
-    Role, absolute, border_color, border_t, flex, flex_col, flex_none, left, mt, p, pb, px, py,
-    top_px, z,
-};
-use pm_ui::{Node, node};
+use rustle::Modifier;
 
 use crate::Input;
 use crate::git_controls::{BRANCH_BODY, BRANCH_CREATE, BRANCH_FILTER, BRANCH_PICK_BASE};
+use crate::kit::{Flex, FocusId, Interactive, Role, Side, Styled, block, column, sp};
 use crate::parts::line;
 use crate::popover::{Popover, row};
 use crate::size::Size;
@@ -20,59 +16,68 @@ const TOP: f32 = 88.0;
 /// How wide the list is, in logical pixels.
 const WIDTH: f32 = 340.0;
 
-/// The list of branches of the repository the panel works on, hanging under the row it belongs to.
-pub fn branch_menu(state: &WorkspaceState) -> Node {
+/// Emits the list of branches of the repository the panel works on, hanging under the row it belongs to.
+///
+/// It is placed in the panel's layer, kept inside the window, and answers to [`BRANCH_BODY`].
+#[track_caller]
+pub fn branch_menu(state: &WorkspaceState) {
     let git = &state.git;
     let current = state.head_of(git.repository.as_deref()).unwrap_or_default();
     let current = current.as_str();
     let typed = git.filter.text().trim();
     let matching = git.matching();
-    let mut menu = Popover::new().width(WIDTH).child(
-        node().styles([p(1), pb(2)]).child(
-            Input::new(&git.filter, BRANCH_FILTER)
-                .placeholder("Search branches, or name a new one")
-                .size(Size::Sm)
-                .build(),
-        ),
-    );
-    menu = menu.children(matching.iter().enumerate().map(|(position, name)| {
-        row(
-            name,
-            "",
-            name.as_str() == current,
-            FocusId(BRANCH_PICK_BASE + position as u64),
+    Popover::new()
+        .width(WIDTH)
+        .modifier(
+            Modifier::new()
+                .at(sp(3), TOP)
+                .z_index_unclipped(60)
+                .keep_in_window()
+                .target(BRANCH_BODY),
         )
-    }));
-    if matching.is_empty() && typed.is_empty() {
-        menu = menu.child(node().styles([px(2.5), py(1.5)]).child(line(
-            "No branches.",
-            13,
-            1.4,
-            Role::Subtle,
-        )));
-    }
-    if !typed.is_empty() && !git.exists() {
-        menu = menu.child(
-            node()
-                .styles([
-                    flex(),
-                    flex_col(),
-                    flex_none(),
-                    border_t(),
-                    border_color(Role::Border),
-                    mt(1),
-                    pm_style::pt(1),
-                ])
-                .child(row(
-                    &format!("Create branch “{typed}”"),
-                    "From the commit this session is at",
-                    false,
-                    BRANCH_CREATE,
-                )),
-        );
-    }
-    menu.build()
-        .styles([absolute(), top_px(TOP), left(3), z(60)])
-        .keep_in_view()
-        .focusable(BRANCH_BODY)
+        .build_with(|| {
+            block(
+                Modifier::new()
+                    .pad_side(Side::Top, 1)
+                    .pad_side(Side::Left, 1)
+                    .pad_side(Side::Right, 1)
+                    .pad_side(Side::Bottom, 2),
+                || {
+                    Input::new(&git.filter, BRANCH_FILTER)
+                        .placeholder("Search branches, or name a new one")
+                        .size(Size::Sm)
+                        .build();
+                },
+            );
+            for (position, name) in matching.iter().enumerate() {
+                row(
+                    name,
+                    "",
+                    name.as_str() == current,
+                    FocusId(BRANCH_PICK_BASE + position as u64),
+                );
+            }
+            if matching.is_empty() && typed.is_empty() {
+                block(Modifier::new().pad_x(2.5).pad_y(1.5), || {
+                    line("No branches.", 13, 1.4, Role::Subtle);
+                });
+            }
+            if !typed.is_empty() && !git.exists() {
+                column(
+                    Modifier::new()
+                        .pad_side(Side::Top, 1)
+                        .stroke_side(Side::Top, 1.0, Role::Border)
+                        .pad_side(Side::Top, 1),
+                    Flex::new(),
+                    || {
+                        row(
+                            &format!("Create branch “{typed}”"),
+                            "From the commit this session is at",
+                            false,
+                            BRANCH_CREATE,
+                        );
+                    },
+                );
+            }
+        });
 }

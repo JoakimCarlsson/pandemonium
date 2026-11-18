@@ -1,14 +1,12 @@
 //! The menu: a floating list of actions opened at a point.
 
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, absolute, bg, cursor_not_allowed, cursor_pointer, flex, flex_1, gap, h,
-    items_center, leading_ratio, left_px, min_w_px, opacity, p, px, rounded, text_color, text_px,
-    top_px, w, z,
-};
-use pm_ui::{Node, node, text};
+use rustle::{CursorIcon, Modifier};
 
 use crate::Surface;
+use crate::kit::{
+    Flex, FocusId, Hovered, Interactive, Looks, Radius, Role, Styled, Type, at_window, label,
+    label_with, row, sp,
+};
 
 /// How far a menu opened from a control hangs from it, in logical pixels.
 const MENU_GAP: f32 = 4.0;
@@ -34,9 +32,8 @@ pub enum Entry {
 /// A menu being described: where it opens and what it holds.
 ///
 /// Build it with [`Menu::new`], add rows with [`Menu::item`] and
-/// [`Menu::separator`], and turn it into a node with [`Menu::build`]. The
-/// node is positioned over whatever it is placed in, so it belongs last in
-/// the root of a screen.
+/// [`Menu::separator`], and emit it with [`Menu::build`]. It floats over
+/// everything at its point, kept inside the window.
 #[derive(Clone, Debug)]
 pub struct Menu {
     /// Where its top-left corner is, in logical pixels.
@@ -47,6 +44,8 @@ pub struct Menu {
     width: f32,
     /// How tall each row is, in style units.
     row: f32,
+    /// What the caller puts around its box.
+    modifier: Modifier,
 }
 
 impl Menu {
@@ -57,7 +56,14 @@ impl Menu {
             entries: Vec::new(),
             width: 52.0,
             row: 8.0,
+            modifier: Modifier::new(),
         }
+    }
+
+    /// The menu with `modifier` put around its box, outside its own.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
     }
 
     /// The menu with rows `units` style units tall, for a long menu that has to fit the window.
@@ -127,7 +133,7 @@ impl Menu {
 
     /// How wide and how tall the menu is, in logical pixels, at the spacing scale being built for.
     fn extent(&self) -> (f32, f32) {
-        let step = 4.0 * pm_style::step_scale();
+        let step = 4.0 * crate::kit::theme::step_scale();
         let rows: f32 = self
             .entries
             .iter()
@@ -139,79 +145,80 @@ impl Menu {
         (self.width * step, rows + step * 0.5)
     }
 
-    /// The node that draws the menu.
-    pub fn build(self) -> Node {
-        Surface::new()
-            .build()
-            .styles([
-                absolute(),
-                left_px(self.at.0),
-                top_px(self.at.1),
-                z(50),
-                w(self.width),
-                min_w_px(0),
-                p(1),
-            ])
-            .keep_in_view()
-            .children(self.entries.into_iter().map(|entry| row(entry, self.row)))
+    /// Emits the menu over everything, with its corner at its point, kept inside the window.
+    #[track_caller]
+    pub fn build(self) {
+        let (x, y) = self.at;
+        let (width, height) = (self.width, self.row);
+        let entries = self.entries;
+        let modifier = self.modifier;
+        at_window(x, y, Modifier::new(), move || {
+            Surface::new()
+                .modifier(modifier.chain(Modifier::new().w(width)))
+                .inner(Modifier::new().pad(1))
+                .build_with(move || {
+                    for entry in entries {
+                        menu_row(entry, height);
+                    }
+                });
+        });
     }
 }
 
-/// The node for one entry, `height` style units tall when it is a row.
-fn row(entry: Entry, height: f32) -> Node {
+/// Emits one entry, `height` style units tall when it is a row: a hairline reaching the menu's
+/// edges with a step of room above and below it, or a row with the label and its shortcut.
+#[track_caller]
+fn menu_row(entry: Entry, height: f32) {
     match entry {
-        Entry::Separator => node().styles([
-            h(0.25),
-            bg(Role::Border),
-            pm_style::mx(-1.0),
-            pm_style::my(1),
-        ]),
+        Entry::Separator => {
+            let color = crate::kit::role(Role::Border);
+            rustle::spacer(
+                Modifier::new()
+                    .fill_max_width()
+                    .height(sp(0.25) + 2.0 * sp(1))
+                    .draw_behind(move |canvas| {
+                        let width = canvas.width();
+                        let height = canvas.height();
+                        canvas.rect(
+                            -sp(1),
+                            (height - sp(0.25)) / 2.0,
+                            width + 2.0 * sp(1),
+                            sp(0.25),
+                            color,
+                        );
+                    }),
+            );
+        }
         Entry::Item {
-            label,
+            label: words,
             shortcut,
             id,
             disabled,
         } => {
-            let mut styles = vec![
-                flex(),
-                items_center(),
-                gap(4),
-                h(height),
-                px(2),
-                rounded(Radius::Sm),
-            ];
-            if disabled {
-                styles.extend([opacity(40), cursor_not_allowed()]);
+            let modifier = Modifier::new().fill_max_width().h(height);
+            let modifier = if disabled {
+                modifier.opacity(40.0).cursor(CursorIcon::NotAllowed)
             } else {
-                styles.extend([
-                    cursor_pointer(),
-                    bg(Role::SurfaceHover).hover(),
-                    bg(Role::SurfaceActive).active(),
-                ]);
-            }
-            let mut item =
-                node()
-                    .styles(styles)
-                    .child(node().styles([flex_1()]).child(text(label).styles([
-                        text_px(13),
-                        leading_ratio(1.4),
-                        text_color(Role::Text),
-                    ])));
-            if let Some(shortcut) = shortcut {
-                item = item.child(text(shortcut).styles([
-                    text_px(12),
-                    leading_ratio(1.4),
-                    text_color(Role::Subtle),
-                ]));
-            }
-            if disabled { item } else { item.focusable(id) }
+                modifier
+                    .looks(
+                        Looks::new()
+                            .hover(Role::SurfaceHover)
+                            .active(Role::SurfaceActive)
+                            .radius(Radius::Sm),
+                    )
+                    .cursor(CursorIcon::Pointer)
+                    .target(id)
+            };
+            row(modifier.pad_x(2), Flex::new().center().gap(4), move || {
+                label_with(
+                    Modifier::new().grow(),
+                    words,
+                    Type::new(13).ratio(1.4).tone(Role::Text),
+                );
+                if let Some(shortcut) = shortcut {
+                    label(shortcut, Type::new(12).ratio(1.4).tone(Role::Subtle));
+                }
+            });
         }
-    }
-}
-
-impl From<Menu> for Node {
-    /// The node that draws the menu.
-    fn from(menu: Menu) -> Self {
-        menu.build()
     }
 }

@@ -1,14 +1,12 @@
 //! The model servers page of the settings window: the OpenAI-compatible servers declared on the server's machine, each offered as an agent with its models, the form a server is added or changed with, and the models a server is found to offer, picked from to make its list.
 
+use pm_field::{Edit, Field};
 use pm_harness::{ModelServer, ServerWire};
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, bg, border, border_color, flex, flex_1, flex_col, flex_none, flex_wrap, gap,
-    items_center, justify_between, justify_end, min_w_px, p, rounded,
+use rustle::Modifier;
+
+use crate::kit::{
+    Flex, FocusId, IconName, Radius, Role, Styled, Type, column, label, label_with, row, wrapping,
 };
-use pm_text::{Edit, Field};
-use pm_ui::{Node, node};
 
 use crate::agent_list::AgentEntry;
 use crate::button::Variant;
@@ -447,147 +445,135 @@ impl WorkspaceState {
     }
 }
 
-/// A box of the form under the words that say what is written in it.
-fn labelled(label: &str, field: &Field, id: FocusId, placeholder: &str) -> Node {
-    node()
-        .styles([flex(), flex_col(), gap(1)])
-        .child(line(label, 12, 1.4, Role::Muted))
-        .child(
-            Input::new(field, id)
-                .size(Size::Sm)
-                .placeholder(placeholder)
-                .build(),
-        )
+/// Emits a box of the form under the words that say what is written in it.
+#[track_caller]
+fn labelled(words: &str, field: &Field, id: FocusId, placeholder: &str) {
+    column(Modifier::new(), Flex::new().gap(1), || {
+        line(words, 12, 1.4, Role::Muted);
+        Input::new(field, id)
+            .size(Size::Sm)
+            .placeholder(placeholder)
+            .build();
+    });
 }
 
-/// The models the server was found to offer, each with a box that lists it in the form or takes it out, or what asking it came to.
-fn found_node(form: &ModelServerForm, room: f32) -> Option<Node> {
+/// Emits the models the server was found to offer, each with a box that lists it in the form or takes it out, or what asking it came to; nothing when it was not asked or offers none.
+#[track_caller]
+fn found_node(form: &ModelServerForm, room: f32) {
     let found = &form.found;
     if found.asking.is_some() {
-        return Some(note("Asking the server for its models..."));
+        note("Asking the server for its models...");
+        return;
     }
     if let Some(reason) = &found.error {
-        return Some(wrapped_note(
-            &format!("The server could not be asked: {reason}"),
-            room,
-        ));
+        wrapped_note(&format!("The server could not be asked: {reason}"), room);
+        return;
     }
     if found.models.is_empty() {
-        return None;
+        return;
     }
     let listed = form.listed();
-    let picks = found
-        .models
-        .iter()
-        .enumerate()
-        .filter_map(|(place, model)| {
-            let pick = FOUND_MODEL_PICKS.id(place)?;
-            Some(
-                node()
-                    .styles([flex(), items_center(), gap(2), flex_none()])
-                    .child(Checkbox::new(listed.contains(model), pick).build())
-                    .child(
-                        line(model.clone(), 12, 1.4, Role::Text).styles([pm_style::font_mono()]),
-                    ),
-            )
-        });
-    Some(
-        node()
-            .styles([flex(), flex_col(), gap(2)])
-            .child(wrapped_note(
-                &format!(
-                    "Found {} models; tick the ones to offer, or leave the list blank to offer every one.",
-                    found.models.len()
-                ),
-                (room - 48.0).max(160.0),
-            ))
-            .child(
-                node()
-                    .styles([flex(), flex_wrap(), gap(3), p(3), rounded(Radius::Md), border(), border_color(Role::Border), bg(Role::Background)])
-                    .children(picks),
+    column(Modifier::new(), Flex::new().gap(2), || {
+        wrapped_note(
+            &format!(
+                "Found {} models; tick the ones to offer, or leave the list blank to offer every one.",
+                found.models.len()
             ),
-    )
+            (room - 48.0).max(160.0),
+        );
+        wrapping(
+            Modifier::new()
+                .fill_rounded(Role::Background, Radius::Md)
+                .stroke(Role::Border, Radius::Md)
+                .pad(3),
+            3,
+            || {
+                for (place, model) in found.models.iter().enumerate() {
+                    let Some(pick) = FOUND_MODEL_PICKS.id(place) else {
+                        continue;
+                    };
+                    row(Modifier::new(), Flex::new().center().gap(2), || {
+                        Checkbox::new(listed.contains(model), pick).build();
+                        label(
+                            model.clone(),
+                            Type::new(12).ratio(1.4).tone(Role::Text).truncate().mono(),
+                        );
+                    });
+                }
+            },
+        );
+    });
 }
 
-/// The form a model server is declared or changed with, `room` logical pixels across.
-fn form_node(form: &ModelServerForm, room: f32) -> Node {
-    let wire = choices(
-        &WIRES.map(|(_, name)| name),
-        WIRES
-            .iter()
-            .position(|(held, _)| *held == form.wire)
-            .unwrap_or(0),
-        |option| [MODEL_WIRE_CHAT, MODEL_WIRE_RESPONSES].get(option).copied(),
-    );
+/// Emits the form a model server is declared or changed with, `room` logical pixels across.
+#[track_caller]
+fn form_node(form: &ModelServerForm, room: f32) {
+    let picked = WIRES
+        .iter()
+        .position(|(held, _)| *held == form.wire)
+        .unwrap_or(0);
     let key_hint = if form.has_key {
         "Key saved; leave blank to keep it"
     } else {
         "sk-..."
     };
-    node()
-        .styles([flex(), flex_col(), gap(3), p(3)])
-        .child(labelled(
-            "Name",
-            &form.name,
-            MODEL_NAME,
-            "e.g. Company gateway",
-        ))
-        .child(labelled(
+    column(Modifier::new().pad(3), Flex::new().gap(3), || {
+        labelled("Name", &form.name, MODEL_NAME, "e.g. Company gateway");
+        labelled(
             "Base URL",
             &form.base_url,
             MODEL_URL,
             "e.g. http://localhost:8000/v1",
-        ))
-        .child(
-            node()
-                .styles([flex(), flex_col(), gap(1)])
-                .child(line("API", 12, 1.4, Role::Muted))
-                .child(node().styles([flex()]).child(wire)),
-        )
-        .child(labelled("API key", &form.key, MODEL_KEY, key_hint))
-        .child(labelled(
+        );
+        column(Modifier::new(), Flex::new().gap(1), || {
+            line("API", 12, 1.4, Role::Muted);
+            row(Modifier::new(), Flex::new(), || {
+                choices(&WIRES.map(|(_, name)| name), picked, |option| {
+                    [MODEL_WIRE_CHAT, MODEL_WIRE_RESPONSES].get(option).copied()
+                });
+            });
+        });
+        labelled("API key", &form.key, MODEL_KEY, key_hint);
+        labelled(
             "Or read the key from (environment variables)",
             &form.key_env,
             MODEL_KEY_ENV,
             "e.g. GATEWAY_API_KEY",
-        ))
-        .child(labelled(
+        );
+        labelled(
             "Models (separated by commas; blank asks the server)",
             &form.models,
             MODEL_LIST,
             "e.g. qwen3-coder, gpt-oss-120b",
-        ))
-        .children(found_node(form, room))
-        .child(
-            node()
-                .styles([flex(), items_center(), justify_between(), gap(2)])
-                .child(
-                    Button::new("Find models", MODEL_FIND)
-                        .variant(Variant::Outline)
-                        .size(Size::Sm)
-                        .with_icon(IconName::Search)
-                        .disabled(
-                            form.base_url.text().trim().is_empty() || form.found.asking.is_some(),
-                        )
-                        .build(),
-                )
-                .child(
-                    node()
-                        .styles([flex(), items_center(), justify_end(), gap(2)])
-                        .child(
-                            Button::new("Cancel", MODEL_CANCEL)
-                                .variant(Variant::Ghost)
-                                .size(Size::Sm)
-                                .build(),
-                        )
-                        .child(
-                            Button::new("Save", MODEL_SAVE)
-                                .size(Size::Sm)
-                                .disabled(!form.complete())
-                                .build(),
-                        ),
-                ),
-        )
+        );
+        found_node(form, room);
+        row(
+            Modifier::new(),
+            Flex::new().center().between().gap(2),
+            || {
+                Button::new("Find models", MODEL_FIND)
+                    .variant(Variant::Outline)
+                    .size(Size::Sm)
+                    .with_icon(IconName::Search)
+                    .disabled(form.base_url.text().trim().is_empty() || form.found.asking.is_some())
+                    .build();
+                row(
+                    Modifier::new(),
+                    Flex::new().center().trailing().gap(2),
+                    || {
+                        Button::new("Cancel", MODEL_CANCEL)
+                            .variant(Variant::Ghost)
+                            .size(Size::Sm)
+                            .build();
+                        Button::new("Save", MODEL_SAVE)
+                            .size(Size::Sm)
+                            .disabled(!form.complete())
+                            .build();
+                    },
+                );
+            },
+        );
+    });
 }
 
 /// How `server` is reached and what it offers, in the words under its name.
@@ -616,92 +602,96 @@ fn key_badge(server: &ModelServer) -> Option<String> {
     }
 }
 
-/// The row of the server at `index`: its name and how its key is given, over how it is reached and its models, with its buttons.
-fn server_row(index: usize, server: &ModelServer) -> Node {
+/// Emits the row of the server at `index`: its name and how its key is given, over how it is reached and its models, with its buttons.
+#[track_caller]
+fn server_row(index: usize, server: &ModelServer) {
     let name = server.label.clone().unwrap_or_else(|| server.id.clone());
-    let words = node()
-        .styles([flex(), flex_col(), gap(0.5), flex_1(), min_w_px(0)])
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(2)])
-                .child(line(name, 13, 1.4, Role::Text).styles([pm_style::font_medium()]))
-                .children(key_badge(server).map(|label| Badge::new(label).build())),
-        )
-        .child(clipped(detail_of(server), 12, Role::Muted))
-        .children((!server.models.is_empty()).then(|| {
-            clipped(server.models.join(", "), 11, Role::Subtle).styles([pm_style::font_mono()])
-        }));
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            justify_between(),
-            gap(3),
-            flex_none(),
-            pm_style::px(3),
-            pm_style::py(3),
-        ])
-        .child(words)
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(1), flex_none()])
-                .children(MODEL_SERVER_EDITS.id(index).map(|edit| {
+    row(
+        Modifier::new().pad_x(3).pad_y(3),
+        Flex::new().center().between().gap(3),
+        || {
+            column(Modifier::new().grow(), Flex::new().gap(0.5), || {
+                row(Modifier::new(), Flex::new().center().gap(2), || {
+                    label(
+                        name,
+                        Type::new(13)
+                            .ratio(1.4)
+                            .tone(Role::Text)
+                            .truncate()
+                            .medium(),
+                    );
+                    if let Some(said) = key_badge(server) {
+                        Badge::new(said).build();
+                    }
+                });
+                clipped(detail_of(server), 12, Role::Muted);
+                if !server.models.is_empty() {
+                    label_with(
+                        Modifier::new().fill_max_width(),
+                        server.models.join(", "),
+                        Type::new(11)
+                            .ratio(1.4)
+                            .tone(Role::Subtle)
+                            .truncate()
+                            .mono(),
+                    );
+                }
+            });
+            row(Modifier::new(), Flex::new().center().gap(1), || {
+                if let Some(edit) = MODEL_SERVER_EDITS.id(index) {
                     Button::new("Edit", edit)
                         .variant(Variant::Ghost)
                         .size(Size::Sm)
-                        .build()
-                }))
-                .children(MODEL_SERVER_REMOVES.id(index).map(|remove| {
+                        .build();
+                }
+                if let Some(remove) = MODEL_SERVER_REMOVES.id(index) {
                     Button::new("Remove", remove)
                         .variant(Variant::Ghost)
                         .size(Size::Sm)
-                        .build()
-                })),
-        )
+                        .build();
+                }
+            });
+        },
+    );
 }
 
 /// What the page says about itself under its heading.
 pub(crate) const SUMMARY: &str = "OpenAI-compatible servers, such as a company gateway or a local vLLM, LM Studio or llama.cpp server. Each one is offered as an agent, with its models in the model picker.";
 
-/// The body of the model servers page, `room` logical pixels across: what it is for, then every server with the form while it is open.
-pub(crate) fn body(state: &WorkspaceState, page: Node, room: f32) -> Node {
+/// Emits the body of the model servers page, `room` logical pixels across: `page`, what the caller put first, then what the page is for, then every server with the form while it is open.
+#[track_caller]
+pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     let models = &state.settings_page.models;
     let form = models.form.as_ref();
     let adding = form.is_some_and(|form| form.index.is_none());
-    let mut rows: Vec<Node> = models
-        .servers
-        .iter()
-        .enumerate()
-        .map(|(index, server)| match form {
-            Some(form) if form.index == Some(index) => form_node(form, room),
-            _ => server_row(index, server),
-        })
-        .collect();
-    if let (Some(form), true) = (form, adding) {
-        rows.push(form_node(form, room));
+    page();
+    paragraph(SUMMARY, room);
+    if let Some(reason) = models.error.as_deref() {
+        wrapped_note(&format!("Could not change the servers: {reason}"), room);
     }
-    let page =
-        page.child(paragraph(SUMMARY, room))
-            .children(models.error.as_deref().map(|reason| {
-                wrapped_note(&format!("Could not change the servers: {reason}"), room)
-            }))
-            .child(
-                node()
-                    .styles([flex(), items_center(), justify_between(), flex_none()])
-                    .child(heading_only("Servers", models.servers.len()))
-                    .child(
-                        Button::new("Add Server", MODEL_ADD)
-                            .variant(Variant::Outline)
-                            .size(Size::Sm)
-                            .disabled(adding)
-                            .build(),
-                    ),
-            );
-    if rows.is_empty() {
-        page.child(note("No model servers are declared."))
-    } else {
-        page.child(boxed(rows))
+    row(Modifier::new(), Flex::new().center().between(), || {
+        heading_only("Servers", models.servers.len());
+        Button::new("Add Server", MODEL_ADD)
+            .variant(Variant::Outline)
+            .size(Size::Sm)
+            .disabled(adding)
+            .build();
+    });
+    if models.servers.is_empty() && !adding {
+        note("No model servers are declared.");
+        return;
     }
+    boxed(|| {
+        for (index, server) in models.servers.iter().enumerate() {
+            rustle::key(index, || match form {
+                Some(form) if form.index == Some(index) => form_node(form, room),
+                _ => server_row(index, server),
+            });
+        }
+        if let (Some(form), true) = (form, adding) {
+            form_node(form, room);
+        }
+    });
 }
 
 /// How many servers the page lists, in words, for its card on the Agents overview.

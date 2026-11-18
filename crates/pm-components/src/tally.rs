@@ -1,15 +1,13 @@
 //! The tally: how many lines were added and how many removed.
 
-use pm_style::{
-    Role, flex, flex_none, font_mono, gap, items_center, leading_ratio, text_color, text_px,
-};
-use pm_ui::{Node, node, text};
+use crate::kit::{Flex, Role, Type, label, row};
+use rustle::Modifier;
 
 /// A tally being described: the two counts and how big they are set.
 ///
-/// Build it with [`Tally::new`], change it with [`Tally::size`], and turn it
-/// into a node with [`Tally::build`].
-#[derive(Clone, Copy, Debug)]
+/// Build it with [`Tally::new`], change it with [`Tally::size`], and emit it
+/// with [`Tally::build`].
+#[derive(Clone, Debug)]
 pub struct Tally {
     /// The lines added.
     added: usize,
@@ -17,6 +15,8 @@ pub struct Tally {
     removed: usize,
     /// How tall the type is, in logical pixels.
     pixels: u32,
+    /// What the caller puts around its box.
+    modifier: Modifier,
 }
 
 impl Tally {
@@ -26,6 +26,7 @@ impl Tally {
             added,
             removed,
             pixels: 12,
+            modifier: Modifier::new(),
         }
     }
 
@@ -35,19 +36,20 @@ impl Tally {
         self
     }
 
-    /// The node that draws `+added −removed`, the first in the success colour and the second in the danger colour.
-    pub fn build(self) -> Node {
-        let count = |content: String, tone: Role| {
-            text(content).styles([
-                text_px(self.pixels),
-                leading_ratio(1.4),
-                font_mono(),
-                text_color(tone),
-            ])
-        };
-        node()
-            .styles([flex(), items_center(), gap(1.5), flex_none()])
-            .child(count(format!("+{}", self.added), Role::Success))
-            .child(count(format!("−{}", self.removed), Role::Danger))
+    /// The tally with `modifier` put around its box, outside its own: sizes, weight, placement.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
+    }
+
+    /// Emits `+added −removed`, the first in the success colour and the second in the danger colour.
+    #[track_caller]
+    pub fn build(self) {
+        let kind = Type::new(self.pixels).ratio(1.4).mono();
+        let (added, removed) = (self.added, self.removed);
+        row(self.modifier, Flex::new().center().gap(1.5), move || {
+            label(format!("+{added}"), kind.tone(Role::Success));
+            label(format!("−{removed}"), kind.tone(Role::Danger));
+        });
     }
 }

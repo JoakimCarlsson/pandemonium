@@ -1,7 +1,6 @@
 //! The menu on the tab of an open file: closing it and the tabs around it, making it read only, its paths and permalink, showing it in the file manager and in the project's files, pinning it, and a shell beside it.
 
-use pm_input::FocusId;
-use pm_ui::Node;
+use crate::kit::FocusId;
 
 use crate::Menu;
 use crate::open_files::{Contents, Viewer};
@@ -266,8 +265,9 @@ impl WorkspaceState {
     }
 }
 
-/// The menu on the tab of `viewer`, at `at`, its rows enabled by what the file allows, `local` when the project is on this machine.
-pub fn tab_menu(viewer: &Viewer, open: TabMenu, count: usize, local: bool) -> Node {
+/// Emits the menu on the tab of `viewer`, at `at`, its rows enabled by what the file allows, `local` when the project is on this machine.
+#[track_caller]
+pub fn tab_menu(viewer: &Viewer, open: TabMenu, count: usize, local: bool) {
     let row = |menu: Menu, label: &str, keys: Option<&str>, command: TabCommand, on: bool| {
         menu.item(label, keys, command.id(), !on)
     };
@@ -369,5 +369,5 @@ pub fn tab_menu(viewer: &Viewer, open: TabMenu, count: usize, local: bool) -> No
         TabCommand::OpenInTerminal,
         in_folder,
     )
-    .build()
+    .build();
 }

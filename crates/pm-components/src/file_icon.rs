@@ -3,12 +3,10 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
-use pm_icon::{IconName, Svg};
 use pm_protocol::{ExtensionIconTheme, ExtensionInfo};
-use pm_style::{Color, Role, size, text_color};
-use pm_ui::{Node, node};
+use rustle::Modifier;
 
-use crate::parts::glyph;
+use crate::kit::{Artwork, IconName, Role, Tone, artwork_with, icon, icon_with, sp};
 
 /// What an installed language says of the files whose names end as it reads.
 #[derive(Clone)]
@@ -16,7 +14,7 @@ struct Known {
     /// The language, by its folder's name.
     language: String,
     /// The icon and colour its files are shown with, when it has one.
-    icon: Option<(Svg, Color)>,
+    icon: Option<(Artwork, Tone)>,
 }
 
 /// What the installed languages of one machine say of their files: by the ending of a file name, and by the whole names and name patterns that are read before an ending is.
@@ -35,18 +33,18 @@ type Learned = HashMap<Option<String>, Machine>;
 static LEARNED: LazyLock<Mutex<Learned>> = LazyLock::new(Default::default);
 
 /// The icons the icon themes of each machine give the endings of file names: by machine, then by ending.
-type Themed = HashMap<Option<String>, HashMap<String, (Svg, Color)>>;
+type Themed = HashMap<Option<String>, HashMap<String, (Artwork, Tone)>>;
 
 /// What was learned from the icon themes installed on the machines reached.
 static THEMED: LazyLock<Mutex<Themed>> = LazyLock::new(Default::default);
 
 /// The colour `hex`, written `#rrggbb`, names.
-fn colour_of(hex: &str) -> Option<Color> {
+fn colour_of(hex: &str) -> Option<Tone> {
     let digits = hex.strip_prefix('#')?;
     let value = u32::from_str_radix(digits, 16)
         .ok()
         .filter(|_| digits.len() == 6)?;
-    Some(Color::rgb(
+    Some(Tone::rgb(
         (value >> 16) as u8,
         (value >> 8) as u8,
         value as u8,
@@ -58,12 +56,12 @@ pub fn learn_languages(host: &Option<String>, extensions: &[ExtensionInfo]) {
     let mut machine = Machine::default();
     for extension in extensions.iter().filter(|extension| extension.installed) {
         let icon = extension.icon.as_ref().map(|source| {
-            let svg = Svg::arrived(&format!("extension-{}", extension.id), source);
+            let svg = Artwork::arrived(&format!("extension-{}", extension.id), source);
             let tone = extension
                 .color
                 .as_deref()
                 .and_then(colour_of)
-                .unwrap_or_else(|| Color::from(Role::Muted));
+                .unwrap_or_else(|| Tone::from(Role::Muted));
             (svg, tone)
         });
         let known = Known {
@@ -97,8 +95,8 @@ pub fn learn_icon_themes(host: &Option<String>, themes: &[ExtensionIconTheme]) {
                 .color
                 .as_deref()
                 .and_then(colour_of)
-                .unwrap_or_else(|| Color::from(Role::Muted));
-            let svg = Svg::arrived(
+                .unwrap_or_else(|| Tone::from(Role::Muted));
+            let svg = Artwork::arrived(
                 &format!(
                     "icon-theme-{}-{}-{}",
                     theme.extension, theme.name, icon.suffix
@@ -142,8 +140,8 @@ pub fn file_language(path: &str) -> Option<String> {
     learned_of(path, |known| Some(known.language.clone()))
 }
 
-/// The icon and colour of the file `path` names: its installed language's, or a plain muted file.
-pub fn file_kind(path: &str) -> (Svg, Color) {
+/// The icon and colour of the file `path` names: its installed language's or its icon theme's artwork, or no artwork, meaning the plain file icon, in muted.
+pub fn file_kind(path: &str) -> (Option<Artwork>, Tone) {
     let suffix = suffix_of(path);
     let themed = THEMED.lock().ok().and_then(|themed| {
         themed
@@ -152,21 +150,27 @@ pub fn file_kind(path: &str) -> (Svg, Color) {
     });
     themed
         .or_else(|| learned_of(path, |known| known.icon))
-        .unwrap_or_else(|| (IconName::File.svg(), Color::from(Role::Muted)))
+        .map_or((None, Tone::from(Role::Muted)), |(art, tone)| {
+            (Some(art), tone)
+        })
 }
 
-/// The icon of the file `path` names, `steps` on a side, tinted by its kind.
-pub fn file_icon(path: &str, steps: f32) -> Node {
-    let (svg, tone) = file_kind(path);
-    node().styles([size(steps), text_color(tone)]).artwork(svg)
+/// Emits the icon of the file `path` names, `steps` on a side, tinted by its kind.
+#[track_caller]
+pub fn file_icon(path: &str, steps: f32) {
+    match file_kind(path) {
+        (Some(art), tone) => artwork_with(Modifier::new(), art, sp(steps), tone),
+        (None, tone) => icon_with(Modifier::new(), IconName::File, sp(steps), tone),
+    }
 }
 
-/// A folder, open or closed, `steps` on a side, in the folder colour.
-pub fn folder_icon(open: bool, steps: f32) -> Node {
-    let icon = if open {
+/// Emits a folder, open or closed, `steps` on a side, in the folder colour.
+#[track_caller]
+pub fn folder_icon(open: bool, steps: f32) {
+    let name = if open {
         IconName::FolderOpen
     } else {
         IconName::Folder
     };
-    glyph(icon, steps, Color::rgb(0xd9, 0xa9, 0x5b))
+    icon(name, steps, Tone::rgb(0xd9, 0xa9, 0x5b));
 }

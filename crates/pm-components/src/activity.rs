@@ -1,21 +1,16 @@
 //! The chips above the prompt box that sum up what the agent is doing, each opening its details.
 
 use pm_harness::Progress;
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::primitives::{Length, Sides};
-use pm_style::{
-    Radius, Role, absolute, animate_spin, bg, border, border_color, cursor_pointer, flex, flex_col,
-    flex_none, flex_wrap, gap, h, inset_length, items_center, left, mb, p, px, py, relative,
-    rounded, rounded_full, shadow_md, size, w_full, z,
-};
-use pm_text::Shaper;
-use pm_ui::{Node, node};
+use rustle::{CursorIcon, Modifier};
 
 use crate::Button;
 use crate::Tally;
 use crate::button::Variant;
-use crate::parts::{clipped, glyph, line};
+use crate::kit::{
+    Flex, FocusId, Hovered, IconName, Interactive, Looks, Placement, Radius, Role, Side, Styled,
+    anchored, column, gap_box, row, spinner, wrapping,
+};
+use crate::parts::{clipped, line};
 use crate::sample::{Session, Step};
 use crate::size::Size;
 use crate::state::{
@@ -45,50 +40,48 @@ pub(crate) fn latest_plan(session: &Session) -> Option<&[pm_harness::PlanStep]> 
         })
 }
 
-/// The card of the commands the agent left running, with how long each has gone on.
-fn shells(session: &Session) -> Node {
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            gap(2),
-            px(3.5),
-            py(3),
-            rounded(Radius::Lg),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-        ])
-        .child(line(
-            format!("{} running", session.shells.len()),
-            12,
-            1.4,
-            Role::Muted,
-        ))
-        .children(session.shells.iter().map(|shell| {
-            node()
-                .styles([flex(), items_center(), gap(2.5)])
-                .child(glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()]))
-                .child(clipped(&shell.label, 13, Role::Text))
-                .child(
+/// Emits the card of the commands the agent left running, with how long each has gone on.
+fn shells(session: &Session) {
+    column(
+        Modifier::new()
+            .fill_rounded(Role::Surface, Radius::Lg)
+            .stroke(Role::Border, Radius::Lg)
+            .pad_x(3.5)
+            .pad_y(3),
+        Flex::new().gap(2),
+        || {
+            line(
+                format!("{} running", session.shells.len()),
+                12,
+                1.4,
+                Role::Muted,
+            );
+            for shell in &session.shells {
+                row(Modifier::new(), Flex::new().center().gap(2.5), || {
+                    spinner(3.5, Role::Muted);
+                    clipped(&shell.label, 13, Role::Text);
                     line(
                         elapsed(shell.started.elapsed().as_secs()),
                         12,
                         1.4,
                         Role::Subtle,
-                    )
-                    .styles([flex_none()]),
-                )
-        }))
+                    );
+                });
+            }
+        },
+    );
 }
 
-/// The card of the subagents of the latest reply that started any, or nothing when none was started.
-fn subagent_panel(state: &WorkspaceState, session: &Session) -> Option<Node> {
-    let (reply, _, _) = *session
+/// Emits the card of the subagents of the latest reply that started any, or nothing when none was started.
+fn subagent_panel(state: &WorkspaceState, session: &Session) {
+    let Some(&(reply, _, _)) = session
         .subagents()
         .iter()
         .rev()
-        .find(|(_, _, tool)| tool.is_working_agent())?;
+        .find(|(_, _, tool)| tool.is_working_agent())
+    else {
+        return;
+    };
     let positions: Vec<usize> = session
         .subagents()
         .into_iter()
@@ -98,23 +91,60 @@ fn subagent_panel(state: &WorkspaceState, session: &Session) -> Option<Node> {
     let page = state.open_index();
     let held = state.opened.clone();
     let root = state.root_of(session);
-    Some(subagents(
+    subagents(
         &session.messages[reply].steps,
         &positions,
         reply,
         &|position| page.is_some_and(|open| held.contains(&(open, reply, position))),
         &root.to_string_lossy(),
         Some((SUBAGENTS_SCROLL, state.subagents_scroll)),
-    ))
+    );
 }
 
-/// The chips for `session`, whose panels are `width` logical pixels wide, or nothing when there is nothing to sum up.
-pub fn activity(
-    state: &WorkspaceState,
-    session: &Session,
-    width: f32,
-    shaper: &mut Shaper,
-) -> Option<Node> {
+/// Whether the panel `open` has anything to show for `session`.
+fn has_panel(session: &Session, open: Activity) -> bool {
+    match open {
+        Activity::Plan => latest_plan(session).is_some(),
+        Activity::Approvals => session.ask.is_some(),
+        Activity::Subagents => session
+            .subagents()
+            .iter()
+            .any(|(_, _, tool)| tool.is_working_agent()),
+        Activity::Shells => !session.shells.is_empty(),
+    }
+}
+
+/// Emits the open panel `open` for `session`, `width` logical pixels wide, hanging over the chips.
+#[track_caller]
+fn panel(state: &WorkspaceState, session: &Session, open: Activity, width: f32) {
+    column(
+        Modifier::new()
+            .width(width)
+            .shadow_md(Radius::Xl)
+            .fill_rounded(Role::Background, Radius::Xl)
+            .stroke(Role::Border, Radius::Xl)
+            .pad(2),
+        Flex::new(),
+        || match open {
+            Activity::Plan => {
+                if let Some(items) = latest_plan(session) {
+                    plan(items);
+                }
+            }
+            Activity::Approvals => {
+                if let Some(ask) = session.ask.as_ref() {
+                    question(ask, width);
+                }
+            }
+            Activity::Subagents => subagent_panel(state, session),
+            Activity::Shells => shells(session),
+        },
+    );
+}
+
+/// Emits the chips for `session`, whose panels are `width` logical pixels wide, or nothing when there is nothing to sum up.
+#[track_caller]
+pub fn activity(state: &WorkspaceState, session: &Session, width: f32) {
     let plan_items = latest_plan(session);
     let awaiting = usize::from(session.ask.as_ref().is_some_and(|ask| ask.plan.is_none()));
     let working_agents = session
@@ -128,77 +158,58 @@ pub fn activity(
         && working_agents == 0
         && session.shells.is_empty()
     {
-        return None;
+        return;
     }
-    let mut bar = node().styles([
-        relative(),
-        flex(),
-        flex_wrap(),
-        items_center(),
-        gap(2),
-        mb(2),
-    ]);
-    if let Some(open) = state.activity {
-        let panel = match open {
-            Activity::Plan => plan_items.map(plan),
-            Activity::Approvals => session.ask.as_ref().map(|ask| question(ask, width, shaper)),
-            Activity::Subagents => subagent_panel(state, session),
-            Activity::Shells => (!session.shells.is_empty()).then(|| shells(session)),
-        };
-        if let Some(panel) = panel {
-            bar = bar.child(
-                node()
-                    .styles([
-                        absolute(),
-                        inset_length(Sides::Bottom, Length::Fraction(1.0)),
-                        left(0),
-                        z(40),
-                        w_full(),
-                        flex(),
-                        flex_col(),
-                        p(2),
-                        rounded(Radius::Xl),
-                        border(),
-                        border_color(Role::Border),
-                        bg(Role::Background),
-                        shadow_md(),
-                        mb(2),
-                    ])
-                    .child(panel),
-            );
-        }
-    }
-    if awaiting > 0 {
-        bar = bar.child(
+    let open = state.activity.filter(|&open| has_panel(session, open));
+    anchored(
+        Modifier::new().pad_side(Side::Bottom, 2),
+        Placement::Above,
+        2.0,
+        || chips(state, session, plan_items, awaiting, working_agents),
+        open.map(|open| move || panel(state, session, open, width)),
+    );
+}
+
+/// Emits the strip of chips: approvals awaited, the plan, running subagents and commands, and the diff.
+#[track_caller]
+fn chips(
+    state: &WorkspaceState,
+    session: &Session,
+    plan_items: Option<&[pm_harness::PlanStep]>,
+    awaiting: usize,
+    working_agents: usize,
+) {
+    wrapping(Modifier::new(), 2, || {
+        if awaiting > 0 {
             chip(format!("{awaiting} awaiting approval"), APPROVALS_CHIP)
-                .mark(node().styles([size(1.5), rounded_full(), bg(Role::Danger)]))
+                .mark(|| {
+                    gap_box(
+                        Modifier::new()
+                            .square(1.5)
+                            .fill_rounded(Role::Danger, Radius::Full),
+                    )
+                })
                 .selected(state.activity == Some(Activity::Approvals))
-                .build(),
-        );
-    }
-    if let Some(items) = plan_items {
-        let done = items
-            .iter()
-            .filter(|item| item.progress == Progress::Done)
-            .count();
-        bar = bar.child(
+                .build();
+        }
+        if let Some(items) = plan_items {
+            let done = items
+                .iter()
+                .filter(|item| item.progress == Progress::Done)
+                .count();
             chip(format!("{done}/{} tasks", items.len()), PLAN_CHIP)
                 .with_icon(IconName::CheckCircle)
                 .selected(state.activity == Some(Activity::Plan))
-                .build(),
-        );
-    }
-    if working_agents > 0 {
-        bar = bar.child(
+                .build();
+        }
+        if working_agents > 0 {
             chip(format!("{working_agents} running"), SUBAGENTS_CHIP)
-                .mark(glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()]))
+                .mark(|| spinner(3.5, Role::Muted))
                 .selected(state.activity == Some(Activity::Subagents))
-                .build(),
-        );
-    }
-    if !session.shells.is_empty() {
-        let count = session.shells.len();
-        bar = bar.child(
+                .build();
+        }
+        if !session.shells.is_empty() {
+            let count = session.shells.len();
             chip(
                 format!(
                     "{count} {} running",
@@ -206,32 +217,29 @@ pub fn activity(
                 ),
                 SHELLS_CHIP,
             )
-            .mark(glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()]))
+            .mark(|| spinner(3.5, Role::Muted))
             .selected(state.activity == Some(Activity::Shells))
-            .build(),
-        );
-    }
-    if !session.changes.is_empty() {
-        bar = bar.child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    h(7),
-                    px(3),
-                    rounded_full(),
-                    border(),
-                    border_color(Role::Border),
-                    cursor_pointer(),
-                    bg(Role::SurfaceHover).hover(),
-                ])
-                .child(
+            .build();
+        }
+        if !session.changes.is_empty() {
+            row(
+                Modifier::new()
+                    .h(7)
+                    .looks_of(
+                        Looks::new().hover(Role::SurfaceHover).radius(Radius::Full),
+                        OPEN_DIFF,
+                    )
+                    .stroke(Role::Border, Radius::Full)
+                    .cursor(CursorIcon::Pointer)
+                    .target(OPEN_DIFF)
+                    .pad_x(3),
+                Flex::new().center(),
+                || {
                     Tally::new(session.added(), session.removed())
                         .size(12)
-                        .build(),
-                )
-                .focusable(OPEN_DIFF),
-        );
-    }
-    Some(bar)
+                        .build();
+                },
+            );
+        }
+    });
 }

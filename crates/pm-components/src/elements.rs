@@ -2,15 +2,12 @@
 //! message is sent, a popover lists everything about it, and in the message it is written out in
 //! sections.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Color, Radius, Role, bg, border, border_color, flex, flex_1, flex_col, flex_none, flex_wrap,
-    font_mono, gap, h_px, items_center, items_start, leading_ratio, max_h, min_w_px,
-    overflow_hidden, p, pr, pt, px, py, rounded, text_color, text_px, w_full, w_px,
+use rustle::Modifier;
+
+use crate::kit::{
+    Flex, FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, Tone, Type, column,
+    gap_box, label, row, scroll_area, sp, wrap_lines, wrapping,
 };
-use pm_text::Shaper;
-use pm_ui::{Node, node, text};
 
 use crate::button::Variant;
 use crate::parts::line;
@@ -202,30 +199,29 @@ pub fn split(text: &str) -> (&str, Vec<String>) {
     (text[..start].trim_end(), labels)
 }
 
-/// The elements of a sent message as chips, which only say what they are.
-pub fn sent_chips(labels: &[String]) -> Node {
-    node()
-        .styles([flex(), flex_wrap(), gap(2)])
-        .children(labels.iter().map(|label| {
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    gap(1.5),
-                    px(2),
-                    py(1),
-                    rounded(Radius::Lg),
-                    bg(Role::Surface),
-                    border(),
-                    border_color(Role::Border),
-                ])
-                .child(crate::parts::glyph(
-                    crate::captures::Capture::icon_of_label(label),
-                    3.5,
-                    Role::Muted,
-                ))
-                .child(line(label, 12, 1.4, Role::Text))
-        }))
+/// Emits the elements of a sent message as chips, which only say what they are.
+#[track_caller]
+pub fn sent_chips(labels: &[String]) {
+    wrapping(Modifier::new(), 2, || {
+        for label in labels {
+            row(
+                Modifier::new()
+                    .fill_rounded(Role::Surface, Radius::Lg)
+                    .stroke(Role::Border, Radius::Lg)
+                    .pad_x(2)
+                    .pad_y(1),
+                Flex::new().center().gap(1.5),
+                || {
+                    crate::parts::glyph(
+                        crate::captures::Capture::icon_of_label(label),
+                        3.5,
+                        Role::Muted,
+                    );
+                    line(label, 12, 1.4, Role::Text);
+                },
+            );
+        }
+    });
 }
 
 /// The elements written out for the agent, in sections: each says where it is, what it is made of and how it looks, and all of it is set off as page content, not instructions.
@@ -291,7 +287,7 @@ fn number(token: &str, whole: f32) -> Option<f32> {
 }
 
 /// The colour a CSS value names, when it is written as `#rgb`, `#rrggbb`, `rgb()`, `rgba()` or `oklch()`.
-fn css_color(value: &str) -> Option<Color> {
+fn css_color(value: &str) -> Option<Tone> {
     let value = value.trim();
     if let Some(hex) = value.strip_prefix('#') {
         let digits = match hex.len() {
@@ -299,7 +295,7 @@ fn css_color(value: &str) -> Option<Color> {
             6 => hex.to_owned(),
             _ => return None,
         };
-        return u32::from_str_radix(&digits, 16).ok().map(Color::hex);
+        return u32::from_str_radix(&digits, 16).ok().map(Tone::hex);
     }
     let (function, rest) = value.split_once('(')?;
     let inside = rest.strip_suffix(')')?;
@@ -315,10 +311,10 @@ fn css_color(value: &str) -> Option<Color> {
         "rgb" | "rgba" if parts.len() >= 3 => {
             let channel = |part: &str| number(part, 255.0).map(|v| v.clamp(0.0, 255.0) as u8);
             let alpha = alpha.or_else(|| parts.get(3).and_then(|part| number(part, 1.0)));
-            let base = Color::rgb(channel(parts[0])?, channel(parts[1])?, channel(parts[2])?);
+            let base = Tone::rgb(channel(parts[0])?, channel(parts[1])?, channel(parts[2])?);
             return Some(alpha.map_or(base, |a| base.alpha(a.clamp(0.0, 1.0))));
         }
-        "oklch" if parts.len() >= 3 => Color::oklch(
+        "oklch" if parts.len() >= 3 => Tone::oklch(
             number(parts[0], 1.0)?,
             number(parts[1], 0.4)?,
             parts[2].trim_end_matches("deg").parse().ok()?,
@@ -328,185 +324,162 @@ fn css_color(value: &str) -> Option<Color> {
     Some(alpha.map_or(color, |a| color.alpha(a.clamp(0.0, 1.0))))
 }
 
-/// A card of the popover: a small title over `body`.
-pub(crate) fn section(title: &str, body: Node) -> Node {
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            gap(1.5),
-            p(2.5),
-            rounded(Radius::Lg),
-            border(),
-            border_color(Role::Border),
-        ])
-        .child(line(title, 11, 1.4, Role::Subtle))
-        .child(body)
+/// Emits a card of the popover: a small title over what `body` emits.
+#[track_caller]
+pub(crate) fn section(title: &str, body: impl FnOnce()) {
+    column(
+        Modifier::new().stroke(Role::Border, Radius::Lg).pad(2.5),
+        Flex::new().gap(1.5),
+        || {
+            line(title, 11, 1.4, Role::Subtle);
+            body();
+        },
+    );
 }
 
-/// Words broken into lines of at most `width` logical pixels, one line to a node, in the monospace face when `mono`.
-pub(crate) fn words(
-    shaper: &mut Shaper,
-    content: &str,
-    mono: bool,
-    tone: Role,
-    width: f32,
-) -> Node {
+/// Emits `content` broken into lines of at most `width` logical pixels, one label to a line, in
+/// `tone`, in the monospace face when `mono`.
+#[track_caller]
+pub(crate) fn words(content: &str, mono: bool, tone: Role, width: f32) {
     let content = one_line(content);
-    let mut setting = vec![text_px(12), leading_ratio(1.5)];
-    if mono {
-        setting.push(font_mono());
-    }
-    node().styles([flex(), flex_col()]).children(
-        pm_ui::wrap(shaper, &content, setting.clone(), width)
-            .into_iter()
-            .map(|piece| {
-                text(&content[piece.start..piece.end])
-                    .styles(setting.clone())
-                    .styles([text_color(tone)])
-            }),
-    )
+    let kind = Type::new(12).ratio(1.5);
+    let kind = if mono { kind.mono() } else { kind };
+    let lines = wrap_lines(&content, kind, width);
+    column(Modifier::new(), Flex::new(), || {
+        for piece in lines {
+            label(&content[piece.start..piece.end], kind.tone(tone));
+        }
+    });
 }
 
-/// A row of a list: a name at the left and a value at the right, with a swatch of the colour when the value is one.
-fn pair(shaper: &mut Shaper, name: &str, value: &str) -> Node {
+/// Emits a row of a list: a name at the left and a value at the right, with a swatch of the colour
+/// when the value is one.
+#[track_caller]
+fn pair(name: &str, value: &str) {
     let swatch = css_color(value);
-    let mut cell = node().styles([flex(), items_start(), gap(1.5), flex_1(), min_w_px(0)]);
     let room = if swatch.is_some() {
         VALUE_TEXT
     } else {
         VALUE_TEXT + 18.0
     };
-    if let Some(color) = swatch {
-        cell = cell.child(
-            node()
-                .styles([
-                    w_px(12.0),
-                    h_px(12.0),
-                    flex_none(),
-                    rounded(Radius::Sm),
-                    border(),
-                    border_color(Role::Border),
-                    bg(color),
-                ])
-                .styles([pt(0.5)]),
-        );
-    }
-    let name = words(shaper, name, false, Role::Muted, NAME_WIDTH);
-    node()
-        .styles([flex(), items_start(), gap(3)])
-        .child(node().styles([w_px(NAME_WIDTH), flex_none()]).child(name))
-        .child(cell.child(words(shaper, value, false, Role::Text, room)))
+    row(Modifier::new(), Flex::new().start().gap(3), || {
+        column(Modifier::new().width(NAME_WIDTH), Flex::new(), || {
+            words(name, false, Role::Muted, NAME_WIDTH);
+        });
+        row(Modifier::new().grow(), Flex::new().start().gap(1.5), || {
+            if let Some(tone) = swatch {
+                gap_box(
+                    Modifier::new()
+                        .width(12.0)
+                        .height(12.0)
+                        .fill_rounded(tone, Radius::Sm)
+                        .stroke(Role::Border, Radius::Sm)
+                        .pad_side(Side::Top, 0.5),
+                );
+            }
+            words(value, false, Role::Text, room);
+        });
+    });
 }
 
-/// A list of rows, one for each name and value.
-fn pairs(shaper: &mut Shaper, rows: &[(String, String)]) -> Node {
-    node()
-        .styles([flex(), flex_col(), gap(1.5)])
-        .children(rows.iter().map(|(name, value)| pair(shaper, name, value)))
+/// Emits a list of rows, one for each name and value of `rows`.
+#[track_caller]
+fn pairs(rows: &[(String, String)]) {
+    column(Modifier::new(), Flex::new().gap(1.5), || {
+        for (name, value) in rows {
+            pair(name, value);
+        }
+    });
 }
 
-/// The popover of an element: everything the prompt knows about it, in cards.
-fn popover(element: &Element, state: &WorkspaceState, shaper: &mut Shaper) -> Node {
-    let mut cards = vec![
-        section(
-            "ELEMENT",
-            node()
-                .styles([flex(), flex_col(), gap(1)])
-                .child(words(
-                    shaper,
-                    &element.opening_tag(),
-                    true,
-                    Role::Text,
-                    CARD_TEXT,
-                ))
-                .child(words(
-                    shaper,
-                    &element.size(),
-                    false,
-                    Role::Muted,
-                    CARD_TEXT,
-                )),
-        ),
-        section(
-            "PATH",
-            words(shaper, &element.selector, true, Role::Text, CARD_TEXT),
-        ),
-    ];
-    if let Some(component) = element.component_tag() {
-        cards.push(section(
-            "COMPONENT",
-            words(shaper, &component, true, Role::Text, CARD_TEXT),
-        ));
-    }
-    if !element.attributes.is_empty() {
-        cards.push(section("ATTRIBUTES", pairs(shaper, &element.attributes)));
-    }
+/// Emits the popover of `element`: everything the prompt knows about it, in cards that scroll by
+/// the offset `state` keeps.
+#[track_caller]
+fn popover(element: &Element, state: &WorkspaceState) {
     let styles: Vec<(String, String)> = element
         .styles
         .iter()
         .filter(|(_, value)| !value.is_empty())
         .cloned()
         .collect();
-    if !styles.is_empty() {
-        cards.push(section("COMPUTED STYLES", pairs(shaper, &styles)));
-    }
-    if !element.text.is_empty() {
-        cards.push(section(
-            "INNER TEXT",
-            words(shaper, &element.text, false, Role::Text, CARD_TEXT),
-        ));
-    }
     Popover::new()
         .width(WIDTH)
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    flex_col(),
-                    gap(2),
-                    w_full(),
-                    max_h(HEIGHT / 4.0),
-                    overflow_hidden(),
-                ])
-                .scroll_from_start(MENU_SCROLL, state.menu_scroll)
-                .children(cards),
-        )
-        .over_button(MENU_BODY)
+        .modifier(Modifier::new().target(MENU_BODY))
+        .build_with(|| {
+            scroll_area(
+                Modifier::new()
+                    .fill_max_width()
+                    .height_in(0.0, sp(HEIGHT / 4.0)),
+                Scroll::from_start(MENU_SCROLL, state.menu_scroll),
+                || {
+                    column(Modifier::new().fill_max_width(), Flex::new().gap(2), || {
+                        section("ELEMENT", || {
+                            column(Modifier::new(), Flex::new().gap(1), || {
+                                words(&element.opening_tag(), true, Role::Text, CARD_TEXT);
+                                words(&element.size(), false, Role::Muted, CARD_TEXT);
+                            });
+                        });
+                        section("PATH", || {
+                            words(&element.selector, true, Role::Text, CARD_TEXT);
+                        });
+                        if let Some(component) = element.component_tag() {
+                            section("COMPONENT", || {
+                                words(&component, true, Role::Text, CARD_TEXT);
+                            });
+                        }
+                        if !element.attributes.is_empty() {
+                            section("ATTRIBUTES", || pairs(&element.attributes));
+                        }
+                        if !styles.is_empty() {
+                            section("COMPUTED STYLES", || pairs(&styles));
+                        }
+                        if !element.text.is_empty() {
+                            section("INNER TEXT", || {
+                                words(&element.text, false, Role::Text, CARD_TEXT);
+                            });
+                        }
+                    });
+                },
+            );
+        });
 }
 
-/// The chips of the elements picked for the prompt: each opens a popover with everything about it, and has a button that takes it off again.
-pub fn chips(state: &WorkspaceState, shaper: &mut Shaper) -> Option<Node> {
+/// Emits the chips of the elements picked for the prompt, when there are any: each opens a popover
+/// with everything about it, and has a button that takes it off again.
+#[track_caller]
+pub fn chips(state: &WorkspaceState) {
     if state.elements.is_empty() {
-        return None;
+        return;
     }
-    Some(
-        node()
-            .styles([flex(), flex_wrap(), gap(2), px(3), pt(3)])
-            .children(state.elements.iter().enumerate().map(|(index, element)| {
-                let open = state.picker == Some(Picker::Element(index));
-                let pill = node()
-                    .styles([
-                        flex(),
-                        items_center(),
-                        gap(0.5),
-                        pr(1),
-                        rounded(Radius::Lg),
-                        bg(Role::SurfaceHover),
-                    ])
-                    .child(
-                        Button::new(element.label(), FocusId(ELEMENT_BASE + index as u64))
-                            .variant(Variant::Ghost)
-                            .size(Size::Xs)
-                            .with_icon(IconName::Pick)
-                            .selected(open)
-                            .build(),
-                    )
-                    .child(
-                        Button::icon(IconName::Close, FocusId(ELEMENT_REMOVE_BASE + index as u64))
-                            .build(),
-                    );
-                anchored(pill, open.then(|| popover(element, state, shaper)))
-            })),
-    )
+    wrapping(Modifier::new().pad_x(3).pad_side(Side::Top, 3), 2, || {
+        for (index, element) in state.elements.iter().enumerate() {
+            let open = state.picker == Some(Picker::Element(index));
+            rustle::key(ELEMENT_BASE + index as u64, || {
+                anchored(
+                    || {
+                        row(
+                            Modifier::new()
+                                .fill_rounded(Role::SurfaceHover, Radius::Lg)
+                                .pad_side(Side::Right, 1),
+                            Flex::new().center().gap(0.5),
+                            || {
+                                Button::new(element.label(), FocusId(ELEMENT_BASE + index as u64))
+                                    .variant(Variant::Ghost)
+                                    .size(Size::Xs)
+                                    .with_icon(IconName::Pick)
+                                    .selected(open)
+                                    .build();
+                                Button::icon(
+                                    IconName::Close,
+                                    FocusId(ELEMENT_REMOVE_BASE + index as u64),
+                                )
+                                .build();
+                            },
+                        );
+                    },
+                    open.then_some(|| popover(element, state)),
+                );
+            });
+        }
+    });
 }

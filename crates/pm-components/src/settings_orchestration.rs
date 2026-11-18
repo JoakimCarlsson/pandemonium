@@ -1,14 +1,13 @@
 //! The orchestration page of the settings window: the switch that starts new conversations in orchestrator mode, and the work categories the agent then hands work to, each a row like a slot of the models page with its model, effort, backups, description and prompt addition.
 
-use pm_style::{flex, flex_none, flex_wrap, gap, items_center, justify_between};
-use pm_text::Shaper;
-use pm_ui::{Node, node};
+use rustle::Modifier;
 
+use crate::kit::{Flex, row};
 use crate::settings::Section;
 use crate::settings_servers::{boxed, heading_only, note, paragraph};
 use crate::settings_slots::{
-    CATEGORY_ADD, CATEGORY_NEW_NAME, entry, error_note, provider_choice, scope_choice, slot_row,
-    split_effort,
+    CATEGORY_ADD, CATEGORY_NEW_NAME, SlotRow, entry, error_note, provider_choice, scope_choice,
+    slot_row, split_effort,
 };
 use crate::state::WorkspaceState;
 
@@ -81,53 +80,46 @@ impl WorkspaceState {
     }
 }
 
-/// The body of the orchestration page, `room` logical pixels across: the switch for new conversations, the provider whose assignments are shown, why the last change failed, the work categories as rows like the slots of the models page, and a box to add a category.
-pub(crate) fn body(state: &WorkspaceState, page: Node, room: f32, shaper: &mut Shaper) -> Node {
+/// Emits the body of the orchestration page, `room` logical pixels across, after what `page` emits, into the box the caller holds it in: the switch for new conversations, the provider whose assignments are shown, why the last change failed, the work categories as rows like the slots of the models page, and a box to add a category.
+#[track_caller]
+pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     let slots = &state.settings_page.slots;
-    let (provider, provider_list) = provider_choice(state);
-    let rows: Vec<Node> = state
+    let rows: Vec<(usize, SlotRow)> = state
         .slot_rows()
-        .iter()
+        .into_iter()
         .enumerate()
         .filter(|(_, slot)| slot.category)
-        .map(|(row, slot)| slot_row(state, row, slot, room, shaper))
         .collect();
-    let page = page
-        .child(crate::settings_pages::page_rows(
-            state,
-            Section::Orchestration,
-            room,
-        ))
-        .child(provider)
-        .children(provider_list)
-        .children(error_note(state, room))
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    justify_between(),
-                    gap(2),
-                    flex_wrap(),
-                    flex_none(),
-                ])
-                .child(heading_only("Categories", rows.len()))
-                .child(scope_choice(state)),
-        )
-        .child(paragraph(CATEGORIES_NOTE, room));
-    let page = if !rows.is_empty() {
-        page.child(boxed(rows))
+    page();
+    crate::settings_pages::page_rows(state, Section::Orchestration, room);
+    provider_choice(state);
+    error_note(state, room);
+    row(
+        Modifier::new(),
+        Flex::new().center().between().gap(2),
+        || {
+            heading_only("Categories", rows.len());
+            scope_choice(state);
+        },
+    );
+    paragraph(CATEGORIES_NOTE, room);
+    if !rows.is_empty() {
+        boxed(|| {
+            for (place, slot) in &rows {
+                rustle::key(*place, || slot_row(state, *place, slot, room));
+            }
+        });
     } else if slots.slots.is_empty() {
-        page.child(note("The agent has not told its slots yet."))
+        note("The agent has not told its slots yet.");
     } else {
-        page.child(note("No categories yet. Add one below."))
-    };
-    page.child(entry(
+        note("No categories yet. Add one below.");
+    }
+    entry(
         &slots.new_category,
         CATEGORY_NEW_NAME,
         "Add a category of your own, e.g. docs",
         ("Add Category", CATEGORY_ADD),
-    ))
+    );
 }
 
 /// How many work categories there are, in words, for the page's card on the Agents overview.
@@ -141,8 +133,8 @@ pub(crate) fn count(state: &WorkspaceState) -> String {
 #[cfg(test)]
 /// Tests for the orchestration page: asking for the slots, the cards of the categories, opening one and describing it, and the switch for new conversations.
 mod tests {
+    use pm_field::Edit;
     use pm_harness::{SlotBook, SlotChange, SlotInfo, SlotProvider, SlotScope, SlotSource};
-    use pm_text::Edit;
 
     use super::*;
     use crate::settings_catalog::Setting;

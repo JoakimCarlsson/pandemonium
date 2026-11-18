@@ -70,7 +70,7 @@ impl Screen {
     }
 
     /// The screen after one of the debug tab's lists was scrolled.
-    pub fn scrolled_debug(self, list: pm_input::FocusId, delta: f32, room: f32) -> Self {
+    pub fn scrolled_debug(self, list: pm_components::kit::FocusId, delta: f32, room: f32) -> Self {
         self.in_workspace_debugging(|state| state.scrolled_debug(list, delta, room))
     }
 

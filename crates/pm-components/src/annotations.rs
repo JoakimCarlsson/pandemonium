@@ -1,8 +1,8 @@
 //! What the language server says to show in and beside the lines of the file shown: names coloured by what they are, hints written inside a line, and lenses at the end of one.
 
-use pm_input::FocusId;
 use pm_protocol::{CodeLens, FileEdit, InlayHint, Location, Seek, SemanticToken};
 
+use crate::kit::FocusId;
 use crate::listing::{Items, Listing};
 use crate::state::{Outgoing, WorkspaceState};
 

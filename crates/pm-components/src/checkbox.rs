@@ -1,14 +1,8 @@
 //! The check box: a small control that is ticked or not, as a square or as a switch.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, bg, border, border_color, cursor_pointer, flex, h, items_center, justify_center,
-    justify_end, justify_start, px, rounded, rounded_full, size, w,
-};
-use pm_ui::{Node, node};
+use rustle::{CursorIcon, Modifier};
 
-use crate::parts::glyph;
+use crate::kit::{Flex, FocusId, IconName, Interactive, Radius, Role, Styled, gap_box, icon, row};
 
 /// How a check box looks.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -23,8 +17,8 @@ pub enum Variant {
 /// A check box being described: whether it is ticked, what it answers to and how it looks.
 ///
 /// Build it with [`Checkbox::new`], change it with [`Checkbox::variant`], and
-/// turn it into a node with [`Checkbox::build`].
-#[derive(Clone, Copy, Debug)]
+/// emit it with [`Checkbox::build`].
+#[derive(Clone, Debug)]
 pub struct Checkbox {
     /// Whether it is ticked.
     checked: bool,
@@ -34,6 +28,8 @@ pub struct Checkbox {
     id: FocusId,
     /// How it looks.
     variant: Variant,
+    /// What the caller puts around its box.
+    modifier: Modifier,
 }
 
 impl Checkbox {
@@ -44,6 +40,7 @@ impl Checkbox {
             mixed: false,
             id,
             variant: Variant::default(),
+            modifier: Modifier::new(),
         }
     }
 
@@ -59,67 +56,71 @@ impl Checkbox {
         self
     }
 
-    /// The node that draws the check box.
-    pub fn build(self) -> Node {
+    /// The check box with `modifier` chained outside its own, for what the caller puts around it.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
+    }
+
+    /// Emits the check box.
+    #[track_caller]
+    pub fn build(self) {
         match self.variant {
             Variant::Box => self.build_box(),
             Variant::Switch => self.build_switch(),
         }
     }
 
-    /// The node that draws the square.
-    fn build_box(self) -> Node {
-        let mut styles = vec![
-            flex(),
-            items_center(),
-            justify_center(),
-            size(4),
-            rounded(Radius::Sm),
-            border(),
-            cursor_pointer(),
-        ];
+    /// Emits the square.
+    #[track_caller]
+    fn build_box(self) {
         let filled = self.checked || self.mixed;
-        if filled {
-            styles.extend([bg(Role::Accent), border_color(Role::Accent)]);
+        let own = Modifier::new().square(4);
+        let own = if filled {
+            own.fill_rounded(Role::Accent, Radius::Sm)
+                .stroke(Role::Accent, Radius::Sm)
         } else {
-            styles.push(border_color(Role::Subtle));
-        }
-        let boxed = node().styles(styles);
-        let boxed = if self.checked {
-            boxed.child(glyph(IconName::Check, 3.0, Role::OnAccent))
-        } else if self.mixed {
-            boxed.child(glyph(IconName::Minus, 3.0, Role::OnAccent))
-        } else {
-            boxed
+            own.stroke(Role::Subtle, Radius::Sm)
         };
-        boxed.focusable(self.id)
+        let own = own.cursor(CursorIcon::Pointer).target(self.id);
+        let (checked, mixed) = (self.checked, self.mixed);
+        row(
+            self.modifier.chain(own),
+            Flex::new().center().middle(),
+            move || {
+                if checked {
+                    icon(IconName::Check, 3.0, Role::OnAccent);
+                } else if mixed {
+                    icon(IconName::Minus, 3.0, Role::OnAccent);
+                }
+            },
+        );
     }
 
-    /// The node that draws the switch.
-    fn build_switch(self) -> Node {
-        let track = node().styles([
-            flex(),
-            items_center(),
-            w(9),
-            h(5),
-            px(0.5),
-            rounded_full(),
-            cursor_pointer(),
-        ]);
-        let track = if self.checked {
-            track.styles([justify_end(), bg(Role::Text)])
+    /// Emits the switch.
+    #[track_caller]
+    fn build_switch(self) {
+        let on = self.checked;
+        let own = Modifier::new()
+            .w(9)
+            .h(5)
+            .fill_rounded(
+                if on { Role::Text } else { Role::SurfaceHover },
+                Radius::Full,
+            )
+            .cursor(CursorIcon::Pointer)
+            .target(self.id)
+            .pad_x(0.5);
+        let flex = if on {
+            Flex::new().center().trailing()
         } else {
-            track.styles([justify_start(), bg(Role::SurfaceHover)])
+            Flex::new().center()
         };
-        let knob = node().styles([
-            size(4),
-            rounded_full(),
-            bg(if self.checked {
-                Role::Background
-            } else {
-                Role::Muted
-            }),
-        ]);
-        track.child(knob).focusable(self.id)
+        row(self.modifier.chain(own), flex, move || {
+            gap_box(Modifier::new().square(4).fill_rounded(
+                if on { Role::Background } else { Role::Muted },
+                Radius::Full,
+            ));
+        });
     }
 }

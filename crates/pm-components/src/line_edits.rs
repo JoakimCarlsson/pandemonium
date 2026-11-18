@@ -1,8 +1,8 @@
 //! The keys that work on whole lines and on the selection of the file shown: commenting, indenting, moving, duplicating and deleting lines, growing and shrinking the selection along the syntax tree, going to the next problem and to a line by its number.
 
+use crate::kit::FocusId;
 use pm_editor::{Case, Document, LineOrder};
-use pm_input::FocusId;
-use pm_text::{Edit, Field, Motion};
+use pm_field::{Edit, Field, Motion};
 
 use crate::state::WorkspaceState;
 
@@ -166,7 +166,7 @@ impl WorkspaceState {
                 .unwrap_or_default(),
             LineEdit::Backspace if several => vec![Edit::Backspace],
             LineEdit::Home(extend) if several => {
-                vec![Edit::Move(pm_text::Motion::LineStart, extend)]
+                vec![Edit::Move(Motion::LineStart, extend)]
             }
             LineEdit::Case(case) => self
                 .shown_document()

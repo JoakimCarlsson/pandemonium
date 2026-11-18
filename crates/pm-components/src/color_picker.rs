@@ -1,8 +1,8 @@
 //! Choosing another colour for a stretch of the file that spells one: the colour typed in hex, the ways the language server offers to write it, and the one picked written in place of the stretch.
 
-use pm_input::FocusId;
+use crate::kit::FocusId;
+use pm_field::{Edit, Field};
 use pm_protocol::{ColorPresentation, Span};
-use pm_text::{Edit, Field};
 
 use crate::state::{Outgoing, WorkspaceState};
 

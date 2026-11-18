@@ -1,6 +1,6 @@
 //! Tests of the tabs of the browser: opening, showing, closing, the lock and what is kept across a restart.
 
-use pm_input::FocusId;
+use crate::kit::FocusId;
 
 use super::{
     BROWSER_LOCK, BROWSER_NEW_TAB, BROWSER_TAB_CLOSE, BROWSER_TAB_SELECT, SavedTab, changes_page,

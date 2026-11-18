@@ -1,13 +1,11 @@
 //! The settings window: the sections of settings down its left side and the one chosen on its right, filling a window of its own.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Role, bg, border_color, border_r, flex, flex_1, flex_col, flex_none, gap, h, h_full,
-    items_center, min_h, min_w_px, overflow_hidden, p, pb, pl, pr, pt, px, w_full, w_px,
+use rustle::{CursorIcon, Modifier};
+
+use crate::kit::{
+    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled,
+    column, row, scroll_area,
 };
-use pm_text::Shaper;
-use pm_ui::{Node, node};
 
 use crate::input::Input;
 use crate::parts::{clipped, glyph, line};
@@ -416,7 +414,7 @@ impl WorkspaceState {
                 return self.without_settings();
             }
             SETTINGS_FIND_CLEAR => {
-                self.settings_page.find = pm_text::Field::default();
+                self.settings_page.find = pm_field::Field::default();
                 self.settings_servers.scroll = 0.0;
             }
             action if self.slots_pressed(action) => {}
@@ -449,7 +447,7 @@ impl WorkspaceState {
             self.settings_servers.folded = showing && !self.settings_servers.folded;
         }
         self.settings = Some(section);
-        self.settings_page.find = pm_text::Field::default();
+        self.settings_page.find = pm_field::Field::default();
         self.settings_page.picker = None;
         self.settings_page.slots.picking = None;
         self.recording = None;
@@ -493,9 +491,14 @@ fn navigation_width(width: f32) -> f32 {
     }
 }
 
-/// The node that fills the settings window, `width` logical pixels across, when settings are open, with `shaper` measuring the text of its boxes of several lines.
-pub fn settings(state: &WorkspaceState, width: f32, shaper: &mut Shaper) -> Option<Node> {
-    let section = state.settings?;
+/// Emits what fills the settings window, `width` logical pixels across, when settings are open.
+///
+/// Returns whether settings are open, and so whether anything was emitted.
+#[track_caller]
+pub fn settings(state: &WorkspaceState, width: f32) -> bool {
+    let Some(section) = state.settings else {
+        return false;
+    };
     let folded = state.settings_servers.folded;
     let navigation_width = navigation_width(width);
     let showing = if state.settings_searching() {
@@ -503,73 +506,38 @@ pub fn settings(state: &WorkspaceState, width: f32, shaper: &mut Shaper) -> Opti
     } else {
         section
     };
-    Some(
-        node()
-            .styles([flex(), w_full(), h_full(), min_h(0), bg(Role::Surface)])
-            .child(navigation(state, section, folded, navigation_width))
-            .child(content(
-                state,
-                showing,
-                width - navigation_width - 2.0 * PAGE_INSET,
-                shaper,
-            )),
-    )
+    row(
+        Modifier::new().fill_max_size().fill(Role::Surface),
+        Flex::new(),
+        || {
+            navigation(state, section, folded, navigation_width);
+            content(state, showing, width - navigation_width - 2.0 * PAGE_INSET);
+        },
+    );
+    true
 }
 
-/// The search box over the list of sections, and the list, with the one showing marked, `width` logical pixels across.
-fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32) -> Node {
+/// Emits the search box over the list of sections, and the list, with the one showing marked, `width` logical pixels across.
+#[track_caller]
+fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32) {
     let searching = state.settings_searching();
-    let find = node()
-        .styles([flex(), items_center(), gap(1), flex_none(), pb(2)])
-        .child(
-            node().styles([flex_1(), min_w_px(0)]).child(
-                Input::search(&state.settings_page.find, SETTINGS_FIND)
-                    .size(Size::Sm)
-                    .placeholder("Search settings")
-                    .build(),
-            ),
-        )
-        .children(searching.then(|| {
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    pm_style::justify_center(),
-                    flex_none(),
-                    pm_style::size(6),
-                    pm_style::rounded(pm_style::Radius::Sm),
-                    pm_style::cursor_pointer(),
-                    bg(Role::SurfaceHover).hover(),
-                ])
-                .focusable(SETTINGS_FIND_CLEAR)
-                .child(glyph(IconName::Close, 3.5, Role::Muted))
-        }));
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_none(),
-            gap(1),
-            p(3),
-            w_px(width),
-            min_h(0),
-            border_r(),
-            border_color(Role::Border),
-        ])
-        .child(
-            node()
-                .styles([flex(), items_center(), h(9), px(2)])
-                .child(line("Settings", 13, 1.4, Role::Subtle)),
-        )
-        .child(find)
-        .child(
-            node()
-                .styles([flex(), flex_col(), flex_1(), min_h(0), overflow_hidden()])
-                .scroll_from_start(SETTINGS_NAV_SCROLL, state.settings_page.nav_scroll)
-                .child(
-                    node()
-                        .styles([flex(), flex_col(), flex_none(), gap(1)])
-                        .children(
+    column(
+        Modifier::new()
+            .width(width)
+            .stroke_side(Side::Right, 1.0, Role::Border)
+            .pad(3),
+        Flex::new().gap(1),
+        || {
+            row(Modifier::new().h(9).pad_x(2), Flex::new().center(), || {
+                line("Settings", 13, 1.4, Role::Subtle);
+            });
+            find(state, searching);
+            scroll_area(
+                Modifier::new().grow(),
+                Scroll::from_start(SETTINGS_NAV_SCROLL, state.settings_page.nav_scroll),
+                || {
+                    column(Modifier::new().fill_max_width(), Flex::new().gap(1), || {
+                        for section in
                             Section::ALL
                                 .into_iter()
                                 .filter(|section| match section.parent() {
@@ -579,75 +547,112 @@ fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32
                                     }
                                     None => true,
                                 })
-                                .map(|section| {
-                                    entry(
-                                        section,
-                                        !searching && section == showing,
-                                        folded,
-                                        state.library_count(section),
-                                    )
-                                }),
-                        ),
-                ),
-        )
+                        {
+                            entry(
+                                section,
+                                !searching && section == showing,
+                                folded,
+                                state.library_count(section),
+                            );
+                        }
+                    });
+                },
+            );
+        },
+    );
 }
 
-/// One row of the list of sections: a section of its own has its glyph, Agents the chevron that says whether the sections inside it are shown, and those inside another only their name, set in under it, with `count` after it when it has one.
-fn entry(section: Section, showing: bool, folded: bool, count: Option<usize>) -> Node {
+/// Emits the box searching settings, with the button clearing it while `searching`.
+#[track_caller]
+fn find(state: &WorkspaceState, searching: bool) {
+    row(
+        Modifier::new().pad_side(Side::Bottom, 2),
+        Flex::new().center().gap(1),
+        || {
+            Input::search(&state.settings_page.find, SETTINGS_FIND)
+                .size(Size::Sm)
+                .placeholder("Search settings")
+                .modifier(Modifier::new().grow())
+                .build();
+            if searching {
+                row(
+                    Modifier::new()
+                        .square(6)
+                        .looks_of(
+                            Looks::new().hover(Role::SurfaceHover).radius(Radius::Sm),
+                            SETTINGS_FIND_CLEAR,
+                        )
+                        .cursor(CursorIcon::Pointer)
+                        .target(SETTINGS_FIND_CLEAR),
+                    Flex::new().center().middle(),
+                    || glyph(IconName::Close, 3.5, Role::Muted),
+                );
+            }
+        },
+    );
+}
+
+/// Emits one row of the list of sections: a section of its own has its glyph, Agents the chevron that says whether the sections inside it are shown, and those inside another only their name, set in under it, with `count` after it when it has one.
+#[track_caller]
+fn entry(section: Section, showing: bool, folded: bool, count: Option<usize>) {
     let tone = if showing { Role::Text } else { Role::Muted };
-    let row = Tile::new(section.id())
+    let nested = section != Section::Agents && section.parent().is_some();
+    let left = if nested { 8.0 } else { 2.0 };
+    Tile::new(section.id())
         .selected(showing)
-        .build()
-        .styles([px(2)]);
-    let row = match section {
-        Section::Agents => row.child(glyph(
-            if folded {
-                IconName::ChevronRight
-            } else {
-                IconName::ChevronDown
-            },
-            4.0,
-            tone,
-        )),
-        _ if section.parent().is_some() => row.styles([pl(8)]),
-        _ => row.child(glyph(section.icon(), 4.0, tone)),
-    };
-    row.child(clipped(section.title(), 13, tone).styles([pm_style::flex_1()]))
-        .children(count.map(|count| crate::Badge::new(count.to_string()).build()))
+        .inner(
+            Modifier::new()
+                .pad_side(Side::Left, left)
+                .pad_side(Side::Right, 2),
+        )
+        .build_with(|| {
+            match section {
+                Section::Agents => glyph(
+                    if folded {
+                        IconName::ChevronRight
+                    } else {
+                        IconName::ChevronDown
+                    },
+                    4.0,
+                    tone,
+                ),
+                _ if nested => {}
+                _ => glyph(section.icon(), 4.0, tone),
+            }
+            clipped(section.title(), 13, tone);
+            if let Some(count) = count {
+                crate::Badge::new(count.to_string()).build();
+            }
+        });
 }
 
-/// The settings of `section` under its title, with `room` logical pixels across for them and `shaper` measuring the text of their boxes of several lines.
-fn content(state: &WorkspaceState, section: Section, room: f32, shaper: &mut Shaper) -> Node {
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_1(),
-            min_w_px(0),
-            bg(Role::Background),
-        ])
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    pl(8),
-                    pr(8),
-                    pt(6),
-                    pb(4),
-                    flex_none(),
-                ])
-                .child(settings_servers::page_title(section)),
-        )
-        .child(settings_servers::body(state, section, room, shaper))
+/// Emits the settings of `section` under its title, with `room` logical pixels across for them.
+#[track_caller]
+fn content(state: &WorkspaceState, section: Section, room: f32) {
+    column(
+        Modifier::new().grow().fill(Role::Background),
+        Flex::new(),
+        || {
+            row(
+                Modifier::new()
+                    .pad_side(Side::Left, 8)
+                    .pad_side(Side::Right, 8)
+                    .pad_side(Side::Top, 6)
+                    .pad_side(Side::Bottom, 4),
+                Flex::new().center(),
+                || settings_servers::page_title(section),
+            );
+            settings_servers::body(state, section, room);
+        },
+    );
 }
 
 #[cfg(test)]
 /// Tests for what pressing the controls of the settings window does.
 mod tests {
     use pm_config::KnownServer;
+    use pm_field::Edit;
     use pm_protocol::library::Kind;
-    use pm_text::Edit;
 
     use super::*;
     use crate::settings_catalog::{LISTS, OPEN_LIST, Setting};

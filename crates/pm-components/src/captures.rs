@@ -3,18 +3,16 @@
 //! sent, a popover previews it, and in the message the screenshots go as attached pictures and the
 //! console as a fenced block that everything the page said is set off inside.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, bg, flex, flex_col, flex_wrap, gap, h_px, items_center, max_h, overflow_hidden,
-    pr, pt, px, relative, rounded, w_full, w_px,
+use crate::kit::{
+    Flex, FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, column, picture, row,
+    scroll_area, sp, wrapping,
 };
-use pm_text::Shaper;
-use pm_ui::{Node, node};
+use rustle::Modifier;
 
 use crate::button::Variant;
 use crate::elements::{code, fence, one_line, section, words};
 use crate::parts::line;
+use crate::popover::anchored;
 use crate::size::Size;
 use crate::state::{MENU_BODY, MENU_SCROLL, Picker, WorkspaceState};
 use crate::{Button, Popover};
@@ -183,120 +181,126 @@ fn console_block(lines: &[String]) -> String {
     )
 }
 
-/// A card of the popover with a picture drawn as large as the card allows, or a line saying it is not ready.
-fn picture_card(state: &WorkspaceState, shot: &Shot) -> Node {
-    let body = match state.previews.get(&shot.path) {
-        Some(picture) if picture.width > 0 && picture.height > 0 => {
-            let scale = (CARD_TEXT / picture.width as f32)
-                .min(PICTURE_HEIGHT / picture.height as f32)
-                .min(1.0);
-            node()
-                .styles([
-                    w_px((picture.width as f32 * scale).floor().max(1.0)),
-                    h_px((picture.height as f32 * scale).floor().max(1.0)),
-                    rounded(Radius::Md),
-                ])
-                .picture(picture.clone())
+/// Emits a card of the popover with a picture drawn as large as the card allows, or a line saying it is not ready.
+#[track_caller]
+fn picture_card(state: &WorkspaceState, shot: &Shot) {
+    section(&shot.label.to_uppercase(), || {
+        match state.previews.get(&shot.path) {
+            Some(shown) if shown.width > 0 && shown.height > 0 => {
+                let scale = (CARD_TEXT / shown.width as f32)
+                    .min(PICTURE_HEIGHT / shown.height as f32)
+                    .min(1.0);
+                picture(
+                    Modifier::new()
+                        .width((shown.width as f32 * scale).floor().max(1.0))
+                        .height((shown.height as f32 * scale).floor().max(1.0))
+                        .clip_to(Radius::Md),
+                    shown,
+                );
+            }
+            _ => line("Preview not ready", 12, 1.4, Role::Muted),
         }
-        _ => line("Preview not ready", 12, 1.4, Role::Muted),
-    };
-    section(&shot.label.to_uppercase(), body)
+    });
 }
 
-/// The popover of a capture: the pictures, or the lines, and where they are from.
-fn popover(capture: &Capture, state: &WorkspaceState, shaper: &mut Shaper) -> Node {
-    let mut cards: Vec<Node> = Vec::new();
+/// Emits the popover of a capture: the pictures, or the lines, and where they are from.
+#[track_caller]
+fn popover(capture: &Capture, state: &WorkspaceState) {
+    Popover::new()
+        .width(WIDTH)
+        .modifier(Modifier::new().target(MENU_BODY))
+        .build_with(|| {
+            scroll_area(
+                Modifier::new()
+                    .fill_max_width()
+                    .height_in(0.0, sp(HEIGHT / 4.0)),
+                Scroll::from_start(MENU_SCROLL, state.menu_scroll),
+                || {
+                    column(Modifier::new().fill_max_width(), Flex::new().gap(2), || {
+                        cards(capture, state);
+                    });
+                },
+            );
+        });
+}
+
+/// Emits the cards of a capture's popover, in order: why it failed, the page, the pictures, the note and the console.
+#[track_caller]
+fn cards(capture: &Capture, state: &WorkspaceState) {
     if capture.kind == Kind::Failed {
-        cards.push(section(
-            "WHY",
-            words(shaper, &capture.note, false, Role::Text, CARD_TEXT),
-        ));
+        section("WHY", || {
+            words(&capture.note, false, Role::Text, CARD_TEXT);
+        });
     }
     if !capture.url.is_empty() {
         let page = format!("{} ({})", capture.url, capture.title);
-        cards.push(section(
-            "PAGE",
-            words(shaper, &page, false, Role::Text, CARD_TEXT),
-        ));
+        section("PAGE", || words(&page, false, Role::Text, CARD_TEXT));
     }
-    cards.extend(capture.shots.iter().map(|shot| picture_card(state, shot)));
+    for (index, shot) in capture.shots.iter().enumerate() {
+        rustle::key(index, || picture_card(state, shot));
+    }
     if capture.kind != Kind::Failed && !capture.note.is_empty() {
-        cards.push(section(
-            "NOTE",
-            words(shaper, &capture.note, false, Role::Text, CARD_TEXT),
-        ));
+        section("NOTE", || {
+            words(&capture.note, false, Role::Text, CARD_TEXT);
+        });
     }
     if capture.kind == Kind::Console {
-        let rows = capture
-            .lines
-            .iter()
-            .map(|text| words(shaper, text, true, Role::Text, CARD_TEXT));
-        let body = if capture.lines.is_empty() {
-            line("The console was empty.", 12, 1.4, Role::Muted)
-        } else {
-            node().styles([flex(), flex_col(), gap(1)]).children(rows)
-        };
-        cards.push(section(
-            &format!("CONSOLE, {} LINES", capture.lines.len()),
-            body,
-        ));
+        section(&format!("CONSOLE, {} LINES", capture.lines.len()), || {
+            if capture.lines.is_empty() {
+                line("The console was empty.", 12, 1.4, Role::Muted);
+            } else {
+                column(Modifier::new(), Flex::new().gap(1), || {
+                    for text in &capture.lines {
+                        words(text, true, Role::Text, CARD_TEXT);
+                    }
+                });
+            }
+        });
     }
-    Popover::new()
-        .width(WIDTH)
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    flex_col(),
-                    gap(2),
-                    w_full(),
-                    max_h(HEIGHT / 4.0),
-                    overflow_hidden(),
-                ])
-                .scroll_from_start(MENU_SCROLL, state.menu_scroll)
-                .children(cards),
-        )
-        .over_button(MENU_BODY)
 }
 
-/// The chips of the captures held for the prompt: each opens a popover that previews it, hanging above the row at its left edge so that it stays inside the prompt however far along its chip is, and has a button that takes it off again.
-pub fn chips(state: &WorkspaceState, shaper: &mut Shaper) -> Option<Node> {
+/// Emits the chips of the captures held for the prompt, when there are any: each opens a popover that previews it, hanging above the row at its left edge so that it stays inside the prompt however far along its chip is, and has a button that takes it off again.
+#[track_caller]
+pub fn chips(state: &WorkspaceState) {
     if state.captures.is_empty() {
-        return None;
+        return;
     }
     let open = match state.picker {
         Some(Picker::Capture(index)) => state.captures.get(index).map(|capture| (index, capture)),
         _ => None,
     };
-    let pills = state.captures.iter().enumerate().map(|(index, capture)| {
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                gap(0.5),
-                pr(1),
-                rounded(Radius::Lg),
-                bg(Role::SurfaceHover),
-            ])
-            .child(
-                Button::new(capture.label(), FocusId(CAPTURE_BASE + index as u64))
-                    .variant(Variant::Ghost)
-                    .size(Size::Xs)
-                    .with_icon(capture.icon())
-                    .selected(open.is_some_and(|(held, _)| held == index))
-                    .build(),
-            )
-            .child(
-                Button::icon(IconName::Close, FocusId(CAPTURE_REMOVE_BASE + index as u64)).build(),
-            )
-    });
-    let preview = open.map(|(_, capture)| popover(capture, state, shaper));
-    Some(
-        node()
-            .styles([relative(), flex(), flex_wrap(), gap(2), px(3), pt(3)])
-            .children(pills)
-            .children(preview),
-    )
+    anchored(
+        || {
+            wrapping(Modifier::new().pad_x(3).pad_side(Side::Top, 3), 2, || {
+                for (index, capture) in state.captures.iter().enumerate() {
+                    rustle::key(CAPTURE_BASE + index as u64, || {
+                        pill(index, capture, open.is_some_and(|(held, _)| held == index));
+                    });
+                }
+            });
+        },
+        open.map(|(_, capture)| move || popover(capture, state)),
+    );
+}
+
+/// Emits the chip of the capture at `index`: a button that opens its popover, filled while `selected`, and one that takes it off.
+#[track_caller]
+fn pill(index: usize, capture: &Capture, selected: bool) {
+    row(
+        Modifier::new()
+            .fill_rounded(Role::SurfaceHover, Radius::Lg)
+            .pad_side(Side::Right, 1),
+        Flex::new().center().gap(0.5),
+        || {
+            Button::new(capture.label(), FocusId(CAPTURE_BASE + index as u64))
+                .variant(Variant::Ghost)
+                .size(Size::Xs)
+                .with_icon(capture.icon())
+                .selected(selected)
+                .build();
+            Button::icon(IconName::Close, FocusId(CAPTURE_REMOVE_BASE + index as u64)).build();
+        },
+    );
 }
 
 impl WorkspaceState {

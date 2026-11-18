@@ -2,19 +2,16 @@
 
 use std::ops::Range;
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_protocol::Location;
-use pm_style::{
-    Color, Role, bg, border_b, border_color, cursor_pointer, cursor_text, flex, flex_1, flex_col,
-    flex_none, font_medium, gap, h_px, items_center, min_h, min_w_px, overflow_hidden, pr, px,
-    truncate, w, w_px,
+use crate::kit::{
+    Flex, FocusId, IconName, Interactive, Mark, Paint, Radius, Role, Scroll, Side, Styled, Tone,
+    Tooltip, Type, block as block_box, column, gap_box, label, label_with, row, scroll_area,
 };
-use pm_ui::{Mark, Node, Paint, node};
+use pm_protocol::Location;
+use rustle::{CursorIcon, Modifier};
 
 use crate::file_icon::file_icon;
 use crate::open_files::{Contents, EDITOR_FIELD, Viewer};
-use crate::parts::{glyph, line};
+use crate::parts::glyph;
 use crate::sample::DiffLine;
 use crate::size::Size;
 use crate::state::{Tab, WorkspaceState};
@@ -517,82 +514,92 @@ fn block_rows(viewer: Option<&Viewer>, block: &Block) -> usize {
     shown_lines(viewer, block).len() + block.removed_lines()
 }
 
-/// The header over the excerpts of one file: its icon and name, where it is, whether it has changes not saved and what it holds, with, for a change, how far it went.
+/// Emits the header over the excerpts of one file: its icon and name, where it is, whether it has changes not saved and what it holds, with, for a change, how far it went.
+#[track_caller]
 fn header(
     position: usize,
     file: &ExcerptFile,
     viewer: Option<&Viewer>,
     excerpts: &Excerpts,
     size: Size,
-) -> Node {
+) {
     let name = name_of(&file.path);
     let folder = file.path.strip_suffix(name).unwrap_or_default();
-    let mut row = node().styles([
-        flex(),
-        items_center(),
-        gap(2),
-        h_px(header_height(size)),
-        flex_none(),
-        px(3),
-        bg(Role::Surface),
-        border_b(),
-        border_color(Role::Border),
-    ]);
-    let mut label = node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(2),
-            flex_1(),
-            min_w_px(0),
-            overflow_hidden(),
-            cursor_pointer(),
-        ])
-        .focusable(FocusId(EXCERPTS_FILE_BASE + position as u64));
-    if excerpts.folds() {
-        label = label.child(glyph(
-            if file.closed {
-                IconName::ChevronRight
-            } else {
-                IconName::ChevronDown
-            },
-            3.5,
-            Role::Muted,
-        ));
-    }
-    label = label
-        .child(file_icon(name, 4.0))
-        .child(line(name, 13, 1.4, Role::Text).styles([font_medium(), flex_none()]))
-        .child(
-            node()
-                .styles([flex_1(), min_w_px(0), overflow_hidden()])
-                .child(line(folder, 12, 1.4, Role::Subtle).styles([truncate()])),
-        );
-    row = row.child(label);
-    if viewer.is_some_and(Viewer::is_dirty) {
-        row = row.child(glyph(IconName::Pencil, 3.0, Role::Muted));
-    }
-    match &excerpts.source {
-        Source::Search { .. } => {
-            let hits: usize = file.blocks.iter().map(|block| block.hits.len()).sum();
-            row = row.child(line(hits.to_string(), 11, 1.4, Role::Muted).styles([flex_none()]));
-        }
-        _ => {
-            if let Some(mark) = file.mark {
-                row = row.child(line(mark, 11, 1.4, mark_tone(mark)).styles([flex_none()]));
+    row(
+        Modifier::new()
+            .height(header_height(size))
+            .fill(Role::Surface)
+            .stroke_side(Side::Bottom, 1.0, Role::Border)
+            .pad_x(3),
+        Flex::new().center().gap(2),
+        || {
+            row(
+                Modifier::new()
+                    .grow()
+                    .clip_to(Radius::None)
+                    .cursor(CursorIcon::Pointer)
+                    .target(FocusId(EXCERPTS_FILE_BASE + position as u64)),
+                Flex::new().center().gap(2),
+                || {
+                    if excerpts.folds() {
+                        glyph(
+                            if file.closed {
+                                IconName::ChevronRight
+                            } else {
+                                IconName::ChevronDown
+                            },
+                            3.5,
+                            Role::Muted,
+                        );
+                    }
+                    file_icon(name, 4.0);
+                    label(
+                        name,
+                        Type::new(13)
+                            .ratio(1.4)
+                            .tone(Role::Text)
+                            .truncate()
+                            .medium(),
+                    );
+                    label_with(
+                        Modifier::new().grow().clip_to(Radius::None),
+                        folder,
+                        Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
+                    );
+                },
+            );
+            if viewer.is_some_and(Viewer::is_dirty) {
+                glyph(IconName::Pencil, 3.0, Role::Muted);
             }
-            row = row.child(Tally::new(file.tally.0, file.tally.1).size(11).build());
-            if matches!(excerpts.source, Source::Revision { turn: Some(_), .. }) {
-                row = row.child(
-                    Button::icon(IconName::Undo, FocusId(EXCERPT_UNDO_BASE + position as u64))
-                        .size(Size::Sm)
-                        .build()
-                        .tooltip("Take what this turn changed back out of this file"),
-                );
+            match &excerpts.source {
+                Source::Search { .. } => {
+                    let hits: usize = file.blocks.iter().map(|block| block.hits.len()).sum();
+                    label(
+                        hits.to_string(),
+                        Type::new(11).ratio(1.4).tone(Role::Muted).truncate(),
+                    );
+                }
+                _ => {
+                    if let Some(mark) = file.mark {
+                        label(
+                            mark,
+                            Type::new(11).ratio(1.4).tone(mark_tone(mark)).truncate(),
+                        );
+                    }
+                    Tally::new(file.tally.0, file.tally.1).size(11).build();
+                    if matches!(excerpts.source, Source::Revision { turn: Some(_), .. }) {
+                        Button::icon(IconName::Undo, FocusId(EXCERPT_UNDO_BASE + position as u64))
+                            .size(Size::Sm)
+                            .modifier(
+                                Modifier::new()
+                                    .tooltip("Take what this turn changed back out of this file"),
+                            )
+                            .build();
+                    }
+                }
             }
-        }
-    }
-    row
+        },
+    );
 }
 
 /// The colour of the letter a change is marked with.
@@ -604,12 +611,13 @@ fn mark_tone(mark: &str) -> Role {
     }
 }
 
-/// The button of the header of a timeline that puts the file back as it was in the state.
-pub(crate) fn restore_button() -> Node {
+/// Emits the button of the header of a timeline that puts the file back as it was in the state.
+#[track_caller]
+pub(crate) fn restore_button() {
     Button::new("Restore this version", EXCERPTS_RESTORE)
         .with_icon(IconName::History)
         .size(Size::Sm)
-        .build()
+        .build();
 }
 
 /// What the view of the excerpts needs to draw the lines of one file.
@@ -630,46 +638,51 @@ enum Row<'a> {
     Removed(&'a str),
 }
 
-/// A line a change took out, drawn under the gutter of the lines of the file so that the text stays in its column, tinted as taken out and not to be edited.
-fn removed_row(content: &str, settings: &pm_editor::EditorSettings) -> Node {
+/// Emits a line a change took out, drawn under the gutter of the lines of the file so that the text stays in its column, tinted as taken out and not to be edited.
+#[track_caller]
+fn removed_row(content: &str, settings: &pm_editor::EditorSettings) {
     let height = settings.row_height();
-    let numbers = if settings.line_numbers { w(13) } else { w(2) };
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            h_px(height),
-            flex_none(),
-            overflow_hidden(),
-            bg(Color::from(Role::Danger).alpha(0.12)),
-        ])
-        .child(node().styles([w_px(BREAKPOINT_CELL + 3.0), flex_none()]))
-        .child(node().styles([flex_none(), pr(3), numbers]))
-        .child(
-            node()
-                .styles([flex_1(), min_w_px(0), overflow_hidden(), px(2)])
-                .child(pm_ui::text(crate::diff_syntax::shown(content)).styles([
-                    pm_style::code_px(settings.font_size),
-                    pm_style::leading_ratio(1.4),
-                    pm_style::font_mono(),
-                    pm_style::text_color(Role::Muted),
-                ])),
-        )
+    let numbers = if settings.line_numbers {
+        Modifier::new().w(13)
+    } else {
+        Modifier::new().w(2)
+    };
+    let kind = Type::code(settings.font_size).ratio(1.4).tone(Role::Muted);
+    let shown = crate::diff_syntax::shown(content);
+    row(
+        Modifier::new()
+            .height(height)
+            .fill(Tone::from(Role::Danger).alpha(0.12))
+            .clip_to(Radius::None),
+        Flex::new().center(),
+        move || {
+            gap_box(Modifier::new().width(BREAKPOINT_CELL + 3.0));
+            gap_box(numbers.pad_side(Side::Right, 3));
+            label_with(
+                Modifier::new().grow().clip_to(Radius::None).pad_x(2),
+                shown,
+                kind,
+            );
+        },
+    );
 }
 
-/// A box as tall as `rows` rows of `row` logical pixels, standing in for those left out.
-fn blank(rows: usize, row: f32) -> Node {
-    node().styles([h_px(rows as f32 * row), flex_none()])
+/// Emits a box as tall as `rows` rows of `row` logical pixels, standing in for those left out.
+#[track_caller]
+fn blank(rows: usize, row: f32) {
+    gap_box(Modifier::new().height(rows as f32 * row));
 }
 
 impl Drawing<'_> {
-    /// The rows of `block` of the file open at `index`, the ones in `window` built from a block that starts `top` logical pixels down, in a box that a press makes the file edited, with the space under them.
-    fn block(&self, index: usize, block: &Block, top: f32, window: (f32, f32)) -> Node {
+    /// Emits the rows of `block` of the file open at `index`, the ones in `window` built from a block that starts `top` logical pixels down, in a box that a press makes the file edited, with the space under them.
+    #[track_caller]
+    fn block(&self, index: usize, block: &Block, top: f32, window: (f32, f32)) {
         let state = self.state;
         let row_height = state.editor.row_height();
         let Some(Contents::Text(document)) = state.git.viewers.get(index).map(|v| &v.contents)
         else {
-            return node().styles([h_px(GAP + row_height), flex_none()]);
+            gap_box(Modifier::new().height(GAP + row_height));
+            return;
         };
         let live = state.git.shown == Some(index);
         let owner = if live {
@@ -722,7 +735,7 @@ impl Drawing<'_> {
         } else {
             Vec::new()
         };
-        let drawn = visible.iter().map(|row| match row {
+        let draw = |row: &Row| match row {
             Row::Removed(text) => removed_row(text, self.settings),
             Row::Line(line) => {
                 let spans = painted.get(line - low).cloned().unwrap_or_default();
@@ -735,53 +748,55 @@ impl Drawing<'_> {
                         .as_ref()
                         .and_then(|matcher| matcher.first_in(&document.field.text()[range.clone()]))
                 {
-                    marks.push(Mark {
-                        range: matched,
-                        color: Role::SurfaceSelected.into(),
-                        paint: Paint::Fill,
-                    });
+                    marks.push(Mark::new(matched, Role::SurfaceSelected, Paint::Fill));
                 }
                 let segments = vec![Range {
                     start: 0,
                     end: range.len(),
                 }];
-                let cell = breakpoint_cell(
-                    index,
-                    *line,
-                    &gutter,
-                    document_row(self.settings, &segments),
-                );
-                let mut shown = file_line(
-                    document,
-                    *line,
-                    marks,
-                    segments,
-                    Beside {
-                        blamed: None,
-                        breakpoint: cell,
-                        bulb: false,
-                        paused: gutter.paused == Some(*line),
-                    },
-                    self.settings,
-                    owner,
-                );
+                let height = document_row(self.settings, &segments);
+                let cell = || breakpoint_cell(index, *line, &gutter, height);
+                let beside = Beside {
+                    blamed: None,
+                    breakpoint: cell,
+                    bulb: false,
+                    paused: gutter.paused == Some(*line),
+                };
+                let shown = || {
+                    file_line(
+                        document,
+                        *line,
+                        marks,
+                        segments,
+                        beside,
+                        self.settings,
+                        owner,
+                    );
+                };
                 if hit && self.matcher.is_none() {
-                    shown = shown.styles([bg(Color::from(Role::Success).alpha(0.12))]);
+                    block_box(
+                        Modifier::new().fill(Tone::from(Role::Success).alpha(0.12)),
+                        shown,
+                    );
+                } else {
+                    shown();
                 }
-                shown
             }
+        };
+        column(Modifier::new(), Flex::new(), || {
+            column(
+                Modifier::new().cursor(CursorIcon::Text).target(owner),
+                Flex::new(),
+                || {
+                    blank(first, row_height);
+                    for (at, shown) in visible.iter().enumerate() {
+                        rustle::key(first + at, || draw(shown));
+                    }
+                    blank(rows.len() - last.max(first), row_height);
+                },
+            );
+            gap_box(Modifier::new().height(GAP));
         });
-        node()
-            .styles([flex(), flex_col(), flex_none()])
-            .child(
-                node()
-                    .styles([flex(), flex_col(), flex_none(), cursor_text()])
-                    .focusable(owner)
-                    .child(blank(first, row_height))
-                    .children(drawn)
-                    .child(blank(rows.len() - last.max(first), row_height)),
-            )
-            .child(node().styles([h_px(GAP), flex_none()]))
     }
 }
 
@@ -793,26 +808,26 @@ enum Entry {
     Block(usize, usize),
 }
 
-/// The lines of a file that is shown from its diff alone, as the rows of a diff, under its header.
-fn diff_rows(file: &ExcerptFile) -> Vec<Node> {
+/// Emits the lines of a file that is shown from its diff alone, as the rows of a diff, under its header.
+#[track_caller]
+fn diff_rows(file: &ExcerptFile) {
     let colours = crate::diff_syntax::DiffColours::of(
         &file.diff,
         crate::file_icon::file_language(&file.path).as_deref(),
     );
-    file.diff
-        .iter()
-        .enumerate()
-        .map(|(at, diff)| crate::diff::diff_line(diff.kind, &diff.text, colours.line(at)))
-        .collect()
+    for (at, diff) in file.diff.iter().enumerate() {
+        crate::diff::diff_line(diff.kind, &diff.text, colours.line(at));
+    }
 }
 
 /// How tall the rows of a diff are, in logical pixels.
 const DIFF_ROW: f32 = 20.0;
 
-/// The excerpts in a view `height` logical pixels tall: a header over each file, and under it the runs of lines, only those near the view being built.
-pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: Size) -> Node {
+/// Emits the excerpts in a view `height` logical pixels tall: a header over each file, and under it the runs of lines, only those near the view being built.
+#[track_caller]
+pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: Size) {
     let Some(excerpts) = state.excerpts.as_ref() else {
-        return node();
+        return;
     };
     let row = state.editor.row_height();
     let header_pixels = header_height(size);
@@ -865,7 +880,7 @@ pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: Size) -> Node
         excerpts.scroll + height + OVERSCAN,
     );
     let (mut before, mut after, mut top) = (0.0_f32, 0.0_f32, 0.0_f32);
-    let mut built = Vec::new();
+    let mut built: Vec<(&Entry, f32, f32)> = Vec::new();
     for (entry, size) in &entries {
         let (start, end) = (top, top + size);
         top = end;
@@ -877,49 +892,58 @@ pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: Size) -> Node
             after += size;
             continue;
         }
-        built.push(match entry {
-            Entry::Header(place) => {
-                let file = &excerpts.files[*place];
-                let viewer = state
-                    .viewer_at(&file.path)
-                    .and_then(|i| state.git.viewers.get(i));
-                header(*place, file, viewer, excerpts, size_of(header_pixels))
-            }
-            Entry::Block(place, usize::MAX) => {
-                let file = &excerpts.files[*place];
-                node()
-                    .styles([flex(), flex_col(), flex_none()])
-                    .children(diff_rows(file))
-                    .child(node().styles([h_px(GAP), flex_none()]))
-            }
-            Entry::Block(place, step) => {
-                let file = &excerpts.files[*place];
-                match state.viewer_at(&file.path).filter(|_| file.editable) {
-                    Some(index) => drawing.block(index, &file.blocks[*step], start, (low, high)),
-                    None if !file.editable => gone_block(&file.blocks[*step], &settings),
-                    None => node().styles([h_px(*size), flex_none()]),
-                }
-            }
-        });
+        built.push((entry, start, *size));
     }
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_1(),
-            min_w_px(0),
-            min_h(0),
-            overflow_hidden(),
-            bg(Role::Background),
-        ])
-        .child(
-            node()
-                .styles([flex(), flex_col(), flex_1(), min_h(0), overflow_hidden()])
-                .scroll_from_start(EXCERPTS_SCROLL, excerpts.scroll)
-                .child(node().styles([h_px(before), flex_none()]))
-                .children(built)
-                .child(node().styles([h_px(after), flex_none()])),
-        )
+    let draw = |entry: &Entry, start: f32, size: f32| match entry {
+        Entry::Header(place) => {
+            let file = &excerpts.files[*place];
+            let viewer = state
+                .viewer_at(&file.path)
+                .and_then(|i| state.git.viewers.get(i));
+            header(*place, file, viewer, excerpts, size_of(header_pixels));
+        }
+        Entry::Block(place, usize::MAX) => {
+            let file = &excerpts.files[*place];
+            column(Modifier::new(), Flex::new(), || {
+                diff_rows(file);
+                gap_box(Modifier::new().height(GAP));
+            });
+        }
+        Entry::Block(place, step) => {
+            let file = &excerpts.files[*place];
+            match state.viewer_at(&file.path).filter(|_| file.editable) {
+                Some(index) => drawing.block(index, &file.blocks[*step], start, (low, high)),
+                None if !file.editable => gone_block(&file.blocks[*step], &settings),
+                None => gap_box(Modifier::new().height(size)),
+            }
+        }
+    };
+    column(
+        Modifier::new()
+            .grow()
+            .clip_to(Radius::None)
+            .fill(Role::Background),
+        Flex::new(),
+        || {
+            scroll_area(
+                Modifier::new().grow(),
+                Scroll::from_start(EXCERPTS_SCROLL, excerpts.scroll),
+                || {
+                    column(Modifier::new().fill_max_width(), Flex::new(), || {
+                        gap_box(Modifier::new().height(before));
+                        for (entry, start, size) in built {
+                            let identity = match entry {
+                                Entry::Header(place) => (*place, None),
+                                Entry::Block(place, step) => (*place, Some(*step)),
+                            };
+                            rustle::key(identity, || draw(entry, start, size));
+                        }
+                        gap_box(Modifier::new().height(after));
+                    });
+                },
+            );
+        },
+    );
 }
 
 /// How tall a header over a file is at `size`, in logical pixels.
@@ -945,28 +969,26 @@ fn size_of(height: f32) -> Size {
     }
 }
 
-/// The lines a change took out of a file that is gone, drawn as taken out, with the space under them.
-fn gone_block(block: &Block, settings: &pm_editor::EditorSettings) -> Node {
-    node()
-        .styles([flex(), flex_col(), flex_none()])
-        .children(
-            block
-                .removed
-                .iter()
-                .flat_map(|(_, lines)| lines.iter())
-                .map(|text| removed_row(text, settings)),
-        )
-        .child(node().styles([h_px(GAP), flex_none()]))
+/// Emits the lines a change took out of a file that is gone, drawn as taken out, with the space under them.
+#[track_caller]
+fn gone_block(block: &Block, settings: &pm_editor::EditorSettings) {
+    column(Modifier::new(), Flex::new(), || {
+        for text in block.removed.iter().flat_map(|(_, lines)| lines.iter()) {
+            removed_row(text, settings);
+        }
+        gap_box(Modifier::new().height(GAP));
+    });
 }
 
-/// The rows of `block` of the file open at `index` in the window, the ones in `window` built from a block that starts `top` logical pixels down, as the excerpts draw them but for the hits of a search.
+/// Emits the rows of `block` of the file open at `index` in the window, the ones in `window` built from a block that starts `top` logical pixels down, as the excerpts draw them but for the hits of a search.
+#[track_caller]
 pub(crate) fn plain_block(
     state: &WorkspaceState,
     index: usize,
     block: &Block,
     top: f32,
     window: (f32, f32),
-) -> Node {
+) {
     let settings = pm_editor::EditorSettings {
         git_gutter: state.shows_gutter(),
         ..state.editor.clone()
@@ -976,10 +998,11 @@ pub(crate) fn plain_block(
         settings: &settings,
         matcher: None,
     }
-    .block(index, block, top, window)
+    .block(index, block, top, window);
 }
 
-/// The excerpts of a search in a view `height` logical pixels tall.
-pub fn excerpts_view(state: &WorkspaceState, height: f32) -> Node {
-    file_list(state, height, Size::default())
+/// Emits the excerpts of a search in a view `height` logical pixels tall.
+#[track_caller]
+pub fn excerpts_view(state: &WorkspaceState, height: f32) {
+    file_list(state, height, Size::default());
 }

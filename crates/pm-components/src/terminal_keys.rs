@@ -1,6 +1,6 @@
 //! What the keys of a terminal send the shell.
 
-use pm_input::{Key, KeyEvent};
+use crate::kit::{Key, KeyEvent};
 
 /// The modifier number the extended forms of a key carry: one, plus one for shift, two for alt and four for control.
 fn modifier_code(event: &KeyEvent) -> u8 {

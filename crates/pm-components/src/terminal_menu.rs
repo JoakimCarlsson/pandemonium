@@ -1,9 +1,9 @@
 //! The menu that opens over the window of a shell: putting what is marked into the chat, copying, pasting, marking everything, clearing and ending the shell, each with the keys the keymap gives it.
 
 use pm_editor::{Action, Keymap};
-use pm_input::FocusId;
-use pm_text::Edit;
-use pm_ui::Node;
+use pm_field::Edit;
+
+use crate::kit::FocusId;
 
 use crate::Menu;
 use crate::state::{Outgoing, PROMPT, WorkspaceState};
@@ -146,8 +146,9 @@ impl WorkspaceState {
     }
 }
 
-/// The menu over a shell opened at `open`, its rows that act on marked text enabled only when there is some, each showing the keys `keymap` gives it.
-pub fn terminal_menu(open: TerminalMenu, keymap: &Keymap) -> Node {
+/// Emits the menu over a shell opened at `open`, its rows that act on marked text enabled only when there is some, each showing the keys `keymap` gives it.
+#[track_caller]
+pub fn terminal_menu(open: TerminalMenu, keymap: &Keymap) {
     let row = |menu: Menu, command: TerminalCommand, on: bool| {
         let keys = keymap.label(command.action());
         menu.item(command.label(), keys.as_deref(), command.id(), !on)
@@ -158,5 +159,5 @@ pub fn terminal_menu(open: TerminalMenu, keymap: &Keymap) -> Node {
     let menu = row(menu, TerminalCommand::Paste, true);
     let menu = row(menu, TerminalCommand::SelectAll, true).separator();
     let menu = row(menu, TerminalCommand::Clear, true).separator();
-    row(menu, TerminalCommand::Kill, true).build()
+    row(menu, TerminalCommand::Kill, true).build();
 }

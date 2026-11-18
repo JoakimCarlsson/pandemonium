@@ -3,10 +3,9 @@
 use std::ops::Range;
 
 use pm_editor::{Document, EditorSettings, LineChange};
-use pm_style::{
-    Length, Role, Sides, absolute, bg, flex_none, h_px, inset_length, right, top, w_px,
-};
-use pm_ui::{Node, node};
+use rustle::Modifier;
+
+use crate::kit::{Role, Styled, color, gap_box};
 
 use crate::viewer::severity_role;
 
@@ -66,36 +65,31 @@ fn matches(document: &Document, found: &[Range<usize>], rows: f32) -> Vec<Placed
         .collect()
 }
 
-/// The strip of marks along the right edge of the view of `document`, with the matches `found` of a search, when `settings` want it and there is anything to mark.
-pub(crate) fn scroll_marks(
-    document: &Document,
-    found: &[Range<usize>],
-    settings: &EditorSettings,
-) -> Option<Node> {
+/// Emits the strip of marks along the right edge of the view of `document`, with the matches `found` of a search, when `settings` want it and there is anything to mark.
+///
+/// The strip covers the layer it is emitted in, which the view sizes, and paints each mark at its share of that layer's height.
+#[track_caller]
+pub(crate) fn scroll_marks(document: &Document, found: &[Range<usize>], settings: &EditorSettings) {
     if !settings.scrollbar_marks {
-        return None;
+        return;
     }
     let rows = document.rows().max(1) as f32;
     let mut placed = changes(document, rows);
     placed.extend(matches(document, found, rows));
     placed.extend(problems(document, settings, rows));
     if placed.is_empty() {
-        return None;
+        return;
     }
     placed.dedup_by(|later, earlier| (later.0 - earlier.0).abs() < 0.002 && later.1 == earlier.1);
-    Some(
-        node()
-            .styles([absolute(), top(0), right(0), w_px(STRIP_WIDTH), flex_none()])
-            .styles([inset_length(Sides::Bottom, Length::Px(0.0))])
-            .children(placed.into_iter().map(|(share, tone)| {
-                node().styles([
-                    absolute(),
-                    right(0),
-                    inset_length(Sides::Top, Length::Fraction(share.clamp(0.0, 1.0))),
-                    w_px(STRIP_WIDTH),
-                    h_px(MARK_HEIGHT),
-                    bg(tone),
-                ])
-            })),
-    )
+    let painted: Vec<(f32, rustle::Color)> = placed
+        .into_iter()
+        .map(|(share, tone)| (share.clamp(0.0, 1.0), color(tone)))
+        .collect();
+    gap_box(Modifier::new().cover().draw_behind(move |canvas| {
+        let left = canvas.width() - STRIP_WIDTH;
+        let height = canvas.height();
+        for (share, paint) in &painted {
+            canvas.rect(left, height * share, STRIP_WIDTH, MARK_HEIGHT, *paint);
+        }
+    }));
 }

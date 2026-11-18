@@ -1,12 +1,9 @@
 //! The rows of settings on each page of the settings window, the page of what a search found, and what pressing a row's control or writing in its box does.
 
-use pm_input::FocusId;
-use pm_style::{
-    Role, border_b, border_color, flex, flex_col, flex_none, font_medium, items_center, pb, pt,
-};
-use pm_text::{Edit, Field};
-use pm_ui::{Node, node};
+use pm_field::{Edit, Field};
+use rustle::Modifier;
 
+use crate::kit::{Flex, FocusId, Role, Side, Styled, Type, column, label, row};
 use crate::parts::line;
 use crate::settings::{SETTINGS_PICK_FILTER, SETTINGS_PICK_FIRST, Section};
 use crate::settings_catalog::{self, LISTS, OPEN_LIST, RESET, Setting};
@@ -236,7 +233,7 @@ pub(crate) fn is_setting_field(id: FocusId) -> bool {
 /// Whether `setting` shows in `state`: the pickers of themes only once there is more than one theme, and a language's settings only once a language is installed.
 fn shown(setting: Setting, state: &WorkspaceState) -> bool {
     match setting {
-        Setting::LightTheme | Setting::DarkTheme => pm_theme::families().len() > 1,
+        Setting::LightTheme | Setting::DarkTheme => crate::kit::theme::families().len() > 1,
         Setting::LanguageTabSize
         | Setting::LanguageIndent
         | Setting::LanguageFormat
@@ -249,40 +246,33 @@ fn shown(setting: Setting, state: &WorkspaceState) -> bool {
     }
 }
 
-/// The row of `setting` as it stands in `state`, `room` logical pixels across; a control the window has no name for is left out rather than answering to another's.
-pub(crate) fn setting_row(state: &WorkspaceState, setting: Setting, room: f32) -> Node {
+/// Emits the row of `setting` as it stands in `state`, `room` logical pixels across; a control the window has no name for is left out rather than answering to another's.
+#[track_caller]
+pub(crate) fn setting_row(state: &WorkspaceState, setting: Setting, room: f32) {
     let (title, about) = setting.words();
     let changed = setting.changed(state);
     let reserved = if changed { RESET_WIDTH } else { 0.0 };
     let open = state.settings_page.picker == Some(setting);
     let row = SettingRow::new(title, about).reset(changed.then(|| setting.id(RESET)).flatten());
     let opener = setting.id(OPEN_LIST);
-    let list_below = |options: &[String], picked: Option<usize>| {
-        picker_list(
-            options,
-            picked,
-            (&state.settings_page.filter, SETTINGS_PICK_FILTER),
-        )
-    };
+    let filter = &state.settings_page.filter;
     let row = match setting.control(state) {
-        Control::Switch(on) => row.control(switch(on, setting.id(0)), Some(SWITCH_WIDTH)),
+        Control::Switch(on) => row.control(move || switch(on, setting.id(0)), Some(SWITCH_WIDTH)),
         Control::Number(shown) => match (setting.id(0), setting.id(1)) {
             (Some(smaller), Some(bigger)) => {
-                row.control(number(shown, smaller, bigger), Some(NUMBER_WIDTH))
+                row.control(move || number(shown, smaller, bigger), Some(NUMBER_WIDTH))
             }
             _ => row,
         },
         Control::Text(placeholder) => {
-            let held;
-            let field = match state.settings_page.fields.get(&setting) {
-                Some(field) => field,
-                None => {
-                    held = Field::new(setting.text(state));
-                    &held
-                }
-            };
+            let field = state
+                .settings_page
+                .fields
+                .get(&setting)
+                .cloned()
+                .unwrap_or_else(|| Field::new(setting.text(state)));
             match setting.id(0) {
-                Some(id) => row.control(text_box(field, id, placeholder), None),
+                Some(id) => row.control(move || text_box(&field, id, placeholder), None),
                 None => row,
             }
         }
@@ -290,23 +280,18 @@ pub(crate) fn setting_row(state: &WorkspaceState, setting: Setting, room: f32) -
             let width = choices_width(names);
             match opener {
                 Some(_) if width <= room - reserved => row.control(
-                    choices(names, picked, |option| setting.choice_id(option)),
+                    move || choices(names, picked, |option| setting.choice_id(option)),
                     Some(width),
                 ),
                 Some(opener) => {
                     let options: Vec<String> =
                         names.iter().map(|name| (*name).to_owned()).collect();
                     let width = PICKER_WIDTH.min(room - reserved);
-                    row.control(
-                        picker(
-                            names.get(picked).copied().unwrap_or_default(),
-                            width,
-                            opener,
-                            open,
-                        ),
-                        Some(width),
-                    )
-                    .below(open.then(|| list_below(&options, Some(picked))))
+                    let shown = names.get(picked).copied().unwrap_or_default();
+                    row.control(move || picker(shown, width, opener, open), Some(width))
+                        .below(open.then_some(move || {
+                            picker_list(&options, Some(picked), (filter, SETTINGS_PICK_FILTER))
+                        }))
                 }
                 None => row,
             }
@@ -317,81 +302,98 @@ pub(crate) fn setting_row(state: &WorkspaceState, setting: Setting, room: f32) -
                 .settings_page
                 .list_adds
                 .get(&setting)
-                .unwrap_or(&empty);
+                .cloned()
+                .unwrap_or(empty);
             match (list_field_id(setting), list_add_id(setting)) {
-                (Some(field_id), Some(add)) => row.below(Some(list(
-                    &lines,
-                    |line| list_remove_id(setting, line),
-                    (field, field_id),
-                    (add, setting.add_label()),
-                    setting.add_placeholder(),
-                ))),
+                (Some(field_id), Some(add)) => row.below(Some(move || {
+                    list(
+                        &lines,
+                        |line| list_remove_id(setting, line),
+                        (&field, field_id),
+                        (add, setting.add_label()),
+                        setting.add_placeholder(),
+                    )
+                })),
                 _ => row,
             }
         }
         Control::Picker(shown) => match opener {
             Some(opener) => {
                 let width = PICKER_WIDTH.min(room - reserved);
-                row.control(picker(&shown, width, opener, open), Some(width))
-                    .below(open.then(|| list_below(&setting.options(state), setting.picked(state))))
+                let options = setting.options(state);
+                let picked = setting.picked(state);
+                row.control(move || picker(&shown, width, opener, open), Some(width))
+                    .below(open.then_some(move || {
+                        picker_list(&options, picked, (filter, SETTINGS_PICK_FILTER))
+                    }))
             }
             None => row,
         },
     };
-    row.build(room)
+    row.build(room);
 }
 
-/// `rows` one under another, with a hairline between each and the next.
-pub(crate) fn ruled(rows: Vec<Node>) -> Node {
-    let last = rows.len().saturating_sub(1);
-    node()
-        .styles([flex(), flex_col(), flex_none()])
-        .children(rows.into_iter().enumerate().map(|(place, row)| {
-            if place < last {
-                row.styles([border_b(), border_color(Role::Border)])
+/// Emits each of `items` one under another with `emit`, with a hairline between each and the next.
+#[track_caller]
+pub(crate) fn ruled<T>(items: Vec<T>, emit: impl Fn(T)) {
+    let last = items.len().saturating_sub(1);
+    column(Modifier::new(), Flex::new(), || {
+        for (place, item) in items.into_iter().enumerate() {
+            let modifier = if place < last {
+                Modifier::new().stroke_side(Side::Bottom, 1.0, Role::Border)
             } else {
-                row
-            }
-        }))
+                Modifier::new()
+            };
+            column(modifier, Flex::new(), || emit(item));
+        }
+    });
 }
 
-/// The rows of the settings on the page `section` that show in `state`, `room` logical pixels across.
-pub(crate) fn page_rows(state: &WorkspaceState, section: Section, room: f32) -> Node {
+/// Emits the rows of the settings on the page `section` that show in `state`, `room` logical pixels across.
+#[track_caller]
+pub(crate) fn page_rows(state: &WorkspaceState, section: Section, room: f32) {
     ruled(
         settings_catalog::on_page(section)
             .filter(|setting| shown(*setting, state))
-            .map(|setting| setting_row(state, setting, room))
             .collect(),
-    )
+        |setting| setting_row(state, setting, room),
+    );
 }
 
-/// `title` over the rows of a group of settings, as the pages that hold several groups set it.
-pub(crate) fn group(title: &str, rows: Node) -> Node {
-    node()
-        .styles([flex(), flex_col(), flex_none(), pt(2)])
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    flex_none(),
-                    pb(1),
-                    border_b(),
-                    border_color(Role::Border),
-                ])
-                .child(line(title, 12, 1.4, Role::Muted).styles([font_medium()])),
-        )
-        .child(rows)
+/// Emits `title` over the rows `rows` emits of a group of settings, as the pages that hold several groups set it.
+#[track_caller]
+pub(crate) fn group(title: &str, rows: impl FnOnce()) {
+    column(Modifier::new().pad_side(Side::Top, 2), Flex::new(), || {
+        row(
+            Modifier::new()
+                .stroke_side(Side::Bottom, 1.0, Role::Border)
+                .pad_side(Side::Bottom, 1),
+            Flex::new().center(),
+            || {
+                label(
+                    title,
+                    Type::new(12)
+                        .ratio(1.4)
+                        .tone(Role::Muted)
+                        .truncate()
+                        .medium(),
+                );
+            },
+        );
+        rows();
+    });
 }
 
-/// What a search of every setting found, each under the page it is on, `room` logical pixels across; or a line saying nothing was.
-pub(crate) fn results(state: &WorkspaceState, room: f32) -> Vec<Node> {
+/// Emits what a search of every setting found, each under the page it is on, `room` logical pixels across; or a line saying nothing was.
+#[track_caller]
+pub(crate) fn results(state: &WorkspaceState, room: f32) {
     let found: Vec<Setting> = settings_catalog::found(state.settings_page.find.text())
         .into_iter()
         .filter(|setting| shown(*setting, state))
         .collect();
     if found.is_empty() {
-        return vec![line("No setting matches.", 13, 1.5, Role::Muted)];
+        line("No setting matches.", 13, 1.5, Role::Muted);
+        return;
     }
     let mut pages: Vec<Section> = Vec::new();
     for setting in &found {
@@ -399,23 +401,20 @@ pub(crate) fn results(state: &WorkspaceState, room: f32) -> Vec<Node> {
             pages.push(setting.page());
         }
     }
-    pages
-        .into_iter()
-        .map(|page| {
-            let title = match page.parent() {
-                Some(parent) => format!("{} › {}", parent.title(), page.title()),
-                None => page.title().to_owned(),
-            };
-            group(
-                &title,
-                ruled(
-                    found
-                        .iter()
-                        .filter(|setting| setting.page() == page)
-                        .map(|setting| setting_row(state, *setting, room))
-                        .collect(),
-                ),
-            )
-        })
-        .collect()
+    for page in pages {
+        let title = match page.parent() {
+            Some(parent) => format!("{} › {}", parent.title(), page.title()),
+            None => page.title().to_owned(),
+        };
+        group(&title, || {
+            ruled(
+                found
+                    .iter()
+                    .copied()
+                    .filter(|setting| setting.page() == page)
+                    .collect(),
+                |setting| setting_row(state, setting, room),
+            );
+        });
+    }
 }

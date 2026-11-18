@@ -1,187 +1,235 @@
 //! The popover: a raised surface that floats over a screen, with a heading and rows of choices.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::primitives::{Length, Sides};
-use pm_style::{
-    Radius, Role, absolute, bg, cursor_pointer, flex, flex_1, flex_col, flex_none, font_mono, gap,
-    h, inset_length, items_center, justify_between, leading_ratio, left, max_w_px, mb, min_w_px, p,
-    px, py, relative, right, rounded, text_color, text_px, truncate, w_full, w_px, z,
+use crate::kit::{
+    Flex, FocusId, Hovered, IconName, Interactive, Looks, Placement, Radius, Role, Styled, Type,
+    column, label,
 };
-use pm_ui::{Node, node, text};
+use rustle::{CursorIcon, Modifier};
 
 use crate::parts::{glyph, line};
 use crate::{Surface, surface};
 
-/// A popover being described: the rows and sections it holds.
-///
-/// Build it with [`Popover::new`], fill it with [`Popover::heading`],
-/// [`Popover::row`], [`Popover::child`] and [`Popover::children`], and turn it
-/// into a node with [`Popover::build`], or with one of the methods that also
-/// place it over what it belongs to.
+/// One entry of a popover, kept until it is built.
 #[derive(Clone, Debug)]
-pub struct Popover {
-    /// The frame holding everything in it.
-    body: Node,
+enum Entry {
+    /// A heading line saying `title`, with `hint` at its right: a key to press, and what it does.
+    Heading {
+        /// The words of the heading.
+        title: String,
+        /// The key to press and what it does, shown at the heading's right.
+        hint: Option<(String, String)>,
+    },
+    /// A row of `name` over `description`, ticked while `current`, answering to `id`.
+    Row {
+        /// The name of the choice.
+        name: String,
+        /// What choosing it means.
+        description: String,
+        /// Whether it is the current choice.
+        current: bool,
+        /// What the row answers to.
+        id: FocusId,
+    },
 }
 
-impl Default for Popover {
-    /// An empty popover.
-    fn default() -> Self {
-        Self::new()
-    }
+/// A popover being described: the rows and sections it holds.
+///
+/// Build it with [`Popover::new`], fill it with [`Popover::heading`] and
+/// [`Popover::row`], and emit it with [`Popover::build`], or with
+/// [`Popover::build_with`] to put more after its entries. Place it over what
+/// it belongs to with [`anchored`] or [`anchored_end`], emitting it there with
+/// [`Popover::build_target`] so pressing it does not count as pressing outside.
+#[derive(Clone, Debug, Default)]
+pub struct Popover {
+    /// What it holds, in order.
+    entries: Vec<Entry>,
+    /// How wide it is, when fixed.
+    width: Option<f32>,
+    /// Whether it is as wide as what it is placed in.
+    full_width: bool,
+    /// What the caller puts around its box.
+    modifier: Modifier,
 }
 
 impl Popover {
     /// An empty popover.
     pub fn new() -> Self {
-        Self {
-            body: Surface::new()
-                .variant(surface::Variant::Floating)
-                .build()
-                .styles([p(1.5)]),
-        }
+        Self::default()
     }
 
     /// The popover `pixels` wide, and no wider.
     pub fn width(mut self, pixels: f32) -> Self {
-        self.body = self.body.styles([w_px(pixels), max_w_px(pixels)]);
+        self.width = Some(pixels);
         self
     }
 
     /// The popover as wide as what it is placed in.
     pub fn full_width(mut self) -> Self {
-        self.body = self.body.styles([w_full()]);
+        self.full_width = true;
         self
     }
 
     /// The popover with a heading line saying `title`, and `hint` at its right.
-    pub fn heading(self, title: &str, hint: Option<(&str, &str)>) -> Self {
-        self.child(heading(title, hint))
+    pub fn heading(mut self, title: &str, hint: Option<(&str, &str)>) -> Self {
+        self.entries.push(Entry::Heading {
+            title: title.to_owned(),
+            hint: hint.map(|(key, does)| (key.to_owned(), does.to_owned())),
+        });
+        self
     }
 
     /// The popover with a row of `name` over `description`, ticked while `current`, answering to `id`.
-    pub fn row(self, name: &str, description: &str, current: bool, id: FocusId) -> Self {
-        self.child(row(name, description, current, id))
-    }
-
-    /// The popover with `child` after what it holds.
-    pub fn child(mut self, child: Node) -> Self {
-        self.body = self.body.child(child);
+    pub fn row(mut self, name: &str, description: &str, current: bool, id: FocusId) -> Self {
+        self.entries.push(Entry::Row {
+            name: name.to_owned(),
+            description: description.to_owned(),
+            current,
+            id,
+        });
         self
     }
 
-    /// The popover with every node of `children` after what it holds.
-    pub fn children(mut self, children: impl IntoIterator<Item = Node>) -> Self {
-        self.body = self.body.children(children);
+    /// `modifier` put around the popover's box, outside its own: sizes, weight, placement, a target.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
         self
     }
 
-    /// The node that draws the popover.
-    pub fn build(self) -> Node {
-        self.body
+    /// Emits the popover holding its entries, then what `content` emits.
+    #[track_caller]
+    pub fn build_with(self, content: impl FnOnce()) {
+        let mut own = Modifier::new();
+        if let Some(pixels) = self.width {
+            own = own.width(pixels).max_w_px(pixels);
+        }
+        if self.full_width {
+            own = own.fill_max_width();
+        }
+        let entries = self.entries;
+        Surface::new()
+            .variant(surface::Variant::Floating)
+            .inner(Modifier::new().pad(1.5))
+            .modifier(self.modifier.chain(own))
+            .build_with(move || {
+                for entry in entries {
+                    match entry {
+                        Entry::Heading { title, hint } => heading(
+                            &title,
+                            hint.as_ref()
+                                .map(|(key, does)| (key.as_str(), does.as_str())),
+                        ),
+                        Entry::Row {
+                            name,
+                            description,
+                            current,
+                            id,
+                        } => rustle::key(id.0, || row(&name, &description, current, id)),
+                    }
+                }
+                content();
+            });
     }
 
-    /// The popover placed above the button it is a child of, a little way off, with their left edges together,
-    /// and answering to `id` so that pressing it does not count as pressing outside.
-    pub fn over_button(self, id: FocusId) -> Node {
-        placed_above(self.body).focusable(id)
+    /// Emits the popover.
+    #[track_caller]
+    pub fn build(self) {
+        self.build_with(|| {});
     }
 
-    /// The popover placed above the button it is a child of, a little way off, with their right edges together,
-    /// and answering to `id` so that pressing it does not count as pressing outside.
-    pub fn over_button_end(self, id: FocusId) -> Node {
-        placed_above_end(self.body).focusable(id)
+    /// Emits the popover answering to `id`, so that pressing it does not count as pressing outside.
+    /// Placed over its trigger by [`anchored`] or [`anchored_end`].
+    #[track_caller]
+    pub fn build_target(self, id: FocusId) {
+        self.modifier(Modifier::new().target(id)).build();
     }
 
-    /// The popover placed just above the box it is a child of, across its width.
-    pub fn above_box(self) -> Node {
-        placed_above(self.body)
+    /// Emits the popover answering to `id`, so that pressing it does not count as pressing outside;
+    /// placed above its button, left edges together, by [`anchored`].
+    #[track_caller]
+    pub fn over_button(self, id: FocusId) {
+        self.build_target(id);
+    }
+
+    /// Emits the popover answering to `id`, so that pressing it does not count as pressing outside;
+    /// placed above its button, right edges together, by [`anchored_end`].
+    #[track_caller]
+    pub fn over_button_end(self, id: FocusId) {
+        self.build_target(id);
+    }
+
+    /// Emits the popover across the width of the box it hangs over; placed just above that box by [`anchored`].
+    #[track_caller]
+    pub fn above_box(self) {
+        self.modifier(Modifier::new().fill_max_width()).build();
     }
 }
 
-/// `body` hanging above the box it is a child of.
-fn placed_above(body: Node) -> Node {
-    body.styles([
-        absolute(),
-        inset_length(Sides::Bottom, Length::Fraction(1.0)),
-        left(0),
-        mb(2),
-        z(40),
-    ])
-    .keep_in_view()
+/// Emits `button` with `popover`, when there is one, hanging a little way above it with their left edges together.
+#[track_caller]
+pub fn anchored(button: impl FnOnce(), popover: Option<impl FnOnce()>) {
+    crate::kit::anchored(Modifier::new(), Placement::Above, 2.0, button, popover);
 }
 
-/// `body` hanging above the box it is a child of, with their right edges together.
-fn placed_above_end(body: Node) -> Node {
-    body.styles([
-        absolute(),
-        inset_length(Sides::Bottom, Length::Fraction(1.0)),
-        right(0),
-        mb(2),
-        z(40),
-    ])
-    .keep_in_view()
+/// Emits `button` with `popover`, when there is one, hanging a little way above it with their right edges together.
+#[track_caller]
+pub fn anchored_end(button: impl FnOnce(), popover: Option<impl FnOnce()>) {
+    crate::kit::anchored(Modifier::new(), Placement::AboveEnd, 2.0, button, popover);
 }
 
-/// `button` with `popover`, if there is one, hanging above it.
-pub fn anchored(button: Node, popover: Option<Node>) -> Node {
-    node().styles([relative()]).child(button).children(popover)
-}
-
-/// One row of a popover: a name over what choosing it means, with a tick on the one that is current.
-pub fn row(name: &str, description: &str, current: bool, id: FocusId) -> Node {
-    let mut styles = vec![
-        flex(),
-        flex_none(),
-        items_center(),
-        gap(3),
-        px(2.5),
-        py(1.5),
-        rounded(Radius::Lg),
-        cursor_pointer(),
-        bg(Role::SurfaceHover).hover(),
-    ];
-    if current {
-        styles.push(bg(Role::SurfaceSelected));
+/// Emits one row of a popover: a name over what choosing it means, with a tick on the one that is current.
+#[track_caller]
+pub fn row(name: &str, description: &str, current: bool, id: FocusId) {
+    let looks = if current {
+        Looks::new().idle(Role::SurfaceSelected)
+    } else {
+        Looks::new().hover(Role::SurfaceHover)
     }
-    let mut texts = node()
-        .styles([flex(), flex_col(), flex_1(), min_w_px(0)])
-        .child(line(name, 13, 1.4, Role::Text).styles([truncate()]));
-    if !description.is_empty() {
-        texts = texts.child(line(description, 12, 1.4, Role::Subtle).styles([truncate()]));
-    }
-    let mut row = node().styles(styles).child(texts);
-    if current {
-        row = row.child(glyph(IconName::Check, 4.0, Role::Text));
-    }
-    row.focusable(id)
+    .radius(Radius::Lg);
+    let modifier = Modifier::new()
+        .looks_of(looks, id)
+        .cursor(CursorIcon::Pointer)
+        .target(id)
+        .pad_x(2.5)
+        .pad_y(1.5);
+    crate::kit::row(modifier, Flex::new().center().gap(3), || {
+        column(Modifier::new().grow(), Flex::new(), || {
+            line(name, 13, 1.4, Role::Text);
+            if !description.is_empty() {
+                line(description, 12, 1.4, Role::Subtle);
+            }
+        });
+        if current {
+            glyph(IconName::Check, 4.0, Role::Text);
+        }
+    });
 }
 
-/// The small heading line of a popover, with `hint` at its right: a key to press, and what it does.
-pub fn heading(title: &str, hint: Option<(&str, &str)>) -> Node {
-    let mut row = node()
-        .styles([flex(), items_center(), justify_between(), h(8), px(2.5)])
-        .child(line(title, 12, 1.4, Role::Subtle));
-    if let Some((key, does)) = hint {
-        row = row.child(key_hint(key, does));
-    }
-    row
+/// Emits the small heading line of a popover, with `hint` at its right: a key to press, and what it does.
+#[track_caller]
+pub fn heading(title: &str, hint: Option<(&str, &str)>) {
+    crate::kit::row(
+        Modifier::new().h(8).pad_x(2.5),
+        Flex::new().center().between(),
+        || {
+            line(title, 12, 1.4, Role::Subtle);
+            if let Some((key, does)) = hint {
+                key_hint(key, does);
+            }
+        },
+    );
 }
 
-/// A key to press, in a small chip, and what it does.
-pub fn key_hint(key: &str, does: &str) -> Node {
-    node()
-        .styles([flex(), items_center(), gap(1.5)])
-        .child(
-            node()
-                .styles([px(1.5), rounded(Radius::Md), bg(Role::SurfaceHover)])
-                .child(text(key.to_owned()).styles([
-                    text_px(11),
-                    leading_ratio(1.6),
-                    font_mono(),
-                    text_color(Role::Muted),
-                ])),
-        )
-        .child(line(does, 12, 1.4, Role::Subtle))
+/// Emits a key to press, in a small chip, and what it does.
+#[track_caller]
+pub fn key_hint(key: &str, does: &str) {
+    crate::kit::row(Modifier::new(), Flex::new().center().gap(1.5), || {
+        crate::kit::row(
+            Modifier::new()
+                .fill_rounded(Role::SurfaceHover, Radius::Md)
+                .pad_x(1.5),
+            Flex::new(),
+            || label(key, Type::new(11).ratio(1.6).mono().tone(Role::Muted)),
+        );
+        line(does, 12, 1.4, Role::Subtle);
+    });
 }

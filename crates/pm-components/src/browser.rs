@@ -1,14 +1,13 @@
 //! The browser pane: a page of the web beside the agent's work, with its address bar and, beside it, the developer tools of the page.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Role, bg, border_b, border_color, cursor_text, flex, flex_1, flex_col, flex_none, gap, h_px,
-    items_center, min_w_px, overflow_hidden, px, relative, w_full, w_px,
-};
-use pm_text::Field;
-use pm_ui::{Node, Picture, node};
+use pm_field::Field;
+use rustle::{CursorIcon, Modifier};
 use std::ops::{Deref, DerefMut};
+
+use crate::kit::{
+    Flex, FocusId, IconName, Interactive, Picture, Radius, Role, Side, Styled, Tooltip, block,
+    column, layer, picture, row,
+};
 
 use crate::browser_address::address_of;
 use crate::browser_find::find_bar;
@@ -698,59 +697,46 @@ impl WorkspaceState {
     }
 }
 
-/// The browser shown in a pane `width` by `height` logical pixels.
-pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
-    let Some(browser) = state.browser.as_ref() else {
-        return node();
-    };
+/// Emits the bar above the page of `browser`: back, forward, reload, the address, the zoom when it is not 100%, picking, capturing, the lock and the developer tools.
+#[track_caller]
+fn toolbar(browser: &Browser) {
     let zoomed = (browser.zoom - 1.0).abs() > 0.005;
-    let toolbar = node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(1),
-            px(2),
-            h_px(TOOLBAR),
-            flex_none(),
-            border_b(),
-            border_color(Role::Border),
-        ])
-        .child(Button::icon(IconName::ArrowLeft, BROWSER_BACK).build())
-        .child(Button::icon(IconName::ArrowRight, BROWSER_FORWARD).build())
-        .child(Button::icon(IconName::Refresh, BROWSER_RELOAD).build())
-        .child(
-            node().styles([flex_1(), min_w_px(0)]).child(
+    row(
+        Modifier::new()
+            .height(TOOLBAR)
+            .stroke_side(Side::Bottom, 1.0, Role::Border)
+            .pad_x(2),
+        Flex::new().center().gap(1),
+        || {
+            Button::icon(IconName::ArrowLeft, BROWSER_BACK).build();
+            Button::icon(IconName::ArrowRight, BROWSER_FORWARD).build();
+            Button::icon(IconName::Refresh, BROWSER_RELOAD).build();
+            block(Modifier::new().grow(), || {
                 Input::new(&browser.address, BROWSER_ADDRESS)
                     .size(Size::Sm)
                     .placeholder("Search or enter an address")
-                    .build(),
-            ),
-        )
-        .children(zoomed.then(|| {
-            Button::new(format!("{}%", (browser.zoom * 100.0).round()), BROWSER_ZOOM)
-                .variant(Variant::Ghost)
-                .size(Size::Sm)
-                .build()
-        }))
-        .child(
+                    .build();
+            });
+            if zoomed {
+                Button::new(format!("{}%", (browser.zoom * 100.0).round()), BROWSER_ZOOM)
+                    .variant(Variant::Ghost)
+                    .size(Size::Sm)
+                    .build();
+            }
             Button::icon(IconName::Pick, BROWSER_PICK)
                 .variant(if browser.picking {
                     Variant::Secondary
                 } else {
                     Variant::Ghost
                 })
-                .build(),
-        )
-        .child(
+                .build();
             Button::icon(IconName::Camera, BROWSER_CAPTURE)
                 .variant(if browser.picking_area {
                     Variant::Secondary
                 } else {
                     Variant::Ghost
                 })
-                .build(),
-        )
-        .child(
+                .build();
             Button::icon(
                 if browser.locked {
                     IconName::Lock
@@ -765,16 +751,14 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
                 Variant::Ghost
             })
             .disabled(browser.agent)
-            .build()
-            .tooltip(if browser.agent {
+            .modifier(Modifier::new().tooltip(if browser.agent {
                 "Opened by an agent: agents may always work in this tab"
             } else if browser.locked {
                 "Locked: agents cannot change this tab. Press to unlock it."
             } else {
                 "Lock this tab so agents cannot change it"
-            }),
-        )
-        .child(
+            }))
+            .build();
             Button::icon(
                 if browser.tools {
                     IconName::PanelRightFilled
@@ -783,91 +767,103 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) -> Node {
                 },
                 BROWSER_TOOLS,
             )
-            .build(),
-        );
-    let room = (height - TAB_STRIP - TOOLBAR - browser.safety.bars()).max(0.0);
-    let surface = |id: FocusId, picture: &Option<Picture>, wide: f32, tall: f32| {
-        if id == BROWSER_BODY
-            && let Some(certificate) = browser.safety.certificate.as_ref()
-        {
-            return certificate_page(certificate, wide, tall);
-        }
-        let body = node()
-            .styles([
-                flex_none(),
-                w_px(wide),
-                h_px(tall),
-                overflow_hidden(),
-                cursor_text(),
-            ])
-            .focusable(id);
-        match picture {
-            Some(picture) if browser.notice.is_none() || id != BROWSER_BODY => {
-                body.picture(picture.clone())
-            }
-            _ => body.child(line(
+            .build();
+        },
+    );
+}
+
+/// Emits the window `id` of `browser`, `wide` by `tall` logical pixels: the certificate the page is stopped at, the newest `shown` picture, or what the tab says instead of a page.
+#[track_caller]
+fn surface(browser: &Browser, id: FocusId, shown: &Option<Picture>, wide: f32, tall: f32) {
+    if id == BROWSER_BODY
+        && let Some(certificate) = browser.safety.certificate.as_ref()
+    {
+        certificate_page(certificate, wide, tall);
+        return;
+    }
+    let body = Modifier::new()
+        .width(wide)
+        .height(tall)
+        .clip_to(Radius::None)
+        .cursor(CursorIcon::Text)
+        .target(id);
+    match shown {
+        Some(shown) if browser.notice.is_none() || id != BROWSER_BODY => picture(body, shown),
+        _ => block(body, || {
+            line(
                 browser.notice.as_deref().unwrap_or("Loading"),
                 12,
                 1.4,
                 Role::Muted,
-            )),
-        }
+            );
+        }),
+    }
+}
+
+/// Emits the line between the page and the developer tools, `tall` logical pixels high, with the handle that drags it.
+#[track_caller]
+fn divider(tall: f32) {
+    layer(
+        Modifier::new().width(1.0).height(tall).fill(Role::Border),
+        || Sash::column(BROWSER_SASH).bare().build(),
+    );
+}
+
+/// Emits the browser shown in a pane `width` by `height` logical pixels; nothing when it is closed.
+#[track_caller]
+pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) {
+    let Some(browser) = state.browser.as_ref() else {
+        return;
     };
-    let divider = |wide: f32, tall: f32| {
-        node().styles([w_px(wide), h_px(tall), bg(Role::Border), flex_none()])
-    };
-    let mut beside = 0.0;
-    let mut page_width = width;
-    let mut row = node().styles([flex(), w_full(), h_px(room), relative()]);
-    if browser.tools {
-        let tools = browser
+    let room = (height - TAB_STRIP - TOOLBAR - browser.safety.bars()).max(0.0);
+    let tools = browser.tools.then(|| {
+        browser
             .tools_width
             .clamp(TOOLS_LEAST, (width - TOOLS_LEAST - 1.0).max(TOOLS_LEAST))
-            .floor();
-        let page = (width - tools - 1.0).max(0.0);
-        beside = tools + 1.0;
-        page_width = page;
-        row = row
-            .child(surface(BROWSER_BODY, &browser.page, page, room))
-            .child(
-                divider(1.0, room)
-                    .styles([relative()])
-                    .child(Sash::column(BROWSER_SASH).bare().build()),
-            )
-            .child(surface(
-                BROWSER_TOOLS_BODY,
-                &browser.tools_page,
-                tools,
-                room,
-            ));
-    } else {
-        row = row.child(surface(BROWSER_BODY, &browser.page, width, room));
-    }
-    row = row.children(
-        browser
-            .search
-            .as_ref()
-            .map(|search| find_bar(search, page_width, beside)),
+            .floor()
+    });
+    let (page_width, beside) = match tools {
+        Some(tools) => ((width - tools - 1.0).max(0.0), tools + 1.0),
+        None => (width, 0.0),
+    };
+    column(
+        Modifier::new()
+            .fill_max_width()
+            .height(height)
+            .fill(Role::Background),
+        Flex::new(),
+        || {
+            tab_strip(browser, width);
+            toolbar(browser);
+            browser.safety.bar_nodes();
+            layer(Modifier::new().fill_max_width().height(room), || {
+                row(
+                    Modifier::new().fill_max_width().height(room),
+                    Flex::new(),
+                    || match tools {
+                        Some(tools) => {
+                            surface(browser, BROWSER_BODY, &browser.page, page_width, room);
+                            divider(room);
+                            surface(
+                                browser,
+                                BROWSER_TOOLS_BODY,
+                                &browser.tools_page,
+                                tools,
+                                room,
+                            );
+                        }
+                        None => surface(browser, BROWSER_BODY, &browser.page, width, room),
+                    },
+                );
+                if let Some(search) = browser.search.as_ref() {
+                    find_bar(search, page_width, beside);
+                }
+                browser
+                    .safety
+                    .question_overlay(page_width, std::time::Instant::now());
+            });
+        },
     );
-    row = row.children(
-        browser
-            .safety
-            .question_overlay(page_width, std::time::Instant::now()),
-    );
-    let mut pane = node()
-        .styles([
-            flex(),
-            flex_col(),
-            w_full(),
-            h_px(height),
-            bg(Role::Background),
-        ])
-        .child(tab_strip(browser, width))
-        .child(toolbar);
-    for bar in browser.safety.bar_nodes() {
-        pane = pane.child(bar);
-    }
-    pane.child(row)
 }
 
 #[cfg(test)]

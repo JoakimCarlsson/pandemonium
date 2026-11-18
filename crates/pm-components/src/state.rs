@@ -1,8 +1,8 @@
 //! What the workspace remembers: the page on screen, the panels that are open and what was typed.
 
+use crate::kit::FocusId;
+use pm_field::{Edit, Field};
 use pm_harness::{Event, Setting, Slash};
-use pm_input::FocusId;
-use pm_text::{Edit, Field};
 
 use crate::adder::{ADDER_FIELD, ADDER_ROW_BASE, ADDER_SUBMIT, Adder, is_adder};
 use crate::arrange::{
@@ -1902,7 +1902,7 @@ pub struct WorkspaceState {
     /// What other machines said about the agents, by destination, while the settings of one machine are showing.
     pub discovered_elsewhere: std::collections::HashMap<Option<String>, Discovered>,
     /// What the attached pictures look like, by path, once they are decoded.
-    pub previews: std::collections::HashMap<String, pm_ui::Picture>,
+    pub previews: std::collections::HashMap<String, crate::kit::Picture>,
     /// The diagrams and images of markdown drawn or fetched so far.
     pub figures: crate::figures::Figures,
     /// The figures asked for, by their key, so none is asked for twice.

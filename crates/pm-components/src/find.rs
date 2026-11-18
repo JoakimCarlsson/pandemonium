@@ -3,19 +3,15 @@
 use std::ops::Range;
 
 use pm_editor::{Document, Query};
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, ShadowLayer, absolute, bg, border, border_color, cursor_pointer, flex, flex_col,
-    flex_none, font_mono, gap, h, items_center, justify_center, leading_ratio, p, px, right,
-    rounded, shadow_layers, text_color, text_px, top, w, w_px, z,
-};
-use pm_text::{Edit, Field};
-use pm_ui::{Node, node, text};
+use pm_field::{Edit, Field};
+use rustle::{BoxAlignment, CursorIcon, Modifier};
 
 use crate::button::{Button, Variant};
 use crate::input::Input;
-use crate::parts::line;
+use crate::kit::{
+    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Type, column,
+    gap_box, label_with, row, sp,
+};
 use crate::size::Size;
 use crate::state::WorkspaceState;
 
@@ -58,8 +54,8 @@ pub const FIND_TOGGLE_REPLACE: FocusId = FocusId(7_402_111);
 /// Limits finding to the lines that were selected, and lifts the limit again.
 pub const FIND_IN_SELECTION: FocusId = FocusId(7_402_112);
 
-/// The shadow under the bar.
-pub(crate) const SHADOW: [ShadowLayer; 1] = [ShadowLayer::new(0.0, 8.0, 28.0, 0.0, 0.3, false)];
+/// The shadow under the bar: each layer's `(x, y, blur, spread, alpha)`.
+pub(crate) const SHADOW: [(f32, f32, f32, f32, f32); 1] = [(0.0, 8.0, 28.0, 0.0, 0.3)];
 
 /// The stretches a query finds, or why it cannot be used.
 type Matches = Result<Vec<Range<usize>>, String>;
@@ -341,35 +337,28 @@ impl WorkspaceState {
     }
 }
 
-/// A switch of the bar, `label` in the font for code, lit when `on`.
-pub(crate) fn switch(label: &str, id: FocusId, on: bool) -> Node {
-    let mut held = node()
-        .styles([
-            flex(),
-            items_center(),
-            justify_center(),
-            flex_none(),
-            w(6.5),
-            h(6),
-            rounded(Radius::Sm),
-            cursor_pointer(),
-            bg(Role::SurfaceHover).hover(),
-        ])
-        .focusable(id)
-        .child(text(label).styles([
-            text_px(11),
-            leading_ratio(1.2),
-            font_mono(),
-            text_color(if on { Role::Text } else { Role::Subtle }),
-        ]));
-    if on {
-        held = held.styles([
-            bg(Role::SurfaceActive),
-            border(),
-            border_color(Role::Accent),
-        ]);
+/// Emits a switch of the bar, `label` in the font for code, lit when `on`, answering to `id`.
+#[track_caller]
+pub(crate) fn switch(label: &str, id: FocusId, on: bool) {
+    let looks = if on {
+        Looks::new().idle(Role::SurfaceActive)
+    } else {
+        Looks::new()
     }
-    held
+    .hover(Role::SurfaceHover)
+    .radius(Radius::Sm);
+    let mut own = Modifier::new().w(6.5).h(6).looks_of(looks, id);
+    if on {
+        own = own.stroke(Role::Accent, Radius::Sm);
+    }
+    let own = own.cursor(CursorIcon::Pointer).target(id);
+    let kind = Type::new(11)
+        .ratio(1.2)
+        .mono()
+        .tone(if on { Role::Text } else { Role::Subtle });
+    row(own, Flex::new().center().middle(), || {
+        crate::kit::label(label, kind);
+    });
 }
 
 /// What the bar says of the matches: which is selected of how many, that there are none, or why the query cannot be used.
@@ -385,8 +374,9 @@ fn tally(found: &Matches, selected: Option<usize>, empty: bool) -> (String, Role
     }
 }
 
-/// The bar for finding and replacing in `document`, over the top right corner of the file.
-pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) -> Node {
+/// Emits the bar for finding and replacing in `document`, over the top right corner of the file.
+#[track_caller]
+pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
     let query = finding.query(smartcase);
     let found = document.find_all_within(&query, finding.scope(document));
     let selected = found
@@ -399,76 +389,60 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) -> Node
     } else {
         IconName::ChevronRight
     };
-    let find_row = node()
-        .styles([flex(), items_center(), gap(1)])
-        .child(Button::icon(toggle, FIND_TOGGLE_REPLACE).build())
-        .child(
-            node().styles([w_px(194.0), flex_none()]).child(
+    let read_only = document.field.is_read_only();
+    column(
+        Modifier::new()
+            .placed(BoxAlignment::TopEnd)
+            .at(-sp(6), sp(2))
+            .z_index(40)
+            .shadows(&SHADOW, Radius::Md)
+            .fill_rounded(Role::Surface, Radius::Md)
+            .stroke(Role::Border, Radius::Md)
+            .target(FIND_BAR)
+            .pad(1),
+        Flex::new().gap(1),
+        || {
+            row(Modifier::new(), Flex::new().center().gap(1), || {
+                Button::icon(toggle, FIND_TOGGLE_REPLACE).build();
                 Input::new(&finding.query, FIND_FIELD)
                     .size(Size::Sm)
                     .placeholder("Find")
                     .invalid(found.is_err())
-                    .build(),
-            ),
-        )
-        .child(switch("Aa", FIND_CASE, finding.case))
-        .child(switch("ab", FIND_WORD, finding.word))
-        .child(switch(".*", FIND_REGEX, finding.regex))
-        .child(switch("sel", FIND_IN_SELECTION, finding.scoped))
-        .child(
-            node()
-                .styles([w_px(84.0), flex_none(), px(1)])
-                .child(line(said, 11, 1.4, tone)),
-        )
-        .child(Button::icon(IconName::ArrowUp, FIND_PREVIOUS).build())
-        .child(Button::icon(IconName::ArrowDown, FIND_NEXT).build())
-        .child(Button::icon(IconName::Close, FIND_CLOSE).build());
-    let mut bar = node()
-        .styles([
-            absolute(),
-            top(2),
-            right(6),
-            z(40),
-            flex(),
-            flex_col(),
-            gap(1),
-            p(1),
-            rounded(Radius::Md),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-            shadow_layers(&SHADOW),
-        ])
-        .focusable(FIND_BAR)
-        .child(find_row);
-    if finding.replacing {
-        bar = bar.child(
-            node()
-                .styles([flex(), items_center(), gap(1)])
-                .child(node().styles([w(7), flex_none()]))
-                .child(
-                    node().styles([w_px(194.0), flex_none()]).child(
-                        Input::new(&finding.replacement, REPLACE_FIELD)
-                            .size(Size::Sm)
-                            .placeholder("Replace")
-                            .build(),
-                    ),
-                )
-                .child(
+                    .modifier(Modifier::new().width(194.0))
+                    .build();
+                switch("Aa", FIND_CASE, finding.case);
+                switch("ab", FIND_WORD, finding.word);
+                switch(".*", FIND_REGEX, finding.regex);
+                switch("sel", FIND_IN_SELECTION, finding.scoped);
+                label_with(
+                    Modifier::new().width(84.0).pad_x(1),
+                    said,
+                    Type::new(11).ratio(1.4).tone(tone).truncate(),
+                );
+                Button::icon(IconName::ArrowUp, FIND_PREVIOUS).build();
+                Button::icon(IconName::ArrowDown, FIND_NEXT).build();
+                Button::icon(IconName::Close, FIND_CLOSE).build();
+            });
+            if finding.replacing {
+                row(Modifier::new(), Flex::new().center().gap(1), || {
+                    gap_box(Modifier::new().w(7));
+                    Input::new(&finding.replacement, REPLACE_FIELD)
+                        .size(Size::Sm)
+                        .placeholder("Replace")
+                        .modifier(Modifier::new().width(194.0))
+                        .build();
                     Button::new("Replace", REPLACE_ONE)
                         .variant(Variant::Ghost)
                         .size(Size::Sm)
-                        .disabled(document.field.is_read_only())
-                        .build(),
-                )
-                .child(
+                        .disabled(read_only)
+                        .build();
                     Button::new("Replace all", REPLACE_ALL)
                         .variant(Variant::Ghost)
                         .size(Size::Sm)
-                        .disabled(document.field.is_read_only())
-                        .build(),
-                ),
-        );
-    }
-    bar
+                        .disabled(read_only)
+                        .build();
+                });
+            }
+        },
+    );
 }

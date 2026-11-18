@@ -1,8 +1,9 @@
 //! The lists the quick input offers to pick one thing from: a theme, a keymap, a setting of the agent and its values, a message to rewind to or fork from, a branch to check out, or what to type to list something else; and what picking each does.
 
 use pm_editor::Preset;
-use pm_input::FocusId;
-use pm_text::Field;
+use pm_field::Field;
+
+use crate::kit::FocusId;
 
 use crate::listing::{Items, Listing};
 use crate::state::{FORK_BASE, Outgoing, Page, RESTORE_BASE, REWIND_BASE, WorkspaceState};
@@ -170,7 +171,7 @@ impl WorkspaceState {
         match choosing {
             Choosing::Theme => {
                 let held = &self.window.appearance.dark_theme;
-                pm_theme::families()
+                crate::kit::theme::families()
                     .into_iter()
                     .map(|family| {
                         let current = family.name == *held;

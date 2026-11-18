@@ -2,22 +2,17 @@
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use pm_icon::IconName;
-use pm_input::FocusId;
 use pm_markdown::{Block, Inline, Span};
-use pm_style::{
-    Radius, Role, Sides, Style, Utility, bg, border, border_color, border_t, border_width,
-    cursor_pointer, flex, flex_1, flex_col, flex_none, font_mono, font_semibold, gap, gap_x, h_px,
-    italic, items_center, leading_ratio, line_through, min_w_px, ml, my, overflow_hidden, padding,
-    pl, px, py, rounded, rounded_full, size, text_color, text_px, underline, w_full, w_px,
-};
-use pm_text::Shaper;
-use pm_ui::{Node, node, retained, text};
+use rustle::{CursorIcon, Modifier};
 
 use crate::CodeBox;
 use crate::figures::{
     Figures, diagram_key, diagram_node, figure_marks, formula_key, image_key, images_node,
     is_diagram,
+};
+use crate::kit::{
+    Flex, FocusId, IconName, Interactive, Radius, Role, Side, Styled, Type, block, column, gap_box,
+    label_with, measure, row, wrap_lines,
 };
 use crate::parts::{glyph, line};
 
@@ -42,7 +37,7 @@ const UNCUT: f32 = 1.0e6;
 /// A markdown source being described: what it says, how wide it is set and in what type.
 ///
 /// Build it with [`Markdown::new`], change it with [`Markdown::size`] and
-/// [`Markdown::tone`], and turn it into a node with [`Markdown::build`].
+/// [`Markdown::tone`], and emit it with [`Markdown::build`].
 #[derive(Clone, Debug)]
 pub struct Markdown<'a> {
     /// The markdown.
@@ -63,6 +58,10 @@ pub struct Markdown<'a> {
     figures: Option<&'a Figures>,
     /// The markdown file the source is, from the root of its repository, which the paths of its images start from; nothing for text in no file.
     place: Option<&'a str>,
+    /// What the caller puts around the column of blocks.
+    modifier: Modifier,
+    /// How the column of blocks lays them out.
+    flex: Flex,
 }
 
 impl<'a> Markdown<'a> {
@@ -78,6 +77,8 @@ impl<'a> Markdown<'a> {
             links: None,
             figures: None,
             place: None,
+            modifier: Modifier::new(),
+            flex: Flex::new().gap(3),
         }
     }
 
@@ -114,11 +115,24 @@ impl<'a> Markdown<'a> {
         self
     }
 
-    /// The node that draws the source, its lines broken as `shaper` measures
-    /// them. The source is parsed and laid out once for as long as nothing
-    /// about it changes, and each block once for as long as it stays the
-    /// same, so a reply that grows only lays out its last block again.
-    pub fn build(self, shaper: &mut Shaper) -> Node {
+    /// The source with `modifier` put around its column of blocks (size, growth, margins), on top of what earlier calls put.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
+    }
+
+    /// The column of blocks laid out by `flex` instead of one under the other three steps apart.
+    pub fn flex(mut self, flex: Flex) -> Self {
+        self.flex = flex;
+        self
+    }
+
+    /// Emits the source, its lines broken as the type measures them. The
+    /// source is parsed and laid out once for as long as nothing about it
+    /// changes, and each block once for as long as it stays the same, so a
+    /// reply that grows only lays out its last block again.
+    #[track_caller]
+    pub fn build(self) {
         let width = self.width;
         let drawn = self
             .figures
@@ -134,49 +148,53 @@ impl<'a> Markdown<'a> {
             &drawn,
             self.place,
         ));
-        retained(whole, width, shaper, |shaper| {
-            let blocks = pm_markdown::parse(self.source);
-            let mut seen = 0;
-            node()
-                .styles([flex(), flex_col(), gap(3)])
-                .children(blocks.iter().map(|block| {
-                    let first = seen;
-                    seen += count_details(std::slice::from_ref(block));
-                    let unfolded: Vec<usize> = self
-                        .unfolded
-                        .iter()
-                        .copied()
-                        .filter(|place| (first..seen).contains(place))
-                        .collect();
-                    let key = hash((
-                        block,
-                        self.pixels,
-                        self.tone,
-                        self.details,
-                        first,
-                        &unfolded,
-                        self.links,
-                        &drawn,
-                    ));
-                    retained(key, width, shaper, |shaper| {
-                        Layout {
-                            pixels: self.pixels,
-                            shaper,
-                            details: self.details,
-                            unfolded,
-                            seen: first,
-                            links: self.links,
-                            figures: self.figures,
-                            place: self.place,
-                        }
-                        .block(block, self.tone, width)
-                    })
-                }))
-        })
+        let modifier = self.modifier.clone();
+        column(modifier, self.flex, || {
+            rustle::key(whole, || {
+                rustle::skippable((whole, width.to_bits()), || {
+                    let blocks = pm_markdown::parse(self.source);
+                    let mut seen = 0;
+                    for block in &blocks {
+                        let first = seen;
+                        seen += count_details(std::slice::from_ref(block));
+                        let unfolded: Vec<usize> = self
+                            .unfolded
+                            .iter()
+                            .copied()
+                            .filter(|place| (first..seen).contains(place))
+                            .collect();
+                        let key = hash((
+                            block,
+                            self.pixels,
+                            self.tone,
+                            self.details,
+                            first,
+                            &unfolded,
+                            self.links,
+                            &drawn,
+                        ));
+                        rustle::key(key, || {
+                            rustle::skippable((key, width.to_bits()), || {
+                                Layout {
+                                    pixels: self.pixels,
+                                    details: self.details,
+                                    unfolded,
+                                    seen: first,
+                                    links: self.links,
+                                    figures: self.figures,
+                                    place: self.place,
+                                }
+                                .block(block, self.tone, width);
+                            });
+                        });
+                    }
+                });
+            });
+        });
     }
 }
 
-/// `value` hashed, to tell one retained subtree from another.
+/// `value` hashed, to tell one kept stretch of the drawing from another.
 fn hash(value: impl Hash) -> u64 {
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);
@@ -187,8 +205,6 @@ fn hash(value: impl Hash) -> u64 {
 struct Layout<'s> {
     /// How tall running text is, in logical pixels.
     pixels: u32,
-    /// Measures the text as it will be drawn.
-    shaper: &'s mut Shaper,
     /// The name of the first fold-out's summary, when they can be pressed.
     details: Option<u64>,
     /// The fold-outs that are open, by their place in the source.
@@ -209,17 +225,24 @@ impl Layout<'_> {
         self.pixels as f32 * LEADING
     }
 
-    /// `blocks` one under the other, `width` wide, running text in `tone`.
-    fn blocks(&mut self, blocks: &[Block], tone: Role, width: f32) -> Node {
-        node()
-            .styles([flex(), flex_col(), gap(3)])
-            .children(blocks.iter().map(|block| self.block(block, tone, width)))
+    /// Emits `blocks` one under the other, `gap` steps apart, in a column with
+    /// `modifier`, `width` wide, running text in `tone`.
+    #[track_caller]
+    fn blocks(&mut self, modifier: Modifier, gap: f32, blocks: &[Block], tone: Role, width: f32) {
+        column(modifier, Flex::new().gap(gap), || {
+            for block in blocks {
+                self.block(block, tone, width);
+            }
+        });
     }
 
-    /// One block, `width` wide, running text in `tone`.
-    fn block(&mut self, block: &Block, tone: Role, width: f32) -> Node {
+    /// Emits one block, `width` wide, running text in `tone`.
+    #[track_caller]
+    fn block(&mut self, block: &Block, tone: Role, width: f32) {
         match block {
-            Block::Paragraph(spans) => self.text(spans, self.pixels, false, tone, width),
+            Block::Paragraph(spans) => {
+                self.text(Modifier::new(), spans, self.pixels, false, tone, width)
+            }
             Block::Heading { level, spans } => {
                 let pixels = match level {
                     1 => self.pixels + 6,
@@ -227,7 +250,7 @@ impl Layout<'_> {
                     3 => self.pixels + 1,
                     _ => self.pixels,
                 };
-                self.text(spans, pixels, true, tone, width)
+                self.text(Modifier::new(), spans, pixels, true, tone, width);
             }
             Block::List { start, items } => self.list(*start, items, tone, width),
             Block::Code { language, text } if is_diagram(language) => self.figure(
@@ -237,16 +260,28 @@ impl Layout<'_> {
                 width,
             ),
             Block::Code { text, .. } => self.code(text, width),
-            Block::Quote(blocks) => node()
-                .styles([
-                    flex(),
-                    border_width(Sides::Left, 2.0),
-                    border_color(Role::Border),
-                    pl(QUOTE_INDENT / 4.0 - 0.5),
-                ])
-                .child(self.blocks(blocks, Role::Muted, width - QUOTE_INDENT)),
+            Block::Quote(blocks) => {
+                let own = Modifier::new()
+                    .stroke_side(Side::Left, 2.0, Role::Border)
+                    .pad_side(Side::Left, QUOTE_INDENT / 4.0 - 0.5);
+                row(own, Flex::new(), || {
+                    self.blocks(
+                        Modifier::new(),
+                        3.0,
+                        blocks,
+                        Role::Muted,
+                        width - QUOTE_INDENT,
+                    );
+                });
+            }
             Block::Details { summary, blocks } => self.fold_out(summary, blocks, tone, width),
-            Block::Rule => node().styles([h_px(1), w_full(), my(1), bg(Role::Border)]),
+            Block::Rule => gap_box(
+                Modifier::new()
+                    .pad_y(1)
+                    .height(1.0)
+                    .fill_max_width()
+                    .fill(Role::Border),
+            ),
             Block::Table { head, rows } => self.table(head, rows, tone, width),
             Block::Math(text) => self.figure(
                 text,
@@ -264,8 +299,9 @@ impl Layout<'_> {
         }
     }
 
-    /// A fold-out: a chevron and `summary`, over `blocks` set in past a bar under the chevron when it is open.
-    fn fold_out(&mut self, summary: &[Span], blocks: &[Block], tone: Role, width: f32) -> Node {
+    /// Emits a fold-out: a chevron and `summary`, over `blocks` set in past a bar under the chevron when it is open.
+    #[track_caller]
+    fn fold_out(&mut self, summary: &[Span], blocks: &[Block], tone: Role, width: f32) {
         let place = self.seen;
         self.seen += 1;
         let open = self.details.is_none() || self.unfolded.contains(&place);
@@ -279,12 +315,15 @@ impl Layout<'_> {
         } else {
             summary
         };
-        let mut head = node()
-            .styles([flex(), gap_x(1.5), cursor_pointer()])
-            .child(
-                node()
-                    .styles([h_px(height), flex(), items_center(), flex_none()])
-                    .child(glyph(
+        let mut head = Modifier::new().cursor(CursorIcon::Pointer);
+        if let Some(base) = self.details {
+            head = head.target(FocusId(base + place as u64));
+        }
+        let pixels = self.pixels;
+        column(Modifier::new(), Flex::new().gap(2), || {
+            row(head, Flex::new().gap(1.5), || {
+                row(Modifier::new().height(height), Flex::new().center(), || {
+                    glyph(
                         if open {
                             IconName::ChevronDown
                         } else {
@@ -292,116 +331,108 @@ impl Layout<'_> {
                         },
                         3.5,
                         Role::Subtle,
-                    )),
-            )
-            .child(
-                self.text(summary, self.pixels, true, tone, width - 20.0)
-                    .styles([flex_1(), min_w_px(0)]),
-            );
-        if let Some(base) = self.details {
-            head = head.focusable(FocusId(base + place as u64));
-        }
-        let fold = node().styles([flex(), flex_col(), gap(2)]).child(head);
-        if !open {
-            self.seen += count_details(blocks);
-            return fold;
-        }
-        fold.child(
-            node()
-                .styles([
-                    flex(),
-                    border_width(Sides::Left, 2.0),
-                    border_color(Role::Border),
-                    ml(1.5),
-                    padding(Sides::Left, INDENT - 8.0),
-                ])
-                .child(self.blocks(blocks, tone, width - INDENT)),
-        )
+                    );
+                });
+                self.text(
+                    Modifier::new().grow(),
+                    summary,
+                    pixels,
+                    true,
+                    tone,
+                    width - 20.0,
+                );
+            });
+            if !open {
+                self.seen += count_details(blocks);
+                return;
+            }
+            let bar = Modifier::new()
+                .pad_side(Side::Left, 1.5)
+                .stroke_side(Side::Left, 2.0, Role::Border)
+                .padding_each(INDENT - 8.0, 0.0, 0.0, 0.0);
+            row(bar, Flex::new(), || {
+                self.blocks(Modifier::new(), 3.0, blocks, tone, width - INDENT);
+            });
+        });
     }
 
-    /// A list of `items`, numbered from `start` when it is ordered and dotted when not.
-    fn list(&mut self, start: Option<u64>, items: &[Vec<Block>], tone: Role, width: f32) -> Node {
+    /// Emits a list of `items`, numbered from `start` when it is ordered and dotted when not.
+    #[track_caller]
+    fn list(&mut self, start: Option<u64>, items: &[Vec<Block>], tone: Role, width: f32) {
         let height = self.line_height();
         let pixels = self.pixels;
-        node()
-            .styles([flex(), flex_col(), gap(1.5)])
-            .children(items.iter().enumerate().map(|(index, item)| {
-                let marker = match start {
-                    Some(first) => line(
-                        format!("{}.", first + index as u64),
-                        pixels,
-                        LEADING,
-                        Role::Muted,
-                    ),
-                    None => node().styles([size(1), rounded_full(), bg(Role::Subtle)]),
-                };
-                node()
-                    .styles([flex()])
-                    .child(
-                        node()
-                            .styles([
-                                w_px(INDENT),
-                                h_px(height),
-                                flex(),
-                                items_center(),
-                                flex_none(),
-                            ])
-                            .child(marker),
-                    )
-                    .child(self.blocks(item, tone, width - INDENT).styles([
-                        flex_1(),
-                        min_w_px(0),
-                        gap(1.5),
-                    ]))
-            }))
+        column(Modifier::new(), Flex::new().gap(1.5), || {
+            for (index, item) in items.iter().enumerate() {
+                row(Modifier::new(), Flex::new(), || {
+                    row(
+                        Modifier::new().width(INDENT).height(height),
+                        Flex::new().center(),
+                        || match start {
+                            Some(first) => line(
+                                format!("{}.", first + index as u64),
+                                pixels,
+                                LEADING,
+                                Role::Muted,
+                            ),
+                            None => gap_box(
+                                Modifier::new()
+                                    .square(1)
+                                    .fill_rounded(Role::Subtle, Radius::Full),
+                            ),
+                        },
+                    );
+                    self.blocks(Modifier::new().grow(), 1.5, item, tone, width - INDENT);
+                });
+            }
+        });
     }
 
-    /// A block of code in a bordered box, its long lines broken to fit `width`.
-    fn code(&mut self, source: &str, width: f32) -> Node {
-        let styles = [
-            text_px(self.pixels - 1),
-            leading_ratio(1.6),
-            font_mono(),
-            text_color(Role::Text),
-        ];
+    /// Emits a block of code in a bordered box, its long lines broken to fit `width`.
+    #[track_caller]
+    fn code(&mut self, source: &str, width: f32) {
+        let kind = Type::new(self.pixels - 1)
+            .ratio(1.6)
+            .mono()
+            .tone(Role::Text);
         let room = width - 30.0;
         let mut lines = Vec::new();
         for source_line in source.split('\n') {
             let expanded = source_line.replace('\t', "    ");
-            for piece in pm_ui::wrap(self.shaper, &expanded, styles, room) {
-                lines.push(
-                    node()
-                        .styles([flex(), px(3.5)])
-                        .child(text(&expanded[piece.start..piece.end]).styles(styles)),
-                );
+            for piece in wrap_lines(&expanded, kind, room) {
+                lines.push(expanded[piece.start..piece.end].to_owned());
             }
         }
-        CodeBox::new(lines)
-            .max_height(UNCUT)
-            .build()
-            .styles([py(2), my(0)])
+        CodeBox::new(move || {
+            for content in lines {
+                row(Modifier::new().pad_x(3.5), Flex::new(), move || {
+                    label_with(Modifier::new(), content, kind);
+                });
+            }
+        })
+        .max_height(UNCUT)
+        .inner(Modifier::new().pad_y(2))
+        .build();
     }
 
-    /// The figure written as `source` and kept under `key`, drawn when its drawing has arrived, and otherwise its source as code, with `failed` under it when it could not be drawn.
-    fn figure(&mut self, source: &str, key: u64, failed: &str, width: f32) -> Node {
+    /// Emits the figure written as `source` and kept under `key`, drawn when its drawing has arrived, and otherwise its source as code, with `failed` under it when it could not be drawn.
+    #[track_caller]
+    fn figure(&mut self, source: &str, key: u64, failed: &str, width: f32) {
         match self.figures.and_then(|figures| figures.get(&key)) {
             Some(Ok(drawing)) => diagram_node(drawing, width),
-            Some(Err(_)) => node()
-                .styles([flex(), flex_col(), gap(1.5)])
-                .child(self.code(source, width))
-                .child(line(failed, self.pixels - 2, 1.4, Role::Subtle)),
+            Some(Err(_)) => {
+                let pixels = self.pixels;
+                column(Modifier::new(), Flex::new().gap(1.5), || {
+                    self.code(source, width);
+                    line(failed, pixels - 2, 1.4, Role::Subtle);
+                });
+            }
             None => self.code(source, width),
         }
     }
 
-    /// A table: a shaded heading row over its rows, the columns sharing `width` evenly.
-    fn table(
-        &mut self,
-        head: &[Vec<Span>],
-        rows: &[Vec<Vec<Span>>],
-        tone: Role,
-        width: f32,
-    ) -> Node {
+    /// Emits a table: a shaded heading row over its rows, the columns sharing `width` evenly.
+    #[track_caller]
+    fn table(&mut self, head: &[Vec<Span>], rows: &[Vec<Vec<Span>>], tone: Role, width: f32) {
         let columns = rows
             .iter()
             .map(Vec::len)
@@ -411,43 +442,50 @@ impl Layout<'_> {
             .max(1);
         let cell_width = ((width - 2.0) / columns as f32).floor();
         let pixels = self.pixels - 1;
-        let mut table = node().styles([
-            flex(),
-            flex_col(),
-            rounded(Radius::Lg),
-            border(),
-            border_color(Role::Border),
-            overflow_hidden(),
-        ]);
-        table = table.child(
-            node().styles([flex(), bg(Role::Surface)]).children(
-                head.iter()
-                    .map(|cell| self.cell(cell, pixels, true, tone, cell_width)),
-            ),
-        );
-        for row in rows {
-            table = table.child(
-                node()
-                    .styles([flex(), border_t(), border_color(Role::Border)])
-                    .children(
-                        row.iter()
-                            .map(|cell| self.cell(cell, pixels, false, tone, cell_width)),
-                    ),
-            );
-        }
-        table
+        let own = Modifier::new()
+            .stroke(Role::Border, Radius::Lg)
+            .clip_to(Radius::Lg);
+        column(own, Flex::new(), || {
+            row(Modifier::new().fill(Role::Surface), Flex::new(), || {
+                for cell in head {
+                    self.cell(cell, pixels, true, tone, cell_width);
+                }
+            });
+            for cells in rows {
+                row(
+                    Modifier::new().stroke_side(Side::Top, 1.0, Role::Border),
+                    Flex::new(),
+                    || {
+                        for cell in cells {
+                            self.cell(cell, pixels, false, tone, cell_width);
+                        }
+                    },
+                );
+            }
+        });
     }
 
-    /// One cell of a table, `width` wide, set heavier when it is a heading.
-    fn cell(&mut self, spans: &[Span], pixels: u32, strong: bool, tone: Role, width: f32) -> Node {
-        node()
-            .styles([w_px(width), flex_none(), px(2.5), py(1.5)])
-            .child(self.text(spans, pixels, strong, tone, width - 20.0))
+    /// Emits one cell of a table, `width` wide, set heavier when it is a heading.
+    #[track_caller]
+    fn cell(&mut self, spans: &[Span], pixels: u32, strong: bool, tone: Role, width: f32) {
+        block(Modifier::new().width(width).pad_x(2.5).pad_y(1.5), || {
+            self.text(Modifier::new(), spans, pixels, strong, tone, width - 20.0)
+        });
     }
 
-    /// `spans` broken into lines that fit `width`, set in `pixels` tall type,
-    /// heavier throughout when `strong`, running text in `tone`.
-    fn text(&mut self, spans: &[Span], pixels: u32, strong: bool, tone: Role, width: f32) -> Node {
+    /// Emits `spans` broken into lines that fit `width`, set in `pixels` tall
+    /// type, heavier throughout when `strong`, running text in `tone`, in a
+    /// column with `modifier`.
+    #[track_caller]
+    fn text(
+        &mut self,
+        modifier: Modifier,
+        spans: &[Span],
+        pixels: u32,
+        strong: bool,
+        tone: Role,
+        width: f32,
+    ) {
         let mut lines: Vec<Vec<(String, Inline)>> = vec![Vec::new()];
         let mut used = 0.0;
         for span in spans {
@@ -480,21 +518,26 @@ impl Layout<'_> {
             }
         }
         let height = pixels as f32 * LEADING;
-        node()
-            .styles([flex(), flex_col()])
-            .children(lines.into_iter().map(|runs| {
-                node()
-                    .styles([flex(), items_center(), h_px(height)])
-                    .children(runs.into_iter().map(|(content, inline)| {
-                        let piece = run(content, inline, pixels, strong, tone);
-                        match (self.links, inline.target) {
-                            (Some(base), target) if target > 0 => piece
-                                .styles([cursor_pointer()])
-                                .focusable(FocusId(base + u64::from(target) - 1)),
-                            _ => piece,
+        let links = self.links;
+        column(modifier, Flex::new(), move || {
+            for runs in lines {
+                row(
+                    Modifier::new().height(height),
+                    Flex::new().center(),
+                    move || {
+                        for (content, inline) in runs {
+                            let pressed = match (links, inline.target) {
+                                (Some(base), target) if target > 0 => Modifier::new()
+                                    .cursor(CursorIcon::Pointer)
+                                    .target(FocusId(base + u64::from(target) - 1)),
+                                _ => Modifier::new(),
+                            };
+                            run(pressed, content, inline, pixels, strong, tone);
                         }
-                    }))
-            }))
+                    },
+                );
+            }
+        });
     }
 
     /// `word` cut into pieces no wider than `width`; one piece when it fits.
@@ -524,9 +567,7 @@ impl Layout<'_> {
 
     /// How wide `content` is when set as `inline` in `pixels` tall type, heavier when `strong`.
     fn measure(&mut self, content: &str, inline: Inline, pixels: u32, strong: bool) -> f32 {
-        let mut style = Style::default();
-        style.extend(setting(inline, pixels, strong));
-        self.shaper.measure(content, &style.base().typography).width
+        measure(content, setting(inline, pixels, strong)).0
     }
 }
 
@@ -554,50 +595,46 @@ fn opening(line: &[(String, Inline)], inline: Inline) -> f32 {
     }
 }
 
-/// The typography of text set as `inline` in `pixels` tall type, heavier when `strong`.
-fn setting(inline: Inline, pixels: u32, strong: bool) -> Vec<Utility> {
-    let mut utilities = Vec::new();
-    if inline.code {
-        utilities.push(text_px(pixels - 1));
-        utilities.push(leading_ratio(
-            pixels as f32 * CODE_LEADING / (pixels - 1) as f32,
-        ));
-        utilities.push(font_mono());
+/// The type of text set as `inline` in `pixels` tall type, heavier when `strong`.
+fn setting(inline: Inline, pixels: u32, strong: bool) -> Type {
+    let mut kind = if inline.code {
+        Type::new(pixels - 1)
+            .ratio(pixels as f32 * CODE_LEADING / (pixels - 1) as f32)
+            .mono()
     } else {
-        utilities.push(text_px(pixels));
-        utilities.push(leading_ratio(LEADING));
-    }
+        Type::new(pixels).ratio(LEADING)
+    };
     if strong || inline.strong {
-        utilities.push(font_semibold());
+        kind = kind.semibold();
     }
     if inline.emphasis {
-        utilities.push(italic());
+        kind = kind.italic();
     }
     if inline.strike {
-        utilities.push(line_through());
+        kind = kind.strike();
     }
     if inline.link {
-        utilities.push(underline());
+        kind = kind.underline();
     }
-    utilities
+    kind
 }
 
-/// One run of `content` set as `inline`, in `tone` unless it is a link or struck.
-fn run(content: String, inline: Inline, pixels: u32, strong: bool, tone: Role) -> Node {
+/// Emits one run of `content` set as `inline`, in `tone` unless it is a link or struck, inside
+/// `modifier` (what makes a link pressable), on a shaded rounded backing when it is code.
+#[track_caller]
+fn run(modifier: Modifier, content: String, inline: Inline, pixels: u32, strong: bool, tone: Role) {
     let colour = match inline {
         Inline { link: true, .. } => Role::Accent,
         Inline { strike: true, .. } => Role::Muted,
         _ => tone,
     };
-    let piece = text(content)
-        .styles(setting(inline, pixels, strong))
-        .styles([text_color(colour), flex_none()]);
-    match inline.code {
-        true => piece.styles([
-            padding(Sides::Horizontal, CODE_PAD),
-            rounded(Radius::Sm),
-            bg(Role::SurfaceHover),
-        ]),
-        false => piece,
-    }
+    let kind = setting(inline, pixels, strong).tone(colour);
+    let modifier = match inline.code {
+        true => Modifier::new()
+            .fill_rounded(Role::SurfaceHover, Radius::Sm)
+            .chain(modifier)
+            .padding_xy(CODE_PAD, 0.0),
+        false => modifier,
+    };
+    label_with(modifier, content, kind);
 }

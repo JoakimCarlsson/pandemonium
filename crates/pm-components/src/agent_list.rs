@@ -1,7 +1,6 @@
 //! The agents a workspace can be started with: the ones the app offers, one for each provider of the harness.
 
-use pm_icon::IconName;
-
+use crate::kit::IconName;
 use crate::state::{Outgoing, WorkspaceState};
 
 /// One agent the app ships, as the windows list it.

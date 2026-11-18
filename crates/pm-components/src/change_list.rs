@@ -1,17 +1,14 @@
 //! The changed files in groups: staged, tracked and untracked, each file with how it changed, a way to open it and a box that stages it.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Color, Radius, Role, flex, flex_1, flex_none, font_mono, items_center, justify_between,
-    leading_ratio, min_w_px, overflow_hidden, pb, pl, pr, pt, text_color, text_px, truncate,
-};
-use pm_ui::{Node, node, text};
+use rustle::Modifier;
 use std::collections::HashSet;
 
 use crate::file_icon::file_icon;
 use crate::git_controls::{GROUP_TRACKED, GROUP_UNTRACKED, OPEN_ARROW_BASE};
-use crate::parts::{glyph, line};
+use crate::kit::{
+    Flex, FocusId, IconName, Radius, Role, Side, Styled, Tone, Type, label, label_with, row,
+};
+use crate::parts::glyph;
 use crate::sample::{Change, Session};
 use crate::size::Size;
 use crate::state::{FILE_BASE, FOLDER_BASE, FOLDER_STAGE_BASE, STAGE_BASE, WorkspaceState};
@@ -75,54 +72,50 @@ pub fn members(changes: &[Change], group: Group, repository: Option<&str>) -> Ve
 }
 
 /// The colour the letter that says how `change` came to differ is written in.
-pub(crate) fn mark_color(letter: &str) -> Color {
+pub(crate) fn mark_color(letter: &str) -> Tone {
     match letter {
-        "A" | "U" => Color::from(Role::Success),
-        "D" => Color::from(Role::Subtle),
-        "C" => Color::from(Role::Danger),
-        _ => Color::rgb(0xe6, 0xc8, 0x4f),
+        "A" | "U" => Tone::from(Role::Success),
+        "D" => Tone::from(Role::Subtle),
+        "C" => Tone::from(Role::Danger),
+        _ => Tone::rgb(0xe6, 0xc8, 0x4f),
     }
 }
 
-/// How much of a file is in the index, as its box says.
-fn staged_box(change: &Change, id: FocusId) -> Node {
+/// Emits the box that says how much of a file is in the index.
+#[track_caller]
+fn staged_box(change: &Change, id: FocusId) {
     Checkbox::new(change.fully_staged(), id)
         .mixed(change.staged && change.unstaged)
-        .build()
+        .build();
 }
 
-/// The heading above the files of `group` in `repository`, and the box that stages them all: none of them, all of them or some.
-fn heading(changes: &[Change], group: Group, repository: Option<&str>) -> Node {
+/// Emits the heading above the files of `group` in `repository`, and the box that stages them all: none of them, all of them or some.
+#[track_caller]
+fn heading(changes: &[Change], group: Group, repository: Option<&str>) {
     let files = members(changes, group, repository);
     let staged = files
         .iter()
         .filter(|&&index| changes[index].fully_staged())
         .count();
-    let mut row = node()
-        .styles([
-            flex(),
-            items_center(),
-            justify_between(),
-            pl(3),
-            pr(3),
-            pt(2),
-            pb(1),
-        ])
-        .child(
-            text(format!("{} ({})", group.label(), files.len())).styles([
-                text_px(11),
-                leading_ratio(1.4),
-                text_color(Role::Subtle),
-            ]),
-        );
-    if let Some(id) = group.id() {
-        row = row.child(
-            Checkbox::new(staged == files.len(), id)
-                .mixed(staged > 0 && staged < files.len())
-                .build(),
-        );
-    }
-    row
+    row(
+        Modifier::new()
+            .pad_side(Side::Left, 3)
+            .pad_side(Side::Right, 3)
+            .pad_side(Side::Top, 2)
+            .pad_side(Side::Bottom, 1),
+        Flex::new().center().between(),
+        || {
+            label(
+                format!("{} ({})", group.label(), files.len()),
+                Type::new(11).ratio(1.4).tone(Role::Subtle),
+            );
+            if let Some(id) = group.id() {
+                Checkbox::new(staged == files.len(), id)
+                    .mixed(staged > 0 && staged < files.len())
+                    .build();
+            }
+        },
+    );
 }
 
 /// How far, in steps, each level of a group's tree indents its rows.
@@ -276,61 +269,51 @@ fn commit_count(moved: &pm_git::Moved) -> String {
     }
 }
 
-/// The row of the file at `index`, `depth` levels down: how it changed, a button that opens it and the box that stages it.
-fn file_row(
-    state: &WorkspaceState,
-    change: &Change,
-    index: usize,
-    name: &str,
-    depth: usize,
-) -> Node {
+/// Emits the row of the file at `index`, `depth` levels down: how it changed, a button that opens it and the box that stages it.
+#[track_caller]
+fn file_row(state: &WorkspaceState, change: &Change, index: usize, name: &str, depth: usize) {
     let letter = change.mark();
     let tone = mark_color(letter);
-    let icon = match &change.moved {
-        Some(_) => glyph(IconName::Git, 3.5, Role::Muted),
-        None => file_icon(name, 3.5),
-    };
     Tile::new(FocusId(FILE_BASE + index as u64))
         .selected(state.git.marked.contains(&index))
         .height(6.5)
         .gap(2.0)
         .radius(Radius::Sm)
-        .build()
-        .styles([
-            pl(3.0 + depth as f32 * INDENT + FILE_OFFSET),
-            pr(3),
-            flex_none(),
-            overflow_hidden(),
-        ])
-        .child(icon)
-        .child(
-            node()
-                .styles([flex_1(), min_w_px(0), overflow_hidden()])
-                .child(line(name, 13, 1.4, Role::Text).styles([truncate()])),
+        .modifier(Modifier::new().clip_to(Radius::None))
+        .inner(
+            Modifier::new()
+                .pad_side(Side::Left, 3.0 + depth as f32 * INDENT + FILE_OFFSET)
+                .pad_side(Side::Right, 3),
         )
-        .children(
-            change.moved.as_ref().map(|moved| {
-                line(commit_count(moved), 11, 1.4, Role::Subtle).styles([flex_none()])
-            }),
-        )
-        .child(text(letter).styles([
-            text_px(11),
-            leading_ratio(1.4),
-            font_mono(),
-            text_color(tone),
-            flex_none(),
-        ]))
-        .children(change.moved.is_none().then(|| {
-            Button::icon(
-                IconName::ArrowRight,
-                FocusId(OPEN_ARROW_BASE + index as u64),
-            )
-            .size(Size::Sm)
-            .build()
-        }))
-        .children(
-            (!change.conflicted).then(|| staged_box(change, FocusId(STAGE_BASE + index as u64))),
-        )
+        .build_with(|| {
+            match &change.moved {
+                Some(_) => glyph(IconName::Git, 3.5, Role::Muted),
+                None => file_icon(name, 3.5),
+            }
+            label_with(
+                Modifier::new().grow(),
+                name,
+                Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
+            );
+            if let Some(moved) = change.moved.as_ref() {
+                label(
+                    commit_count(moved),
+                    Type::new(11).ratio(1.4).tone(Role::Subtle).truncate(),
+                );
+            }
+            label(letter, Type::new(11).ratio(1.4).mono().tone(tone));
+            if change.moved.is_none() {
+                Button::icon(
+                    IconName::ArrowRight,
+                    FocusId(OPEN_ARROW_BASE + index as u64),
+                )
+                .size(Size::Sm)
+                .build();
+            }
+            if !change.conflicted {
+                staged_box(change, FocusId(STAGE_BASE + index as u64));
+            }
+        });
 }
 
 /// What the branch of the repository `standing` says stands as is written: its name, or the commit on a detached head, and how many commits it is ahead of and behind what it follows.
@@ -349,7 +332,8 @@ fn standing_label(standing: &pm_git::Standing) -> String {
     label
 }
 
-/// The row of a folder, `depth` levels down, open or folded: a chevron, the box that stages everything in it, its name and what it changed; a repository's row says what it has checked out, from `standings`.
+/// Emits the row of a folder, `depth` levels down, open or folded: a chevron, the box that stages everything in it, its name and what it changed; a repository's row says what it has checked out, from `standings`.
+#[track_caller]
 fn folder_row(
     changes: &[Change],
     standings: &[pm_git::Standing],
@@ -358,7 +342,7 @@ fn folder_row(
     position: usize,
     depth: usize,
     open: bool,
-) -> Node {
+) {
     let inside: Vec<usize> = folder.files.iter().map(|&place| files[place]).collect();
     let staged = inside
         .iter()
@@ -371,48 +355,53 @@ fn folder_row(
         .height(6.5)
         .gap(2.0)
         .radius(Radius::Sm)
-        .build()
-        .styles([pl(3.0 + depth as f32 * INDENT), pr(3), flex_none()])
-        .child(glyph(
-            if open {
-                IconName::ChevronDown
-            } else {
-                IconName::ChevronRight
-            },
-            3.5,
-            Role::Muted,
-        ))
-        .child(
+        .inner(
+            Modifier::new()
+                .pad_side(Side::Left, 3.0 + depth as f32 * INDENT)
+                .pad_side(Side::Right, 3),
+        )
+        .build_with(|| {
+            glyph(
+                if open {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                },
+                3.5,
+                Role::Muted,
+            );
             Checkbox::new(
                 !inside.is_empty() && staged == inside.len(),
                 FocusId(FOLDER_STAGE_BASE + position as u64),
             )
             .mixed(partly && staged < inside.len())
-            .build(),
-        )
-        .children(
-            stops(changes, None)
-                .contains(&folder.path.as_str())
-                .then(|| glyph(IconName::Git, 3.5, Role::Muted)),
-        )
-        .child(
-            node()
-                .styles([flex_1(), min_w_px(0), overflow_hidden()])
-                .child(line(&folder.name, 13, 1.4, Role::Text).styles([truncate()])),
-        )
-        .children(
-            standings
+            .build();
+            if stops(changes, None).contains(&folder.path.as_str()) {
+                glyph(IconName::Git, 3.5, Role::Muted);
+            }
+            label_with(
+                Modifier::new().grow(),
+                &folder.name,
+                Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
+            );
+            if let Some(standing) = standings
                 .iter()
                 .find(|standing| standing.path == folder.path)
-                .map(|standing| {
-                    line(standing_label(standing), 11, 1.4, Role::Subtle)
-                        .styles([flex_none(), font_mono()])
-                }),
-        )
-        .child(Tally::new(added, removed).size(11).build())
+            {
+                label(
+                    standing_label(standing),
+                    Type::new(11)
+                        .ratio(1.4)
+                        .tone(Role::Subtle)
+                        .truncate()
+                        .mono(),
+                );
+            }
+            Tally::new(added, removed).size(11).build();
+        });
 }
 
-/// The rows of `entries` and of everything in their open folders, `depth` levels down; `counter` numbers the folders across the groups as [`folder_table`] does.
+/// Emits the rows of `entries` and of everything in their open folders, `depth` levels down; `counter` numbers the folders across the groups as [`folder_table`] does.
 fn rows_of(
     state: &WorkspaceState,
     session: &Session,
@@ -421,13 +410,14 @@ fn rows_of(
     files: &[usize],
     depth: usize,
     counter: &mut usize,
-) -> Vec<Node> {
-    let mut rows = Vec::new();
+) {
     for entry in entries {
         match entry {
             Entry::File { name, index } => {
                 let at = files[*index];
-                rows.push(file_row(state, &session.changes[at], at, name, depth));
+                rustle::key(at, || {
+                    file_row(state, &session.changes[at], at, name, depth)
+                });
             }
             Entry::Folder(folder) => {
                 let position = *counter;
@@ -435,45 +425,47 @@ fn rows_of(
                 let open = !state
                     .closed_folders
                     .contains(&fold_key(group, &folder.path));
-                rows.push(folder_row(
-                    &session.changes,
-                    &session.standings,
-                    folder,
-                    files,
-                    position,
-                    depth,
-                    open,
-                ));
-                let inner = rows_of(
-                    state,
-                    session,
-                    &folder.entries,
-                    group,
-                    files,
-                    depth + 1,
-                    counter,
-                );
+                rustle::key(("folder", position), || {
+                    folder_row(
+                        &session.changes,
+                        &session.standings,
+                        folder,
+                        files,
+                        position,
+                        depth,
+                        open,
+                    )
+                });
                 if open {
-                    rows.extend(inner);
+                    rows_of(
+                        state,
+                        session,
+                        &folder.entries,
+                        group,
+                        files,
+                        depth + 1,
+                        counter,
+                    );
+                } else {
+                    *counter += folders(&folder.entries).len();
                 }
             }
         }
     }
-    rows
 }
 
-/// The rows of the changes of `session` in the repository the panel works on: each group that has files, under its heading, as a tree of folders.
-pub fn rows(state: &WorkspaceState, session: &Session) -> Vec<Node> {
+/// Emits the rows of the changes of `session` in the repository the panel works on: each group that has files, under its heading, as a tree of folders.
+#[track_caller]
+pub fn rows(state: &WorkspaceState, session: &Session) {
     let repository = state.git.repository.as_deref();
-    let mut rows = Vec::new();
     let mut counter = 0;
     for group in Group::ALL {
         let files = members(&session.changes, group, repository);
         if files.is_empty() {
             continue;
         }
-        rows.push(heading(&session.changes, group, repository));
-        rows.extend(rows_of(
+        heading(&session.changes, group, repository);
+        rows_of(
             state,
             session,
             &tree(&session.changes, &files, repository),
@@ -481,7 +473,6 @@ pub fn rows(state: &WorkspaceState, session: &Session) -> Vec<Node> {
             &files,
             0,
             &mut counter,
-        ));
+        );
     }
-    rows
 }

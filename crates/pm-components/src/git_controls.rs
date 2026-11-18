@@ -1,7 +1,7 @@
 //! What the reader does to the changes with git: picking several files, the menu on them, discarding, ignoring, reading a file and changing branch.
 
-use pm_input::FocusId;
-use pm_text::Field;
+use crate::kit::FocusId;
+use pm_field::Field;
 
 use crate::change_list::Group;
 use crate::git_menus::{MENU_ROW_BASE, MenuKind, OpenMenu};

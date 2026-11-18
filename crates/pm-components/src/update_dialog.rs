@@ -1,19 +1,15 @@
 //! The page that offers a newer release: its notes, and the button that downloads it and restarts into it.
 
-use pm_input::FocusId;
-use pm_style::{
-    Role, bg, flex, flex_1, flex_col, gap, items_center, min_h, min_w_px, overflow_hidden, px, py,
-    w_full,
-};
-use pm_text::Shaper;
-use pm_ui::{Node, node};
-
 use crate::button::Variant;
+use crate::kit::{
+    Flex, FocusId, Radius, Role, Scroll, Styled, Type, column, gap_box, label, row, scroll_area,
+};
 use crate::parts::{line, spacer, wrap};
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::update::{RUNNING, Update};
 use crate::{Button, Markdown};
+use rustle::Modifier;
 
 /// Downloads the release and restarts into it.
 pub const UPDATE_NOW: FocusId = FocusId(7_019);
@@ -144,12 +140,13 @@ impl WorkspaceState {
     }
 }
 
-/// A button of the window, saying `label`.
-fn button(label: &str, id: FocusId, variant: Variant) -> Node {
+/// Emits a button of the window, saying `label`.
+#[track_caller]
+fn button(label: &str, id: FocusId, variant: Variant) {
     Button::new(label, id)
         .variant(variant)
         .size(Size::Sm)
-        .build()
+        .build();
 }
 
 /// What the window says under the notes about how the update is going, when it says anything.
@@ -166,8 +163,9 @@ fn status(state: &WorkspaceState, blocker: Option<&str>) -> Option<String> {
     }
 }
 
-/// The page, `width` logical pixels across, that offers `update`, the newer release found, with its notes.
-pub fn page(state: &WorkspaceState, update: &Update, width: f32, shaper: &mut Shaper) -> Node {
+/// Emits the page, `width` logical pixels across, that offers `update`, the newer release found, with its notes; nothing when `update` is not a newer release.
+#[track_caller]
+pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
     let Update::Newer {
         name,
         published,
@@ -176,76 +174,68 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32, shaper: &mut Sh
         ..
     } = update
     else {
-        return node();
+        return;
     };
     let text_width = width - 2.0 * MARGIN;
     let date = published
         .as_deref()
         .map(|date| format!(", published {}", date.split('T').next().unwrap_or(date)))
         .unwrap_or_default();
-    let mut column = node()
-        .styles([
-            flex(),
-            flex_col(),
-            gap(3),
-            flex_1(),
-            min_h(0),
-            w_full(),
-            py(8),
-        ])
-        .child(line(name, 22, 1.3, Role::Text).styles([pm_style::font_medium()]))
-        .child(line(
-            format!("This is {RUNNING}{date}."),
-            13,
-            1.4,
-            Role::Muted,
-        ));
-    if let Some(notes) = body {
-        column = column.child(
-            node()
-                .styles([flex_1(), min_h(0), overflow_hidden()])
-                .scroll_from_start(UPDATE_SCROLL, state.update_scroll)
-                .child(Markdown::new(notes, text_width).build(shaper)),
-        );
-    } else {
-        column = column.child(node().styles([flex_1()]));
-    }
     let said = status(state, blocker.as_deref());
     let busy = matches!(
         state.update_run,
         UpdateRun::Downloading { .. } | UpdateRun::Installing
     );
-    let mut buttons = node()
-        .styles([flex(), items_center(), gap(2)])
-        .child(button("View on GitHub", UPDATE_PAGE, Variant::Ghost))
-        .child(spacer());
-    if !matches!(state.update_run, UpdateRun::Installing) {
-        buttons = buttons.child(button(
-            if busy { "Cancel" } else { "Later" },
-            UPDATE_LATER,
-            Variant::Ghost,
-        ));
-    }
-    if !busy && blocker.is_none() {
-        buttons = buttons.child(button("Update and Restart", UPDATE_NOW, Variant::Default));
-    }
-    let column = column
-        .children(said.map(|said| {
-            node().styles([flex(), flex_col()]).children(
-                wrap(&said, 13, text_width)
-                    .iter()
-                    .map(|words| line(words, 13, 1.5, Role::Muted)),
-            )
-        }))
-        .child(buttons);
-    node()
-        .styles([
-            flex(),
-            flex_1(),
-            min_w_px(0),
-            min_h(0),
-            px(6),
-            bg(Role::Background),
-        ])
-        .child(column)
+    let installing = matches!(state.update_run, UpdateRun::Installing);
+    row(
+        Modifier::new().grow().fill(Role::Background).pad_x(6),
+        Flex::new(),
+        || {
+            column(
+                Modifier::new().grow().fill_max_width().pad_y(8),
+                Flex::new().gap(3),
+                || {
+                    label(
+                        name,
+                        Type::new(22)
+                            .ratio(1.3)
+                            .tone(Role::Text)
+                            .truncate()
+                            .medium(),
+                    );
+                    line(format!("This is {RUNNING}{date}."), 13, 1.4, Role::Muted);
+                    if let Some(notes) = body {
+                        scroll_area(
+                            Modifier::new().grow().clip_to(Radius::None),
+                            Scroll::from_start(UPDATE_SCROLL, state.update_scroll),
+                            || Markdown::new(notes, text_width).build(),
+                        );
+                    } else {
+                        gap_box(Modifier::new().grow());
+                    }
+                    if let Some(said) = said {
+                        column(Modifier::new(), Flex::new(), || {
+                            for words in wrap(&said, 13, text_width) {
+                                line(words, 13, 1.5, Role::Muted);
+                            }
+                        });
+                    }
+                    row(Modifier::new(), Flex::new().center().gap(2), || {
+                        button("View on GitHub", UPDATE_PAGE, Variant::Ghost);
+                        spacer();
+                        if !installing {
+                            button(
+                                if busy { "Cancel" } else { "Later" },
+                                UPDATE_LATER,
+                                Variant::Ghost,
+                            );
+                        }
+                        if !busy && blocker.is_none() {
+                            button("Update and Restart", UPDATE_NOW, Variant::Default);
+                        }
+                    });
+                },
+            );
+        },
+    );
 }

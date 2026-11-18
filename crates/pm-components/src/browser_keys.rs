@@ -1,6 +1,6 @@
 //! The keys a page of the browser takes for the browser itself, as a browser's own do, instead of passing them to the page.
 
-use pm_input::{Key, KeyEvent};
+use crate::kit::{Key, KeyEvent};
 
 use crate::browser::{Command, ZoomStep};
 use crate::state::WorkspaceState;

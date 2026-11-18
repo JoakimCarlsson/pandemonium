@@ -1,10 +1,8 @@
 //! The menu that opens over a page of the browser: going back and forward, loading it again with or without the cache, cutting, copying and pasting, marking everything, finding in the page, zooming, opening it in the system's browser, clearing cookies and site data, showing the developer tools, and adding screenshots of the page or its console to the prompt.
 
-use pm_input::FocusId;
-use pm_ui::Node;
-
 use crate::Menu;
 use crate::browser::{Command, ZoomStep};
+use crate::kit::FocusId;
 use crate::state::WorkspaceState;
 
 /// The first of the rows of the menu over a page; each command's row follows it by the command's place.
@@ -214,14 +212,16 @@ impl WorkspaceState {
     }
 }
 
-/// The menu over a page opened at `open`.
-pub fn browser_menu(open: BrowserMenu) -> Node {
+/// Emits the menu over a page opened at `open`.
+#[track_caller]
+pub fn browser_menu(open: BrowserMenu) {
     let row = |menu: Menu, command: BrowserCommand| {
         menu.item(command.label(), command.keys(), command.id(), false)
     };
     let menu = Menu::new(open.at.0, open.at.1).width(68.0).row_height(6.5);
     if open.captures_only {
-        return BrowserCommand::CAPTURES.into_iter().fold(menu, row).build();
+        BrowserCommand::CAPTURES.into_iter().fold(menu, row).build();
+        return;
     }
     let menu = row(menu, BrowserCommand::Back);
     let menu = row(menu, BrowserCommand::Forward);

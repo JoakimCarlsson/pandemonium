@@ -1,12 +1,7 @@
 //! The bar across the top of the window: back and forward, the command center naming where the window is, the button that opens a newer release while one is out, the settings, and the controls of a window the desktop draws no frame around.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Role, bg, border_b, border_color, flex, flex_1, flex_none, gap, h_px, items_center,
-    justify_center, justify_end, min_w_px, px, w_full, w_px,
-};
-use pm_ui::{Node, node};
+use crate::kit::{Flex, FocusId, IconName, Interactive, Role, Side, Styled, Tooltip, gap_box, row};
+use rustle::Modifier;
 
 use crate::Button;
 use crate::button::Variant;
@@ -106,99 +101,98 @@ impl TitleBar {
         }
     }
 
-    /// The node that draws the bar.
-    pub fn build(self) -> Node {
+    /// Emits the bar.
+    #[track_caller]
+    pub fn build(self) {
         let navigation = self.place.is_some();
-        let leading = node()
-            .styles([flex(), flex_1(), items_center(), gap(0.5), px(2)])
-            .child(node().styles([flex_none(), w_px(DESKTOP_CONTROLS)]))
-            .children(navigation.then(|| {
-                Button::icon(IconName::ArrowLeft, GO_BACK)
-                    .build()
-                    .tooltip("Go Back")
-            }))
-            .children(navigation.then(|| {
-                Button::icon(IconName::ArrowRight, GO_FORWARD)
-                    .build()
-                    .tooltip("Go Forward")
-            }));
-        let trailing = node()
-            .styles([
-                flex(),
-                flex_1(),
-                items_center(),
-                justify_end(),
-                gap(0.5),
-                pm_style::h_full(),
-            ])
-            .children(self.language_update.then(|| {
-                Button::new("Update languages", LANGUAGE_UPDATE)
-                    .variant(Variant::Ghost)
-                    .tone(Role::Accent)
-                    .size(Size::Sm)
-                    .build()
-                    .tooltip("A newer language or language server is available")
-                    .styles([pm_style::mr(1)])
-            }))
-            .children(self.update.then(|| {
-                Button::new("Update", UPDATE)
-                    .variant(Variant::Ghost)
-                    .tone(Role::Accent)
-                    .size(Size::Sm)
-                    .build()
-                    .tooltip("Update Available")
-                    .styles([pm_style::mr(1)])
-            }))
-            .children(navigation.then(|| {
-                layout_toggle(
-                    IconName::PanelLeft,
-                    SIDEBAR_TOGGLE,
-                    "Toggle Primary Side Bar",
-                    self.sidebar_open,
-                )
-            }))
-            .children(navigation.then(|| {
-                layout_toggle(
-                    IconName::PanelBottom,
-                    TERMINAL,
-                    "Toggle Panel",
-                    self.panel_open,
-                )
-            }))
-            .children(navigation.then(|| {
-                layout_toggle(
-                    IconName::PanelRight,
-                    REVIEW,
-                    "Toggle Review Panel",
-                    self.review_open,
-                )
-            }))
-            .children(navigation.then(|| {
-                Button::icon(IconName::Settings, SETTINGS)
-                    .build()
-                    .tooltip("Open Settings")
-            }))
-            .children(FRAMELESS.then(|| window_controls(self.close_only)));
-        node()
-            .styles([
-                flex(),
-                flex_none(),
-                items_center(),
-                w_full(),
-                h_px(TITLE_BAR_HEIGHT),
-                bg(Role::Sidebar),
-                border_b(),
-                border_color(Role::Border),
-            ])
-            .focusable(TITLE_BAR)
-            .child(leading)
-            .children(self.place.map(command_center))
-            .child(trailing)
+        let own = Modifier::new()
+            .fill_max_width()
+            .height(TITLE_BAR_HEIGHT)
+            .fill(Role::Sidebar)
+            .stroke_side(Side::Bottom, 1.0, Role::Border)
+            .target(TITLE_BAR);
+        row(own, Flex::new().center(), move || {
+            row(
+                Modifier::new().grow().pad_x(2),
+                Flex::new().center().gap(0.5),
+                || {
+                    gap_box(Modifier::new().width(DESKTOP_CONTROLS));
+                    if navigation {
+                        Button::icon(IconName::ArrowLeft, GO_BACK)
+                            .modifier(Modifier::new().tooltip("Go Back"))
+                            .build();
+                        Button::icon(IconName::ArrowRight, GO_FORWARD)
+                            .modifier(Modifier::new().tooltip("Go Forward"))
+                            .build();
+                    }
+                },
+            );
+            if let Some(place) = self.place {
+                command_center(place);
+            }
+            row(
+                Modifier::new().grow().fill_max_height(),
+                Flex::new().center().trailing().gap(0.5),
+                || {
+                    if self.language_update {
+                        Button::new("Update languages", LANGUAGE_UPDATE)
+                            .variant(Variant::Ghost)
+                            .tone(Role::Accent)
+                            .size(Size::Sm)
+                            .modifier(
+                                Modifier::new()
+                                    .pad_side(Side::Right, 1)
+                                    .tooltip("A newer language or language server is available"),
+                            )
+                            .build();
+                    }
+                    if self.update {
+                        Button::new("Update", UPDATE)
+                            .variant(Variant::Ghost)
+                            .tone(Role::Accent)
+                            .size(Size::Sm)
+                            .modifier(
+                                Modifier::new()
+                                    .pad_side(Side::Right, 1)
+                                    .tooltip("Update Available"),
+                            )
+                            .build();
+                    }
+                    if navigation {
+                        layout_toggle(
+                            IconName::PanelLeft,
+                            SIDEBAR_TOGGLE,
+                            "Toggle Primary Side Bar",
+                            self.sidebar_open,
+                        );
+                        layout_toggle(
+                            IconName::PanelBottom,
+                            TERMINAL,
+                            "Toggle Panel",
+                            self.panel_open,
+                        );
+                        layout_toggle(
+                            IconName::PanelRight,
+                            REVIEW,
+                            "Toggle Review Panel",
+                            self.review_open,
+                        );
+                        Button::icon(IconName::Settings, SETTINGS)
+                            .modifier(Modifier::new().tooltip("Open Settings"))
+                            .build();
+                    }
+                    if FRAMELESS {
+                        window_controls(self.close_only);
+                    }
+                },
+            );
+        });
     }
 }
 
-/// The button that shows or hides a panel, filling its part of the icon while open.
-fn layout_toggle(icon: IconName, id: FocusId, words: &str, open: bool) -> Node {
+/// Emits the button that shows or hides a panel, filling its part of the icon while open.
+#[track_caller]
+fn layout_toggle(icon: IconName, id: FocusId, words: &str, open: bool) {
     let mark = match (icon, open) {
         (IconName::PanelLeft, true) => IconName::PanelLeftFilled,
         (IconName::PanelRight, true) => IconName::PanelRightFilled,
@@ -206,49 +200,51 @@ fn layout_toggle(icon: IconName, id: FocusId, words: &str, open: bool) -> Node {
         _ => icon,
     };
     Button::icon(icon, id)
-        .mark(crate::parts::glyph(mark, 5.0, Role::Muted))
-        .build()
-        .tooltip(words)
+        .mark(move || crate::parts::glyph(mark, 5.0, Role::Muted))
+        .modifier(Modifier::new().tooltip(words))
+        .build();
 }
 
-/// The box in the middle of the bar that says where the window is pointed and lists every command when it is pressed.
-fn command_center(place: String) -> Node {
+/// Emits the box in the middle of the bar that says where the window is pointed and lists every command when it is pressed.
+#[track_caller]
+fn command_center(place: String) {
     Button::new(place, COMMAND_CENTER)
         .variant(Variant::Field)
         .with_icon(IconName::Search)
         .tone(Role::Subtle)
         .width(COMMAND_CENTER_WIDTH)
-        .build()
-        .styles([
-            justify_center(),
-            min_w_px(COMMAND_CENTER_MIN_WIDTH),
-            h_px(COMMAND_CENTER_HEIGHT),
-            bg(Role::Background),
-        ])
-        .tooltip("Show All Commands")
+        .flex(Flex::new().center().middle())
+        .modifier(
+            Modifier::new()
+                .width_in(COMMAND_CENTER_MIN_WIDTH, COMMAND_CENTER_WIDTH)
+                .height(COMMAND_CENTER_HEIGHT)
+                .tooltip("Show All Commands"),
+        )
+        .build();
 }
 
-/// The buttons that minimize, maximize and close a window the desktop draws no frame around, or only the one that closes it when `close_only` is set.
-fn window_controls(close_only: bool) -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(0.5),
-            px(1.5),
-            pm_style::h_full(),
-        ])
-        .children((!close_only).then(|| control(IconName::Minus, WINDOW_MINIMIZE, "Minimize")))
-        .children((!close_only).then(|| control(IconName::Maximize, WINDOW_MAXIMIZE, "Maximize")))
-        .child(control(IconName::Close, WINDOW_CLOSE, "Close"))
+/// Emits the buttons that minimize, maximize and close a window the desktop draws no frame around, or only the one that closes it when `close_only` is set.
+#[track_caller]
+fn window_controls(close_only: bool) {
+    row(
+        Modifier::new().pad_x(1.5).fill_max_height(),
+        Flex::new().center().gap(0.5),
+        || {
+            if !close_only {
+                control(IconName::Minus, WINDOW_MINIMIZE, "Minimize");
+                control(IconName::Maximize, WINDOW_MAXIMIZE, "Maximize");
+            }
+            control(IconName::Close, WINDOW_CLOSE, "Close");
+        },
+    );
 }
 
-/// One control of the window, showing `icon`, answering to `id` and named `words`.
-fn control(icon: IconName, id: FocusId, words: &str) -> Node {
+/// Emits one control of the window, showing `icon`, answering to `id` and named `words`.
+#[track_caller]
+fn control(icon: IconName, id: FocusId, words: &str) {
     Button::icon(icon, id)
-        .build()
-        .styles([w_px(32.0)])
-        .tooltip(words)
+        .modifier(Modifier::new().width(32.0).tooltip(words))
+        .build();
 }
 
 /// What the command center says the window is pointed at: the project shown, and the session in it or the submodule new work starts in when there is one.

@@ -1,15 +1,11 @@
 //! The source control panel: the branch, the commit message and its button, the changed files in groups, and the graph of commits.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Color, Radius, Role, animate_spin, bg, border, border_b, border_color, border_l,
-    cursor_pointer, flex, flex_1, flex_col, flex_none, font_medium, gap, h, h_full, items_center,
-    justify_center, min_h, min_w_px, overflow_hidden, pb, pl, pr, px, py, relative, rounded,
-    w_full, w_px,
+use rustle::{CursorIcon, Modifier};
+
+use crate::kit::{
+    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tone,
+    Tooltip, Type, column, gap_box, label, layer, row, scroll_area, spinner,
 };
-use pm_text::Shaper;
-use pm_ui::{Node, node};
 
 use crate::branch_menu::branch_menu;
 use crate::button::Variant;
@@ -37,43 +33,46 @@ pub const WIDTH: f32 = 380.0;
 /// How narrow and how wide the review panel can be dragged, in logical pixels.
 pub const WIDTHS: (f32, f32) = (260.0, 760.0);
 
-/// A row of the panel `height` steps tall, with a rule beneath it.
-fn band(height: u32) -> Node {
-    node().styles([
-        flex(),
-        items_center(),
-        gap(2),
-        h(height),
-        px(3),
-        flex_none(),
-        border_b(),
-        border_color(Role::Border),
-    ])
+/// Emits a row of the panel `height` steps tall, with a rule beneath it, holding what `content` emits.
+#[track_caller]
+fn band(height: u32, content: impl FnOnce()) {
+    row(
+        Modifier::new()
+            .h(height)
+            .stroke_side(Side::Bottom, 1.0, Role::Border)
+            .pad_x(3),
+        Flex::new().center().gap(2),
+        content,
+    );
 }
 
-/// The box that holds the rows of the panel's list and scrolls them.
-fn scrolling_list(state: &WorkspaceState) -> Node {
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            pm_style::flex_1(),
-            min_h(0),
-            overflow_hidden(),
-            pm_style::py(1),
-        ])
-        .scroll_from_start(TREE_SCROLL, state.tree_scroll)
+/// Emits the box that holds the rows of the panel's list, which `content` emits, and scrolls them.
+#[track_caller]
+fn scrolling_list(state: &WorkspaceState, content: impl FnOnce()) {
+    scroll_area(
+        Modifier::new().grow(),
+        Scroll::from_start(TREE_SCROLL, state.tree_scroll),
+        || {
+            column(
+                Modifier::new().fill_max_width().pad_y(1),
+                Flex::new(),
+                content,
+            );
+        },
+    );
 }
 
-/// A line telling the list has nothing to show.
-fn nothing(message: &str) -> Node {
-    node()
-        .styles([px(4), pm_style::py(3)])
-        .child(line(message, 13, 1.4, Role::Subtle))
+/// Emits a line telling the list has nothing to show.
+#[track_caller]
+fn nothing(message: &str) {
+    row(Modifier::new().pad_x(4).pad_y(3), Flex::new(), || {
+        line(message, 13, 1.4, Role::Subtle)
+    });
 }
 
-/// One of the tabs at the top of the panel, a glyph that says its name when the pointer rests on it, filled while it is the one shown.
-fn panel_tab(label: &str, icon: IconName, id: FocusId, shown: bool) -> Node {
+/// Emits one of the tabs at the top of the panel, a glyph that says its name when the pointer rests on it, filled while it is the one shown.
+#[track_caller]
+fn panel_tab(label: &str, icon: IconName, id: FocusId, shown: bool) {
     let mark = match (icon, shown) {
         (IconName::Git, true) => IconName::GitFilled,
         (IconName::Folder, true) => IconName::FolderFilled,
@@ -83,76 +82,84 @@ fn panel_tab(label: &str, icon: IconName, id: FocusId, shown: bool) -> Node {
     let tone = if shown { Role::Text } else { Role::Muted };
     Button::icon(icon, id)
         .size(Size::Md)
-        .mark(glyph(mark, 5.0, tone))
-        .build()
-        .tooltip(label)
+        .mark(move || glyph(mark, 5.0, tone))
+        .modifier(Modifier::new().tooltip(label))
+        .build();
 }
 
-/// The line above the tree: what it lists, and the buttons that make a file or folder, read it again and fold it.
-fn files_header(state: &WorkspaceState) -> Node {
-    band(10)
-        .child(line("Files", 13, 1.4, Role::Subtle).styles([pm_style::flex_1()]))
-        .child(
-            Button::icon(IconName::FilePlus, TREE_NEW_FILE)
-                .size(Size::Sm)
-                .build()
-                .tooltip("New File…"),
-        )
-        .child(
-            Button::icon(IconName::FolderPlus, TREE_NEW_FOLDER)
-                .size(Size::Sm)
-                .build()
-                .tooltip("New Folder…"),
-        )
-        .child(
-            Button::icon(IconName::Refresh, TREE_REFRESH)
-                .size(Size::Sm)
-                .spinning(state.git.working)
-                .build()
-                .tooltip("Refresh"),
-        )
-        .child(
-            Button::icon(IconName::Collapse, TREE_COLLAPSE)
-                .size(Size::Sm)
-                .build()
-                .tooltip("Collapse Folders"),
-        )
+/// Emits a small button showing only `icon`, answering to `id`, turning while `spinning`, saying what it does with `tooltip`.
+#[track_caller]
+fn small_icon_button(icon: IconName, id: FocusId, spinning: bool, tooltip: &str) {
+    Button::icon(icon, id)
+        .size(Size::Sm)
+        .spinning(spinning)
+        .modifier(Modifier::new().tooltip(tooltip))
+        .build();
 }
 
-/// Every file of the project, as a tree, under the buttons that act on it.
-fn files(state: &WorkspaceState, height: f32) -> Node {
-    let mut list = scrolling_list(state).children(file_tree::rows(
-        state,
-        (height - 136.0 * pm_style::step_scale()).max(0.0),
-    ));
-    if state.files.is_empty() && state.tree_folders.is_empty() {
-        list = list.child(nothing(if state.files_loading() {
-            "Loading files…"
-        } else {
-            "No files yet."
-        }));
-    }
+/// Emits the line above the tree: what it lists, and the buttons that make a file or folder, read it again and fold it.
+#[track_caller]
+fn files_header(state: &WorkspaceState) {
+    band(10, || {
+        label_with_grow("Files");
+        small_icon_button(IconName::FilePlus, TREE_NEW_FILE, false, "New File…");
+        small_icon_button(IconName::FolderPlus, TREE_NEW_FOLDER, false, "New Folder…");
+        small_icon_button(
+            IconName::Refresh,
+            TREE_REFRESH,
+            state.git.working,
+            "Refresh",
+        );
+        small_icon_button(IconName::Collapse, TREE_COLLAPSE, false, "Collapse Folders");
+    });
+}
+
+/// Emits `words` as the name of a list, taking the room left in its row.
+#[track_caller]
+fn label_with_grow(words: &str) {
+    crate::kit::label_with(
+        Modifier::new().grow(),
+        words,
+        Type::new(13).ratio(1.4).tone(Role::Subtle).truncate(),
+    );
+}
+
+/// Emits every file of the project, as a tree, under the buttons that act on it.
+#[track_caller]
+fn files(state: &WorkspaceState, height: f32) {
     let landing_at_root = state
         .git
         .tree_drag
         .as_ref()
         .is_some_and(|drag| drag.into.as_deref() == Some(""));
-    let mut space = node().styles([flex_1(), min_h(32.0)]);
-    if landing_at_root {
-        space = space.styles([
-            pm_style::rounded(pm_style::Radius::Sm),
-            pm_style::bg(pm_style::Color::from(Role::Accent).alpha(0.24)),
-        ]);
-    }
-    list = list.child(space.focusable(TREE_SPACE));
-    node()
-        .styles([flex(), flex_col(), pm_style::flex_1(), min_h(0)])
-        .child(files_header(state))
-        .child(list)
+    column(Modifier::new().grow(), Flex::new(), || {
+        files_header(state);
+        scrolling_list(state, || {
+            file_tree::rows(
+                state,
+                (height - 136.0 * crate::kit::theme::step_scale()).max(0.0),
+            );
+            if state.files.is_empty() && state.tree_folders.is_empty() {
+                nothing(if state.files_loading() {
+                    "Loading files…"
+                } else {
+                    "No files yet."
+                });
+            }
+            let space = Modifier::new().grow().min_h(32.0);
+            let space = if landing_at_root {
+                space.fill_rounded(Tone::from(Role::Accent).alpha(0.24), Radius::Sm)
+            } else {
+                space
+            };
+            gap_box(space.target(TREE_SPACE));
+        });
+    });
 }
 
-/// The words and the icon on the button under the commit message, for what it does now.
-fn primary_face(primary: &Primary) -> Node {
+/// Emits the words and the icon on the button under the commit message, for what it does now.
+#[track_caller]
+fn primary_face(primary: &Primary) {
     let enabled = !matches!(
         primary,
         Primary::Commit {
@@ -161,36 +168,38 @@ fn primary_face(primary: &Primary) -> Node {
         } | Primary::Busy(_)
     );
     let tone = if enabled { Role::Text } else { Role::Subtle };
-    let (icon, label) = match primary {
+    let (icon, words) = match primary {
         Primary::Commit { title, stopped } => (IconName::Check, stopped.unwrap_or(title)),
         Primary::Sync { .. } => (IconName::Refresh, "Sync Changes"),
         Primary::Publish => (IconName::GitPush, "Publish Branch"),
         Primary::Busy(doing) => (IconName::Loading, *doing),
     };
-    let mut face = node().styles([flex(), items_center(), gap(2)]).child(
+    row(Modifier::new(), Flex::new().center().gap(2), || {
         if matches!(primary, Primary::Busy(_)) {
-            glyph(icon, 3.5, tone).styles([animate_spin()])
+            spinner(3.5, tone);
         } else {
-            glyph(icon, 3.5, tone)
-        },
-    );
-    face = face.child(line(label, 13, 1.4, tone).styles([font_medium()]));
-    if let Primary::Sync { ahead, behind } = primary {
-        for (count, arrow) in [(*behind, IconName::ArrowDown), (*ahead, IconName::ArrowUp)] {
-            if count > 0 {
-                face = face
-                    .child(line(count.to_string(), 13, 1.4, tone))
-                    .child(glyph(arrow, 3.0, tone));
+            glyph(icon, 3.5, tone);
+        }
+        label(
+            words,
+            Type::new(13).ratio(1.4).tone(tone).truncate().medium(),
+        );
+        if let Primary::Sync { ahead, behind } = primary {
+            for (count, arrow) in [(*behind, IconName::ArrowDown), (*ahead, IconName::ArrowUp)] {
+                if count > 0 {
+                    line(count.to_string(), 13, 1.4, tone);
+                    glyph(arrow, 3.0, tone);
+                }
             }
         }
-    }
-    face
+    });
 }
 
-/// The control that commits, or syncs or publishes once there is nothing to commit, with the arrow that offers what else it can do.
+/// Emits the control that commits, or syncs or publishes once there is nothing to commit, with the arrow that offers what else it can do.
 ///
 /// What stops it is written where the words would be, so a reader who cannot commit is told why.
-fn commit_button(primary: &Primary) -> Node {
+#[track_caller]
+fn commit_button(primary: &Primary) {
     let enabled = !matches!(
         primary,
         Primary::Commit {
@@ -198,198 +207,197 @@ fn commit_button(primary: &Primary) -> Node {
             ..
         } | Primary::Busy(_)
     );
-    let mut main = node()
-        .styles([flex(), items_center(), justify_center(), flex_1(), h_full()])
-        .child(primary_face(primary));
-    let mut arrow = node()
-        .styles([
-            flex(),
-            items_center(),
-            px(2),
-            h_full(),
-            border_l(),
-            border_color(Role::Border),
-        ])
-        .child(glyph(
-            IconName::ChevronDown,
-            3.0,
-            if enabled { Role::Text } else { Role::Subtle },
-        ));
-    let mut control = node().styles([
-        flex(),
-        items_center(),
-        h(9),
-        w_full(),
-        rounded(Radius::Md),
-        bg(Role::SurfaceSelected),
-    ]);
-    if enabled {
-        main = main
-            .styles([cursor_pointer(), bg(Role::SurfaceHover).hover()])
-            .focusable(COMMIT);
-        arrow = arrow
-            .styles([cursor_pointer(), bg(Role::SurfaceHover).hover()])
-            .focusable(COMMIT_CHEVRON);
-    }
-    control = control.child(main).child(arrow);
-    node().styles([px(3), pb(2), flex_none()]).child(control)
+    let pressable = |own: Modifier, id: FocusId| {
+        if enabled {
+            own.looks_of(Looks::new().hover(Role::SurfaceHover), id)
+                .cursor(CursorIcon::Pointer)
+                .target(id)
+        } else {
+            own
+        }
+    };
+    let main = pressable(Modifier::new().grow().fill_max_height(), COMMIT);
+    let arrow = pressable(
+        Modifier::new()
+            .fill_max_height()
+            .stroke_side(Side::Left, 1.0, Role::Border),
+        COMMIT_CHEVRON,
+    )
+    .pad_x(2);
+    row(
+        Modifier::new().pad_x(3).pad_side(Side::Bottom, 2),
+        Flex::new(),
+        || {
+            row(
+                Modifier::new()
+                    .h(9)
+                    .fill_max_width()
+                    .fill_rounded(Role::SurfaceSelected, Radius::Md),
+                Flex::new().center(),
+                || {
+                    row(main, Flex::new().center().middle(), || {
+                        primary_face(primary)
+                    });
+                    row(arrow, Flex::new().center(), || {
+                        glyph(
+                            IconName::ChevronDown,
+                            3.0,
+                            if enabled { Role::Text } else { Role::Subtle },
+                        )
+                    });
+                },
+            );
+        },
+    );
 }
 
-/// The box the commit message is written in: several lines, wrapped to the panel.
-fn message_box(state: &WorkspaceState, shaper: &mut Shaper) -> Node {
-    node().styles([px(3), py(2), flex_none()]).child(
-        node()
-            .styles([
-                relative(),
-                flex(),
-                flex_col(),
-                w_full(),
-                rounded(Radius::Lg),
-                border(),
-                border_color(Role::Border),
-                border_color(Role::Accent).focus(),
-                bg(Role::Background),
-            ])
-            .focused_with(COMMIT_MESSAGE)
-            .child(
+/// Emits the box the commit message is written in: several lines, wrapped to the panel.
+#[track_caller]
+fn message_box(state: &WorkspaceState) {
+    column(Modifier::new().pad_x(3).pad_y(2), Flex::new(), || {
+        column(
+            Modifier::new()
+                .fill_max_width()
+                .fill_rounded(Role::Background, Radius::Lg)
+                .stroke_by_focus(COMMIT_MESSAGE, Role::Border, Role::Accent, Radius::Lg)
+                .focus_of(COMMIT_MESSAGE),
+            Flex::new(),
+            || {
                 Input::new(&state.message, COMMIT_MESSAGE)
                     .variant(input::Variant::Multiline)
                     .placeholder(&match &state.git.repository {
-                        Some(submodule) => format!("Message (Ctrl+Enter to commit in {submodule})"),
+                        Some(submodule) => {
+                            format!("Message (Ctrl+Enter to commit in {submodule})")
+                        }
                         None => "Message (Ctrl+Enter to commit)".to_owned(),
                     })
                     .rows(4)
-                    .wrap(input::inner_width(state.review_width - 24.0), shaper)
-                    .build(),
-            ),
-    )
+                    .wrap(input::inner_width(state.review_width - 24.0))
+                    .build();
+            },
+        );
+    });
 }
 
-/// The heading of the changes section: a chevron that folds it, its name, and what can be done from it.
-fn section_heading(state: &WorkspaceState, primary: &Primary) -> Node {
+/// Emits the heading of the changes section: a chevron that folds it, its name, and what can be done from it.
+#[track_caller]
+fn section_heading(state: &WorkspaceState, primary: &Primary) {
     let open = state.git.changes_open;
     let committable = matches!(primary, Primary::Commit { stopped: None, .. });
-    node()
-        .styles([flex(), items_center(), gap(1), h(8), px(2), flex_none()])
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    gap(1),
-                    flex_1(),
-                    h_full(),
-                    cursor_pointer(),
-                ])
-                .child(glyph(
-                    if open {
-                        IconName::ChevronDown
-                    } else {
-                        IconName::ChevronRight
-                    },
-                    3.5,
-                    Role::Subtle,
-                ))
-                .child(line("Changes", 13, 1.4, Role::Text))
-                .focusable(CHANGES_TOGGLE),
-        )
-        .child(
+    row(
+        Modifier::new().h(8).pad_x(2),
+        Flex::new().center().gap(1),
+        || {
+            row(
+                Modifier::new()
+                    .grow()
+                    .fill_max_height()
+                    .cursor(CursorIcon::Pointer)
+                    .target(CHANGES_TOGGLE),
+                Flex::new().center().gap(1),
+                || {
+                    glyph(
+                        if open {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        },
+                        3.5,
+                        Role::Subtle,
+                    );
+                    line("Changes", 13, 1.4, Role::Text);
+                },
+            );
             Button::icon(IconName::GitCommit, COMMIT)
                 .size(Size::Sm)
                 .disabled(!committable)
-                .build()
-                .tooltip("Commit"),
-        )
-        .child(
-            Button::icon(IconName::Refresh, CHANGES_REFRESH)
-                .size(Size::Sm)
-                .spinning(state.git.working)
-                .build()
-                .tooltip("Refresh"),
-        )
-        .child(
-            Button::icon(IconName::More, CHANGES_MORE)
-                .size(Size::Sm)
-                .build()
-                .tooltip("More Actions…"),
-        )
+                .modifier(Modifier::new().tooltip("Commit"))
+                .build();
+            small_icon_button(
+                IconName::Refresh,
+                CHANGES_REFRESH,
+                state.git.working,
+                "Refresh",
+            );
+            small_icon_button(IconName::More, CHANGES_MORE, false, "More Actions…");
+        },
+    );
 }
 
-/// The banner saying what git refused to do, with a button that dismisses it, in a panel `width` logical pixels wide.
-fn trouble(said: &str, width: f32) -> Node {
-    node().styles([px(3), pb(2), flex_none()]).child(
-        node()
-            .styles([
-                flex(),
-                gap(2),
-                px(3),
-                py(2),
-                rounded(Radius::Md),
-                bg(Color::from(Role::Danger).alpha(0.12)),
-            ])
-            .child(
-                node()
-                    .styles([flex(), flex_col(), flex_1(), min_w_px(0)])
-                    .children(
-                        wrap(said, 12, width - 24.0 - 56.0)
-                            .iter()
-                            .map(|words| line(words, 12, 1.5, Role::Danger)),
-                    ),
-            )
-            .child(
-                Button::icon(IconName::Close, TROUBLE_DISMISS)
-                    .size(Size::Sm)
-                    .build(),
-            ),
-    )
+/// Emits the banner saying what git refused to do, with a button that dismisses it, in a panel `width` logical pixels wide.
+#[track_caller]
+fn trouble(said: &str, width: f32) {
+    row(
+        Modifier::new().pad_x(3).pad_side(Side::Bottom, 2),
+        Flex::new(),
+        || {
+            row(
+                Modifier::new()
+                    .grow()
+                    .fill_rounded(Tone::from(Role::Danger).alpha(0.12), Radius::Md)
+                    .pad_x(3)
+                    .pad_y(2),
+                Flex::new().gap(2),
+                || {
+                    column(Modifier::new().grow(), Flex::new(), || {
+                        for words in wrap(said, 12, width - 24.0 - 56.0) {
+                            line(words, 12, 1.5, Role::Danger);
+                        }
+                    });
+                    Button::icon(IconName::Close, TROUBLE_DISMISS)
+                        .size(Size::Sm)
+                        .build();
+                },
+            );
+        },
+    );
 }
 
-/// The changes of `session`: the commit message and its button, then the files in groups, and the graph under them.
-fn changes(state: &WorkspaceState, session: &Session, shaper: &mut Shaper) -> Node {
+/// Emits the changes of `session`: the commit message and its button, then the files in groups, and the graph under them.
+#[track_caller]
+fn changes(state: &WorkspaceState, session: &Session) {
     if session.unknown {
-        return nothing("Reading the folder…");
+        nothing("Reading the folder…");
+        return;
     }
     if !session.on_branch
         && session.branch.is_empty()
         && session.changes.is_empty()
         && state.git.history.is_empty()
     {
-        return nothing("This folder is not a git repository.");
+        nothing("This folder is not a git repository.");
+        return;
     }
     let primary = state.primary();
-    let mut list = scrolling_list(state).children(change_list::rows(state, session));
-    if session.changes.is_empty() {
-        list = list.child(nothing("No uncommitted changes."));
-    }
-    let mut section = node()
-        .styles([flex(), flex_col(), pm_style::flex_1(), min_h(0)])
-        .child(section_heading(state, &primary))
-        .children(
-            state
-                .git
-                .trouble
-                .as_deref()
-                .map(|said| trouble(said, state.review_width)),
-        );
-    if state.git.changes_open {
-        section = section
-            .child(message_box(state, shaper))
-            .child(commit_button(&primary))
-            .child(list);
-    } else {
-        section = section.child(spacer());
-    }
-    node()
-        .styles([flex(), flex_col(), pm_style::flex_1(), min_h(0)])
-        .child(section)
-        .child(graph(state))
+    column(Modifier::new().grow(), Flex::new(), || {
+        column(Modifier::new().grow(), Flex::new(), || {
+            section_heading(state, &primary);
+            if let Some(said) = state.git.trouble.as_deref() {
+                trouble(said, state.review_width);
+            }
+            if state.git.changes_open {
+                message_box(state);
+                commit_button(&primary);
+                scrolling_list(state, || {
+                    change_list::rows(state, session);
+                    if session.changes.is_empty() {
+                        nothing("No uncommitted changes.");
+                    }
+                });
+            } else {
+                spacer();
+            }
+        });
+        graph(state);
+    });
 }
 
-/// The rows of the list of repositories of `session`'s folder, when it has submodules: its own and each submodule, nested ones set in under the one they are in, each with what it has checked out on a button that opens its branches; the one the panel works on is picked.
-fn repositories(state: &WorkspaceState, session: &Session) -> Option<Node> {
+/// Emits the rows of the list of repositories of `session`'s folder, when it has submodules: its own and each submodule, nested ones set in under the one they are in, each with what it has checked out on a button that opens its branches; the one the panel works on is picked.
+#[track_caller]
+fn repositories(state: &WorkspaceState, session: &Session) {
     let repositories = state.repositories();
     if repositories.len() < 2 {
-        return None;
+        return;
     }
     let name = |repository: &Option<String>| match repository {
         Some(path) => path.clone(),
@@ -410,73 +418,70 @@ fn repositories(state: &WorkspaceState, session: &Session) -> Option<Node> {
                 .count()
         })
     };
-    let rows =
-        repositories.iter().enumerate().map(|(row, repository)| {
-            let changed = session
-                .changes
-                .iter()
-                .filter(|change| change.is_listed_in(repository.as_deref()))
-                .count();
-            let head = state.head_of(repository.as_deref()).unwrap_or_default();
-            Tile::new(FocusId(REPOSITORY_BASE + row as u64))
-                .selected(state.git.repository == *repository)
-                .height(7.0)
-                .gap(2.0)
-                .radius(Radius::Sm)
-                .build()
-                .styles([pl(2.0 + depth(repository) as f32 * 3.5), pr(1), flex_none()])
-                .child(glyph(
-                    if repository.is_some() {
-                        IconName::GitFork
-                    } else {
-                        IconName::Git
-                    },
-                    3.5,
-                    Role::Muted,
-                ))
-                .child(clipped(name(repository), 13, Role::Text))
-                .children((changed > 0).then(|| {
-                    line(changed.to_string(), 11, 1.4, Role::Subtle).styles([flex_none()])
-                }))
-                .child(
-                    Button::new(&head, FocusId(REPOSITORY_BRANCH_BASE + row as u64))
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .monospace()
-                        .build()
-                        .styles([flex_none()])
-                        .tooltip("Checkout Branch…"),
-                )
-        });
-    Some(
-        node()
-            .styles([
-                flex(),
-                flex_col(),
-                px(1),
-                pb(2),
-                flex_none(),
-                border_b(),
-                border_color(Role::Border),
-            ])
-            .child(
-                node()
-                    .styles([flex(), items_center(), h(7), px(2)])
-                    .child(line("Repositories", 12, 1.4, Role::Subtle)),
-            )
-            .children(rows),
-    )
+    column(
+        Modifier::new()
+            .stroke_side(Side::Bottom, 1.0, Role::Border)
+            .pad_x(1)
+            .pad_side(Side::Bottom, 2),
+        Flex::new(),
+        || {
+            row(Modifier::new().h(7).pad_x(2), Flex::new().center(), || {
+                line("Repositories", 12, 1.4, Role::Subtle)
+            });
+            for (place, repository) in repositories.iter().enumerate() {
+                let changed = session
+                    .changes
+                    .iter()
+                    .filter(|change| change.is_listed_in(repository.as_deref()))
+                    .count();
+                let head = state.head_of(repository.as_deref()).unwrap_or_default();
+                Tile::new(FocusId(REPOSITORY_BASE + place as u64))
+                    .selected(state.git.repository == *repository)
+                    .height(7.0)
+                    .gap(2.0)
+                    .radius(Radius::Sm)
+                    .inner(
+                        Modifier::new()
+                            .pad_side(Side::Left, 2.0 + depth(repository) as f32 * 3.5)
+                            .pad_side(Side::Right, 1),
+                    )
+                    .build_with(|| {
+                        glyph(
+                            if repository.is_some() {
+                                IconName::GitFork
+                            } else {
+                                IconName::Git
+                            },
+                            3.5,
+                            Role::Muted,
+                        );
+                        clipped(name(repository), 13, Role::Text);
+                        if changed > 0 {
+                            line(changed.to_string(), 11, 1.4, Role::Subtle);
+                        }
+                        Button::new(&head, FocusId(REPOSITORY_BRANCH_BASE + place as u64))
+                            .variant(Variant::Ghost)
+                            .size(Size::Sm)
+                            .monospace()
+                            .modifier(Modifier::new().tooltip("Checkout Branch…"))
+                            .build();
+                    });
+            }
+        },
+    );
 }
 
-/// The button that shows the branch the repository the panel works on is on and opens the list of branches, or, outside a repository, only says so.
-fn branch_button(state: &WorkspaceState, session: &Session, working: bool) -> Node {
+/// Emits the button that shows the branch the repository the panel works on is on and opens the list of branches, or, outside a repository, only says so.
+#[track_caller]
+fn branch_button(state: &WorkspaceState, session: &Session, working: bool) {
     if session.branch.is_empty() {
         let said = if session.unknown {
             "Reading the folder…"
         } else {
             "Not a Git repository"
         };
-        return clipped(said, 12, Role::Subtle);
+        clipped(said, 12, Role::Subtle);
+        return;
     }
     let head = state
         .head_of(state.git.repository.as_deref())
@@ -494,83 +499,73 @@ fn branch_button(state: &WorkspaceState, session: &Session, working: bool) -> No
             IconName::ChevronDown
         })
         .spinning(working)
-        .build()
+        .build();
 }
 
-/// The review panel for `session`. A chat has no branch, worktree or diff, so its panel leaves out source control: it lists the files of its scratch folder, or searches them.
-pub fn review(state: &WorkspaceState, session: &Session, height: f32, shaper: &mut Shaper) -> Node {
+/// Emits the review panel for `session`. A chat has no branch, worktree or diff, so its panel leaves out source control: it lists the files of its scratch folder, or searches them.
+#[track_caller]
+pub fn review(state: &WorkspaceState, session: &Session, height: f32) {
     let versioned = !session.is_chat();
     let shown = match state.review_tab {
         ReviewTab::Changes if !versioned => ReviewTab::Files,
         tab => tab,
     };
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_none(),
-            w_px(state.review_width),
-            h_full(),
-            bg(Role::Background),
-            border_l(),
-            border_color(Role::Border),
-            relative(),
-        ])
-        .child(
-            band(12)
-                .styles([px(3)])
-                .child(
-                    node()
-                        .styles([
-                            flex(),
-                            items_center(),
-                            gap(2),
-                            flex_1(),
-                            min_w_px(0),
-                            overflow_hidden(),
-                        ])
-                        .children(versioned.then(|| {
+    layer(
+        Modifier::new()
+            .width(state.review_width)
+            .fill_max_height()
+            .fill(Role::Background)
+            .stroke_side(Side::Left, 1.0, Role::Border),
+        || {
+            column(Modifier::new().fill_max_size(), Flex::new(), || {
+                band(12, || {
+                    row(
+                        Modifier::new().grow().clip_to(Radius::None),
+                        Flex::new().center().gap(2),
+                        || {
+                            if versioned {
+                                panel_tab(
+                                    "Source Control",
+                                    IconName::Git,
+                                    REVIEW_CHANGES,
+                                    shown == ReviewTab::Changes,
+                                );
+                            }
                             panel_tab(
-                                "Source Control",
-                                IconName::Git,
-                                REVIEW_CHANGES,
-                                shown == ReviewTab::Changes,
-                            )
-                        }))
-                        .child(panel_tab(
-                            "Files",
-                            IconName::Folder,
-                            REVIEW_FILES,
-                            shown == ReviewTab::Files,
-                        ))
-                        .child(panel_tab(
-                            "Search",
-                            IconName::Search,
-                            crate::project_search::REVIEW_SEARCH,
-                            shown == ReviewTab::Search,
-                        )),
-                )
-                .children(
-                    (shown == ReviewTab::Changes && !session.changes.is_empty()).then(|| {
+                                "Files",
+                                IconName::Folder,
+                                REVIEW_FILES,
+                                shown == ReviewTab::Files,
+                            );
+                            panel_tab(
+                                "Search",
+                                IconName::Search,
+                                crate::project_search::REVIEW_SEARCH,
+                                shown == ReviewTab::Search,
+                            );
+                        },
+                    );
+                    if shown == ReviewTab::Changes && !session.changes.is_empty() {
                         Button::icon(IconName::GitCompare, OPEN_DIFF)
-                            .build()
-                            .styles([flex_none()])
-                            .tooltip("Open Diff")
-                    }),
-                ),
-        )
-        .children(
-            versioned.then(|| band(10).child(branch_button(state, session, state.git.working))),
-        )
-        .children(
-            (shown == ReviewTab::Changes)
-                .then(|| repositories(state, session))
-                .flatten(),
-        )
-        .child(match shown {
-            ReviewTab::Changes => changes(state, session, shaper),
-            ReviewTab::Files => files(state, height),
-            ReviewTab::Search => crate::project_search::panel(state),
-        })
-        .children((versioned && state.git.branch_menu).then(|| branch_menu(state)))
+                            .modifier(Modifier::new().tooltip("Open Diff"))
+                            .build();
+                    }
+                });
+                if versioned {
+                    band(10, || branch_button(state, session, state.git.working));
+                }
+                if shown == ReviewTab::Changes {
+                    repositories(state, session);
+                }
+                match shown {
+                    ReviewTab::Changes => changes(state, session),
+                    ReviewTab::Files => files(state, height),
+                    ReviewTab::Search => crate::project_search::panel(state),
+                }
+            });
+            if versioned && state.git.branch_menu {
+                branch_menu(state);
+            }
+        },
+    );
 }

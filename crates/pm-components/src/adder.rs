@@ -1,20 +1,18 @@
 //! Adding a project: the modal that offers a folder on this computer or a repository to clone, found through the accounts and organizations on GitHub.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, animate_spin, bg, border_b, border_color, cursor_pointer, flex, flex_1, flex_col,
-    flex_none, gap, h, items_center, max_h, min_w_px, overflow_hidden, p, px, py, rounded,
-    truncate,
-};
-use pm_text::Field;
-use pm_ui::{Node, node};
+use pm_field::{Edit, Field};
+use rustle::{CursorIcon, Modifier};
 
 use crate::Input;
 use crate::Modal;
 use crate::folder_picker::Purpose;
 use crate::input;
+use crate::kit::{
+    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Type,
+    column, label, label_with, row, scroll_area, sp, spinner,
+};
 use crate::parts::{glyph, line};
+
 use crate::state::{MENU_SCROLL, Outgoing, WorkspaceState};
 
 /// Closes the panel, which is what pressing outside it does.
@@ -312,76 +310,64 @@ fn choice_id(index: usize) -> FocusId {
     [ADDER_BROWSE, ADDER_CLONE][index.min(1)]
 }
 
-/// The modal for adding a project, when it is open.
-pub fn adder(state: &WorkspaceState) -> Option<Node> {
-    let open = state.adder.as_ref()?;
-    Some(
-        Modal::new(ADDER_SCRIM, ADDER_BODY)
-            .width(WIDTH)
-            .children(panel(open, state.menu_scroll))
-            .build(),
-    )
+/// Emits the modal for adding a project, when it is open.
+#[track_caller]
+pub fn adder(state: &WorkspaceState) {
+    let Some(open) = state.adder.as_ref() else {
+        return;
+    };
+    Modal::new(ADDER_SCRIM, ADDER_BODY)
+        .width(WIDTH)
+        .build_with(|| panel(open, state.menu_scroll));
 }
 
-/// What the modal holds: its heading, the field when the step has one and the list.
-fn panel(open: &Adder, scrolled: f32) -> Vec<Node> {
-    let mut parts = vec![
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                gap(2),
-                h(11),
-                px(4),
-                flex_none(),
-                border_b(),
-                border_color(Role::Border),
-            ])
-            .child(line("Add project", 13, 1.4, Role::Text))
-            .children(heading_hint(open).map(|hint| line(hint, 13, 1.4, Role::Subtle))),
-    ];
+/// Emits what the modal holds: its heading, the field when the step has one and the list.
+#[track_caller]
+fn panel(open: &Adder, scrolled: f32) {
+    let banded = || {
+        Modifier::new()
+            .h(11)
+            .stroke_side(Side::Bottom, 1.0, Role::Border)
+            .pad_x(4)
+    };
+    row(banded(), Flex::new().center().gap(2), || {
+        line("Add project", 13, 1.4, Role::Text);
+        if let Some(hint) = heading_hint(open) {
+            line(hint, 13, 1.4, Role::Subtle);
+        }
+    });
     if open.step != Step::Choices {
-        parts.push(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    h(11),
-                    px(4),
-                    flex_none(),
-                    border_b(),
-                    border_color(Role::Border),
-                ])
-                .child(
-                    Input::new(&open.field, ADDER_FIELD)
-                        .variant(input::Variant::Ghost)
-                        .placeholder(open.placeholder())
-                        .build(),
-                ),
-        );
+        row(banded(), Flex::new().center(), || {
+            Input::new(&open.field, ADDER_FIELD)
+                .variant(input::Variant::Ghost)
+                .placeholder(open.placeholder())
+                .modifier(Modifier::new().grow())
+                .build();
+        });
     }
-    let mut list = node()
-        .styles([
-            flex(),
-            flex_col(),
-            p(1.5),
-            max_h(LIST_HEIGHT / 4.0),
-            overflow_hidden(),
-        ])
-        .scroll_from_start(MENU_SCROLL, scrolled);
-    list = list.children(open.rows().iter().enumerate().map(|(index, row)| {
-        let id = if open.step == Step::Choices {
-            choice_id(index)
-        } else {
-            FocusId(ADDER_ROW_BASE + index as u64)
-        };
-        entry(row, id, index == open.selected)
-    }));
-    if let Some(status) = open.status() {
-        list = list.child(status_line(status));
-    }
-    parts.push(list);
-    parts
+    scroll_area(
+        Modifier::new().height_in(0.0, sp(LIST_HEIGHT / 4.0)),
+        Scroll::from_start(MENU_SCROLL, scrolled),
+        || {
+            column(
+                Modifier::new().fill_max_width().pad(1.5),
+                Flex::new(),
+                || {
+                    for (index, row) in open.rows().iter().enumerate() {
+                        let id = if open.step == Step::Choices {
+                            choice_id(index)
+                        } else {
+                            FocusId(ADDER_ROW_BASE + index as u64)
+                        };
+                        entry(row, id, index == open.selected);
+                    }
+                    if let Some(status) = open.status() {
+                        status_line(status);
+                    }
+                },
+            );
+        },
+    );
 }
 
 /// What is said after the heading: whose repositories are listed, once an account is picked.
@@ -392,47 +378,56 @@ fn heading_hint(open: &Adder) -> Option<String> {
     }
 }
 
-/// The line under the rows: a spinner and what is being waited for, or what is the matter.
-pub(crate) fn status_line(status: Status) -> Node {
-    let row = node().styles([flex(), items_center(), gap(3), px(2.5), py(2)]);
-    match status {
-        Status::Loading(message) => row
-            .child(glyph(IconName::Loading, 4.0, Role::Muted).styles([animate_spin()]))
-            .child(line(message, 13, 1.4, Role::Subtle)),
-        Status::Message(message) => row.child(line(message, 13, 1.4, Role::Subtle)),
-    }
+/// Emits the line under the rows: a spinner and what is being waited for, or what is the matter.
+#[track_caller]
+pub(crate) fn status_line(status: Status) {
+    row(
+        Modifier::new().pad_x(2.5).pad_y(2),
+        Flex::new().center().gap(3),
+        || match status {
+            Status::Loading(message) => {
+                spinner(4.0, Role::Muted);
+                line(message, 13, 1.4, Role::Subtle);
+            }
+            Status::Message(message) => line(message, 13, 1.4, Role::Subtle),
+        },
+    );
 }
 
-/// One row of the list: a glyph, a name and what is said under it, highlighted while it is the one the keys act on.
-fn entry(row: &Row, id: FocusId, selected: bool) -> Node {
-    let mut styles = vec![
-        flex(),
-        items_center(),
-        gap(3),
-        px(2.5),
-        py(1.5),
-        flex_none(),
-        rounded(Radius::Lg),
-        cursor_pointer(),
-        bg(Role::SurfaceHover).hover(),
-    ];
-    if selected {
-        styles.push(bg(Role::SurfaceSelected));
-    }
-    node()
-        .styles(styles)
-        .child(glyph(row.icon, 4.0, Role::Muted))
-        .child(
-            node()
-                .styles([flex(), flex_col(), flex_1(), min_w_px(0)])
-                .child(line(row.name.clone(), 13, 1.4, Role::Text).styles([truncate()]))
-                .children(
-                    (!row.detail.is_empty()).then(|| {
-                        line(row.detail.clone(), 12, 1.4, Role::Subtle).styles([truncate()])
-                    }),
-                ),
-        )
-        .focusable(id)
+/// Emits one row of the list: a glyph, a name and what is said under it, highlighted while it is the one the keys act on.
+#[track_caller]
+fn entry(row_of: &Row, id: FocusId, selected: bool) {
+    let looks = Looks::new().hover(Role::SurfaceHover).radius(Radius::Lg);
+    let looks = if selected {
+        looks.idle(Role::SurfaceSelected)
+    } else {
+        looks
+    };
+    row(
+        Modifier::new()
+            .looks_of(looks, id)
+            .cursor(CursorIcon::Pointer)
+            .target(id)
+            .pad_x(2.5)
+            .pad_y(1.5),
+        Flex::new().center().gap(3),
+        || {
+            glyph(row_of.icon, 4.0, Role::Muted);
+            column(Modifier::new().grow(), Flex::new(), || {
+                label(
+                    row_of.name.clone(),
+                    Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
+                );
+                if !row_of.detail.is_empty() {
+                    label_with(
+                        Modifier::new(),
+                        row_of.detail.clone(),
+                        Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
+                    );
+                }
+            });
+        },
+    );
 }
 
 /// Whether `id` names something of the panel.
@@ -555,7 +550,7 @@ impl WorkspaceState {
     }
 
     /// The state after `edit` was made to the field of the panel.
-    pub(crate) fn adder_edited(&mut self, edit: pm_text::Edit) {
+    pub(crate) fn adder_edited(&mut self, edit: Edit) {
         let Some(open) = self.adder.as_mut() else {
             return;
         };

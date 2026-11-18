@@ -1,10 +1,9 @@
 //! The menu that opens over a text field: its rows and the field it acts on.
 
-use pm_input::FocusId;
-use pm_text::Field;
-use pm_ui::Node;
+use pm_field::Field;
 
 use crate::Menu;
+use crate::kit::FocusId;
 
 /// Takes back the last change to the field the menu was opened on.
 pub const MENU_UNDO: FocusId = FocusId(200);
@@ -152,14 +151,15 @@ pub fn is_menu_item(id: FocusId) -> bool {
 /// How tall the menu over the file shown is, in logical pixels, to keep it inside the window.
 pub const EDITOR_MENU_HEIGHT: f32 = 18.0 * 26.0 + 3.0 * 9.0 + 10.0;
 
-/// The menu over the file shown, opened at `open`: the language server's ways around the code when `coding`, what the selection allows, and the file's place on this machine when it is on this machine, `local`.
+/// Emits the menu over the file shown, opened at `open`: the language server's ways around the code when `coding`, what the selection allows, and the file's place on this machine when it is on this machine, `local`; `keymap` names the keys of each command.
+#[track_caller]
 pub fn editor_menu(
     field: &Field,
     open: ContextMenu,
     coding: bool,
     local: bool,
     keymap: &pm_editor::Keymap,
-) -> Node {
+) {
     let editable = !field.is_read_only();
     let selected = field.selection().is_some();
     let command = |menu: Menu, label: &str, _: Option<&str>, which: EditorCommand, on: bool| {
@@ -297,11 +297,12 @@ pub fn editor_menu(
         EditorCommand::FileHistory,
         true,
     )
-    .build()
+    .build();
 }
 
-/// The menu opened at `open`, with each row enabled by what `field` can do.
-pub fn field_menu(field: &Field, open: ContextMenu) -> Node {
+/// Emits the menu opened at `open`, with each row enabled by what `field` can do.
+#[track_caller]
+pub fn field_menu(field: &Field, open: ContextMenu) {
     let editable = !field.is_read_only();
     Menu::new(open.at.0, open.at.1)
         .item(
@@ -332,5 +333,5 @@ pub fn field_menu(field: &Field, open: ContextMenu) -> Node {
             MENU_SELECT_ALL,
             field.text().is_empty(),
         )
-        .build()
+        .build();
 }

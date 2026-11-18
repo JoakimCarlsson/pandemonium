@@ -7,19 +7,16 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use pm_config::KnownServer;
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Role, border_b, border_color, border_r, border_t, flex, flex_1, flex_col, flex_none,
-    font_medium, gap, h, items_center, min_h, min_w_px, overflow_hidden, p, px, truncate, w_full,
-    w_px,
-};
-use pm_text::{Edit, Field};
-use pm_ui::{Node, node};
+use pm_field::{Edit, Field};
+use rustle::Modifier;
 
 use crate::adder::{Found, Kind, Listing, Status, status_line};
 use crate::button::Variant;
-use crate::parts::{glyph, line, spacer};
+use crate::kit::{
+    Flex, FocusId, IconName, Radius, Role, Scroll, Side, Styled, Tooltip, Type, column, icon,
+    label, label_with, row, scroll_area,
+};
+use crate::parts::spacer;
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::tile::Tile;
@@ -423,204 +420,196 @@ impl FolderPicker {
         }
     }
 
-    /// What the window holds: the bar with the steps and the path, the places beside the folders, and the bar with the buttons.
-    pub fn view(&self) -> Node {
-        node()
-            .styles([flex(), flex_col(), flex_1(), min_h(0), w_full()])
-            .child(self.heading())
-            .child(self.bar())
-            .child(
-                node()
-                    .styles([flex(), flex_1(), min_h(0), overflow_hidden()])
-                    .child(places())
-                    .child(self.list()),
-            )
-            .child(self.footer())
+    /// Emits what the window holds: the bar with the steps and the path, the places beside the folders, and the bar with the buttons.
+    #[track_caller]
+    pub fn view(&self) {
+        column(Modifier::new().grow().fill_max_width(), Flex::new(), || {
+            self.heading();
+            self.bar();
+            row(
+                Modifier::new().grow().clip_to(Radius::None),
+                Flex::new(),
+                || {
+                    places();
+                    self.list();
+                },
+            );
+            self.footer();
+        });
     }
 
-    /// The line naming what the folder is for, and the machine it is on when that is not this one.
-    fn heading(&self) -> Node {
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                gap(2),
-                h(11),
-                px(4),
-                flex_none(),
-                border_b(),
-                border_color(Role::Border),
-            ])
-            .child(line(self.title(), 13, 1.4, Role::Text))
-            .children(
-                self.machine
-                    .as_ref()
-                    .map(|machine| line(format!("on {}", machine.name), 13, 1.4, Role::Subtle)),
-            )
+    /// Emits the line naming what the folder is for, and the machine it is on when that is not this one.
+    #[track_caller]
+    fn heading(&self) {
+        row(
+            Modifier::new()
+                .h(11)
+                .stroke_side(Side::Bottom, 1.0, Role::Border)
+                .pad_x(4),
+            Flex::new().center().gap(2),
+            || {
+                label(
+                    self.title(),
+                    Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
+                );
+                if let Some(machine) = self.machine.as_ref() {
+                    label(
+                        format!("on {}", machine.name),
+                        Type::new(13).ratio(1.4).tone(Role::Subtle).truncate(),
+                    );
+                }
+            },
+        );
     }
 
-    /// The bar above the folders: the steps back, forward and up, the path as a trail that can be pressed anywhere along, and the box filtering the folders.
-    fn bar(&self) -> Node {
+    /// Emits the bar above the folders: the steps back, forward and up, the path as a trail that can be pressed anywhere along, and the box filtering the folders.
+    #[track_caller]
+    fn bar(&self) {
         let crumbs = self.directory.as_deref().map(trail).unwrap_or_default();
         let last = crumbs.len().saturating_sub(1);
-        let mut path = node().styles([flex(), items_center(), gap(0.5), flex_1(), min_w_px(0)]);
-        for (index, (name, _)) in crumbs.iter().enumerate() {
-            if index > 0 {
-                path = path.child(glyph(IconName::ChevronRight, 3.0, Role::Subtle));
-            }
-            let tone = if index == last {
-                Role::Text
-            } else {
-                Role::Muted
-            };
-            let mut label = line(name.clone(), 13, 1.4, tone);
-            if index == last {
-                label = label.styles([font_medium()]);
-            }
-            path = path.child(
-                Tile::new(FocusId(CRUMB_BASE + index as u64))
-                    .height(7.0)
-                    .build()
-                    .styles([px(1.5)])
-                    .child(label),
-            );
-        }
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                gap(2),
-                h(12),
-                px(3),
-                flex_none(),
-                border_b(),
-                border_color(Role::Border),
-            ])
-            .child(
+        row(
+            Modifier::new()
+                .h(12)
+                .stroke_side(Side::Bottom, 1.0, Role::Border)
+                .pad_x(3),
+            Flex::new().center().gap(2),
+            || {
                 Button::icon(IconName::ArrowLeft, PICKER_BACK)
                     .disabled(!self.can_go_back())
-                    .build()
-                    .tooltip("Back"),
-            )
-            .child(
+                    .modifier(Modifier::new().tooltip("Back"))
+                    .build();
                 Button::icon(IconName::ArrowRight, PICKER_FORWARD)
                     .disabled(!self.can_go_forward())
-                    .build()
-                    .tooltip("Forward"),
-            )
-            .child(
+                    .modifier(Modifier::new().tooltip("Forward"))
+                    .build();
                 Button::icon(IconName::ArrowUp, PICKER_PARENT)
                     .disabled(crumbs.len() < 2)
-                    .build()
-                    .tooltip("Up"),
-            )
-            .child(path)
-            .child(
-                node().styles([w_px(FILTER_WIDTH), flex_none()]).child(
-                    Input::new(&self.field, PICKER_FIELD)
-                        .size(Size::Sm)
-                        .placeholder("Filter folders")
-                        .build(),
-                ),
-            )
-    }
-
-    /// The folders inside the one being looked into, one to a line, scrolled to where the picker says.
-    fn list(&self) -> Node {
-        let mut list = node()
-            .styles([
-                flex(),
-                flex_col(),
-                gap(0.5),
-                p(2),
-                flex_1(),
-                min_w_px(0),
-                min_h(0),
-                overflow_hidden(),
-            ])
-            .scroll_from_start(PICKER_SCROLL, self.scroll);
-        list = list.children(
-            self.entries()
-                .into_iter()
-                .enumerate()
-                .map(|(index, found)| row(&found.name, index == self.selected, index)),
+                    .modifier(Modifier::new().tooltip("Up"))
+                    .build();
+                row(
+                    Modifier::new().grow(),
+                    Flex::new().center().gap(0.5),
+                    || {
+                        for (index, (name, _)) in crumbs.iter().enumerate() {
+                            if index > 0 {
+                                icon(IconName::ChevronRight, 3.0, Role::Subtle);
+                            }
+                            let kind = if index == last {
+                                Type::new(13)
+                                    .ratio(1.4)
+                                    .tone(Role::Text)
+                                    .truncate()
+                                    .medium()
+                            } else {
+                                Type::new(13).ratio(1.4).tone(Role::Muted).truncate()
+                            };
+                            Tile::new(FocusId(CRUMB_BASE + index as u64))
+                                .height(7.0)
+                                .inner(Modifier::new().pad_x(1.5))
+                                .build_with(|| label(name.clone(), kind));
+                        }
+                    },
+                );
+                Input::new(&self.field, PICKER_FIELD)
+                    .size(Size::Sm)
+                    .placeholder("Filter folders")
+                    .modifier(Modifier::new().width(FILTER_WIDTH))
+                    .build();
+            },
         );
-        if let Some(status) = self.status() {
-            list = list.child(status_line(status));
-        }
-        list
     }
 
-    /// The bar under the folders: the key that closes the picker, and the buttons that close it and that take the folder.
-    fn footer(&self) -> Node {
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                gap(2),
-                h(14),
-                px(4),
-                flex_none(),
-                border_t(),
-                border_color(Role::Border),
-            ])
-            .child(popover::key_hint("Esc", "Close"))
-            .child(spacer())
-            .child(
+    /// Emits the folders inside the one being looked into, one to a line, scrolled to where the picker says.
+    #[track_caller]
+    fn list(&self) {
+        scroll_area(
+            Modifier::new().grow(),
+            Scroll::from_start(PICKER_SCROLL, self.scroll),
+            || {
+                column(
+                    Modifier::new().fill_max_width().pad(2),
+                    Flex::new().gap(0.5),
+                    || {
+                        for (index, found) in self.entries().into_iter().enumerate() {
+                            folder_row(&found.name, index == self.selected, index);
+                        }
+                        if let Some(status) = self.status() {
+                            status_line(status);
+                        }
+                    },
+                );
+            },
+        );
+    }
+
+    /// Emits the bar under the folders: the key that closes the picker, and the buttons that close it and that take the folder.
+    #[track_caller]
+    fn footer(&self) {
+        row(
+            Modifier::new()
+                .h(14)
+                .stroke_side(Side::Top, 1.0, Role::Border)
+                .pad_x(4),
+            Flex::new().center().gap(2),
+            || {
+                popover::key_hint("Esc", "Close");
+                spacer();
                 Button::new("Cancel", PICKER_CLOSE)
                     .variant(Variant::Ghost)
-                    .build(),
-            )
-            .child(
+                    .build();
                 Button::new(self.confirm_label(), PICKER_CONFIRM)
                     .disabled(self.directory.is_none())
-                    .build(),
-            )
+                    .build();
+            },
+        );
     }
 }
 
-/// The column of places that are one press away.
-fn places() -> Node {
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_none(),
-            gap(0.5),
-            w_px(PLACES_WIDTH),
-            p(2),
-            border_r(),
-            border_color(Role::Border),
-        ])
-        .child(
-            node()
-                .styles([flex(), items_center(), h(8), px(2)])
-                .child(line("Places", 12, 1.4, Role::Subtle)),
-        )
-        .children(PLACES.iter().enumerate().map(|(index, (name, _, icon))| {
-            Tile::new(FocusId(PLACE_BASE + index as u64))
-                .height(8.0)
-                .gap(2.5)
-                .build()
-                .styles([px(2)])
-                .child(glyph(*icon, 4.0, Role::Muted))
-                .child(line(*name, 13, 1.4, Role::Text))
-        }))
+/// Emits the column of places that are one press away.
+#[track_caller]
+fn places() {
+    column(
+        Modifier::new()
+            .width(PLACES_WIDTH)
+            .stroke_side(Side::Right, 1.0, Role::Border)
+            .pad(2),
+        Flex::new().gap(0.5),
+        || {
+            row(Modifier::new().h(8).pad_x(2), Flex::new().center(), || {
+                label(
+                    "Places",
+                    Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
+                );
+            });
+            for (index, (name, _, glyph)) in PLACES.iter().enumerate() {
+                Tile::new(FocusId(PLACE_BASE + index as u64))
+                    .height(8.0)
+                    .gap(2.5)
+                    .inner(Modifier::new().pad_x(2))
+                    .build_with(|| {
+                        icon(*glyph, 4.0, Role::Muted);
+                        label(*name, Type::new(13).ratio(1.4).tone(Role::Text).truncate());
+                    });
+            }
+        },
+    );
 }
 
-/// One folder of the list: its glyph and its name on a line, highlighted while it is the one the keys act on.
-fn row(name: &str, selected: bool, index: usize) -> Node {
+/// Emits one folder of the list, the one at `index` called `name`: its glyph and its name on a line, highlighted while it is `selected`, the one the keys act on.
+#[track_caller]
+fn folder_row(name: &str, selected: bool, index: usize) {
     Tile::new(FocusId(ROW_BASE + index as u64))
         .selected(selected)
         .height(8.0)
-        .build()
-        .styles([px(2.5), flex_none()])
-        .child(glyph(IconName::Folder, 4.0, Role::Accent))
-        .child(
-            node()
-                .styles([flex_1(), min_w_px(0), overflow_hidden()])
-                .child(line(name, 13, 1.4, Role::Text).styles([truncate()])),
-        )
+        .inner(Modifier::new().pad_x(2.5))
+        .build_with(|| {
+            icon(IconName::Folder, 4.0, Role::Accent);
+            label_with(
+                Modifier::new().grow(),
+                name,
+                Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
+            );
+        });
 }
 
 impl WorkspaceState {

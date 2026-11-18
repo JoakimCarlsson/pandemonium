@@ -2,12 +2,10 @@
 //!
 //! The server asks the chat's agent for a handoff summary and starts the session with it, so the window only says where the work goes on and is told the outcome.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{Role, border_color, border_t, flex, items_center, justify_end, mt, px, py};
-use pm_ui::{Node, node};
+use rustle::Modifier;
 
 use crate::Button;
+use crate::kit::{Flex, FocusId, IconName, Interactive, Role, Side, Styled, block, row};
 use crate::parts::line;
 use crate::popover::{Popover, anchored, heading};
 use crate::sample::{Message, Session, Status};
@@ -211,8 +209,26 @@ impl WorkspaceState {
     }
 }
 
-/// The choice of where the open chat is continued: the projects on its machine, the branches of the one chosen to make the worktree from, and the button that starts it.
-fn menu(state: &WorkspaceState, chat: &Session) -> Node {
+/// The modifier of a section of the choice set off from what is above it by a rule: `border_t()` with `mt(1)`.
+fn ruled() -> Modifier {
+    Modifier::new()
+        .pad_side(Side::Top, 1)
+        .stroke_side(Side::Top, 1.0, Role::Border)
+}
+
+/// Emits a line of the choice saying `words`, where rows would be.
+#[track_caller]
+fn said(words: &str) {
+    row(
+        Modifier::new().pad_x(2.5).pad_y(1.5),
+        Flex::new().center(),
+        || line(words, 13, 1.4, Role::Subtle),
+    );
+}
+
+/// Emits the choice of where the open chat `chat` is continued: the projects on its machine, the branches of the one chosen to make the worktree from, and the button that starts it.
+#[track_caller]
+fn menu(state: &WorkspaceState, chat: &Session) {
     let chosen = state.continue_project();
     let mut menu = Popover::new()
         .width(MENU_WIDTH)
@@ -228,48 +244,37 @@ fn menu(state: &WorkspaceState, chat: &Session) -> Node {
     }
     let listed = state.continuing.branches.as_deref();
     let ready = chosen.is_some() && listed.is_some_and(|branches| !branches.is_empty());
-    let from = node()
-        .styles([border_t(), border_color(Role::Border), mt(1)])
-        .child(heading("Branch from", None));
-    let said = |words: &str| {
-        node()
-            .styles([flex(), items_center(), px(2.5), py(1.5)])
-            .child(line(words, 13, 1.4, Role::Subtle))
-    };
-    let from = match listed {
-        None => from.child(said("Reading the branches…")),
-        Some([]) => from.child(said("Not a Git repository, so it has no worktrees.")),
-        Some(branches) => from.children(crate::composer::branch_rows(
-            branches,
-            state.continuing.base.as_ref(),
-        )),
-    };
-    menu.child(from)
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    justify_end(),
-                    border_t(),
-                    border_color(Role::Border),
-                    mt(1),
-                    px(1),
-                    py(1.5),
-                ])
-                .child(
-                    Button::new("Continue", CONTINUE_START)
-                        .size(Size::Sm)
-                        .disabled(!ready)
-                        .build(),
-                ),
-        )
-        .over_button(MENU_BODY)
+    menu.modifier(Modifier::new().target(MENU_BODY))
+        .build_with(|| {
+            block(ruled(), || {
+                heading("Branch from", None);
+                match listed {
+                    None => said("Reading the branches…"),
+                    Some([]) => said("Not a Git repository, so it has no worktrees."),
+                    Some(branches) => {
+                        crate::composer::branch_rows(branches, state.continuing.base.as_ref())
+                    }
+                }
+            });
+            row(ruled().pad_x(1).pad_y(1.5), Flex::new().trailing(), || {
+                Button::new("Continue", CONTINUE_START)
+                    .size(Size::Sm)
+                    .disabled(!ready)
+                    .build();
+            });
+        });
 }
 
-/// The chip above the prompt box of the chat `chat` that continues it in a project, with the choice over it while open; switched off while the chat's agent is working, has prompts waiting or is writing the summary, and left out when no project is on the chat's machine.
-pub(crate) fn chip(state: &WorkspaceState, chat: &Session) -> Option<Node> {
-    if !chat.is_chat() || state.continue_projects(chat).is_empty() {
-        return None;
+/// Whether the chip that continues the chat `chat` in a project shows: `chat` is a chat and a project is on its machine.
+pub(crate) fn shows_chip(state: &WorkspaceState, chat: &Session) -> bool {
+    chat.is_chat() && !state.continue_projects(chat).is_empty()
+}
+
+/// Emits the chip above the prompt box of the chat `chat` that continues it in a project, with the choice over it while open; switched off while the chat's agent is working, has prompts waiting or is writing the summary, and left out when no project is on the chat's machine ([`shows_chip`]).
+#[track_caller]
+pub(crate) fn chip(state: &WorkspaceState, chat: &Session) {
+    if !shows_chip(state, chat) {
+        return;
     }
     let open = state.picker == Some(Picker::Continue);
     let label = if chat.handing_over {
@@ -277,14 +282,18 @@ pub(crate) fn chip(state: &WorkspaceState, chat: &Session) -> Option<Node> {
     } else {
         "Continue in project…"
     };
-    let button = Button::new(label, CONTINUE)
-        .variant(crate::button::Variant::Ghost)
-        .size(Size::Xs)
-        .with_icon(IconName::GitFork)
-        .selected(open)
-        .disabled(!state.can_continue(chat))
-        .build();
-    Some(anchored(button, open.then(|| menu(state, chat))))
+    anchored(
+        || {
+            Button::new(label, CONTINUE)
+                .variant(crate::button::Variant::Ghost)
+                .size(Size::Xs)
+                .with_icon(IconName::GitFork)
+                .selected(open)
+                .disabled(!state.can_continue(chat))
+                .build();
+        },
+        open.then_some(|| menu(state, chat)),
+    );
 }
 
 #[cfg(test)]

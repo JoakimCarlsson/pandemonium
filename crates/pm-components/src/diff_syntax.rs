@@ -7,9 +7,9 @@ use std::mem::discriminant;
 use std::ops::Range;
 use std::sync::{Arc, LazyLock, Mutex};
 
-use pm_style::{Color, Role};
 use pm_treesitter::{Grammar, Syntax, registry};
-use pm_ui::{Mark, Paint};
+
+use crate::kit::{Mark, Paint, Role, Tone};
 
 use crate::sample::{DiffLine, Kind};
 use crate::viewer::highlight_marks;
@@ -94,10 +94,12 @@ impl DiffColours {
                 .ranges
                 .iter()
                 .filter(|(start, end)| start < end && *end <= line.text.len())
-                .map(|(start, end)| Mark {
-                    range: shown_offset(&line.text, *start)..shown_offset(&line.text, *end),
-                    color: Color::from(role).alpha(0.35),
-                    paint: Paint::Fill,
+                .map(|(start, end)| {
+                    Mark::new(
+                        shown_offset(&line.text, *start)..shown_offset(&line.text, *end),
+                        Tone::from(role).alpha(0.35),
+                        Paint::Fill,
+                    )
                 })
                 .collect();
             self.words.insert(entry.line, marks);

@@ -1,7 +1,7 @@
 //! Tests of the sessions the quick input lists: those waiting for the reader first, the chats the servers found by what was said in them, and starting a session from what is typed.
 
+use pm_field::Edit;
 use pm_protocol::{ChatField, ChatHit};
-use pm_text::Edit;
 
 use crate::listing::{Destination, Items};
 use crate::state::{Outgoing, Page, WorkspaceState};

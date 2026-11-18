@@ -1,14 +1,11 @@
 //! The sidebar: ways to start and find work, the chats that belong to no project, and every project with its sessions.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, absolute, animate_spin, bg, border, border_color, border_l, border_r, flex,
-    flex_col, flex_none, gap, h, h_full, items_center, justify_center, left, mb, min_h, ml,
-    opacity, overflow_hidden, p, pl, pr, pt, px, rounded, rounded_full, shadow_md, size, top_px,
-    w_px, z,
+use rustle::Modifier;
+
+use crate::kit::{
+    Flex, FocusId, IconName, Radius, Role, Side, Styled, Tooltip, Type, at_window, column, gap_box,
+    label_with, layer, row, sp, spinner,
 };
-use pm_ui::{Node, node};
 
 use crate::Avatar;
 use crate::Button;
@@ -70,11 +67,12 @@ pub fn chats_height(state: &WorkspaceState) -> f32 {
 /// How tall the heading above the projects is, in logical pixels.
 pub const HEADING_HEIGHT: f32 = ROW;
 
-/// The heading of a group of the list, saying `words`.
-fn heading(words: &str) -> Node {
-    node()
-        .styles([flex(), items_center(), flex_none(), h(9), px(2)])
-        .child(line(words, 12, 1.4, Role::Subtle))
+/// Emits the heading of a group of the list, saying `words`.
+#[track_caller]
+fn heading(words: &str) {
+    row(Modifier::new().h(9).pad_x(2), Flex::new().center(), || {
+        line(words, 12, 1.4, Role::Subtle);
+    });
 }
 
 /// Every submodule row of the sidebar, project by project in the order they were added: the project's position and the submodule's path. The place of a row in this list is what it answers to.
@@ -103,58 +101,67 @@ fn listed_under<'a>(state: &'a WorkspaceState, session: &Session) -> Option<&'a 
         .map(String::as_str)
 }
 
-/// The session activity or attention indicator, with its meaning on hover.
-pub fn status_icon(status: Status) -> Node {
-    let slot = node().styles([
-        flex(),
-        items_center(),
-        justify_center(),
-        size(4),
-        flex_none(),
-    ]);
-    slot.tooltip(match status {
+/// Emits the session activity or attention indicator, with its meaning on hover.
+#[track_caller]
+pub fn status_icon(status: Status) {
+    let meaning = match status {
         Status::Working => "Working",
         Status::Unread => "Unread",
         Status::Error => "Unread error",
         Status::NeedsInput => "Needs input",
         Status::Idle => "Idle",
         Status::Unreachable => "Server out of reach",
-    })
-    .child(match status {
-        Status::Working => glyph(IconName::Loading, 3.5, Role::Muted).styles([animate_spin()]),
-        Status::Unread => node().styles([size(2), rounded_full(), bg(Role::Accent)]),
-        Status::Error => glyph(IconName::Close, 3.5, Role::Danger),
-        Status::NeedsInput => glyph(IconName::Message, 3.5, Role::Warning),
-        Status::Unreachable => glyph(IconName::Plug, 3.5, Role::Warning),
-        Status::Idle => node().styles([
-            size(2),
-            rounded_full(),
-            border(),
-            border_color(Role::Subtle),
-        ]),
-    })
+    };
+    row(
+        Modifier::new().square(4).tooltip(meaning),
+        Flex::new().center().middle(),
+        move || match status {
+            Status::Working => spinner(3.5, Role::Muted),
+            Status::Unread => {
+                gap_box(
+                    Modifier::new()
+                        .square(2)
+                        .fill_rounded(Role::Accent, Radius::Full),
+                );
+            }
+            Status::Error => glyph(IconName::Close, 3.5, Role::Danger),
+            Status::NeedsInput => glyph(IconName::Message, 3.5, Role::Warning),
+            Status::Unreachable => glyph(IconName::Plug, 3.5, Role::Warning),
+            Status::Idle => {
+                gap_box(Modifier::new().square(2).stroke(Role::Subtle, Radius::Full));
+            }
+        },
+    );
 }
 
-/// One of the ways in at the top: a glyph and a label.
-fn entry(icon: IconName, label: &str, id: FocusId, selected: bool) -> Node {
+/// Emits one of the ways in at the top: a glyph and a label.
+#[track_caller]
+fn entry(icon: IconName, label: &str, id: FocusId, selected: bool) {
     let tone = if selected { Role::Text } else { Role::Muted };
     Tile::new(id)
         .selected(selected)
-        .build()
-        .styles([px(2)])
-        .child(glyph(icon, 4.0, tone))
-        .child(line(label, 14, 1.4, tone))
+        .inner(Modifier::new().pad_x(2))
+        .build_with(|| {
+            glyph(icon, 4.0, tone);
+            line(label, 14, 1.4, tone);
+        });
 }
 
-/// The row of one session under its project, set in `indent` steps.
-fn session_row(index: usize, session: &Session, selected: bool, indent: f32) -> Node {
+/// Emits the row of one session under its project, set in `indent` steps.
+#[track_caller]
+fn session_row(index: usize, session: &Session, selected: bool, indent: f32) {
     Tile::new(FocusId(SESSION_BASE + index as u64))
         .selected(selected)
-        .build()
-        .styles([pl(indent), pr(2)])
-        .child(status_icon(session.shown()))
-        .child(clipped(&session.title, 14, Role::Text))
-        .child(line(session.age(), 12, 1.4, Role::Subtle))
+        .inner(
+            Modifier::new()
+                .pad_side(Side::Left, indent)
+                .pad_side(Side::Right, 2),
+        )
+        .build_with(|| {
+            status_icon(session.shown());
+            clipped(&session.title, 14, Role::Text);
+            line(session.age(), 12, 1.4, Role::Subtle);
+        });
 }
 
 /// The submodule of `paths` that `path` sits directly inside, or nothing when it sits in the project itself.
@@ -169,91 +176,97 @@ fn holder<'a>(path: &str, paths: &'a [String]) -> Option<&'a str> {
         .map(String::as_str)
 }
 
-/// The header of a submodule at `relative`, its path from what holds it, numbered `position` among [`submodule_rows`]: its own avatar in its project's colour, its name, the folder it is in and a button that starts work in it.
-fn submodule_row(project: &Project, relative: &str, position: usize, starting: bool) -> Node {
+/// Emits the header of a submodule at `relative`, its path from what holds it, numbered `position` among [`submodule_rows`]: its own avatar in its project's colour, its name, the folder it is in and a button that starts work in it.
+#[track_caller]
+fn submodule_row(project: &Project, relative: &str, position: usize, starting: bool) {
     let (folder, name) = relative
         .rsplit_once('/')
         .map_or(("", relative), |(folder, name)| (folder, name));
     Tile::new(FocusId(NEW_IN_SUBMODULE_BASE + position as u64))
         .selected(starting)
-        .build()
-        .styles([pl(2), pr(2)])
-        .child(Avatar::new(name, project.color()).size(Size::Xs).build())
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    gap(1.5),
-                    pm_style::flex_1(),
-                    pm_style::min_w_px(0),
-                    overflow_hidden(),
-                ])
-                .child(line(name, 13, 1.4, Role::Text).styles([flex_none()]))
-                .children((!folder.is_empty()).then(|| {
-                    line(format!("{folder}/"), 12, 1.4, Role::Subtle).styles([pm_style::truncate()])
-                })),
+        .inner(
+            Modifier::new()
+                .pad_side(Side::Left, 2)
+                .pad_side(Side::Right, 2),
         )
-        .child(glyph(
-            IconName::Plus,
-            3.5,
-            if starting { Role::Text } else { Role::Subtle },
-        ))
+        .build_with(|| {
+            Avatar::new(name, project.color()).size(Size::Xs).build();
+            row(
+                Modifier::new().grow().clip_to(Radius::None),
+                Flex::new().center().gap(1.5),
+                || {
+                    line(name, 13, 1.4, Role::Text);
+                    if !folder.is_empty() {
+                        label_with(
+                            Modifier::new().grow(),
+                            format!("{folder}/"),
+                            Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
+                        );
+                    }
+                },
+            );
+            glyph(
+                IconName::Plus,
+                3.5,
+                if starting { Role::Text } else { Role::Subtle },
+            );
+        });
 }
 
-/// The submodules of the project at `index` that sit directly in `parent`, each with the sessions working in it and the submodules inside it, behind a line that ties them to what holds them.
+/// Emits the submodules of the project at `index` that sit directly in `parent`, each with the sessions working in it and the submodules inside it, behind a line that ties them to what holds them; nothing when there are none.
+#[track_caller]
 fn submodule_tree(
     state: &WorkspaceState,
     index: usize,
     parent: Option<&str>,
     members: &[(usize, &Session)],
     first: usize,
-) -> Option<Node> {
+) {
     let project = &state.projects[index];
     let open = match state.page {
         Page::Session(open) => Some(open),
         _ => None,
     };
-    let blocks: Vec<Node> = project
+    let blocks: Vec<(usize, &String)> = project
         .submodules
         .iter()
         .enumerate()
         .filter(|(_, path)| holder(path, &project.submodules) == parent)
-        .map(|(offset, path)| {
-            let name = parent
-                .and_then(|parent| path.strip_prefix(parent))
-                .map_or(path.as_str(), |rest| rest.trim_start_matches('/'));
-            let starting =
-                state.page == Page::New(index) && state.new_in.as_deref() == Some(path.as_str());
-            node()
-                .styles([flex(), flex_col()])
-                .child(submodule_row(project, name, first + offset, starting))
-                .children(
-                    members
-                        .iter()
-                        .filter(|(_, session)| listed_under(state, session) == Some(path.as_str()))
-                        .map(|&(position, session)| {
-                            session_row(position, session, open == Some(position), 3.5)
-                        }),
-                )
-                .children(submodule_tree(state, index, Some(path), members, first))
-        })
         .collect();
-    (!blocks.is_empty()).then(|| {
-        node()
-            .styles([
-                flex(),
-                flex_col(),
-                ml(SUBMODULE_RAIL),
-                border_l(),
-                border_color(project.color()),
-            ])
-            .children(blocks)
-    })
+    if blocks.is_empty() {
+        return;
+    }
+    column(
+        Modifier::new()
+            .pad_side(Side::Left, SUBMODULE_RAIL)
+            .stroke_side(Side::Left, 1.0, project.color()),
+        Flex::new(),
+        || {
+            for (offset, path) in blocks {
+                let name = parent
+                    .and_then(|parent| path.strip_prefix(parent))
+                    .map_or(path.as_str(), |rest| rest.trim_start_matches('/'));
+                let starting = state.page == Page::New(index)
+                    && state.new_in.as_deref() == Some(path.as_str());
+                rustle::key(first + offset, || {
+                    column(Modifier::new(), Flex::new(), || {
+                        submodule_row(project, name, first + offset, starting);
+                        for &(position, session) in members.iter().filter(|(_, session)| {
+                            listed_under(state, session) == Some(path.as_str())
+                        }) {
+                            session_row(position, session, open == Some(position), 3.5);
+                        }
+                        submodule_tree(state, index, Some(path), members, first);
+                    });
+                });
+            }
+        },
+    );
 }
 
-/// One project: its header, its sessions and a row to start new work, then each submodule with the sessions working in it.
-fn project(state: &WorkspaceState, index: usize) -> Node {
+/// Emits one project: its header, its sessions and a row to start new work, then each submodule with the sessions working in it.
+#[track_caller]
+fn project(state: &WorkspaceState, index: usize) {
     let project = &state.projects[index];
     let members: Vec<(usize, &Session)> = state
         .sessions
@@ -266,167 +279,160 @@ fn project(state: &WorkspaceState, index: usize) -> Node {
         .position(|(held, _)| *held == index)
         .unwrap_or(0);
     let dragged = state.project_drag.is_some_and(|drag| drag.from == index);
-    let mut header = Tile::new(FocusId(PROJECT_BASE + index as u64))
-        .selected(state.page == Page::Project(index))
-        .build()
-        .styles([px(2)])
-        .child(Avatar::of(project).build())
-        .child(clipped(&project.name, 14, Role::Text));
-    header = header
-        .child(Button::icon(IconName::More, FocusId(PROJECT_MORE_BASE + index as u64)).build());
-    let mut section = node().styles([flex(), flex_col(), mb(3)]).child(header);
-    if dragged {
-        section = section.styles([opacity(35)]);
-    }
     let open = match state.page {
         Page::Session(open) => Some(open),
         _ => None,
     };
-    section = section.children(
-        members
+    let starting = state.page == Page::New(index) && state.new_in.is_none();
+    let section = Modifier::new().pad_side(Side::Bottom, 3);
+    let section = if dragged {
+        section.opacity(35.0)
+    } else {
+        section
+    };
+    column(section, Flex::new(), || {
+        Tile::new(FocusId(PROJECT_BASE + index as u64))
+            .selected(state.page == Page::Project(index))
+            .inner(Modifier::new().pad_x(2))
+            .build_with(|| {
+                Avatar::of(project).build();
+                clipped(&project.name, 14, Role::Text);
+                Button::icon(IconName::More, FocusId(PROJECT_MORE_BASE + index as u64)).build();
+            });
+        for &(position, session) in members
             .iter()
             .filter(|(_, session)| listed_under(state, session).is_none())
-            .map(|&(position, session)| {
-                session_row(position, session, open == Some(position), 3.5)
-            }),
-    );
-    section = section.children(submodule_tree(
-        state,
-        index,
-        None,
-        &members,
-        first_submodule,
-    ));
-    let starting = state.page == Page::New(index) && state.new_in.is_none();
-    section = section.child(
+        {
+            session_row(position, session, open == Some(position), 3.5);
+        }
+        submodule_tree(state, index, None, &members, first_submodule);
+        let tone = if starting { Role::Text } else { Role::Muted };
         Tile::new(FocusId(NEW_IN_BASE + index as u64))
             .selected(starting)
-            .build()
-            .styles([pl(3)])
-            .child(glyph(
-                IconName::Plus,
-                4.0,
-                if starting { Role::Text } else { Role::Muted },
-            ))
-            .child(line(
-                "New session",
-                14,
-                1.4,
-                if starting { Role::Text } else { Role::Muted },
-            )),
-    );
-    section
+            .inner(Modifier::new().pad_side(Side::Left, 3))
+            .build_with(|| {
+                glyph(IconName::Plus, 4.0, tone);
+                line("New session", 14, 1.4, tone);
+            });
+    });
 }
 
-/// The chats that belong to no project, under a heading of their own, or nothing while no chat is open.
-fn chats(state: &WorkspaceState) -> Option<Node> {
+/// Emits the chats that belong to no project, under a heading of their own, or nothing while no chat is open.
+#[track_caller]
+fn chats(state: &WorkspaceState) {
     let members = state.open_chats();
     if members.is_empty() {
-        return None;
+        return;
     }
     let open = match state.page {
         Page::Session(open) => Some(open),
         _ => None,
     };
-    Some(
-        node()
-            .styles([flex(), flex_col(), mb(3)])
-            .child(heading("Chats"))
-            .children(members.into_iter().map(|position| {
+    column(
+        Modifier::new().pad_side(Side::Bottom, 3),
+        Flex::new(),
+        || {
+            heading("Chats");
+            for position in members {
                 session_row(
                     position,
                     &state.sessions[position],
                     open == Some(position),
                     2.0,
-                )
-            })),
-    )
+                );
+            }
+        },
+    );
 }
 
-/// The whole sidebar for `state`.
-pub fn sidebar(state: &WorkspaceState) -> Node {
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_none(),
-            w_px(state.sidebar_width),
-            h_full(),
-            bg(Role::Sidebar),
-            border_r(),
-            border_color(Role::Border),
-        ])
-        .child(
-            node()
-                .styles([flex(), flex_col(), gap(0.5), p(2), pt(3)])
-                .children([
+/// Emits the whole sidebar for `state`.
+#[track_caller]
+pub fn sidebar(state: &WorkspaceState) {
+    column(
+        Modifier::new()
+            .width(state.sidebar_width)
+            .fill_max_height()
+            .fill(Role::Sidebar)
+            .stroke_side(Side::Right, 1.0, Role::Border),
+        Flex::new(),
+        || {
+            column(
+                Modifier::new()
+                    .pad_x(2)
+                    .pad_side(Side::Top, 3)
+                    .pad_side(Side::Bottom, 2),
+                Flex::new().gap(0.5),
+                || {
                     entry(
                         IconName::Message,
                         "New chat",
                         crate::chats::NEW_CHAT,
                         state.page == Page::Chat,
-                    ),
-                    entry(IconName::Plus, "New workspace", ADD_PROJECT, false),
+                    );
+                    entry(IconName::Plus, "New workspace", ADD_PROJECT, false);
                     entry(
                         IconName::History,
                         "History",
                         HISTORY,
                         state.page == Page::History,
-                    ),
+                    );
                     entry(
                         IconName::FileCode,
                         "Extensions",
                         crate::extensions::EXTENSIONS,
                         state.page == Page::Extensions,
-                    ),
-                ]),
-        )
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    flex_col(),
-                    px(2),
-                    min_h(0),
-                    overflow_hidden(),
-                    pm_style::flex_1(),
-                ])
-                .children(chats(state))
-                .child(heading("Workspaces"))
-                .children(
-                    state
-                        .display_order()
-                        .into_iter()
-                        .map(|index| project(state, index)),
-                )
-                .scroll_y(state.sidebar_scroll),
-        )
+                    );
+                },
+            );
+            layer(
+                Modifier::new()
+                    .grow()
+                    .fill_max_width()
+                    .clip_to(Radius::None),
+                || {
+                    column(
+                        Modifier::new()
+                            .at(0.0, -state.sidebar_scroll)
+                            .fill_max_width()
+                            .pad_x(2),
+                        Flex::new(),
+                        || {
+                            chats(state);
+                            heading("Workspaces");
+                            for index in state.display_order() {
+                                rustle::key(index, || project(state, index));
+                            }
+                        },
+                    );
+                },
+            );
+        },
+    );
 }
 
-/// The header of the project being dragged, floating where the pointer is.
-pub fn drag_ghost(state: &WorkspaceState) -> Option<Node> {
-    let drag = state.project_drag?;
-    let project = state.projects.get(drag.from)?;
-    Some(
-        node()
-            .styles([
-                absolute(),
-                left(2),
-                top_px(drag.at.1 - ROW / 2.0),
-                z(60),
-                flex(),
-                items_center(),
-                gap(3),
-                h(9),
-                w_px(state.sidebar_width - 16.0),
-                px(2),
-                rounded(Radius::Md),
-                bg(Role::Surface),
-                border(),
-                border_color(Role::Border),
-                shadow_md(),
-            ])
-            .child(Avatar::of(project).build())
-            .child(clipped(&project.name, 14, Role::Text)),
-    )
+/// Emits the header of the project being dragged, floating where the pointer is; nothing while no project is dragged.
+#[track_caller]
+pub fn drag_ghost(state: &WorkspaceState) {
+    let Some(drag) = state.project_drag else {
+        return;
+    };
+    let Some(project) = state.projects.get(drag.from) else {
+        return;
+    };
+    at_window(sp(2.0), drag.at.1 - ROW / 2.0, Modifier::new(), || {
+        row(
+            Modifier::new()
+                .h(9)
+                .width(state.sidebar_width - 16.0)
+                .shadow_md(Radius::Md)
+                .fill_rounded(Role::Surface, Radius::Md)
+                .stroke(Role::Border, Radius::Md)
+                .pad_x(2),
+            Flex::new().center().gap(3),
+            || {
+                Avatar::of(project).build();
+                clipped(&project.name, 14, Role::Text);
+            },
+        );
+    });
 }

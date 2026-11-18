@@ -1,12 +1,8 @@
 //! The handles on the edges between panels, dragged to change how big a panel is, and the sizes they set.
 
-use pm_input::FocusId;
-use pm_style::{
-    Length, Role, Sides, absolute, bg, bottom, cursor_col_resize, cursor_row_resize, flex,
-    flex_none, h_full, h_px, inset_length, items_center, justify_center, left, relative, right,
-    top, w_full, w_px, z,
-};
-use pm_ui::{Node, node};
+use rustle::{CursorIcon, Modifier};
+
+use crate::kit::{Flex, FocusId, Hovered, Interactive, Looks, Role, Styled, gap_box, layer, row};
 
 use crate::git_controls::GRAPH_SASH;
 use crate::state::WorkspaceState;
@@ -62,6 +58,7 @@ pub enum Layout {
 }
 
 /// A handle on the edge between two panels, either floating over the edge at a place in the window or lying over the top edge of what follows it in the flow.
+#[derive(Clone, Debug)]
 pub struct Sash {
     /// The element the handle is.
     id: FocusId,
@@ -71,6 +68,10 @@ pub struct Sash {
     placed: Option<((f32, f32), f32)>,
     /// Whether it is built bare, to be put inside the element whose edge it is.
     bare: bool,
+    /// What the caller puts around the handle's strip.
+    modifier: Modifier,
+    /// How the strip lays out the line it lights, when the caller replaces it.
+    flex: Option<Flex>,
 }
 
 impl Sash {
@@ -81,6 +82,8 @@ impl Sash {
             layout: Layout::Column,
             placed: None,
             bare: false,
+            modifier: Modifier::new(),
+            flex: None,
         }
     }
 
@@ -91,6 +94,8 @@ impl Sash {
             layout: Layout::Row,
             placed: None,
             bare: false,
+            modifier: Modifier::new(),
+            flex: None,
         }
     }
 
@@ -106,58 +111,68 @@ impl Sash {
         self
     }
 
-    /// The handle: a strip the pointer takes hold of, clear until the pointer is on it, when a line as thin as a border lights up along the edge.
-    pub fn build(self) -> Node {
+    /// The handle with `modifier` chained around its strip, outside its own placement and size; calls add up.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
+    }
+
+    /// The handle with its strip laying out the line it lights by `flex` instead of centring it.
+    pub fn flex(mut self, flex: Flex) -> Self {
+        self.flex = Some(flex);
+        self
+    }
+
+    /// Emits the handle: a strip the pointer takes hold of, clear until the pointer is on it, when a line as thin as a border lights up along the edge.
+    #[track_caller]
+    pub fn build(self) {
         let (cursor, line) = match self.layout {
-            Layout::Column => (cursor_col_resize(), [w_px(1.0), h_full()]),
-            Layout::Row => (cursor_row_resize(), [h_px(1.0), w_full()]),
+            Layout::Column => (
+                CursorIcon::ColResize,
+                Modifier::new().width(1.0).fill_max_height(),
+            ),
+            Layout::Row => (
+                CursorIcon::RowResize,
+                Modifier::new().height(1.0).fill_max_width(),
+            ),
         };
-        let mut styles = vec![
-            flex(),
-            items_center(),
-            justify_center(),
-            flex_none(),
-            absolute(),
-            z(10),
-            cursor,
-        ];
-        match (self.layout, self.placed) {
-            (Layout::Column, Some(((x, y), length))) => styles.extend([
-                w_px(THICKNESS),
-                h_px(length),
-                inset_length(Sides::Left, Length::Px(x - THICKNESS / 2.0)),
-                inset_length(Sides::Top, Length::Px(y)),
-            ]),
-            (Layout::Row, Some(((x, y), length))) => styles.extend([
-                w_px(length),
-                h_px(THICKNESS),
-                inset_length(Sides::Left, Length::Px(x)),
-                inset_length(Sides::Top, Length::Px(y - THICKNESS / 2.0)),
-            ]),
-            (Layout::Column, None) => styles.extend([
-                w_px(THICKNESS),
-                top(0),
-                bottom(0),
-                inset_length(Sides::Left, Length::Px(-THICKNESS / 2.0)),
-            ]),
-            (Layout::Row, None) => styles.extend([
-                h_px(THICKNESS),
-                left(0),
-                right(0),
-                inset_length(Sides::Top, Length::Px(-THICKNESS / 2.0)),
-            ]),
-        }
-        let handle = node()
-            .styles(styles)
+        let own = match (self.layout, self.placed) {
+            (Layout::Column, Some(((x, y), length))) => Modifier::new()
+                .at(x - THICKNESS / 2.0, y)
+                .width(THICKNESS)
+                .height(length),
+            (Layout::Row, Some(((x, y), length))) => Modifier::new()
+                .at(x, y - THICKNESS / 2.0)
+                .width(length)
+                .height(THICKNESS),
+            (Layout::Column, None) => Modifier::new()
+                .at(-THICKNESS / 2.0, 0.0)
+                .width(THICKNESS)
+                .fill_max_height(),
+            (Layout::Row, None) => Modifier::new()
+                .at(0.0, -THICKNESS / 2.0)
+                .height(THICKNESS)
+                .fill_max_width(),
+        };
+        let own = own
+            .z_index(10)
             .group()
-            .child(node().styles(line).styles([bg(Role::Accent).group_hover()]))
-            .focusable(self.id);
+            .cursor(cursor)
+            .target(self.id)
+            .draggable_id(self.id);
+        let flex = self.flex.unwrap_or(Flex::new().center().middle());
+        let modifier = self.modifier.chain(own);
+        let handle = move || {
+            row(modifier, flex, move || {
+                gap_box(line.looks(Looks::new().group(Role::Accent)));
+            });
+        };
         match self.placed {
-            Some(_) => handle,
-            None if self.bare => handle,
-            None => node()
-                .styles([relative(), flex_none(), w_full(), h_px(0.0)])
-                .child(handle),
+            Some(_) => handle(),
+            None if self.bare => layer(Modifier::new().cover(), handle),
+            None => layer(Modifier::new().fill_max_width().height(0.0), move || {
+                layer(Modifier::new().cover(), handle);
+            }),
         }
     }
 }

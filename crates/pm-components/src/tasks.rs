@@ -1,8 +1,8 @@
 //! Tasks as the workspace holds them: what the project can be built, tested and run with, the last one run, the toolchains installed on its machine, and what the reader does with them.
 
-use pm_input::FocusId;
+use crate::kit::FocusId;
+use pm_field::Field;
 use pm_protocol::{Task, ToolchainInfo};
-use pm_text::Field;
 
 use crate::listing::{Items, Listing};
 use crate::quick_choices::Choosing;

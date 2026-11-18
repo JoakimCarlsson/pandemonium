@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use pm_input::FocusId;
+use crate::kit::FocusId;
 
 use crate::Project;
 use crate::sample::Session;

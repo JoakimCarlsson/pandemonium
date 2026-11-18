@@ -1,10 +1,16 @@
 //! The components the app is built from.
 //!
-//! A component is a builder. It is made with `new`, given a variant for how
-//! it looks and a size for how big it is, and turned into a [`pm_ui::Node`]
-//! with `build`; the caller restyles the node with `.styles([...])` and never
-//! reaches into it. Each component lives in a module named for what it is,
-//! which holds its `Variant` and is re-exported here; `Size` is shared.
+//! A component is a composable: a function or a builder that emits what it
+//! draws, in place, while the app composes its window. Components are made
+//! with the kit ([`kit`]), which lays boxes out in rows, columns, blocks and
+//! layers, sets type, draws icons, fields and marked text, and turns what the
+//! user does into actions named by focus ids. A builder is made with `new`,
+//! given a variant for how it looks and a size for how big it is, and emitted
+//! with `build`; the caller puts what goes around it with `.modifier(..)`,
+//! replaces its padding with `.inner(..)` and adds children with
+//! `build_with(..)`, and never reaches into it. Each component lives in a
+//! module named for what it is, which holds its `Variant` and is re-exported
+//! here; `Size` is shared.
 
 pub mod activity;
 pub mod adder;

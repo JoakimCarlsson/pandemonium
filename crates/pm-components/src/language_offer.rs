@@ -1,17 +1,13 @@
 //! The offer, at the top of a file, to install the language it is written in when the server's machine has not got it.
 
-use pm_input::FocusId;
 use pm_protocol::ExtensionInfo;
-use pm_style::{
-    Role, bg, border_b, border_color, flex, flex_none, gap, items_center, min_w_px,
-    overflow_hidden, px, py,
-};
-use pm_ui::{Node, node};
+use rustle::Modifier;
+
+use crate::kit::{Flex, FocusId, Role, Side, Styled, Type, label_with, row};
 
 use crate::Button;
 use crate::button::Variant;
 use crate::open_files::{Contents, Viewer};
-use crate::parts::line;
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 
@@ -55,9 +51,12 @@ fn offered<'a>(state: &'a WorkspaceState, viewer: &Viewer) -> Option<&'a Extensi
     })
 }
 
-/// The bar at the top of `viewer`'s file that offers to install its language, or nothing when there is none on offer.
-pub(crate) fn offer(state: &WorkspaceState, viewer: &Viewer) -> Option<Node> {
-    let extension = offered(state, viewer)?;
+/// Emits the bar at the top of `viewer`'s file that offers to install its language, or nothing when there is none on offer.
+#[track_caller]
+pub(crate) fn offer(state: &WorkspaceState, viewer: &Viewer) {
+    let Some(extension) = offered(state, viewer) else {
+        return;
+    };
     let words = match (&extension.busy, &extension.problem) {
         (Some(step), _) => format!("Installing {}: {step}", extension.name),
         (None, Some(problem)) => format!("Installing {} failed: {problem}", extension.name),
@@ -66,43 +65,33 @@ pub(crate) fn offer(state: &WorkspaceState, viewer: &Viewer) -> Option<Node> {
             extension.name
         ),
     };
-    let mut bar = node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(3),
-            px(4),
-            py(1),
-            flex_none(),
-            border_b(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-        ])
-        .child(line(words, 12, 1.4, Role::Muted).styles([min_w_px(0), overflow_hidden()]))
-        .child(crate::parts::spacer());
-    if extension.busy.is_none() {
-        bar = bar
-            .child(
-                Button::new(
-                    if extension.problem.is_some() {
-                        "Try again"
-                    } else {
-                        "Install"
-                    },
-                    OFFER_INSTALL,
-                )
-                .variant(Variant::Secondary)
-                .size(Size::Sm)
-                .build(),
-            )
-            .child(
+    let idle = extension.busy.is_none();
+    let retry = extension.problem.is_some();
+    row(
+        Modifier::new()
+            .fill(Role::Surface)
+            .stroke_side(Side::Bottom, 1.0, Role::Border)
+            .pad_x(4)
+            .pad_y(1),
+        Flex::new().center().gap(3),
+        move || {
+            label_with(
+                Modifier::new().grow().clip_to(crate::kit::Radius::None),
+                words,
+                Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
+            );
+            if idle {
+                Button::new(if retry { "Try again" } else { "Install" }, OFFER_INSTALL)
+                    .variant(Variant::Secondary)
+                    .size(Size::Sm)
+                    .build();
                 Button::new("Not now", OFFER_DECLINE)
                     .variant(Variant::Ghost)
                     .size(Size::Sm)
-                    .build(),
-            );
-    }
-    Some(bar)
+                    .build();
+            }
+        },
+    );
 }
 
 impl WorkspaceState {

@@ -2,14 +2,13 @@
 
 use std::path::Path;
 
-use pm_icon::IconName;
-use pm_input::FocusId;
 use pm_protocol::library::{Item, Kind, Product, Scope, Source, ToolSet, locations};
-use pm_style::{
-    Role, flex, flex_1, flex_col, flex_none, gap, items_center, justify_between, min_w_px,
-    overflow_hidden, pl,
+use rustle::{CursorIcon, Modifier};
+
+use crate::kit::{
+    Flex, FocusId, IconName, Interactive, Radius, Role, Side, Styled, Type, column, label,
+    label_with, row,
 };
-use pm_ui::{Node, node};
 
 use crate::button::Variant;
 use crate::parts::{clipped, glyph, line};
@@ -432,11 +431,13 @@ fn openable(state: &WorkspaceState, item: &Item) -> bool {
         })
 }
 
-/// What the pages say they were read for: the project by name, and whether the app knows the agent's files.
-fn context(state: &WorkspaceState, room: f32) -> Node {
+/// Emits what the pages say they were read for: the project by name, and whether the app knows the agent's files.
+#[track_caller]
+fn context(state: &WorkspaceState, room: f32) {
     let library = &state.settings_page.library;
     let Some((project, _)) = library.of else {
-        return wrapped_note("Add an agent to see what it is given.", room);
+        wrapped_note("Add an agent to see what it is given.", room);
+        return;
     };
     let read_for = match project.and_then(|project| state.projects.get(project)) {
         Some(held) => held.name.clone(),
@@ -448,63 +449,67 @@ fn context(state: &WorkspaceState, room: f32) -> Node {
             format!("Read for {read_for}; the app does not know how to read this agent's files.")
         }
     };
-    node()
-        .styles([flex(), flex_col(), gap(2), flex_none()])
-        .child(wrapped_note(&said, room))
+    column(Modifier::new(), Flex::new().gap(2), || {
+        wrapped_note(&said, room)
+    });
 }
 
-/// What the page of `section`, one of the pages of what agents are given, holds under its title, `room` logical pixels across.
-pub(crate) fn body(state: &WorkspaceState, section: Section, page: Node, room: f32) -> Node {
-    let page = page
-        .child(paragraph(summary(section), room))
-        .child(context(state, room));
+/// Emits what the page of `section`, one of the pages of what agents are given, holds under its
+/// title, `room` logical pixels across: `page`, what the caller put first, then what the page is
+/// for, what it was read for and the rows of the page.
+#[track_caller]
+pub(crate) fn body(state: &WorkspaceState, section: Section, page: impl FnOnce(), room: f32) {
+    page();
+    paragraph(summary(section), room);
+    context(state, room);
     let library = &state.settings_page.library;
-    let page = page.children(
-        library
-            .error
-            .as_ref()
-            .map(|reason| wrapped_note(&format!("The server could not say: {reason}"), room)),
-    );
+    if let Some(reason) = library.error.as_ref() {
+        wrapped_note(&format!("The server could not say: {reason}"), room);
+    }
     match (section, kind_of(section)) {
-        (Section::Customizations, _) => page.children(
-            Kind::ALL
+        (Section::Customizations, _) => {
+            for part in Kind::ALL
                 .into_iter()
                 .map(section_of)
                 .chain(std::iter::once(Section::Tools))
-                .map(|part| {
-                    let count = state
-                        .library_count(part)
-                        .map_or_else(|| "Reading…".to_owned(), |count| format!("{count} found"));
-                    card(part, count)
-                }),
-        ),
-        (Section::Tools, _) => tools_page(state, page),
-        (_, Some(kind)) => items_page(state, kind, page, room),
-        _ => page,
+            {
+                let count = state
+                    .library_count(part)
+                    .map_or_else(|| "Reading…".to_owned(), |count| format!("{count} found"));
+                card(part, count);
+            }
+        }
+        (Section::Tools, _) => tools_page(state),
+        (_, Some(kind)) => items_page(state, kind, room),
+        _ => {}
     }
 }
 
-/// The page of one kind of customization: the search box, a note when the agent cannot leave this kind out, and the rows found, or where the files would go when none are.
-fn items_page(state: &WorkspaceState, kind: Kind, page: Node, room: f32) -> Node {
+/// Emits the page of one kind of customization: the search box, a note when the agent cannot leave this kind out, and the rows found, or where the files would go when none are.
+#[track_caller]
+fn items_page(state: &WorkspaceState, kind: Kind, room: f32) {
     let library = &state.settings_page.library;
     let product = library.product;
     let needle = state.settings_servers.search.text().trim().to_lowercase();
-    let mut page = page.child(search_box(state, section_of(kind)));
+    search_box(state, section_of(kind));
     if library.of.is_some() && !kind.switchable(product) {
         let name = product.map_or("This agent", Product::name);
-        page = page.child(wrapped_note(
-            &format!("{name} reads these itself and cannot be started without one, so they are shown but cannot be turned off here."),
+        wrapped_note(
+            &format!(
+                "{name} reads these itself and cannot be started without one, so they are shown but cannot be turned off here."
+            ),
             room,
-        ));
+        );
     }
     let Some(items) = library.items.as_ref() else {
-        return page.child(note(if library.of.is_some() {
+        note(if library.of.is_some() {
             "Reading…"
         } else {
             ""
-        }));
+        });
+        return;
     };
-    let rows: Vec<Node> = items
+    let rows: Vec<(usize, &Item)> = items
         .iter()
         .enumerate()
         .filter(|(_, item)| item.kind == kind)
@@ -514,21 +519,26 @@ fn items_page(state: &WorkspaceState, kind: Kind, page: Node, room: f32) -> Node
                 || item.description.to_lowercase().contains(&needle)
                 || item.command.to_lowercase().contains(&needle)
         })
-        .map(|(index, item)| item_row(state, index, item))
         .collect();
     let found = items.iter().filter(|item| item.kind == kind).count();
     if kind == Kind::Instruction {
-        page = page.child(crate::settings_drafts::prompt_node(state, room));
+        crate::settings_drafts::prompt_node(state, room);
     }
-    page = page.child(found_heading(state, kind, rows.len()));
+    found_heading(state, kind, rows.len());
     if let Some(form) = library.draft.as_ref().filter(|form| form.kind == kind) {
-        page = page.child(draft_node(form, room));
+        draft_node(form, room);
     }
     if !rows.is_empty() {
-        return page.child(boxed(rows));
+        boxed(|| {
+            for (index, item) in rows {
+                rustle::key(index, || item_row(state, index, item));
+            }
+        });
+        return;
     }
     if found > 0 {
-        return page.child(note("Nothing found matches."));
+        note("Nothing found matches.");
+        return;
     }
     let places = locations(kind);
     let said = match places.is_empty() {
@@ -538,19 +548,23 @@ fn items_page(state: &WorkspaceState, kind: Kind, page: Node, room: f32) -> Node
         ),
         false => format!("Nothing found. They would go in {}.", places.join(", ")),
     };
-    page.child(wrapped_note(&said, room))
+    wrapped_note(&said, room);
 }
 
-/// The heading over the customizations of `kind` found, with how many show, and the button for a new one when one can be written.
-fn found_heading(state: &WorkspaceState, kind: Kind, shown: usize) -> Node {
-    node()
-        .styles([flex(), items_center(), justify_between(), flex_none()])
-        .child(heading_only("Found", shown))
-        .children(draftable(kind).then(|| new_button(state, kind)))
+/// Emits the heading over the customizations of `kind` found, with how many show, and the button for a new one when one can be written.
+#[track_caller]
+fn found_heading(state: &WorkspaceState, kind: Kind, shown: usize) {
+    row(Modifier::new(), Flex::new().center().between(), || {
+        heading_only("Found", shown);
+        if draftable(kind) {
+            new_button(state, kind);
+        }
+    });
 }
 
-/// One customization as its row shows it: its name with its scope, what it is for, what it says about itself in the code font, its switch and the button that opens its file.
-fn item_row(state: &WorkspaceState, index: usize, item: &Item) -> Node {
+/// Emits one customization as its row shows it: its name with its scope, what it is for, what it says about itself in the code font, its switch and the button that opens its file.
+#[track_caller]
+fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
     let library = &state.settings_page.library;
     let on = item.enabled(&library.withheld);
     let detail = match item.kind {
@@ -583,67 +597,80 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) -> Node {
         Kind::Hook if !item.description.is_empty() => format!("Matches {}", item.description),
         _ => item.description.clone(),
     };
-    let mut badges = vec![Badge::new(item.scope.label()).tone(Role::Subtle).build()];
-    if !item.tool.is_empty() {
-        badges.push(Badge::new(&item.tool).tone(Role::Subtle).build());
-    }
-    if !on {
-        badges.push(Badge::new("Off").tone(Role::Subtle).build());
-    }
-    let text = node()
-        .styles([
-            flex(),
-            flex_col(),
-            gap(1),
-            flex_1(),
-            min_w_px(0),
-            overflow_hidden(),
-        ])
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(2)])
-                .child(
-                    line(
+    let name_tone = if on { Role::Text } else { Role::Muted };
+    flat_row(|| {
+        column(
+            Modifier::new().grow().clip_to(Radius::None),
+            Flex::new().gap(1),
+            || {
+                row(Modifier::new(), Flex::new().center().gap(2), || {
+                    label(
                         item.name.clone(),
-                        13,
-                        1.4,
-                        if on { Role::Text } else { Role::Muted },
-                    )
-                    .styles([pm_style::font_medium()]),
-                )
-                .children(badges),
-        )
-        .children((!description.is_empty()).then(|| clipped(description, 12, Role::Muted)))
-        .child(clipped(detail, 11, Role::Subtle).styles([pm_style::font_mono()]));
-    let actions = node()
-        .styles([flex(), items_center(), gap(2), flex_none()])
-        .children(
-            item.kind
-                .switchable(library.product)
-                .then(|| switch(on, ITEM_SWITCHES.id(index))),
-        )
-        .children(ITEM_OPENS.id(index).map(|open| {
-            Button::new("Open", open)
-                .variant(Variant::Outline)
-                .size(Size::Sm)
-                .disabled(!openable(state, item))
-                .build()
-        }));
-    flat_row().child(text).child(actions)
+                        Type::new(13).ratio(1.4).tone(name_tone).truncate().medium(),
+                    );
+                    Badge::new(item.scope.label()).tone(Role::Subtle).build();
+                    if !item.tool.is_empty() {
+                        Badge::new(&item.tool).tone(Role::Subtle).build();
+                    }
+                    if !on {
+                        Badge::new("Off").tone(Role::Subtle).build();
+                    }
+                });
+                if !description.is_empty() {
+                    clipped(description, 12, Role::Muted);
+                }
+                label_with(
+                    Modifier::new().fill_max_width(),
+                    detail,
+                    Type::new(11)
+                        .ratio(1.4)
+                        .tone(Role::Subtle)
+                        .truncate()
+                        .mono(),
+                );
+            },
+        );
+        row(Modifier::new(), Flex::new().center().gap(2), || {
+            if item.kind.switchable(library.product) {
+                switch(on, ITEM_SWITCHES.id(index));
+            }
+            if let Some(open) = ITEM_OPENS.id(index) {
+                Button::new("Open", open)
+                    .variant(Variant::Outline)
+                    .size(Size::Sm)
+                    .disabled(!openable(state, item))
+                    .build();
+            }
+        });
+    });
 }
 
-/// The page of tools: the search box, and each set with how many of its tools are on and its switch, its tools under it when it is unfolded or searched.
-fn tools_page(state: &WorkspaceState, page: Node) -> Node {
+/// One set of tools the tools page shows: where it is in the list, whether it is unfolded, and its tools that match the search with their place among every tool.
+struct ShownSet<'a> {
+    /// The set.
+    set: &'a ToolSet,
+    /// Where it is among the sets.
+    place: usize,
+    /// Whether its tools show under it.
+    open: bool,
+    /// Its tools that match the search, each with its place among the tools of every set.
+    matching: Vec<(usize, &'a pm_protocol::library::ToolEntry)>,
+}
+
+/// Emits the page of tools: the search box, and each set with how many of its tools are on and its switch, its tools under it when it is unfolded or searched.
+#[track_caller]
+fn tools_page(state: &WorkspaceState) {
     let library = &state.settings_page.library;
     let product = library.product;
     let needle = state.settings_servers.search.text().trim().to_lowercase();
-    let page = page.child(search_box(state, Section::Tools));
+    search_box(state, Section::Tools);
     let Some(sets) = library.sets.as_ref() else {
-        return page.child(note(if library.of.is_some() {
+        note(if library.of.is_some() {
             "Listing the tools of each server…"
         } else {
             ""
-        }));
+        });
+        return;
     };
     let mut first = 0;
     let mut shown = Vec::new();
@@ -660,43 +687,52 @@ fn tools_page(state: &WorkspaceState, page: Node) -> Node {
                     || tool.name.to_lowercase().contains(&needle)
                     || tool.description.to_lowercase().contains(&needle)
             })
+            .map(|(index, tool)| (start + index, tool))
             .collect();
         if !named && matching.is_empty() {
             continue;
         }
         let open = !needle.is_empty() || library.open_sets.contains(&set.id);
-        let mut rows = vec![set_row(set, place, open, product, &library.withheld)];
-        if open {
-            rows.extend(matching.into_iter().map(|(index, tool)| {
-                tool_row(
-                    set,
-                    tool,
-                    TOOL_SWITCHES.id(start + index),
-                    product,
-                    &library.withheld,
-                )
-            }));
-        }
-        shown.push(boxed(rows));
+        shown.push(ShownSet {
+            set,
+            place,
+            open,
+            matching,
+        });
     }
     if shown.is_empty() {
-        return page.child(note(if sets.is_empty() {
+        note(if sets.is_empty() {
             "The agent has no tools the app knows of, and no tool server is switched on."
         } else {
             "Nothing found matches."
-        }));
+        });
+        return;
     }
-    page.children(shown)
+    for held in &shown {
+        rustle::key(held.place, || {
+            boxed(|| {
+                set_row(held.set, held.place, held.open, product, &library.withheld);
+                if held.open {
+                    for &(index, tool) in &held.matching {
+                        rustle::key(index, || {
+                            tool_row(
+                                held.set,
+                                tool,
+                                TOOL_SWITCHES.id(index),
+                                product,
+                                &library.withheld,
+                            );
+                        });
+                    }
+                }
+            });
+        });
+    }
 }
 
-/// The heading row of a set of tools: the chevron that folds it, its name and where it comes from, how many of its tools are on, and its switch.
-fn set_row(
-    set: &ToolSet,
-    place: usize,
-    open: bool,
-    product: Option<Product>,
-    withheld: &[String],
-) -> Node {
+/// Emits the heading row of a set of tools: the chevron that folds it, its name and where it comes from, how many of its tools are on, and its switch.
+#[track_caller]
+fn set_row(set: &ToolSet, place: usize, open: bool, product: Option<Product>, withheld: &[String]) {
     let on = set.enabled(withheld);
     let count = match &set.error {
         Some(_) => "?".to_owned(),
@@ -714,91 +750,72 @@ fn set_row(
         ),
         None => source_label(set),
     };
-    let heading = node().styles([
-        flex(),
-        items_center(),
-        gap(2),
-        flex_1(),
-        min_w_px(0),
-        overflow_hidden(),
-    ]);
+    let heading = Modifier::new().grow().clip_to(Radius::None);
     let heading = match SET_FOLDS.id(place) {
-        Some(fold) => heading.styles([pm_style::cursor_pointer()]).focusable(fold),
+        Some(fold) => heading.cursor(CursorIcon::Pointer).target(fold),
         None => heading,
     };
-    flat_row()
-        .child(
-            heading.child(glyph(chevron, 4.0, Role::Muted)).child(
-                node()
-                    .styles([
-                        flex(),
-                        flex_col(),
-                        gap(1),
-                        flex_1(),
-                        min_w_px(0),
-                        overflow_hidden(),
-                    ])
-                    .child(
-                        node()
-                            .styles([flex(), items_center(), gap(2)])
-                            .child(
-                                line(
-                                    set.name.clone(),
-                                    13,
-                                    1.4,
-                                    if on { Role::Text } else { Role::Muted },
-                                )
-                                .styles([pm_style::font_medium()]),
-                            )
-                            .child(Badge::new(count).build()),
-                    )
-                    .child(clipped(about, 12, Role::Muted)),
-            ),
-        )
-        .children(
-            set.switchable(product)
-                .then(|| switch(on, SET_SWITCHES.id(place))),
-        )
+    let name_tone = if on { Role::Text } else { Role::Muted };
+    flat_row(|| {
+        row(heading, Flex::new().center().gap(2), || {
+            glyph(chevron, 4.0, Role::Muted);
+            column(
+                Modifier::new().grow().clip_to(Radius::None),
+                Flex::new().gap(1),
+                || {
+                    row(Modifier::new(), Flex::new().center().gap(2), || {
+                        label(
+                            set.name.clone(),
+                            Type::new(13).ratio(1.4).tone(name_tone).truncate().medium(),
+                        );
+                        Badge::new(count).build();
+                    });
+                    clipped(about, 12, Role::Muted);
+                },
+            );
+        });
+        if set.switchable(product) {
+            switch(on, SET_SWITCHES.id(place));
+        }
+    });
 }
 
-/// One tool of a set, set in under the set's heading: its name, what it does and, where the agent can be started without it alone, its switch answering to `id`.
+/// Emits one tool of a set, set in under the set's heading: its name, what it does and, where the agent can be started without it alone, its switch answering to `id`.
+#[track_caller]
 fn tool_row(
     set: &ToolSet,
     tool: &pm_protocol::library::ToolEntry,
     id: Option<FocusId>,
     product: Option<Product>,
     withheld: &[String],
-) -> Node {
+) {
     let on = set.tool_enabled(&tool.name, withheld);
-    flat_row()
-        .styles([pl(10)])
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    flex_col(),
-                    gap(1),
-                    flex_1(),
-                    min_w_px(0),
-                    overflow_hidden(),
-                ])
-                .child(
-                    line(
+    let name_tone = if on { Role::Text } else { Role::Muted };
+    row(
+        Modifier::new()
+            .pad_side(Side::Left, 10)
+            .pad_side(Side::Right, 3)
+            .pad_y(3),
+        Flex::new().center().between().gap(3),
+        || {
+            column(
+                Modifier::new().grow().clip_to(Radius::None),
+                Flex::new().gap(1),
+                || {
+                    label(
                         tool.name.clone(),
-                        12,
-                        1.4,
-                        if on { Role::Text } else { Role::Muted },
-                    )
-                    .styles([pm_style::font_mono()]),
-                )
-                .children(
-                    tool.description
-                        .lines()
-                        .next()
-                        .map(|first| clipped(first.to_owned(), 12, Role::Muted)),
-                ),
-        )
-        .children(set.per_tool(product).then(|| switch(on, id)))
+                        Type::new(12).ratio(1.4).tone(name_tone).truncate().mono(),
+                    );
+                    if let Some(first) = tool.description.lines().next() {
+                        clipped(first.to_owned(), 12, Role::Muted);
+                    }
+                },
+            );
+            if set.per_tool(product) {
+                switch(on, id);
+            }
+        },
+    );
 }
 
 #[cfg(test)]

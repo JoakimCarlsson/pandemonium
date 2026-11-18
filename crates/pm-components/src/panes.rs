@@ -1,6 +1,6 @@
 //! The panes of the main area: tab groups laid side by side or one above the other, each tab dragged to another group or to the edge of one to split it.
 
-use pm_input::FocusId;
+use crate::kit::FocusId;
 use serde::{Deserialize, Serialize};
 
 use crate::open_files::FILE_TAB_BASE;

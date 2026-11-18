@@ -1,15 +1,12 @@
 //! A project's overview: its sessions grouped by where they stand, and how its own repository is.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Role, bg, border_b, border_color, cursor_pointer, flex, flex_1, flex_col, flex_none,
-    font_medium, font_mono, gap, h, items_center, max_w_px, min_h, min_w_px, mx_auto,
-    overflow_hidden, pb, pt, px, text_px, w_full, w_px,
-};
-use pm_ui::{Node, node};
+use rustle::{CursorIcon, Modifier};
 
 use crate::extensions::group;
+use crate::kit::{
+    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled,
+    Tooltip, Type, column, label, label_with, row, scroll_area,
+};
 use crate::parts::{clipped, glyph, line, spacer};
 use crate::sample::{Session, Status};
 use crate::sidebar::status_icon;
@@ -53,66 +50,74 @@ impl WorkspaceState {
     }
 }
 
-/// The overview of the project at `project`.
-pub fn overview(state: &WorkspaceState, project: usize) -> Node {
-    let mut column = node().styles([
-        flex(),
-        flex_col(),
-        gap(6),
-        w_full(),
-        max_w_px(PAGE_WIDTH),
-        mx_auto(),
-        px(5),
-        pt(5),
-        pb(8),
-        flex_none(),
-    ]);
-    column = column.children(sessions(state, project));
-    column = column.children(repository(state));
-    column = column.children(commits(state));
-    node()
-        .styles([flex(), flex_col(), flex_1(), min_w_px(0), min_h(0)])
-        .child(heading(state, project))
-        .child(
-            node()
-                .styles([flex(), flex_col(), flex_1(), min_h(0), overflow_hidden()])
-                .scroll_from_start(OVERVIEW_SCROLL, state.overview_scroll)
-                .child(column),
-        )
+/// Emits the overview of the project at `project`.
+#[track_caller]
+pub fn overview(state: &WorkspaceState, project: usize) {
+    column(Modifier::new().grow(), Flex::new(), || {
+        heading(state, project);
+        scroll_area(
+            Modifier::new().grow(),
+            Scroll::from_start(OVERVIEW_SCROLL, state.overview_scroll),
+            || {
+                column(
+                    Modifier::new().fill_max_width(),
+                    Flex::new().center(),
+                    || {
+                        column(
+                            Modifier::new()
+                                .fill_max_width()
+                                .max_w_px(PAGE_WIDTH)
+                                .pad_x(5)
+                                .pad_side(Side::Top, 5)
+                                .pad_side(Side::Bottom, 8),
+                            Flex::new().gap(6),
+                            || {
+                                sessions(state, project);
+                                repository(state);
+                                commits(state);
+                            },
+                        );
+                    },
+                );
+            },
+        );
+    });
 }
 
-/// The bar across the top: the project, where it lives, and the button that starts a session in it.
-fn heading(state: &WorkspaceState, project: usize) -> Node {
-    let mut bar = node().styles([
-        flex(),
-        items_center(),
-        gap(3),
-        h(12),
-        px(5),
-        flex_none(),
-        border_b(),
-        border_color(Role::Border),
-    ]);
-    if let Some(held) = state.projects.get(project) {
-        bar = bar
-            .child(Avatar::of(held).build())
-            .child(line(&held.name, 14, 1.4, Role::Text).styles([
-                font_medium(),
-                text_px(14),
-                flex_none(),
-            ]))
-            .child(clipped(&held.path, 12, Role::Subtle));
-    }
-    bar.child(spacer()).child(
-        Button::new("New session", FocusId(NEW_IN_BASE + project as u64))
-            .with_icon(IconName::Plus)
-            .size(Size::Sm)
-            .build(),
-    )
+/// Emits the bar across the top: the project, where it lives, and the button that starts a session in it.
+#[track_caller]
+fn heading(state: &WorkspaceState, project: usize) {
+    row(
+        Modifier::new()
+            .h(12)
+            .stroke_side(Side::Bottom, 1.0, Role::Border)
+            .pad_x(5),
+        Flex::new().center().gap(3),
+        || {
+            if let Some(held) = state.projects.get(project) {
+                Avatar::of(held).build();
+                label(
+                    &held.name,
+                    Type::new(14)
+                        .ratio(1.4)
+                        .tone(Role::Text)
+                        .truncate()
+                        .medium(),
+                );
+                clipped(&held.path, 12, Role::Subtle);
+            }
+            spacer();
+            Button::new("New session", FocusId(NEW_IN_BASE + project as u64))
+                .with_icon(IconName::Plus)
+                .size(Size::Sm)
+                .build();
+        },
+    );
 }
 
-/// The project's open sessions, a group for each way they stand, or a line saying there are none.
-fn sessions(state: &WorkspaceState, project: usize) -> Vec<Node> {
+/// Emits the project's open sessions, a group for each way they stand, or a line saying there are none.
+#[track_caller]
+fn sessions(state: &WorkspaceState, project: usize) {
     let mut members: Vec<usize> = (0..state.sessions.len())
         .filter(|&index| {
             let session = &state.sessions[index];
@@ -121,87 +126,105 @@ fn sessions(state: &WorkspaceState, project: usize) -> Vec<Node> {
         .collect();
     members.sort_by_key(|&index| std::cmp::Reverse(state.sessions[index].updated_at));
     if members.is_empty() {
-        return vec![line("No sessions yet.", 13, 1.4, Role::Subtle)];
+        line("No sessions yet.", 13, 1.4, Role::Subtle);
+        return;
     }
-    GROUPS
-        .into_iter()
-        .filter_map(|(status, title)| {
-            group(
-                title,
-                members
-                    .iter()
-                    .filter(|&&index| state.sessions[index].shown() == status)
-                    .map(|&index| session_row(state, index))
-                    .collect(),
-            )
-        })
-        .collect()
+    for (status, title) in GROUPS {
+        group(title, || {
+            for &index in members
+                .iter()
+                .filter(|&&index| state.sessions[index].shown() == status)
+            {
+                session_row(state, index);
+            }
+        });
+    }
 }
 
-/// The row of the session at `index`: where it stands, its title, its agent's mark, what it changed, its branch and when it last changed.
-fn session_row(state: &WorkspaceState, index: usize) -> Node {
+/// Emits the row of the session at `index`: where it stands, its title, its agent's mark, what it changed, its branch and when it last changed.
+#[track_caller]
+fn session_row(state: &WorkspaceState, index: usize) {
     let session: &Session = &state.sessions[index];
     let agent = state.agent_look(session.agent);
-    let mut row = row()
-        .styles([cursor_pointer(), bg(Role::SurfaceHover).hover()])
-        .child(status_icon(session.shown()))
-        .child(clipped(&session.title, 14, Role::Text))
-        .child(
-            node()
-                .styles([flex(), flex_none()])
-                .child(glyph(agent.icon, 3.5, Role::Muted))
-                .tooltip(agent.name),
+    let id = FocusId(SESSION_BASE + index as u64);
+    let own = Modifier::new()
+        .looks_of(Looks::new().hover(Role::SurfaceHover), id)
+        .cursor(CursorIcon::Pointer)
+        .target(id);
+    card_row(own, || {
+        status_icon(session.shown());
+        clipped(&session.title, 14, Role::Text);
+        row(Modifier::new().tooltip(agent.name), Flex::new(), || {
+            glyph(agent.icon, 3.5, Role::Muted);
+        });
+        if !session.changes.is_empty() {
+            tally(session);
+        }
+        row(
+            Modifier::new().width(BRANCH_WIDTH).clip_to(Radius::None),
+            Flex::new(),
+            || {
+                label_with(
+                    Modifier::new().grow(),
+                    &session.branch,
+                    Type::new(12).ratio(1.4).tone(Role::Muted).truncate().mono(),
+                );
+            },
         );
-    if !session.changes.is_empty() {
-        row = row.child(tally(session));
-    }
-    row.child(
-        node()
-            .styles([flex(), flex_none(), w_px(BRANCH_WIDTH), overflow_hidden()])
-            .child(clipped(&session.branch, 12, Role::Muted).styles([font_mono()])),
-    )
-    .child(
-        node()
-            .styles([
-                flex(),
-                flex_none(),
-                w_px(AGE_WIDTH),
-                pm_style::justify_end(),
-            ])
-            .child(line(session.age(), 13, 1.4, Role::Subtle)),
-    )
-    .focusable(FocusId(SESSION_BASE + index as u64))
+        row(
+            Modifier::new().width(AGE_WIDTH),
+            Flex::new().trailing(),
+            || line(session.age(), 13, 1.4, Role::Subtle),
+        );
+    });
 }
 
-/// The lines `session` adds and takes away, in their colours.
-fn tally(session: &Session) -> Node {
-    node()
-        .styles([flex(), items_center(), gap(1.5), flex_none()])
-        .child(line(format!("+{}", session.added()), 12, 1.4, Role::Success).styles([font_mono()]))
-        .child(line(format!("−{}", session.removed()), 12, 1.4, Role::Danger).styles([font_mono()]))
+/// Emits the lines `session` adds and takes away, in their colours.
+#[track_caller]
+fn tally(session: &Session) {
+    row(Modifier::new(), Flex::new().center().gap(1.5), || {
+        label(
+            format!("+{}", session.added()),
+            Type::new(12)
+                .ratio(1.4)
+                .tone(Role::Success)
+                .truncate()
+                .mono(),
+        );
+        label(
+            format!("−{}", session.removed()),
+            Type::new(12)
+                .ratio(1.4)
+                .tone(Role::Danger)
+                .truncate()
+                .mono(),
+        );
+    });
 }
 
-/// The project's own folder: the branch it is on and how far it is from what it follows, and what is not committed.
-fn repository(state: &WorkspaceState) -> Option<Node> {
-    let home = state.review_session()?;
+/// Emits the project's own folder: the branch it is on and how far it is from what it follows, and what is not committed.
+#[track_caller]
+fn repository(state: &WorkspaceState) {
+    let Some(home) = state.review_session() else {
+        return;
+    };
     if home.branch.is_empty() {
-        return group(
-            "Repository",
-            vec![
-                row()
-                    .child(glyph(IconName::Folder, 4.0, Role::Muted))
-                    .child(line(
-                        if home.unknown {
-                            "Reading the folder…"
-                        } else {
-                            "Not a Git repository"
-                        },
-                        13,
-                        1.4,
-                        Role::Muted,
-                    )),
-            ],
-        );
+        group("Repository", || {
+            card_row(Modifier::new(), || {
+                glyph(IconName::Folder, 4.0, Role::Muted);
+                line(
+                    if home.unknown {
+                        "Reading the folder…"
+                    } else {
+                        "Not a Git repository"
+                    },
+                    13,
+                    1.4,
+                    Role::Muted,
+                );
+            });
+        });
+        return;
     }
     let tracking = &home.tracking;
     let standing = match &tracking.upstream {
@@ -214,58 +237,71 @@ fn repository(state: &WorkspaceState) -> Option<Node> {
             tracking.ahead, tracking.behind
         ),
     };
-    let branch = row()
-        .child(glyph(IconName::GitFork, 4.0, Role::Muted))
-        .child(clipped(&home.branch, 13, Role::Text).styles([font_mono()]))
-        .child(line(standing, 13, 1.4, Role::Muted).styles([flex_none()]));
-    let mut changes = row().child(glyph(IconName::GitCompare, 4.0, Role::Muted));
-    changes = match home.changes.len() {
-        0 => changes.child(clipped("No uncommitted changes", 13, Role::Muted)),
-        count => changes
-            .child(clipped(
-                format!(
-                    "{count} uncommitted {}",
-                    if count == 1 { "file" } else { "files" }
-                ),
-                13,
-                Role::Text,
-            ))
-            .child(tally(home)),
-    };
-    group("Repository", vec![branch, changes])
+    group("Repository", || {
+        card_row(Modifier::new(), || {
+            glyph(IconName::GitFork, 4.0, Role::Muted);
+            label_with(
+                Modifier::new().grow(),
+                &home.branch,
+                Type::new(13).ratio(1.4).tone(Role::Text).truncate().mono(),
+            );
+            line(standing, 13, 1.4, Role::Muted);
+        });
+        card_row(Modifier::new(), || {
+            glyph(IconName::GitCompare, 4.0, Role::Muted);
+            match home.changes.len() {
+                0 => clipped("No uncommitted changes", 13, Role::Muted),
+                count => {
+                    clipped(
+                        format!(
+                            "{count} uncommitted {}",
+                            if count == 1 { "file" } else { "files" }
+                        ),
+                        13,
+                        Role::Text,
+                    );
+                    tally(home);
+                }
+            }
+        });
+    });
 }
 
-/// The latest commits of the project's own repository, once the server has listed them.
-fn commits(state: &WorkspaceState) -> Option<Node> {
-    state
+/// Emits the latest commits of the project's own repository, once the server has listed them.
+#[track_caller]
+fn commits(state: &WorkspaceState) {
+    if state
         .review_session()
-        .filter(|home| !home.branch.is_empty())?;
-    group(
-        "Recent commits",
-        state
-            .git
-            .history
-            .iter()
-            .take(COMMITS_SHOWN)
-            .map(|commit| {
-                row()
-                    .child(glyph(IconName::GitCommit, 4.0, Role::Subtle))
-                    .child(
-                        line(
-                            commit.id.chars().take(SHORT_ID).collect::<String>(),
-                            12,
-                            1.4,
-                            Role::Subtle,
-                        )
-                        .styles([font_mono(), flex_none()]),
-                    )
-                    .child(clipped(&commit.summary, 13, Role::Text))
-            })
-            .collect(),
-    )
+        .filter(|home| !home.branch.is_empty())
+        .is_none()
+    {
+        return;
+    }
+    group("Recent commits", || {
+        for commit in state.git.history.iter().take(COMMITS_SHOWN) {
+            card_row(Modifier::new(), || {
+                glyph(IconName::GitCommit, 4.0, Role::Subtle);
+                label(
+                    commit.id.chars().take(SHORT_ID).collect::<String>(),
+                    Type::new(12)
+                        .ratio(1.4)
+                        .tone(Role::Subtle)
+                        .truncate()
+                        .mono(),
+                );
+                clipped(&commit.summary, 13, Role::Text);
+            });
+        }
+    });
 }
 
-/// A row of one of the overview's cards, its contents in a line.
-fn row() -> Node {
-    node().styles([flex(), items_center(), gap(3), h(11), px(4)])
+/// Emits a row of one of the overview's cards, its contents in a line, with `modifier` around its
+/// box before its padding, holding what `content` emits.
+#[track_caller]
+fn card_row(modifier: Modifier, content: impl FnOnce()) {
+    row(
+        Modifier::new().h(11).chain(modifier).pad_x(4),
+        Flex::new().center().gap(3),
+        content,
+    );
 }

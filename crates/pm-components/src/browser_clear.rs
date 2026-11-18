@@ -1,7 +1,5 @@
 //! Clearing the cookies and site storage of the browser: the question put to the reader first, and what answering it does.
 
-use pm_ui::Node;
-
 use crate::browser::{
     BROWSER_CLEAR_CANCEL, BROWSER_CLEAR_CONFIRM, BROWSER_CLEAR_INSIDE, BROWSER_CLEAR_OUTSIDE,
     Command,
@@ -48,17 +46,18 @@ impl WorkspaceState {
     }
 }
 
-/// The question about clearing the cookies and site storage, while it is open.
-pub fn clear_question(state: &WorkspaceState) -> Option<Node> {
-    state.browser_clearing().then(|| {
+/// Emits the question about clearing the cookies and site storage, while it is open; nothing otherwise.
+#[track_caller]
+pub fn clear_question(state: &WorkspaceState) {
+    if state.browser_clearing() {
         question_of(
             IDS,
             "Clear cookies and site data?".to_owned(),
             "This signs you out of every site in the browser and removes what sites stored: cookies, local storage, IndexedDB and cached files. The page loads again afterwards.",
             "Clear",
             Variant::Destructive,
-        )
-    })
+        );
+    }
 }
 
 #[cfg(test)]

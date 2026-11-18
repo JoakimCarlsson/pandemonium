@@ -1,9 +1,9 @@
 //! The workspace screen and the actions and auxiliary windows it exposes.
 
+use pm_components::kit::FocusId;
+use pm_components::kit::report::Scroller;
+use pm_field::{Edit, Field};
 use pm_harness::Event;
-use pm_input::FocusId;
-use pm_text::{Edit, Field, Shaper};
-use pm_ui::Node;
 
 use crate::workspace::{Outgoing, WorkspaceState, workspace};
 use pm_components::context_menu::{ContextMenu, field_menu};
@@ -512,12 +512,12 @@ impl Screen {
     }
 
     /// The width the diff was drawn at among `scrollers`, in logical pixels, when it differs from the width the screen last took it to be.
-    pub fn diff_resized(&self, scrollers: &[pm_ui::Scroller]) -> Option<f32> {
+    pub fn diff_resized(&self, scrollers: &[Scroller]) -> Option<f32> {
         let Self::Workspace(state) = self;
         scrollers
             .iter()
             .find(|scroller| scroller.id == pm_components::state::DIFF_SCROLL)
-            .map(|scroller| scroller.rect.width)
+            .map(|scroller| scroller.rect.size.width)
             .filter(|width| (width - state.diff_width).abs() > 0.5)
     }
 
@@ -746,7 +746,7 @@ impl Screen {
         session: usize,
         path: &str,
         head: bool,
-        read: Result<pm_ui::Picture, String>,
+        read: Result<pm_components::kit::Picture, String>,
     ) -> Self {
         match self {
             Self::Workspace(state) => {
@@ -761,7 +761,7 @@ impl Screen {
         session: usize,
         path: &str,
         head: bool,
-        drawn: Result<pm_ui::Picture, String>,
+        drawn: Result<pm_components::kit::Picture, String>,
     ) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_drawn(session, path, head, drawn)),
@@ -1092,7 +1092,7 @@ impl Screen {
     }
 
     /// The screen knowing what the picture at `path` looks like, while the workspace is showing.
-    pub fn with_preview(self, path: &str, picture: pm_ui::Picture) -> Self {
+    pub fn with_preview(self, path: &str, picture: pm_components::kit::Picture) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_preview(path, picture)),
         }
@@ -1424,7 +1424,7 @@ impl Screen {
     /// What `reach` takes around the cell at `at`, a line counted from the oldest kept and a column, of the shell showing, as its first and last cell.
     pub fn terminal_reach(
         &self,
-        reach: pm_text::Reach,
+        reach: pm_field::Reach,
         at: (usize, usize),
     ) -> Option<pm_terminal::Span> {
         match self {
@@ -1472,34 +1472,48 @@ impl Screen {
     }
 }
 
-/// The whole screen for `state` in a window `width` by `height` logical pixels.
-pub fn screen(state: &Screen, width: f32, height: f32, shaper: &mut Shaper) -> Node {
+/// Emits the whole screen for `state` in a window `width` by `height` logical pixels: the root content of the main window, in its frame.
+#[track_caller]
+pub fn screen(state: &Screen, width: f32, height: f32) {
     match state {
-        Screen::Workspace(state) => shadowed(workspace(state, width, height, shaper)),
+        Screen::Workspace(state) => shadowed(|| workspace(state, width, height)),
     }
 }
 
-/// What the folder picker's window shows for `state` while the picker is open.
-pub fn picker_screen(state: &Screen) -> Option<Node> {
-    let picker = state.folder_picker()?;
-    Some(
-        Window::new()
-            .body(picker.view())
-            .over(
-                state
-                    .menu()
-                    .filter(|menu| menu.field == pm_components::folder_picker::PICKER_FIELD)
-                    .and_then(|menu| Some(field_menu(state.field(menu.field)?, menu))),
-            )
-            .build(),
-    )
+/// Emits what the folder picker's window, `width` by `height` logical pixels, shows for `state` while the picker is open: the root content of that window; emits nothing while the picker is closed. The picker fills the window whatever its size, so the size is taken only to match the other roots.
+#[track_caller]
+pub fn picker_screen(state: &Screen, width: f32, height: f32) {
+    let _ = (width, height);
+    let Some(picker) = state.folder_picker() else {
+        return;
+    };
+    Window::new()
+        .body(move || picker.view())
+        .over(move || {
+            if let Some(menu) = state
+                .menu()
+                .filter(|menu| menu.field == pm_components::folder_picker::PICKER_FIELD)
+                && let Some(field) = state.field(menu.field)
+            {
+                field_menu(field, menu);
+            }
+        })
+        .build();
 }
 
-/// What the settings window, `width` logical pixels across, shows for `state` while settings are open, with `shaper` measuring the text of its boxes of several lines.
-pub fn settings_screen(state: &Screen, width: f32, shaper: &mut Shaper) -> Option<Node> {
+/// Emits what the settings window, `width` by `height` logical pixels, shows for `state` while settings are open: the root content of that window; emits nothing while settings are closed. The page fills the window's height, so only `width` shapes it.
+#[track_caller]
+pub fn settings_screen(state: &Screen, width: f32, height: f32) {
+    let _ = height;
     match state {
-        Screen::Workspace(state) => crate::workspace::settings_window(state, width, shaper),
+        Screen::Workspace(state) => crate::workspace::settings_window(state, width),
     }
+}
+
+/// Emits the settings window's root content, as [`settings_screen`] does; the name the host calls it by.
+#[track_caller]
+pub fn settings_window(state: &Screen, width: f32, height: f32) {
+    settings_screen(state, width, height);
 }
 
 /// First launch and restored workspaces share the same entry point.

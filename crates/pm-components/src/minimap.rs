@@ -1,14 +1,12 @@
 //! The minimap: a map of the whole file drawn small beside it, each line a row of coloured blocks where the text is, with the stretch the view shows marked; pressing or dragging on it scrolls the file.
 
-use pm_input::FocusId;
-use pm_style::{
-    Color, Length, Role, Sides, absolute, bg, border_color, border_l, code_px, cursor_pointer,
-    flex, flex_col, flex_none, font_mono, h_px, inset_length, leading_ratio, overflow_hidden,
-    relative, text_color, w_px,
-};
 use pm_treesitter::Kind;
-use pm_ui::{Mark, Node, Paint, node, text};
+use rustle::{CursorIcon, Modifier};
 
+use crate::kit::{
+    CaretLook, Flex, FocusId, Interactive, Mark, Paint, Radius, Role, Side, Styled, Tone, Type,
+    column, gap_box, layer, marked_line,
+};
 use crate::state::WorkspaceState;
 use crate::viewer::kind_role;
 use pm_editor::Document;
@@ -131,33 +129,28 @@ fn blocks(text: &str, spans: &[(std::ops::Range<usize>, Kind)], tab: usize) -> (
             .iter()
             .position(|held| *held != Some(role))
             .map_or(roles.len(), |gap| start + gap);
-        marks.push(Mark {
-            range: start..end,
-            color: Color::Role(role, INK),
-            paint: Paint::Fill,
-        });
+        marks.push(Mark::new(start..end, Tone::Role(role, INK), Paint::Fill));
         start = end;
     }
     (roles.len(), marks)
 }
 
-/// The line at `index` of `document` as a row of the minimap.
-fn row_of(document: &Document, index: usize, spans: &[(std::ops::Range<usize>, Kind)]) -> Node {
+/// Emits the line at `index` of `document` as a row of the minimap.
+#[track_caller]
+fn row_of(document: &Document, index: usize, spans: &[(std::ops::Range<usize>, Kind)]) {
     let line = document.line(index);
     let (width, marks) = blocks(&document.field.text()[line], spans, document.editing.indent);
-    text(" ".repeat(width))
-        .styles([
-            code_px(FONT),
-            leading_ratio(ROW / FONT),
-            font_mono(),
-            text_color(Color::Transparent),
-            flex_none(),
-            h_px(ROW),
-        ])
-        .marks(marks)
+    marked_line(
+        Modifier::new().height(ROW),
+        &" ".repeat(width),
+        Type::code(FONT).ratio(ROW / FONT).tone(Tone::Transparent),
+        marks,
+        CaretLook::default(),
+    );
 }
 
-/// The minimap of `document`, scrolled `scroll` logical pixels in a view `view` tall whose rows are `row` tall and hold `columns` characters when lines wrap, drawn `height` logical pixels tall.
+/// Emits the minimap of `document`, scrolled `scroll` logical pixels in a view `view` tall whose rows are `row` tall and hold `columns` characters when lines wrap, drawn `height` logical pixels tall.
+#[track_caller]
 pub(crate) fn minimap(
     document: &Document,
     scroll: f32,
@@ -165,7 +158,7 @@ pub(crate) fn minimap(
     row: f32,
     columns: Option<usize>,
     height: f32,
-) -> Node {
+) {
     let geometry = Geometry::of(document, scroll, view, row, columns, height);
     let first = (geometry.offset / ROW).floor() as usize;
     let count = (height / ROW).ceil() as usize + 1;
@@ -176,40 +169,31 @@ pub(crate) fn minimap(
         .map_or((0, 0), |(low, high)| (*low, high + 1));
     let spans = document.minimap_highlights(low..high);
     let (top, size) = geometry.slider(scroll, row, height);
-    let lines = shown
-        .iter()
-        .map(|index| row_of(document, *index, &spans[index - low]));
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_none(),
-            relative(),
-            overflow_hidden(),
-            w_px(WIDTH),
-            border_l(),
-            border_color(Role::Border),
-            cursor_pointer(),
-        ])
-        .focusable(MINIMAP)
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    flex_col(),
-                    flex_none(),
-                    absolute(),
-                    inset_length(Sides::Top, Length::Px(first as f32 * ROW - geometry.offset)),
-                ])
-                .children(lines),
-        )
-        .child(node().styles([
-            absolute(),
-            inset_length(Sides::Top, Length::Px(top)),
-            w_px(WIDTH),
-            h_px(size),
-            bg(Color::Role(Role::Muted, 0.2)),
-        ]))
+    let own = Modifier::new()
+        .width(WIDTH)
+        .stroke_side(Side::Left, 1.0, Role::Border)
+        .clip_to(Radius::None)
+        .cursor(CursorIcon::Pointer)
+        .target(MINIMAP)
+        .draggable_id(MINIMAP);
+    layer(own, || {
+        column(
+            Modifier::new().at(0.0, first as f32 * ROW - geometry.offset),
+            Flex::new(),
+            || {
+                for index in &shown {
+                    row_of(document, *index, &spans[index - low]);
+                }
+            },
+        );
+        gap_box(
+            Modifier::new()
+                .at(0.0, top)
+                .width(WIDTH)
+                .height(size)
+                .fill(Tone::Role(Role::Muted, 0.2)),
+        );
+    });
 }
 
 impl WorkspaceState {

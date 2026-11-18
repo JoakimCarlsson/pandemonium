@@ -1,12 +1,9 @@
 //! The rings in the prompt box that show how full the conversation's context is and how much of the account's allowance is used, and the words they say when the pointer rests on them.
 
 use pm_harness::{Limit, LimitUnit, Limits, Usage};
-use pm_style::{
-    Color, Role, bg, cursor_default, flex, flex_none, h_px, items_center, justify_center,
-    rounded_full, w_px,
-};
-use pm_ui::{Node, node};
+use rustle::{CursorIcon, Modifier};
 
+use crate::kit::{Flex, Hovered, Looks, Radius, Role, Tone, Tooltip, row};
 use crate::sample::Session;
 
 /// How wide the ring of a context that has no allowance beside it is, in logical pixels.
@@ -48,9 +45,9 @@ fn context_percent(context: &Usage) -> Option<u32> {
 }
 
 /// The colour of a ring that is `used` percent full: green when empty, through amber, to red when full.
-fn tone(used: u32) -> Color {
+fn tone(used: u32) -> Tone {
     let share = used.min(100) as f32 / 100.0;
-    Color::oklch(0.72, 0.17, EMPTY_HUE + (FULL_HUE - EMPTY_HUE) * share)
+    Tone::oklch(0.72, 0.17, EMPTY_HUE + (FULL_HUE - EMPTY_HUE) * share)
 }
 
 /// A count of tokens in whole thousands once it reaches a thousand.
@@ -203,16 +200,18 @@ pub fn tooltip(limits: &Limits) -> Option<String> {
     (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
-/// The rings that show how full the context is and how much of the account's allowance is used, with the figures as their tooltip, once there is anything to show.
-pub fn usage_rings(session: &Session) -> Option<Node> {
+/// Emits the rings that show how full the context is and how much of the account's allowance is used, with the figures as their tooltip, once there is anything to show; returns whether it emitted them.
+#[track_caller]
+pub fn usage_rings(session: &Session) -> bool {
     rings_of(session.context.as_ref(), session.limits.as_ref())
 }
 
-/// The rings for `context` and `limits`, which are whatever is known so far, with the figures as their tooltip; nothing when neither is known.
-pub fn rings_of(context: Option<&Usage>, limits: Option<&Limits>) -> Option<Node> {
+/// Emits the rings for `context` and `limits`, which are whatever is known so far, with the figures as their tooltip; emits nothing when neither is known. Returns whether it emitted them.
+#[track_caller]
+pub fn rings_of(context: Option<&Usage>, limits: Option<&Limits>) -> bool {
     let found = meters(context, limits, crate::age::now());
     if found.is_empty() {
-        return None;
+        return false;
     }
     let tooltip = found
         .iter()
@@ -224,40 +223,37 @@ pub fn rings_of(context: Option<&Usage>, limits: Option<&Limits>) -> Option<Node
         .filter_map(|meter| meter.share)
         .take(MAX_RINGS)
         .collect();
-    Some(
-        node()
-            .styles([
-                flex(),
-                flex_none(),
-                items_center(),
-                justify_center(),
-                w_px(32),
-                h_px(32),
-                rounded_full(),
-                cursor_default(),
-                bg(Role::SurfaceHover).hover(),
-            ])
-            .child(rings(&shares))
+    row(
+        Modifier::new()
+            .width(32.0)
+            .height(32.0)
+            .looks(Looks::new().hover(Role::SurfaceHover).radius(Radius::Full))
+            .cursor(CursorIcon::Default)
             .tooltip(tooltip),
-    )
+        Flex::new().center().middle(),
+        || rings(&shares),
+    );
+    true
 }
 
-/// The rings that fill clockwise from the top as each share grows, outermost first; one thick ring when there is one share, thinner ones set inside each other when there are several.
-fn rings(shares: &[f32]) -> Node {
+/// Emits the rings that fill clockwise from the top as each share grows, outermost first; one thick ring when there is one share, thinner ones set inside each other when there are several.
+#[track_caller]
+fn rings(shares: &[f32]) {
     let (across, width, gap) = match shares.len() {
         0 | 1 => (SINGLE_RING, SINGLE_WIDTH, 0.0),
         _ => (NESTED_RING, NESTED_WIDTH, NESTED_GAP),
     };
-    node()
-        .styles([flex_none(), w_px(across), h_px(across)])
-        .rings(
-            width,
-            gap,
-            Role::Border,
-            shares
-                .iter()
-                .map(|share| (*share, tone((share * 100.0).round() as u32))),
-        )
+    let filled: Vec<(f32, Tone)> = shares
+        .iter()
+        .map(|share| (*share, tone((share * 100.0).round() as u32)))
+        .collect();
+    crate::kit::rings(
+        Modifier::new().width(across).height(across),
+        width,
+        gap,
+        Role::Border,
+        &filled,
+    );
 }
 
 #[cfg(test)]
@@ -339,14 +335,24 @@ mod tests {
             size: 100,
             written: 0,
         };
-        assert!(rings_of(None, None).is_none());
-        assert!(rings_of(Some(&context), None).is_some());
+        assert!(!drawn(None, None));
+        assert!(drawn(Some(context), None));
         let limits = Limits {
             provider: "claude".to_owned(),
             plan: None,
             fetched_at_ms: 0,
             limits: vec![limit("5 hour", "5h", 0.2)],
         };
-        assert!(rings_of(None, Some(&limits)).is_some());
+        assert!(drawn(None, Some(limits)));
+    }
+
+    /// Whether [`rings_of`] emits its rings for `context` and `limits` when laid out.
+    fn drawn(context: Option<Usage>, limits: Option<Limits>) -> bool {
+        let emitted = std::rc::Rc::new(std::cell::Cell::new(false));
+        let seen = emitted.clone();
+        crate::kit::snapshot::lay_out(400.0, 200.0, None, move || {
+            seen.set(rings_of(context.as_ref(), limits.as_ref()));
+        });
+        emitted.get()
     }
 }

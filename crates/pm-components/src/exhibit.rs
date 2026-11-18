@@ -1,14 +1,11 @@
 //! What an agent puts in front of the reader to look at: the card of a diagram or a prototype it showed in the conversation, and the picture of a document it wrote, a prototype or the mockup of an answer, which the window has rendered sealed from the network.
 
-use pm_harness::{Exhibit, ExhibitKind};
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, bg, border, border_color, flex, flex_col, flex_none, gap, h_px, items_center,
-    justify_center, min_w_px, overflow_hidden, px, py, rounded, truncate, w_full, w_px,
+use crate::kit::{
+    Flex, FocusId, IconName, Radius, Role, Styled, Tooltip, Type, column, icon_with, label,
+    picture, row, sp,
 };
-use pm_text::Shaper;
-use pm_ui::{Node, node};
+use pm_harness::{Exhibit, ExhibitKind};
+use rustle::Modifier;
 
 use crate::button::Variant;
 use crate::figures::{Drawing, Figures, Wanted, diagram_key, diagram_node, prototype_key};
@@ -184,91 +181,85 @@ impl Offer {
         }
     }
 
-    /// What the placeholder shows for the offer in the room `form` stands for, its button answering to `id`: the line and a labelled button with its icon where words fit, the labelled button alone where only that does, and an icon alone in the narrowest; a running download has its line, or only the icon, in place of a button.
-    fn shown(&self, id: FocusId, form: Marks) -> Node {
+    /// Emits what the placeholder shows for the offer in the room `form` stands for, its button answering to `id`: the line and a labelled button with its icon where words fit, the labelled button alone where only that does, and an icon alone in the narrowest; a running download has its line, or only the icon, in place of a button.
+    #[track_caller]
+    fn shown(&self, id: FocusId, form: Marks) {
         let tone = match self {
             Self::Failed(_) | Self::Update(Some(_)) => Role::Danger,
             _ => Role::Subtle,
         };
-        let button = self.button().map(|(label, icon)| {
-            let built = match form {
-                Marks::Words => Button::new(label, id)
-                    .variant(Variant::Outline)
-                    .size(Size::Sm)
-                    .with_icon(icon)
-                    .build(),
-                Marks::Icons => Button::new(label, id)
-                    .variant(Variant::Outline)
-                    .size(Size::Sm)
-                    .build(),
-                Marks::Hidden => Button::icon(icon, id).build(),
-            };
-            built.tooltip(self.hint())
+        let hint = self.hint();
+        let button = self.button().map(|(label, icon)| match form {
+            Marks::Words => Button::new(label, id)
+                .variant(Variant::Outline)
+                .size(Size::Sm)
+                .with_icon(icon),
+            Marks::Icons => Button::new(label, id)
+                .variant(Variant::Outline)
+                .size(Size::Sm),
+            Marks::Hidden => Button::icon(icon, id),
         });
         let spelled = form == Marks::Words || (form == Marks::Icons && button.is_none());
-        let said = spelled.then(|| caption(self.words(), tone).tooltip(self.hint()));
-        let lone = (said.is_none() && button.is_none())
-            .then(|| glyph(IconName::Globe, 3.5, tone).tooltip(self.hint()));
-        node()
-            .styles([
-                flex(),
-                flex_col(),
-                items_center(),
-                justify_center(),
-                gap(2),
-                w_full(),
-                min_w_px(0),
-            ])
-            .children(said)
-            .children(button)
-            .children(lone)
+        let lone = !spelled && button.is_none();
+        column(
+            Modifier::new().fill_max_width(),
+            Flex::new().center().middle().gap(2),
+            || {
+                if spelled {
+                    caption(self.words(), tone, Modifier::new().tooltip(hint.clone()));
+                }
+                if let Some(button) = button {
+                    button
+                        .modifier(Modifier::new().tooltip(hint.clone()))
+                        .build();
+                }
+                if lone {
+                    icon_with(
+                        Modifier::new().tooltip(hint.clone()),
+                        IconName::Globe,
+                        sp(3.5),
+                        tone,
+                    );
+                }
+            },
+        );
     }
 }
 
-/// What a preview that could not be rendered shows in the room `form` stands for: why, cut short where it does not fit and whole on hover, over a button answering to `id` that renders it again; the button alone where words do not fit.
-fn failure(reason: &str, id: FocusId, form: Marks) -> Node {
+/// Emits what a preview that could not be rendered shows in the room `form` stands for: why, cut short where it does not fit and whole on hover, over a button answering to `id` that renders it again; the button alone where words do not fit.
+#[track_caller]
+fn failure(reason: &str, id: FocusId, form: Marks) {
     let button = match form {
-        Marks::Hidden => Button::icon(IconName::Refresh, id).build(),
+        Marks::Hidden => Button::icon(IconName::Refresh, id),
         _ => Button::new(RETRY_LABEL, id)
             .variant(Variant::Outline)
             .size(Size::Sm)
-            .with_icon(IconName::Refresh)
-            .build(),
+            .with_icon(IconName::Refresh),
     };
     let hint = format!("{reason} · press to render it again");
-    let said = (form == Marks::Words).then(|| caption(reason, Role::Danger).tooltip(hint.clone()));
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            items_center(),
-            justify_center(),
-            gap(2),
-            w_full(),
-            min_w_px(0),
-        ])
-        .children(said)
-        .child(button.tooltip(hint))
+    column(
+        Modifier::new().fill_max_width(),
+        Flex::new().center().middle().gap(2),
+        || {
+            if form == Marks::Words {
+                caption(reason, Role::Danger, Modifier::new().tooltip(hint.clone()));
+            }
+            button.modifier(Modifier::new().tooltip(hint)).build();
+        },
+    );
 }
 
-/// The line a placeholder says, `words` in `tone` after the globe, cut short where the placeholder is narrower than it.
-fn caption(words: &str, tone: Role) -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            justify_center(),
-            gap(1.5),
-            px(3),
-            w_full(),
-            min_w_px(0),
-        ])
-        .child(glyph(IconName::Globe, 3.5, tone))
-        .child(
-            node()
-                .styles([min_w_px(0), overflow_hidden()])
-                .child(line(words, 12, 1.4, tone).styles([truncate()])),
-        )
+/// Emits the line a placeholder says, `words` in `tone` after the globe, cut short where the placeholder is narrower than it, with `modifier` put around its box.
+#[track_caller]
+fn caption(words: &str, tone: Role, modifier: Modifier) {
+    row(
+        modifier.fill_max_width().pad_x(3),
+        Flex::new().center().middle().gap(1.5),
+        || {
+            glyph(IconName::Globe, 3.5, tone);
+            label(words, Type::new(12).ratio(1.4).tone(tone).truncate());
+        },
+    );
 }
 
 /// What the window still has to do for exhibits and mockups, and what it said of the helper that renders them.
@@ -326,6 +317,10 @@ pub(crate) struct Preview<'a> {
     width: f32,
     /// What the box offers while the embedded browser is missing, and what its button answers to.
     offer: Option<(&'a Offer, FocusId)>,
+    /// What the caller puts around the box.
+    modifier: Modifier,
+    /// How the box lays out what it holds, when the caller chose.
+    flex: Option<Flex>,
 }
 
 impl<'a> Preview<'a> {
@@ -340,6 +335,8 @@ impl<'a> Preview<'a> {
             viewport,
             width,
             offer: None,
+            modifier: Modifier::new(),
+            flex: None,
         }
     }
 
@@ -349,33 +346,41 @@ impl<'a> Preview<'a> {
         self
     }
 
-    /// The picture, or the box that says it is being rendered, why it could not be, or what to press to have the embedded browser render it.
-    pub(crate) fn build(self) -> Node {
+    /// The preview with `modifier` put around its box, outside its own size, fill and border.
+    pub(crate) fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
+    }
+
+    /// The preview laying out what its box holds by `flex` instead of centring it.
+    pub(crate) fn flex(mut self, flex: Flex) -> Self {
+        self.flex = Some(flex);
+        self
+    }
+
+    /// Emits the picture, or the box that says it is being rendered, why it could not be, or what to press to have the embedded browser render it.
+    #[track_caller]
+    pub(crate) fn build(self) {
         let width = self.width.max(1.0).floor();
-        let frame = |height: f32| {
-            node().styles([
-                flex(),
-                flex_none(),
-                items_center(),
-                justify_center(),
-                w_px(width),
-                h_px(height),
-                rounded(Radius::Lg),
-                border(),
-                border_color(Role::Border),
-                bg(Role::Background),
-                overflow_hidden(),
-            ])
+        let own = |height: f32| {
+            Modifier::new()
+                .width(width)
+                .height(height)
+                .fill_rounded(Role::Background, Radius::Lg)
+                .stroke(Role::Border, Radius::Lg)
+                .clip_to(Radius::Lg)
         };
+        let flex = self.flex.unwrap_or(Flex::new().center().middle());
         match self.figure {
             Some(Ok(drawing)) => {
                 let (across, down) = drawing.size();
                 let height = (width * down / across.max(1.0)).round().max(1.0);
-                frame(height).child(
-                    node()
-                        .styles([w_px(width), h_px(height), flex_none()])
-                        .picture(drawing.picture.clone()),
-                )
+                row(self.modifier.chain(own(height)), flex, || {
+                    picture(
+                        Modifier::new().width(width).height(height),
+                        &drawing.picture,
+                    );
+                });
             }
             other => {
                 let (across, down) = self.viewport;
@@ -387,18 +392,26 @@ impl<'a> Preview<'a> {
                 let waits = words == PREVIEW_NEEDS_BROWSER || words == PREVIEW_NEEDS_UPDATE;
                 let offered = self
                     .offer
-                    .filter(|(offer, _)| waits && **offer != Offer::Nothing)
-                    .map(|(offer, id)| offer.shown(id, marks_in(width)));
+                    .filter(|(offer, _)| waits && **offer != Offer::Nothing);
                 let retried = self
                     .offer
-                    .filter(|(offer, _)| !waits && other.is_some() && **offer == Offer::Nothing)
-                    .map(|(_, id)| failure(words, id, marks_in(width)));
-                frame(height).child(offered.or(retried).unwrap_or_else(|| {
-                    node()
-                        .styles([flex(), items_center(), gap(1.5), px(3)])
-                        .child(glyph(IconName::Globe, 3.5, Role::Subtle))
-                        .child(line(words, 12, 1.4, Role::Subtle))
-                }))
+                    .filter(|(offer, _)| !waits && other.is_some() && **offer == Offer::Nothing);
+                row(self.modifier.chain(own(height)), flex, || {
+                    if let Some((offer, id)) = offered {
+                        offer.shown(id, marks_in(width));
+                    } else if let Some((_, id)) = retried {
+                        failure(words, id, marks_in(width));
+                    } else {
+                        row(
+                            Modifier::new().pad_x(3),
+                            Flex::new().center().gap(1.5),
+                            || {
+                                glyph(IconName::Globe, 3.5, Role::Subtle);
+                                line(words, 12, 1.4, Role::Subtle);
+                            },
+                        );
+                    }
+                });
             }
         }
     }
@@ -418,6 +431,12 @@ pub struct ExhibitCard<'a> {
     copy: Option<FocusId>,
     /// What the placeholder of a prototype's picture offers while the embedded browser is missing, and what its button answers to.
     offer: Option<(&'a Offer, FocusId)>,
+    /// What the caller puts around the card.
+    modifier: Modifier,
+    /// The padding the caller chose in place of the card's own, when it did.
+    inner: Option<Modifier>,
+    /// How the card lays out its heading and body, when the caller chose.
+    flex: Option<Flex>,
 }
 
 impl<'a> ExhibitCard<'a> {
@@ -430,6 +449,9 @@ impl<'a> ExhibitCard<'a> {
             open: None,
             copy: None,
             offer: None,
+            modifier: Modifier::new(),
+            inner: None,
+            flex: None,
         }
     }
 
@@ -451,8 +473,27 @@ impl<'a> ExhibitCard<'a> {
         self
     }
 
-    /// The heading of the card: what kind of exhibit it is, its title and its buttons.
-    fn heading(&self) -> Node {
+    /// The card with `modifier` put around its box, outside its own border and padding.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
+    }
+
+    /// The card with `modifier` in place of its own padding, inside its border.
+    pub fn inner(mut self, modifier: Modifier) -> Self {
+        self.inner = Some(modifier);
+        self
+    }
+
+    /// The card laying out its heading and body by `flex` instead of its own.
+    pub fn flex(mut self, flex: Flex) -> Self {
+        self.flex = Some(flex);
+        self
+    }
+
+    /// Emits the heading of the card: what kind of exhibit it is, its title and its buttons.
+    #[track_caller]
+    fn heading(&self) {
         let (icon, kind) = match self.exhibit.kind {
             ExhibitKind::Diagram => (IconName::Sparkles, "Diagram"),
             ExhibitKind::Prototype => (IconName::Globe, "Prototype"),
@@ -466,59 +507,55 @@ impl<'a> ExhibitCard<'a> {
             .is_some_and(|(offer, _)| matches!(offer, Offer::Update(_)));
         let opens = self
             .open
-            .filter(|_| self.exhibit.kind == ExhibitKind::Prototype)
-            .map(|id| {
-                Button::new("Open", id)
-                    .variant(Variant::Outline)
-                    .size(Size::Sm)
-                    .with_icon(IconName::Maximize)
-                    .disabled(outdated)
-                    .build()
-                    .tooltip(if outdated {
-                        OPEN_NEEDS_UPDATE
-                    } else {
-                        "Open live in the browser pane · sealed from the network"
-                    })
-            });
-        let copies = self.copy.map(|id| {
-            Button::icon(IconName::Copy, id)
-                .build()
-                .tooltip("Copy source")
-        });
-        node()
-            .styles([flex(), items_center(), gap(2), w_full()])
-            .child(glyph(icon, 3.5, Role::Subtle))
-            .child(clipped(title, 13, Role::Text))
-            .child(line(kind, 12, 1.4, Role::Subtle).styles([flex_none()]))
-            .children(copies)
-            .children(opens)
+            .filter(|_| self.exhibit.kind == ExhibitKind::Prototype);
+        row(
+            Modifier::new().fill_max_width(),
+            Flex::new().center().gap(2),
+            || {
+                glyph(icon, 3.5, Role::Subtle);
+                clipped(title, 13, Role::Text);
+                label(kind, Type::new(12).ratio(1.4).tone(Role::Subtle).truncate());
+                if let Some(id) = self.copy {
+                    Button::icon(IconName::Copy, id)
+                        .modifier(Modifier::new().tooltip("Copy source"))
+                        .build();
+                }
+                if let Some(id) = opens {
+                    Button::new("Open", id)
+                        .variant(Variant::Outline)
+                        .size(Size::Sm)
+                        .with_icon(IconName::Maximize)
+                        .disabled(outdated)
+                        .modifier(Modifier::new().tooltip(if outdated {
+                            OPEN_NEEDS_UPDATE
+                        } else {
+                            "Open live in the browser pane · sealed from the network"
+                        }))
+                        .build();
+                }
+            },
+        );
     }
 
-    /// What the card shows of a diagram: the drawing once it arrived, its source as code until then, and the source with why it could not be drawn when it could not.
-    fn diagram(&self, inner: f32, shaper: &mut Shaper) -> Node {
+    /// Emits what the card shows of a diagram: the drawing once it arrived, its source as code until then, and the source with why it could not be drawn when it could not.
+    #[track_caller]
+    fn diagram(&self, inner: f32) {
         let source = fenced(&self.exhibit.content);
         match self.figures.get(&diagram_key(&self.exhibit.content)) {
             Some(Ok(drawing)) => diagram_node(drawing, inner),
-            Some(Err(reason)) => node()
-                .styles([flex(), flex_col(), gap(1.5)])
-                .child(Markdown::new(&source, inner).build(shaper))
-                .child(crate::parts::paragraph(
-                    reason,
-                    12,
-                    1.4,
-                    Role::Danger,
-                    inner,
-                    shaper,
-                )),
-            None => Markdown::new(&source, inner).build(shaper),
+            Some(Err(reason)) => column(Modifier::new(), Flex::new().gap(1.5), || {
+                Markdown::new(&source, inner).build();
+                crate::parts::paragraph(reason, 12, 1.4, Role::Danger, inner);
+            }),
+            None => Markdown::new(&source, inner).build(),
         }
     }
 
-    /// The card: the heading over the diagram, or over the picture of the prototype.
-    pub fn build(self, shaper: &mut Shaper) -> Node {
-        let inner = (self.width - CARD_INSET).max(64.0);
-        let body = match self.exhibit.kind {
-            ExhibitKind::Diagram => self.diagram(inner, shaper),
+    /// Emits the body of the card: the diagram, or the picture of the prototype, `inner` logical pixels wide.
+    #[track_caller]
+    fn body(&self, inner: f32) {
+        match self.exhibit.kind {
+            ExhibitKind::Diagram => self.diagram(inner),
             ExhibitKind::Prototype => {
                 let (key, _) = wanted_exhibit(self.exhibit);
                 let picture = Preview::new(self.figures.get(&key), EXHIBIT_VIEWPORT, inner);
@@ -526,22 +563,27 @@ impl<'a> ExhibitCard<'a> {
                     Some((offer, id)) => picture.offer(offer, id),
                     None => picture,
                 };
-                picture.build()
+                picture.build();
             }
-        };
-        node()
-            .styles([
-                flex(),
-                flex_col(),
-                gap(2.5),
-                px(4),
-                py(3),
-                rounded(Radius::Xl),
-                border(),
-                border_color(Role::Border),
-            ])
-            .child(self.heading())
-            .child(body)
+        }
+    }
+
+    /// Emits the card: the heading over the diagram, or over the picture of the prototype.
+    #[track_caller]
+    pub fn build(self) {
+        let inner = (self.width - CARD_INSET).max(64.0);
+        let padding = self
+            .inner
+            .clone()
+            .unwrap_or_else(|| Modifier::new().pad_x(4).pad_y(3));
+        let own = Modifier::new()
+            .stroke(Role::Border, Radius::Xl)
+            .chain(padding);
+        let flex = self.flex.unwrap_or(Flex::new().gap(2.5));
+        column(self.modifier.clone().chain(own), flex, || {
+            self.heading();
+            self.body(inner);
+        });
     }
 }
 

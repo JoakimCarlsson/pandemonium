@@ -2,14 +2,10 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use pm_style::decoration::ShadowLayer;
-use pm_style::{
-    Role, bg, border, border_color, flex, flex_1, flex_col, h_full, min_h, rounded, shadow_layers,
-    w_full,
-};
-use pm_ui::{Node, node};
+use rustle::Modifier;
 
 use crate::TitleBar;
+use crate::kit::{Flex, Radius, Role, Styled, block, color, column};
 use crate::title_bar::FRAMELESS;
 
 /// How wide the transparent band around a floating window is, in logical pixels, which is where its shadow is cast and where the window is grabbed to resize it.
@@ -19,10 +15,12 @@ pub const SHADOW_MARGIN: f32 = 32.0;
 pub const FRAME_RADIUS: f32 = 10.0;
 
 /// The layers of the shadow a floating window casts: a wide soft one that falls away below it and a tight one that keeps its edge defined.
-pub const WINDOW_SHADOW: &[ShadowLayer] = &[
-    ShadowLayer::new(0.0, 8.0, 22.0, 0.0, 0.5, false),
-    ShadowLayer::new(0.0, 2.0, 8.0, 0.0, 0.32, false),
-    ShadowLayer::new(0.0, 0.0, 2.0, 0.0, 0.28, false),
+///
+/// Each layer is `(x, y, blur, spread, alpha)`: its offset, how far it blurs, how far it grows past the window and how dark it is.
+pub const WINDOW_SHADOW: &[(f32, f32, f32, f32, f32)] = &[
+    (0.0, 8.0, 22.0, 0.0, 0.5),
+    (0.0, 2.0, 8.0, 0.0, 0.32),
+    (0.0, 0.0, 2.0, 0.0, 0.28),
 ];
 
 /// Whether the windows are floating, which is when they are neither maximized nor full screen and so have room around them for a shadow.
@@ -60,76 +58,125 @@ pub fn shadow_margin() -> f32 {
     }
 }
 
-/// `frame`, which fills the window, with rounded corners that hold everything inside it, a border and, when there is a band of [`shadow_margin`] around the window, the shadow it casts into it; `frame` itself when the window is not [`framed`].
-pub fn shadowed(frame: Node) -> Node {
+/// Emits `frame`, which fills the window, with rounded corners that hold everything inside it, a border and, when there is a band of [`shadow_margin`] around the window, the shadow it casts into it; emits `frame` alone when the window is not [`framed`].
+#[track_caller]
+pub fn shadowed(frame: impl FnOnce()) {
     if !framed() {
-        return frame;
+        frame();
+        return;
     }
-    let frame = frame.styles([border(), border_color(Role::Border), rounded(FRAME_RADIUS)]);
-    let frame = if shadow_margin() > 0.0 {
-        frame.styles([shadow_layers(WINDOW_SHADOW)])
+    let own = Modifier::new().fill_max_size();
+    let own = if shadow_margin() > 0.0 {
+        cast_shadow(own)
     } else {
-        frame
+        own
     };
-    frame.masked()
+    let own = own
+        .clip_rounded(FRAME_RADIUS)
+        .border(1.0, color(Role::Border), FRAME_RADIUS);
+    block(own, frame);
+}
+
+/// `modifier` with [`WINDOW_SHADOW`] drawn behind its box, its corners rounded by [`FRAME_RADIUS`].
+fn cast_shadow(modifier: Modifier) -> Modifier {
+    modifier.draw_behind(|canvas| {
+        let (width, height) = (canvas.width(), canvas.height());
+        for (x, y, blur, spread, alpha) in WINDOW_SHADOW {
+            let shade = rustle::Color::rgba(0, 0, 0, (alpha * 255.0).round() as u8);
+            canvas.shadow(
+                x - spread,
+                y - spread,
+                width + 2.0 * spread,
+                height + 2.0 * spread,
+                (FRAME_RADIUS + spread).max(0.0),
+                *blur,
+                shade,
+            );
+        }
+    })
 }
 
 /// A window's frame being described: what its body holds, and what is laid over the body.
 ///
 /// Build it with [`Window::new`], fill it with [`Window::body`], lay menus
-/// over it with [`Window::over`], and turn it into a node with
-/// [`Window::build`]. The node fills the window.
-#[derive(Clone, Debug)]
-pub struct Window {
-    /// What fills the window under the title bar.
-    body: Node,
+/// over it with [`Window::over`], and emit it with [`Window::build`]. It
+/// fills the window.
+pub struct Window<'a> {
+    /// What fills the window under the title bar, in the order it was given.
+    body: Vec<Box<dyn FnOnce() + 'a>>,
     /// What is laid over the window, such as menus.
-    over: Vec<Node>,
+    over: Vec<Box<dyn FnOnce() + 'a>>,
+    /// What the caller puts around the frame's box.
+    modifier: Modifier,
 }
 
-impl Window {
+impl<'a> Window<'a> {
     /// A frame with nothing in it.
     pub fn new() -> Self {
         Self {
-            body: node().styles([flex(), flex_col(), flex_1(), min_h(0), w_full()]),
+            body: Vec::new(),
             over: Vec::new(),
+            modifier: Modifier::new(),
         }
     }
 
-    /// The frame with `child` filling the window under the title bar.
-    pub fn body(mut self, child: Node) -> Self {
-        self.body = self.body.child(child);
+    /// The frame with what `child` emits filling the window under the title bar, after what the body already holds.
+    pub fn body(mut self, child: impl FnOnce() + 'a) -> Self {
+        self.body.push(Box::new(child));
         self
     }
 
-    /// The frame with every node of `nodes` laid over the window.
-    pub fn over(mut self, nodes: impl IntoIterator<Item = Node>) -> Self {
-        self.over.extend(nodes);
+    /// The frame with what `content` emits laid over the window.
+    pub fn over(mut self, content: impl FnOnce() + 'a) -> Self {
+        self.over.push(Box::new(content));
         self
     }
 
-    /// The node that draws the frame, with the shadow it casts while the window floats.
-    pub fn build(self) -> Node {
-        shadowed(self.frame())
+    /// The frame with `modifier` put around its box, outside its own.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
     }
 
-    /// The node that draws the frame itself.
-    fn frame(self) -> Node {
-        node()
-            .styles([flex(), flex_col(), w_full(), h_full(), bg(Role::Surface)])
-            .styles(
-                FRAMELESS
-                    .then(|| [border(), border_color(Role::Border)])
-                    .into_iter()
-                    .flatten(),
-            )
-            .child(TitleBar::closing().build())
-            .child(self.body)
-            .children(self.over)
+    /// Emits the frame, with the shadow it casts while the window floats.
+    #[track_caller]
+    pub fn build(self) {
+        shadowed(move || self.frame());
+    }
+
+    /// Emits the frame itself: the title bar, the body under it and what is laid over both.
+    #[track_caller]
+    fn frame(self) {
+        let own = Modifier::new().fill_max_size().fill(Role::Surface);
+        let own = if FRAMELESS {
+            own.stroke(Role::Border, Radius::None)
+        } else {
+            own
+        };
+        let Self {
+            body,
+            over,
+            modifier,
+        } = self;
+        column(modifier.chain(own), Flex::new(), move || {
+            TitleBar::closing().build();
+            column(
+                Modifier::new().grow().fill_max_width(),
+                Flex::new(),
+                move || {
+                    for child in body {
+                        child();
+                    }
+                },
+            );
+            for content in over {
+                content();
+            }
+        });
     }
 }
 
-impl Default for Window {
+impl Default for Window<'_> {
     /// A frame with nothing in it.
     fn default() -> Self {
         Self::new()

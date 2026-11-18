@@ -218,12 +218,12 @@ impl Screen {
     }
 
     /// The screen with the menu of the session shown pressed on its row `row`.
-    pub fn session_command(self, row: pm_input::FocusId) -> Self {
+    pub fn session_command(self, row: pm_components::kit::FocusId) -> Self {
         self.in_workspace(|state| state.session_command(row))
     }
 
     /// The control answering what the agent of the session shown asks with an answer of `verdict`, when it asks.
-    pub fn answer_of(&self, verdict: pm_harness::Verdict) -> Option<pm_input::FocusId> {
+    pub fn answer_of(&self, verdict: pm_harness::Verdict) -> Option<pm_components::kit::FocusId> {
         match self {
             Self::Workspace(state) => state.answer_of(verdict),
         }
@@ -270,11 +270,13 @@ impl Screen {
     }
 
     /// The button that starts a new session in the project shown, when there is a project.
-    pub fn new_session_button(&self) -> Option<pm_input::FocusId> {
+    pub fn new_session_button(&self) -> Option<pm_components::kit::FocusId> {
         match self {
-            Self::Workspace(state) if !state.projects.is_empty() => Some(pm_input::FocusId(
-                pm_components::state::NEW_IN_BASE + state.current_project() as u64,
-            )),
+            Self::Workspace(state) if !state.projects.is_empty() => {
+                Some(pm_components::kit::FocusId(
+                    pm_components::state::NEW_IN_BASE + state.current_project() as u64,
+                ))
+            }
             _ => None,
         }
     }
@@ -612,7 +614,7 @@ impl Screen {
     }
 
     /// The position among the open files of the file whose lines in the excerpts the element `id` holds.
-    pub fn excerpt_owner_of(&self, id: pm_input::FocusId) -> Option<usize> {
+    pub fn excerpt_owner_of(&self, id: pm_components::kit::FocusId) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.excerpt_owner_of(id),
         }
@@ -671,7 +673,7 @@ impl Screen {
     }
 
     /// The screen with the way of matching `which` names switched.
-    pub fn find_toggled(self, which: pm_input::FocusId) -> Self {
+    pub fn find_toggled(self, which: pm_components::kit::FocusId) -> Self {
         self.in_workspace(|state| state.find_toggled(which))
     }
 
@@ -845,7 +847,7 @@ impl Screen {
         text: &str,
         whole_lines: bool,
         indentation: &str,
-    ) -> Option<pm_text::Edit> {
+    ) -> Option<pm_field::Edit> {
         match self {
             Self::Workspace(state) => state.editor_paste_edit(text, whole_lines, indentation),
         }
@@ -902,7 +904,7 @@ impl Screen {
     }
 
     /// The tab of an open file the element `id` is, when it is one.
-    pub fn file_tab_of(&self, id: pm_input::FocusId) -> Option<usize> {
+    pub fn file_tab_of(&self, id: pm_components::kit::FocusId) -> Option<usize> {
         match self {
             Self::Workspace(state) => {
                 id.0.checked_sub(pm_components::open_files::FILE_TAB_BASE)

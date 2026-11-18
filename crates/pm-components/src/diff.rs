@@ -1,19 +1,17 @@
 //! The diff view: every changed file stacked, the old and the new side by side, with notes on lines for the agent.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Color, Radius, Role, bg, border, border_b, border_color, border_l, cursor_pointer, flex,
-    flex_1, flex_col, flex_none, font_medium, font_mono, gap, h, items_center, items_start,
-    justify_end, leading_ratio, min_h, min_w_px, mt, mx, overflow_hidden, p, pb, pr, px, py,
-    rounded, rounded_full, text_color, text_px, truncate, w, w_full,
+use rustle::{CursorIcon, Modifier};
+
+use crate::kit::{
+    CaretLook, Flex, FocusId, Hovered, IconName, Interactive, Looks, Mark, Radius, Role, Scroll,
+    Side, Styled, Tone, Type, block, column, gap_box, icon, label, label_with, marked_line, row,
+    scroll_area,
 };
-use pm_ui::{Mark, Node, node, text};
 
 use crate::button::Variant;
 use crate::diff_syntax::{DiffColours, shown};
 use crate::file_icon::{file_icon, file_language};
-use crate::parts::{glyph, line, spacer, wrap};
+use crate::parts::{line, spacer, wrap};
 use crate::sample::{Change, Comment, DiffLine, Kind, Range, Session};
 use crate::size::Size;
 use crate::state::{
@@ -27,7 +25,7 @@ const ROW: f32 = 20.0;
 
 /// How many pixels one logical pixel of the sizes below comes to: the rows, headers and notes are set in steps that follow the interface size, while the view and the scroll are counted in pixels.
 fn pixels() -> f32 {
-    pm_style::step_scale()
+    crate::kit::theme::step_scale()
 }
 
 /// The width of what is beside a pair of columns of code: the margins and rules of a file, in logical pixels.
@@ -207,7 +205,7 @@ fn rows(change: &Change) -> Vec<Row<'_>> {
 /// How many characters of code one side of a row holds on a line, in a view `width` wide.
 fn columns(width: f32) -> usize {
     let side = (width - SECTION_SIDES * pixels()) / 2.0 - GUTTER_AND_PADDING * pixels();
-    let character = CODE_PIXELS * pm_style::text_scale() * CODE_CHARACTER;
+    let character = CODE_PIXELS * crate::kit::theme::text_scale() * CODE_CHARACTER;
     ((side / character) as usize).max(8)
 }
 
@@ -325,22 +323,24 @@ pub fn offset_of(state: &WorkspaceState, session: &Session, index: usize, width:
         .sum::<f32>()
 }
 
-/// One line of a diff: tinted by what it does, written in the code font, its code coloured by `marks`.
-pub fn diff_line(kind: Kind, content: &str, marks: Vec<Mark>) -> Node {
+/// The type the code of a diff is set in: 12 pixels tall, a line height of 1.4 times that, in the code font, in `tone`.
+fn code_type(tone: impl Into<Tone>) -> Type {
+    Type::new(12).ratio(1.4).mono().tone(tone)
+}
+
+/// Emits one line of a diff: tinted by what it does, written in the code font, its code coloured by `marks`.
+#[track_caller]
+pub fn diff_line(kind: Kind, content: &str, marks: Vec<Mark>) {
     let (marker, fill, tone) = match kind {
-        Kind::Hunk => (" ", Some(Color::from(Role::Surface)), Role::Subtle),
+        Kind::Hunk => (" ", Some(Tone::from(Role::Surface)), Role::Subtle),
         Kind::Context => (" ", None, Role::Muted),
-        Kind::Add => (
-            "+",
-            Some(Color::from(Role::Success).alpha(0.12)),
-            Role::Text,
-        ),
-        Kind::Remove => ("-", Some(Color::from(Role::Danger).alpha(0.12)), Role::Text),
+        Kind::Add => ("+", Some(Tone::from(Role::Success).alpha(0.12)), Role::Text),
+        Kind::Remove => ("-", Some(Tone::from(Role::Danger).alpha(0.12)), Role::Text),
     };
     let marker = if kind == Kind::Hunk { "" } else { marker };
-    let mut row = node().styles([flex(), w_full(), h(5), px(3), items_center()]);
+    let mut own = Modifier::new().fill_max_width().h(5);
     if let Some(fill) = fill {
-        row = row.styles([bg(fill)]);
+        own = own.fill(fill);
     }
     let shift = marker.len();
     let marks = marks
@@ -350,110 +350,109 @@ pub fn diff_line(kind: Kind, content: &str, marks: Vec<Mark>) -> Node {
             ..mark
         })
         .collect::<Vec<_>>();
-    row.child(
-        text(format!("{marker}{}", shown(content)))
-            .styles([
-                text_px(12),
-                leading_ratio(1.4),
-                font_mono(),
-                text_color(tone),
-            ])
-            .marks(marks),
-    )
+    let content = format!("{marker}{}", shown(content));
+    row(own.pad_x(3), Flex::new().center(), move || {
+        marked_line(
+            Modifier::new(),
+            &content,
+            code_type(tone),
+            marks,
+            CaretLook::default(),
+        );
+    });
 }
 
 /// The tint behind a line, the stronger one behind its number, and the colour of the number.
-fn tints(kind: Option<Kind>) -> (Option<Color>, Option<Color>, Role) {
+fn tints(kind: Option<Kind>) -> (Option<Tone>, Option<Tone>, Role) {
     match kind {
         Some(Kind::Add) => (
-            Some(Color::from(Role::Success).alpha(0.12)),
-            Some(Color::from(Role::Success).alpha(0.25)),
+            Some(Tone::from(Role::Success).alpha(0.12)),
+            Some(Tone::from(Role::Success).alpha(0.25)),
             Role::Success,
         ),
         Some(Kind::Remove) => (
-            Some(Color::from(Role::Danger).alpha(0.12)),
-            Some(Color::from(Role::Danger).alpha(0.25)),
+            Some(Tone::from(Role::Danger).alpha(0.12)),
+            Some(Tone::from(Role::Danger).alpha(0.25)),
             Role::Danger,
         ),
         Some(_) => (None, None, Role::Subtle),
         None => (
-            Some(Color::from(Role::Surface).alpha(0.6)),
-            Some(Color::from(Role::Surface).alpha(0.6)),
+            Some(Tone::from(Role::Surface).alpha(0.6)),
+            Some(Tone::from(Role::Surface).alpha(0.6)),
             Role::Subtle,
         ),
     }
 }
 
-/// The cell that holds a line number, on the stronger tint of the line it numbers; pressing it, or dragging from it, starts a comment on the lines.
-fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<FocusId>) -> Node {
+/// Emits the cell that holds a line number, on the stronger tint of the line it numbers; pressing it, or dragging from it, starts a comment on the lines.
+#[track_caller]
+fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<FocusId>) {
     let (_, tint, tone) = tints(kind);
-    let mut cell = node().styles([
-        flex(),
-        items_start(),
-        justify_end(),
-        flex_none(),
-        w(11),
-        pr(2),
-    ]);
-    if let Some(tint) = tint {
-        cell = cell.styles([bg(tint)]);
-    }
-    if let Some(id) = id.filter(|_| number.is_some()) {
-        cell = cell
-            .styles([cursor_pointer(), bg(Role::Accent).hover()])
-            .focusable(id);
-    }
-    cell.child(node().styles([flex(), items_center(), h(5)]).child(
-        text(number.map(|number| number.to_string()).unwrap_or_default()).styles([
-            text_px(12),
-            leading_ratio(1.4),
-            font_mono(),
-            text_color(tone),
-        ]),
-    ))
+    let mut own = Modifier::new().w(11);
+    own = match id.filter(|_| number.is_some()) {
+        Some(id) => {
+            let looks = Looks::new().hover(Role::Accent);
+            let looks = match tint {
+                Some(tint) => looks.idle(tint),
+                None => looks,
+            };
+            own.looks(looks)
+                .cursor(CursorIcon::Pointer)
+                .target(id)
+                .draggable_id(id)
+        }
+        None => match tint {
+            Some(tint) => own.fill(tint),
+            None => own,
+        },
+    };
+    let shown_number = number.map(|number| number.to_string()).unwrap_or_default();
+    row(
+        own.pad_side(Side::Right, 2),
+        Flex::new().start().trailing(),
+        move || {
+            row(Modifier::new().h(5), Flex::new().center(), move || {
+                label(shown_number, code_type(tone));
+            });
+        },
+    );
 }
 
-/// The cell that holds the text of a line, coloured by `marks` and broken into lines of `columns` characters, each on a row of its own.
-fn code(content: &str, marks: Vec<Mark>, columns: usize) -> Node {
+/// Emits the cell that holds the text of a line, coloured by `marks` and broken into lines of `columns` characters, each on a row of its own.
+#[track_caller]
+fn code(content: &str, marks: Vec<Mark>, columns: usize) {
     let content = shown(content);
-    let mut cell = node().styles([
-        flex(),
-        flex_col(),
-        flex_1(),
-        min_w_px(0),
-        overflow_hidden(),
-        px(3),
-    ]);
-    for piece in pieces(&content, columns) {
-        let within: Vec<Mark> = marks
-            .iter()
-            .filter(|mark| mark.range.start < piece.end && mark.range.end > piece.start)
-            .map(|mark| Mark {
-                range: mark.range.start.max(piece.start) - piece.start
-                    ..mark.range.end.min(piece.end) - piece.start,
-                ..mark.clone()
-            })
-            .collect();
-        cell = cell.child(
-            node()
-                .styles([flex(), items_center(), h(5), flex_none()])
-                .child(
-                    text(content[piece].to_owned())
-                        .styles([
-                            text_px(12),
-                            leading_ratio(1.4),
-                            font_mono(),
-                            text_color(Role::Text),
-                            truncate(),
-                        ])
-                        .marks(within),
-                ),
-        );
-    }
-    cell
+    column(
+        Modifier::new().grow().clip_to(Radius::None).pad_x(3),
+        Flex::new(),
+        || {
+            for piece in pieces(&content, columns) {
+                let within: Vec<Mark> = marks
+                    .iter()
+                    .filter(|mark| mark.range.start < piece.end && mark.range.end > piece.start)
+                    .map(|mark| Mark {
+                        range: mark.range.start.max(piece.start) - piece.start
+                            ..mark.range.end.min(piece.end) - piece.start,
+                        ..mark.clone()
+                    })
+                    .collect();
+                let text = &content[piece];
+                row(Modifier::new().h(5), Flex::new().center(), move || {
+                    marked_line(
+                        Modifier::new().grow(),
+                        text,
+                        code_type(Role::Text).truncate(),
+                        within,
+                        CaretLook::default(),
+                    );
+                });
+            }
+        },
+    );
 }
 
-/// One half of a row: the line that is on that side, coloured as `colours` says, or a blank where there is none, lit while it is among the lines being commented on.
+/// Emits one half of a row: the line that is on that side, coloured as `colours` says, or a blank where there is none, lit while it is among the lines being commented on.
+#[track_caller]
 fn half(
     entry: Option<&Numbered>,
     colours: &DiffColours,
@@ -462,7 +461,7 @@ fn half(
     selected: Option<Range>,
     columns: usize,
     lines: usize,
-) -> Node {
+) {
     let (number, kind, content, marks) = match entry {
         Some(entry) => (
             if new { entry.new } else { entry.old },
@@ -476,242 +475,225 @@ fn half(
         range.new == new && number.is_some_and(|n| (range.start..=range.end).contains(&n))
     });
     let (fill, _, _) = tints(kind);
-    let mut side = node()
-        .styles([
-            flex(),
-            flex_1(),
-            min_w_px(0),
-            h(5.0 * lines as f32),
-            overflow_hidden(),
-        ])
-        .child(gutter(
+    let fill = if lit {
+        Some(Tone::from(Role::Accent).alpha(0.25))
+    } else {
+        fill
+    };
+    let mut own = Modifier::new().grow().h(5.0 * lines as f32);
+    if let Some(fill) = fill {
+        own = own.fill(fill);
+    }
+    if new {
+        own = own.stroke_side(Side::Left, 1.0, Role::Border);
+    }
+    row(own.clip_to(Radius::None), Flex::new(), move || {
+        gutter(
             number,
             kind,
             number.map(|number| gutter_id(change, new, number)),
-        ));
-    if let Some(fill) = fill {
-        side = side.styles([bg(fill)]);
-    }
-    if lit {
-        side = side.styles([bg(Color::from(Role::Accent).alpha(0.25))]);
-    }
-    if new {
-        side = side.styles([border_l(), border_color(Role::Border)]);
-    }
-    side.child(code(content, marks, columns))
+        );
+        code(content, marks, columns);
+    });
 }
 
-/// The row of a hunk header.
-fn hunk_row(header: &str) -> Node {
-    node()
-        .styles([
-            flex(),
-            w_full(),
-            h(5),
-            flex_none(),
-            items_center(),
-            px(3),
-            bg(Role::Surface),
-        ])
-        .child(text(header.to_owned()).styles([
-            text_px(12),
-            leading_ratio(1.4),
-            font_mono(),
-            text_color(Role::Subtle),
-            truncate(),
-        ]))
+/// Emits the row of a hunk header.
+#[track_caller]
+fn hunk_row(header: &str) {
+    row(
+        Modifier::new()
+            .fill_max_width()
+            .h(5)
+            .fill(Role::Surface)
+            .pad_x(3),
+        Flex::new().center(),
+        || {
+            label_with(
+                Modifier::new().grow(),
+                header,
+                code_type(Role::Subtle).truncate(),
+            );
+        },
+    );
 }
 
-/// A diff row of the change at `change` as a node, its code coloured as `colours` says.
-fn row_node(
-    row: &Row,
+/// Emits a diff row of the change at `change`, its code coloured as `colours` says.
+#[track_caller]
+fn diff_row(
+    row_of: &Row,
     colours: &DiffColours,
     change: usize,
     selected: Option<Range>,
     columns: usize,
-) -> Node {
-    let lines = row_height(row, columns);
-    match row {
+) {
+    let lines = row_height(row_of, columns);
+    match row_of {
         Row::Hunk(header) => hunk_row(header),
-        Row::Pair(old, new) => node()
-            .styles([flex(), w_full(), h(5.0 * lines as f32), flex_none()])
-            .child(half(
-                old.as_ref(),
-                colours,
-                change,
-                false,
-                selected,
-                columns,
-                lines,
-            ))
-            .child(half(
-                new.as_ref(),
-                colours,
-                change,
-                true,
-                selected,
-                columns,
-                lines,
-            )),
+        Row::Pair(old, new) => row(
+            Modifier::new().fill_max_width().h(5.0 * lines as f32),
+            Flex::new(),
+            || {
+                half(
+                    old.as_ref(),
+                    colours,
+                    change,
+                    false,
+                    selected,
+                    columns,
+                    lines,
+                );
+                half(
+                    new.as_ref(),
+                    colours,
+                    change,
+                    true,
+                    selected,
+                    columns,
+                    lines,
+                );
+            },
+        ),
     }
 }
 
-/// A card of a note, under the column it is about when it is about lines and across the file when it is not.
-fn under(range: Option<Range>, card: Node) -> Node {
-    let row = node().styles([flex(), w_full(), flex_none()]);
-    let gap = || node().styles([flex_1(), min_w_px(0)]);
-    let card = node().styles([flex_1(), min_w_px(0), p(2)]).child(card);
-    match range {
-        Some(range) if range.new => row.child(gap()).child(card),
-        Some(_) => row.child(card).child(gap()),
-        None => row.child(card),
-    }
+/// Emits a card of a note, drawn by `card`, under the column it is about when it is about lines and across the file when it is not.
+#[track_caller]
+fn under(range: Option<Range>, card: impl FnOnce()) {
+    let blank = || gap_box(Modifier::new().grow());
+    let boxed = Modifier::new().grow().pad(2);
+    row(
+        Modifier::new().fill_max_width(),
+        Flex::new(),
+        move || match range {
+            Some(range) if range.new => {
+                blank();
+                block(boxed, card);
+            }
+            Some(_) => {
+                block(boxed, card);
+                blank();
+            }
+            None => block(boxed, card),
+        },
+    );
 }
 
-/// The frame of a note: a rounded box on the panel colour.
-fn card() -> Node {
-    node().styles([
-        flex(),
-        flex_col(),
-        rounded(Radius::Lg),
-        border(),
-        border_color(Role::Border),
-        bg(Role::Surface),
-    ])
+/// Emits the frame of a note: a rounded box on the panel colour, padded when `padded`, laying out what `content` emits as `flex` says.
+#[track_caller]
+fn card(padded: bool, flex: Flex, content: impl FnOnce()) {
+    let own = Modifier::new()
+        .fill_rounded(Role::Surface, Radius::Lg)
+        .stroke(Role::Border, Radius::Lg);
+    let own = if padded { own.pad(3) } else { own };
+    column(own, flex, content);
 }
 
-/// A note waiting to be sent: which lines it is about, that it is unsent, a button to take it back, and what it says.
-fn comment_card(index: usize, comment: &Comment, width: f32) -> Node {
-    let label = comment
+/// Emits a note waiting to be sent: which lines it is about, that it is unsent, a button to take it back, and what it says.
+#[track_caller]
+fn comment_card(index: usize, comment: &Comment, width: f32) {
+    let about = comment
         .range
         .map_or_else(|| "Whole file".to_owned(), |range| range.label());
     let body = wrap(&comment.text, 13, width);
-    under(
-        comment.range,
-        card()
-            .child(
-                node()
-                    .styles([
-                        flex(),
-                        items_center(),
-                        gap(2),
-                        h(8),
-                        px(3),
-                        border_b(),
-                        border_color(Role::Border),
-                    ])
-                    .child(line(label, 12, 1.4, Role::Subtle))
-                    .child(
-                        node()
-                            .styles([px(2), rounded_full(), border(), border_color(Role::Border)])
-                            .child(line("Not sent", 11, 1.4, Role::Muted)),
-                    )
-                    .child(spacer())
-                    .child(
-                        Button::icon(IconName::Close, FocusId(COMMENT_REMOVE_BASE + index as u64))
-                            .build(),
-                    ),
-            )
-            .child(
-                node()
-                    .styles([flex(), flex_col(), px(3), py(2.5)])
-                    .children(body.iter().map(|text| line(text, 13, 1.54, Role::Text))),
-            ),
-    )
+    under(comment.range, || {
+        card(false, Flex::new(), || {
+            row(
+                Modifier::new()
+                    .h(8)
+                    .stroke_side(Side::Bottom, 1.0, Role::Border)
+                    .pad_x(3),
+                Flex::new().center().gap(2),
+                || {
+                    line(about, 12, 1.4, Role::Subtle);
+                    block(
+                        Modifier::new().stroke(Role::Border, Radius::Full).pad_x(2),
+                        || line("Not sent", 11, 1.4, Role::Muted),
+                    );
+                    spacer();
+                    Button::icon(IconName::Close, FocusId(COMMENT_REMOVE_BASE + index as u64))
+                        .build();
+                },
+            );
+            column(Modifier::new().pad_x(3).pad_y(2.5), Flex::new(), || {
+                for text in &body {
+                    line(text, 13, 1.54, Role::Text);
+                }
+            });
+        });
+    });
 }
 
-/// The form for a comment on `target`: what it is about, a box to write it in, and the buttons to keep it or drop it.
-fn comment_box(state: &WorkspaceState, target: CommentTarget) -> Node {
+/// Emits the form for a comment on `target`: what it is about, a box to write it in, and the buttons to keep it or drop it.
+#[track_caller]
+fn comment_box(state: &WorkspaceState, target: CommentTarget) {
     let about = target
         .range
         .map_or_else(|| "this file".to_owned(), |range| range.label());
     let ready = !state.comment_text.text().trim().is_empty();
-    under(
-        target.range,
-        card()
-            .styles([p(3), gap(2.5)])
-            .child(line(format!("Comment on {about}"), 13, 1.4, Role::Text).styles([font_medium()]))
-            .child(
-                Input::new(&state.comment_text, COMMENT_FIELD)
-                    .placeholder("Tell the agent what to change")
-                    .build(),
-            )
-            .child(
-                node()
-                    .styles([flex(), items_center(), gap(2)])
-                    .child(spacer())
-                    .child(
-                        Button::new("Cancel", COMMENT_CANCEL)
-                            .variant(Variant::Ghost)
-                            .size(Size::Sm)
-                            .build(),
-                    )
-                    .child(
-                        Button::new("Add comment", COMMENT_ADD)
-                            .size(Size::Sm)
-                            .disabled(!ready)
-                            .build(),
-                    ),
-            ),
-    )
+    under(target.range, || {
+        card(true, Flex::new().gap(2.5), || {
+            label(
+                format!("Comment on {about}"),
+                Type::new(13)
+                    .ratio(1.4)
+                    .tone(Role::Text)
+                    .truncate()
+                    .medium(),
+            );
+            Input::new(&state.comment_text, COMMENT_FIELD)
+                .placeholder("Tell the agent what to change")
+                .build();
+            row(Modifier::new(), Flex::new().center().gap(2), || {
+                spacer();
+                Button::new("Cancel", COMMENT_CANCEL)
+                    .variant(Variant::Ghost)
+                    .size(Size::Sm)
+                    .build();
+                Button::new("Add comment", COMMENT_ADD)
+                    .size(Size::Sm)
+                    .disabled(!ready)
+                    .build();
+            });
+        });
+    });
 }
 
-/// The button that marks a file as read, or takes the mark off.
-fn viewed_button(viewed: bool, id: FocusId) -> Node {
+/// Emits the button that marks a file as read, or takes the mark off.
+#[track_caller]
+fn viewed_button(viewed: bool, id: FocusId) {
     Button::icon(IconName::Check, id)
         .size(Size::Xs)
         .round()
         .tone(if viewed { Role::Success } else { Role::Subtle })
         .selected(viewed)
-        .build()
+        .build();
 }
 
-/// One changed file: its header, and, unless it is folded away, its lines with the notes on them.
-fn file(
-    state: &WorkspaceState,
-    session: &Session,
-    index: usize,
-    width: f32,
-    top: f32,
-    window: (f32, f32),
-) -> Node {
-    let height = section_height(state, session, index, width);
-    if top + height < window.0 || top > window.1 {
-        return node().styles([h(height / (4.0 * pixels())), flex_none()]);
+/// Something shown under a row of a diff: the form for a comment, or a note kept.
+enum Block<'a> {
+    /// The form for a comment on the target.
+    Form(CommentTarget),
+    /// The note at this position among the session's notes.
+    Note(usize, &'a Comment),
+}
+
+/// Emits the header of `change`, the change at `index`, unfolded when `open`, with the count of `notes` on it.
+#[track_caller]
+fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
+    let mut own = Modifier::new().h(10).fill(Role::Surface);
+    if open {
+        own = own.stroke_side(Side::Bottom, 1.0, Role::Border);
     }
-    let change = &session.changes[index];
-    let open = !state.closed_diffs.contains(&change.path);
-    let column = ((width - 34.0) / 2.0 - 46.0).max(80.0);
-    let mine: Vec<(usize, &Comment)> = session
-        .comments
-        .iter()
-        .enumerate()
-        .filter(|(_, comment)| comment.path == change.path)
-        .collect();
-    let target = state.comment_target.filter(|target| target.change == index);
-    let mut header = node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(2),
-            h(10),
-            px(3),
-            flex_none(),
-            bg(Role::Surface),
-        ])
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    gap(2),
-                    flex_1(),
-                    min_w_px(0),
-                    overflow_hidden(),
-                    cursor_pointer(),
-                ])
-                .focusable(FocusId(DIFF_FOLD_BASE + index as u64))
-                .child(glyph(
+    row(own.pad_x(3), Flex::new().center().gap(2), || {
+        row(
+            Modifier::new()
+                .grow()
+                .clip_to(Radius::None)
+                .cursor(CursorIcon::Pointer)
+                .target(FocusId(DIFF_FOLD_BASE + index as u64)),
+            Flex::new().center().gap(2),
+            || {
+                icon(
                     if open {
                         IconName::ChevronDown
                     } else {
@@ -719,135 +701,179 @@ fn file(
                     },
                     3.5,
                     Role::Muted,
-                ))
-                .child(file_icon(change.name(), 4.0))
-                .child(
-                    line(change.name(), 13, 1.4, Role::Text).styles([font_medium(), flex_none()]),
-                )
-                .child(text(change.directory().to_owned()).styles([
-                    text_px(11),
-                    leading_ratio(1.4),
-                    font_mono(),
-                    text_color(Role::Subtle),
-                    truncate(),
-                ])),
+                );
+                file_icon(change.name(), 4.0);
+                label(
+                    change.name(),
+                    Type::new(13)
+                        .ratio(1.4)
+                        .tone(Role::Text)
+                        .truncate()
+                        .medium(),
+                );
+                label_with(
+                    Modifier::new().grow(),
+                    change.directory(),
+                    Type::new(11)
+                        .ratio(1.4)
+                        .mono()
+                        .tone(Role::Subtle)
+                        .truncate(),
+                );
+            },
         );
-    if !mine.is_empty() {
-        header = header.child(
-            node()
-                .styles([flex(), items_center(), gap(1), flex_none()])
-                .child(glyph(IconName::Message, 3.5, Role::Muted))
-                .child(line(mine.len().to_string(), 11, 1.4, Role::Muted)),
-        );
+        if notes > 0 {
+            row(Modifier::new(), Flex::new().center().gap(1), || {
+                icon(IconName::Message, 3.5, Role::Muted);
+                line(notes.to_string(), 11, 1.4, Role::Muted);
+            });
+        }
+        Tally::new(change.added(), change.removed())
+            .size(11)
+            .build();
+        viewed_button(change.viewed, FocusId(VIEWED_BASE + index as u64));
+        Button::icon(IconName::Message, FocusId(COMMENT_FILE_BASE + index as u64)).build();
+    });
+}
+
+/// Emits one changed file: its header, and, unless it is folded away, its lines with the notes on them.
+#[track_caller]
+fn file(
+    state: &WorkspaceState,
+    session: &Session,
+    index: usize,
+    width: f32,
+    top: f32,
+    window: (f32, f32),
+) {
+    let height = section_height(state, session, index, width);
+    if top + height < window.0 || top > window.1 {
+        gap_box(Modifier::new().h(height / (4.0 * pixels())));
+        return;
     }
-    header = header
-        .child(
-            Tally::new(change.added(), change.removed())
-                .size(11)
-                .build(),
-        )
-        .child(viewed_button(
-            change.viewed,
-            FocusId(VIEWED_BASE + index as u64),
-        ))
-        .child(Button::icon(IconName::Message, FocusId(COMMENT_FILE_BASE + index as u64)).build());
-    if open {
-        header = header.styles([border_b(), border_color(Role::Border)]);
-    }
-    let mut section = node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_none(),
-            mx(4),
-            mt(4),
-            rounded(Radius::Lg),
-            border(),
-            border_color(Role::Border),
-            overflow_hidden(),
-        ])
-        .child(header);
-    if !open {
-        return section;
-    }
-    if !change.loaded {
-        return section.child(
-            node()
-                .styles([flex(), px(3), py(2), flex_none()])
-                .styles([h(change.expected_rows() as f32 * ROW / 4.0)])
-                .child(line("Reading the diff…", 12, 1.4, Role::Subtle)),
-        );
-    }
-    if let Some(target) = target.filter(|target| target.range.is_none() && !target.dragging) {
-        section = section.child(comment_box(state, target));
-    }
-    for (at, comment) in mine.iter().filter(|(_, comment)| comment.range.is_none()) {
-        section = section.child(comment_card(*at, comment, width));
-    }
-    let selected = target.and_then(|target| target.range);
-    let mut colours = DiffColours::of(&change.diff, file_language(&change.path).as_deref());
-    if state.window.git.word_diff {
-        colours = colours.with_words(&change.diff, &change.words);
-    }
-    let scale = pixels();
-    let columns = columns(width);
-    let mut at = top + (SECTION_CHROME + HEADER) * scale;
-    let mut skipped = 0;
-    for row in rows(change) {
-        let mut blocks = Vec::new();
-        if let Row::Pair(old, new) = &row {
-            for (side_new, entry) in [(false, old), (true, new)] {
-                let number = entry
-                    .as_ref()
-                    .and_then(|entry| if side_new { entry.new } else { entry.old });
-                let Some(number) = number else {
-                    continue;
-                };
-                let ends_here = |range: Option<Range>| {
-                    range.is_some_and(|range| range.new == side_new && range.end == number)
-                };
-                if let Some(target) =
-                    target.filter(|target| !target.dragging && ends_here(target.range))
-                {
-                    blocks.push((comment_box(state, target), NOTE_BOX));
+    let change = &session.changes[index];
+    let open = !state.closed_diffs.contains(&change.path);
+    let column_width = ((width - 34.0) / 2.0 - 46.0).max(80.0);
+    let mine: Vec<(usize, &Comment)> = session
+        .comments
+        .iter()
+        .enumerate()
+        .filter(|(_, comment)| comment.path == change.path)
+        .collect();
+    let target = state.comment_target.filter(|target| target.change == index);
+    column(
+        Modifier::new()
+            .pad_x(4)
+            .pad_side(Side::Top, 4)
+            .stroke(Role::Border, Radius::Lg)
+            .clip_to(Radius::Lg),
+        Flex::new(),
+        || {
+            file_header(change, index, open, mine.len());
+            if !open {
+                return;
+            }
+            if !change.loaded {
+                row(
+                    Modifier::new()
+                        .h(change.expected_rows() as f32 * ROW / 4.0)
+                        .pad_x(3)
+                        .pad_y(2),
+                    Flex::new(),
+                    || line("Reading the diff…", 12, 1.4, Role::Subtle),
+                );
+                return;
+            }
+            if let Some(target) = target.filter(|target| target.range.is_none() && !target.dragging)
+            {
+                rustle::key("file form", || comment_box(state, target));
+            }
+            for (at, comment) in mine.iter().filter(|(_, comment)| comment.range.is_none()) {
+                rustle::key(("file note", *at), || comment_card(*at, comment, width));
+            }
+            let selected = target.and_then(|target| target.range);
+            let mut colours = DiffColours::of(&change.diff, file_language(&change.path).as_deref());
+            if state.window.git.word_diff {
+                colours = colours.with_words(&change.diff, &change.words);
+            }
+            let scale = pixels();
+            let columns = columns(width);
+            let mut at = top + (SECTION_CHROME + HEADER) * scale;
+            let mut skipped = 0;
+            for (position, row_of) in rows(change).iter().enumerate() {
+                let mut blocks: Vec<(Block, f32)> = Vec::new();
+                if let Row::Pair(old, new) = row_of {
+                    for (side_new, entry) in [(false, old), (true, new)] {
+                        let number = entry
+                            .as_ref()
+                            .and_then(|entry| if side_new { entry.new } else { entry.old });
+                        let Some(number) = number else {
+                            continue;
+                        };
+                        let ends_here = |range: Option<Range>| {
+                            range.is_some_and(|range| range.new == side_new && range.end == number)
+                        };
+                        if let Some(target) =
+                            target.filter(|target| !target.dragging && ends_here(target.range))
+                        {
+                            blocks.push((Block::Form(target), NOTE_BOX));
+                        }
+                        for (nth, comment) in
+                            mine.iter().filter(|(_, comment)| ends_here(comment.range))
+                        {
+                            blocks.push((
+                                Block::Note(*nth, comment),
+                                NOTE_CHROME
+                                    + wrap(&comment.text, 13, column_width).len() as f32
+                                        * NOTE_LINE,
+                            ));
+                        }
+                    }
                 }
-                for (nth, comment) in mine.iter().filter(|(_, comment)| ends_here(comment.range)) {
-                    blocks.push((
-                        comment_card(*nth, comment, column),
-                        NOTE_CHROME + wrap(&comment.text, 13, column).len() as f32 * NOTE_LINE,
-                    ));
+                let lines = row_height(row_of, columns);
+                let near = at + lines as f32 * ROW * scale >= window.0 && at <= window.1;
+                if blocks.is_empty() && !near {
+                    skipped += lines;
+                    at += lines as f32 * ROW * scale;
+                    continue;
+                }
+                skip(&mut skipped);
+                rustle::key(("row", position), || {
+                    diff_row(row_of, &colours, index, selected, columns);
+                });
+                at += lines as f32 * ROW * scale;
+                for (block, tall) in blocks {
+                    match block {
+                        Block::Form(target) => {
+                            rustle::key(("form", position), || comment_box(state, target));
+                        }
+                        Block::Note(nth, comment) => {
+                            rustle::key(("note", nth), || {
+                                comment_card(nth, comment, column_width);
+                            });
+                        }
+                    }
+                    at += tall * scale;
                 }
             }
-        }
-        let lines = row_height(&row, columns);
-        let near = at + lines as f32 * ROW * scale >= window.0 && at <= window.1;
-        if blocks.is_empty() && !near {
-            skipped += lines;
-            at += lines as f32 * ROW * scale;
-            continue;
-        }
-        section = skip(section, &mut skipped);
-        section = section.child(row_node(&row, &colours, index, selected, columns));
-        at += lines as f32 * ROW * scale;
-        for (block, tall) in blocks {
-            section = section.child(block);
-            at += tall * scale;
-        }
-    }
-    skip(section, &mut skipped)
+            skip(&mut skipped);
+        },
+    );
 }
 
-/// `section` with a blank as tall as the `rows` lines left out since the last row built, which are taken as counted.
-fn skip(section: Node, rows: &mut usize) -> Node {
+/// Emits a blank as tall as the `rows` lines left out since the last row built, which are taken as counted.
+#[track_caller]
+fn skip(rows: &mut usize) {
     let blank = std::mem::take(rows);
     if blank == 0 {
-        return section;
+        return;
     }
-    section.child(node().styles([h(blank as f32 * ROW / 4.0), flex_none()]))
+    gap_box(Modifier::new().h(blank as f32 * ROW / 4.0));
 }
 
-/// The strip above the files: how many changed, how many are read, and the button that sends the notes to the agent.
-fn summary(session: &Session) -> Node {
+/// Emits the strip above the files: how many changed, how many are read, and the button that sends the notes to the agent.
+#[track_caller]
+fn summary(session: &Session) {
     let viewed = session
         .changes
         .iter()
@@ -855,36 +881,24 @@ fn summary(session: &Session) -> Node {
         .count();
     let count = session.changes.len();
     let waiting = session.comments.len();
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(3),
-            h(10),
-            px(4),
-            flex_none(),
-            border_b(),
-            border_color(Role::Border),
-        ])
-        .child(line(
-            format!("{count} file{} changed", if count == 1 { "" } else { "s" }),
-            12,
-            1.4,
-            Role::Muted,
-        ))
-        .child(
+    row(
+        Modifier::new()
+            .h(10)
+            .stroke_side(Side::Bottom, 1.0, Role::Border)
+            .pad_x(4),
+        Flex::new().center().gap(3),
+        || {
+            line(
+                format!("{count} file{} changed", if count == 1 { "" } else { "s" }),
+                12,
+                1.4,
+                Role::Muted,
+            );
             Tally::new(session.added(), session.removed())
                 .size(12)
-                .build(),
-        )
-        .child(spacer())
-        .child(line(
-            format!("{viewed} of {count} viewed"),
-            12,
-            1.4,
-            Role::Subtle,
-        ))
-        .child(
+                .build();
+            spacer();
+            line(format!("{viewed} of {count} viewed"), 12, 1.4, Role::Subtle);
             Button::new(
                 if waiting > 0 {
                     format!("Send to agent · {waiting}")
@@ -895,12 +909,14 @@ fn summary(session: &Session) -> Node {
             )
             .size(Size::Sm)
             .disabled(waiting == 0)
-            .build(),
-        )
+            .build();
+        },
+    );
 }
 
-/// The diff of `session` in a view `width` by `height` logical pixels: a summary strip, then each changed file, of which only those in or near the view are built.
-pub fn diff(state: &WorkspaceState, session: &Session, width: f32, height: f32) -> Node {
+/// Emits the diff of `session` in a view `width` by `height` logical pixels: a summary strip, then each changed file, of which only those in or near the view are built.
+#[track_caller]
+pub fn diff(state: &WorkspaceState, session: &Session, width: f32, height: f32) {
     let heights: Vec<f32> = (0..session.changes.len())
         .map(|index| section_height(state, session, index, width))
         .collect();
@@ -910,26 +926,24 @@ pub fn diff(state: &WorkspaceState, session: &Session, width: f32, height: f32) 
         state.diff_scroll.min(total - view) - OVERSCAN * pixels(),
         state.diff_scroll.min(total) + view + OVERSCAN * pixels(),
     );
-    let mut top = 0.0;
-    let files: Vec<Node> = heights
-        .iter()
-        .enumerate()
-        .map(|(index, tall)| {
-            let node = file(state, session, index, width, top, window);
-            top += tall;
-            node
-        })
-        .collect();
-    let body = node()
-        .styles([flex(), flex_col(), flex_1(), min_h(0), overflow_hidden()])
-        .scroll_from_start(DIFF_SCROLL, state.diff_scroll)
-        .child(
-            node()
-                .styles([flex(), flex_col(), flex_none(), pb(4)])
-                .children(files),
+    column(Modifier::new().grow(), Flex::new(), || {
+        summary(session);
+        scroll_area(
+            Modifier::new().grow(),
+            Scroll::from_start(DIFF_SCROLL, state.diff_scroll),
+            || {
+                column(
+                    Modifier::new().fill_max_width().pad_side(Side::Bottom, 4),
+                    Flex::new(),
+                    || {
+                        let mut top = 0.0;
+                        for (index, tall) in heights.iter().enumerate() {
+                            rustle::key(index, || file(state, session, index, width, top, window));
+                            top += tall;
+                        }
+                    },
+                );
+            },
         );
-    node()
-        .styles([flex(), flex_col(), flex_1(), min_w_px(0), min_h(0)])
-        .child(summary(session))
-        .child(body)
+    });
 }

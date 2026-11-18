@@ -1,18 +1,16 @@
 //! The page of the agents and their accounts: a card for each agent with how it signs in, its switch, and its accounts or its API key.
 
+use pm_field::{Edit, Field};
 use pm_harness::SignIn;
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, bg, flex, flex_1, flex_col, flex_none, gap, items_center, justify_center,
-    min_w_px, overflow_hidden, pl, rounded, size,
+use rustle::Modifier;
+
+use crate::kit::{
+    Flex, FocusId, IconName, Radius, Role, Side, Styled, Tooltip, Type, column, label, row,
 };
-use pm_text::{Edit, Field};
-use pm_ui::{Node, node};
 
 use crate::button::Variant;
 use crate::input::Input;
-use crate::parts::{clipped, glyph, line};
+use crate::parts::{clipped, glyph};
 use crate::settings_ids::{
     ACCOUNT_ADDS, ACCOUNT_COLUMNS, ACCOUNT_CONTROLS, ACCOUNT_REMOVES, AGENT_SWITCHES, DEFAULT_USES,
     KEY_REMOVES, KEY_SETS, SIGN_INS, SINGLES,
@@ -337,76 +335,83 @@ fn how_it_signs_in(sign_in: Option<SignIn>, keyed: bool, credentials: Option<&st
     }
 }
 
-/// The square an agent's glyph sits in at the start of its card.
-fn emblem(icon: IconName, dim: bool) -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            justify_center(),
-            flex_none(),
-            size(8),
-            rounded(Radius::Md),
-            bg(Role::SurfaceActive),
-        ])
-        .child(glyph(
-            icon,
-            4.5,
-            if dim { Role::Subtle } else { Role::Text },
-        ))
+/// Emits the square an agent's glyph sits in at the start of its card, the glyph quieter when `dim`.
+fn emblem(icon: IconName, dim: bool) {
+    row(
+        Modifier::new()
+            .square(8)
+            .fill_rounded(Role::SurfaceActive, Radius::Md),
+        Flex::new().center().middle(),
+        || glyph(icon, 4.5, if dim { Role::Subtle } else { Role::Text }),
+    );
 }
 
-/// A name over a quieter line, side by side with nothing else.
-fn titled(title: &str, under: &str, tone: Role, badges: Vec<Node>) -> Node {
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            gap(1),
-            flex_1(),
-            min_w_px(0),
-            overflow_hidden(),
-        ])
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(2)])
-                .child(line(title, 13, 1.4, tone).styles([pm_style::font_medium()]))
-                .children(badges),
-        )
-        .children((!under.is_empty()).then(|| clipped(under, 12, Role::Muted)))
+/// Emits a name `title` in `tone` followed by `badges`, over a quieter line `under` when it says something.
+#[track_caller]
+fn titled(title: &str, under: &str, tone: Role, badges: impl FnOnce()) {
+    column(
+        Modifier::new().grow().clip_to(Radius::None),
+        Flex::new().gap(1),
+        || {
+            row(Modifier::new(), Flex::new().center().gap(2), || {
+                label(
+                    title,
+                    Type::new(13).ratio(1.4).tone(tone).truncate().medium(),
+                );
+                badges();
+            });
+            if !under.is_empty() {
+                clipped(under, 12, Role::Muted);
+            }
+        },
+    );
 }
 
-/// The buttons at the end of a row, side by side.
-fn actions(buttons: Vec<Node>) -> Node {
-    node()
-        .styles([flex(), items_center(), gap(2), flex_none()])
-        .children(buttons)
+/// Emits the buttons `buttons` emits at the end of a row, side by side.
+#[track_caller]
+fn actions(buttons: impl FnOnce()) {
+    row(Modifier::new(), Flex::new().center().gap(2), buttons);
 }
 
-/// A small button of a row.
-fn small(label: &str, id: FocusId, variant: Variant) -> Node {
+/// Emits a small button of a row saying `label` in the look of `variant`, answering to `id`.
+#[track_caller]
+fn small(label: &str, id: FocusId, variant: Variant) {
     Button::new(label, id)
         .variant(variant)
         .size(Size::Sm)
-        .build()
+        .build();
 }
 
-/// A row inside an agent's card, standing in to line up with the agent's name.
-/// A small button showing only `icon`, saying what it does with `tooltip`, answering to `id`.
-fn icon_button(icon: IconName, tooltip: &str, id: FocusId) -> Node {
+/// Emits a small button showing only `icon`, saying what it does with `tooltip`, answering to `id`.
+#[track_caller]
+fn icon_button(icon: IconName, tooltip: &str, id: FocusId) {
     Button::icon(icon, id)
         .variant(Variant::Ghost)
         .size(Size::Sm)
-        .build()
-        .tooltip(tooltip)
+        .modifier(Modifier::new().tooltip(tooltip))
+        .build();
 }
 
-/// A row inside an agent's card, standing in to line up with the agent's name.
-fn inner_row() -> Node {
-    flat_row().styles([pl(ROW_INSET)])
+/// Emits a row of a boxed list, as the list's own rows are, set in from the left by `inset` steps and holding what `content` emits.
+#[track_caller]
+fn inset_row(inset: u32, content: impl FnOnce()) {
+    row(
+        Modifier::new()
+            .pad_side(Side::Left, inset)
+            .pad_side(Side::Right, 3)
+            .pad_y(3),
+        Flex::new().center().between().gap(3),
+        content,
+    );
 }
 
-/// The top of an agent's card: its glyph, its name and how it signs in, `keyed` when it also takes an API key and naming the cloud `credentials` it reads instead when it does, and the switch that offers it for new sessions.
+/// Emits a row inside an agent's card, standing in to line up with the agent's name, holding what `content` emits.
+#[track_caller]
+fn inner_row(content: impl FnOnce()) {
+    inset_row(ROW_INSET, content);
+}
+
+/// Emits the top of an agent's card: its glyph, its name and how it signs in, `keyed` when it also takes an API key and naming the cloud `credentials` it reads instead when it does, and the switch that offers it for new sessions.
 fn header(
     state: &WorkspaceState,
     index: usize,
@@ -414,27 +419,26 @@ fn header(
     sign_in: Option<SignIn>,
     keyed: bool,
     credentials: Option<&str>,
-) -> Node {
+) {
     let shown = state.agent_shown(index);
     let look = state.agent_look(index);
-    let badges = if shown {
-        Vec::new()
-    } else {
-        vec![Badge::new("Hidden").tone(Role::Subtle).build()]
-    };
-    flat_row()
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(3), flex_1(), min_w_px(0)])
-                .child(emblem(look.icon, !shown))
-                .child(titled(
-                    name,
-                    &how_it_signs_in(sign_in, keyed, credentials),
-                    if shown { Role::Text } else { Role::Muted },
-                    badges,
-                )),
-        )
-        .child(switch(shown, AGENT_SWITCHES.id(index)))
+    let under = how_it_signs_in(sign_in, keyed, credentials);
+    flat_row(|| {
+        row(Modifier::new().grow(), Flex::new().center().gap(3), || {
+            emblem(look.icon, !shown);
+            titled(
+                name,
+                &under,
+                if shown { Role::Text } else { Role::Muted },
+                || {
+                    if !shown {
+                        Badge::new("Hidden").tone(Role::Subtle).build();
+                    }
+                },
+            );
+        });
+        switch(shown, AGENT_SWITCHES.id(index));
+    });
 }
 
 /// How an agent signs in and what it takes, as its accounts' rows need it.
@@ -459,33 +463,33 @@ fn status_of(said: Option<&Option<String>>, signing: Signing) -> (String, bool) 
     }
 }
 
-/// The buttons every account has, by the names given for them: use it when it is not in use, sign it in, and set or forget its key.
+/// Emits the buttons every account has, by the names given for them: use it when it is not in use, sign it in, and set or forget its key.
+#[track_caller]
 fn account_buttons(
     signing: Signing,
     in_use: bool,
     status: (&str, bool),
     ids: [Option<FocusId>; 4],
-) -> Vec<Node> {
+) {
     let [use_id, sign_in, set_key, remove_key] = ids;
     let (said, signed_in) = status;
     let keyed_now = said.starts_with("API key");
-    let mut buttons = Vec::new();
     if signing.keyed {
         if let Some(remove) = remove_key.filter(|_| said == pm_harness::SAVED_KEY) {
-            buttons.push(small("Remove key", remove, Variant::Ghost));
+            small("Remove key", remove, Variant::Ghost);
         }
         if let Some(set) = set_key {
-            buttons.push(small(
+            small(
                 if keyed_now { "Replace key" } else { "Add key" },
                 set,
                 Variant::Ghost,
-            ));
+            );
         }
     }
     if signing.signs_in
         && let Some(sign_in) = sign_in
     {
-        buttons.push(small(
+        small(
             if signed_in && !keyed_now {
                 "Sign in again"
             } else {
@@ -493,29 +497,33 @@ fn account_buttons(
             },
             sign_in,
             Variant::Ghost,
-        ));
+        );
     }
     if let Some(use_id) = use_id.filter(|_| !in_use) {
-        buttons.push(small("Use", use_id, Variant::Outline));
+        small("Use", use_id, Variant::Outline);
     }
-    buttons
 }
 
-/// The box an account's name or API key is typed into, with its buttons, in place of the account's row.
-fn form_row(field: &Field, id: FocusId, placeholder: &str, save: FocusId, cancel: FocusId) -> Node {
+/// Emits the box `id` an account's name or API key is typed into, holding `field` and showing `placeholder` while empty, with its buttons `save` and `cancel`, in place of the account's row.
+#[track_caller]
+fn form_row(field: &Field, id: FocusId, placeholder: &str, save: FocusId, cancel: FocusId) {
     let mut input = Input::new(field, id)
         .variant(crate::input::Variant::Bordered)
         .size(Size::Sm)
-        .placeholder(placeholder);
+        .placeholder(placeholder)
+        .modifier(Modifier::new().grow());
     if id == KEY_FIELD {
         input = input.leading_icon(IconName::Lock);
     }
-    inner_row()
-        .child(node().styles([flex_1(), min_w_px(0)]).child(input.build()))
-        .child(actions(vec![
-            small("Cancel", cancel, Variant::Ghost),
-            small("Save", save, Variant::Default),
-        ]))
+    rustle::key(id.0, || {
+        inner_row(|| {
+            input.build();
+            actions(|| {
+                small("Cancel", cancel, Variant::Ghost);
+                small("Save", save, Variant::Default);
+            });
+        });
+    });
 }
 
 /// The open key box, when it is for the account `login` of the agent at `index`, or its default account when `login` is nothing.
@@ -531,17 +539,16 @@ fn key_form_for<'a>(
         .filter(|form| form.agent == index && form.login.as_deref() == login)
 }
 
-/// The rows of the accounts of the agent at `index`, whose id is `id`: its default account, the ones added, each with who it is signed in as and its buttons, and the button adding one.
-fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing) -> Vec<Node> {
+/// Emits the rows of the accounts of the agent at `index`, whose id is `id`: its default account, the ones added, each with who it is signed in as and its buttons, and the button adding one.
+fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing) {
     let in_use_badge = || Badge::new("In use").tone(Role::Subtle).build();
     let default_in_use = !state.in_use.iter().any(|(owner, _)| owner == id);
-    let mut rows = Vec::new();
     let default_said = match state.defaults.get(index) {
         Some(Some(said)) => Some(said),
         _ => None,
     };
     let (status, signed_in) = status_of(default_said, signing);
-    rows.push(match key_form_for(state, index, None) {
+    match key_form_for(state, index, None) {
         Some(form) => form_row(
             &form.key,
             KEY_FIELD,
@@ -549,29 +556,32 @@ fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing
             KEY_SAVE,
             KEY_CANCEL,
         ),
-        None => inner_row()
-            .child(titled(
+        None => inner_row(|| {
+            titled(
                 "Default account",
                 &status,
                 if signed_in { Role::Text } else { Role::Muted },
-                if default_in_use {
-                    vec![in_use_badge()]
-                } else {
-                    Vec::new()
+                || {
+                    if default_in_use {
+                        in_use_badge();
+                    }
                 },
-            ))
-            .child(actions(account_buttons(
-                signing,
-                default_in_use,
-                (&status, signed_in),
-                [
-                    DEFAULT_USES.id(index),
-                    SIGN_INS.id(index),
-                    KEY_SETS.id(index),
-                    KEY_REMOVES.id(index),
-                ],
-            ))),
-    });
+            );
+            actions(|| {
+                account_buttons(
+                    signing,
+                    default_in_use,
+                    (&status, signed_in),
+                    [
+                        DEFAULT_USES.id(index),
+                        SIGN_INS.id(index),
+                        KEY_SETS.id(index),
+                        KEY_REMOVES.id(index),
+                    ],
+                );
+            });
+        }),
+    }
     for (position, (_, login, name)) in state
         .logins
         .iter()
@@ -579,13 +589,13 @@ fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing
         .filter(|(_, (owner, _, _))| owner == id)
     {
         if let Some(form) = key_form_for(state, index, Some(login)) {
-            rows.push(form_row(
+            form_row(
                 &form.key,
                 KEY_FIELD,
                 "Paste an API key",
                 KEY_SAVE,
                 KEY_CANCEL,
-            ));
+            );
             continue;
         }
         if let Some(form) = state
@@ -594,13 +604,13 @@ fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing
             .as_ref()
             .filter(|form| form.login == position)
         {
-            rows.push(form_row(
+            form_row(
                 &form.name,
                 NAME_FIELD,
                 "Account name",
                 NAME_SAVE,
                 NAME_CANCEL,
-            ));
+            );
             continue;
         }
         let used = state
@@ -613,99 +623,96 @@ fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing
             .get(login)
             .and_then(Option::as_ref);
         let (status, signed_in) = status_of(said, signing);
-        let mut buttons = account_buttons(
-            signing,
-            used,
-            (&status, signed_in),
-            [
-                AccountControl::Use.id(position),
-                AccountControl::SignIn.id(position),
-                AccountControl::SetKey.id(position),
-                AccountControl::RemoveKey.id(position),
-            ],
-        );
-        buttons.extend(
-            AccountControl::Rename
-                .id(position)
-                .map(|rename| icon_button(IconName::Pencil, "Rename", rename)),
-        );
-        buttons.extend(
-            ACCOUNT_REMOVES
-                .id(position)
-                .map(|remove| icon_button(IconName::Trash, "Remove account", remove)),
-        );
-        rows.push(
-            inner_row()
-                .child(titled(
+        rustle::key(position, || {
+            inner_row(|| {
+                titled(
                     name,
                     &status,
                     if signed_in { Role::Text } else { Role::Muted },
-                    if used {
-                        vec![in_use_badge()]
-                    } else {
-                        Vec::new()
+                    || {
+                        if used {
+                            in_use_badge();
+                        }
                     },
-                ))
-                .child(actions(buttons)),
-        );
+                );
+                actions(|| {
+                    account_buttons(
+                        signing,
+                        used,
+                        (&status, signed_in),
+                        [
+                            AccountControl::Use.id(position),
+                            AccountControl::SignIn.id(position),
+                            AccountControl::SetKey.id(position),
+                            AccountControl::RemoveKey.id(position),
+                        ],
+                    );
+                    if let Some(rename) = AccountControl::Rename.id(position) {
+                        icon_button(IconName::Pencil, "Rename", rename);
+                    }
+                    if let Some(remove) = ACCOUNT_REMOVES.id(position) {
+                        icon_button(IconName::Trash, "Remove account", remove);
+                    }
+                });
+            });
+        });
     }
-    rows.push(
-        flat_row()
-            .styles([pl(ADD_INSET)])
-            .children(ACCOUNT_ADDS.id(index).map(|add| {
-                Button::new("Add account", add)
-                    .variant(Variant::Ghost)
-                    .size(Size::Sm)
-                    .with_icon(IconName::Plus)
-                    .build()
-            })),
-    );
-    rows
+    inset_row(ADD_INSET, || {
+        if let Some(add) = ACCOUNT_ADDS.id(index) {
+            Button::new("Add account", add)
+                .variant(Variant::Ghost)
+                .size(Size::Sm)
+                .with_icon(IconName::Plus)
+                .build();
+        }
+    });
 }
 
-/// The card of the agent at `index`, `room` logical pixels across: its header, what the reader sets up for it when it needs something, then its accounts, each signed in or given a key of its own.
-fn agent_card(state: &WorkspaceState, index: usize, room: f32) -> Option<Node> {
-    let entry = state.settings_servers.agents.get(index)?;
+/// Emits the card of the agent at `index`, `room` logical pixels across: its header, what the reader sets up for it when it needs something, then its accounts, each signed in or given a key of its own; nothing when there is no agent there.
+#[track_caller]
+fn agent_card(state: &WorkspaceState, index: usize, room: f32) {
+    let Some(entry) = state.settings_servers.agents.get(index) else {
+        return;
+    };
     let agent = pm_harness::agent(&entry.id);
     let sign_in = agent.map(|agent| agent.sign_in);
     let keyed = agent.is_some_and(|agent| !agent.key_env.is_empty());
     let credentials = agent.and_then(|agent| agent.credentials);
-    let mut rows = vec![header(
-        state,
-        index,
-        &entry.name,
-        sign_in,
-        keyed,
-        credentials,
-    )];
     let hint = if entry.server {
         Some("A model server declared on the Model Servers page.".to_owned())
     } else {
         agent.and_then(|agent| agent.setup_hint())
     };
-    if let Some(hint) = hint {
-        rows.push(inner_row().child(crate::settings_servers::wrapped_note(
-            &hint,
-            (room - ROW_INSET as f32 * 4.0 - 24.0).max(160.0),
-        )));
-    }
     let signing = Signing {
         signs_in: sign_in.is_some_and(SignIn::has_accounts),
         keyed,
     };
-    if signing.signs_in || signing.keyed {
-        rows.extend(account_rows(state, index, &entry.id, signing));
-    }
-    Some(boxed(rows))
+    boxed(|| {
+        header(state, index, &entry.name, sign_in, keyed, credentials);
+        if let Some(hint) = &hint {
+            inner_row(|| {
+                crate::settings_servers::wrapped_note(
+                    hint,
+                    (room - ROW_INSET as f32 * 4.0 - 24.0).max(160.0),
+                );
+            });
+        }
+        if signing.signs_in || signing.keyed {
+            account_rows(state, index, &entry.id, signing);
+        }
+    });
 }
 
-/// The page of the agents: what it is for, then a card for each agent.
-pub(crate) fn body(state: &WorkspaceState, page: Node, room: f32) -> Node {
-    page.child(paragraph(
+/// Emits the page of the agents, `room` logical pixels across: what `page` emits first, then what the page is for, then a card for each agent.
+pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
+    page();
+    paragraph(
         "Every agent the harness offers. New sessions offer the ones signed in; switch one off to leave it out even then. Its sessions and accounts stay. An agent can keep several accounts, such as one per organisation; new sessions use the one marked in use. Skills, instructions, tools, memory and conversations are shared by every account and every agent.",
         room,
-    ))
-    .children((0..state.agent_slots()).filter_map(|index| agent_card(state, index, room)))
+    );
+    for index in 0..state.agent_slots() {
+        rustle::key(index, || agent_card(state, index, room));
+    }
 }
 
 /// Whether `id` names the box for an API key or the one for an account's name.

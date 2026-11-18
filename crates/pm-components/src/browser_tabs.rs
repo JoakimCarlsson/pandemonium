@@ -2,13 +2,9 @@
 
 use std::ops::Range;
 
-use pm_input::FocusId;
-use pm_style::{
-    Role, bg, border_b, border_color, flex, flex_none, gap, h_px, items_center, overflow_hidden,
-    px, w_full,
-};
-use pm_text::Field;
-use pm_ui::{Node, Picture, node};
+use crate::kit::{Flex, FocusId, IconName, Picture, Radius, Role, Side, Styled, row};
+use pm_field::Field;
+use rustle::Modifier;
 
 use crate::Button;
 use crate::browser::{Browser, Command, Pointer};
@@ -18,7 +14,6 @@ use crate::button::Variant;
 use crate::size::Size;
 use crate::state::{Tab, WorkspaceState};
 use crate::tab_chip::{TabChip, TabVariant};
-use pm_icon::IconName;
 
 /// Opens a new, empty tab.
 pub const BROWSER_NEW_TAB: FocusId = FocusId(7_440_022);
@@ -479,70 +474,66 @@ impl WorkspaceState {
     }
 }
 
-/// The strip of tabs, `width` logical pixels wide: a chip for each tab that fits, buttons to scroll when not all do, and the one that opens a new tab.
-pub fn tab_strip(browser: &Browser, width: f32) -> Node {
+/// Emits the strip of tabs, `width` logical pixels wide: a chip for each tab that fits, buttons to scroll when not all do, and the one that opens a new tab.
+#[track_caller]
+pub fn tab_strip(browser: &Browser, width: f32) {
     let (shown, each) = browser.strip_window(width);
     let scrolls = shown.len() < browser.tabs.len();
-    let mut strip = node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(1),
-            px(2),
-            h_px(TAB_STRIP),
-            w_full(),
-            flex_none(),
-            overflow_hidden(),
-            border_b(),
-            border_color(Role::Border),
-            bg(Role::Sidebar),
-        ])
-        .children(scrolls.then(|| {
-            Button::icon(IconName::ArrowLeft, BROWSER_TABS_PREVIOUS)
-                .variant(Variant::Ghost)
-                .size(Size::Xs)
-                .disabled(shown.start == 0)
-                .build()
-        }));
-    for index in shown.clone() {
-        let tab = &browser.tabs[index];
-        let hint = if tab.agent {
-            format!("{} (opened by an agent)", tab.label())
-        } else {
-            tab.label()
-        };
-        strip = strip.child(
-            TabChip::new(
-                tab.label(),
-                FocusId(BROWSER_TAB_SELECT + index as u64),
-                FocusId(BROWSER_TAB_CLOSE + index as u64),
-            )
-            .variant(if tab.agent {
-                TabVariant::Agent
-            } else {
-                TabVariant::Page
-            })
-            .selected(index == browser.active)
-            .locked(tab.locked)
-            .width(each)
-            .hint(hint)
-            .build(),
-        );
-    }
-    strip
-        .children(scrolls.then(|| {
-            Button::icon(IconName::ArrowRight, BROWSER_TABS_NEXT)
-                .variant(Variant::Ghost)
-                .size(Size::Xs)
-                .disabled(shown.end == browser.tabs.len())
-                .build()
-        }))
-        .child(
+    row(
+        Modifier::new()
+            .height(TAB_STRIP)
+            .fill_max_width()
+            .clip_to(Radius::None)
+            .fill(Role::Sidebar)
+            .stroke_side(Side::Bottom, 1.0, Role::Border)
+            .pad_x(2),
+        Flex::new().center().gap(1),
+        || {
+            if scrolls {
+                Button::icon(IconName::ArrowLeft, BROWSER_TABS_PREVIOUS)
+                    .variant(Variant::Ghost)
+                    .size(Size::Xs)
+                    .disabled(shown.start == 0)
+                    .build();
+            }
+            for index in shown.clone() {
+                let tab = &browser.tabs[index];
+                let hint = if tab.agent {
+                    format!("{} (opened by an agent)", tab.label())
+                } else {
+                    tab.label()
+                };
+                rustle::key(tab.id, || {
+                    TabChip::new(
+                        tab.label(),
+                        FocusId(BROWSER_TAB_SELECT + index as u64),
+                        FocusId(BROWSER_TAB_CLOSE + index as u64),
+                    )
+                    .variant(if tab.agent {
+                        TabVariant::Agent
+                    } else {
+                        TabVariant::Page
+                    })
+                    .selected(index == browser.active)
+                    .locked(tab.locked)
+                    .width(each)
+                    .hint(hint)
+                    .build();
+                });
+            }
+            if scrolls {
+                Button::icon(IconName::ArrowRight, BROWSER_TABS_NEXT)
+                    .variant(Variant::Ghost)
+                    .size(Size::Xs)
+                    .disabled(shown.end == browser.tabs.len())
+                    .build();
+            }
             Button::icon(IconName::Plus, BROWSER_NEW_TAB)
                 .variant(Variant::Ghost)
                 .size(Size::Sm)
-                .build(),
-        )
+                .build();
+        },
+    );
 }
 
 #[cfg(test)]

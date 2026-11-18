@@ -1,8 +1,9 @@
 //! The answers being given to a form of questions the agent asked, and what pressing its buttons does.
 
+use pm_field::Field;
 use pm_harness::{Inquiry, Question, Reply};
-use pm_input::FocusId;
-use pm_text::Field;
+
+use crate::kit::FocusId;
 
 use crate::state::{Outgoing, Page, WorkspaceState};
 

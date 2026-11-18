@@ -1,7 +1,7 @@
 //! What the reader picks around the prompt box: the agent's settings, a command behind a slash, and where new work is done.
 
+use crate::kit::FocusId;
 use pm_harness::{Discovery, Setting, Slash};
-use pm_input::FocusId;
 use pm_protocol::ExtensionCommand;
 
 use crate::captures::{CAPTURE_BASE, CAPTURE_REMOVE_BASE, MOST_CAPTURES};
@@ -934,7 +934,7 @@ impl WorkspaceState {
             let shown = Self::chips(self.settings_now());
             let wanted = shown.get(index).copied().map(Picker::Setting);
             self.picker = if self.picker == wanted { None } else { wanted };
-            self.menu_filter = pm_text::Field::default();
+            self.menu_filter = pm_field::Field::default();
             self.menu_scroll = self.scroll_to_current();
         } else if let Some(index) = within(MENU_PICK_BASE, MENU_PICK_ROOM) {
             self.pick(index);
@@ -1193,7 +1193,7 @@ impl WorkspaceState {
     }
 
     /// The state knowing what the picture at `path` looks like.
-    pub fn with_preview(mut self, path: &str, picture: pm_ui::Picture) -> Self {
+    pub fn with_preview(mut self, path: &str, picture: crate::kit::Picture) -> Self {
         self.previews.insert(path.to_owned(), picture);
         self
     }
@@ -1530,7 +1530,7 @@ mod tests {
         assert!(state.menu_filters());
         assert_eq!(state.menu_filter_focus(opened), Some(MENU_FILTER));
         assert_eq!(state.menu_matches().len(), 150);
-        state = state.edited(MENU_FILTER, pm_text::Edit::Paste("QWEN 14".to_owned()));
+        state = state.edited(MENU_FILTER, pm_field::Edit::Paste("QWEN 14".to_owned()));
         let left: Vec<String> = state
             .menu_matches()
             .iter()
@@ -1629,7 +1629,7 @@ mod tests {
     /// The settings the first message of new work was started with, once it was sent.
     fn started_with(state: WorkspaceState) -> Vec<(String, String)> {
         let mut state = state
-            .edited(crate::state::PROMPT, pm_text::Edit::Paste("Go".to_owned()))
+            .edited(crate::state::PROMPT, pm_field::Edit::Paste("Go".to_owned()))
             .after(crate::state::SEND);
         state
             .take_outbox()
@@ -1669,7 +1669,10 @@ mod tests {
     #[test]
     fn the_orchestrate_command_toggles_the_mode() {
         let typed = |state: WorkspaceState, words: &str| {
-            state.edited(crate::state::PROMPT, pm_text::Edit::Paste(words.to_owned()))
+            state.edited(
+                crate::state::PROMPT,
+                pm_field::Edit::Paste(words.to_owned()),
+            )
         };
         let state = typed(starting(), "/orch");
         let offered: Vec<String> = state
@@ -1766,7 +1769,7 @@ mod tests {
         ];
         state.press_choice(SLASH_BUTTON.0);
         assert_eq!(state.slash_matches().len(), 2);
-        state = state.edited(crate::state::PROMPT, pm_text::Edit::Insert('r'));
+        state = state.edited(crate::state::PROMPT, pm_field::Edit::Insert('r'));
         let matches = state.slash_matches();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].name, "review");
@@ -1821,7 +1824,7 @@ mod tests {
             state = state.slash_moved(1);
         }
         assert!(state.menu_scroll > 0.0);
-        state = state.edited(crate::state::PROMPT, pm_text::Edit::Insert('1'));
+        state = state.edited(crate::state::PROMPT, pm_field::Edit::Insert('1'));
         assert_eq!(state.slash, 0);
         assert_eq!(state.menu_scroll, 0.0);
         assert!(state.slash_matches().len() < 20);

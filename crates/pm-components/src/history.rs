@@ -1,17 +1,15 @@
 //! The history page: every session of every project, newest first, grouped by when it last changed and narrowed by a search.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, bg, border, border_b, border_color, flex, flex_1, flex_col, flex_none,
-    font_medium, gap, h, items_center, min_h, min_w_px, overflow_hidden, pb, pt, px, rounded,
-    text_px, truncate, w_px,
+use rustle::Modifier;
+
+use crate::kit::{
+    Flex, FocusId, IconName, Radius, Role, Scroll, Side, Styled, Type, block, column, label,
+    label_with, row, scroll_area,
 };
-use pm_ui::{Node, node};
 
 use crate::age::{self, Span};
 use crate::input::{self, Input};
-use crate::parts::{clipped, glyph, line};
+use crate::parts::{clipped, glyph};
 use crate::sample::Session;
 use crate::size::Size;
 use crate::state::{HISTORY_SEARCH, SESSION_BASE, WorkspaceState};
@@ -46,73 +44,83 @@ const AGE_WIDTH: f32 = 80.0;
 /// What the machine column says for a project on this machine.
 const LOCAL_MACHINE: &str = "local";
 
-/// The history page for `state`.
-pub fn history(state: &WorkspaceState) -> Node {
+/// Emits the history page for `state`.
+#[track_caller]
+pub fn history(state: &WorkspaceState) {
     let now = age::now();
     let rows = matching(state);
-    node()
-        .styles([flex(), flex_col(), flex_1(), min_w_px(0), min_h(0)])
-        .child(heading())
-        .child(search(state))
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    flex_col(),
-                    flex_1(),
-                    min_h(0),
-                    overflow_hidden(),
-                    px(5),
-                ])
-                .scroll_from_start(HISTORY_SCROLL, state.history_scroll)
-                .children(
-                    Span::ALL
-                        .into_iter()
-                        .filter_map(|span| group(state, span, &rows, now)),
-                ),
-        )
+    column(Modifier::new().grow(), Flex::new(), || {
+        heading();
+        search(state);
+        scroll_area(
+            Modifier::new().grow(),
+            Scroll::from_start(HISTORY_SCROLL, state.history_scroll),
+            || {
+                column(
+                    Modifier::new().fill_max_width().pad_x(5),
+                    Flex::new(),
+                    || {
+                        for span in Span::ALL {
+                            group(state, span, &rows, now);
+                        }
+                    },
+                );
+            },
+        );
+    });
 }
 
-/// The bar across the top naming the page.
-fn heading() -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            h(12),
-            px(5),
-            flex_none(),
-            border_b(),
-            border_color(Role::Border),
-        ])
-        .child(line("History", 14, 1.4, Role::Text).styles([font_medium(), text_px(14)]))
+/// Emits the bar across the top naming the page.
+#[track_caller]
+fn heading() {
+    row(
+        Modifier::new()
+            .h(12)
+            .stroke_side(Side::Bottom, 1.0, Role::Border)
+            .pad_x(5),
+        Flex::new().center(),
+        || {
+            label(
+                "History",
+                Type::new(14)
+                    .ratio(1.4)
+                    .tone(Role::Text)
+                    .truncate()
+                    .medium(),
+            );
+        },
+    );
 }
 
-/// The box the reader types into to narrow the list.
-fn search(state: &WorkspaceState) -> Node {
-    node().styles([px(5), pt(5), pb(2), flex_none()]).child(
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                gap(2),
-                w_px(SEARCH_WIDTH),
-                h(10),
-                px(3),
-                rounded(Radius::Lg),
-                bg(Role::Surface),
-                border(),
-                border_color(Role::Border),
-            ])
-            .child(glyph(IconName::Search, 4.0, Role::Muted))
-            .child(
-                Input::new(&state.history_search, HISTORY_SEARCH)
-                    .variant(input::Variant::Ghost)
-                    .size(Size::Sm)
-                    .placeholder("Search history")
-                    .build(),
-            ),
-    )
+/// Emits the box the reader types into to narrow the list.
+#[track_caller]
+fn search(state: &WorkspaceState) {
+    block(
+        Modifier::new()
+            .pad_x(5)
+            .pad_side(Side::Top, 5)
+            .pad_side(Side::Bottom, 2),
+        || {
+            row(
+                Modifier::new()
+                    .width(SEARCH_WIDTH)
+                    .h(10)
+                    .fill_rounded(Role::Surface, Radius::Lg)
+                    .stroke(Role::Border, Radius::Lg)
+                    .pad_x(3),
+                Flex::new().center().gap(2),
+                || {
+                    glyph(IconName::Search, 4.0, Role::Muted);
+                    Input::new(&state.history_search, HISTORY_SEARCH)
+                        .variant(input::Variant::Ghost)
+                        .size(Size::Sm)
+                        .placeholder("Search history")
+                        .modifier(Modifier::new().grow())
+                        .build();
+                },
+            );
+        },
+    );
 }
 
 /// The sessions that match the search, by position, the one changed last first.
@@ -142,30 +150,41 @@ fn searchable(state: &WorkspaceState, index: usize) -> String {
     .to_lowercase()
 }
 
-/// The heading and rows of `span`, when a session in `rows` falls in it.
-fn group(state: &WorkspaceState, span: Span, rows: &[usize], now: u64) -> Option<Node> {
+/// Emits the heading and rows of `span`, when a session in `rows` falls in it.
+#[track_caller]
+fn group(state: &WorkspaceState, span: Span, rows: &[usize], now: u64) {
     let members: Vec<usize> = rows
         .iter()
         .copied()
         .filter(|&index| Span::of(state.sessions[index].updated_at, now) == span)
         .collect();
     if members.is_empty() {
-        return None;
+        return;
     }
-    Some(
-        node()
-            .styles([flex(), flex_col(), gap(0.5), flex_none(), pt(5)])
-            .child(
-                node()
-                    .styles([flex(), items_center(), h(8), px(3)])
-                    .child(line(span.title(), 14, 1.4, Role::Text).styles([font_medium()])),
-            )
-            .children(members.into_iter().map(|index| row(state, index))),
-    )
+    column(
+        Modifier::new().pad_side(Side::Top, 5),
+        Flex::new().gap(0.5),
+        || {
+            row(Modifier::new().h(8).pad_x(3), Flex::new().center(), || {
+                label(
+                    span.title(),
+                    Type::new(14)
+                        .ratio(1.4)
+                        .tone(Role::Text)
+                        .truncate()
+                        .medium(),
+                );
+            });
+            for index in members {
+                rustle::key(index, || row_of(state, index));
+            }
+        },
+    );
 }
 
-/// The row of the session at `index`: its title and agent, then where it ran and when.
-fn row(state: &WorkspaceState, index: usize) -> Node {
+/// Emits the row of the session at `index`: its title and agent, then where it ran and when.
+#[track_caller]
+fn row_of(state: &WorkspaceState, index: usize) {
     let session: &Session = &state.sessions[index];
     let project = state
         .project_of(session)
@@ -177,29 +196,39 @@ fn row(state: &WorkspaceState, index: usize) -> Node {
     let agent = state.agent_look(session.agent);
     Tile::new(FocusId(SESSION_BASE + index as u64))
         .height(12.0)
-        .build()
-        .styles([px(3)])
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(2), flex_1(), min_w_px(0)])
-                .child(
-                    node()
-                        .styles([flex_none(), overflow_hidden(), pm_style::max_w_px(560.0)])
-                        .child(line(&session.title, 14, 1.4, Role::Text).styles([truncate()])),
-                )
-                .child(glyph(IconName::ChevronRight, 4.0, Role::Subtle))
-                .child(glyph(agent.icon, 4.0, Role::Muted))
-                .child(line(agent.name, 14, 1.4, Role::Muted).styles([flex_none()])),
-        )
-        .child(column(project, PROJECT_WIDTH))
-        .child(column(&machine, MACHINE_WIDTH))
-        .child(column(&session.branch, BRANCH_WIDTH))
-        .child(column(&session.age(), AGE_WIDTH).styles([pm_style::justify_end()]))
+        .inner(Modifier::new().pad_x(3))
+        .build_with(|| {
+            row(Modifier::new().grow(), Flex::new().center().gap(2), || {
+                label_with(
+                    Modifier::new().max_w_px(560.0),
+                    &session.title,
+                    Type::new(14).ratio(1.4).tone(Role::Text).truncate(),
+                );
+                glyph(IconName::ChevronRight, 4.0, Role::Subtle);
+                glyph(agent.icon, 4.0, Role::Muted);
+                label(
+                    agent.name,
+                    Type::new(14).ratio(1.4).tone(Role::Muted).truncate(),
+                );
+            });
+            cell(project, PROJECT_WIDTH, false);
+            cell(&machine, MACHINE_WIDTH, false);
+            cell(&session.branch, BRANCH_WIDTH, false);
+            cell(&session.age(), AGE_WIDTH, true);
+        });
 }
 
-/// A cell `width` pixels wide holding `content`, cut short at its edge.
-fn column(content: &str, width: f32) -> Node {
-    node()
-        .styles([flex(), flex_none(), w_px(width), overflow_hidden()])
-        .child(clipped(content, 14, Role::Muted))
+/// Emits a cell `width` pixels wide holding `content`, cut short at its edge, against its end when `end`.
+#[track_caller]
+fn cell(content: &str, width: f32, end: bool) {
+    let flex = if end {
+        Flex::new().trailing()
+    } else {
+        Flex::new()
+    };
+    row(
+        Modifier::new().width(width).clip_to(Radius::None),
+        flex,
+        || clipped(content, 14, Role::Muted),
+    );
 }

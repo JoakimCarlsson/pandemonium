@@ -3,16 +3,14 @@
 use std::collections::HashSet;
 use std::ops::Range;
 
-use pm_editor::Query;
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_protocol::Location;
-use pm_style::{
-    Role, bg, cursor_pointer, flex, flex_1, flex_col, flex_none, font_mono, gap, h, items_center,
-    min_h, min_w_px, overflow_hidden, pl, pr, px, py, truncate,
+use crate::kit::{
+    Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled,
+    Tooltip, Type, column, label, label_with, row, scroll_area,
 };
-use pm_text::{Edit, Field};
-use pm_ui::{Node, node};
+use pm_editor::Query;
+use pm_field::{Edit, Field};
+use pm_protocol::Location;
+use rustle::{CursorIcon, Modifier};
 
 use crate::file_icon::file_icon;
 use crate::find::switch;
@@ -315,53 +313,50 @@ fn windowed(line: &str, found: Option<Range<usize>>) -> (String, String, String)
     )
 }
 
-/// The row for one hit: the line it is on, with the match marked, and the number of the line.
-fn hit_row(index: usize, location: &Location, matcher: &Query) -> Node {
+/// Emits the row for one hit: the line it is on, with the match marked, and the number of the line.
+#[track_caller]
+fn hit_row(index: usize, location: &Location, matcher: &Query) {
     let text = location.line.as_deref().unwrap_or_default();
     let (before, found, after) = windowed(text, matcher.first_in(text));
-    let mut words = node()
-        .styles([
-            flex(),
-            items_center(),
-            flex_1(),
-            min_w_px(0),
-            overflow_hidden(),
-        ])
-        .child(line(before, 12, 1.4, Role::Muted).styles([font_mono(), flex_none()]));
-    if !found.is_empty() {
-        words = words.child(
-            node()
-                .styles([flex_none(), bg(Role::SurfaceActive)])
-                .child(line(found, 12, 1.4, Role::Text).styles([font_mono()])),
+    let id = FocusId(SEARCH_HIT_BASE + index as u64);
+    let modifier = Modifier::new()
+        .h(6)
+        .looks_of(Looks::new().hover(Role::SurfaceHover), id)
+        .cursor(CursorIcon::Pointer)
+        .target(id)
+        .pad_side(Side::Left, 9)
+        .pad_side(Side::Right, 3);
+    let code = Type::new(12).ratio(1.4).mono();
+    row(modifier, Flex::new().center().gap(2), || {
+        row(
+            Modifier::new().grow().clip_to(Radius::None),
+            Flex::new().center(),
+            || {
+                label(before, code.tone(Role::Muted));
+                if !found.is_empty() {
+                    label_with(
+                        Modifier::new().fill(Role::SurfaceActive),
+                        found,
+                        code.tone(Role::Text).truncate(),
+                    );
+                }
+                label_with(
+                    Modifier::new().grow(),
+                    after,
+                    code.tone(Role::Muted).truncate(),
+                );
+            },
         );
-    }
-    words = words.child(line(after, 12, 1.4, Role::Muted).styles([font_mono(), truncate()]));
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(2),
-            h(6),
-            pl(9),
-            pr(3),
-            cursor_pointer(),
-            bg(Role::SurfaceHover).hover(),
-        ])
-        .child(words)
-        .child(
-            line(
-                (location.span.start.line + 1).to_string(),
-                11,
-                1.4,
-                Role::Subtle,
-            )
-            .styles([font_mono(), flex_none()]),
-        )
-        .focusable(FocusId(SEARCH_HIT_BASE + index as u64))
+        label(
+            (location.span.start.line + 1).to_string(),
+            Type::new(11).ratio(1.4).mono().tone(Role::Subtle),
+        );
+    });
 }
 
-/// The row that names a file and folds its hits.
-fn group_row(place: usize, group: &Group, folded: bool) -> Node {
+/// Emits the row that names a file and folds its hits.
+#[track_caller]
+fn group_row(place: usize, group: &Group, folded: bool) {
     let name = group.path.rsplit('/').next().unwrap_or(&group.path);
     let folder = group.path.strip_suffix(name).unwrap_or_default();
     let chevron = if folded {
@@ -369,26 +364,24 @@ fn group_row(place: usize, group: &Group, folded: bool) -> Node {
     } else {
         IconName::ChevronDown
     };
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(1.5),
-            h(6),
-            px(3),
-            cursor_pointer(),
-            bg(Role::SurfaceHover).hover(),
-        ])
-        .child(glyph(chevron, 3.5, Role::Muted))
-        .child(file_icon(name, 4.0))
-        .child(line(name, 13, 1.4, Role::Text).styles([flex_none()]))
-        .child(
-            node()
-                .styles([flex_1(), min_w_px(0), overflow_hidden()])
-                .child(line(folder, 12, 1.4, Role::Subtle).styles([truncate()])),
-        )
-        .child(line(group.hits.len().to_string(), 11, 1.4, Role::Muted).styles([flex_none()]))
-        .focusable(FocusId(SEARCH_GROUP_BASE + place as u64))
+    let id = FocusId(SEARCH_GROUP_BASE + place as u64);
+    let modifier = Modifier::new()
+        .h(6)
+        .looks_of(Looks::new().hover(Role::SurfaceHover), id)
+        .cursor(CursorIcon::Pointer)
+        .target(id)
+        .pad_x(3);
+    row(modifier, Flex::new().center().gap(1.5), || {
+        glyph(chevron, 3.5, Role::Muted);
+        file_icon(name, 4.0);
+        line(name, 13, 1.4, Role::Text);
+        label_with(
+            Modifier::new().grow(),
+            folder,
+            Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
+        );
+        line(group.hits.len().to_string(), 11, 1.4, Role::Muted);
+    });
 }
 
 /// What the search says under its box: how much it found, that it is looking, or why it cannot.
@@ -419,77 +412,71 @@ fn tally(search: &ProjectSearch, has_project: bool) -> (String, Role) {
     }
 }
 
-/// The search in the review panel: its box, its switches, what it says, and the hits.
-pub fn panel(state: &WorkspaceState) -> Node {
+/// Emits the search in the review panel: its box, its switches, what it says, and the hits.
+#[track_caller]
+pub fn panel(state: &WorkspaceState) {
     let search = &state.project_search;
     let (said, tone) = tally(search, state.review_index().is_some());
     let matcher = search.matcher();
-    let mut rows = Vec::new();
-    let mut index = 0;
-    for (place, group) in search.groups.iter().enumerate() {
-        let folded = search.folded.contains(&group.path);
-        rows.push(group_row(place, group, folded));
-        for location in &group.hits {
-            if !folded {
-                rows.push(hit_row(index, location, &matcher));
-            }
-            index += 1;
-        }
-    }
-    let list = node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_1(),
-            min_h(0),
-            overflow_hidden(),
-            py(1),
-        ])
-        .scroll_from_start(TREE_SCROLL, state.tree_scroll)
-        .children(rows);
-    let clear = (!search.query.text().is_empty()).then(|| {
-        crate::button::Button::icon(IconName::Close, PROJECT_SEARCH_CLEAR)
-            .variant(crate::button::Variant::Ghost)
-            .size(Size::Sm)
-            .build()
+    column(Modifier::new().grow(), Flex::new(), || {
+        column(
+            Modifier::new().pad_x(3).pad_y(2),
+            Flex::new().gap(1.5),
+            || {
+                row(Modifier::new(), Flex::new().center().gap(1), || {
+                    Input::new(&search.query, PROJECT_SEARCH_FIELD)
+                        .size(Size::Sm)
+                        .placeholder("Search")
+                        .invalid(search.problem.is_some())
+                        .modifier(Modifier::new().grow())
+                        .build();
+                    if !search.query.text().is_empty() {
+                        crate::button::Button::icon(IconName::Close, PROJECT_SEARCH_CLEAR)
+                            .variant(crate::button::Variant::Ghost)
+                            .size(Size::Sm)
+                            .build();
+                    }
+                    switch("Aa", PROJECT_SEARCH_CASE, search.case);
+                    switch(".*", PROJECT_SEARCH_REGEX, search.regex);
+                });
+                row(Modifier::new(), Flex::new().center().gap(1), || {
+                    label_with(
+                        Modifier::new().grow(),
+                        said.as_str(),
+                        Type::new(12).ratio(1.4).tone(tone).truncate(),
+                    );
+                    if search.total() > 0 {
+                        crate::button::Button::icon(IconName::FileCode, PROJECT_SEARCH_EXCERPTS)
+                            .variant(crate::button::Variant::Ghost)
+                            .size(Size::Sm)
+                            .modifier(Modifier::new().tooltip("Open Results in Editor"))
+                            .build();
+                    }
+                });
+            },
+        );
+        scroll_area(
+            Modifier::new().grow().clip_to(Radius::None),
+            Scroll::from_start(TREE_SCROLL, state.tree_scroll),
+            || {
+                column(
+                    Modifier::new().fill_max_width().pad_y(1),
+                    Flex::new(),
+                    || {
+                        let mut index = 0;
+                        for (place, group) in search.groups.iter().enumerate() {
+                            let folded = search.folded.contains(&group.path);
+                            group_row(place, group, folded);
+                            for location in &group.hits {
+                                if !folded {
+                                    hit_row(index, location, &matcher);
+                                }
+                                index += 1;
+                            }
+                        }
+                    },
+                );
+            },
+        );
     });
-    node()
-        .styles([flex(), flex_col(), flex_1(), min_h(0)])
-        .child(
-            node()
-                .styles([flex(), flex_col(), gap(1.5), px(3), py(2), flex_none()])
-                .child(
-                    node()
-                        .styles([flex(), items_center(), gap(1)])
-                        .child(
-                            node().styles([flex_1(), min_w_px(0)]).child(
-                                Input::new(&search.query, PROJECT_SEARCH_FIELD)
-                                    .size(Size::Sm)
-                                    .placeholder("Search")
-                                    .invalid(search.problem.is_some())
-                                    .build(),
-                            ),
-                        )
-                        .children(clear)
-                        .child(switch("Aa", PROJECT_SEARCH_CASE, search.case))
-                        .child(switch(".*", PROJECT_SEARCH_REGEX, search.regex)),
-                )
-                .child(
-                    node()
-                        .styles([flex(), items_center(), gap(1)])
-                        .child(
-                            node()
-                                .styles([flex_1(), min_w_px(0)])
-                                .child(line(said, 12, 1.4, tone)),
-                        )
-                        .children((search.total() > 0).then(|| {
-                            crate::button::Button::icon(IconName::FileCode, PROJECT_SEARCH_EXCERPTS)
-                                .variant(crate::button::Variant::Ghost)
-                                .size(Size::Sm)
-                                .build()
-                                .tooltip("Open Results in Editor")
-                        })),
-                ),
-        )
-        .child(list)
 }

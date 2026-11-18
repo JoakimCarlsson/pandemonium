@@ -1,8 +1,8 @@
 //! The files open in the window beside the conversation: one tab each, a file looked at in a tab that the next one replaces, and kept once it is changed.
 
-use pm_input::FocusId;
+use pm_field::Edit;
 
-use pm_text::Edit;
+use crate::kit::FocusId;
 
 use crate::git_prompts::Prompt;
 use crate::panes::Item;
@@ -33,7 +33,7 @@ pub enum Contents {
     /// The text of the file.
     Text(Box<Document>),
     /// The pixels of a picture file, decoded.
-    Picture(pm_ui::Picture),
+    Picture(crate::kit::Picture),
     /// Why there is nothing to show.
     Message(String),
 }
@@ -60,7 +60,7 @@ pub struct Viewer {
     /// Whether a file that can be rendered shows its source instead.
     pub source: bool,
     /// The text of a vector picture drawn, or why it could not be, once it has been tried.
-    pub drawn: Option<Result<pm_ui::Picture, String>>,
+    pub drawn: Option<Result<crate::kit::Picture, String>>,
     /// Whether it is open only for the excerpts, which leaves its tab out of the strip.
     pub hidden: bool,
 }
@@ -132,7 +132,7 @@ impl WorkspaceState {
     /// How many characters a row of the file shown holds when long lines wrap, as soft wrap and the view's width say, or nothing when they do not.
     pub fn wrap_columns(&self) -> Option<usize> {
         let fitting = self.code_view.map(|(width, cell)| {
-            let scale = pm_style::step_scale();
+            let scale = crate::kit::theme::step_scale();
             let numbers = if self.editor.line_numbers { 13.0 } else { 2.0 };
             let runs = match self.git.shown {
                 Some(file) if !self.run_lines_of(file).is_empty() => crate::viewer::RUN_CELL,
@@ -454,7 +454,7 @@ impl WorkspaceState {
         session: usize,
         path: &str,
         head: bool,
-        read: Result<pm_ui::Picture, String>,
+        read: Result<crate::kit::Picture, String>,
     ) -> Self {
         if let Some(viewer) = self.viewer_of(session, path, head) {
             viewer.contents = match read {
@@ -471,7 +471,7 @@ impl WorkspaceState {
         session: usize,
         path: &str,
         head: bool,
-        drawn: Result<pm_ui::Picture, String>,
+        drawn: Result<crate::kit::Picture, String>,
     ) -> Self {
         if let Some(viewer) = self.viewer_of(session, path, head) {
             viewer.drawn = Some(drawn);
