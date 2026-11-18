@@ -5533,8 +5533,8 @@ fn compared(how: Compare) -> WorkspaceState {
 }
 
 /// Draws the screen as it looks `elapsed_ms` into the animations, with the
-/// pointer at `pointer` and focus on `focused` if given, in `appearance`, and
-/// writes it to `path` as a PNG. The pointer is taken to have rested where it
+/// pointer at `pointer` and focus on `focused` if given, in `appearance`, at
+/// `scale` physical pixels a logical one, and writes it to `path` as a PNG. The pointer is taken to have rested where it
 /// is since the start, so a tooltip under it shows once `elapsed_ms` is long
 /// enough.
 pub fn write(
@@ -5544,6 +5544,7 @@ pub fn write(
     focused: Option<FocusId>,
     appearance: Appearance,
     shot: Shot,
+    scale: f32,
 ) -> Result<(), String> {
     let (width, height) = if shot.narrow() {
         (NARROW_WIDTH, NARROW_HEIGHT)
@@ -5594,6 +5595,7 @@ pub fn write(
         family: default_family(),
         appearance,
         transparent: pm_components::framed(),
+        scale,
         ..Frame::new(target.0, target.1)
     };
     write_png(path, &frame, content(screen, window, target))

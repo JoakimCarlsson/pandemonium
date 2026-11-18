@@ -251,13 +251,13 @@ fn refs_button(all: bool, tip: &str) {
     );
 }
 
-/// Emits a small button showing `icon` that answers to `id`, spinning while `spinning`, with `tip` shown while it is hovered.
+/// Emits a small button showing `icon` that answers to `id`, spinning while `spinning`, with `tip` shown while it is hovered, giving up room with the strip's other items when the strip is too narrow, as a CSS flex item does.
 #[track_caller]
 fn strip_button(icon: IconName, id: FocusId, spinning: bool, tip: &str) {
     Button::icon(icon, id)
         .size(Size::Sm)
         .spinning(spinning)
-        .modifier(Modifier::new().tooltip(tip))
+        .modifier(Modifier::new().tooltip(tip).shrink(1.0))
         .build();
 }
 

@@ -404,6 +404,7 @@ fn popover(element: &Element, state: &WorkspaceState) {
         .collect();
     Popover::new()
         .width(WIDTH)
+        .open_bottom()
         .modifier(Modifier::new().target(MENU_BODY))
         .build_with(|| {
             scroll_area(

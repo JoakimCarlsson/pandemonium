@@ -398,9 +398,12 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                 let fork = session.turn_of(index) > 0;
                 if copy || fork {
                     row(
-                        Modifier::new()
-                            .placed(BoxAlignment::TopStart)
-                            .offset(0.0, -sp(1.0)),
+                        Modifier::new().placed(BoxAlignment::TopStart).padding_each(
+                            0.0,
+                            -sp(1.0),
+                            0.0,
+                            0.0,
+                        ),
                         Flex::new().center().gap(1),
                         || {
                             if copy {

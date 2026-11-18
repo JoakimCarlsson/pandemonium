@@ -366,7 +366,7 @@ impl<'a> Conflict<'a> {
             self.side(ours, &region.ours, Role::Success, row);
             self.side(theirs, &region.theirs, Role::Warning, row);
         };
-        let own = Modifier::new().grow().pad_x(3);
+        let own = Modifier::new().keep().pad_x(3);
         match self.layout {
             Layout::SideBySide => crate::kit::row(own, Flex::new().gap(2), both),
             Layout::Stacked => column(own, Flex::new(), both),

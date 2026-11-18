@@ -336,6 +336,7 @@ impl App {
         pm_components::set_shadow_outside(on_wayland(event_loop));
         rustle_wgpu::set_legible_text(false);
         rustle_wgpu::set_gamma_blending(true);
+        rustle_wgpu::set_linear_shadows(true);
         rustle::set_pixel_rounding(rustle::PixelRounding::Logical);
         rustle::set_close_handler(|| false);
         let size = Self::opening_size(event_loop);

@@ -117,7 +117,7 @@ pub(crate) fn piece(
     shaped: Rc<RefCell<Option<Rc<TextLayout>>>>,
 ) -> Modifier {
     let index: Rc<RefCell<usize>> = Rc::default();
-    let highlight = theme::color(Tone::from(Role::Accent).alpha(0.3));
+    let highlight = theme::color(Tone::from(Role::Focused).alpha(0.45));
     let (placed, numbered) = (shaped.clone(), index.clone());
     modifier
         .on_placed(move |rect, _| {

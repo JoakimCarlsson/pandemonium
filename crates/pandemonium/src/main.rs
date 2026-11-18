@@ -21,7 +21,8 @@ use snapshot::{Shot, Trigger};
 /// Opens the window and runs the event loop until it is closed, or, given `--version`, prints the version
 /// and leaves, or, given `--server`, runs the server
 /// on this machine with the options that follow, or, given
-/// `--snapshot <path> [elapsed_ms [x y [focus [light [screen]]]]]`, writes one frame to a PNG and leaves.
+/// `--snapshot <path> [elapsed_ms [x y [focus [light [screen [scale]]]]]]`, writes one frame to a PNG,
+/// at `scale` physical pixels a logical one, and leaves.
 fn main() {
     startup::begin();
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -317,6 +318,11 @@ fn main() {
             }
             _ => Shot::Empty,
         };
+        let scale = arguments
+            .get(8)
+            .and_then(|value| value.parse().ok())
+            .filter(|scale: &f32| *scale > 0.0)
+            .unwrap_or(1.0);
         if let Err(error) = snapshot::write(
             Path::new(path),
             elapsed_ms,
@@ -324,6 +330,7 @@ fn main() {
             focused,
             appearance,
             shot,
+            scale,
         ) {
             eprintln!("pandemonium: {error}");
             std::process::exit(1);
