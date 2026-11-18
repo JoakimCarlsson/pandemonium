@@ -74,6 +74,7 @@ pub mod history;
 pub mod inline_values;
 pub mod input;
 pub mod inquiry;
+pub mod kit;
 pub mod language_offer;
 pub mod lazy_diffs;
 pub mod lightbulb;
