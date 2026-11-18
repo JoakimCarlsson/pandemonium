@@ -1,6 +1,6 @@
 //! Taking back the last move of the carets and selections without touching the text, and making it again.
 
-use pm_text::Edit;
+use pm_field::Edit;
 
 use crate::document::Document;
 

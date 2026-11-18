@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant};
 
-use pm_text::Edit;
+use pm_field::Edit;
 use similar::{Algorithm, DiffOp, capture_diff_deadline};
 
 use crate::document::Document;

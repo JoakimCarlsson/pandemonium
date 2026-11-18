@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use pm_text::Edit;
+use pm_field::Edit;
 
 use crate::document::Document;
 

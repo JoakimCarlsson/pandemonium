@@ -2,7 +2,7 @@
 
 use pm_buffer::Lines;
 use pm_protocol::TextChange;
-use pm_text::Edit;
+use pm_field::Edit;
 
 use crate::document::{Completions, Document};
 

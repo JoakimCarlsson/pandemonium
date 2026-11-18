@@ -1,6 +1,6 @@
 //! Selecting a rectangle of text: a caret or a selection on each line from one column to another, grown with the keys or dragged out with the pointer.
 
-use pm_text::Edit;
+use pm_field::Edit;
 
 use crate::document::Document;
 

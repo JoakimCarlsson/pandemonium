@@ -145,7 +145,7 @@ impl Document {
             .find(|fold| (fold.head..fold.tail).contains(&caret))
             .copied()
         {
-            self.field.apply(pm_text::Edit::Place(fold.head, false));
+            self.field.apply(pm_field::Edit::Place(fold.head, false));
         }
     }
 
@@ -159,7 +159,7 @@ impl Document {
             self.folds.push(fold);
         }
         if (fold.head..fold.tail).contains(&self.field.caret()) {
-            self.field.apply(pm_text::Edit::Place(fold.head, false));
+            self.field.apply(pm_field::Edit::Place(fold.head, false));
         }
         true
     }

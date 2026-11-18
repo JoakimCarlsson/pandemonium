@@ -1,6 +1,6 @@
 //! What copying, cutting and pasting do in a file that a plain field does not: the lines copied when nothing is selected, pasted above the line of the caret, and lines of code pasted at the indentation of the place they go to.
 
-use pm_text::Edit;
+use pm_field::Edit;
 
 use crate::document::Document;
 

@@ -1,7 +1,7 @@
 //! Formatting and edits across a project: the changes a language server gives, made to the text as one change, the caret kept where it was among them.
 
 use pm_protocol::TextChange;
-use pm_text::Edit;
+use pm_field::Edit;
 
 use crate::document::Document;
 

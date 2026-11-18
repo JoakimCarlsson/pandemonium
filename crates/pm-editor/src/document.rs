@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use pm_buffer::{Change, Lines, Span};
 use pm_protocol::{Completion, Diagnostic, TextChange};
-use pm_text::Field;
+use pm_field::Field;
 use pm_treesitter::{Editing, Kind, Syntax};
 
 /// How many lines beyond the ones asked for are highlighted with them, so that scrolling a little needs no highlighting again.

@@ -5,5 +5,5 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-pm-text.workspace = true
+pm-field = { version = "0.15.0-rc.4", path = "../pm-field" }
 vte = "0.15.0"
