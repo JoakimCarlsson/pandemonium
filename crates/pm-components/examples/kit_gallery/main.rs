@@ -40,9 +40,12 @@ const HOVERED: [(&str, FocusId); 3] = [
     ("controls", FocusId(111)),
 ];
 
-/// Where the pictures go.
+/// Where the pictures go: `KIT_GALLERY_OUT` when set, else `build/kit` of the repository.
 fn out() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/kit")
+    std::env::var_os("KIT_GALLERY_OUT").map_or_else(
+        || std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/kit"),
+        std::path::PathBuf::from,
+    )
 }
 
 /// Draws each shot of the gallery.

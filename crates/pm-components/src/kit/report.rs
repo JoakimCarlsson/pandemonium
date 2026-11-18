@@ -20,7 +20,7 @@ use crate::kit::focus::FocusId;
 use crate::kit::select::{Piece, TextPoint, TextSelection};
 
 /// Where the caret goes when it is moved one place along the screen in a
-/// line that holds right-to-left text: `pm_text::Step`.
+/// line that holds right-to-left text: the step of a caret along the screen.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Step {
     /// To this shown byte.

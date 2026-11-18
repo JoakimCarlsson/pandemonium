@@ -28,6 +28,7 @@
 //! - [`progress`]: rings and spinners.
 //! - [`focus`], [`keys`], [`pointer`]: what names a control, the keys the
 //!   logic matches on, and the pointer as the host follows it.
+//! - [`model`]: the shared, observed value the host keeps the screen in.
 //! - [`snapshot`]: drawing offscreen into a PNG, and laying out for tests.
 
 pub mod bus;
@@ -39,6 +40,7 @@ pub mod interact;
 pub mod keys;
 pub mod layout;
 pub mod marks;
+pub mod model;
 pub mod overlay;
 pub mod picture;
 pub mod pointer;
@@ -59,6 +61,7 @@ pub use interact::{Hovered, Looks};
 pub use keys::{Key, KeyEvent, Modifiers};
 pub use layout::{Flex, Side, Styled, block, column, gap_box, grow, layer, row, wrapping};
 pub use marks::{CaretLook, CaretShape, Mark, Paint, marked_field_line, marked_line};
+pub use model::{State, Subscription};
 pub use overlay::{Placement, Tooltip, anchored, at_window, tooltips};
 pub use picture::{Picture, picture};
 pub use pointer::{Button, PointerEvent, PointerState};
@@ -70,4 +73,6 @@ pub use text::{
     Line, Type, code_ligatures, font_families, font_key, label, label_with, measure, paragraph,
     set_code_ligatures, wrap_lines,
 };
-pub use theme::{Appearance, Radius, Role, Theme, ThemeFamily, Tone, color, role, sp};
+pub use theme::{
+    Appearance, Fonts, Radius, Role, Roles, Srgba, Theme, ThemeFamily, Tone, color, role, sp,
+};

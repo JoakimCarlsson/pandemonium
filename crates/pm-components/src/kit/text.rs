@@ -310,7 +310,7 @@ pub fn shape(content: &str, kind: Type, width: Option<f32>) -> TextLayout {
 }
 
 /// The lines `content` breaks into at `width` logical pixels when set in
-/// `kind`; replaces `pm_ui::wrap`. The lines tile the text and at least one is
+/// `kind`. The lines tile the text and at least one is
 /// always returned.
 pub fn wrap_lines(content: &str, kind: Type, width: f32) -> Vec<Line> {
     lines_of(&shape(content, kind, Some(width.max(1.0))), content.len())
@@ -343,4 +343,48 @@ pub fn lines_of(layout: &TextLayout, length: usize) -> Vec<Line> {
 /// sorted: `shaper.families()`. Empty before a renderer exists.
 pub fn font_families() -> (Vec<String>, Vec<String>) {
     (rustle::font_families(), rustle::monospace_font_families())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Installs this thread's text engine, which measuring text needs.
+    fn fonts() {
+        drop(rustle::Embedded::without_renderer(|| {}, || {}));
+    }
+
+    /// Line breaks, blank paragraphs and a trailing line break keep the byte ranges of the text.
+    #[test]
+    fn wrapped_lines_keep_the_offsets_of_paragraphs() {
+        fonts();
+        let text = "é 🦀\n\nend\n";
+        let line = |start, end, next| Line { start, end, next };
+        assert_eq!(
+            wrap_lines(text, Type::new(14), 1000.0),
+            vec![
+                line(0, 7, 8),
+                line(8, 8, 9),
+                line(9, 12, 13),
+                line(13, 13, 14)
+            ]
+        );
+    }
+
+    /// Long text wrapped narrow is tiled by its lines without splitting a character.
+    #[test]
+    fn narrow_lines_tile_long_text() {
+        fonts();
+        let text = "café🦀 ".repeat(40);
+        for width in [1.0, 24.0, 120.0] {
+            let lines = wrap_lines(&text, Type::new(13), width);
+            let mut covered = 0;
+            for line in &lines {
+                assert!(text.is_char_boundary(line.start) && text.is_char_boundary(line.end));
+                assert_eq!(line.start, covered, "at width {width}");
+                covered = line.next.min(text.len());
+            }
+            assert_eq!(covered, text.len());
+        }
+    }
 }

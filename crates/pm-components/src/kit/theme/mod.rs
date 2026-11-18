@@ -8,21 +8,43 @@
 //! the density the host set with [`set_scales`]; interface text is scaled by
 //! the reader's text size, code text is not.
 //!
-//! The colour and theme data ([`Role`], [`Tone`], [`Theme`], [`ThemeFamily`],
-//! the shipped families and the families extensions bring) are the same data
-//! the old interface used, re-exported here so ported code names them only
-//! through the kit.
+//! The colour and theme data live here as plain data: the colour model
+//! ([`Srgba`], [`Oklch`], [`Oklab`]) and the named palette ([`Tone`]), the
+//! roles ([`Role`], [`Roles`]), one appearance's [`Theme`] with its [`Fonts`],
+//! the [`ThemeFamily`] holding a dark and a light theme, the shipped
+//! families and the families extensions bring.
+//!
+//! - [`srgba`], [`oklch`]: gamma-encoded and perceptual colour values.
+//! - [`palette`], [`color`]: the named palette and operations on a tone.
+//! - [`role`]: the roles a view names instead of colours.
+//! - [`scheme`], [`fonts`], [`family`]: a theme, its font stacks, a family of two.
+//! - [`builtin`], [`extension`]: the shipped families and those extensions add.
+
+pub mod builtin;
+pub mod color;
+pub mod extension;
+pub mod family;
+pub mod fonts;
+pub mod oklch;
+pub mod palette;
+pub mod role;
+pub mod scheme;
+pub mod srgba;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use rustle::{CompositionLocal, FontFamily};
 
-pub use pm_color::{Color as Tone, Role, Srgba};
-pub use pm_theme::{
-    Appearance, Fonts, Theme, ThemeFamily, default_family, families, family_from_colours,
-    family_named, set_extension_families, shipped_families,
-};
+pub use builtin::{default_family, families, family_named, shipped_families};
+pub use color::Tone;
+pub use extension::{family_from_colours, set_extension_families};
+pub use family::{Appearance, ThemeFamily};
+pub use fonts::Fonts;
+pub use oklch::{Oklab, Oklch};
+pub use role::{Role, Roles};
+pub use scheme::Theme;
+pub use srgba::Srgba;
 
 /// Logical pixels in one step of the spacing scale at the comfortable density.
 pub const STEP_PX: f32 = 4.0;
@@ -150,19 +172,31 @@ impl Default for Tokens {
 /// The tokens composables below a [`provide`] read.
 static LOCAL_TOKENS: CompositionLocal<Tokens> = CompositionLocal::new(Tokens::default);
 
-/// Composes `content` drawn with `tokens`.
+thread_local! {
+    /// The tokens last provided on this thread, for code that runs outside composition.
+    static LAST_TOKENS: RefCell<Option<Tokens>> = const { RefCell::new(None) };
+}
+
+/// Composes `content` drawn with `tokens`, which code running outside
+/// composition on this thread, such as measuring text for the host, then uses too.
 pub fn provide(tokens: Tokens, content: impl FnOnce()) {
+    LAST_TOKENS.with(|last| *last.borrow_mut() = Some(tokens.clone()));
     LOCAL_TOKENS.provide(tokens, content);
 }
 
-/// The tokens the views being composed are drawn with.
+/// The tokens the views being composed are drawn with; outside composition,
+/// the tokens last provided on this thread, or the default ones.
 pub fn tokens() -> Tokens {
-    LOCAL_TOKENS.current()
+    if rustle::is_composing() {
+        return LOCAL_TOKENS.current();
+    }
+    LAST_TOKENS.with(|last| last.borrow().clone().unwrap_or_default())
 }
 
-/// The theme the views being composed are drawn with.
+/// The theme the views being composed are drawn with; outside composition,
+/// as [`tokens`] says.
 pub fn theme() -> Rc<Theme> {
-    LOCAL_TOKENS.current().theme
+    tokens().theme
 }
 
 /// `tone` resolved against the theme being composed with: a role takes the
