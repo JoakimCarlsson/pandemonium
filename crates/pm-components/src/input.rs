@@ -208,6 +208,9 @@ impl<'a> Input<'a> {
             }
         });
         own = own.focus_ring(id, 2.0, Radius::Lg);
+        if boxed || invalid {
+            own = own.padding(1.0);
+        }
         own = if self.disabled {
             own.opacity(40.0).cursor(CursorIcon::NotAllowed)
         } else {

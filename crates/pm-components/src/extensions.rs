@@ -599,9 +599,27 @@ fn preview_card(preview: &Preview) {
     );
 }
 
-/// Emits a titled group of the rows `rows` emits in one outlined box, with a line drawn along the bottom edge of every row but the last, inside its height, or nothing when it emits none.
+/// Emits a titled group of the rows `rows` emits in one outlined box, with a
+/// line under every row but the last that adds to the row's height, as a
+/// bottom border does to a box sized by its content, or nothing when it emits none.
 #[track_caller]
 pub(crate) fn group(title: &str, rows: impl FnOnce()) {
+    lined_group(title, false, rows);
+}
+
+/// Emits a titled group like [`group`] of rows of a fixed height, the line
+/// under each drawn inside that height, as a bottom border is inside a box
+/// of a set height.
+#[track_caller]
+pub(crate) fn group_of_fixed_rows(title: &str, rows: impl FnOnce()) {
+    lined_group(title, true, rows);
+}
+
+/// Emits a titled group of the rows `rows` emits in one outlined box, the
+/// line under every row but the last drawn `inside` its height or added to
+/// it, or nothing when it emits none.
+#[track_caller]
+fn lined_group(title: &str, inside: bool, rows: impl FnOnce()) {
     let rows = rustle::collect(rows);
     if rows.is_empty() {
         return;
@@ -622,13 +640,16 @@ pub(crate) fn group(title: &str, rows: impl FnOnce()) {
                         rustle::emit(built);
                         continue;
                     }
-                    block(
-                        Modifier::new().draw_over_interactive(move |canvas, _| {
-                            let (width, height) = (canvas.width(), canvas.height());
-                            canvas.rect(0.0, height - 1.0, width, 1.0, color);
-                        }),
-                        move || rustle::emit(built),
-                    );
+                    let lined = Modifier::new().draw_over_interactive(move |canvas, _| {
+                        let (width, height) = (canvas.width(), canvas.height());
+                        canvas.rect(0.0, height - 1.0, width, 1.0, color);
+                    });
+                    let lined = if inside {
+                        lined
+                    } else {
+                        lined.padding_each(0.0, 0.0, 0.0, 1.0)
+                    };
+                    block(lined, move || rustle::emit(built));
                 }
             },
         );

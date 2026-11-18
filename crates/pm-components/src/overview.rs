@@ -2,7 +2,7 @@
 
 use rustle::{CursorIcon, Modifier};
 
-use crate::extensions::group;
+use crate::extensions::group_of_fixed_rows as group;
 use crate::kit::{
     Flex, FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled,
     Tooltip, Type, column, label, label_with, row, scroll_area,

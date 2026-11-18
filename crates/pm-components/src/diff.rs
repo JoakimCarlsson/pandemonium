@@ -677,7 +677,7 @@ enum Block<'a> {
     Note(usize, &'a Comment),
 }
 
-/// Emits the header of `change`, the change at `index`, unfolded when `open`, with the count of `notes` on it.
+/// Emits the header of `change`, the change at `index`, unfolded when `open`, with the count of `notes` on it; when the header is too narrow the chevron and the file icon give up their room first, then the folder, which is cut off at the edge.
 #[track_caller]
 fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
     let mut own = Modifier::new().h(10).fill(Role::Surface);
@@ -693,16 +693,20 @@ fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
                 .target(FocusId(DIFF_FOLD_BASE + index as u64)),
             Flex::new().center().gap(2),
             || {
-                icon(
-                    if open {
-                        IconName::ChevronDown
-                    } else {
-                        IconName::ChevronRight
-                    },
-                    3.5,
-                    Role::Muted,
-                );
-                file_icon(change.name(), 4.0);
+                let giving = || Modifier::new().shrink(1.0).clip_to(Radius::None);
+                let first = || Modifier::new().shrink(1000.0).clip_to(Radius::None);
+                block(first(), || {
+                    icon(
+                        if open {
+                            IconName::ChevronDown
+                        } else {
+                            IconName::ChevronRight
+                        },
+                        3.5,
+                        Role::Muted,
+                    );
+                });
+                block(first(), || file_icon(change.name(), 4.0));
                 label_with(
                     Modifier::new().keep(),
                     change.name(),
@@ -712,14 +716,12 @@ fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
                         .truncate()
                         .medium(),
                 );
-                label(
-                    change.directory(),
-                    Type::new(11)
-                        .ratio(1.4)
-                        .mono()
-                        .tone(Role::Subtle)
-                        .truncate(),
-                );
+                block(giving(), || {
+                    label(
+                        change.directory(),
+                        Type::new(11).ratio(1.4).mono().tone(Role::Subtle),
+                    );
+                });
             },
         );
         if notes > 0 {

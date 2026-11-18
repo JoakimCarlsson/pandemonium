@@ -47,8 +47,8 @@ pub struct Popover {
     width: Option<f32>,
     /// Whether it is as wide as what it is placed in.
     full_width: bool,
-    /// Whether what it holds runs to its bottom edge, with no padding under it.
-    open_bottom: bool,
+    /// The padding inside its border, in place of its own, when the caller gave one.
+    inner: Option<Modifier>,
     /// What the caller puts around its box.
     modifier: Modifier,
 }
@@ -71,10 +71,9 @@ impl Popover {
         self
     }
 
-    /// The popover with no padding under what it holds, so content cut at its
-    /// bottom runs to the edge, as a box of cards that scrolls is shown.
-    pub fn open_bottom(mut self) -> Self {
-        self.open_bottom = true;
+    /// The popover with `padding` inside its border in place of its own.
+    pub fn inner(mut self, padding: Modifier) -> Self {
+        self.inner = Some(padding);
         self
     }
 
@@ -115,11 +114,7 @@ impl Popover {
             own = own.fill_max_width();
         }
         let entries = self.entries;
-        let inner = if self.open_bottom {
-            Modifier::new().padding_each(6.0, 6.0, 6.0, 0.0)
-        } else {
-            Modifier::new().pad(1.5)
-        };
+        let inner = self.inner.unwrap_or_else(|| Modifier::new().pad(1.5));
         Surface::new()
             .variant(surface::Variant::Floating)
             .inner(inner)

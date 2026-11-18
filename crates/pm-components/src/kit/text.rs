@@ -324,7 +324,7 @@ fn shortened(modifier: Modifier, content: String, kind: Type, scope: Option<Focu
                 let room = canvas.width();
                 let mut held = cut.borrow_mut();
                 if held.as_ref().is_none_or(|(width, _)| *width != room) {
-                    *held = Some((room, ellipsized(&content, &style, room)));
+                    *held = Some((room, ellipsized(&content, &style, room, 1.0)));
                 }
                 if let Some((_, words)) = held.as_ref() {
                     canvas.draw_text(0.0, 0.0, words, &style, None);
@@ -336,10 +336,11 @@ fn shortened(modifier: Modifier, content: String, kind: Type, scope: Option<Focu
 
 /// `content` set in `style`, cut short to the most of it that fits in `room`
 /// logical pixels with an ellipsis after it, the spaces before the ellipsis
-/// left out; `content` itself when it fits.
-pub(crate) fn ellipsized(content: &str, style: &TextStyle, room: f32) -> String {
+/// left out; `content` itself when it fits, or overflows by no more than
+/// `slack` pixels, which a box sized to its line's rounded-up width allows.
+pub(crate) fn ellipsized(content: &str, style: &TextStyle, room: f32, slack: f32) -> String {
     let width = |text: &str| rustle::layout_text(text, style, None).size().width;
-    if width(content) <= room + 1.0 {
+    if width(content) <= room + slack {
         return content.to_owned();
     }
     let boundaries: Vec<usize> = content

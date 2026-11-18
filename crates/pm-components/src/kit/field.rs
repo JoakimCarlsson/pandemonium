@@ -127,7 +127,7 @@ impl<'a> FieldText<'a> {
         };
         let drawn = match (empty, self.wrap) {
             (true, Some(width)) => {
-                crate::kit::text::ellipsized(self.placeholder, &ink.style_in(&theme), width)
+                crate::kit::text::ellipsized(self.placeholder, &ink.style_in(&theme), width, 0.0)
             }
             (true, None) => self.placeholder.to_owned(),
             (false, _) => shown.clone(),
@@ -264,6 +264,7 @@ impl<'a> FieldText<'a> {
                         piece,
                         &single,
                         canvas.width(),
+                        0.0,
                     ))
                 } else {
                     std::borrow::Cow::Borrowed(piece)
