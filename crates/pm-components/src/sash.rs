@@ -1,9 +1,13 @@
 //! The handles on the edges between panels, dragged to change how big a panel is, and the sizes they set.
 
+use crate::events::reduce;
+use crate::theme;
 use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
-use crate::kit::{FocusId, Hovered, Interactive, Looks, Role, Styled};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::theme::Role;
 
 use crate::git_controls::GRAPH_SASH;
 use crate::state::WorkspaceState;
@@ -139,35 +143,37 @@ impl Sash {
         };
         let own = match (self.layout, self.placed) {
             (Layout::Column, Some(((x, y), length))) => Modifier::new()
-                .at(x - THICKNESS / 2.0, y)
+                .offset(x - THICKNESS / 2.0, y)
                 .width(THICKNESS)
                 .height(length),
             (Layout::Row, Some(((x, y), length))) => Modifier::new()
-                .at(x, y - THICKNESS / 2.0)
+                .offset(x, y - THICKNESS / 2.0)
                 .width(length)
                 .height(THICKNESS),
             (Layout::Column, None) => Modifier::new()
-                .at(-THICKNESS / 2.0, 0.0)
+                .offset(-THICKNESS / 2.0, 0.0)
                 .width(THICKNESS)
                 .fill_max_height(),
             (Layout::Row, None) => Modifier::new()
-                .at(0.0, -THICKNESS / 2.0)
+                .offset(0.0, -THICKNESS / 2.0)
                 .height(THICKNESS)
                 .fill_max_width(),
         };
         let own = own
             .z_index(10)
-            .group()
+            .interaction_group()
             .cursor(cursor)
-            .target(self.id)
-            .draggable_id(self.id);
+            .control(self.id, reduce(self.id))
+            .chain(crate::events::sash_drag(self.id));
         let (arrangement, alignment) = self
             .arranged
             .unwrap_or((Arrangement::Center, Alignment::Center));
         let modifier = self.modifier.chain(own);
         let handle = move || {
             row_arranged(modifier, arrangement, alignment, move || {
-                rustle::spacer(line.looks(Looks::new().group(Role::Accent)));
+                rustle::spacer(
+                    line.draw_behind_interactive(group_line(theme::color(Role::Accent))),
+                );
             });
         };
         match self.placed {
@@ -227,5 +233,16 @@ impl WorkspaceState {
             }
         }
         self
+    }
+}
+
+/// Fills the sash's line in `accent` while the pointer is over the sash around it.
+fn group_line(
+    accent: rustle::Color,
+) -> impl Fn(&mut rustle::Canvas, rustle::Interaction) + 'static {
+    move |canvas, interaction| {
+        if interaction.group_hovered {
+            canvas.rect(0.0, 0.0, canvas.width(), canvas.height(), accent);
+        }
     }
 }

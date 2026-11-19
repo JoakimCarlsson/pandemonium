@@ -1,13 +1,16 @@
 //! The menu: a floating list of actions opened at a point.
 
+use crate::events::reduce;
+use crate::theme;
 use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
+use std::rc::Rc;
 
 use crate::Surface;
-use crate::kit::{
-    FocusId, Hovered, Interactive, Looks, Radius, Role, Styled, Type, at_window, label, label_with,
-    sp,
-};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::select::styled_text;
+use crate::theme::{Radius, Role, sp};
 
 /// How far a menu opened from a control hangs from it, in logical pixels.
 const MENU_GAP: f32 = 4.0;
@@ -47,6 +50,20 @@ pub struct Menu {
     row: f32,
     /// What the caller puts around its box.
     modifier: Modifier,
+    /// What picking a row does, told the row's id, when the caller said; the workspace's
+    /// reducer takes the press of the row otherwise.
+    on_pick: Option<Pick>,
+}
+
+/// What picking a row of a menu does, told the row's id, as the menu's builder keeps it.
+#[derive(Clone)]
+struct Pick(Rc<dyn Fn(FocusId)>);
+
+impl std::fmt::Debug for Pick {
+    /// Writes that there is a lambda, which has nothing else to show.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Pick")
+    }
 }
 
 impl Menu {
@@ -58,12 +75,20 @@ impl Menu {
             width: 52.0,
             row: 8.0,
             modifier: Modifier::new(),
+            on_pick: None,
         }
     }
 
     /// The menu with `modifier` put around its box, outside its own.
     pub fn modifier(mut self, modifier: Modifier) -> Self {
         self.modifier = self.modifier.chain(modifier);
+        self
+    }
+
+    /// The menu running `on_pick` with the id of the row picked, in place of handing the
+    /// press of the row to the workspace's reducer.
+    pub fn on_pick(mut self, on_pick: impl Fn(FocusId) + 'static) -> Self {
+        self.on_pick = Some(Pick(Rc::new(on_pick)));
         self
     }
 
@@ -134,7 +159,7 @@ impl Menu {
 
     /// How wide and how tall the menu is, in logical pixels, at the spacing scale being built for.
     fn extent(&self) -> (f32, f32) {
-        let step = 4.0 * crate::kit::theme::step_scale();
+        let step = 4.0 * crate::theme::step_scale();
         let rows: f32 = self
             .entries
             .iter()
@@ -146,33 +171,46 @@ impl Menu {
         (self.width * step, rows + step * 0.5)
     }
 
-    /// Emits the menu over everything, with its corner at its point, kept inside the window.
+    /// Emits the menu over everything, with its corner at its point, kept inside the window; a
+    /// press outside it asks the app to close what a press elsewhere closes.
     #[track_caller]
     pub fn build(self) {
         let (x, y) = self.at;
         let (width, height) = (self.width, self.row);
         let entries = self.entries;
         let modifier = self.modifier;
-        at_window(x, y, Modifier::new(), move || {
+        let on_pick = self.on_pick;
+        crate::popups::at_window(x, y, true, move || {
             Surface::new()
-                .modifier(modifier.chain(Modifier::new().w(width)))
-                .inner(Modifier::new().pad(1))
+                .modifier(modifier.chain(Modifier::new().width(theme::sp(width))))
+                .inner(Modifier::new().padding(theme::sp(1)))
                 .build_with(move || {
                     for entry in entries {
-                        menu_row(entry, height);
+                        menu_row(entry, height, on_pick.clone());
                     }
                 });
         });
     }
 }
 
+/// What clicking the row `id` does: `on_pick` told the row, or the workspace's reducer
+/// taking the press without one.
+fn picked(id: FocusId, on_pick: Option<Pick>) -> impl Fn() + 'static {
+    let reduced = reduce(id);
+    move || match &on_pick {
+        Some(Pick(on_pick)) => on_pick(id),
+        None => reduced(),
+    }
+}
+
 /// Emits one entry, `height` style units tall when it is a row: a hairline reaching the menu's
-/// edges with a step of room above and below it, or a row with the label and its shortcut.
+/// edges with a step of room above and below it, or a row with the label and its shortcut,
+/// whose click runs `on_pick`, or hands the press to the workspace's reducer without one.
 #[track_caller]
-fn menu_row(entry: Entry, height: f32) {
+fn menu_row(entry: Entry, height: f32, on_pick: Option<Pick>) {
     match entry {
         Entry::Separator => {
-            let color = crate::kit::role(Role::Border);
+            let color = crate::theme::role(Role::Border);
             rustle::spacer(
                 Modifier::new()
                     .fill_max_width()
@@ -196,32 +234,37 @@ fn menu_row(entry: Entry, height: f32) {
             id,
             disabled,
         } => {
-            let modifier = Modifier::new().fill_max_width().h(height);
+            let modifier = Modifier::new().fill_max_width().height(theme::sp(height));
             let modifier = if disabled {
-                modifier.opacity(40.0).cursor(CursorIcon::NotAllowed)
+                modifier.alpha(0.4).cursor(CursorIcon::NotAllowed)
             } else {
                 modifier
-                    .looks(
-                        Looks::new()
+                    .interaction_background(
+                        theme::InteractionTones::new()
                             .hover(Role::SurfaceHover)
                             .active(Role::SurfaceActive)
-                            .radius(Radius::Sm),
+                            .radius(Radius::Sm)
+                            .colors(),
                     )
                     .cursor(CursorIcon::Pointer)
-                    .target(id)
+                    .control(id, picked(id, on_pick))
             };
             row_arranged(
-                modifier.pad_x(2),
+                modifier.padding_xy(theme::sp(2), 0.0),
                 Arrangement::SpacedBy(sp(4)),
                 Alignment::Center,
                 move || {
-                    label_with(
+                    styled_text(
                         Modifier::new().weight(1.0),
                         words,
-                        Type::new(13).ratio(1.4).tone(Role::Text),
+                        theme::text_style(13, 1.4).color(theme::color(Role::Text)),
                     );
                     if let Some(shortcut) = shortcut {
-                        label(shortcut, Type::new(12).ratio(1.4).tone(Role::Subtle));
+                        styled_text(
+                            Modifier::new(),
+                            shortcut,
+                            theme::text_style(12, 1.4).color(theme::color(Role::Subtle)),
+                        );
                     }
                 },
             );

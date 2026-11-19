@@ -1,9 +1,10 @@
 //! The badge: a small label in a pill, filled, washed in its colour or quietly neutral.
 
+use crate::theme;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, row_arranged};
 
-use crate::kit::{Radius, Role, Styled, Tone};
+use crate::theme::{Radius, Role, Tone};
 
 use crate::parts::line;
 
@@ -91,17 +92,20 @@ impl Badge {
             Variant::Subtle => (Tone::from(Role::SurfaceSelected), self.tone),
         };
         let radius = if self.round { Radius::Full } else { Radius::Sm };
-        let own = Modifier::new()
-            .h(4.5)
-            .fill_rounded(fill, radius)
-            .chain(self.inner.unwrap_or_else(|| Modifier::new().pad_x(2)));
+        let inner = self
+            .inner
+            .unwrap_or_else(|| Modifier::new().padding_xy(theme::sp(2), 0.0));
         let label = self.label;
-        row_arranged(
-            self.modifier.chain(own),
-            Arrangement::Start,
-            Alignment::Center,
+        rustle::surface_custom(
+            self.modifier.height(theme::sp(4.5)),
+            rustle::Shape::rounded(radius.px()),
+            theme::color(fill),
+            theme::color(words),
+            None,
             move || {
-                line(label, 11, 1.2, words);
+                row_arranged(inner, Arrangement::Start, Alignment::Center, move || {
+                    line(label, 11, 1.2, words);
+                });
             },
         );
     }

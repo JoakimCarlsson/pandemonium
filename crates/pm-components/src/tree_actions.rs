@@ -1,8 +1,8 @@
 //! What the reader does to the project's files from the Files tab: make a file or folder, rename, cut, copy, paste, duplicate, delete, copy a path, drag entries into another folder and bring files in from outside the window.
 
+use crate::focus::FocusId;
 use crate::git_controls::Pick;
 use crate::git_prompts::Prompt;
-use crate::kit::FocusId;
 use crate::state::{Outgoing, WorkspaceState};
 
 /// Asks for a name for a new file at the root of the project.
@@ -405,7 +405,7 @@ impl WorkspaceState {
                 String::new()
             }
         };
-        self.git.naming = Some((naming, pm_field::Field::new(current)));
+        self.git.naming = Some((naming, rustle::TextFieldState::new(current)));
     }
 
     /// Whether the tree is asking for a name.
@@ -422,7 +422,8 @@ impl WorkspaceState {
     /// What is wrong with the name typed in the tree, if anything is.
     pub fn naming_problem(&self) -> Option<&'static str> {
         let (naming, field) = self.git.naming.as_ref()?;
-        let typed = field.text().trim();
+        let typed = field.text();
+        let typed = typed.trim();
         if typed.is_empty() || self.naming_unchanged() {
             return None;
         }

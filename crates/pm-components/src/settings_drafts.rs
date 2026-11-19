@@ -1,14 +1,17 @@
 //! The form on the pages of skills, instruction files and agent definitions that writes a new one from a template, in the project's folder or the reader's own, and opens it to be filled in.
 
-use crate::kit::sp;
-use pm_field::{Edit, Field};
+use crate::theme;
+use crate::theme::sp;
 use pm_protocol::library::{
     APPENDS_PROMPT, Item, Kind, PromptFile, REPLACES_PROMPT, Scope, valid_name,
 };
 use rustle::Modifier;
+use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
-use crate::kit::{FocusId, Radius, Role, Styled, Type, label};
+use crate::focus::FocusId;
+use crate::select::styled_text;
+use crate::theme::{Radius, Role};
 
 use crate::button::Variant;
 use crate::parts::line;
@@ -56,9 +59,9 @@ pub struct DraftForm {
     /// Whether it goes in the project's folder or the reader's own.
     pub scope: Scope,
     /// Its name.
-    pub name: Field,
+    pub name: TextFieldState,
     /// What it is for.
-    pub description: Field,
+    pub description: TextFieldState,
     /// Why the server could not write the last one asked for.
     pub error: Option<String>,
     /// Whether the server is writing it.
@@ -77,8 +80,8 @@ impl DraftForm {
             } else {
                 Scope::User
             },
-            name: Field::default(),
-            description: Field::default(),
+            name: TextFieldState::default(),
+            description: TextFieldState::default(),
             error: None,
             busy: false,
             in_project,
@@ -86,13 +89,13 @@ impl DraftForm {
     }
 
     /// The name as written, without spaces around it.
-    fn name(&self) -> &str {
-        self.name.text().trim()
+    fn name(&self) -> String {
+        self.name.text().trim().to_owned()
     }
 
     /// Whether the form holds enough to be written.
     fn complete(&self) -> bool {
-        valid_name(self.name()) && !self.busy
+        valid_name(&self.name()) && !self.busy
     }
 }
 
@@ -224,21 +227,15 @@ impl WorkspaceState {
         self
     }
 
-    /// Writes `edit` into the box `id` of the form.
-    pub(crate) fn draft_edited(&mut self, id: FocusId, edit: Edit) {
-        let Some(form) = self.settings_page.library.draft.as_mut() else {
-            return;
-        };
-        form.error = None;
-        match id {
-            DRAFT_NAME => form.name.apply(edit),
-            DRAFT_DESCRIPTION => form.description.apply(edit),
-            _ => {}
+    /// Takes in what the reader wrote in a box of the form: the trouble shown before is let go.
+    pub(crate) fn draft_typed(&mut self) {
+        if let Some(form) = self.settings_page.library.draft.as_mut() {
+            form.error = None;
         }
     }
 
     /// The box `id` of the form, if it is open and `id` names one.
-    pub(crate) fn draft_field(&self, id: FocusId) -> Option<&Field> {
+    pub(crate) fn draft_field(&self, id: FocusId) -> Option<&TextFieldState> {
         let form = self.settings_page.library.draft.as_ref()?;
         match id {
             DRAFT_NAME => Some(&form.name),
@@ -327,17 +324,17 @@ pub(crate) fn prompt_node(state: &WorkspaceState, room: f32) {
         Alignment::Start,
         || {
             row_arranged(
-                Modifier::new().h(9),
+                Modifier::new().height(theme::sp(9)),
                 Arrangement::Start,
                 Alignment::Center,
                 || {
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         "System prompt",
-                        Type::new(15)
-                            .ratio(1.4)
-                            .tone(Role::Text)
-                            .truncate()
-                            .medium(),
+                        theme::text_style(15, 1.4)
+                            .font_weight(rustle::FontWeight::MEDIUM)
+                            .color(theme::color(Role::Text))
+                            .max_lines(1),
                     );
                 },
             );
@@ -415,7 +412,7 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) {
         .position(|scope| *scope == form.scope)
         .unwrap_or(0);
     let name = form.name();
-    let message = match (&form.error, name.is_empty() || valid_name(name)) {
+    let message = match (&form.error, name.is_empty() || valid_name(&name)) {
         (Some(reason), _) => Some(reason.clone()),
         (None, false) => {
             Some("Use lowercase letters, digits and hyphens, up to 64 characters.".to_owned())
@@ -425,9 +422,10 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) {
     column_arranged(
         Modifier::new()
             .fill_max_width()
-            .fill_rounded(Role::Surface, Radius::Lg)
-            .stroke(Role::Border, Radius::Lg)
-            .pad(4),
+            .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
+            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+            .padding(1.0)
+            .padding(theme::sp(4)),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Start,
         || {
@@ -483,7 +481,7 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) {
 
 /// Emits a box `id` holding `field`, showing `placeholder` while empty, under the words `label` that say what is written in it.
 #[track_caller]
-fn labelled(label: &str, field: &Field, id: FocusId, placeholder: &str) {
+fn labelled(label: &str, field: &TextFieldState, id: FocusId, placeholder: &str) {
     rustle::key(id.0, || {
         column_arranged(
             Modifier::new().fill_max_width(),
@@ -510,9 +508,9 @@ mod tests {
     fn a_form_needs_a_valid_name() {
         let mut form = DraftForm::new(Kind::Skill, true);
         assert!(!form.complete());
-        form.name = Field::new("Not Valid");
+        form.name = TextFieldState::new("Not Valid");
         assert!(!form.complete());
-        form.name = Field::new(" ship-it ");
+        form.name = TextFieldState::new(" ship-it ");
         assert!(form.complete());
         form.busy = true;
         assert!(!form.complete());
@@ -525,8 +523,9 @@ mod tests {
         state.read_library();
         state.take_outbox();
         assert!(state.draft_pressed(DRAFT_NEW, Some(Kind::Skill)));
-        state.draft_edited(DRAFT_NAME, Edit::Paste("ship-it".to_owned()));
-        state.draft_edited(DRAFT_DESCRIPTION, Edit::Paste("Ships it".to_owned()));
+        state = state
+            .typed(DRAFT_NAME, "ship-it")
+            .typed(DRAFT_DESCRIPTION, "Ships it");
         assert!(state.draft_pressed(draft_scope(Scope::User).unwrap(), Some(Kind::Skill)));
         assert!(state.draft_pressed(DRAFT_CREATE, Some(Kind::Skill)));
         let sent = state.take_outbox();
@@ -561,7 +560,7 @@ mod tests {
         )));
         assert!(state.draft_pressed(DRAFT_NEW, Some(Kind::Skill)));
         assert!(state.draft_pressed(draft_scope(Scope::Workspace).unwrap(), Some(Kind::Skill)));
-        state.draft_edited(DRAFT_NAME, Edit::Paste("ship-it".to_owned()));
+        state = state.typed(DRAFT_NAME, "ship-it");
         assert!(state.draft_pressed(DRAFT_CREATE, Some(Kind::Skill)));
         assert!(state.take_outbox().iter().any(|outgoing| matches!(
             outgoing,

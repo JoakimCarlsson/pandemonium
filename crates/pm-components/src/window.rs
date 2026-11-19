@@ -1,12 +1,13 @@
 //! The frame of a window beside the main one: the title bar that closes it over what it holds, with the border the window draws itself when it has no frame from the desktop.
 
+use crate::theme;
 use rustle::{Alignment, Arrangement, column_arranged};
 use std::cell::Cell;
 
 use rustle::Modifier;
 
 use crate::TitleBar;
-use crate::kit::{Radius, Role, Styled, color};
+use crate::theme::{Radius, Role, color};
 use crate::title_bar::FRAMELESS;
 
 /// How wide the transparent band around a floating window is, in logical pixels, which is where its shadow is cast and where the window is grabbed to resize it.
@@ -61,6 +62,74 @@ pub fn shadow_margin() -> f32 {
     }
 }
 
+/// How far in from the frame of a window a press resizes it, in logical pixels; so does a
+/// press anywhere in the band around the frame that holds its shadow.
+pub const RESIZE_EDGE: f32 = 4.0;
+
+/// The pointer shape that says the edge or corner `edge` resizes the window.
+fn edge_cursor(edge: rustle::ResizeEdge) -> rustle::CursorIcon {
+    use rustle::{CursorIcon, ResizeEdge};
+    match edge {
+        ResizeEdge::North | ResizeEdge::South => CursorIcon::NsResize,
+        ResizeEdge::West | ResizeEdge::East => CursorIcon::EwResize,
+        ResizeEdge::NorthWest | ResizeEdge::SouthEast => CursorIcon::NwseResize,
+        ResizeEdge::NorthEast | ResizeEdge::SouthWest => CursorIcon::NeswResize,
+    }
+}
+
+/// Emits, over everything in a window that draws its own frame and floats, the strips along
+/// its edges and the squares at its corners that resize it: the band that holds its shadow
+/// and [`RESIZE_EDGE`] into the frame. Each shows the pointer shape of its edge and hands a
+/// press of the primary button to the app, which asks the desktop to resize the window.
+/// Emit it last in a stack that fills the window.
+#[track_caller]
+pub fn resize_edges() {
+    use rustle::{BoxAlignment, PointerButton, PointerPhase, ResizeEdge};
+    if !framed() {
+        return;
+    }
+    let reach = shadow_margin() + RESIZE_EDGE;
+    let operations = crate::events::operations();
+    let edges = [
+        (ResizeEdge::North, BoxAlignment::TopCenter),
+        (ResizeEdge::South, BoxAlignment::BottomCenter),
+        (ResizeEdge::West, BoxAlignment::CenterStart),
+        (ResizeEdge::East, BoxAlignment::CenterEnd),
+        (ResizeEdge::NorthWest, BoxAlignment::TopStart),
+        (ResizeEdge::NorthEast, BoxAlignment::TopEnd),
+        (ResizeEdge::SouthWest, BoxAlignment::BottomStart),
+        (ResizeEdge::SouthEast, BoxAlignment::BottomEnd),
+    ];
+    rustle::stack_with(
+        Modifier::new()
+            .fill_max_size()
+            .z_index(rustle::POPUP_Z_INDEX + 1),
+        || {
+            for (edge, alignment) in edges {
+                let size = match edge {
+                    ResizeEdge::North | ResizeEdge::South => {
+                        Modifier::new().fill_max_width().height(reach)
+                    }
+                    ResizeEdge::West | ResizeEdge::East => {
+                        Modifier::new().fill_max_height().width(reach)
+                    }
+                    _ => Modifier::new().width(reach).height(reach),
+                };
+                let pressed = std::rc::Rc::clone(&operations);
+                rustle::spacer(
+                    size.align(alignment)
+                        .cursor(edge_cursor(edge))
+                        .on_pointer_button(PointerButton::Primary, move |event| {
+                            if event.phase == PointerPhase::Press {
+                                pressed.edge_pressed(edge);
+                            }
+                        }),
+                );
+            }
+        },
+    );
+}
+
 /// Emits `frame`, which fills the window, with rounded corners that hold everything inside it, a border and, when there is a band of [`shadow_margin`] around the window, the shadow it casts into it; emits `frame` alone when the window is not [`framed`].
 #[track_caller]
 pub fn shadowed(frame: impl FnOnce()) {
@@ -92,7 +161,7 @@ fn cast_shadow(modifier: Modifier) -> Modifier {
                 width + 2.0 * spread,
                 height + 2.0 * spread,
                 (FRAME_RADIUS + spread).max(0.0),
-                blur * crate::kit::layout::SHADOW_SOFTNESS,
+                blur * crate::theme::SHADOW_SOFTNESS,
                 shade,
                 rustle::ShadowFalloff::SmoothStep,
             );
@@ -151,9 +220,12 @@ impl<'a> Window<'a> {
     /// Emits the frame itself: the title bar, the body under it and what is laid over both.
     #[track_caller]
     fn frame(self) {
-        let own = Modifier::new().fill_max_size().fill(Role::Surface);
+        let own = Modifier::new()
+            .fill_max_size()
+            .background(theme::color(Role::Surface));
         let own = if FRAMELESS {
-            own.stroke(Role::Border, Radius::None)
+            own.border(1.0, theme::color(Role::Border), Radius::None.px())
+                .padding(1.0)
         } else {
             own
         };

@@ -1,5 +1,7 @@
 //! The prompt box where work is handed to an agent.
 
+use crate::events::reduce;
+use crate::theme;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 use std::cell::Cell;
 
@@ -8,21 +10,23 @@ use rustle::{CursorIcon, Modifier};
 
 use crate::Popover;
 use crate::choices::{LIST_ROW_HEIGHT, LIST_ROWS, PRESSABLE_LIST_ROWS};
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Placement, Radius, Role, Scroll, Side, Styled,
-    Type, label, label_with, scroll_area, sp,
-};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::IconName;
 use crate::parts::{line, spacer};
 use crate::plan::proposal;
 use crate::popover::{anchored, anchored_end, heading};
+use crate::popups::Placement;
 use crate::sample::Session;
+use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, ATTACH, ATTACHED_BASE, BRANCH_BASE, EFFORT_BASE,
     GOAL_BASE, GOAL_CHIP, LOCATION, Location, MENTION, MENU_BODY, MENU_FILTER, MENU_PICK_BASE,
-    MENU_SCROLL, ORCHESTRATE, PLACE_BASE, PROMPT, Picker, SEND, SEND_NOW, SETTING_BASE, SLASH_BASE,
+    ORCHESTRATE, PLACE_BASE, PROMPT, Picker, SEND, SEND_NOW, SETTING_BASE, SLASH_BASE,
     SLASH_BUTTON, STOP, WorkspaceState,
 };
+use crate::theme::{Radius, Role, sp};
 use crate::usage;
 use crate::{Button, Checkbox, Input, Stepper, button, checkbox, input};
 
@@ -81,8 +85,13 @@ fn list_height(settings: &[Setting], above: f32, rows: u32) -> f32 {
 fn ruled() -> Modifier {
     Modifier::new()
         .fill_max_width()
-        .pad_side(Side::Top, 1)
-        .stroke_side(Side::Top, 1.0, Role::Border)
+        .padding_each(0.0, theme::sp(1), 0.0, 0.0)
+        .draw_behind(theme::edge(
+            theme::Side::Top,
+            1.0,
+            theme::color(Role::Border),
+        ))
+        .padding_each(0.0, 1.0, 0.0, 0.0)
 }
 
 /// Emits the menu of the setting at `index`: its values in a list that scrolls, and the effort beneath the models; nothing when there is no such setting.
@@ -106,14 +115,14 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) {
     Popover::new()
         .width(MENU_WIDTH)
         .heading(title, hint)
-        .modifier(Modifier::new().target(MENU_BODY))
+        .modifier(Modifier::new().control(MENU_BODY, reduce(MENU_BODY)))
         .build_with(|| {
             if filters {
                 column_arranged(
                     Modifier::new()
                         .fill_max_width()
-                        .pad_x(1)
-                        .pad_side(Side::Bottom, 1),
+                        .padding_xy(theme::sp(1), 0.0)
+                        .padding_each(0.0, 0.0, 0.0, theme::sp(1)),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
@@ -128,40 +137,38 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) {
                     },
                 );
             }
-            scroll_area(
+            column_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .max_h_px(sp(list_height(settings, above, rows) / 4.0)),
-                Scroll::from_start(MENU_SCROLL, state.menu_scroll),
+                    .height_in(0.0, sp(list_height(settings, above, rows) / 4.0))
+                    .vertical_scroll(&state.menu_scroll)
+                    .fill_max_width(),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
-                    column_arranged(
-                        Modifier::new().fill_max_width(),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            for position in &shown {
-                                let Some(pick) = setting.picks.get(*position) else {
-                                    continue;
-                                };
-                                crate::popover::row(
-                                    &pick.name,
-                                    &pick.description,
-                                    pick.value == setting.current,
-                                    FocusId(MENU_PICK_BASE + *position as u64),
-                                );
-                            }
-                            if shown.is_empty() {
-                                column_arranged(
-                                    Modifier::new().pad_x(2).pad_y(2),
-                                    Arrangement::Start,
-                                    Alignment::Start,
-                                    || {
-                                        line("Nothing matches", 13, 1.4, Role::Muted);
-                                    },
-                                );
-                            }
-                        },
-                    );
+                    for position in &shown {
+                        let Some(pick) = setting.picks.get(*position) else {
+                            continue;
+                        };
+                        crate::popover::row(
+                            &pick.name,
+                            &pick.description,
+                            pick.value == setting.current,
+                            FocusId(MENU_PICK_BASE + *position as u64),
+                        );
+                    }
+                    if shown.is_empty() {
+                        column_arranged(
+                            Modifier::new()
+                                .padding_xy(theme::sp(2), 0.0)
+                                .padding_xy(0.0, theme::sp(2)),
+                            Arrangement::Start,
+                            Alignment::Start,
+                            || {
+                                line("Nothing matches", 13, 1.4, Role::Muted);
+                            },
+                        );
+                    }
                 },
             );
             if setting.category == "model"
@@ -217,7 +224,7 @@ fn location_menu(state: &WorkspaceState) {
                 FocusId(PLACE_BASE + 1),
             );
     }
-    menu.modifier(Modifier::new().target(MENU_BODY))
+    menu.modifier(Modifier::new().control(MENU_BODY, reduce(MENU_BODY)))
         .build_with(|| {
             if state.offers_container() {
                 column_arranged(ruled(), Arrangement::Start, Alignment::Start, || {
@@ -379,12 +386,18 @@ fn agent_row(agent: &Setting) {
 /// Emits a line of a menu's footer: `name` with how it is set, `value`, in brackets, then what `control` emits to set it, under a rule when `rule`.
 #[track_caller]
 fn labelled(name: &str, value: &str, control: impl FnOnce(), rule: bool) {
-    let mut own = Modifier::new().fill_max_width().h(9);
+    let mut own = Modifier::new().fill_max_width().height(theme::sp(9));
     if rule {
-        own = own.stroke_side(Side::Top, 1.0, Role::Border);
+        own = own
+            .draw_behind(theme::edge(
+                theme::Side::Top,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 1.0, 0.0, 0.0);
     }
     row_arranged(
-        own.pad_x(2.5),
+        own.padding_xy(theme::sp(2.5), 0.0),
         Arrangement::SpaceBetween,
         Alignment::Center,
         || {
@@ -420,8 +433,10 @@ fn above_box() -> Modifier {
 }
 
 /// The look of a row of a list above the prompt box: filled on hover, and filled while it is the `chosen` one.
-fn list_row_looks(chosen: bool) -> Looks {
-    let looks = Looks::new().hover(Role::SurfaceHover).radius(Radius::Lg);
+fn list_row_looks(chosen: bool) -> theme::InteractionTones {
+    let looks = theme::InteractionTones::new()
+        .hover(Role::SurfaceHover)
+        .radius(Radius::Lg);
     if chosen {
         looks.idle(Role::SurfaceHover)
     } else {
@@ -443,7 +458,9 @@ fn mention_list(state: &WorkspaceState) {
             .modifier(above_box())
             .build_with(|| {
                 column_arranged(
-                    Modifier::new().pad_x(2.5).pad_y(2),
+                    Modifier::new()
+                        .padding_xy(theme::sp(2.5), 0.0)
+                        .padding_xy(0.0, theme::sp(2)),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
@@ -459,44 +476,41 @@ fn mention_list(state: &WorkspaceState) {
         .heading("Files", None)
         .modifier(above_box())
         .build_with(|| {
-            scroll_area(
+            column_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .max_h_px(sp(LIST_ROW_HEIGHT * LIST_ROWS as f32 / 4.0)),
-                Scroll::from_start(MENU_SCROLL, state.menu_scroll),
+                    .height_in(0.0, sp(LIST_ROW_HEIGHT * LIST_ROWS as f32 / 4.0))
+                    .vertical_scroll(&state.menu_scroll)
+                    .fill_max_width(),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
-                    column_arranged(
-                        Modifier::new().fill_max_width(),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            for (position, path) in matches.iter().enumerate() {
-                                let id = FocusId(SLASH_BASE + position as u64);
-                                row_arranged(
-                                    Modifier::new()
-                                        .fill_max_width()
-                                        .looks_of(list_row_looks(position == chosen), id)
-                                        .cursor(CursorIcon::Pointer)
-                                        .target(id)
-                                        .pad_x(2.5)
-                                        .pad_y(2),
-                                    Arrangement::Start,
-                                    Alignment::Center,
-                                    || {
-                                        label_with(
-                                            Modifier::new().weight(1.0),
-                                            path.as_str(),
-                                            Type::new(13)
-                                                .ratio(1.4)
-                                                .tone(Role::Text)
-                                                .mono()
-                                                .truncate(),
-                                        );
-                                    },
+                    for (position, path) in matches.iter().enumerate() {
+                        let id = FocusId(SLASH_BASE + position as u64);
+                        row_arranged(
+                            Modifier::new()
+                                .fill_max_width()
+                                .interaction_focused(crate::focus::is_held(id))
+                                .interaction_background(
+                                    (list_row_looks(position == chosen)).colors(),
+                                )
+                                .cursor(CursorIcon::Pointer)
+                                .control(id, reduce(id))
+                                .padding_xy(theme::sp(2.5), 0.0)
+                                .padding_xy(0.0, theme::sp(2)),
+                            Arrangement::Start,
+                            Alignment::Center,
+                            || {
+                                styled_text(
+                                    Modifier::new().weight(1.0),
+                                    path.as_str(),
+                                    theme::mono_style(13, 1.4)
+                                        .color(theme::color(Role::Text))
+                                        .max_lines(1),
                                 );
-                            }
-                        },
-                    );
+                            },
+                        );
+                    }
                 },
             );
         });
@@ -516,51 +530,53 @@ fn slash_list(state: &WorkspaceState) {
         .heading("Commands", None)
         .modifier(above_box())
         .build_with(|| {
-            scroll_area(
+            column_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .max_h_px(sp(LIST_ROW_HEIGHT * LIST_ROWS as f32 / 4.0)),
-                Scroll::from_start(MENU_SCROLL, state.menu_scroll),
+                    .height_in(0.0, sp(LIST_ROW_HEIGHT * LIST_ROWS as f32 / 4.0))
+                    .vertical_scroll(&state.menu_scroll)
+                    .fill_max_width(),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
-                    column_arranged(
-                        Modifier::new().fill_max_width(),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            for (position, command) in matches.iter().enumerate() {
-                                let looks = list_row_looks(position == chosen);
-                                let own = if position < PRESSABLE_LIST_ROWS {
-                                    let id = FocusId(SLASH_BASE + position as u64);
-                                    Modifier::new()
-                                        .looks_of(looks, id)
-                                        .cursor(CursorIcon::Pointer)
-                                        .target(id)
-                                } else {
-                                    Modifier::new().looks(looks).cursor(CursorIcon::Pointer)
-                                };
-                                row_arranged(
-                                    Modifier::new()
-                                        .fill_max_width()
-                                        .chain(own)
-                                        .pad_x(2.5)
-                                        .pad_y(2),
-                                    Arrangement::SpacedBy(sp(3)),
-                                    Alignment::Center,
-                                    || {
-                                        label(
-                                            format!("/{}", command.name),
-                                            Type::new(13).ratio(1.4).mono().tone(Role::Text),
-                                        );
-                                        label_with(
-                                            Modifier::new().weight(1.0),
-                                            &command.description,
-                                            Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
-                                        );
-                                    },
+                    for (position, command) in matches.iter().enumerate() {
+                        let looks = list_row_looks(position == chosen);
+                        let own = if position < PRESSABLE_LIST_ROWS {
+                            let id = FocusId(SLASH_BASE + position as u64);
+                            Modifier::new()
+                                .interaction_focused(crate::focus::is_held(id))
+                                .interaction_background((looks).colors())
+                                .cursor(CursorIcon::Pointer)
+                                .control(id, reduce(id))
+                        } else {
+                            Modifier::new()
+                                .interaction_background(looks.colors())
+                                .cursor(CursorIcon::Pointer)
+                        };
+                        row_arranged(
+                            Modifier::new()
+                                .fill_max_width()
+                                .chain(own)
+                                .padding_xy(theme::sp(2.5), 0.0)
+                                .padding_xy(0.0, theme::sp(2)),
+                            Arrangement::SpacedBy(sp(3)),
+                            Alignment::Center,
+                            || {
+                                styled_text(
+                                    Modifier::new(),
+                                    format!("/{}", command.name),
+                                    theme::mono_style(13, 1.4).color(theme::color(Role::Text)),
                                 );
-                            }
-                        },
-                    );
+                                styled_text(
+                                    Modifier::new().weight(1.0),
+                                    &command.description,
+                                    theme::text_style(12, 1.4)
+                                        .color(theme::color(Role::Subtle))
+                                        .max_lines(1),
+                                );
+                            },
+                        );
+                    }
                 },
             );
         });
@@ -584,10 +600,7 @@ pub fn attached_file(state: &WorkspaceState, path: &str, side: f32) {
         || {
             if let Some(shown) = shown {
                 rustle::image(
-                    Modifier::new()
-                        .width(side)
-                        .height(side)
-                        .clip_to(Radius::None),
+                    Modifier::new().width(side).height(side).clip(),
                     &shown,
                     rustle::ContentScale::Crop,
                 );
@@ -606,16 +619,16 @@ fn attachment_row(state: &WorkspaceState) {
     flow_row_with(
         Modifier::new()
             .fill_max_width()
-            .pad_x(3)
-            .pad_side(Side::Top, 3),
+            .padding_xy(theme::sp(3), 0.0)
+            .padding_each(0.0, theme::sp(3), 0.0, 0.0),
         FlowOptions::new(sp(2), sp(2)),
         || {
             for (index, path) in state.attachments.iter().enumerate() {
                 rustle::key(index, || {
                     row_arranged(
                         Modifier::new()
-                            .fill_rounded(Role::SurfaceHover, Radius::Lg)
-                            .pad(1),
+                            .background_rounded(theme::color(Role::SurfaceHover), Radius::Lg.px())
+                            .padding(theme::sp(1)),
                         Arrangement::SpacedBy(sp(1.5)),
                         Alignment::Center,
                         || {
@@ -644,7 +657,7 @@ pub fn sent_files(state: &WorkspaceState, files: &[String]) {
                         Modifier::new()
                             .width(SENT_PICTURE)
                             .height(SENT_PICTURE)
-                            .clip_to(Radius::None),
+                            .clip(),
                         shown,
                         rustle::ContentScale::Crop,
                     ),
@@ -717,14 +730,23 @@ fn sign_in_again(state: &WorkspaceState, session: &Session, reason: &str, accoun
     column_arranged(
         Modifier::new()
             .fill_max_width()
-            .fill_rounded(Role::Surface, Radius::Xl)
-            .stroke(Role::Border, Radius::Xl)
-            .pad(4),
+            .background_rounded(theme::color(Role::Surface), Radius::Xl.px())
+            .border(1.0, theme::color(Role::Border), Radius::Xl.px())
+            .padding(1.0)
+            .padding(theme::sp(4)),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Start,
         || {
-            label(words, Type::new(14.0).tone(Role::Text));
-            label(reason, Type::new(12.0).tone(Role::Muted));
+            styled_text(
+                Modifier::new(),
+                words,
+                theme::text_style(14.0, 1.5).color(theme::color(Role::Text)),
+            );
+            styled_text(
+                Modifier::new(),
+                reason,
+                theme::text_style(12.0, 1.5).color(theme::color(Role::Muted)),
+            );
             Button::new("Sign in", crate::state::SESSION_SIGN_IN)
                 .modifier(Modifier::new().fill_max_width())
                 .build();
@@ -744,13 +766,16 @@ fn strip(state: &WorkspaceState, session: Option<&Session>, rows: u32, above: f3
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .pad_x(2.5)
-            .pad_side(Side::Top, 1)
-            .pad_side(Side::Bottom, 2.5),
+            .padding_xy(theme::sp(2.5), 0.0)
+            .padding_each(0.0, theme::sp(1), 0.0, 0.0)
+            .padding_each(0.0, 0.0, 0.0, theme::sp(2.5)),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Center,
         || {
-            Button::icon(IconName::Plus, ATTACH).build();
+            let operations = crate::events::operations();
+            Button::icon(IconName::Plus, ATTACH)
+                .on_click(move || operations.attach())
+                .build();
             Button::icon(IconName::At, MENTION).build();
             Button::new("/", SLASH_BUTTON)
                 .size(Size::Sm)
@@ -815,7 +840,7 @@ fn place(state: &WorkspaceState, session: Option<&Session>) {
         return;
     }
     row_arranged(
-        Modifier::new().pad_x(2.5),
+        Modifier::new().padding_xy(theme::sp(2.5), 0.0),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Center,
         || {
@@ -845,7 +870,7 @@ fn place(state: &WorkspaceState, session: Option<&Session>) {
 }
 
 /// Emits the prompt box for `state`: a few lines to write in, `placeholder`
-/// while empty, at least `rows` lines tall and wrapped to `text_width`, a strip
+/// while empty, at least `rows` lines tall and wrapped at its width, a strip
 /// of what the agent is set to and where the work goes, and a send button that
 /// stops the turn while there is one; above it, a notice while the agents
 /// of other sessions are working in the same checkout as `session`, and the
@@ -859,7 +884,6 @@ pub fn composer(
     session: Option<&Session>,
     rows: u32,
     above: f32,
-    text_width: f32,
 ) {
     if let Some(session) = session
         && let Some((reason, account)) = &session.signed_out
@@ -883,10 +907,11 @@ pub fn composer(
                 crate::shared_checkout::notice(state, session);
             }
             place(state, session);
-            crate::kit::anchored(
+            crate::popups::anchored(
                 Modifier::new().fill_max_width(),
                 Placement::Above,
                 2.0,
+                false,
                 || {
                     column_arranged(
                         Modifier::new()
@@ -894,10 +919,16 @@ pub fn composer(
                             .on_size_changed(|size| {
                                 PROMPT_BOX_WIDTH.with(|width| width.set(size.width))
                             })
-                            .shadows(&COMPOSER_SHADOW, Radius::Xl)
-                            .fill_rounded(Role::Surface, Radius::Xl)
-                            .stroke_by_focus(PROMPT, Role::Border, Role::Accent, Radius::Xl)
-                            .focus_of(PROMPT),
+                            .draw_behind(theme::shadows(&COMPOSER_SHADOW, Radius::Xl))
+                            .background_rounded(theme::color(Role::Surface), Radius::Xl.px())
+                            .interaction_focused(crate::focus::is_held(PROMPT))
+                            .draw_behind_interactive(theme::outline_by_focus(
+                                theme::color(Role::Border),
+                                theme::color(Role::Accent),
+                                Radius::Xl,
+                            ))
+                            .padding(1.0)
+                            .interaction_focused(crate::focus::is_held(PROMPT)),
                         Arrangement::Start,
                         Alignment::Start,
                         || {
@@ -908,11 +939,11 @@ pub fn composer(
                             crate::elements::chips(state);
                             crate::captures::chips(state);
                             Input::new(&state.prompt, PROMPT)
+                                .scroll(&state.prompt_scroll)
                                 .modifier(Modifier::new().fill_max_width())
                                 .variant(input::Variant::Multiline)
                                 .placeholder(placeholder)
                                 .rows(rows)
-                                .wrap(text_width)
                                 .build();
                             strip(state, session, rows, above);
                         },

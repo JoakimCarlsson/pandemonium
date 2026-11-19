@@ -1,10 +1,9 @@
 //! What a keypress does to a file while modal editing is on: the key goes to vim's engine before the keymap sees it, because in normal mode a plain letter is a command rather than a character, and whatever the engine does not take goes on as it would without modal editing, which is how insert mode types.
 
-use pm_components::kit::KeyEvent;
 use pm_editor::Action;
 use pm_vim::Command;
+use rustle::KeyEvent;
 
-use pm_components::git_controls::VIEWER_SCROLL;
 use pm_components::open_files::{EDITOR_FIELD, STRIP};
 use pm_pages::Screen;
 
@@ -72,17 +71,17 @@ fn action_for(command: Command) -> Option<Action> {
 
 impl App {
     /// Sends a keypress to modal editing, when it is on and the file shown has the keyboard, and says whether it was taken.
-    pub(super) fn vim_key(&mut self, event: KeyEvent) -> bool {
+    pub(super) fn vim_key(&mut self, event: &KeyEvent) -> bool {
         if self.focus.current() != Some(EDITOR_FIELD) || !self.model.read(Screen::vim_on) {
             return false;
         }
-        let Some(key) = pm_components::vim::keystroke(&event) else {
+        let Some(key) = pm_components::vim::keystroke(event) else {
             return false;
         };
-        let height = self.output.scroller(VIEWER_SCROLL).map_or_else(
-            || self.window_height(),
-            |view| view.rect.size.height + STRIP,
-        );
+        let height = self
+            .model
+            .read(Screen::code_area)
+            .map_or_else(|| self.window_height(), |view| view.size.height + STRIP);
         self.clipboard();
         let clipboard = &mut self.clipboard;
         let mut commands = None;

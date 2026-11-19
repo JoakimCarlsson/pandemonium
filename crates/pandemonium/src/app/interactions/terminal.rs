@@ -1,8 +1,8 @@
 //! The shell: taking the keyboard when pressed, keys and an input method's
 //! text sent to it, marking its text by dragging, its menu, and the wheel.
 
-use pm_components::kit::Key;
 use pm_components::state::TERMINAL_BODY;
+use rustle::Key;
 
 use crate::app::headless::Rig;
 use crate::snapshot::Shot;
@@ -54,10 +54,7 @@ fn an_input_method_types_into_the_shell() {
 #[test]
 fn dragging_marks_the_shell_text() {
     let mut rig = Rig::shot(Shot::Terminal);
-    let body = rig
-        .report()
-        .region(TERMINAL_BODY)
-        .expect("the shell is drawn");
+    let body = rig.region(TERMINAL_BODY).expect("the shell is drawn");
     let from = (body.origin.x + 4.0, body.origin.y + 6.0);
     rig.drag(from, (from.0 + 80.0, from.1), 5);
     let marked = rig.read(|screen| screen.terminal_selection());

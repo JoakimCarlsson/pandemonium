@@ -124,25 +124,19 @@ fn a_press_answers_only_the_question_it_was_for() {
 /// Whether the question bar of `safety` is drawn over a page 400 logical pixels wide at the time `now`.
 fn overlay_shown(safety: &Safety, now: Instant) -> bool {
     let safety = safety.clone();
-    let report = crate::kit::report::lay_out(400.0, 300.0, None, move || {
+    let laid = crate::tagged::lay_out(400.0, 300.0, None, move || {
         rustle::stack_with(rustle::Modifier::new(), || {
             safety.question_overlay(400.0, now)
         });
     });
-    report
-        .regions
-        .iter()
-        .any(|region| region.id == BROWSER_QUESTION_BAR)
+    laid.drawn(BROWSER_QUESTION_BAR)
 }
 
 /// Whether `safety` draws any bar above the page: the note about a download has a button that dismisses it.
 fn bars_shown(safety: &Safety) -> bool {
     let safety = safety.clone();
-    let report = crate::kit::report::lay_out(400.0, 300.0, None, move || safety.bar_nodes());
-    report
-        .regions
-        .iter()
-        .any(|region| region.id == BROWSER_DISMISS)
+    let laid = crate::tagged::lay_out(400.0, 300.0, None, move || safety.bar_nodes());
+    laid.drawn(BROWSER_DISMISS)
 }
 
 /// A press on the bar itself, or with no question asked, answers nothing, and the question does not move the page.
@@ -214,5 +208,5 @@ fn the_download_note_can_be_dismissed() {
     assert_eq!(safety.bars(), super::BAR);
     assert!(safety.press(BROWSER_DISMISS));
     assert!(safety.download.is_none());
-    assert!(!safety.press(crate::kit::FocusId(1)));
+    assert!(!safety.press(crate::focus::FocusId(1)));
 }

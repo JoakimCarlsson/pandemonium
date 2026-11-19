@@ -68,10 +68,10 @@ fn main() {
         let focused = arguments
             .get(5)
             .and_then(|value| value.parse().ok())
-            .map(pm_components::kit::FocusId);
+            .map(pm_components::focus::FocusId);
         let appearance = match arguments.get(6).map(String::as_str) {
-            Some("light") => pm_components::kit::theme::Appearance::Light,
-            _ => pm_components::kit::theme::Appearance::Dark,
+            Some("light") => pm_components::theme::Appearance::Light,
+            _ => pm_components::theme::Appearance::Dark,
         };
         let shot = match arguments.get(7).map(String::as_str) {
             Some("code") => Shot::Code,

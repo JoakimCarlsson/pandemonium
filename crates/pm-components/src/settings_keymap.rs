@@ -1,11 +1,16 @@
 //! The keymap page of the settings panel: the preset the keys start from, every action with its keys, and the reader's own keys recorded over the preset's.
 
-use crate::kit::sp;
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
 use pm_editor::{Action, shown};
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
-use crate::kit::{FocusId, Hovered, Interactive, Looks, Radius, Role, Side, Styled, Type, label};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::select::styled_text;
+use crate::theme::{Radius, Role};
 
 use crate::input::Input;
 use crate::parts::line;
@@ -97,7 +102,7 @@ impl WorkspaceState {
 /// `own`, the modifier of a control, answering to `id` and showing it can be pressed, or as it is when it has no name.
 fn pressable(own: Modifier, id: Option<FocusId>) -> Modifier {
     match id {
-        Some(id) => own.cursor(CursorIcon::Pointer).target(id),
+        Some(id) => own.cursor(CursorIcon::Pointer).control(id, reduce(id)),
         None => own,
     }
 }
@@ -105,11 +110,14 @@ fn pressable(own: Modifier, id: Option<FocusId>) -> Modifier {
 /// Emits a small button of a row saying `words`, answering to `id`.
 #[track_caller]
 fn small(words: &str, id: Option<FocusId>) {
-    let own = Modifier::new()
-        .h(6)
-        .looks(Looks::new().hover(Role::SurfaceHover).radius(Radius::Sm));
+    let own = Modifier::new().height(theme::sp(6)).interaction_background(
+        (theme::InteractionTones::new()
+            .hover(Role::SurfaceHover)
+            .radius(Radius::Sm))
+        .colors(),
+    );
     row_arranged(
-        pressable(own, id).pad_x(2),
+        pressable(own, id).padding_xy(theme::sp(2), 0.0),
         Arrangement::Start,
         Alignment::Center,
         || line(words, 11, 1.4, Role::Muted),
@@ -125,12 +133,15 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: Option<FocusId>) {
         Role::Border
     };
     let own = Modifier::new()
-        .h(7)
-        .fill_rounded(Role::Background, Radius::Sm)
-        .stroke(edge, Radius::Sm);
-    let code = Type::new(12).ratio(1.4).tone(Role::Text).truncate().mono();
+        .height(theme::sp(7))
+        .background_rounded(theme::color(Role::Background), Radius::Sm.px())
+        .border(1.0, theme::color(edge), Radius::Sm.px())
+        .padding(1.0);
+    let code = theme::mono_style(12, 1.4)
+        .color(theme::color(Role::Text))
+        .max_lines(1);
     row_arranged(
-        pressable(own, id).pad_x(1.5),
+        pressable(own, id).padding_xy(theme::sp(1.5), 0.0),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Center,
         move || {
@@ -140,7 +151,7 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: Option<FocusId>) {
                 } else {
                     format!("{} …", shown(&so_far.join(" ")))
                 };
-                label(said, code);
+                styled_text(Modifier::new(), said, code);
             } else if keys.is_empty() {
                 line("Not bound", 12, 1.4, Role::Subtle);
             } else {
@@ -148,7 +159,7 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: Option<FocusId>) {
                     if place > 0 {
                         line("or", 11, 1.4, Role::Subtle);
                     }
-                    label(shown(binding), code);
+                    styled_text(Modifier::new(), shown(binding), code);
                 }
             }
         },
@@ -245,26 +256,27 @@ pub(crate) fn rows(state: &WorkspaceState, room: f32) {
     if !any {
         line("No action matches.", 13, 1.5, Role::Muted);
     }
-    rustle::spacer(Modifier::new().width(1.0).h(2));
+    rustle::spacer(Modifier::new().width(1.0).height(theme::sp(2)));
 }
 
 /// Emits the heading `group` over a bordered box holding the row of each of `members`, ruled between them.
 #[track_caller]
 fn section(group: &str, members: &[Found]) {
-    label(
+    styled_text(
+        Modifier::new(),
         group,
-        Type::new(13)
-            .ratio(1.4)
-            .tone(Role::Text)
-            .truncate()
-            .medium(),
+        theme::text_style(13, 1.4)
+            .font_weight(rustle::FontWeight::MEDIUM)
+            .color(theme::color(Role::Text))
+            .max_lines(1),
     );
     let last = members.len().saturating_sub(1);
     column_arranged(
         Modifier::new()
             .fill_max_width()
-            .fill_rounded(Role::Surface, Radius::Lg)
-            .stroke(Role::Border, Radius::Lg),
+            .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
+            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+            .padding(1.0),
         Arrangement::Start,
         Alignment::Start,
         || {
@@ -281,12 +293,18 @@ fn action_row(entry: &Found, ruled: bool) {
     let action = entry.action;
     let own = Modifier::new().fill_max_width();
     let own = if ruled {
-        own.stroke_side(Side::Bottom, 1.0, Role::Border)
+        own.draw_behind(theme::edge(
+            theme::Side::Bottom,
+            1.0,
+            theme::color(Role::Border),
+        ))
+        .padding_each(0.0, 0.0, 0.0, 1.0)
     } else {
         own
     };
     row_arranged(
-        own.pad_x(4).pad_y(2),
+        own.padding_xy(theme::sp(4), 0.0)
+            .padding_xy(0.0, theme::sp(2)),
         Arrangement::SpacedBy(sp(6)),
         Alignment::Center,
         || {

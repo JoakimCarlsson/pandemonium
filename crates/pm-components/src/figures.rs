@@ -1,5 +1,7 @@
 //! The pictures a markdown source shows: diagrams written as fenced mermaid code, formulas written in TeX and images it names, each drawn or fetched into pixels and kept under a key.
 
+use crate::events::reduce;
+use crate::theme;
 use rustle::{Alignment, row_arranged};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -8,9 +10,12 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use pm_markdown::{Block, Image};
 use rustle::{Arrangement, CursorIcon, FlowOptions, Modifier};
 
-use crate::kit::{FocusId, Interactive, Role, Type, label_with, sp};
+use crate::events::Interactive;
+use crate::focus::FocusId;
 use crate::preview::linked_path;
+use crate::select::styled_text;
 use crate::state::{Outgoing, WorkspaceState};
+use crate::theme::{Role, sp};
 
 /// Pixels a figure was drawn into, and how many of them fall on one logical pixel.
 #[derive(Clone, Debug, PartialEq)]
@@ -257,9 +262,12 @@ pub(crate) fn images_node(
         || {
             for image in images {
                 let modifier = match (links, image.target) {
-                    (Some(base), target) if target > 0 => Modifier::new()
-                        .cursor(CursorIcon::Pointer)
-                        .target(FocusId(base + u64::from(target) - 1)),
+                    (Some(base), target) if target > 0 => {
+                        Modifier::new().cursor(CursorIcon::Pointer).control(
+                            FocusId(base + u64::from(target) - 1),
+                            reduce(FocusId(base + u64::from(target) - 1)),
+                        )
+                    }
                     _ => Modifier::new(),
                 };
                 match figures.and_then(|figures| figures.get(&key(image))) {
@@ -268,13 +276,12 @@ pub(crate) fn images_node(
                         drawn(modifier, drawing, across, down);
                     }
                     _ if image.alt.is_empty() => {}
-                    _ => label_with(
+                    _ => styled_text(
                         modifier,
                         &image.alt,
-                        Type::new(pixels.saturating_sub(1))
-                            .ratio(1.4)
-                            .tone(Role::Subtle)
-                            .truncate(),
+                        theme::text_style(pixels.saturating_sub(1), 1.4)
+                            .color(theme::color(Role::Subtle))
+                            .max_lines(1),
                     ),
                 }
             }

@@ -1,9 +1,11 @@
 //! The workspace screen and the actions and auxiliary windows it exposes.
 
-use pm_components::kit::FocusId;
-use pm_components::kit::report::Scroller;
-use pm_field::{Edit, Field};
+use pm_components::events::Change;
+use pm_components::focus::FocusId;
+use pm_components::state::Asked;
+use pm_field::Edit;
 use pm_harness::Event;
+use rustle::TextFieldState;
 
 use crate::workspace::{Outgoing, WorkspaceState, workspace};
 use pm_components::context_menu::{ContextMenu, field_menu};
@@ -73,6 +75,20 @@ impl Screen {
         }
     }
 
+    /// The screen after `change` was made to the workspace.
+    pub fn changed(self, change: Change) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(change(state)),
+        }
+    }
+
+    /// Takes what the control pressed last asks of the app, leaving nothing asked.
+    pub fn take_asked(&mut self) -> Option<Asked> {
+        match self {
+            Self::Workspace(state) => state.take_asked(),
+        }
+    }
+
     /// The screen after `action` was pressed.
     pub fn after(self, action: FocusId) -> Self {
         match self {
@@ -92,23 +108,80 @@ impl Screen {
         }
     }
 
-    /// The screen after `edit` is made to the field named `id`.
+    /// The screen after `edit` is made to the code editor's field, which `id` names.
     pub fn edited(self, id: FocusId, edit: Edit) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.edited(id, edit)),
         }
     }
 
-    /// The text field `id` names, if the screen has one by that name.
-    pub fn field(&self, id: FocusId) -> Option<&Field> {
+    /// The screen after the reader changed the text of the field named `id` through its text field.
+    pub fn field_typed(self, id: FocusId) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.field_typed(id)),
+        }
+    }
+
+    /// The screen after the reader typed `text` into the text field `id` over its selection.
+    pub fn typed(self, id: FocusId, text: &str) -> Self {
+        match self {
+            Self::Workspace(state) => Self::Workspace(state.typed(id, text)),
+        }
+    }
+
+    /// The code editor's field, which `id` names, while a text file is shown.
+    pub fn field(&self, id: FocusId) -> Option<&pm_field::Field> {
         match self {
             Self::Workspace(state) => state.field(id),
+        }
+    }
+
+    /// The state of the text field `id` names, if it names one other than the code editor's.
+    pub fn text_field(&self, id: FocusId) -> Option<&TextFieldState> {
+        match self {
+            Self::Workspace(state) => state.text_field(id),
+        }
+    }
+
+    /// Where the selectable text was placed in the latest frame, and what of it is selected.
+    pub fn selectables(&self) -> pm_components::select::Selectables {
+        match self {
+            Self::Workspace(state) => state.selectables.clone(),
+        }
+    }
+
+    /// Where the areas the app asks about by name were drawn in the latest frame.
+    pub fn places(&self) -> pm_components::bounds::Places {
+        match self {
+            Self::Workspace(state) => state.places.clone(),
+        }
+    }
+
+    /// Where the lines of code text were drawn in the latest frame.
+    pub fn code_lines(&self) -> pm_components::text_lines::TextLines {
+        match self {
+            Self::Workspace(state) => state.code_lines.clone(),
         }
     }
 
     /// Whether `id` names a text field of either screen.
     pub fn is_field(id: FocusId) -> bool {
         WorkspaceState::is_field(id)
+    }
+
+    /// Whether `id` names a text field other than the code editor's: one a rustle text field edits.
+    pub fn is_text_field(id: FocusId) -> bool {
+        WorkspaceState::is_field(id) && id != pm_components::open_files::EDITOR_FIELD
+    }
+
+    /// Whether the field `id` holds several lines, so Enter can break a line in it.
+    pub fn is_multiline(id: FocusId) -> bool {
+        WorkspaceState::is_multiline(id)
+    }
+
+    /// Whether the field `id` hides what it holds and keeps it off the clipboard.
+    pub fn is_secure(id: FocusId) -> bool {
+        WorkspaceState::is_secure(id)
     }
 
     /// What pressing Enter inside the field `id` presses.
@@ -124,13 +197,6 @@ impl Screen {
     /// Whether the panel for adding a project is open.
     pub fn adder_open(&self) -> bool {
         matches!(self, Self::Workspace(state) if state.adder_open())
-    }
-
-    /// Which server's menu button `id` is, while the settings panel is open.
-    pub fn settings_more_of(&self, id: FocusId) -> Option<usize> {
-        match self {
-            Self::Workspace(state) => state.settings_more_of(id),
-        }
     }
 
     /// The screen with the menu of the `index`-th server of the settings page open at `at`.
@@ -199,14 +265,6 @@ impl Screen {
         }
     }
 
-    /// The screen after the list of the folder picker is scrolled by `delta`
-    /// logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_folder_picker(self, delta: f32, room: f32) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.scrolled_folder_picker(delta, room)),
-        }
-    }
-
     /// The menu open over a field, and where, if one is.
     pub fn menu(&self) -> Option<ContextMenu> {
         match self {
@@ -225,13 +283,6 @@ impl Screen {
     pub fn with_project_menu(self, project: usize, at: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_project_menu(project, at)),
-        }
-    }
-
-    /// Which project's menu button `id` is, while the workspace is showing.
-    pub fn more_button_of(&self, id: FocusId) -> Option<usize> {
-        match self {
-            Self::Workspace(state) => state.more_button_of(id),
         }
     }
 
@@ -296,23 +347,9 @@ impl Screen {
         }
     }
 
-    /// The screen after the file at `index` in a pane other than the focused one is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_peek(self, index: usize, delta: f32, room: f32) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.scrolled_peek(index, delta, room)),
-        }
-    }
-
     /// Whether a menu is open over a project, a session or a message, so that a press elsewhere has to close it.
     pub fn list_menu_open(&self) -> bool {
         matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some() || state.message_menu.is_some() || state.terminal_menu.is_some() || state.browser_menu.is_some() || state.git.menu.is_some() || state.settings_servers.menu.is_some() || state.tab_menu.is_some() || state.pane_menu.is_some())
-    }
-
-    /// Which session the row `id` of the sidebar opens, while the workspace is showing.
-    pub fn session_row_of(&self, id: FocusId) -> Option<usize> {
-        match self {
-            Self::Workspace(state) => state.session_row_of(id),
-        }
     }
 
     /// The screen with the menu over the message at `message` of the open
@@ -458,52 +495,6 @@ impl Screen {
         }
     }
 
-    /// The screen after the conversation is scrolled by `delta` logical
-    /// pixels, downwards when positive, with `room` pixels to scroll back.
-    pub fn scrolled_chat(self, delta: f32, room: f32) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.scrolled_chat(delta, room)),
-        }
-    }
-
-    /// The screen after the list of values in the open menu is scrolled by
-    /// `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_menu(self, delta: f32, room: f32) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.scrolled_menu(delta, room)),
-        }
-    }
-
-    /// The screen after the notes of an update are scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_update(self, delta: f32, room: f32) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.scrolled_update(delta, room)),
-        }
-    }
-
-    /// The screen after the plan panel is scrolled by `delta` logical
-    /// pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_plan(self, delta: f32, room: f32) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.scrolled_plan(delta, room)),
-        }
-    }
-
-    /// The screen after the subagent rows scroll by `delta` pixels within `room`.
-    pub fn scrolled_subagents(self, delta: f32, room: f32) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.scrolled_subagents(delta, room)),
-        }
-    }
-
-    /// The screen after the diff is scrolled by `delta` logical pixels,
-    /// downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_diff(self, delta: f32, room: f32) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.scrolled_diff(delta, room)),
-        }
-    }
-
     /// The screen after the diff was drawn `width` logical pixels wide.
     pub fn measured_diff(self, width: f32) -> Self {
         match self {
@@ -511,38 +502,51 @@ impl Screen {
         }
     }
 
-    /// The width the diff was drawn at among `scrollers`, in logical pixels, when it differs from the width the screen last took it to be.
-    pub fn diff_resized(&self, scrollers: &[Scroller]) -> Option<f32> {
+    /// Whether the reader scrolled what the screen follows since it last looked.
+    pub fn scrolls_moved(&self) -> bool {
         let Self::Workspace(state) = self;
-        scrollers
-            .iter()
-            .find(|scroller| scroller.id == pm_components::state::DIFF_SCROLL)
-            .map(|scroller| scroller.rect.size.width)
+        state.scrolls_moved()
+    }
+
+    /// Catches the screen up with what the reader scrolled, and says whether
+    /// the diff moved, so the diffs that came into view can be asked for.
+    pub fn follow_scrolls(&mut self) -> bool {
+        let Self::Workspace(state) = self;
+        state.follow_scrolls()
+    }
+
+    /// Whether the pointer holds the bar of one of the screen's scrolling areas.
+    pub fn scrollbar_held(&self) -> bool {
+        let Self::Workspace(state) = self;
+        state.scrollbar_held()
+    }
+
+    /// Whether the conversation is shown at its end, give or take a pixel.
+    pub fn conversation_at_end(&self) -> bool {
+        let Self::Workspace(state) = self;
+        state.conversation_at_end()
+    }
+
+    /// Where the conversation is drawn in its window, while it is shown.
+    pub fn conversation_area(&self) -> Option<rustle::Rect> {
+        let Self::Workspace(state) = self;
+        state.chat_bounds.get()
+    }
+
+    /// Where the view of the file shown is drawn in its window, while it is shown.
+    pub fn code_area(&self) -> Option<rustle::Rect> {
+        let Self::Workspace(state) = self;
+        state.code_bounds.get()
+    }
+
+    /// The width the diff was last drawn at, in logical pixels, when it differs from the width the screen last took it to be.
+    pub fn diff_resized(&self) -> Option<f32> {
+        let Self::Workspace(state) = self;
+        state
+            .diff_bounds
+            .last()
+            .map(|bounds| bounds.size.width)
             .filter(|width| (width - state.diff_width).abs() > 0.5)
-    }
-
-    /// The screen after the list of sections of the settings window is scrolled by `delta`
-    /// logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_settings_nav(self, delta: f32, room: f32) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.scrolled_settings_nav(delta, room)),
-        }
-    }
-
-    /// The screen after the page showing in the settings panel is scrolled by `delta`
-    /// logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_settings(self, delta: f32, room: f32) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.scrolled_settings(delta, room)),
-        }
-    }
-
-    /// The screen after the review panel's list is scrolled by `delta`
-    /// logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_tree(self, delta: f32, room: f32) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.scrolled_tree(delta, room)),
-        }
     }
 
     /// Which changed file's row `id` is, while the workspace is showing.
@@ -786,18 +790,6 @@ impl Screen {
         }
     }
 
-    /// Which menu the button `id` opens, if it is one.
-    pub fn menu_button_of(id: FocusId) -> Option<MenuKind> {
-        WorkspaceState::menu_button_of(id)
-    }
-
-    /// Which commit of the graph the row `id` is, while the workspace is showing.
-    pub fn history_row_of(&self, id: FocusId) -> Option<usize> {
-        match self {
-            Self::Workspace(state) => state.history_row_of(id),
-        }
-    }
-
     /// Whether `id` names a row of the menu of the source control panel that is open.
     pub fn is_menu_row(&self, id: FocusId) -> bool {
         matches!(self, Self::Workspace(state) if state.is_menu_row(id))
@@ -960,13 +952,6 @@ impl Screen {
         }
     }
 
-    /// The screen after the graph is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_graph(self, delta: f32, room: f32) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.scrolled_graph(delta, room)),
-        }
-    }
-
     /// Whether pressing Enter in the field `id` puts a line break in it rather than pressing its button.
     pub fn enter_breaks_line(id: FocusId) -> bool {
         id == pm_components::state::COMMIT_MESSAGE || id == pm_components::open_files::EDITOR_FIELD
@@ -975,20 +960,6 @@ impl Screen {
     /// Whether the menu on changed files, the question of whether to discard or the list of branches is open.
     pub fn review_overlay_open(&self) -> bool {
         matches!(self, Self::Workspace(state) if state.review_overlay_open())
-    }
-
-    /// The screen after the excerpts are scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_excerpts(self, delta: f32, room: f32) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.scrolled_excerpts(delta, room)),
-        }
-    }
-
-    /// The screen after the file being read is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_viewer(self, delta: f32, room: f32) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.scrolled_viewer(delta, room)),
-        }
     }
 
     /// The screen after the pointer went down on the line number `id` of the diff.
@@ -1051,6 +1022,11 @@ impl Screen {
     /// Whether a menu of a setting, or the offer to put files back, is open.
     pub fn picker_open(&self) -> bool {
         matches!(self, Self::Workspace(state) if state.picker.is_some() || state.restoring.is_some() || state.git.branch_menu)
+    }
+
+    /// Whether the offer to put files back as they were before a turn is open.
+    pub fn restore_offered(&self) -> bool {
+        matches!(self, Self::Workspace(state) if state.restoring.is_some())
     }
 
     /// The screen with no setting menu, and no offer to put files back, open.
@@ -1275,15 +1251,6 @@ impl Screen {
         WorkspaceState::refocus(id)
     }
 
-    /// The box to give keyboard focus after `id` was pressed: the prompt or a field the press calls for, or the box of a menu it opened that is narrowed with one.
-    pub fn focus_after(&self, id: FocusId) -> Option<FocusId> {
-        match self {
-            Self::Workspace(state) => {
-                WorkspaceState::refocus(id).or_else(|| state.menu_filter_focus(id))
-            }
-        }
-    }
-
     /// Whether the page for starting work is showing, which is where the prompt takes keyboard focus unasked.
     pub fn is_starting(&self) -> bool {
         matches!(self, Self::Workspace(state) if state.starting())
@@ -1329,11 +1296,6 @@ impl Screen {
         match self {
             Self::Workspace(state) => state.inquiry_hotkey(digit),
         }
-    }
-
-    /// Whether pressing `id` shows a shell that should then take the keyboard.
-    pub fn takes_keyboard(id: FocusId) -> bool {
-        WorkspaceState::takes_keyboard(id)
     }
 
     /// The columns and lines of the window of the shell showing, and how far back it is scrolled.
@@ -1493,9 +1455,9 @@ pub fn picker_screen(state: &Screen, width: f32, height: f32) {
             if let Some(menu) = state
                 .menu()
                 .filter(|menu| menu.field == pm_components::folder_picker::PICKER_FIELD)
-                && let Some(field) = state.field(menu.field)
+                && let Some(field) = state.text_field(menu.field)
             {
-                field_menu(field, menu);
+                field_menu(field, menu, false);
             }
         })
         .build();

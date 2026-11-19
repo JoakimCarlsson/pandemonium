@@ -1,7 +1,7 @@
 //! Pressing buttons, rows and tabs, hovering for tooltips and the cursor,
 //! and the mouse's back and forward buttons.
 
-use pm_components::kit::FocusId;
+use pm_components::focus::FocusId;
 use pm_components::state::{Page, SESSION_BASE, SETTINGS, TAB_CHAT, TAB_DIFF, Tab};
 use winit::event::MouseButton;
 

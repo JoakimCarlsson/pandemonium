@@ -1,7 +1,7 @@
 //! Arranging the projects: the menu on each one, putting them in another order by dragging, and taking one away.
 
+use crate::focus::FocusId;
 use crate::git_prompts::Prompt;
-use crate::kit::FocusId;
 use crate::state::{NEW_IN_BASE, Outgoing, PROJECT_BASE, Page, SESSION_BASE, WorkspaceState};
 
 /// The first of the buttons opening the menu of a project; the rest follow it.
@@ -83,13 +83,6 @@ pub fn is_project_menu_item(id: FocusId) -> bool {
 }
 
 impl WorkspaceState {
-    /// Which project's menu button `id` is, if it is one.
-    pub fn more_button_of(&self, id: FocusId) -> Option<usize> {
-        id.0.checked_sub(PROJECT_MORE_BASE)
-            .map(|index| index as usize)
-            .filter(|index| *index < self.projects.len())
-    }
-
     /// Which project's header `id` is, if it is one.
     pub fn header_of(&self, id: FocusId) -> Option<usize> {
         id.0.checked_sub(PROJECT_BASE)
@@ -110,13 +103,6 @@ impl WorkspaceState {
                 within(SESSION_BASE, self.sessions.len())
                     .and_then(|position| self.sessions[position].project)
             })
-    }
-
-    /// Which session the row `id` of the sidebar opens, if it is one.
-    pub fn session_row_of(&self, id: FocusId) -> Option<usize> {
-        id.0.checked_sub(SESSION_BASE)
-            .map(|index| index as usize)
-            .filter(|index| *index < self.sessions.len())
     }
 
     /// The state with the menu of the session at `session` open at `at`.
@@ -168,7 +154,7 @@ impl WorkspaceState {
                 self
             }
             SESSION_MENU_RENAME => {
-                self.git.rename = pm_field::Field::new(held.title.clone());
+                self.git.rename = rustle::TextFieldState::new(held.title.clone());
                 self.ask(Prompt::Rename(open.session));
                 self
             }

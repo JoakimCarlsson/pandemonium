@@ -2,16 +2,21 @@
 //!
 //! The server asks the chat's agent for a handoff summary and starts the session with it, so the window only says where the work goes on and is told the outcome.
 
+use crate::events::reduce;
+use crate::theme;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::Button;
-use crate::kit::{FocusId, IconName, Interactive, Role, Side, Styled};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::IconName;
 use crate::parts::line;
 use crate::popover::{Popover, anchored, heading};
 use crate::sample::{Message, Session, Status};
 use crate::size::Size;
 use crate::state::{BRANCH_BASE, MENU_BODY, Outgoing, Page, Picker, SESSION_BASE, WorkspaceState};
+use crate::theme::Role;
 
 /// The chip above a chat's prompt box that opens the choice of where to continue it.
 pub const CONTINUE: FocusId = FocusId(7130);
@@ -214,15 +219,22 @@ impl WorkspaceState {
 fn ruled() -> Modifier {
     Modifier::new()
         .fill_max_width()
-        .pad_side(Side::Top, 1)
-        .stroke_side(Side::Top, 1.0, Role::Border)
+        .padding_each(0.0, theme::sp(1), 0.0, 0.0)
+        .draw_behind(theme::edge(
+            theme::Side::Top,
+            1.0,
+            theme::color(Role::Border),
+        ))
+        .padding_each(0.0, 1.0, 0.0, 0.0)
 }
 
 /// Emits a line of the choice saying `words`, where rows would be.
 #[track_caller]
 fn said(words: &str) {
     row_arranged(
-        Modifier::new().pad_x(2.5).pad_y(1.5),
+        Modifier::new()
+            .padding_xy(theme::sp(2.5), 0.0)
+            .padding_xy(0.0, theme::sp(1.5)),
         Arrangement::Start,
         Alignment::Center,
         || line(words, 13, 1.4, Role::Subtle),
@@ -247,7 +259,7 @@ fn menu(state: &WorkspaceState, chat: &Session) {
     }
     let listed = state.continuing.branches.as_deref();
     let ready = chosen.is_some() && listed.is_some_and(|branches| !branches.is_empty());
-    menu.modifier(Modifier::new().target(MENU_BODY))
+    menu.modifier(Modifier::new().control(MENU_BODY, reduce(MENU_BODY)))
         .build_with(|| {
             column_arranged(ruled(), Arrangement::Start, Alignment::Start, || {
                 heading("Branch from", None);
@@ -260,7 +272,9 @@ fn menu(state: &WorkspaceState, chat: &Session) {
                 }
             });
             row_arranged(
-                ruled().pad_x(1).pad_y(1.5),
+                ruled()
+                    .padding_xy(theme::sp(1), 0.0)
+                    .padding_xy(0.0, theme::sp(1.5)),
                 Arrangement::End,
                 Alignment::Start,
                 || {

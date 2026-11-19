@@ -1,7 +1,9 @@
 //! A file shown rendered rather than as its source: markdown laid out as a page, and pictures drawn whole.
 
-use crate::kit::sp;
-use crate::kit::{FocusId, Radius, Role, Styled};
+use crate::focus::FocusId;
+use crate::theme;
+use crate::theme::sp;
+use crate::theme::{Radius, Role};
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
@@ -162,7 +164,9 @@ pub fn rendered(viewer: &Viewer, figures: &Figures, (width, height): (f32, f32))
 #[track_caller]
 fn note(message: &str) {
     column_arranged(
-        Modifier::new().pad_x(4).pad_y(4),
+        Modifier::new()
+            .padding_xy(theme::sp(4), 0.0)
+            .padding_xy(0.0, theme::sp(4)),
         Arrangement::Start,
         Alignment::Start,
         || {
@@ -176,7 +180,9 @@ fn note(message: &str) {
 fn page(path: &str, source: &str, figures: &Figures, width: f32) {
     let column = (width - 2.0 * MARGIN).clamp(120.0, PAGE_WIDTH);
     row_arranged(
-        Modifier::new().fill_max_width().pad_y(8),
+        Modifier::new()
+            .fill_max_width()
+            .padding_xy(0.0, theme::sp(8)),
         Arrangement::Center,
         Alignment::Start,
         || {
@@ -216,8 +222,9 @@ fn framed(picture: &rustle::ImageData, density: f32, room: (f32, f32)) {
                 Modifier::new()
                     .width(across * fit)
                     .height(down * fit)
-                    .fill_rounded(Role::Surface, Radius::Sm)
-                    .stroke(Role::Border, Radius::Sm),
+                    .background_rounded(theme::color(Role::Surface), Radius::Sm.px())
+                    .border(1.0, theme::color(Role::Border), Radius::Sm.px())
+                    .padding(1.0),
                 picture,
                 rustle::ContentScale::Crop,
             );

@@ -2,14 +2,16 @@
 //!
 //! Each row shows the first few lines of its prompt, with the elements and captures it carries as chips, and only the first few rows are shown, so that a long prompt or many of them never push the prompt box out of the window; the whole of a prompt is read by editing it.
 
-use crate::kit::sp;
-use pm_field::Field;
+use crate::theme;
+use crate::theme::sp;
 use rustle::Modifier;
+use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
-use crate::kit::{
-    FocusId, IconName, Radius, Role, Side, Styled, Tone, Tooltip, Type, label, wrap_lines,
-};
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::select::styled_text;
+use crate::theme::{Radius, Role, Tone};
 
 use crate::Button;
 use crate::button::Variant;
@@ -56,7 +58,7 @@ pub struct EditingQueued {
     /// The prompt, by the id the server gave it.
     pub id: u64,
     /// What the prompt box held before the edit began, which goes back when it ends.
-    pub draft: Field,
+    pub draft: TextFieldState,
 }
 
 impl WorkspaceState {
@@ -172,8 +174,8 @@ fn with_selection(typed: &str, original: &str) -> String {
 #[track_caller]
 fn clamped(content: &str, tone: Role, width: f32) {
     let tone: Tone = tone.into();
-    let kind = Type::new(TEXT_PIXELS).ratio(TEXT_LEADING);
-    let lines = wrap_lines(content, kind, width.max(32.0));
+    let kind = theme::text_style(TEXT_PIXELS, TEXT_LEADING);
+    let lines = rustle::wrap_at_spaces(content, &kind, width.max(32.0));
     let cut = lines.len() > SHOWN_LINES;
     let shown = lines.len().min(SHOWN_LINES);
     column_arranged(
@@ -185,8 +187,10 @@ fn clamped(content: &str, tone: Role, width: f32) {
                 let words = content[part.start..part.end].trim_end();
                 match (cut && at + 1 == shown, words.is_empty()) {
                     (true, _) => line(format!("{words}\u{2026}"), TEXT_PIXELS, TEXT_LEADING, tone),
-                    (false, true) => rustle::spacer(Modifier::new().h(3)),
-                    (false, false) => label(words, kind.tone(tone)),
+                    (false, true) => rustle::spacer(Modifier::new().height(theme::sp(3))),
+                    (false, false) => {
+                        styled_text(Modifier::new(), words, kind.color(theme::color(tone)))
+                    }
                 }
             }
         },
@@ -198,7 +202,9 @@ fn clamped(content: &str, tone: Role, width: f32) {
 fn body(content: &str, tone: Role, width: f32) {
     let (typed, labels) = crate::elements::split(content);
     column_arranged(
-        Modifier::new().weight(1.0).pad_side(Side::Top, 1),
+        Modifier::new()
+            .weight(1.0)
+            .padding_each(0.0, theme::sp(1), 0.0, 0.0),
         Arrangement::SpacedBy(sp(1.5)),
         Alignment::Start,
         || {
@@ -218,7 +224,7 @@ fn icon_button(icon: IconName, tooltip: &str, id: FocusId) {
     Button::icon(icon, id)
         .variant(Variant::Ghost)
         .size(Size::Sm)
-        .modifier(Modifier::new().tooltip(tooltip))
+        .tooltip(tooltip)
         .build();
 }
 
@@ -228,11 +234,12 @@ fn frame(content: impl FnOnce()) {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .fill_rounded(Role::Surface, Radius::Lg)
-            .stroke(Role::Border, Radius::Lg)
-            .pad_side(Side::Left, 3)
-            .pad_side(Side::Right, 1)
-            .pad_y(1),
+            .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
+            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+            .padding(1.0)
+            .padding_each(theme::sp(3), 0.0, 0.0, 0.0)
+            .padding_each(0.0, 0.0, theme::sp(1), 0.0)
+            .padding_xy(0.0, theme::sp(1)),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Start,
         content,
@@ -243,7 +250,7 @@ fn frame(content: impl FnOnce()) {
 #[track_caller]
 fn leading_glyph(name: IconName, tone: Role) {
     row_arranged(
-        Modifier::new().pad_side(Side::Top, 1),
+        Modifier::new().padding_each(0.0, theme::sp(1), 0.0, 0.0),
         Arrangement::Start,
         Alignment::Start,
         || glyph(name, 3.5, tone),
@@ -266,7 +273,7 @@ fn waiting(index: usize, queued: &Queued, width: f32) {
             let count = queued.files.len();
             let files = if count == 1 { "file" } else { "files" };
             row_arranged(
-                Modifier::new().pad_side(Side::Top, 1.5),
+                Modifier::new().padding_each(0.0, theme::sp(1.5), 0.0, 0.0),
                 Arrangement::Start,
                 Alignment::Start,
                 || line(format!("{count} {files}"), 12, 1.4, Role::Muted),
@@ -324,7 +331,7 @@ pub fn queued(state: &WorkspaceState, session: &Session, width: f32) {
         .filter(|open| open.scope == session.scope)
         .map(|open| open.id);
     column_arranged(
-        Modifier::new().pad_side(Side::Bottom, 2),
+        Modifier::new().padding_each(0.0, 0.0, 0.0, theme::sp(2)),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Start,
         || {
@@ -346,7 +353,7 @@ pub fn queued(state: &WorkspaceState, session: &Session, width: f32) {
             if hidden > 0 {
                 let prompts = if hidden == 1 { "prompt" } else { "prompts" };
                 row_arranged(
-                    Modifier::new().pad_side(Side::Left, 3),
+                    Modifier::new().padding_each(theme::sp(3), 0.0, 0.0, 0.0),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
@@ -365,7 +372,6 @@ pub fn queued(state: &WorkspaceState, session: &Session, width: f32) {
 
 #[cfg(test)]
 mod tests {
-    use pm_field::Edit;
     use pm_harness::Event;
 
     use super::*;
@@ -402,7 +408,7 @@ mod tests {
                     },
                 )
             })
-            .edited(PROMPT, Edit::Paste("my draft".to_owned()))
+            .typed(PROMPT, "my draft")
             .drained()
     }
 
@@ -415,9 +421,7 @@ mod tests {
             state.take_outbox().as_slice(),
             [Outgoing::HoldQueue { held: true, .. }]
         ));
-        state = state
-            .edited(PROMPT, Edit::Paste(", edited".to_owned()))
-            .after(crate::state::SEND);
+        state = state.typed(PROMPT, ", edited").after(crate::state::SEND);
         assert_eq!(state.prompt.text(), "my draft");
         assert!(state.editing_queued.is_none());
         assert!(matches!(
@@ -431,7 +435,7 @@ mod tests {
     fn cancelling_an_edit_restores_the_draft_and_releases_the_queue() {
         let mut state = waiting_state()
             .after(FocusId(EDIT_QUEUED_BASE))
-            .edited(PROMPT, Edit::Paste("x".to_owned()))
+            .typed(PROMPT, "x")
             .after(QUEUED_CANCEL);
         assert_eq!(state.prompt.text(), "my draft");
         assert!(matches!(
@@ -471,9 +475,7 @@ mod tests {
         let mut state = state.after(FocusId(EDIT_QUEUED_BASE));
         assert_eq!(state.prompt.text(), "fix this");
         state.take_outbox();
-        state = state
-            .edited(PROMPT, Edit::Paste(", please".to_owned()))
-            .after(crate::state::SEND);
+        state = state.typed(PROMPT, ", please").after(crate::state::SEND);
         let expected = format!("fix this, please\n\n{section}");
         assert!(matches!(
             state.take_outbox().as_slice(),

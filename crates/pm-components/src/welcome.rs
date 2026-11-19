@@ -1,14 +1,18 @@
 //! The empty page of a new session or a new chat: pick an agent, then describe the work.
 
+use crate::theme;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with};
 use rustle::{BoxAlignment, Modifier};
 
 use crate::Button;
 use crate::button::Variant;
 use crate::composer::composer;
-use crate::kit::{FocusId, IconName, Role, Styled, Tooltip, Type, label, sp};
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{AGENT_BASE, Page, REVIEW, WorkspaceState};
+use crate::theme::{Role, sp};
 
 /// Emits a chip naming one agent, filled while it is the one chosen, with how much of its account's allowance is used as its tooltip once the provider has said.
 #[track_caller]
@@ -24,7 +28,7 @@ fn chip(state: &WorkspaceState, index: usize) {
         .allowance_of(index, state.login_for_new_work(index))
         .and_then(crate::usage::tooltip)
     {
-        Some(words) => chip.modifier(Modifier::new().tooltip(words)).build(),
+        Some(words) => chip.tooltip(words).build(),
         None => chip.build(),
     }
 }
@@ -50,22 +54,28 @@ fn heading(state: &WorkspaceState) -> String {
 
 /// Emits the page for starting work in a project, naming the project it starts in, or for starting a chat, which belongs to none.
 #[track_caller]
-pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32) {
+pub fn welcome(state: &WorkspaceState, above: f32) {
     let reviewable = state.review_session().is_some();
     rustle::stack_with(Modifier::new().weight(1.0), || {
         column_arranged(
-            Modifier::new().fill_max_size().pad_x(6).pad_y(10),
+            Modifier::new()
+                .fill_max_size()
+                .padding_xy(theme::sp(6), 0.0)
+                .padding_xy(0.0, theme::sp(10)),
             Arrangement::Center,
             Alignment::Center,
             || {
                 column_arranged(
-                    Modifier::new().max_w_px(680.0).fill_max_width(),
+                    Modifier::new().width_in(0.0, 680.0).fill_max_width(),
                     Arrangement::SpacedBy(sp(7)),
                     Alignment::Center,
                     || {
-                        label(
+                        styled_text(
+                            Modifier::new(),
                             heading(state),
-                            Type::new(28).ratio(1.25).semibold().tone(Role::Text),
+                            theme::text_style(28, 1.25)
+                                .font_weight(rustle::FontWeight::SEMI_BOLD)
+                                .color(theme::color(Role::Text)),
                         );
                         flow_row_with(
                             Modifier::new().fill_max_width(),
@@ -82,7 +92,6 @@ pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32) {
                             None,
                             3,
                             above,
-                            text_width,
                         );
                     },
                 );
@@ -93,7 +102,7 @@ pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32) {
                 .modifier(
                     Modifier::new()
                         .align(BoxAlignment::TopEnd)
-                        .at(-sp(2.0), sp(2.0)),
+                        .offset(-sp(2.0), sp(2.0)),
                 )
                 .build();
         }

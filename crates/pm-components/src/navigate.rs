@@ -1,9 +1,9 @@
 //! Finding one's way around code through its language server: the places a search from the caret finds, the thing at the caret renamed across its project, and the changes the server offers at the caret.
 
-use pm_field::{Edit, Field};
 use pm_protocol::{CodeAction, FileEdit, Location, Position, Seek};
+use rustle::TextFieldState;
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 
 use crate::listing::{Items, Listing};
 use crate::state::{Outgoing, WorkspaceState};
@@ -29,7 +29,7 @@ pub struct Renaming {
     /// The place.
     pub position: Position,
     /// The new name being typed.
-    pub field: Field,
+    pub field: TextFieldState,
     /// Where the box hangs, in logical pixels of the window.
     pub at: (f32, f32),
     /// Whether the language server is renaming it now.
@@ -166,8 +166,8 @@ impl WorkspaceState {
         let Some(document) = self.shown_document() else {
             return self;
         };
-        let mut field = Field::new(&document.field.text()[range.clone()]);
-        field.apply(Edit::SelectAll);
+        let field = TextFieldState::new(&document.field.text()[range.clone()]);
+        field.select_all();
         let (version, position) = (document.version, document.position_of(range.start));
         self.renaming = Some(Renaming {
             session,
@@ -226,8 +226,8 @@ impl WorkspaceState {
             renaming.preparing = false;
             renaming.position = start;
             if let Some(name) = named {
-                renaming.field = Field::new(name);
-                renaming.field.apply(Edit::SelectAll);
+                renaming.field = TextFieldState::new(name);
+                renaming.field.select_all();
             }
         }
         self

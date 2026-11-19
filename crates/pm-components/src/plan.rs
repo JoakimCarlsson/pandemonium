@@ -1,9 +1,11 @@
 //! The plan an agent proposes before it starts: the panel that reads it and the band above the prompt that answers it.
 
-use crate::kit::sp;
-use crate::kit::{
-    FocusId, IconName, Radius, Role, Scroll, Side, Styled, Type, label_with, scroll_area,
-};
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::select::styled_text;
+use crate::theme;
+use crate::theme::sp;
+use crate::theme::{Radius, Role};
 use pm_harness::{Permission, Verdict};
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
@@ -11,7 +13,7 @@ use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with
 use crate::button::Variant;
 use crate::parts::{line, spacer};
 use crate::size::Size;
-use crate::state::{CHOICE_BASE, CLOSE_PLAN, OPEN_PLAN, PLAN_SCROLL, REVISE, WorkspaceState};
+use crate::state::{CHOICE_BASE, CLOSE_PLAN, OPEN_PLAN, REVISE, WorkspaceState};
 use crate::{Button, Markdown};
 
 /// How narrow and how wide the plan panel can be dragged, in logical pixels.
@@ -33,17 +35,27 @@ pub fn panel(state: &WorkspaceState, source: &str, width: f32) {
         Modifier::new()
             .width(width)
             .fill_max_height()
-            .fill(Role::Background)
-            .stroke_side(Side::Left, 1.0, Role::Border),
+            .background(theme::color(Role::Background))
+            .draw_behind(theme::edge(
+                theme::Side::Left,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(1.0, 0.0, 0.0, 0.0),
         Arrangement::Start,
         Alignment::Start,
         || {
             row_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .h(12)
-                    .stroke_side(Side::Bottom, 1.0, Role::Border)
-                    .pad_x(4),
+                    .height(theme::sp(12))
+                    .draw_behind(theme::edge(
+                        theme::Side::Bottom,
+                        1.0,
+                        theme::color(Role::Border),
+                    ))
+                    .padding_each(0.0, 0.0, 0.0, 1.0)
+                    .padding_xy(theme::sp(4), 0.0),
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Center,
                 || {
@@ -52,21 +64,19 @@ pub fn panel(state: &WorkspaceState, source: &str, width: f32) {
                     Button::icon(IconName::Close, CLOSE_PLAN).build();
                 },
             );
-            scroll_area(
+            column_arranged(
                 Modifier::new()
                     .fill_max_width()
                     .weight(1.0)
-                    .clip_to(Radius::None),
-                Scroll::from_start(PLAN_SCROLL, state.plan_scroll),
+                    .clip()
+                    .vertical_scroll(&state.plan_scroll)
+                    .fill_max_width()
+                    .padding_xy(theme::sp(4), 0.0)
+                    .padding_xy(0.0, theme::sp(4)),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
-                    column_arranged(
-                        Modifier::new().fill_max_width().pad_x(4).pad_y(4),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            Markdown::new(source, width - 33.0).build();
-                        },
-                    );
+                    Markdown::new(source, width - 33.0).build();
                 },
             );
         },
@@ -96,10 +106,11 @@ pub fn proposal(ask: &Permission) -> bool {
     }
     column_arranged(
         Modifier::new()
-            .fill_rounded(Role::Surface, Radius::Xl)
-            .stroke(Role::Border, Radius::Xl)
-            .pad_x(4)
-            .pad_y(3),
+            .background_rounded(theme::color(Role::Surface), Radius::Xl.px())
+            .border(1.0, theme::color(Role::Border), Radius::Xl.px())
+            .padding(1.0)
+            .padding_xy(theme::sp(4), 0.0)
+            .padding_xy(0.0, theme::sp(3)),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Start,
         || {
@@ -108,10 +119,12 @@ pub fn proposal(ask: &Permission) -> bool {
                 Arrangement::Start,
                 Alignment::Center,
                 || {
-                    label_with(
+                    styled_text(
                         Modifier::new().weight(1.0),
                         "The agent proposed a plan",
-                        Type::new(14).ratio(1.4).tone(Role::Text).truncate(),
+                        theme::text_style(14, 1.4)
+                            .color(theme::color(Role::Text))
+                            .max_lines(1),
                     );
                     Button::new("Open plan", OPEN_PLAN)
                         .variant(Variant::Ghost)

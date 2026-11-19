@@ -9,6 +9,6 @@ mod workspace;
 
 pub use screen::{Screen, picker_screen, screen, settings_screen, settings_window};
 pub use workspace::{
-    ADD_PROJECT, ATTACH, CHAT_SCROLL, DIFF_SCROLL, HISTORY, MENU_SCROLL, Outgoing, PLAN_SCROLL,
-    PROMPT, SEND, STOP, TAB_DIFF, TERMINAL, TERMINAL_BODY, TREE_SCROLL, WorkspaceState,
+    ADD_PROJECT, ATTACH, HISTORY, Outgoing, PROMPT, SEND, STOP, TAB_DIFF, TERMINAL, TERMINAL_BODY,
+    WorkspaceState,
 };

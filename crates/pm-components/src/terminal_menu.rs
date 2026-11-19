@@ -1,9 +1,8 @@
 //! The menu that opens over the window of a shell: putting what is marked into the chat, copying, pasting, marking everything, clearing and ending the shell, each with the keys the keymap gives it.
 
 use pm_editor::{Action, Keymap};
-use pm_field::Edit;
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 
 use crate::Menu;
 use crate::state::{Outgoing, PROMPT, WorkspaceState};
@@ -116,7 +115,7 @@ impl WorkspaceState {
         match command {
             TerminalCommand::AddToChat => {
                 if let Some(text) = self.terminal_selection().filter(|text| !text.is_empty()) {
-                    return self.edited(PROMPT, Edit::Paste(format!("```\n{text}\n```\n")));
+                    return self.typed(PROMPT, &format!("```\n{text}\n```\n"));
                 }
             }
             TerminalCommand::Copy => {
@@ -153,7 +152,15 @@ pub fn terminal_menu(open: TerminalMenu, keymap: &Keymap) {
         let keys = keymap.label(command.action());
         menu.item(command.label(), keys.as_deref(), command.id(), !on)
     };
-    let menu = Menu::new(open.at.0, open.at.1).width(64.0).row_height(6.5);
+    let operations = crate::events::operations();
+    let menu = Menu::new(open.at.0, open.at.1)
+        .width(64.0)
+        .row_height(6.5)
+        .on_pick(move |row| {
+            if let Some(command) = TerminalCommand::of(row) {
+                operations.terminal_command(command);
+            }
+        });
     let menu = row(menu, TerminalCommand::AddToChat, open.selected).separator();
     let menu = row(menu, TerminalCommand::Copy, open.selected);
     let menu = row(menu, TerminalCommand::Paste, true);

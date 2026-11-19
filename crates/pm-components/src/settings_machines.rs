@@ -1,12 +1,14 @@
 //! The servers page of the settings window: the server on this machine and the ones on other machines the window knows, each changed or taken out from its row, the form a server is added or changed with, and which one new projects go to.
 
-use crate::kit::sp;
+use crate::theme;
+use crate::theme::sp;
 use pm_config::{KnownServer, Reach};
-use pm_field::{Edit, Field};
 use rustle::Modifier;
+use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
-use crate::kit::{FocusId, Role, Styled};
+use crate::focus::FocusId;
+use crate::theme::Role;
 
 use crate::Button;
 use crate::button::Variant;
@@ -57,13 +59,13 @@ pub struct MachineForm {
     /// The place in the list of the server being changed, or nothing for a new one.
     index: Option<usize>,
     /// What it is called.
-    name: Field,
+    name: TextFieldState,
     /// How it is reached.
     reach: Reach,
     /// Where it is.
-    address: Field,
+    address: TextFieldState,
     /// The token a direct one or one behind a tunnel wants.
-    token: Field,
+    token: TextFieldState,
 }
 
 impl MachineForm {
@@ -71,17 +73,19 @@ impl MachineForm {
     fn holding(index: Option<usize>, server: &KnownServer) -> Self {
         Self {
             index,
-            name: Field::new(server.name.clone()),
+            name: TextFieldState::new(server.name.clone()),
             reach: server.reach,
-            address: Field::new(server.address.clone()),
-            token: Field::new(server.token.clone()).masked(true),
+            address: TextFieldState::new(server.address.clone()),
+            token: TextFieldState::new(server.token.clone()),
         }
     }
 
     /// The server the form describes, once it has a name and an address.
     fn server(&self) -> Option<KnownServer> {
-        let name = self.name.text().trim();
-        let address = self.address.text().trim();
+        let name = self.name.text();
+        let name = name.trim();
+        let address = self.address.text();
+        let address = address.trim();
         (!name.is_empty() && !address.is_empty()).then(|| KnownServer {
             name: name.to_owned(),
             reach: self.reach,
@@ -166,21 +170,8 @@ impl WorkspaceState {
         self.settings_page.server_form = None;
     }
 
-    /// Writes `edit` into the box `id` of the form.
-    pub(crate) fn machine_edited(&mut self, id: FocusId, edit: Edit) {
-        let Some(form) = self.settings_page.server_form.as_mut() else {
-            return;
-        };
-        match id {
-            MACHINE_NAME => form.name.apply(edit),
-            MACHINE_ADDRESS => form.address.apply(edit),
-            MACHINE_TOKEN => form.token.apply(edit),
-            _ => {}
-        }
-    }
-
     /// The box `id` of the form, while it is open.
-    pub(crate) fn machine_field(&self, id: FocusId) -> Option<&Field> {
+    pub(crate) fn machine_field(&self, id: FocusId) -> Option<&TextFieldState> {
         let form = self.settings_page.server_form.as_ref()?;
         match id {
             MACHINE_NAME => Some(&form.name),
@@ -193,7 +184,7 @@ impl WorkspaceState {
 
 /// Emits a box of the form under the words that say what is written in it.
 #[track_caller]
-fn labelled(words: &str, field: &Field, id: FocusId, placeholder: &str) {
+fn labelled(words: &str, field: &TextFieldState, id: FocusId, placeholder: &str) {
     column_arranged(
         Modifier::new().fill_max_width(),
         Arrangement::SpacedBy(sp(1)),
@@ -203,6 +194,7 @@ fn labelled(words: &str, field: &Field, id: FocusId, placeholder: &str) {
             Input::new(field, id)
                 .size(Size::Sm)
                 .placeholder(placeholder)
+                .secure(crate::state::WorkspaceState::is_secure(id))
                 .build();
         },
     );
@@ -226,7 +218,7 @@ fn form_node(form: &MachineForm) {
         .position(|held| *held == form.reach)
         .unwrap_or(0);
     column_arranged(
-        Modifier::new().fill_max_width().pad(3),
+        Modifier::new().fill_max_width().padding(theme::sp(3)),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Start,
         || {
@@ -283,7 +275,9 @@ fn form_node(form: &MachineForm) {
 #[track_caller]
 fn machine_row(name: &str, reach: String, buttons: Option<usize>) {
     row_arranged(
-        Modifier::new().pad_x(3).pad_y(3),
+        Modifier::new()
+            .padding_xy(theme::sp(3), 0.0)
+            .padding_xy(0.0, theme::sp(3)),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         || {

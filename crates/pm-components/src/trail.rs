@@ -184,7 +184,9 @@ impl WorkspaceState {
             viewer.hidden = false;
             match (&mut viewer.contents, caret) {
                 (Contents::Text(document), Some(position)) => {
-                    viewer.scroll = jump(document, position, row, columns);
+                    viewer
+                        .scroll
+                        .jump_to(jump(document, position, row, columns));
                 }
                 (Contents::Text(_), None) => {}
                 (_, position) => viewer.jump = position,

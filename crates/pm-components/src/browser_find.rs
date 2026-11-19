@@ -1,10 +1,14 @@
 //! Finding text in the page of the browser: the search the engine runs, and the bar over the top right corner of the page that drives it.
 
-use pm_field::{Edit, Field};
+use crate::events::reduce;
+use crate::theme;
+use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{BoxAlignment, Modifier};
 
-use crate::kit::{IconName, Interactive, Radius, Role, Styled, sp};
+use crate::events::Interactive;
+use crate::icons::IconName;
+use crate::theme::{Radius, Role, sp};
 
 use crate::browser::{
     BROWSER_FIND_BAR, BROWSER_FIND_CLOSE, BROWSER_FIND_FIELD, BROWSER_FIND_NEXT,
@@ -35,7 +39,7 @@ const COUNT_WIDTH: f32 = 84.0;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PageSearch {
     /// What is looked for.
-    pub query: Field,
+    pub query: TextFieldState,
     /// Which match is the current one, counting from 1, and 0 for none.
     pub active: u32,
     /// How many matches the engine found.
@@ -72,7 +76,7 @@ impl WorkspaceState {
         };
         let tab = &mut **browser;
         let search = tab.search.get_or_insert_with(PageSearch::default);
-        search.query.apply(Edit::SelectAll);
+        search.query.select_all();
         if !search.query.text().is_empty() {
             search.counted = false;
             tab.commands.push(Command::Find {
@@ -111,8 +115,8 @@ impl WorkspaceState {
         }
     }
 
-    /// Applies `edit` to the text looked for, and looks for the new text when it changed.
-    pub(crate) fn browser_find_edited(&mut self, edit: Edit) {
+    /// Looks for the text looked for after the reader changed it.
+    pub(crate) fn browser_find_typed(&mut self) {
         let Some(browser) = self.browser.as_mut() else {
             return;
         };
@@ -120,16 +124,12 @@ impl WorkspaceState {
         let Some(search) = tab.search.as_mut() else {
             return;
         };
-        let before = search.query.text().to_owned();
-        search.query.apply(edit);
-        if search.query.text() != before {
-            search.counted = false;
-            tab.commands.push(Command::Find {
-                text: search.query.text().to_owned(),
-                forward: true,
-                again: false,
-            });
-        }
+        search.counted = false;
+        tab.commands.push(Command::Find {
+            text: search.query.text(),
+            forward: true,
+            again: false,
+        });
     }
 
     /// Takes in the count the engine reported for the page of tab `tab`: which match is current and how many there are.
@@ -157,13 +157,14 @@ pub fn find_bar(search: &PageSearch, page: f32, beside: f32) {
     row_arranged(
         Modifier::new()
             .align(BoxAlignment::TopEnd)
-            .at(-sp((EDGE + beside) / 4.0), sp(2))
+            .offset(-sp((EDGE + beside) / 4.0), sp(2))
             .z_index(40)
-            .shadows(&SHADOW, Radius::Md)
-            .fill_rounded(Role::Surface, Radius::Md)
-            .stroke(Role::Border, Radius::Md)
-            .target(BROWSER_FIND_BAR)
-            .pad(1),
+            .draw_behind(theme::shadows(&SHADOW, Radius::Md))
+            .background_rounded(theme::color(Role::Surface), Radius::Md.px())
+            .border(1.0, theme::color(Role::Border), Radius::Md.px())
+            .padding(1.0)
+            .control(BROWSER_FIND_BAR, reduce(BROWSER_FIND_BAR))
+            .padding(theme::sp(1)),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Center,
         || {
@@ -183,7 +184,9 @@ pub fn find_bar(search: &PageSearch, page: f32, beside: f32) {
                 },
             );
             column_arranged(
-                Modifier::new().width(COUNT_WIDTH).pad_x(1),
+                Modifier::new()
+                    .width(COUNT_WIDTH)
+                    .padding_xy(theme::sp(1), 0.0),
                 Arrangement::Start,
                 Alignment::Start,
                 || {

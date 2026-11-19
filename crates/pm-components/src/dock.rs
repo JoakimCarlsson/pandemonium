@@ -6,7 +6,7 @@ use std::rc::Rc;
 use pm_field::Reach;
 use pm_terminal::{Emulator, Link};
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 
 use crate::sample::Session;
 
@@ -255,7 +255,7 @@ impl WorkspaceState {
     pub fn show_problems(&mut self) {
         self.bottom = BottomTab::Problems;
         self.terminal = true;
-        self.problems_scroll = 0.0;
+        self.problems_scroll.jump_to(0.0);
         self.ask_problems();
     }
 
@@ -307,17 +307,11 @@ impl WorkspaceState {
         }
         if key.is_some() && self.docked_position().and_then(|at| self.problems_key(at)) == key {
             if self.problems_of != key {
-                self.problems_scroll = 0.0;
+                self.problems_scroll.jump_to(0.0);
             }
             self.problems = problems;
             self.problems_of = key;
         }
-        self
-    }
-
-    /// Scrolls the list of problems by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_problems(mut self, delta: f32, room: f32) -> Self {
-        self.problems_scroll = (self.problems_scroll + delta).clamp(0.0, room);
         self
     }
 

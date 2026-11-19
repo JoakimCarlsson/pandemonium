@@ -1,13 +1,18 @@
 //! The browser pane: a page of the web beside the agent's work, with its address bar and, beside it, the developer tools of the page.
 
-use crate::kit::sp;
-use pm_field::Field;
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
+use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use std::ops::{Deref, DerefMut};
 
-use crate::kit::{FocusId, IconName, Interactive, Radius, Role, Side, Styled, Tooltip};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::theme::Role;
 
 use crate::browser_address::address_of;
 use crate::browser_find::find_bar;
@@ -373,7 +378,7 @@ impl WorkspaceState {
                 let again: Vec<usize> = (0..browser.tabs.len())
                     .filter(|index| {
                         browser.tabs[*index].host == host
-                            && served_move(browser.tabs[*index].address.text(), address)
+                            && served_move(&browser.tabs[*index].address.text(), address)
                                 == Move::Reload
                     })
                     .collect();
@@ -381,9 +386,9 @@ impl WorkspaceState {
                     for index in again {
                         browser.tabs[index].commands.push(Command::Reload);
                     }
-                } else if served_move(browser.address.text(), address) == Move::Load {
+                } else if served_move(&browser.address.text(), address) == Move::Load {
                     browser.host = host;
-                    browser.address = Field::new(address);
+                    browser.address = TextFieldState::new(address);
                     browser.commands.push(Command::Load(address.to_owned()));
                 } else if browser.open_tab(address, host, false, false).is_none() {
                     return;
@@ -400,7 +405,7 @@ impl WorkspaceState {
         match self.browser.as_mut() {
             Some(browser) => {
                 browser.host = host;
-                browser.address = Field::new(address);
+                browser.address = TextFieldState::new(address);
                 browser.commands.push(Command::Load(address.to_owned()));
             }
             None => self.browser = Some(Browser::new(address, host)),
@@ -506,7 +511,7 @@ impl WorkspaceState {
             BROWSER_FORWARD => browser.commands.push(Command::Forward),
             BROWSER_RELOAD => browser.commands.push(Command::Reload),
             BROWSER_GO => {
-                let address = address_of(browser.address.text());
+                let address = address_of(&browser.address.text());
                 browser.host = host;
                 browser.commands.push(Command::Load(address));
             }
@@ -577,7 +582,7 @@ impl WorkspaceState {
                     tab.commands.push(Command::LoadSealed);
                 } else {
                     tab.host.clone_from(&host);
-                    let address = address_of(tab.address.text());
+                    let address = address_of(&tab.address.text());
                     tab.commands.push(Command::Load(address));
                 }
             }
@@ -686,7 +691,7 @@ impl WorkspaceState {
         title.clone_into(&mut tab.title);
         tab.pointer = pointer;
         if !(typing && shown) && !address.is_empty() && tab.address.text() != address {
-            tab.address = Field::new(address);
+            tab.address = TextFieldState::new(address);
         }
     }
 }
@@ -699,8 +704,13 @@ fn toolbar(browser: &Browser) {
         Modifier::new()
             .fill_max_width()
             .height(TOOLBAR)
-            .stroke_side(Side::Bottom, 1.0, Role::Border)
-            .pad_x(2),
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(2), 0.0),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Center,
         || {
@@ -732,7 +742,9 @@ fn toolbar(browser: &Browser) {
                     Variant::Ghost
                 })
                 .build();
+            let operations = crate::events::operations();
             Button::icon(IconName::Camera, BROWSER_CAPTURE)
+                .on_click(move || operations.open_browser_capture_menu())
                 .variant(if browser.picking_area {
                     Variant::Secondary
                 } else {
@@ -753,13 +765,13 @@ fn toolbar(browser: &Browser) {
                 Variant::Ghost
             })
             .disabled(browser.agent)
-            .modifier(Modifier::new().tooltip(if browser.agent {
+            .tooltip(if browser.agent {
                 "Opened by an agent: agents may always work in this tab"
             } else if browser.locked {
                 "Locked: agents cannot change this tab. Press to unlock it."
             } else {
                 "Lock this tab so agents cannot change it"
-            }))
+            })
             .build();
             Button::icon(
                 if browser.tools {
@@ -792,9 +804,20 @@ fn surface(
     let body = Modifier::new()
         .width(wide)
         .height(tall)
-        .clip_to(Radius::None)
+        .clip()
         .cursor(CursorIcon::Text)
-        .target(id);
+        .pressable_menu(id, reduce(id), {
+            let operations = crate::events::operations();
+            move || {
+                if id == BROWSER_BODY {
+                    operations.open_browser_menu();
+                } else {
+                    operations.open_message_menu();
+                }
+            }
+        })
+        .chain(crate::bounds::placed(id, Modifier::new()))
+        .chain(crate::focus::keyboard_focus(id));
     match shown {
         Some(shown) if browser.notice.is_none() || id != BROWSER_BODY => {
             rustle::image(body, shown, rustle::ContentScale::Crop)
@@ -814,7 +837,10 @@ fn surface(
 #[track_caller]
 fn divider(tall: f32) {
     rustle::stack_with(
-        Modifier::new().width(1.0).height(tall).fill(Role::Border),
+        Modifier::new()
+            .width(1.0)
+            .height(tall)
+            .background(theme::color(Role::Border)),
         || Sash::column(BROWSER_SASH).bare().build(),
     );
 }
@@ -840,7 +866,7 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) {
         Modifier::new()
             .fill_max_width()
             .height(height)
-            .fill(Role::Background),
+            .background(theme::color(Role::Background)),
         Arrangement::Start,
         Alignment::Start,
         || {

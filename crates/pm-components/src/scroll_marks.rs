@@ -5,7 +5,7 @@ use std::ops::Range;
 use pm_editor::{Document, EditorSettings, LineChange};
 use rustle::Modifier;
 
-use crate::kit::{Role, color};
+use crate::theme::{Role, color};
 
 use crate::viewer::severity_role;
 

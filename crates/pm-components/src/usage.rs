@@ -1,11 +1,12 @@
 //! The rings in the prompt box that show how full the conversation's context is and how much of the account's allowance is used, and the words they say when the pointer rests on them.
 
+use crate::theme;
 use pm_harness::{Limit, LimitUnit, Limits, Usage};
 use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
-use crate::kit::{Hovered, Looks, Radius, Role, Tone, Tooltip};
 use crate::sample::Session;
+use crate::theme::{Radius, Role, Tone};
 
 /// How wide the ring of a context that has no allowance beside it is, in logical pixels.
 const SINGLE_RING: f32 = 20.0;
@@ -224,17 +225,23 @@ pub fn rings_of(context: Option<&Usage>, limits: Option<&Limits>) -> bool {
         .filter_map(|meter| meter.share)
         .take(MAX_RINGS)
         .collect();
-    row_arranged(
-        Modifier::new()
-            .width(32.0)
-            .height(32.0)
-            .looks(Looks::new().hover(Role::SurfaceHover).radius(Radius::Full))
-            .cursor(CursorIcon::Default)
-            .tooltip(tooltip),
-        Arrangement::Center,
-        Alignment::Center,
-        || rings(&shares),
-    );
+    crate::tooltip::with_tooltip(tooltip, || {
+        row_arranged(
+            Modifier::new()
+                .width(32.0)
+                .height(32.0)
+                .interaction_background(
+                    (theme::InteractionTones::new()
+                        .hover(Role::SurfaceHover)
+                        .radius(Radius::Full))
+                    .colors(),
+                )
+                .cursor(CursorIcon::Default),
+            Arrangement::Center,
+            Alignment::Center,
+            || rings(&shares),
+        );
+    });
     true
 }
 
@@ -250,7 +257,7 @@ fn rings(shares: &[f32]) {
         .map(|share| {
             (
                 *share,
-                crate::kit::color(tone((share * 100.0).round() as u32)),
+                crate::theme::color(tone((share * 100.0).round() as u32)),
             )
         })
         .collect();
@@ -258,7 +265,7 @@ fn rings(shares: &[f32]) {
         Modifier::new().width(across).height(across),
         width,
         gap,
-        crate::kit::color(Role::Border),
+        crate::theme::color(Role::Border),
         &filled,
     );
 }
@@ -357,7 +364,7 @@ mod tests {
     fn drawn(context: Option<Usage>, limits: Option<Limits>) -> bool {
         let emitted = std::rc::Rc::new(std::cell::Cell::new(false));
         let seen = emitted.clone();
-        crate::kit::report::lay_out(400.0, 200.0, None, move || {
+        crate::tagged::lay_out(400.0, 200.0, None, move || {
             seen.set(rings_of(context.as_ref(), limits.as_ref()));
         });
         emitted.get()

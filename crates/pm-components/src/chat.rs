@@ -1,5 +1,7 @@
 //! The conversation with an agent: its messages and the prompt box.
 
+use crate::events::reduce;
+use crate::theme;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
 
@@ -8,26 +10,26 @@ use crate::Markdown;
 use crate::activity::activity;
 use crate::button::Variant;
 use crate::composer::composer;
+use crate::events::Interactive;
 use crate::exhibit::{
     EXHIBIT_COPY_BASE, EXHIBIT_OPEN_BASE, ExhibitCard, PREVIEW_OFFER_BASE, exhibit_button,
 };
-use crate::input;
+use crate::focus::FocusId;
+use crate::icons::IconName;
 use crate::inquiry::{answered, inquiry};
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Radius, Role, Scroll, Side as Edge, Styled, Tooltip,
-    Type, label, scroll_area, selectable, selectable_scope, sp, wrap_lines,
-};
 use crate::parts::{clipped, glyph, line};
 use crate::queued::queued;
 use crate::sample::{Session, Side, Status};
+use crate::select::{selectable, selectable_scope, styled_text};
 use crate::sidebar::status_icon;
 use crate::size::Size;
 use crate::state::{
-    CHAT_SCROLL, CHAT_TEXT, COPY_BASE, DETAILS_BASE, FORK_BASE, KEEP_FILES, LINK_BASE,
-    LINKS_PER_PIECE, LINKS_PER_REPLY, RESTORE_BASE, RESTORE_FILES, REWIND_BASE, TURN_BASE,
-    TURN_CHANGES_BASE, WorkspaceState,
+    CHAT_TEXT, COPY_BASE, DETAILS_BASE, FORK_BASE, KEEP_FILES, LINK_BASE, LINKS_PER_PIECE,
+    LINKS_PER_REPLY, RESTORE_BASE, RESTORE_FILES, REWIND_BASE, TURN_BASE, TURN_CHANGES_BASE,
+    WorkspaceState,
 };
 use crate::steps::{question, steps};
+use crate::theme::{Radius, Role, sp};
 
 mod retained;
 
@@ -44,8 +46,8 @@ const GUTTER: f32 = 24.0;
 /// selectable conversation text, with a gap where it has a blank line.
 #[track_caller]
 fn paragraph(content: &str, tone: Role, width: f32) {
-    let kind = Type::new(14).ratio(1.57).tone(tone);
-    let lines = wrap_lines(content, kind, width.max(32.0));
+    let kind = theme::text_style(14, 1.57).color(theme::color(tone));
+    let lines = rustle::wrap_at_spaces(content, &kind, width.max(32.0));
     column_arranged(
         Modifier::new(),
         Arrangement::Start,
@@ -53,7 +55,7 @@ fn paragraph(content: &str, tone: Role, width: f32) {
         || {
             for part in lines {
                 if part.end == part.start {
-                    rustle::spacer(Modifier::new().h(3));
+                    rustle::spacer(Modifier::new().height(theme::sp(3)));
                 } else {
                     selectable(
                         Modifier::new(),
@@ -75,7 +77,9 @@ fn chat_line(content: impl Into<String>, pixels: u32, tone: Role) {
         Modifier::new(),
         CHAT_TEXT,
         content,
-        Type::new(pixels).ratio(1.4).tone(tone).truncate(),
+        theme::text_style(pixels, 1.4)
+            .color(theme::color(tone))
+            .max_lines(1),
     );
 }
 
@@ -87,9 +91,10 @@ fn message_action(icon: IconName, tooltip: &str, id: u64, disabled: bool) {
         .tone(Role::Subtle)
         .modifier(
             Modifier::new()
-                .tooltip(tooltip)
-                .shown_on_group_hover(Some(FocusId(id))),
+                .interaction_focused(crate::focus::is_held(FocusId(id)))
+                .draw_with_content_interactive(shown_on_group_hover),
         )
+        .tooltip(tooltip)
         .build();
 }
 
@@ -124,7 +129,7 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
     column_arranged(
         Modifier::new()
             .fill_max_width()
-            .group()
+            .interaction_group()
             .selectable_area(CHAT_TEXT),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Start,
@@ -133,9 +138,9 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
                 column_arranged(
                     Modifier::new()
                         .align(BoxAlignment::BottomEnd)
-                        .fill_rounded(Role::SurfaceHover, Radius::Xl2)
-                        .pad_x(4)
-                        .pad_y(2.5),
+                        .background_rounded(theme::color(Role::SurfaceHover), Radius::Xl2.px())
+                        .padding_xy(theme::sp(4), 0.0)
+                        .padding_xy(0.0, theme::sp(2.5)),
                     Arrangement::SpacedBy(sp(2)),
                     Alignment::Start,
                     || {
@@ -210,11 +215,12 @@ fn side_note(side: &Side, content: &str, width: f32) {
     column_arranged(
         Modifier::new()
             .fill_max_width()
-            .group()
+            .interaction_group()
             .selectable_area(CHAT_TEXT)
-            .stroke(Role::Border, Radius::Xl)
-            .pad_x(4)
-            .pad_y(3),
+            .border(1.0, theme::color(Role::Border), Radius::Xl.px())
+            .padding(1.0)
+            .padding_xy(theme::sp(4), 0.0)
+            .padding_xy(0.0, theme::sp(3)),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Start,
         || {
@@ -297,9 +303,12 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                 row_arranged(
                     Modifier::new()
                         .align(BoxAlignment::TopStart)
-                        .h(7)
+                        .height(theme::sp(7))
                         .cursor(CursorIcon::Pointer)
-                        .target(FocusId(TURN_BASE + index as u64)),
+                        .control(
+                            FocusId(TURN_BASE + index as u64),
+                            reduce(FocusId(TURN_BASE + index as u64)),
+                        ),
                     Arrangement::SpacedBy(sp(1.5)),
                     Alignment::Center,
                     || {
@@ -339,7 +348,7 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
     column_arranged(
         Modifier::new()
             .fill_max_width()
-            .group()
+            .interaction_group()
             .selectable_area(CHAT_TEXT),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Start,
@@ -420,9 +429,12 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                                     || {
                                         rustle::spacer(
                                             Modifier::new()
-                                                .pad_side(Edge::Top, 2.5)
-                                                .square(1)
-                                                .fill_rounded(Role::Subtle, Radius::Full),
+                                                .padding_each(0.0, theme::sp(2.5), 0.0, 0.0)
+                                                .size(theme::sp(1), theme::sp(1))
+                                                .background_rounded(
+                                                    theme::color(Role::Subtle),
+                                                    Radius::Full.px(),
+                                                ),
                                         );
                                         paragraph(bullet, Role::Muted, width - 14.0);
                                     },
@@ -503,9 +515,14 @@ fn header(state: &WorkspaceState, session: &Session) {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .h(10)
-            .stroke_side(Edge::Bottom, 1.0, Role::Border)
-            .pad_x(5),
+            .height(theme::sp(10))
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(5), 0.0),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         || {
@@ -514,15 +531,16 @@ fn header(state: &WorkspaceState, session: &Session) {
             if !session.branch.is_empty() {
                 row_arranged(
                     Modifier::new()
-                        .fill_rounded(Role::Surface, Radius::Md)
-                        .pad_x(2),
+                        .background_rounded(theme::color(Role::Surface), Radius::Md.px())
+                        .padding_xy(theme::sp(2), 0.0),
                     Arrangement::SpacedBy(sp(1)),
                     Alignment::Center,
                     || {
                         glyph(IconName::GitFork, 3.0, Role::Muted);
-                        label(
+                        styled_text(
+                            Modifier::new(),
                             &session.branch,
-                            Type::new(11).ratio(1.6).mono().tone(Role::Muted),
+                            theme::mono_style(11, 1.6).color(theme::color(Role::Muted)),
                         );
                     },
                 );
@@ -549,37 +567,40 @@ pub fn chat(state: &WorkspaceState, session: &Session, width: f32, above: f32) {
         || {
             header(state, session);
             crate::pull_request_bar::bar(session);
-            scroll_area(
-                Modifier::new().fill_max_width().weight(1.0),
-                Scroll::from_end(CHAT_SCROLL, state.chat_back),
+            column_arranged(
+                state
+                    .chat_bounds
+                    .track(Modifier::new().fill_max_width().weight(1.0))
+                    .vertical_scroll_with(&state.chat_back, true)
+                    .fill_max_width(),
+                Arrangement::Start,
+                Alignment::Center,
                 || {
-                    column_arranged(
-                        Modifier::new().fill_max_width(),
-                        Arrangement::Start,
-                        Alignment::Center,
-                        || {
-                            messages(state, session, text_width);
-                        },
-                    );
+                    messages(state, session, text_width);
                 },
             );
             column_arranged(
                 Modifier::new()
                     .fill_max_width()
                     .wrap_content_height(BoxAlignment::TopStart, true)
-                    .pad_side(Edge::Bottom, 5),
+                    .padding_each(0.0, 0.0, 0.0, theme::sp(5)),
                 Arrangement::Start,
                 Alignment::Center,
                 || {
                     column_arranged(
-                        Modifier::new().max_w_px(COLUMN).fill_max_width().pad_x(6),
+                        Modifier::new()
+                            .width_in(0.0, COLUMN)
+                            .fill_max_width()
+                            .padding_xy(theme::sp(6), 0.0),
                         Arrangement::Start,
                         Alignment::Start,
                         || {
                             queued(state, session, text_width);
                             if let Some(draft) = session.inquiry.as_ref() {
                                 column_arranged(
-                                    Modifier::new().pad_side(Edge::Bottom, 2).fill_max_width(),
+                                    Modifier::new()
+                                        .padding_each(0.0, 0.0, 0.0, theme::sp(2))
+                                        .fill_max_width(),
                                     Arrangement::Start,
                                     Alignment::Start,
                                     || {
@@ -599,7 +620,6 @@ pub fn chat(state: &WorkspaceState, session: &Session, width: f32, above: f32) {
                                 Some(session),
                                 2,
                                 above,
-                                input::inner_width(text_width),
                             );
                         },
                     );
@@ -615,10 +635,10 @@ pub fn chat(state: &WorkspaceState, session: &Session, width: f32, above: f32) {
 fn messages(state: &WorkspaceState, session: &Session, width: f32) {
     column_arranged(
         Modifier::new()
-            .max_w_px(COLUMN)
+            .width_in(0.0, COLUMN)
             .fill_max_width()
-            .pad_x(6)
-            .pad_y(8),
+            .padding_xy(theme::sp(6), 0.0)
+            .padding_xy(0.0, theme::sp(8)),
         Arrangement::SpacedBy(sp(6)),
         Alignment::Start,
         || {
@@ -654,4 +674,11 @@ fn messages(state: &WorkspaceState, session: &Session, width: f32) {
             }
         },
     );
+}
+
+/// Draws the content only while the group around it is hovered or it counts as focused.
+fn shown_on_group_hover(canvas: &mut rustle::Canvas, interaction: rustle::Interaction) {
+    if interaction.group_hovered || interaction.focused {
+        canvas.draw_content();
+    }
 }

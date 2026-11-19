@@ -1,12 +1,16 @@
 //! The model servers page of the settings window: the OpenAI-compatible servers declared on the server's machine, each offered as an agent with its models, the form a server is added or changed with, and the models a server is found to offer, picked from to make its list.
 
-use crate::kit::sp;
-use pm_field::{Edit, Field};
+use crate::theme;
+use crate::theme::sp;
 use pm_harness::{ModelServer, ServerWire};
 use rustle::Modifier;
+use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
-use crate::kit::{FocusId, IconName, Radius, Role, Styled, Type, label, label_with};
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::select::styled_text;
+use crate::theme::{Radius, Role};
 
 use crate::agent_list::AgentEntry;
 use crate::button::Variant;
@@ -94,17 +98,17 @@ pub struct ModelServerForm {
     /// The id of the server being changed, which stays as it was; nothing for a new one, which is given one from its name.
     id: Option<String>,
     /// What it is called.
-    name: Field,
+    name: TextFieldState,
     /// The address `/chat/completions`, `/responses` and `/models` are appended to.
-    base_url: Field,
+    base_url: TextFieldState,
     /// The protocol it speaks.
     wire: ServerWire,
     /// A new API key; left blank to keep the one saved.
-    key: Field,
+    key: TextFieldState,
     /// The environment variables its key is read from, separated by commas or spaces.
-    key_env: Field,
+    key_env: TextFieldState,
     /// The models it offers, separated by commas; blank to ask the server.
-    models: Field,
+    models: TextFieldState,
     /// Whether a key is saved for it already.
     has_key: bool,
     /// What asking the server for its models came to.
@@ -117,24 +121,24 @@ impl ModelServerForm {
         Self {
             index,
             id: server.map(|server| server.id.clone()),
-            name: Field::new(
+            name: TextFieldState::new(
                 server
                     .map(|server| server.label.clone().unwrap_or_else(|| server.id.clone()))
                     .unwrap_or_default(),
             ),
-            base_url: Field::new(
+            base_url: TextFieldState::new(
                 server
                     .map(|server| server.base_url.clone())
                     .unwrap_or_default(),
             ),
             wire: server.map(|server| server.wire).unwrap_or_default(),
-            key: Field::default().masked(true),
-            key_env: Field::new(
+            key: TextFieldState::default(),
+            key_env: TextFieldState::new(
                 server
                     .map(|server| server.api_key_env.join(", "))
                     .unwrap_or_default(),
             ),
-            models: Field::new(
+            models: TextFieldState::new(
                 server
                     .map(|server| server.models.join(", "))
                     .unwrap_or_default(),
@@ -147,7 +151,7 @@ impl ModelServerForm {
     /// The models the form lists, in order, each once.
     fn listed(&self) -> Vec<String> {
         let mut listed: Vec<String> = Vec::new();
-        for model in words(self.models.text()) {
+        for model in words(&self.models.text()) {
             if !listed.contains(&model) {
                 listed.push(model);
             }
@@ -164,23 +168,26 @@ impl ModelServerForm {
             }
             None => listed.push(model.to_owned()),
         }
-        self.models = Field::new(listed.join(", "));
+        self.models = TextFieldState::new(listed.join(", "));
     }
 
     /// The server the form describes under `id`, whether or not it has a name yet; nothing until it has an address.
     fn described(&self, id: String) -> Option<ModelServer> {
-        let base_url = self.base_url.text().trim();
+        let base_url = self.base_url.text();
+        let base_url = base_url.trim();
         if base_url.is_empty() {
             return None;
         }
-        let name = self.name.text().trim();
-        let key = self.key.text().trim();
+        let name = self.name.text();
+        let name = name.trim();
+        let key = self.key.text();
+        let key = key.trim();
         Some(ModelServer {
             id,
             label: (!name.is_empty()).then(|| name.to_owned()),
             base_url: base_url.to_owned(),
             wire: self.wire,
-            api_key_env: words(self.key_env.text()),
+            api_key_env: words(&self.key_env.text()),
             api_key: (!key.is_empty()).then(|| key.to_owned()),
             has_api_key: self.has_key,
             headers: Vec::new(),
@@ -373,7 +380,7 @@ impl WorkspaceState {
     fn form_id(&self, form: &ModelServerForm) -> String {
         form.id
             .clone()
-            .unwrap_or_else(|| id_from(form.name.text(), &self.taken_ids()))
+            .unwrap_or_else(|| id_from(&form.name.text(), &self.taken_ids()))
     }
 
     /// Has the server keep the server the form describes, and puts the form away; a form missing its name or address stays open.
@@ -416,23 +423,8 @@ impl WorkspaceState {
         });
     }
 
-    /// Writes `edit` into the box `id` of the form.
-    pub(crate) fn model_edited(&mut self, id: FocusId, edit: Edit) {
-        let Some(form) = self.settings_page.models.form.as_mut() else {
-            return;
-        };
-        match id {
-            MODEL_NAME => form.name.apply(edit),
-            MODEL_URL => form.base_url.apply(edit),
-            MODEL_KEY => form.key.apply(edit),
-            MODEL_KEY_ENV => form.key_env.apply(edit),
-            MODEL_LIST => form.models.apply(edit),
-            _ => {}
-        }
-    }
-
     /// The box `id` of the form, while it is open.
-    pub(crate) fn model_field(&self, id: FocusId) -> Option<&Field> {
+    pub(crate) fn model_field(&self, id: FocusId) -> Option<&TextFieldState> {
         let form = self.settings_page.models.form.as_ref()?;
         match id {
             MODEL_NAME => Some(&form.name),
@@ -447,7 +439,7 @@ impl WorkspaceState {
 
 /// Emits a box of the form under the words that say what is written in it.
 #[track_caller]
-fn labelled(words: &str, field: &Field, id: FocusId, placeholder: &str) {
+fn labelled(words: &str, field: &TextFieldState, id: FocusId, placeholder: &str) {
     column_arranged(
         Modifier::new().fill_max_width(),
         Arrangement::SpacedBy(sp(1)),
@@ -457,6 +449,7 @@ fn labelled(words: &str, field: &Field, id: FocusId, placeholder: &str) {
             Input::new(field, id)
                 .size(Size::Sm)
                 .placeholder(placeholder)
+                .secure(crate::state::WorkspaceState::is_secure(id))
                 .build();
         },
     );
@@ -493,9 +486,10 @@ fn found_node(form: &ModelServerForm, room: f32) {
             flow_row_with(
                 Modifier::new()
                     .fill_max_width()
-                    .fill_rounded(Role::Background, Radius::Md)
-                    .stroke(Role::Border, Radius::Md)
-                    .pad(3),
+                    .background_rounded(theme::color(Role::Background), Radius::Md.px())
+                    .border(1.0, theme::color(Role::Border), Radius::Md.px())
+                    .padding(1.0)
+                    .padding(theme::sp(3)),
                 FlowOptions::new(sp(3), sp(3)),
                 || {
                     for (place, model) in found.models.iter().enumerate() {
@@ -508,9 +502,12 @@ fn found_node(form: &ModelServerForm, room: f32) {
                             Alignment::Center,
                             || {
                                 Checkbox::new(listed.contains(model), pick).build();
-                                label(
+                                styled_text(
+                                    Modifier::new(),
                                     model.clone(),
-                                    Type::new(12).ratio(1.4).tone(Role::Text).truncate().mono(),
+                                    theme::mono_style(12, 1.4)
+                                        .color(theme::color(Role::Text))
+                                        .max_lines(1),
                                 );
                             },
                         );
@@ -534,7 +531,7 @@ fn form_node(form: &ModelServerForm, room: f32) {
         "sk-..."
     };
     column_arranged(
-        Modifier::new().fill_max_width().pad(3),
+        Modifier::new().fill_max_width().padding(theme::sp(3)),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Start,
         || {
@@ -642,7 +639,10 @@ fn key_badge(server: &ModelServer) -> Option<String> {
 fn server_row(index: usize, server: &ModelServer) {
     let name = server.label.clone().unwrap_or_else(|| server.id.clone());
     row_arranged(
-        Modifier::new().fill_max_width().pad_x(3).pad_y(3),
+        Modifier::new()
+            .fill_max_width()
+            .padding_xy(theme::sp(3), 0.0)
+            .padding_xy(0.0, theme::sp(3)),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         || {
@@ -656,13 +656,13 @@ fn server_row(index: usize, server: &ModelServer) {
                         Arrangement::SpacedBy(sp(2)),
                         Alignment::Center,
                         || {
-                            label(
+                            styled_text(
+                                Modifier::new(),
                                 name,
-                                Type::new(13)
-                                    .ratio(1.4)
-                                    .tone(Role::Text)
-                                    .truncate()
-                                    .medium(),
+                                theme::text_style(13, 1.4)
+                                    .font_weight(rustle::FontWeight::MEDIUM)
+                                    .color(theme::color(Role::Text))
+                                    .max_lines(1),
                             );
                             if let Some(said) = key_badge(server) {
                                 Badge::new(said).build();
@@ -671,10 +671,12 @@ fn server_row(index: usize, server: &ModelServer) {
                     );
                     line(detail_of(server), 12, 1.4, Role::Muted);
                     if !server.models.is_empty() {
-                        label_with(
+                        styled_text(
                             Modifier::new().fill_max_width(),
                             server.models.join(", "),
-                            Type::new(11).ratio(1.4).tone(Role::Subtle).truncate(),
+                            theme::text_style(11, 1.4)
+                                .color(theme::color(Role::Subtle))
+                                .max_lines(1),
                         );
                     }
                 },
@@ -786,7 +788,7 @@ mod tests {
 
     /// Writes `text` into the box `id`.
     fn typed(state: WorkspaceState, id: FocusId, text: &str) -> WorkspaceState {
-        state.edited(id, Edit::Paste(text.to_owned()))
+        state.typed(id, text)
     }
 
     /// Opening the page asks the server for its model servers.
@@ -847,8 +849,20 @@ mod tests {
     #[test]
     fn editing_keeps_the_id_and_the_saved_key() {
         let state = open_with(vec![saved()]).settings_pressed(MODEL_SERVER_EDITS.at(0));
-        assert_eq!(state.field(MODEL_KEY).map(Field::text), Some(""));
-        assert_eq!(state.field(MODEL_NAME).map(Field::text), Some("Gateway"));
+        assert_eq!(
+            state
+                .text_field(MODEL_KEY)
+                .map(TextFieldState::text)
+                .as_deref(),
+            Some("")
+        );
+        assert_eq!(
+            state
+                .text_field(MODEL_NAME)
+                .map(TextFieldState::text)
+                .as_deref(),
+            Some("Gateway")
+        );
         let mut state = typed(state, MODEL_NAME, " Two").settings_pressed(MODEL_SAVE);
         let sent = state.take_outbox();
         let Some(Outgoing::SaveModelServer(server)) = sent.first() else {
@@ -889,7 +903,13 @@ mod tests {
             .settings_pressed(FOUND_MODEL_PICKS.at(1))
             .settings_pressed(FOUND_MODEL_PICKS.at(1))
             .settings_pressed(FOUND_MODEL_PICKS.at(0));
-        assert_eq!(state.field(MODEL_LIST).map(Field::text), Some("kept, a"));
+        assert_eq!(
+            state
+                .text_field(MODEL_LIST)
+                .map(TextFieldState::text)
+                .as_deref(),
+            Some("kept, a")
+        );
         let state = state.with_found_models(ticket, Err("late".to_owned()));
         assert!(
             state

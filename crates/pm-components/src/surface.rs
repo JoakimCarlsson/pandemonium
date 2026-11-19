@@ -1,12 +1,10 @@
-//! The surface: the raised, bordered column that menus, popovers and modals are drawn on.
+//! The surface: the raised, bordered column that menus, popovers and modals are drawn on,
+//! a rustle surface in the theme's surface colour, border and corner, with the app's shadow.
 
-use crate::kit::{Radius, Role, Styled};
+use crate::theme;
+use crate::theme::{Radius, Role};
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged};
-
-/// The shadow under a floating surface: a tall, soft one that lifts it off what is behind,
-/// as `(x, y, blur, spread, alpha)`.
-const FLOATING_SHADOW: [(f32, f32, f32, f32, f32); 1] = [(0.0, 12.0, 40.0, 0.0, 0.35)];
 
 /// How a surface looks.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -72,27 +70,34 @@ impl Surface {
     #[track_caller]
     pub fn build_with(self, content: impl FnOnce()) {
         let (shadow, radius) = match self.variant {
-            Variant::Compact => (Modifier::new().shadow_md(Radius::Md), Radius::Md),
+            Variant::Compact => (
+                Modifier::new().draw_behind(theme::shadows(&theme::MEDIUM_SHADOW, Radius::Md)),
+                Radius::Md,
+            ),
             Variant::Floating => (
-                Modifier::new().shadows(&FLOATING_SHADOW, Radius::Xl),
+                Modifier::new().draw_behind(theme::shadows(&theme::FLOATING_SHADOW, Radius::Xl)),
                 Radius::Xl,
             ),
-            Variant::Dialog => (Modifier::new().shadow_md(Radius::Xl), Radius::Xl),
+            Variant::Dialog => (
+                Modifier::new().draw_behind(theme::shadows(&theme::MEDIUM_SHADOW, Radius::Xl)),
+                Radius::Xl,
+            ),
         };
-        let mut own = shadow
-            .fill_rounded(Role::Surface, radius)
-            .stroke(Role::Border, radius);
+        let mut inner = Modifier::new().padding(1.0);
         if self.variant == Variant::Dialog {
-            own = own.clip_to(Radius::None);
+            inner = inner.clip();
         }
+        let inner = inner.chain(self.inner);
         let (arrangement, alignment) = self
             .arranged
             .unwrap_or((Arrangement::Start, Alignment::Start));
-        column_arranged(
-            self.modifier.chain(own.chain(self.inner)),
-            arrangement,
-            alignment,
-            content,
+        rustle::surface_custom(
+            self.modifier.chain(shadow),
+            rustle::Shape::rounded(radius.px()),
+            theme::color(Role::Surface),
+            theme::color(Role::Text),
+            Some(rustle::BorderStroke::new(1.0, theme::color(Role::Border))),
+            || column_arranged(inner, arrangement, alignment, content),
         );
     }
 

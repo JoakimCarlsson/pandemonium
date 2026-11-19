@@ -1,23 +1,23 @@
 //! A project's overview: its sessions grouped by where they stand, and how its own repository is.
 
-use crate::kit::sp;
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
+use crate::events::Interactive;
 use crate::extensions::group_of_fixed_rows as group;
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tooltip,
-    Type, label, label_with, scroll_area,
-};
+use crate::focus::FocusId;
+use crate::icons::IconName;
 use crate::parts::{clipped, glyph, line, spacer};
 use crate::sample::{Session, Status};
+use crate::select::styled_text;
 use crate::sidebar::status_icon;
 use crate::size::Size;
 use crate::state::{NEW_IN_BASE, SESSION_BASE, WorkspaceState};
+use crate::theme::Role;
 use crate::{Avatar, Button};
-
-/// The scrolling body of the overview.
-pub const OVERVIEW_SCROLL: FocusId = FocusId(9_200_000);
 
 /// How wide the overview's column is at most, in logical pixels.
 const PAGE_WIDTH: f32 = 860.0;
@@ -44,13 +44,7 @@ const GROUPS: [(Status, &str); 6] = [
     (Status::Idle, "Idle"),
 ];
 
-impl WorkspaceState {
-    /// The state after the overview is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_overview(mut self, delta: f32, room: f32) -> Self {
-        self.overview_scroll = (self.overview_scroll + delta).clamp(0.0, room);
-        self
-    }
-}
+impl WorkspaceState {}
 
 /// Emits the overview of the project at `project`.
 #[track_caller]
@@ -61,30 +55,28 @@ pub fn overview(state: &WorkspaceState, project: usize) {
         Alignment::Start,
         || {
             heading(state, project);
-            scroll_area(
-                Modifier::new().fill_max_width().weight(1.0),
-                Scroll::from_start(OVERVIEW_SCROLL, state.overview_scroll),
+            column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .weight(1.0)
+                    .vertical_scroll(&state.overview_scroll)
+                    .fill_max_width(),
+                Arrangement::Start,
+                Alignment::Center,
                 || {
                     column_arranged(
-                        Modifier::new().fill_max_width(),
-                        Arrangement::Start,
-                        Alignment::Center,
+                        Modifier::new()
+                            .fill_max_width()
+                            .width_in(0.0, PAGE_WIDTH)
+                            .padding_xy(theme::sp(5), 0.0)
+                            .padding_each(0.0, theme::sp(5), 0.0, 0.0)
+                            .padding_each(0.0, 0.0, 0.0, theme::sp(8)),
+                        Arrangement::SpacedBy(sp(6)),
+                        Alignment::Start,
                         || {
-                            column_arranged(
-                                Modifier::new()
-                                    .fill_max_width()
-                                    .max_w_px(PAGE_WIDTH)
-                                    .pad_x(5)
-                                    .pad_side(Side::Top, 5)
-                                    .pad_side(Side::Bottom, 8),
-                                Arrangement::SpacedBy(sp(6)),
-                                Alignment::Start,
-                                || {
-                                    sessions(state, project);
-                                    repository(state);
-                                    commits(state);
-                                },
-                            );
+                            sessions(state, project);
+                            repository(state);
+                            commits(state);
                         },
                     );
                 },
@@ -99,21 +91,26 @@ fn heading(state: &WorkspaceState, project: usize) {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .h(12)
-            .stroke_side(Side::Bottom, 1.0, Role::Border)
-            .pad_x(5),
+            .height(theme::sp(12))
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(5), 0.0),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         || {
             if let Some(held) = state.projects.get(project) {
                 Avatar::of(held).build();
-                label(
+                styled_text(
+                    Modifier::new(),
                     &held.name,
-                    Type::new(14)
-                        .ratio(1.4)
-                        .tone(Role::Text)
-                        .truncate()
-                        .medium(),
+                    theme::text_style(14, 1.4)
+                        .font_weight(rustle::FontWeight::MEDIUM)
+                        .color(theme::color(Role::Text))
+                        .max_lines(1),
                 );
                 clipped(&held.path, 12, Role::Subtle);
             }
@@ -159,32 +156,47 @@ fn session_row(state: &WorkspaceState, index: usize) {
     let agent = state.agent_look(session.agent);
     let id = FocusId(SESSION_BASE + index as u64);
     let own = Modifier::new()
-        .looks_of(Looks::new().hover(Role::SurfaceHover), id)
+        .interaction_focused(crate::focus::is_held(id))
+        .interaction_background((theme::InteractionTones::new().hover(Role::SurfaceHover)).colors())
         .cursor(CursorIcon::Pointer)
-        .target(id);
+        .control_menu(
+            id,
+            {
+                let pressed = reduce(id);
+                move |_| pressed()
+            },
+            {
+                let operations = crate::events::operations();
+                move || operations.open_session_menu(index)
+            },
+        );
     card_row(own, || {
         status_icon(session.shown());
         clipped(&session.title, 14, Role::Text);
-        row_arranged(
-            Modifier::new().tooltip(agent.name),
-            Arrangement::Start,
-            Alignment::Start,
-            || {
-                glyph(agent.icon, 3.5, Role::Muted);
-            },
-        );
+        crate::tooltip::with_tooltip(agent.name, || {
+            row_arranged(
+                Modifier::new(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    glyph(agent.icon, 3.5, Role::Muted);
+                },
+            );
+        });
         if !session.changes.is_empty() {
             tally(session);
         }
         row_arranged(
-            Modifier::new().width(BRANCH_WIDTH).clip_to(Radius::None),
+            Modifier::new().width(BRANCH_WIDTH).clip(),
             Arrangement::Start,
             Alignment::Start,
             || {
-                label_with(
+                styled_text(
                     Modifier::new().weight(1.0),
                     &session.branch,
-                    Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
+                    theme::text_style(12, 1.4)
+                        .color(theme::color(Role::Muted))
+                        .max_lines(1),
                 );
             },
         );
@@ -205,21 +217,19 @@ fn tally(session: &Session) {
         Arrangement::SpacedBy(sp(1.5)),
         Alignment::Center,
         || {
-            label(
+            styled_text(
+                Modifier::new(),
                 format!("+{}", session.added()),
-                Type::new(12)
-                    .ratio(1.4)
-                    .tone(Role::Success)
-                    .truncate()
-                    .mono(),
+                theme::mono_style(12, 1.4)
+                    .color(theme::color(Role::Success))
+                    .max_lines(1),
             );
-            label(
+            styled_text(
+                Modifier::new(),
                 format!("−{}", session.removed()),
-                Type::new(12)
-                    .ratio(1.4)
-                    .tone(Role::Danger)
-                    .truncate()
-                    .mono(),
+                theme::mono_style(12, 1.4)
+                    .color(theme::color(Role::Danger))
+                    .max_lines(1),
             );
         },
     );
@@ -263,10 +273,12 @@ fn repository(state: &WorkspaceState) {
     group("Repository", || {
         card_row(Modifier::new(), || {
             glyph(IconName::GitFork, 4.0, Role::Muted);
-            label_with(
+            styled_text(
                 Modifier::new().weight(1.0),
                 &home.branch,
-                Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
+                theme::text_style(13, 1.4)
+                    .color(theme::color(Role::Text))
+                    .max_lines(1),
             );
             line(standing, 13, 1.4, Role::Muted);
         });
@@ -304,13 +316,12 @@ fn commits(state: &WorkspaceState) {
         for commit in state.git.history.iter().take(COMMITS_SHOWN) {
             card_row(Modifier::new(), || {
                 glyph(IconName::GitCommit, 4.0, Role::Subtle);
-                label(
+                styled_text(
+                    Modifier::new(),
                     commit.id.chars().take(SHORT_ID).collect::<String>(),
-                    Type::new(12)
-                        .ratio(1.4)
-                        .tone(Role::Subtle)
-                        .truncate()
-                        .mono(),
+                    theme::mono_style(12, 1.4)
+                        .color(theme::color(Role::Subtle))
+                        .max_lines(1),
                 );
                 clipped(&commit.summary, 13, Role::Text);
             });
@@ -325,9 +336,9 @@ fn card_row(modifier: Modifier, content: impl FnOnce()) {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .h(11)
+            .height(theme::sp(11))
             .chain(modifier)
-            .pad_x(4),
+            .padding_xy(theme::sp(4), 0.0),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         content,

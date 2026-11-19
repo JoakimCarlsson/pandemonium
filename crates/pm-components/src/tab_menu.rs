@@ -1,6 +1,6 @@
 //! The menu on the tab of an open file: closing it and the tabs around it, making it read only, its paths and permalink, showing it in the file manager and in the project's files, pinning it, and a shell beside it.
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 
 use crate::Menu;
 use crate::open_files::{Contents, Viewer};

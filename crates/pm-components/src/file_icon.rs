@@ -6,7 +6,9 @@ use std::sync::{LazyLock, Mutex};
 use pm_protocol::{ExtensionIconTheme, ExtensionInfo};
 use rustle::Modifier;
 
-use crate::kit::{Artwork, IconName, Role, Tone, artwork_with, icon, icon_with, sp};
+use crate::icons::icon;
+use crate::icons::{Artwork, IconName, artwork_with, icon_with};
+use crate::theme::{Role, Tone, sp};
 
 /// What an installed language says of the files whose names end as it reads.
 #[derive(Clone)]

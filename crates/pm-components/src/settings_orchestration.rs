@@ -1,6 +1,6 @@
 //! The orchestration page of the settings window: the switch that starts new conversations in orchestrator mode, and the work categories the agent then hands work to, each a row like a slot of the models page with its model, effort, backups, description and prompt addition.
 
-use crate::kit::sp;
+use crate::theme::sp;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, FlowOptions, flow_row_with};
 
@@ -136,7 +136,6 @@ pub(crate) fn count(state: &WorkspaceState) -> String {
 #[cfg(test)]
 /// Tests for the orchestration page: asking for the slots, the cards of the categories, opening one and describing it, and the switch for new conversations.
 mod tests {
-    use pm_field::Edit;
     use pm_harness::{SlotBook, SlotChange, SlotInfo, SlotProvider, SlotScope, SlotSource};
 
     use super::*;
@@ -276,7 +275,7 @@ mod tests {
         assert!(WorkspaceState::saves_on_leaving(description));
         let state = open()
             .settings_pressed(card_id(2).unwrap())
-            .edited(description, Edit::Paste(" Fast.".to_owned()));
+            .typed(description, " Fast.");
         assert_eq!(
             state.category_cards()[0].description.as_deref(),
             Some("Small changes. Fast.")

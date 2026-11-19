@@ -1,12 +1,16 @@
 //! The minimap: a map of the whole file drawn small beside it, each line a row of coloured blocks where the text is, with the stretch the view shows marked; pressing or dragging on it scrolls the file.
 
+use crate::events::reduce;
+use crate::theme;
 use pm_treesitter::Kind;
 use rustle::{Alignment, Arrangement, column_arranged};
 use rustle::{CursorIcon, Modifier};
 
-use crate::kit::{FocusId, Interactive, Radius, Role, Side, Styled, Tone, Type};
+use crate::events::Interactive;
+use crate::focus::FocusId;
 use crate::marked::{CaretLook, Mark, Paint, marked_line};
 use crate::state::WorkspaceState;
+use crate::theme::{Role, Tone};
 use crate::viewer::kind_role;
 use pm_editor::Document;
 
@@ -142,7 +146,7 @@ fn row_of(document: &Document, index: usize, spans: &[(std::ops::Range<usize>, K
     marked_line(
         Modifier::new().height(ROW),
         &" ".repeat(width),
-        Type::code(FONT).ratio(ROW / FONT).tone(Tone::Transparent),
+        theme::code_style(FONT, ROW / FONT).color(theme::color(Tone::Transparent)),
         marks,
         CaretLook::default(),
     );
@@ -171,14 +175,19 @@ pub(crate) fn minimap(
     let own = Modifier::new()
         .width(WIDTH)
         .fill_max_height()
-        .stroke_side(Side::Left, 1.0, Role::Border)
-        .clip_to(Radius::None)
+        .draw_behind(theme::edge(
+            theme::Side::Left,
+            1.0,
+            theme::color(Role::Border),
+        ))
+        .padding_each(1.0, 0.0, 0.0, 0.0)
+        .clip()
         .cursor(CursorIcon::Pointer)
-        .target(MINIMAP)
-        .draggable_id(MINIMAP);
+        .control(MINIMAP, reduce(MINIMAP))
+        .chain(crate::events::minimap_drag());
     rustle::stack_with(own, || {
         column_arranged(
-            Modifier::new().at(0.0, first as f32 * ROW - geometry.offset),
+            Modifier::new().offset(0.0, first as f32 * ROW - geometry.offset),
             Arrangement::Start,
             Alignment::Start,
             || {
@@ -189,17 +198,17 @@ pub(crate) fn minimap(
         );
         rustle::spacer(
             Modifier::new()
-                .at(0.0, top)
+                .offset(0.0, top)
                 .width(WIDTH)
                 .height(size)
-                .fill(Tone::Role(Role::Muted, 0.2)),
+                .background(theme::color(Tone::Role(Role::Muted, 0.2))),
         );
     });
 }
 
 impl WorkspaceState {
-    /// The state after a press or drag at `y` logical pixels down a minimap `height` tall: the file shown scrolls to centre its view there, no further than `room` logical pixels, the view being `view` tall.
-    pub fn minimap_pressed(mut self, y: f32, height: f32, view: f32, room: f32) -> Self {
+    /// The state after a press or drag at `y` logical pixels down a minimap `height` tall: the file shown scrolls to centre its view there, no further than its view can scroll.
+    pub fn minimap_pressed(mut self, y: f32, height: f32) -> Self {
         let row = self.editor.row_height();
         let columns = self.wrap_columns();
         let Some(index) = self.git.shown else {
@@ -211,8 +220,11 @@ impl WorkspaceState {
         let crate::open_files::Contents::Text(document) = &viewer.contents else {
             return self;
         };
-        let geometry = Geometry::of(document, viewer.scroll, view, row, columns, height);
-        viewer.scroll = geometry.scroll_to(y, row).clamp(0.0, room.max(0.0));
+        let (view, room) = (viewer.scroll.viewport_length(), viewer.scroll.max_offset());
+        let geometry = Geometry::of(document, viewer.scroll.offset(), view, row, columns, height);
+        viewer
+            .scroll
+            .jump_to(geometry.scroll_to(y, row).clamp(0.0, room));
         self
     }
 }

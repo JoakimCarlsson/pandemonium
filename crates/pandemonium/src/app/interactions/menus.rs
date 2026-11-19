@@ -3,17 +3,18 @@
 
 use pm_components::arrange::{SESSION_MENU_COPY_BRANCH, SESSION_MENU_RENAME};
 use pm_components::context_menu::{MENU_PASTE, MENU_SELECT_ALL};
+use pm_components::focus::FocusId;
 use pm_components::git_prompts::RENAME_FIELD;
-use pm_components::kit::{FocusId, Key};
 use pm_components::message_menu::{MESSAGE_MENU_COPY, MESSAGE_MENU_SELECT_ALL};
 use pm_components::state::{CHAT_TEXT, PROJECT_BASE, PROMPT, SESSION_BASE, TAB_DIFF};
+use rustle::Key;
 
 use crate::app::headless::Rig;
 use crate::snapshot::Shot;
 
 /// The text of the prompt.
 fn prompt(rig: &Rig) -> String {
-    rig.read(|screen| screen.field(PROMPT).map(|field| field.text().to_owned()))
+    rig.read(|screen| screen.text_field(PROMPT).map(rustle::TextFieldState::text))
         .unwrap_or_default()
 }
 
@@ -39,13 +40,7 @@ fn a_field_menu_selects_and_pastes() {
     *rig.clipboard.text.borrow_mut() = Some("pasted".to_owned());
     rig.click_on(PROMPT);
     rig.type_text("draft");
-    let field = rig
-        .report()
-        .field(PROMPT)
-        .cloned()
-        .expect("the prompt is drawn");
-    let inside = field.caret_at(2);
-    let at = (inside.0, inside.1 + inside.2 / 2.0);
+    let at = rig.caret_in_text("draft", 2).expect("the prompt is drawn");
     rig.right_click(at);
     rig.click_on(MENU_SELECT_ALL);
     assert!(rig.state(|state| state.menu.is_none()));
@@ -82,11 +77,11 @@ fn renaming_from_the_session_menu() {
     rig.click_on(RENAME_FIELD);
     assert_eq!(rig.focused(), Some(RENAME_FIELD));
     rig.chord(
-        pm_components::kit::Modifiers {
-            control: true,
+        rustle::Modifiers {
+            ctrl: true,
             ..Default::default()
         },
-        Key::Character('a'),
+        Key::Character("a".into()),
     );
     rig.type_text("Renamed");
     rig.key(Key::Enter);
@@ -108,18 +103,26 @@ fn a_press_outside_closes_a_list_menu() {
     assert!(rig.state(|state| state.project_menu.is_none()));
 }
 
+/// A press on the chip that opened an element's popover closes it rather than opening it
+/// again, though the press is outside the popover.
+#[test]
+fn a_popover_toggles_on_its_chip() {
+    let mut rig = Rig::shot(Shot::Elements);
+    let chip = FocusId(pm_components::elements::ELEMENT_BASE);
+    rig.click_on(chip);
+    assert!(rig.state(|state| state.picker.is_some()));
+    rig.click_on(chip);
+    assert!(rig.state(|state| state.picker.is_none()));
+    rig.click_on(chip);
+    assert!(rig.state(|state| state.picker.is_some()));
+}
+
 /// The secondary button over the conversation opens the message's menu,
 /// which selects all of its text and copies it.
 #[test]
 fn the_message_menu_selects_and_copies() {
     let mut rig = Rig::shot(Shot::Workspace);
-    let (_, area) = rig
-        .report()
-        .selectable_areas
-        .iter()
-        .copied()
-        .find(|(id, _)| *id == CHAT_TEXT)
-        .expect("the conversation is drawn");
+    let area = rig.region(CHAT_TEXT).expect("the conversation is drawn");
     let at = (area.origin.x + 40.0, area.origin.y + 10.0);
     rig.right_click(at);
     assert!(rig.state(|state| state.message_menu.is_some()));

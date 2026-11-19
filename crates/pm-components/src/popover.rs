@@ -1,13 +1,18 @@
 //! The popover: a raised surface that floats over a screen, with a heading and rows of choices.
 
-use crate::kit::sp;
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Placement, Radius, Role, Styled, Type, label,
-};
+use crate::events::Interactive;
+use crate::events::reduce;
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::select::styled_text;
+use crate::theme;
+use crate::theme::sp;
+use crate::theme::{Radius, Role};
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use crate::parts::{glyph, line};
+use crate::popups::Placement;
 use crate::{Surface, surface};
 
 /// One entry of a popover, kept until it is built.
@@ -109,7 +114,7 @@ impl Popover {
     pub fn build_with(self, content: impl FnOnce()) {
         let mut own = Modifier::new();
         if let Some(pixels) = self.width {
-            own = own.width(pixels).max_w_px(pixels);
+            own = own.width(pixels).width_in(0.0, pixels);
         }
         if self.full_width {
             own = own.fill_max_width();
@@ -118,7 +123,9 @@ impl Popover {
             own = own.width_intrinsic(rustle::IntrinsicSize::Max);
         }
         let entries = self.entries;
-        let inner = self.inner.unwrap_or_else(|| Modifier::new().pad(1.5));
+        let inner = self
+            .inner
+            .unwrap_or_else(|| Modifier::new().padding(theme::sp(1.5)));
         Surface::new()
             .variant(surface::Variant::Floating)
             .inner(inner)
@@ -153,7 +160,8 @@ impl Popover {
     /// Placed over its trigger by [`anchored`] or [`anchored_end`].
     #[track_caller]
     pub fn build_target(self, id: FocusId) {
-        self.modifier(Modifier::new().target(id)).build();
+        self.modifier(Modifier::new().control(id, reduce(id)))
+            .build();
     }
 
     /// Emits the popover answering to `id`, so that pressing it does not count as pressing outside;
@@ -177,34 +185,51 @@ impl Popover {
     }
 }
 
-/// Emits `button` with `popover`, when there is one, hanging a little way above it with their left edges together.
+/// Emits `button` with `popover`, when there is one, hanging a little way above it with their
+/// left edges together; a press elsewhere asks the app to close it.
 #[track_caller]
 pub fn anchored(button: impl FnOnce(), popover: Option<impl FnOnce()>) {
-    crate::kit::anchored(Modifier::new(), Placement::Above, 2.0, button, popover);
+    crate::popups::anchored(
+        Modifier::new(),
+        Placement::Above,
+        2.0,
+        true,
+        button,
+        popover,
+    );
 }
 
-/// Emits `button` with `popover`, when there is one, hanging a little way above it with their right edges together.
+/// Emits `button` with `popover`, when there is one, hanging a little way above it with their
+/// right edges together; a press elsewhere asks the app to close it.
 #[track_caller]
 pub fn anchored_end(button: impl FnOnce(), popover: Option<impl FnOnce()>) {
-    crate::kit::anchored(Modifier::new(), Placement::AboveEnd, 2.0, button, popover);
+    crate::popups::anchored(
+        Modifier::new(),
+        Placement::AboveEnd,
+        2.0,
+        true,
+        button,
+        popover,
+    );
 }
 
 /// Emits one row of a popover: a name over what choosing it means, with a tick on the one that is current.
 #[track_caller]
 pub fn row(name: &str, description: &str, current: bool, id: FocusId) {
     let looks = if current {
-        Looks::new().idle(Role::SurfaceSelected)
+        theme::InteractionTones::new().idle(Role::SurfaceSelected)
     } else {
-        Looks::new().hover(Role::SurfaceHover)
+        theme::InteractionTones::new().hover(Role::SurfaceHover)
     }
     .radius(Radius::Lg);
     let modifier = Modifier::new()
         .fill_max_width()
-        .looks_of(looks, id)
+        .interaction_focused(crate::focus::is_held(id))
+        .interaction_background((looks).colors())
         .cursor(CursorIcon::Pointer)
-        .target(id)
-        .pad_x(2.5)
-        .pad_y(1.5);
+        .control(id, reduce(id))
+        .padding_xy(theme::sp(2.5), 0.0)
+        .padding_xy(0.0, theme::sp(1.5));
     row_arranged(
         modifier,
         Arrangement::SpacedBy(sp(3)),
@@ -232,7 +257,10 @@ pub fn row(name: &str, description: &str, current: bool, id: FocusId) {
 #[track_caller]
 pub fn heading(title: &str, hint: Option<(&str, &str)>) {
     row_arranged(
-        Modifier::new().fill_max_width().h(8).pad_x(2.5),
+        Modifier::new()
+            .fill_max_width()
+            .height(theme::sp(8))
+            .padding_xy(theme::sp(2.5), 0.0),
         Arrangement::SpaceBetween,
         Alignment::Center,
         || {
@@ -254,11 +282,17 @@ pub fn key_hint(key: &str, does: &str) {
         || {
             row_arranged(
                 Modifier::new()
-                    .fill_rounded(Role::SurfaceHover, Radius::Md)
-                    .pad_x(1.5),
+                    .background_rounded(theme::color(Role::SurfaceHover), Radius::Md.px())
+                    .padding_xy(theme::sp(1.5), 0.0),
                 Arrangement::Start,
                 Alignment::Start,
-                || label(key, Type::new(11).ratio(1.6).mono().tone(Role::Muted)),
+                || {
+                    styled_text(
+                        Modifier::new(),
+                        key,
+                        theme::mono_style(11, 1.6).color(theme::color(Role::Muted)),
+                    )
+                },
             );
             line(does, 12, 1.4, Role::Subtle);
         },

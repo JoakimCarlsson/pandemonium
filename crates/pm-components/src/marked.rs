@@ -1,9 +1,9 @@
 //! Marked lines of the app's text views: syntax colours, fills behind matches,
 //! underlines for problems and links, selections, carets, indent guides and
 //! drop points, named by the theme's roles, resolved to colours and drawn by
-//! [`rustle::marked_text`] when a line is emitted. A line of a field or of
-//! the selectable conversation is also recorded where the app looks up
-//! points and selections.
+//! [`rustle::marked_text`] when a line is emitted. A line of the code text
+//! tells its [`TextLines`] where it was drawn, and a line of the selectable
+//! conversation is recorded where the app looks up points and selections.
 
 use std::cell::RefCell;
 use std::ops::Range;
@@ -11,11 +11,9 @@ use std::rc::Rc;
 
 use rustle::{MarkPaint, MarkedTextOptions, Modifier, TextLayout, TextMark};
 
-use crate::kit::focus::FocusId;
-use crate::kit::frame;
-use crate::kit::report::{self, FieldLine};
-use crate::kit::text::Type;
-use crate::kit::theme::{self, Role, Theme, Tone};
+use crate::focus::FocusId;
+use crate::text_lines::TextLines;
+use crate::theme::{self, Role, Theme, Tone};
 
 pub use rustle::CaretShape;
 
@@ -74,15 +72,32 @@ impl Mark {
     }
 }
 
-/// Whether a blinking caret is lit at the frame's clock, asking for the frame at which it changes.
+/// Whether a blinking caret is lit: on for [`CARET_BLINK_MS`] and off for as long, by the
+/// time of the frame clock, which an effect follows frame by frame and waits on until the
+/// next change, as a text field's cursor blinks on `withFrameMillis`.
+#[track_caller]
 pub fn caret_lit(look: CaretLook) -> bool {
-    if look.steady {
-        return true;
-    }
-    let now = frame::clock_ms();
-    let phase = (now / CARET_BLINK_MS).floor();
-    frame::wake_at((phase + 1.0) * CARET_BLINK_MS);
-    (phase as u64).is_multiple_of(2)
+    let lit = rustle::remember(|| true);
+    let driven = lit.clone();
+    let steady = look.steady;
+    rustle::launched_effect(steady, move |scope| async move {
+        if steady {
+            return;
+        }
+        loop {
+            let now = scope.next_frame().await.as_secs_f32() * 1000.0;
+            let phase = (now / CARET_BLINK_MS).floor();
+            let on = (phase as u64).is_multiple_of(2);
+            if driven.get() != on {
+                driven.set(on);
+            }
+            let until = ((phase + 1.0) * CARET_BLINK_MS - now).max(1.0);
+            scope
+                .delay(std::time::Duration::from_secs_f32(until / 1000.0))
+                .await;
+        }
+    });
+    steady || lit.get()
 }
 
 /// The colour selected text is highlighted in, in `theme`.
@@ -96,37 +111,42 @@ pub fn selection_color(theme: &Theme) -> rustle::Color {
 /// Inked stretches become the spans of one rich text; fills, selections and
 /// guides are drawn behind it, underlines, drop points and carets over it,
 /// from the layout the text reports when it is laid out. Carets blink with the
-/// frame's clock unless `look` keeps them steady.
+/// frame clock unless `look` keeps them steady.
 #[track_caller]
 pub fn marked_line(
     modifier: Modifier,
     content: &str,
-    kind: Type,
+    kind: rustle::TextStyle,
     marks: Vec<Mark>,
     look: CaretLook,
 ) {
     marked(modifier, content, kind, marks, look, None);
 }
 
-/// Emits one line of a text field drawn line by line, as a [`marked_line`]
-/// that is also the piece of the field `owner` starting at byte `start` of
-/// its shown text: `text(..).field_line(owner, start).marks(..)`, with
-/// `.caret(..)`, `.selection(..)` and `.marked(..)` given as [`Paint::Caret`],
-/// [`Paint::Selected`] and [`Paint::Underline`] marks (add them only while
-/// `frame::is_focused(owner)`). The frame's report then answers the host's
-/// questions about the field (`offset_in`, `vertical`, `line_edge`,
-/// `visual_step`, `caret_rect`) from the lines drawn, as the old output did.
+/// Emits one line of a text drawn line by line, as a [`marked_line`] that is
+/// also the piece of the field `owner` starting at byte `start` of its text,
+/// whose layout and place it tells `lines` once it is placed, with the caret,
+/// selection and composition given as [`Paint::Caret`], [`Paint::Selected`]
+/// and [`Paint::Underline`] marks (add them only while the app keeps focus on `owner`).
+/// `lines` then answers the app's questions about the text as drawn.
 #[track_caller]
 pub fn marked_field_line(
     modifier: Modifier,
-    owner: FocusId,
-    start: usize,
+    lines: &TextLines,
+    (owner, start): (FocusId, usize),
     content: &str,
-    kind: Type,
+    kind: rustle::TextStyle,
     marks: Vec<Mark>,
     look: CaretLook,
 ) {
-    marked(modifier, content, kind, marks, look, Some((owner, start)));
+    marked(
+        modifier,
+        content,
+        kind,
+        marks,
+        look,
+        Some((lines, owner, start)),
+    );
 }
 
 /// The rustle mark `mark` stands for, its tone resolved in `theme`; a
@@ -152,17 +172,17 @@ fn resolved(mark: &Mark, theme: &Theme) -> TextMark {
     }
 }
 
-/// Emits a marked line, recorded as the piece of a field starting at a byte
-/// of its shown text when `piece` names the field and the byte, and as a
+/// Emits a marked line, told to the lines holder as the piece of a field
+/// starting at a byte of its text when `piece` names them, and recorded as a
 /// piece of the selectable text the line is composed in, if any.
 #[track_caller]
 fn marked(
     modifier: Modifier,
     content: &str,
-    kind: Type,
+    kind: rustle::TextStyle,
     marks: Vec<Mark>,
     look: CaretLook,
-    piece: Option<(FocusId, usize)>,
+    piece: Option<(&TextLines, FocusId, usize)>,
 ) {
     let theme = theme::theme();
     let caret_visible = marks.iter().any(|mark| mark.paint == Paint::Caret) && caret_lit(look);
@@ -170,34 +190,22 @@ fn marked(
     let shaped: Rc<RefCell<Option<Rc<TextLayout>>>> = Rc::default();
     let (stored, placed, scoped) = (shaped.clone(), shaped.clone(), shaped);
     let modifier = match piece {
-        Some((owner, start)) => modifier.on_placed(move |rect, _| {
-            let Some(layout) = placed.borrow().clone() else {
-                return;
-            };
-            report::record(|report| {
-                report.field_lines.push(FieldLine {
-                    id: owner,
-                    start,
-                    layout,
-                    rect,
-                })
-            });
-        }),
+        Some((lines, owner, start)) => lines.line(modifier, owner, start, placed),
         None => modifier,
     };
-    let modifier = match crate::kit::select::scope() {
-        Some(id) => crate::kit::select::piece(modifier, id, Rc::from(content), scoped),
+    let modifier = match crate::select::scope() {
+        Some(id) => crate::select::piece(modifier, id, Rc::from(content), scoped),
         None => modifier,
     };
     rustle::marked_text(
         modifier,
         content,
-        kind.style(),
+        kind,
         marks,
         MarkedTextOptions {
             caret_shape: look.shape,
             caret_visible,
-            line_height: Some(kind.line_height()),
+            line_height: Some(kind.line_height),
             on_layout: Some(Rc::new(move |layout| *stored.borrow_mut() = Some(layout))),
         },
     );

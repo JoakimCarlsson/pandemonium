@@ -184,7 +184,7 @@ pub(super) fn pending() -> bool {
 pub(super) fn messages(state: &WorkspaceState, session: &Session, width: f32) {
     let page = state.open_index();
     let started = Instant::now();
-    let wanted = state.chat_back + HORIZON;
+    let wanted = state.chat_back.offset() + HORIZON;
     let mut built: Vec<Option<rustle::Node>> = (0..session.messages.len()).map(|_| None).collect();
     let mut covered = 0.0;
     let (mut total, mut counted) = (0.0, 0);
@@ -275,10 +275,10 @@ pub(super) fn message(
         0
     };
     let geometry = (
-        crate::kit::font_key(),
+        crate::theme::font_key(),
         width.to_bits(),
-        crate::kit::theme::step_scale().to_bits(),
-        crate::kit::theme::text_scale().to_bits(),
+        crate::theme::step_scale().to_bits(),
+        crate::theme::text_scale().to_bits(),
         second,
     );
     let offer = (!message.exhibits.is_empty()).then(|| state.preview_offer());
@@ -368,14 +368,27 @@ pub(super) fn message(
 mod tests {
     use std::rc::Rc;
 
-    use crate::kit::Report;
-    use crate::kit::report::lay_out;
+    use crate::select::Selectables;
+    use crate::tagged::{Laid, lay_out};
 
     use super::*;
 
+    thread_local! {
+        /// The selectable text of the conversation, one holder for every frame as the
+        /// workspace keeps one, so messages built in an earlier frame and kept register in it.
+        static SELECTABLES: Selectables = Selectables::default();
+    }
+
     /// Lays `content` out 600 by 1000 logical pixels, capturing message text and action targets without creating a window.
-    fn paint(content: impl Fn() + 'static) -> Report {
-        lay_out(600.0, 1000.0, None, content)
+    fn paint(content: impl Fn() + 'static) -> (Laid, Vec<String>) {
+        let selectables = SELECTABLES.with(Selectables::clone);
+        let held = selectables.clone();
+        let laid = lay_out(600.0, 1000.0, None, move || {
+            rustle::stack_with(held.frame(rustle::Modifier::new()), || {
+                held.provide(&content)
+            });
+        });
+        (laid, selectables.placed_text())
     }
 
     /// Lays out the conversation of the first session of `state` once, 600 logical pixels wide, and returns how many boxes it emitted.
@@ -435,7 +448,7 @@ mod tests {
             .unwrap();
         for change in 0..4 {
             match change {
-                1 => state.prompt.apply(pm_field::Edit::Insert('x')),
+                1 => state.prompt.edit(|buffer| buffer.append("x")),
                 2 => {
                     let reply = &mut state.sessions[0].messages[index];
                     reply.text.push_str("\n\nNew streamed paragraph.");
@@ -453,27 +466,8 @@ mod tests {
             let expected = paint(move || {
                 super::super::agent_message(&fresh, &fresh.sessions[0], index, 600.0);
             });
-            let text = |report: &Report| {
-                report
-                    .pieces
-                    .iter()
-                    .map(|piece| piece.content.as_ref())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            };
-            assert_eq!(text(&actual), text(&expected));
-            assert_eq!(
-                actual
-                    .regions
-                    .iter()
-                    .map(|region| region.id)
-                    .collect::<Vec<_>>(),
-                expected
-                    .regions
-                    .iter()
-                    .map(|region| region.id)
-                    .collect::<Vec<_>>()
-            );
+            assert_eq!(actual.1.join("\n"), expected.1.join("\n"));
+            assert_eq!(actual.0.ids(), expected.0.ids());
         }
     }
 }

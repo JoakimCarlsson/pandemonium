@@ -9,5 +9,5 @@ use crate::snapshot::Shot;
 #[test]
 fn the_workspace_draws_its_prompt() {
     let rig = Rig::shot(Shot::Workspace);
-    assert!(rig.drawn(PROMPT), "{:?}", rig.report().regions.len());
+    assert!(rig.drawn(PROMPT), "{:?}", rig.tagged().len());
 }

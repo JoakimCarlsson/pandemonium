@@ -1,6 +1,5 @@
 //! The terminal dock in the window: sizing it to the shell, typing into it, marking text and scrolling back.
 
-use pm_components::kit::{Key, KeyEvent};
 use pm_components::terminal::{cell_at, cell_size, fitting};
 use pm_components::terminal_keys;
 use pm_components::terminal_menu::{TERMINAL_MENU_HEIGHT, TerminalCommand};
@@ -8,6 +7,7 @@ use pm_editor::{Action, Pressed};
 use pm_field::Reach;
 use pm_pages::{PROMPT, TERMINAL_BODY};
 use rustle::Rect;
+use rustle::{Key, KeyEvent};
 
 use super::gesture::TerminalWindow;
 use super::{App, DOUBLE_CLICK};
@@ -33,11 +33,7 @@ impl App {
 
     /// Where the window of the shell showing was drawn, if it was.
     fn terminal_region(&self) -> Option<Rect> {
-        self.output
-            .regions
-            .iter()
-            .find(|region| region.id == TERMINAL_BODY)
-            .map(|region| region.rect)
+        self.place(TERMINAL_BODY)
     }
 
     /// The cell of the shell's window that the point `at` is over, and the room it has.
@@ -88,7 +84,7 @@ impl App {
     }
 
     /// Acts on a key when the shell holds the keyboard, and says whether it did.
-    pub(super) fn terminal_key(&mut self, event: KeyEvent) -> bool {
+    pub(super) fn terminal_key(&mut self, event: &KeyEvent) -> bool {
         if self.focus.current() != Some(TERMINAL_BODY) {
             return false;
         }
@@ -99,7 +95,7 @@ impl App {
         if self.terminal_keymap_key(event) {
             return true;
         }
-        if let Some(action) = keys::terminal_clip(&event) {
+        if let Some(action) = keys::terminal_clip(event) {
             self.terminal_clip(action, bracketed);
         } else if event.modifiers.shift && matches!(event.key, Key::PageUp | Key::PageDown) {
             let page = self
@@ -113,19 +109,19 @@ impl App {
                 -page
             };
             self.model.update(|screen| screen.scroll_terminal(lines));
-        } else if let Some(data) = terminal_keys::bytes(&event, application) {
+        } else if let Some(data) = terminal_keys::bytes(event, application) {
             self.type_into_terminal(data);
         }
         true
     }
 
     /// Takes a press of keys the keymap binds to one of the shell's actions, or that starts such a binding, and says whether it took it.
-    fn terminal_keymap_key(&mut self, event: KeyEvent) -> bool {
+    fn terminal_keymap_key(&mut self, event: &KeyEvent) -> bool {
         let modifiers = event.modifiers;
-        if !(modifiers.control || modifiers.logo || modifiers.alt) && self.pending.is_empty() {
+        if !(modifiers.ctrl || modifiers.meta || modifiers.alt) && self.pending.is_empty() {
             return false;
         }
-        let Some(chord) = Self::chord_of(&event) else {
+        let Some(chord) = Self::chord_of(event) else {
             return false;
         };
         match self
@@ -215,9 +211,9 @@ impl App {
     /// The cell of the shell's window under the pointer, when the pointer is over the window.
     fn terminal_cell_under_pointer(&mut self) -> Option<(usize, usize)> {
         let at = self.pointer.position?;
-        (self.output.hit(at) == Some(TERMINAL_BODY)).then_some(())?;
+        (self.under_pointer() == Some(TERMINAL_BODY)).then_some(())?;
         self.terminal_region()
-            .is_some_and(|body| pm_components::kit::report::contains(body, (at.0, at.1)))
+            .is_some_and(|body| contains(body, at))
             .then(|| self.terminal_cell(at))
             .flatten()
     }
@@ -226,7 +222,7 @@ impl App {
     pub(super) fn reach_terminal_link(&mut self) {
         let at = self
             .modifiers
-            .control
+            .ctrl
             .then(|| self.terminal_cell_under_pointer())
             .flatten();
         let reaching = self.model.read(|screen| screen.reaching_terminal_link());
@@ -247,7 +243,7 @@ impl App {
             return;
         };
         let mut opened = false;
-        if self.modifiers.control {
+        if self.modifiers.ctrl {
             self.model
                 .update(|screen| opened = screen.open_terminal_link(cell));
         }
@@ -290,7 +286,7 @@ impl App {
         };
         if !self
             .terminal_region()
-            .is_some_and(|body| pm_components::kit::report::contains(body, (at.0, at.1)))
+            .is_some_and(|body| contains(body, at))
         {
             return false;
         }
@@ -302,4 +298,12 @@ impl App {
             .update(|screen| screen.scroll_terminal(lines as isize));
         true
     }
+}
+
+/// Whether the point `at` lies inside `rect`.
+fn contains(rect: Rect, at: (f32, f32)) -> bool {
+    at.0 >= rect.origin.x
+        && at.1 >= rect.origin.y
+        && at.0 < rect.origin.x + rect.size.width
+        && at.1 < rect.origin.y + rect.size.height
 }

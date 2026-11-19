@@ -1,6 +1,5 @@
 //! Tests of the sessions the quick input lists: those waiting for the reader first, the chats the servers found by what was said in them, and starting a session from what is typed.
 
-use pm_field::Edit;
 use pm_protocol::{ChatField, ChatHit};
 
 use crate::listing::{Destination, Items};
@@ -14,7 +13,7 @@ fn typed(typed: &str) -> WorkspaceState {
     if typed.is_empty() {
         return state;
     }
-    state.listing_filtered(Edit::Paste(typed.to_owned()))
+    state.typed(crate::listing::LISTING_FILTER, typed)
 }
 
 /// The places the quick input lists, in the order it lists them.

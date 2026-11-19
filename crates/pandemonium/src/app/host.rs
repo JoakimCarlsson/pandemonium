@@ -5,17 +5,15 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
-use std::time::{Duration, Instant};
 
-use pm_components::events::{self, Handler};
-use pm_components::kit::FocusId;
-use pm_components::kit::frame::{self, Frame};
-use pm_components::kit::report::{self, Report};
-use pm_components::kit::theme::Appearance;
-use pm_components::kit::theme::Tokens;
-use pm_components::kit::{Button, KeyEvent, Modifiers, PointerEvent};
+use super::pointer::{Button, PointerEvent};
+use pm_components::events::{self, Operations};
+use pm_components::focus;
+use pm_components::theme::Appearance;
+use pm_components::theme::Tokens;
 use pm_field::Edit;
 use pm_pages::Screen;
+use rustle::Modifiers;
 use rustle::{CursorIcon, Host, ShadowLayer, WindowHandle, WindowOptions, WindowShadow};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalPosition, LogicalSize};
@@ -25,15 +23,16 @@ use winit::window::{
     ImeCapabilities, ImeEnableRequest, ImeRequest, ImeRequestData, Window, WindowId,
 };
 
-use super::asides::Aside;
+use super::asides::{self, Aside};
 use super::controller::{Claims, Controller};
+use super::focus::KeptFocus;
 use super::port::{NativePort, Port};
 use super::{App, WHEEL_LINE, appearance, fail_to_start, frame as window_frame};
 use crate::model::Model;
 use crate::{keys, scene};
 
-/// The handler of the main window's views and of each window's beside it.
-type Handlers = [Rc<dyn Handler>; 3];
+/// The operations of the main window's views and of each window's beside it.
+type WindowOperations = [Rc<dyn Operations>; 3];
 
 /// What the root composable reads that the app changes outside rustle's own state.
 #[derive(Clone)]
@@ -52,31 +51,34 @@ pub(super) struct Shared {
     closed: Rc<RefCell<Vec<Aside>>>,
     /// What the views of the main window and of each window beside it hand
     /// what the user does to them to, once the app is shared with them.
-    handlers: Rc<RefCell<Option<Handlers>>>,
+    operations: Rc<RefCell<Option<WindowOperations>>>,
+    /// The control the app keeps keyboard focus on, which the views follow.
+    focus: KeptFocus,
 }
 
 impl Shared {
     /// Hands what the user does to the views of every window to `app`.
     pub(super) fn attach(&self, app: &Rc<RefCell<App>>) {
-        *self.handlers.borrow_mut() = Some([
-            Controller::handler(app, None),
-            Controller::handler(app, Some(Aside::Settings)),
-            Controller::handler(app, Some(Aside::Picker)),
+        self.focus.attach(app);
+        *self.operations.borrow_mut() = Some([
+            Controller::operations(app, None),
+            Controller::operations(app, Some(Aside::Settings)),
+            Controller::operations(app, Some(Aside::Picker)),
         ]);
     }
 
-    /// Composes `content` under the handler of the main window's views, or of
+    /// Composes `content` under the operations of the main window's views, or of
     /// `aside`'s, once the app is attached.
-    fn under_handler(&self, aside: Option<Aside>, content: impl FnOnce()) {
-        let handler = self
-            .handlers
+    fn under_operations(&self, aside: Option<Aside>, content: impl FnOnce()) {
+        let operations = self
+            .operations
             .borrow()
             .as_ref()
-            .map(|handlers| Rc::clone(&handlers[aside.map_or(0, |aside| slot(aside) + 1)]));
-        match handler {
-            Some(handler) => events::provide(handler, content),
+            .map(|operations| Rc::clone(&operations[aside.map_or(0, |aside| slot(aside) + 1)]));
+        focus::provide(self.focus.keys(), || match operations {
+            Some(operations) => events::provide(operations, content),
             None => content(),
-        }
+        });
     }
 
     /// How large the main window is, or `aside`'s, as the desktop last said, in logical pixels.
@@ -115,6 +117,10 @@ pub(super) struct Shell {
     /// The interface laid out with no window, when the app runs headless.
     #[cfg(test)]
     pub(super) headless: Rc<RefCell<Option<super::headless::Screens>>>,
+    /// The stand-ins of the windows laid out with no window, readable while the
+    /// interfaces are busy with an event.
+    #[cfg(test)]
+    pub(super) headless_ports: Rc<RefCell<Option<[Rc<super::headless::StandIn>; 3]>>>,
 }
 
 /// The index of `aside` among the windows beside the main one.
@@ -125,10 +131,10 @@ pub(super) fn slot(aside: Aside) -> usize {
     }
 }
 
-/// The report key of `aside`'s window.
-pub(super) fn report_key(aside: Option<Aside>) -> report::WindowKey {
+/// The window key of `aside`'s window.
+pub(super) fn window_key(aside: Option<Aside>) -> scene::WindowKey {
     match aside {
-        None => report::MAIN,
+        None => scene::MAIN_WINDOW,
         Some(Aside::Settings) => scene::SETTINGS_WINDOW,
         Some(Aside::Picker) => scene::PICKER_WINDOW,
     }
@@ -136,7 +142,7 @@ pub(super) fn report_key(aside: Option<Aside>) -> report::WindowKey {
 
 impl Shell {
     /// A shell for `model`, its event loop woken through `proxy` when there is one, with no window yet.
-    pub(super) fn new(model: Model, proxy: Option<EventLoopProxy>) -> Self {
+    pub(super) fn new(model: Model, focus: KeptFocus, proxy: Option<EventLoopProxy>) -> Self {
         Self {
             host: Rc::new(RefCell::new(None)),
             deferred: Rc::new(Cell::new(false)),
@@ -148,10 +154,13 @@ impl Shell {
                 cursor: Rc::new(Cell::new(None)),
                 handles: Rc::new(RefCell::new([None, None])),
                 closed: Rc::new(RefCell::new(Vec::new())),
-                handlers: Rc::new(RefCell::new(None)),
+                operations: Rc::new(RefCell::new(None)),
+                focus,
             },
             #[cfg(test)]
             headless: Rc::new(RefCell::new(None)),
+            #[cfg(test)]
+            headless_ports: Rc::new(RefCell::new(None)),
         }
     }
 
@@ -199,6 +208,21 @@ impl Shell {
         }
     }
 
+    /// Where the headless interface of the main window, or of `aside`'s, wants an
+    /// input method's candidates, in that window's logical pixels: the caret of
+    /// what has rustle's focus. Windows tell their input method themselves, so
+    /// they are not asked.
+    pub(super) fn ime_area(&self, aside: Option<Aside>) -> Option<rustle::Rect> {
+        #[cfg(test)]
+        if let Ok(screens) = self.headless.try_borrow()
+            && let Some(screens) = screens.as_ref()
+        {
+            return screens.ime_area(aside);
+        }
+        let _ = aside;
+        None
+    }
+
     /// Whether the windows were asked to compose while they were busy, clearing it.
     pub(super) fn take_deferred(&self) -> bool {
         self.deferred.replace(false)
@@ -212,8 +236,14 @@ impl Shell {
     /// The window of `aside`, while it is open.
     pub(super) fn port_of(&self, aside: Aside) -> Option<Rc<dyn Port>> {
         #[cfg(test)]
-        if let Some(screens) = self.headless.borrow().as_ref() {
-            return screens.port_of(aside);
+        if let Some(ports) = self.headless_ports.borrow().as_ref() {
+            let open = match self.headless.try_borrow() {
+                Ok(screens) => screens
+                    .as_ref()
+                    .is_some_and(|screens| screens.port_of(aside).is_some()),
+                Err(_) => self.shared.model.read(|screen| aside.is_open(screen)),
+            };
+            return open.then(|| Rc::clone(&ports[slot(aside) + 1]) as Rc<dyn Port>);
         }
         let handle = self.handle_of(aside)?;
         let window = handle.native()?;
@@ -277,7 +307,7 @@ pub(super) fn main_view(shared: &Shared) {
     let tokens = shared.tokens.borrow().clone();
     let size = shared.sizes.borrow()[0];
     let cursor = shared.cursor.get();
-    shared.under_handler(None, || {
+    shared.under_operations(None, || {
         shared
             .model
             .read(|screen| scene::main_root(screen, size.0, size.1, tokens, cursor));
@@ -288,9 +318,9 @@ pub(super) fn main_view(shared: &Shared) {
 pub(super) fn aside_view(shared: &Shared, aside: Aside) {
     let tokens = shared.tokens.borrow().clone();
     let (width, height) = aside_size(shared, aside);
-    shared.under_handler(Some(aside), || {
+    shared.under_operations(Some(aside), || {
         shared.model.read(|screen| {
-            scene::aside_root(screen, report_key(Some(aside)), width, height, tokens);
+            scene::aside_root(screen, window_key(Some(aside)), width, height, tokens);
         });
     });
 }
@@ -328,7 +358,7 @@ fn window_shadow() -> WindowShadow {
                 ShadowLayer::new(
                     *x,
                     *y,
-                    blur * pm_components::kit::layout::SHADOW_SOFTNESS,
+                    blur * pm_components::theme::SHADOW_SOFTNESS,
                     *spread,
                     *alpha,
                 )
@@ -367,25 +397,12 @@ impl App {
         }
     }
 
-    /// Tells the views about the frame they are about to be composed or painted for.
-    pub(super) fn set_frame(&self) {
-        frame::set(Frame {
-            focused: self.focus.current(),
-            clock_ms: self.started.elapsed().as_secs_f32() * 1000.0,
-            held_bar: self.bar_drag.map(|(id, _)| id),
-            selection: self.text_selection,
-        });
-    }
-
-    /// The report of the main window, or of `aside`'s, moved into the
-    /// coordinates of its frame, inside the band that holds its shadow.
-    pub(super) fn report_of(&self, aside: Option<Aside>) -> Report {
-        let band = if aside.is_none() {
-            pm_components::shadow_margin()
-        } else {
-            0.0
-        };
-        report::last_of(report_key(aside)).shifted(-band, -band)
+    /// Hands the stretch of selectable text the app keeps selected to the screen's
+    /// selectable text, which highlights it when it is next painted.
+    pub(super) fn select_text(&self) {
+        self.model
+            .read(Screen::selectables)
+            .select(self.text_selection);
     }
 
     /// Composes again when anything asked for it since the last time, and
@@ -396,9 +413,10 @@ impl App {
             || self.shell.take_deferred()
         {
             let started = self.timings.start();
-            self.set_frame();
+            self.select_text();
             self.shell.invalidate();
             self.shell.wake();
+            self.focus.settle(asides::is_aside);
             let painted = self.timings.start();
             self.timings.frame(started, painted, true);
         }
@@ -416,7 +434,7 @@ impl App {
         let size = Self::opening_size(event_loop);
         let shared = self.shell.shared.clone();
         self.shell.set_size(None, window_frame::with_band(size));
-        self.set_frame();
+        self.select_text();
         let Some(proxy) = self.shell.proxy.clone() else {
             fail_to_start("no event loop to open a window in");
         };
@@ -436,7 +454,7 @@ impl App {
         self.shell.set_size(None, port.logical_size());
         self.window = Some(port);
         self.apply_appearance();
-        let (all, mono) = pm_components::kit::font_families();
+        let (all, mono) = pm_components::theme::font_families();
         self.model
             .update(|screen| *screen = std::mem::take(screen).with_fonts(all, mono));
         self.recompose = true;
@@ -447,18 +465,16 @@ impl App {
     /// What the app does after the interface composed and laid out a frame:
     /// what the old frame did after painting, from what this one painted.
     pub(super) fn after_compose(&mut self) {
+        let focused = self.focus.current();
         self.sync_floating();
         self.fit_terminal();
         let reaching = self.reaching() || self.reaching_terminal_link();
-        let edge = self.frame_edge();
         let browser_cursor = self.browser_cursor();
         let Some(window) = self.window.clone() else {
             return;
         };
-        self.output = self.report_of(self.on_aside);
         let model = self.model.clone();
-        let scroll_to = model.read(|state| {
-            self.order_focus(None);
+        model.read(|state| {
             if std::mem::take(&mut self.focus_terminal) {
                 self.focus.focus(pm_pages::TERMINAL_BODY);
             }
@@ -468,13 +484,7 @@ impl App {
             if std::mem::take(&mut self.focus_filter) {
                 self.focus.focus(pm_components::listing::LISTING_FILTER);
             }
-            let drawn = |id| self.output.drawn(id);
-            Self::give_back_focus(
-                &mut self.refocus,
-                &mut self.focus,
-                self.work.resuming(),
-                drawn,
-            );
+            Self::give_back_focus(&mut self.refocus, &self.focus, self.work.resuming());
             let starting = state.is_starting();
             if starting && !self.autofocused {
                 self.focus.focus(pm_pages::PROMPT);
@@ -485,47 +495,9 @@ impl App {
                 self.focus.focus(pm_components::tree_actions::ENTRY_FIELD);
             }
             self.naming = naming;
-            let mut scroll_to = None;
-            let band = pm_components::shadow_margin();
-            if let Some(id) = self.focus.current()
-                && let Some(field) = state.field(id)
-            {
-                let caret = field.to_shown(field.caret());
-                if field.is_multiline()
-                    && field.follows_caret()
-                    && let Some(scroller) = self.output.scroller(id)
-                {
-                    scroll_to = Some((id, scroller.offset));
-                }
-                if !field.is_multiline()
-                    && let Some(held) = self.output.field(id)
-                {
-                    let caret_x = held.caret_at(caret).0 - held.origin.x;
-                    let shown = held.view.origin.x - held.origin.x;
-                    let want = field.scroll_for(
-                        caret_x - shown + field.scroll(),
-                        held.layout.size().width,
-                        held.view.size.width,
-                    );
-                    if (want - field.scroll()).abs() > 0.5 {
-                        scroll_to = Some((id, want));
-                    }
-                }
-                if let Some(rect) = self.output.caret_rect(id, caret) {
-                    let area = (rect.origin.x, rect.origin.y, 1.0, rect.size.height);
-                    if self.ime_area != Some(area) {
-                        self.ime_area = Some(area);
-                        window.set_ime_area((area.0 + band, area.1 + band, area.2, area.3));
-                    }
-                }
-            }
-            scroll_to
         });
-        if let Some((id, want)) = scroll_to {
-            self.model
-                .update(|state| *state = std::mem::take(state).edited(id, Edit::ScrollTo(want)));
-        }
-        if let Some(width) = model.read(|state| state.diff_resized(&self.output.scrollers)) {
+        self.tell_ime_area(&*window);
+        if let Some(width) = model.read(Screen::diff_resized) {
             self.model
                 .update(|state| *state = std::mem::take(state).measured_diff(width));
         }
@@ -536,25 +508,60 @@ impl App {
             Some((.., pm_components::sash::Grows::Up)) => Some(CursorIcon::RowResize),
             Some(_) => Some(CursorIcon::ColResize),
             None if reaching => Some(CursorIcon::Pointer),
-            None => edge.map(window_frame::edge_icon).or(browser_cursor),
+            None => browser_cursor,
         };
         if self.on_aside.is_none() {
             self.shell.set_cursor(cursor);
         }
         crate::startup::scene_painted();
-        if let Some(at) = frame::take_wake() {
-            let now = self.started.elapsed().as_secs_f32() * 1000.0;
-            self.frame_due =
-                Some(Instant::now() + Duration::from_secs_f32((at - now).max(0.0) / 1000.0));
-        }
-        if frame::take_compose() {
-            self.recompose = true;
-        }
         crate::startup::frame_presented();
         self.place_completion();
         self.place_signature();
         self.note_code_view();
         self.note_conversation(true);
+        if self.focus.current() != focused {
+            self.recompose = true;
+        }
+    }
+
+    /// Tells `window` where its input method's candidates go: at the caret of
+    /// the code editor, found where its lines were drawn, while it has the
+    /// keyboard; otherwise at the caret the interface reports, which a window
+    /// rustle drives places itself.
+    fn tell_ime_area(&mut self, window: &dyn Port) {
+        let editor = self
+            .focus
+            .current()
+            .filter(|id| *id == pm_components::open_files::EDITOR_FIELD)
+            .and_then(|id| {
+                let caret = self
+                    .model
+                    .read(|screen| screen.field(id).map(|field| field.to_shown(field.caret())))?;
+                let rect = self.code_lines().caret_rect(id, caret)?;
+                let band = pm_components::shadow_margin();
+                Some(rustle::Rect::new(
+                    rustle::Offset::new(rect.origin.x + band, rect.origin.y + band),
+                    rect.size,
+                ))
+            });
+        let rect = match editor {
+            Some(rect) => rect,
+            None if window.native().is_some() => return,
+            None => match self.shell.ime_area(self.on_aside) {
+                Some(rect) => rect,
+                None => return,
+            },
+        };
+        let area = (
+            rect.origin.x,
+            rect.origin.y,
+            rect.size.width,
+            rect.size.height,
+        );
+        if self.ime_area != Some(area) {
+            self.ime_area = Some(area);
+            window.set_ime_area(area);
+        }
     }
 
     /// Which window beside the main one `id` is, if it is one.
@@ -579,7 +586,8 @@ impl App {
     /// happened in, the files the interface took, and a frame composed again
     /// for what changed.
     pub(super) fn after_interface(&mut self, aside: Option<Aside>, input: Input) {
-        let focus = self.focus.current();
+        self.follow_typing();
+        let focus = self.focus_before_event;
         match aside {
             Some(aside) => self.aside_input(aside, input),
             None => {
@@ -592,6 +600,7 @@ impl App {
             }
         }
         self.claimed = Claims::default();
+        self.follow_scrolls();
         if self.focus.current() != focus {
             self.recompose = true;
         }
@@ -644,9 +653,6 @@ impl App {
                     self.pointer(PointerEvent::Moved(at.0, at.1));
                 }
                 self.refocus = None;
-                if button == MouseButton::Left && pressed && self.frame_press(&*window) {
-                    return;
-                }
                 let button = match button {
                     MouseButton::Left => Button::Left,
                     MouseButton::Right => Button::Right,
@@ -680,7 +686,7 @@ impl App {
                 }
                 if self.commit_to_terminal(&committed) || self.commit_to_browser(&committed) {
                 } else if let Some(id) = self.focus.current()
-                    && Screen::is_field(id)
+                    && id == pm_components::open_files::EDITOR_FIELD
                 {
                     self.edit_field(id, Edit::Paste(committed));
                 }
@@ -690,12 +696,11 @@ impl App {
                 self.editor_modifiers_changed();
                 self.reach_terminal_link();
             }
-            Input::Key(event) => {
+            Input::Key(pressed) => {
                 self.refocus = None;
-                if event.pressed && self.on_aside.is_none() {
+                if pressed && self.on_aside.is_none() {
                     self.timings.keyboard();
                 }
-                self.key(event);
             }
         }
     }
@@ -714,22 +719,6 @@ impl App {
         self.sync_asides();
         self.flush();
         rest
-    }
-
-    /// When the frame some drawing asked for is due, composing it once that time has come.
-    pub(super) fn frame_deadline(&mut self) -> Option<Instant> {
-        let due = self.frame_due?;
-        if due > Instant::now() {
-            return Some(due);
-        }
-        self.frame_due = None;
-        self.recompose = true;
-        None
-    }
-
-    /// The scrolling box the wheel turned over, as its view said, and how far it can scroll.
-    pub(super) fn wheel_action(&self) -> Option<(FocusId, f32)> {
-        self.claimed.wheel
     }
 
     /// The tokens for the theme and appearance the window is drawn in.
@@ -764,13 +753,13 @@ pub(super) enum Input {
     Commit(String),
     /// These modifier keys are now held.
     Modifiers(Modifiers),
-    /// A key went down or up.
-    Key(KeyEvent),
+    /// A key went down, or up when not `pressed`; the root's key handler acts on it.
+    Key(bool),
 }
 
 /// The app's input for `event` of the window `port`, with `modifiers` held,
 /// or nothing for an event the app does not act on.
-fn input_of(event: &WindowEvent, port: &dyn Port, modifiers: Modifiers) -> Option<Input> {
+fn input_of(event: &WindowEvent, port: &dyn Port) -> Option<Input> {
     let scale = port.scale();
     let logical = |x: f64, y: f64| (x as f32 / scale, y as f32 / scale);
     Some(match event {
@@ -810,7 +799,9 @@ fn input_of(event: &WindowEvent, port: &dyn Port, modifiers: Modifiers) -> Optio
         WindowEvent::ModifiersChanged(changed) => {
             Input::Modifiers(keys::modifiers(changed.state()))
         }
-        WindowEvent::KeyboardInput { event, .. } => Input::Key(keys::key_event(event, modifiers)?),
+        WindowEvent::KeyboardInput { event, .. } => {
+            Input::Key(event.state == winit::event::ElementState::Pressed)
+        }
         _ => return None,
     })
 }
@@ -847,7 +838,7 @@ impl ApplicationHandler for Running {
 
     /// Lets the interface run what woke the loop, then the app's work.
     fn proxy_wake_up(&mut self, _: &dyn ActiveEventLoop) {
-        self.0.borrow().set_frame();
+        self.0.borrow().select_text();
         let host = self.host();
         if let Some(host) = host.borrow_mut().as_mut() {
             host.wake();
@@ -860,10 +851,11 @@ impl ApplicationHandler for Running {
     fn window_event(&mut self, event_loop: &dyn ActiveEventLoop, id: WindowId, event: WindowEvent) {
         let (aside, main) = {
             let app = self.0.borrow();
-            app.set_frame();
+            app.select_text();
             (app.aside_of_window(id), app.is_main_window(id))
         };
         let closing = matches!(event, WindowEvent::CloseRequested);
+        self.0.borrow_mut().note_typing();
         let host = self.host();
         if !closing && let Some(host) = host.borrow_mut().as_mut() {
             host.window_event(event_loop, id, event.clone());
@@ -873,7 +865,7 @@ impl ApplicationHandler for Running {
             Some(aside) => app.shell.port_of(aside),
             None => app.window.clone(),
         };
-        let input = port.and_then(|port| input_of(&event, &*port, app.modifiers));
+        let input = port.and_then(|port| input_of(&event, &*port));
         if (aside.is_some() || main)
             && let Some(input) = input
         {

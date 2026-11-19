@@ -1,21 +1,23 @@
 //! What each window shows: the root composables the live windows and the
 //! snapshots draw, from the screen the app holds.
 
-use pm_components::kit::report::{self, WindowKey};
-use pm_components::kit::theme::{self, Tokens};
-use pm_components::kit::{Interactive, overlay};
+use pm_components::theme::{self, Tokens};
 use pm_pages::{Screen, picker_screen, screen, settings_window};
 use rustle::{Alignment, Arrangement, column_arranged};
 use rustle::{CursorIcon, Modifier};
 
-/// The window key the settings window keeps its report under.
+/// Which window a root composable fills: the main window is [`MAIN_WINDOW`], the windows
+/// beside it are numbered.
+pub type WindowKey = u64;
+
+/// The key of the main window.
+pub const MAIN_WINDOW: WindowKey = 0;
+
+/// The window key of the settings window.
 pub const SETTINGS_WINDOW: WindowKey = 1;
 
-/// The window key the folder picker's window keeps its report under.
+/// The window key of the folder picker's window.
 pub const PICKER_WINDOW: WindowKey = 2;
-
-/// The area that takes files dragged in from other programs: the whole main window.
-pub const DROP_AREA: pm_components::kit::FocusId = pm_components::kit::FocusId(9_990_001);
 
 /// Sets interface text in the family `sans` and code in `mono`, each by name,
 /// falling back to the fonts the app ships; an empty name is the one the app ships.
@@ -86,31 +88,46 @@ pub fn main_root(
 ) {
     scale_for(state);
     theme::provide(tokens, || {
-        report::root(|| {
+        rustle::stack_with(Modifier::new().fill_max_size(), || {
             column_arranged(
-                Modifier::new().fill_max_size().file_drop_id(DROP_AREA),
+                Modifier::new()
+                    .fill_max_size()
+                    .chain(app_keys())
+                    .chain(pm_components::events::carry_target())
+                    .chain(pm_components::events::file_drop()),
                 Arrangement::Start,
                 Alignment::Start,
                 || main_frame(state, width, height),
             );
-            overlay::tooltips(report::MAIN);
             if let Some(cursor) = cursor {
                 rustle::spacer(Modifier::new().match_parent_size().cursor(cursor));
             }
+            pm_components::resize_edges();
         });
     });
 }
 
 /// Emits the root of the window beside the main one kept under `window`,
 /// `width` by `height` logical pixels, drawn with `tokens`: the settings
-/// window or the folder picker's, with the tooltips over it.
+/// window or the folder picker's.
 #[track_caller]
 pub fn aside_root(state: &Screen, window: WindowKey, width: f32, height: f32, tokens: Tokens) {
     scale_for(state);
     theme::provide(tokens, || {
-        report::root_of(window, || {
-            aside_frame(state, window, width, height);
-            overlay::tooltips(window);
+        rustle::stack_with(Modifier::new().fill_max_size(), || {
+            rustle::stack_with(Modifier::new().fill_max_size().chain(app_keys()), || {
+                aside_frame(state, window, width, height);
+            });
+            pm_components::resize_edges();
         });
     });
+}
+
+/// The modifier that hands every key of the window to the app's state holder before
+/// whatever holds focus sees it, the root key handler that keeps the app-wide shortcuts:
+/// a key the app takes goes no further, and one it leaves goes on to the focused control,
+/// then to rustle (Tab walks focus).
+fn app_keys() -> Modifier {
+    let operations = pm_components::events::operations();
+    Modifier::new().on_preview_key_event(move |event| operations.key(event))
 }

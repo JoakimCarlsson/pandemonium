@@ -1,12 +1,16 @@
 //! The main area of a page cut into panes: each pane's strip of tabs above the tab it shows, the handles between panes, and, while a tab is dragged, where it would land.
 
-use pm_components::kit::sp;
-use pm_components::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Side, Styled, Tooltip, Type,
-    label,
-};
+use pm_components::events::Interactive;
+use pm_components::events::reduce;
+use pm_components::focus::FocusId;
+use pm_components::icons::IconName;
+use pm_components::select::styled_text;
+use pm_components::theme;
+use pm_components::theme::sp;
+use pm_components::theme::{Radius, Role, Side};
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{BoxAlignment, Canvas, CursorIcon, Interaction, Modifier};
+use std::rc::Rc;
 
 use pm_components::Menu;
 use pm_components::Size;
@@ -24,9 +28,7 @@ use pm_components::sash::Sash;
 use pm_components::state::{Page, TAB_CHAT, TAB_DIFF, WorkspaceState};
 use pm_components::title_bar::TITLE_BAR_HEIGHT;
 use pm_components::update_dialog::{TAB_UPDATE, UPDATE_CLOSE};
-use pm_components::{
-    Button, Changes, Conflict, chat, diff, input, overview, terminal, viewer, welcome,
-};
+use pm_components::{Button, Changes, Conflict, chat, diff, overview, terminal, viewer, welcome};
 
 /// How much of a window's height the conversation keeps for something other than the room above the prompt box, in logical pixels.
 const CHAT_CHROME: f32 = 230.0;
@@ -48,14 +50,14 @@ fn fill_top_rounded(canvas: &mut Canvas, color: rustle::Color) {
     canvas.rect(0.0, height / 2.0, width, height / 2.0, color);
 }
 
-/// The box of a tab answering to `id`: rounded at the top, filled while it is the one its pane shows and while the pointer is on it otherwise, with its padding; as wide as what it holds, running past the end of a strip too narrow for it.
-fn tab_modifier(shown: bool, id: FocusId) -> Modifier {
-    let surface = pm_components::kit::color(Role::Surface);
-    let hover = pm_components::kit::color(Role::SurfaceHover);
+/// The box of a tab answering to `id`: rounded at the top, filled while it is the one its pane shows and while the pointer is on it otherwise, with its padding; as wide as what it holds, running past the end of a strip too narrow for it. A secondary press runs `on_context` when the tab has a menu.
+fn tab_modifier(shown: bool, id: FocusId, on_context: Option<Rc<dyn Fn()>>) -> Modifier {
+    let surface = pm_components::theme::color(Role::Surface);
+    let hover = pm_components::theme::color(Role::SurfaceHover);
     Modifier::new()
         .wrap_content_width(BoxAlignment::CenterStart, true)
-        .h(10)
-        .styled_by(move |canvas: &mut Canvas, interaction: Interaction| {
+        .height(theme::sp(10))
+        .draw_behind_interactive(move |canvas: &mut Canvas, interaction: Interaction| {
             if shown {
                 fill_top_rounded(canvas, surface);
             } else if interaction.hovered {
@@ -63,8 +65,18 @@ fn tab_modifier(shown: bool, id: FocusId) -> Modifier {
             }
         })
         .cursor(CursorIcon::Pointer)
-        .target(id)
-        .pad_x(3)
+        .chain(match on_context {
+            Some(on_context) => Modifier::new().control_menu(
+                id,
+                {
+                    let pressed = reduce(id);
+                    move |_| pressed()
+                },
+                move || on_context(),
+            ),
+            None => Modifier::new().control(id, reduce(id)),
+        })
+        .padding_xy(theme::sp(3), 0.0)
 }
 
 /// The tone of the text and glyph of a tab, brighter while `shown`.
@@ -77,7 +89,7 @@ fn tab_tone(shown: bool) -> Role {
 fn tab_with(icon: IconName, label: &str, id: FocusId, shown: bool, extra: impl FnOnce()) {
     let tone = tab_tone(shown);
     row_arranged(
-        tab_modifier(shown, id),
+        tab_modifier(shown, id, None),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         || {
@@ -110,20 +122,25 @@ fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) {
     } else {
         name.to_owned()
     };
-    let kind = Type::new(13).ratio(1.4).tone(tone).truncate();
+    let kind = theme::text_style(13, 1.4)
+        .color(theme::color(tone))
+        .max_lines(1);
     let kind = if viewer.preview { kind.italic() } else { kind };
     row_arranged(
-        tab_modifier(shown, FocusId(FILE_TAB_BASE + index as u64)),
+        tab_modifier(shown, FocusId(FILE_TAB_BASE + index as u64), {
+            let operations = pm_components::events::operations();
+            Some(Rc::new(move || operations.open_tab_menu(index)))
+        }),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         || {
             file_icon(&viewer.path, 3.5);
-            label(label_text, kind);
+            styled_text(Modifier::new(), label_text, kind);
             if viewer.is_dirty() {
                 rustle::spacer(
                     Modifier::new()
-                        .square(2.0)
-                        .fill_rounded(Role::Muted, Radius::Xs),
+                        .size(theme::sp(2.0), theme::sp(2.0))
+                        .background_rounded(theme::color(Role::Muted), Radius::Xs.px()),
                 );
             }
             close_button(
@@ -179,28 +196,31 @@ fn update_tab(shown: bool) {
     });
 }
 
-/// Emits a square button in the strip of tabs holding only `icon`, filled while `on`, saying `hint` when the pointer rests on it.
+/// Emits a square button in the strip of tabs holding only `icon`, answering to `id`, filled while `on`, saying `hint` when the pointer rests on it and running `on_click` when clicked.
 #[track_caller]
-fn strip_button(icon: IconName, id: FocusId, on: bool, hint: &str) {
-    let looks = Looks::new().hover(Role::SurfaceHover).radius(Radius::Lg);
+fn strip_button(icon: IconName, id: FocusId, on: bool, hint: &str, on_click: impl Fn() + 'static) {
+    let looks = theme::InteractionTones::new()
+        .hover(Role::SurfaceHover)
+        .radius(Radius::Lg);
     let looks = if on {
         looks.idle(Role::SurfaceSelected)
     } else {
         looks
     };
     let tone = if on { Role::Text } else { Role::Muted };
-    row_arranged(
-        Modifier::new()
-            .pad_side(Side::Bottom, 1)
-            .square(8.0)
-            .looks(looks)
-            .tooltip(hint)
-            .cursor(CursorIcon::Pointer)
-            .target(id),
-        Arrangement::Center,
-        Alignment::Center,
-        || glyph(icon, 3.5, tone),
-    );
+    pm_components::tooltip::with_tooltip(hint, || {
+        row_arranged(
+            Modifier::new()
+                .padding_each(0.0, 0.0, 0.0, theme::sp(1))
+                .size(theme::sp(8.0), theme::sp(8.0))
+                .interaction_background(looks.colors())
+                .cursor(CursorIcon::Pointer)
+                .control(id, on_click),
+            Arrangement::Center,
+            Alignment::Center,
+            || glyph(icon, 3.5, tone),
+        );
+    });
 }
 
 /// Emits the buttons at the end of the strip of tabs: the one that opens the menu of panes.
@@ -216,6 +236,10 @@ fn strip_buttons(state: &WorkspaceState) {
                 PANE_MENU,
                 state.pane_menu.is_some(),
                 "Split pane",
+                {
+                    let operations = pm_components::events::operations();
+                    move || operations.open_pane_menu()
+                },
             );
         },
     );
@@ -293,10 +317,15 @@ fn strip(state: &WorkspaceState, group: &Group, toggle: bool) {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .h(12)
-            .clip_to(Radius::None)
-            .stroke_side(Side::Bottom, 1.0, Role::Border)
-            .pad_x(3),
+            .height(theme::sp(12))
+            .clip()
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(3), 0.0),
         Arrangement::SpacedBy(sp(1)),
         Alignment::End,
         || {
@@ -311,13 +340,12 @@ fn strip(state: &WorkspaceState, group: &Group, toggle: bool) {
     );
 }
 
-/// Emits the page for starting work, its prompt box `width` logical pixels across in a view `height` tall.
+/// Emits the page for starting work in a view `height` tall.
 #[track_caller]
-pub(crate) fn starting_page(state: &WorkspaceState, width: f32, height: f32) {
+pub(crate) fn starting_page(state: &WorkspaceState, height: f32) {
     welcome::welcome(
         state,
         ((height - WELCOME_HEIGHT) / 2.0 + WELCOME_ABOVE).max(0.0),
-        input::inner_width((width - 48.0).min(680.0)),
     );
 }
 
@@ -330,7 +358,7 @@ fn item_view(state: &WorkspaceState, item: &Item, area: Area, tall: f32) {
             chat::chat(state, session, width, (tall - CHAT_CHROME).max(0.0));
         }
         (Item::Page, Page::Project(project), _) => overview::overview(state, project),
-        (Item::Page, _, _) => starting_page(state, width, area.height),
+        (Item::Page, _, _) => starting_page(state, area.height),
         (Item::Diff, _, _) => {
             if let Some(session) = state.review_session() {
                 diff::diff(state, session, width, tall);
@@ -423,8 +451,15 @@ fn pane(state: &WorkspaceState, placed: &Placed, toggle: bool, extra: f32) {
         Modifier::new()
             .fill_max_height()
             .weight(1.0)
-            .clip_to(Radius::None)
-            .target(FocusId(PANE_BASE + placed.index as u64)),
+            .clip()
+            .control(
+                FocusId(PANE_BASE + placed.index as u64),
+                reduce(FocusId(PANE_BASE + placed.index as u64)),
+            )
+            .chain(pm_components::bounds::placed(
+                FocusId(PANE_BASE + placed.index as u64),
+                Modifier::new(),
+            )),
         Arrangement::Start,
         Alignment::Start,
         || {
@@ -480,17 +515,18 @@ fn laid(
                     Axis::Row => Modifier::new().fill_max_height(),
                     Axis::Column => Modifier::new().fill_max_width(),
                 };
+                let (left, top, right, bottom) = edge.padding(1.0);
                 row_arranged(
-                    across.weight(1.0).stroke_side(edge, 1.0, Role::Border),
+                    across
+                        .weight(1.0)
+                        .draw_behind(theme::edge(edge, 1.0, theme::color(Role::Border)))
+                        .padding_each(left, top, right, bottom),
                     Arrangement::Start,
                     Alignment::Start,
                     || laid(state, second, placed, next, (two_area, whole, extra)),
                 );
             };
-            let outer = Modifier::new()
-                .fill_max_height()
-                .weight(1.0)
-                .clip_to(Radius::None);
+            let outer = Modifier::new().fill_max_height().weight(1.0).clip();
             match axis {
                 Axis::Row => row_arranged(outer, Arrangement::Start, Alignment::Start, halves),
                 Axis::Column => {
@@ -513,21 +549,22 @@ fn drag_marks(state: &WorkspaceState, placed: &[Placed]) {
         let zone = here.area.of_side(side);
         rustle::spacer(
             Modifier::new()
-                .at(zone.x + 4.0, zone.y + 4.0)
+                .offset(zone.x + 4.0, zone.y + 4.0)
                 .z_index_unclipped(50)
                 .width((zone.width - 8.0).max(0.0))
                 .height((zone.height - 8.0).max(0.0))
-                .opacity(18.0)
-                .fill_rounded(Role::Accent, Radius::Lg),
+                .alpha(0.18)
+                .background_rounded(theme::color(Role::Accent), Radius::Lg.px()),
         );
     }
     if has_tab(state, &drag.item) {
         rustle::stack_with(
             Modifier::new()
-                .at(drag.at.0 + 8.0, drag.at.1 + 8.0)
+                .offset(drag.at.0 + 8.0, drag.at.1 + 8.0)
                 .z_index_unclipped(60)
-                .shadow_md(Radius::Md)
-                .stroke(Role::Border, Radius::Md),
+                .draw_behind(theme::shadows(&theme::MEDIUM_SHADOW, Radius::Md))
+                .border(1.0, theme::color(Role::Border), Radius::Md.px())
+                .padding(1.0),
             || item_tab(state, &drag.item, true),
         );
     }

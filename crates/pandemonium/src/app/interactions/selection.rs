@@ -4,9 +4,9 @@
 
 use std::path::PathBuf;
 
-use pm_components::kit::{Key, Modifiers};
 use pm_components::state::{CHAT_TEXT, TAB_DIFF};
 use rustle::Rect;
+use rustle::{Key, Modifiers};
 
 use crate::app::headless::Rig;
 use crate::snapshot::Shot;
@@ -14,19 +14,14 @@ use crate::snapshot::Shot;
 /// Control held.
 const CONTROL: Modifiers = Modifiers {
     shift: false,
-    control: true,
+    ctrl: true,
     alt: false,
-    logo: false,
+    meta: false,
 };
 
 /// Where the conversation's text was drawn.
 fn conversation(rig: &Rig) -> Rect {
-    rig.report()
-        .selectable_areas
-        .iter()
-        .find(|(id, _)| *id == CHAT_TEXT)
-        .map(|(_, rect)| *rect)
-        .expect("the conversation is drawn")
+    rig.region(CHAT_TEXT).expect("the conversation is drawn")
 }
 
 /// The text of the conversation selected.
@@ -34,18 +29,16 @@ fn selected(rig: &Rig) -> String {
     rig.app
         .borrow()
         .text_selection
-        .map(|selection| rig.report().selected_text(&selection))
+        .map(|selection| rig.app.borrow().selected_text(&selection))
         .unwrap_or_default()
 }
 
 /// The workspace with its conversation scrolled to the start.
 fn at_start() -> Rig {
     let mut rig = Rig::shot(Shot::Workspace);
-    let report = rig.report();
-    let rect = report
-        .scroller(pm_components::state::CHAT_SCROLL)
-        .expect("the conversation is drawn")
-        .rect;
+    let rect = rig
+        .area(pm_pages::Screen::conversation_area)
+        .expect("the conversation is drawn");
     rig.move_to((rect.origin.x + 100.0, rect.origin.y + 100.0));
     rig.wheel(-10_000.0);
     rig
@@ -69,7 +62,7 @@ fn dragging_selects_and_ctrl_c_copies() {
         !picked.is_empty() && picked.len() < 40,
         "{picked:?} in {area:?}"
     );
-    rig.chord(CONTROL, Key::Character('c'));
+    rig.chord(CONTROL, Key::Character("c".into()));
     assert_eq!(rig.clipboard.text.borrow().clone(), Some(picked));
 }
 
@@ -95,7 +88,7 @@ fn select_all_and_let_go() {
     let mut rig = at_start();
     let at = words_at(&rig, "Checkpoints are in.");
     rig.click(at);
-    rig.chord(CONTROL, Key::Character('a'));
+    rig.chord(CONTROL, Key::Character("a".into()));
     let all = selected(&rig);
     assert!(
         all.contains("Checkpoints are in.") && all.contains("Why it matters"),

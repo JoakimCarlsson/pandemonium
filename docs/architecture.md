@@ -30,16 +30,107 @@ another client. The protocol is documented in `docs/protocol.md`; a change to
 
 One crate per layer, each depending only on the layers below it.
 
-- **Interface:** rustle composables, built with the kit in
-  `pm-components/src/kit`: design tokens and themes, rows and columns laid out
-  as flex boxes, text, icons, marked lines, fields drawn from `pm-field`,
-  scrolling boxes whose offsets live in the model, overlays, and the frame
-  report through which the binary's logic finds where things were drawn.
-  What the user does to a control reaches the app's state holder through the
-  `Handler` the views are composed under (`pm-components/src/events.rs`),
-  called while the interface handles the event. The screen is hoisted in one
+- **Interface:** rustle composables and rustle widgets themed through
+  rustle's theme. `pm-components/src/theme` holds the theme values (roles,
+  palette, shipped and extension families, light and dark, oklch) and
+  provides them at each window root the way Compose builds a custom design
+  system: rustle's `theme(ColorScheme, Typography, Shapes, ..)` carries the
+  roles Compose has a slot for, the type scale and the corners, rustle's
+  `LOCAL_SCROLLBAR_STYLE` the scrollbar look, and one composition local the
+  tokens rustle has no slot for (every role, syntax colours, font stacks).
+  Text is set in rustle `TextStyle`s (`theme::text_style`, `code_style`)
+  through `select::styled_text`, which is rustle's text composables made
+  part of the selectable text they are composed in (`select.rs` holds the
+  conversation's selection). Boxes are plain rustle modifiers with theme
+  values (`theme::sp`, `theme::color`, `Radius::px`); hover, press and focus
+  looks are rustle's `interaction_background` and interactive drawing with
+  the theme's `InteractionTones`; buttons, cards, badges and surfaces are
+  rustle `surface_custom`/`outlined_card`, check boxes and switches rustle's
+  `tri_state_checkbox`/`switch_with`, rules rustle's dividers, all in the
+  theme's colours, sizes and corners. Icons are rustle's Phosphor set by name
+  (`pm-components/src/icons.rs`), with artwork that arrives at run time
+  rasterised there. What floats
+  over the screen is rustle popups (`pm-components/src/popups.rs`): popovers
+  placed against the box they are declared in, menus and code assists at a
+  window point, kept inside the window's frame clear of its shadow band by a
+  `PopupPositionProvider`; a press outside one that a press elsewhere closes
+  calls its `on_dismiss_request`, which asks the app (`Operations::dismiss_requested`)
+  to close what that press closes. Tooltips are rustle's `tooltip_area`
+  (`pm-components/src/tooltip.rs`, `Button::tooltip`), shown after a rest on
+  the frame clock, at once in snapshots.
+  There is no frame report: what the binary needs of the geometry comes from
+  the composables' own callbacks into holders the model owns (`Bounds`,
+  `Places` for the few areas the app asks about by name, `TextLines`,
+  `Selectables`), and what the pointer is over from the controls' hover.
+  Scrolling areas are rustle's `vertical_scroll` over a
+  `rustle::ScrollState` the model owns (hoisted state), styled with the
+  theme's `scrollbar()`, provided as rustle's `LOCAL_SCROLLBAR_STYLE`; rustle handles the wheel and the bar, and the binary
+  catches the model up with what the reader scrolled after each event
+  (`follow_scrolls`). Where an area was drawn is kept by a `Bounds` the model
+  owns, told by the area's `on_globally_positioned`.
+  Controls take event lambdas, as composables do (`pm-components/src/events.rs`):
+  `Interactive::control(id, on_click)` makes a control a focus target that runs
+  `on_click` when clicked, or when Enter or Space reaches it while it holds
+  rustle's focus; `control_with` hands the lambda the modifier keys (rows picked
+  with Shift or Control), and `control_menu`/`pressable_menu` add the lambda of a
+  secondary press (a row's, tab's, field's, shell's or page's menu; other controls
+  open the menu of the conversation's text). `Button`, `Tile`, `Checkbox` and
+  `Menu` take `on_click`/`on_pick`/`on_context` in their builders. The lambdas
+  call the app's state holder, the `Operations` trait the binary implements
+  (its `Controller`), provided once at each window's root: `update(change)` runs
+  a reducer of the workspace, and most controls hand their press to the
+  workspace's reducer with `events::reduce(id)` (`WorkspaceState::after(id)`,
+  keyed by the control's `FocusId`); named operations do what only the app can
+  (`open_command_palette`, `navigate`, `attach`, `take_listing`,
+  `open_project_menu`, `open_git_menu`, `minimize_window`, …). After every
+  change the binary does in one place (`App::settle`) what the change asks
+  (`WorkspaceState::asked`: the focus to give, the shell taking the keyboard,
+  the caret shown again), then saves and sends. Keymap commands call the same
+  reducer or operations. What stays keyed by `FocusId` is the views' report of
+  the pointer: the press that went down on a control (`Operations::pressed`, for
+  fields, handles and the title bar), whether a click counts
+  (`Operations::click_lands`: the press began there and dragged nothing), the
+  pointer over a control (`hovered`) and drags. A panel's handle, the minimap
+  and the numbers of a diff's lines hand their drags over with drag modifiers.
+  Project headers, pane tabs and rows of the project's files are
+  rustle drag-and-drop sources (`drag_and_drop_source`), and each window's
+  root is the drag-and-drop target that tells the app a drag started, where
+  the pointer carries it and that it ended (`events::carry_target`). The
+  title bar moves the window through its control's press, and strips laid
+  over a floating frame's edges resize it (`resize_edges`). Every control carries
+  the rustle `test_tag` of its `FocusId`, by which headless tests and
+  snapshots find it (`pm-components/src/tagged.rs`). Keyboard focus is
+  rustle's: every control is a focus target Tab walks in paint order, and the
+  binary keeps the `FocusId` of the control holding it as the domain key its
+  logic asks about (`pm-components/src/focus.rs`): a control asks for rustle
+  focus while the app keeps focus on it and tells the app when rustle moved
+  focus (`on_focus_changed`). The file tree keeps its focused row composed and
+  scrolls the next row in when Tab leaves the rows drawn. Each window's root
+  hands every key to the app first (`on_preview_key_event`), which matches on
+  rustle's `KeyEvent`s and turns them into the values of the crates below
+  (`pm-field` edits, vim keystrokes, keymap chords) in `keys.rs`. The screen is hoisted in one
   rustle state (`mutable_state`) that every window reads; pictures are
-  rustle's `ImageData`. `pm-field` holds the text editing model.
+  rustle's `ImageData`.
+  Text inputs (search boxes, filters, the prompt, settings boxes, the commit
+  message and the like) are rustle text fields (`basic_text_field_with`,
+  `basic_secure_text_field` for keys and tokens) editing a
+  `rustle::TextFieldState` the model owns, styled through rustle's parameters
+  (text style, caret colour, selection colour, a decorator for the
+  placeholder, line limits, a hoisted scroll state). Rustle edits them, keeps
+  their undo history, composes input-method text in them and keeps their caret
+  in view; the model catches up with what was typed after each event
+  (`field_typed`). A field's rustle `Focus` follows the binary's focus
+  (`focus::follow_focus`), and the window root's key handler sees its keys
+  first, so the app's shortcuts, Enter and the clipboard keep working in it. `pm-field`'s `Field` stays the editing model of the code
+  editor only (several carets, column selection, the editor's undo grouping,
+  vim's programmatic edits): it is drawn line by line with rustle's
+  `marked_text`, each line telling the state's `TextLines` its shaped layout
+  and place (`on_text_layout`, `on_placed`), from which the binary finds the
+  byte under the pointer, moves by visual line and places the input method's
+  candidates. The code editor, the shell and the browser page hold rustle
+  focus while the binary's focus is on them (`focus::keyboard_focus`), so the
+  window keeps its input method on; the shell's cursor cell reports where
+  candidates go with `ime_caret`.
 - **Components:** `pm-components`: reusable controls (`Button`, `Chip`,
   `Popover`, `Checkbox`, `Tally` and so on), each a builder with a variant and a
   size, and the state and sections the workspace is drawn from.

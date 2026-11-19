@@ -1,8 +1,9 @@
 //! What the workspace remembers: the page on screen, the panels that are open and what was typed.
 
-use crate::kit::FocusId;
-use pm_field::{Edit, Field};
+use crate::focus::FocusId;
+use pm_field::Edit;
 use pm_harness::{Event, Setting, Slash};
+use rustle::TextFieldState;
 
 use crate::adder::{ADDER_FIELD, ADDER_ROW_BASE, ADDER_SUBMIT, Adder, is_adder};
 use crate::arrange::{
@@ -24,13 +25,13 @@ use crate::sample::{Change, Comment, Message, Range, Session, Status, projects, 
 use crate::tree_actions::{ENTRY_FIELD, TreeTarget};
 
 /// A prompt holding `text`, which may run to several lines.
-pub fn prompt_field(text: &str) -> Field {
-    Field::new(text).multiline(true)
+pub fn prompt_field(text: &str) -> TextFieldState {
+    TextFieldState::new(text)
 }
 
 /// A box for a commit message, which runs to several lines.
-pub fn commit_field() -> Field {
-    Field::new("").multiline(true)
+pub fn commit_field() -> TextFieldState {
+    TextFieldState::new("")
 }
 
 /// Lists every session.
@@ -63,12 +64,6 @@ pub const CLOSE_PLAN: FocusId = FocusId(329);
 /// Turns the proposed plan down and gives the prompt the keyboard, to say what to change.
 pub const REVISE: FocusId = FocusId(330);
 
-/// The scrolling body of the plan panel.
-pub const PLAN_SCROLL: FocusId = FocusId(352);
-
-/// The independently scrolling rows above the composer.
-pub const SUBAGENTS_SCROLL: FocusId = FocusId(353);
-
 /// Shows the changed files in the review panel.
 pub const REVIEW_CHANGES: FocusId = FocusId(7001);
 
@@ -92,12 +87,6 @@ pub const COMMENT_FILE_BASE: u64 = 7900;
 
 /// The first of the buttons that take a comment back; the rest follow it.
 pub const COMMENT_REMOVE_BASE: u64 = 8100;
-
-/// The scrolling body of the diff.
-pub const DIFF_SCROLL: FocusId = FocusId(7004);
-
-/// The scrolling list of the review panel.
-pub const TREE_SCROLL: FocusId = FocusId(7005);
 
 /// The first of the rows folding a folder of the changed files; the rest follow it.
 pub const FOLDER_BASE: u64 = 150_000;
@@ -137,9 +126,6 @@ pub const HURRY_BASE: u64 = 4_902_000_000_000;
 
 /// The first of the buttons removing a waiting prompt; the rest follow it.
 pub const REMOVE_QUEUED_BASE: u64 = 4_900_000_000_000;
-
-/// The conversation's scrolling area.
-pub const CHAT_SCROLL: FocusId = FocusId(350);
 
 /// The text of the conversation's messages, which the pointer selects as
 /// one: each message is a selectable box of it, in the order of the messages.
@@ -235,9 +221,6 @@ pub const BOTTOM_TERMINAL: FocusId = FocusId(20_200_001);
 /// A folder of a machine, which the problems of the dock are about: the machine the folder is on, when it is not this one, and the folder.
 pub type ProblemsKey = (Option<String>, String);
 
-/// The list of problems in the dock, which scrolls.
-pub const PROBLEMS_SCROLL: FocusId = FocusId(20_200_002);
-
 /// The first of the rows of the dock's list of problems; the rest follow it.
 pub const PROBLEM_ROW_BASE: u64 = 20_201_000;
 
@@ -276,9 +259,6 @@ pub const RESTORE_FILES: FocusId = FocusId(4273);
 
 /// Closes the offer to put the files back, leaving them as they are.
 pub const KEEP_FILES: FocusId = FocusId(4274);
-
-/// The scrolling list of values in the open menu.
-pub const MENU_SCROLL: FocusId = FocusId(351);
 
 /// The box the values of the open menu are narrowed with, when it has many.
 pub const MENU_FILTER: FocusId = FocusId(33_000_000);
@@ -1691,7 +1671,7 @@ pub enum Outgoing {
 
 /// A prompt put aside while another session is worked in: what was typed, the files attached, the elements picked and the captures held.
 pub type StashedPrompt = (
-    Field,
+    TextFieldState,
     Vec<String>,
     Vec<crate::elements::Element>,
     Vec<crate::captures::Capture>,
@@ -1802,6 +1782,20 @@ pub struct CommentTarget {
 /// What one machine said about its agents: the settings and the commands of each.
 pub type Discovered = (Vec<Vec<Setting>>, Vec<Vec<Slash>>);
 
+/// What pressing a control asks of the app once the workspace took the press in, which
+/// the app carries out after the event: keyboard focus, the shell and the caret are the app's.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Asked {
+    /// The box to give keyboard focus: the prompt or a field the press calls for, or the box
+    /// of a menu it opened that is narrowed with one.
+    pub focus: Option<FocusId>,
+    /// Whether the press showed a shell that takes the keyboard.
+    pub keyboard_to_shell: bool,
+    /// Whether the caret of the file shown is to be shown again, after a press on the find
+    /// bar or a row of the list over the file.
+    pub caret: bool,
+}
+
 /// Everything the workspace window shows and lets the reader change.
 #[derive(Clone, Debug, PartialEq)]
 pub struct WorkspaceState {
@@ -1840,9 +1834,14 @@ pub struct WorkspaceState {
     /// The lines or file the comment being written or the lines being dragged over are about.
     pub comment_target: Option<CommentTarget>,
     /// The comment being written.
-    pub comment_text: Field,
+    pub comment_text: TextFieldState,
     /// How far down the diff is scrolled, in logical pixels.
-    pub diff_scroll: f32,
+    pub diff_scroll: rustle::ScrollState,
+    /// How far down the diff was scrolled when the state last moved it or looked at it,
+    /// so a scroll by the reader, which leaves the two apart, can be told from its own.
+    pub diff_seen: f32,
+    /// Where the diff's scrolling area is drawn, while it is shown.
+    pub diff_bounds: crate::bounds::Bounds,
     /// How wide the diff was last drawn, in logical pixels, which decides how its lines wrap and so how tall each file is.
     pub diff_width: f32,
     /// The file, by session and path, whose header the diff is kept scrolled to while the heights of the files above it settle, until the diff is scrolled by hand.
@@ -1850,17 +1849,17 @@ pub struct WorkspaceState {
     /// The files, by session and path, whose diffs were asked of the server and have not come.
     pub(crate) asking_diffs: std::collections::HashSet<(usize, String)>,
     /// How far down the review panel's list is scrolled, in logical pixels.
-    pub tree_scroll: f32,
+    pub tree_scroll: rustle::ScrollState,
     /// The project whose folder the review panel was last asked to read while no session was open.
     pub homed: Option<usize>,
     /// Whether the plan the agent proposed is open in a panel in place of the review.
     pub plan_open: bool,
     /// How far down the plan panel is scrolled, in logical pixels.
-    pub plan_scroll: f32,
+    pub plan_scroll: rustle::ScrollState,
     /// How far down the subagent panel rows are scrolled, in logical pixels.
-    pub subagents_scroll: f32,
+    pub subagents_scroll: rustle::ScrollState,
     /// How far down a project's overview is scrolled, in logical pixels.
-    pub overview_scroll: f32,
+    pub overview_scroll: rustle::ScrollState,
     /// Whether the terminal is open.
     pub terminal: bool,
     /// Whether the terminal is taller than usual.
@@ -1876,7 +1875,7 @@ pub struct WorkspaceState {
     /// The folder, and the machine it is on, the server was asked about and has not answered.
     pub problems_asked: Option<ProblemsKey>,
     /// How far down the list of problems is scrolled, in logical pixels.
-    pub problems_scroll: f32,
+    pub problems_scroll: rustle::ScrollState,
     /// The problem of the list the reader pressed, whose place is to be shown.
     pub problem_picked: Option<usize>,
     /// How tall the terminal dock is while it is not maximized, in logical pixels.
@@ -1890,7 +1889,9 @@ pub struct WorkspaceState {
     /// The changed file the reader picked, by position, if one was.
     pub file: Option<usize>,
     /// The prompt being written.
-    pub prompt: Field,
+    pub prompt: TextFieldState,
+    /// How far the lines of the prompt box are scrolled down.
+    pub prompt_scroll: rustle::ScrollState,
     /// The files attached to the prompt, by path.
     pub attachments: Vec<String>,
     /// The elements of web pages picked for the prompt.
@@ -1910,11 +1911,11 @@ pub struct WorkspaceState {
     /// What the window still has to do for the exhibits agents show and the mockups of their questions.
     pub exhibits: crate::exhibit::Exhibits,
     /// The commit message being written.
-    pub message: Field,
+    pub message: TextFieldState,
     /// What the history page is narrowed to.
-    pub history_search: Field,
+    pub history_search: TextFieldState,
     /// How far the history session groups have scrolled, in logical pixels.
-    pub history_scroll: f32,
+    pub history_scroll: rustle::ScrollState,
     /// How far the sidebar's list is scrolled, in logical pixels.
     pub sidebar_scroll: f32,
     /// The submodule of the project the new session page starts work in, or nothing for the project itself.
@@ -1949,6 +1950,9 @@ pub struct WorkspaceState {
     pub project_drag: Option<ProjectDrag>,
     /// What the agents have yet to be told.
     pub outbox: Vec<Outgoing>,
+    /// What the control pressed last asks of the app once the state took the press in, until
+    /// the app [takes](Self::take_asked) it.
+    pub asked: Option<Asked>,
     /// The session, by position, whose files are the ones open now.
     pub files_owner: Option<usize>,
     /// The files open for each session other than the one whose tabs are showing, by its position, kept so that switching away does not lose them or what was typed in them.
@@ -1969,7 +1973,18 @@ pub struct WorkspaceState {
     /// Where the menu of panes opened, while it is open.
     pub pane_menu: Option<(f32, f32)>,
     /// How far the conversation is scrolled back from its end, in logical pixels.
-    pub chat_back: f32,
+    pub chat_back: rustle::ScrollState,
+    /// Where the conversation's scrolling area is drawn, while it is shown.
+    pub chat_bounds: crate::bounds::Bounds,
+    /// Where the scrolling area of the file shown is drawn, while it is shown.
+    pub code_bounds: crate::bounds::Bounds,
+    /// Where the lines of code text were drawn in the latest frame.
+    pub code_lines: crate::text_lines::TextLines,
+    /// Where the selectable text of the screen was placed in the latest frame, and the
+    /// stretch of it selected.
+    pub selectables: crate::select::Selectables,
+    /// Where the areas the app asks about by name were drawn in the latest frame.
+    pub places: crate::bounds::Places,
     /// The menu open over the prompt box, if one is.
     pub picker: Option<Picker>,
     /// The reader's message of the open session, by position, whose offer to put the files back as they were before it is open, if one is.
@@ -2020,9 +2035,9 @@ pub struct WorkspaceState {
     /// The login in use for each agent, as the agent's id and the folder name; an agent not named uses its own.
     pub in_use: Vec<(String, String)>,
     /// How far the list of values in the open menu is scrolled, in logical pixels.
-    pub menu_scroll: f32,
+    pub menu_scroll: rustle::ScrollState,
     /// What the values of the open menu are narrowed to, when it has many.
-    pub menu_filter: Field,
+    pub menu_filter: TextFieldState,
     /// The command highlighted in the list offered behind a slash, by position.
     pub slash: usize,
     /// The steps whose detail is open, by session, reply and position.
@@ -2072,7 +2087,7 @@ pub struct WorkspaceState {
     /// Whether the reader asked to close the window and nothing is left to ask first.
     pub quitting: bool,
     /// How far down the notes in the window of an update are scrolled, in logical pixels.
-    pub update_scroll: f32,
+    pub update_scroll: rustle::ScrollState,
     /// Whether the release notes of the newer release are open as a tab.
     pub update_open: bool,
     /// How far the update the reader asked for has got.
@@ -2140,17 +2155,19 @@ impl WorkspaceState {
             closed_folders: std::collections::HashSet::new(),
             closed_diffs: std::collections::HashSet::new(),
             comment_target: None,
-            comment_text: Field::default(),
-            diff_scroll: 0.0,
+            comment_text: TextFieldState::default(),
+            diff_scroll: rustle::ScrollState::default(),
+            diff_seen: 0.0,
+            diff_bounds: crate::bounds::Bounds::default(),
             diff_width: DIFF_WIDTH,
             diff_anchor: None,
             asking_diffs: std::collections::HashSet::new(),
-            tree_scroll: 0.0,
+            tree_scroll: rustle::ScrollState::default(),
             homed: None,
             plan_open: false,
-            plan_scroll: 0.0,
-            subagents_scroll: 0.0,
-            overview_scroll: 0.0,
+            plan_scroll: rustle::ScrollState::default(),
+            subagents_scroll: rustle::ScrollState::default(),
+            overview_scroll: rustle::ScrollState::default(),
             terminal: false,
             terminal_maximized: false,
             sidebar_open: true,
@@ -2158,7 +2175,7 @@ impl WorkspaceState {
             problems: Vec::new(),
             problems_of: None,
             problems_asked: None,
-            problems_scroll: 0.0,
+            problems_scroll: rustle::ScrollState::default(),
             problem_picked: None,
             terminal_height: crate::terminal::HEIGHT,
             terminal_size: crate::dock::FIRST_SIZE,
@@ -2166,9 +2183,10 @@ impl WorkspaceState {
             agent: 0,
             file: None,
             prompt: prompt_field(""),
+            prompt_scroll: rustle::ScrollState::default(),
             message: commit_field(),
-            history_search: Field::default(),
-            history_scroll: 0.0,
+            history_search: TextFieldState::default(),
+            history_scroll: rustle::ScrollState::default(),
             sidebar_scroll: 0.0,
             new_in: None,
             sidebar_width: crate::sidebar::WIDTH,
@@ -2190,6 +2208,7 @@ impl WorkspaceState {
             browser_menu: None,
             project_drag: None,
             outbox: Vec::new(),
+            asked: None,
             files_owner: None,
             file_stash: std::collections::HashMap::new(),
             tab_stash: std::collections::HashMap::new(),
@@ -2199,7 +2218,12 @@ impl WorkspaceState {
             prompt_stash: std::collections::HashMap::new(),
             pane_drag: None,
             pane_menu: None,
-            chat_back: 0.0,
+            chat_back: rustle::ScrollState::default(),
+            chat_bounds: crate::bounds::Bounds::default(),
+            code_bounds: crate::bounds::Bounds::default(),
+            code_lines: crate::text_lines::TextLines::default(),
+            selectables: crate::select::Selectables::default(),
+            places: crate::bounds::Places::default(),
             picker: None,
             agent_settings: vec![Vec::new(); builtin.len()],
             touched: Vec::new(),
@@ -2232,8 +2256,8 @@ impl WorkspaceState {
             allowance_asked: Default::default(),
             logins: Vec::new(),
             in_use: Vec::new(),
-            menu_scroll: 0.0,
-            menu_filter: Field::default(),
+            menu_scroll: rustle::ScrollState::default(),
+            menu_filter: TextFieldState::default(),
             slash: 0,
             opened: Vec::new(),
             unfolded: Vec::new(),
@@ -2258,7 +2282,7 @@ impl WorkspaceState {
             code_view: None,
             code_height: None,
             quitting: false,
-            update_scroll: 0.0,
+            update_scroll: rustle::ScrollState::default(),
             update_open: false,
             update_run: crate::update_dialog::UpdateRun::Idle,
             sign_in_code: None,
@@ -2362,8 +2386,27 @@ impl WorkspaceState {
         }
     }
 
-    /// The state after `action` was pressed.
-    pub fn after(mut self, action: FocusId) -> Self {
+    /// The state after `action` was pressed, with what the press asks of the app kept in
+    /// [`asked`](Self::asked): the box to give keyboard focus, whether a shell takes the
+    /// keyboard and whether the caret of the file shown is to be shown.
+    pub fn after(self, action: FocusId) -> Self {
+        let mut state = self.after_press(action);
+        state.asked = Some(Asked {
+            focus: Self::refocus(action).or_else(|| state.menu_filter_focus(action)),
+            keyboard_to_shell: Self::takes_keyboard(action),
+            caret: crate::find::is_find_part(action)
+                || crate::listing::listing_row_of(action).is_some(),
+        });
+        state
+    }
+
+    /// Takes what the control pressed last asks of the app, leaving nothing asked.
+    pub fn take_asked(&mut self) -> Option<Asked> {
+        self.asked.take()
+    }
+
+    /// The state after `action` was pressed, before what the press asks of the app is noted.
+    fn after_press(mut self, action: FocusId) -> Self {
         if !Self::keeps_picker(action) {
             self.picker = None;
         }
@@ -2569,93 +2612,41 @@ impl WorkspaceState {
         self
     }
 
-    /// The state after `edit` is made to the field named `id`.
+    /// The state after `edit` is made to the code editor's field, which `id` names.
     pub fn edited(mut self, id: FocusId, edit: Edit) -> Self {
+        if id == EDITOR_FIELD {
+            self.file_edited(edit);
+            self.refresh_files();
+        }
+        self
+    }
+
+    /// The state after the reader changed the text of the field named `id`
+    /// through its text field: what follows from what it now holds.
+    pub fn field_typed(mut self, id: FocusId) -> Self {
         match id {
-            PROMPT => {
-                let before = self.prompt.revision();
-                self.prompt.apply(edit);
-                if self.prompt.revision() != before {
-                    self.reset_slash();
-                }
-            }
-            COMMIT_MESSAGE => self.message.apply(edit),
-            COMMENT_FIELD => self.comment_text.apply(edit),
-            BRANCH_FILTER => self.git.filter.apply(edit),
-            STASH_FIELD => self.git.stash_message.apply(edit),
-            crate::branch_tasks::BRANCH_TASK_FIELD => {
-                if let Some(open) = self.git.branching.as_mut() {
-                    open.field.apply(edit);
-                }
-            }
-            RENAME_FIELD => self.git.rename.apply(edit),
-            EDITOR_FIELD => self.file_edited(edit),
+            PROMPT => self.reset_slash(),
             crate::navigate::RENAME_SYMBOL => {
                 if let Some(renaming) = self.renaming.as_mut() {
-                    renaming.field.apply(edit);
                     renaming.problem = None;
                 }
             }
-            crate::color_picker::COLOR_HEX => self.color_hex_edited(edit),
-            crate::line_edits::GO_TO_LINE => {
-                if let Some(going) = self.going_to.as_mut() {
-                    going.field.apply(edit);
-                }
-            }
-            crate::find::FIND_FIELD => return self.find_typed(edit),
-            crate::project_search::PROJECT_SEARCH_FIELD => {
-                return self.project_search_typed(edit);
-            }
-            crate::listing::LISTING_FILTER => return self.listing_filtered(edit),
-            crate::debug::DEBUG_CONSOLE_FIELD | crate::debug::DEBUG_WATCH_FIELD => {
-                self.debug_field_edited(id, edit)
-            }
-            crate::browser::BROWSER_ADDRESS => {
-                if let Some(browser) = self.browser.as_mut() {
-                    browser.address.apply(edit);
-                }
-            }
-            crate::browser::BROWSER_FIND_FIELD => self.browser_find_edited(edit),
-            crate::find::REPLACE_FIELD => return self.replacement_typed(edit),
-            ENTRY_FIELD => {
-                if let Some((_, field)) = self.git.naming.as_mut() {
-                    field.apply(edit);
-                }
-            }
-            ADDER_FIELD => self.adder_edited(edit),
-            PICKER_FIELD => self.folder_picker_edited(edit),
-            HISTORY_SEARCH => {
-                let before = self.history_search.text().to_owned();
-                self.history_search.apply(edit);
-                if self.history_search.text() != before {
-                    self.history_scroll = 0.0;
-                }
-            }
-            crate::extensions::EXTENSIONS_SEARCH => self.extensions_searched(edit),
-            MENU_FILTER => {
-                self.menu_filter.apply(edit);
-                self.menu_scroll = 0.0;
-            }
-            id if crate::settings_servers::is_form_field(id) => self.server_form_edited(id, edit),
-            id if crate::settings_drafts::is_draft_field(id) => self.draft_edited(id, edit),
-            id if crate::settings_agents::is_key_field(id) => self.key_edited(id, edit),
-            id if crate::settings_pages::is_setting_field(id) => self.setting_edited(id, edit),
-            id if crate::settings_machines::is_machine_field(id) => self.machine_edited(id, edit),
-            id if crate::settings_models::is_model_field(id) => self.model_edited(id, edit),
-            id if crate::settings_slots::is_slot_field(id) => self.slot_edited(id, edit),
+            crate::color_picker::COLOR_HEX => self.color_hex_typed(),
+            crate::find::FIND_FIELD => return self.find_typed(),
+            crate::project_search::PROJECT_SEARCH_FIELD => return self.project_search_typed(),
+            crate::listing::LISTING_FILTER => return self.listing_filtered(),
+            crate::browser::BROWSER_FIND_FIELD => self.browser_find_typed(),
+            ADDER_FIELD => self.adder_typed(),
+            PICKER_FIELD => self.folder_picker_typed(),
+            HISTORY_SEARCH => self.history_scroll.jump_to(0.0),
+            crate::extensions::EXTENSIONS_SEARCH => self.extensions_typed(),
+            MENU_FILTER => self.menu_scroll.jump_to(0.0),
+            id if crate::settings_drafts::is_draft_field(id) => self.draft_typed(),
+            id if crate::settings_pages::is_setting_field(id) => self.setting_typed(id),
+            id if crate::settings_slots::is_slot_field(id) => self.slot_typed(id),
             crate::settings::SETTINGS_FIND => {
-                self.settings_page.find.apply(edit);
-                self.settings_servers.scroll = 0.0;
+                self.settings_servers.scroll.jump_to(0.0);
                 self.settings_page.picker = None;
-            }
-            crate::settings::SETTINGS_KEYMAP_FIND => self.settings_page.keymap_find.apply(edit),
-            OTHER => {
-                if let Page::Session(open) = self.page
-                    && let Some(draft) =
-                        self.sessions.get_mut(open).and_then(|s| s.inquiry.as_mut())
-                {
-                    draft.others[draft.step].apply(edit);
-                }
             }
             _ => {}
         }
@@ -2663,8 +2654,29 @@ impl WorkspaceState {
         self
     }
 
-    /// The text field `id` names, if it names one.
-    pub fn field(&self, id: FocusId) -> Option<&Field> {
+    /// The state after the reader typed `text` into the text field `id` over its
+    /// selection, as its text field takes typing, and what follows from that.
+    pub fn typed(self, id: FocusId, text: &str) -> Self {
+        let Some(field) = self.text_field(id) else {
+            return self;
+        };
+        field.edit(|buffer| {
+            let selection = buffer.selection();
+            buffer.replace(selection.min(), selection.max(), text);
+            buffer.place_cursor_before_char_at(selection.min() + text.chars().count());
+        });
+        self.field_typed(id)
+    }
+
+    /// The code editor's field, which `id` names, while a text file is shown.
+    pub fn field(&self, id: FocusId) -> Option<&pm_field::Field> {
+        (id == EDITOR_FIELD)
+            .then(|| self.shown_document().map(|document| &document.field))
+            .flatten()
+    }
+
+    /// The state of the text field `id` names, if it names one other than the code editor's.
+    pub fn text_field(&self, id: FocusId) -> Option<&TextFieldState> {
         match id {
             PROMPT => Some(&self.prompt),
             COMMIT_MESSAGE => Some(&self.message),
@@ -2676,7 +2688,6 @@ impl WorkspaceState {
             }
             RENAME_FIELD => Some(&self.git.rename),
             ENTRY_FIELD => self.git.naming.as_ref().map(|(_, field)| field),
-            EDITOR_FIELD => self.shown_document().map(|document| &document.field),
             crate::navigate::RENAME_SYMBOL => {
                 self.renaming.as_ref().map(|renaming| &renaming.field)
             }
@@ -2715,6 +2726,18 @@ impl WorkspaceState {
             OTHER => self.other_field(),
             _ => None,
         }
+    }
+
+    /// Whether the field `id` hides what it holds behind dots and keeps it off the clipboard: a key or a token.
+    pub fn is_secure(id: FocusId) -> bool {
+        id == crate::settings_agents::KEY_FIELD
+            || id == crate::settings_models::MODEL_KEY
+            || id == crate::settings_machines::MACHINE_TOKEN
+    }
+
+    /// Whether the field `id` holds several lines, so Enter can break a line in it.
+    pub fn is_multiline(id: FocusId) -> bool {
+        id == PROMPT || id == COMMIT_MESSAGE || crate::settings_slots::is_prompt_field(id)
     }
 
     /// Whether `id` names a text field.
@@ -2838,23 +2861,6 @@ impl WorkspaceState {
         self
     }
 
-    /// The state after the list of values in the open menu is scrolled by
-    /// `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_menu(mut self, delta: f32, room: f32) -> Self {
-        self.menu_scroll = (self.menu_scroll + delta).clamp(0.0, room);
-        self
-    }
-
-    /// The state after the conversation is scrolled by `delta` logical
-    /// pixels, downwards when positive, with `room` pixels to scroll back.
-    pub fn scrolled_chat(mut self, delta: f32, room: f32) -> Self {
-        self.chat_back = (self.chat_back - delta).clamp(0.0, room);
-        if let Some(index) = self.open_index() {
-            self.sessions[index].chat_back = self.chat_back;
-        }
-        self
-    }
-
     /// Takes what the agents have yet to be told off the state.
     pub fn take_outbox(&mut self) -> Vec<Outgoing> {
         self.ensure_terminal();
@@ -2872,7 +2878,7 @@ impl WorkspaceState {
     pub fn hear_in_place(&mut self, session: usize, event: Event) {
         if matches!(&event, Event::Ask(ask) if ask.plan.is_some()) {
             self.plan_open = true;
-            self.plan_scroll = 0.0;
+            self.plan_scroll.jump_to(0.0);
         }
         let finishing = matches!(&event, Event::Finished(_) | Event::Failed(_));
         let pictured = matches!(&event, Event::Show(_) | Event::Inquire(_));
@@ -2928,18 +2934,6 @@ impl WorkspaceState {
             .and_then(|session| session.ask.as_ref())
             .and_then(|ask| ask.plan.as_deref())
             .filter(|_| self.plan_open)
-    }
-
-    /// The state after the plan panel is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_plan(mut self, delta: f32, room: f32) -> Self {
-        self.plan_scroll = (self.plan_scroll + delta).clamp(0.0, room);
-        self
-    }
-
-    /// Scrolls the subagent rows by `delta` logical pixels within `room`.
-    pub fn scrolled_subagents(mut self, delta: f32, room: f32) -> Self {
-        self.subagents_scroll = (self.subagents_scroll + delta).clamp(0.0, room);
-        self
     }
 
     /// Answers the question with its first refusal, if it offers one.
@@ -3006,7 +3000,7 @@ impl WorkspaceState {
             self.adder_chosen(index);
         } else if let Some(index) = position(PROJECT_BASE, self.projects.len()) {
             self.page = Page::Project(index);
-            self.overview_scroll = 0.0;
+            self.overview_scroll.jump_to(0.0);
             self.rescope_browser();
         } else if let Some(index) = position(NEW_IN_BASE, self.projects.len()) {
             self.start_in(index, None);
@@ -3028,7 +3022,7 @@ impl WorkspaceState {
             self.file = None;
             self.comment_target = None;
             self.fresh_git();
-            self.chat_back = self.sessions[index].chat_back;
+            self.chat_back.jump_to(self.sessions[index].chat_back);
             self.rescope_browser();
         } else if let Some(index) = position(AGENT_BASE, self.agent_slots()) {
             self.agent = index;
@@ -3521,7 +3515,7 @@ impl WorkspaceState {
     fn take_prompt(&mut self) -> Vec<String> {
         let files = self.prompt_files();
         self.prompt = prompt_field("");
-        self.chat_back = 0.0;
+        self.chat_back.jump_to(0.0);
         if let Some(index) = self.open_index() {
             self.sessions[index].chat_back = 0.0;
         }
@@ -3614,7 +3608,7 @@ impl WorkspaceState {
 
     /// Opens the box for a comment on the change at `change`, on `range` or on the whole file.
     fn start_comment(&mut self, change: usize, range: Option<Range>, dragging: bool) {
-        self.comment_text = Field::default();
+        self.comment_text = TextFieldState::default();
         self.comment_target = Some(CommentTarget {
             change,
             range,
@@ -3695,7 +3689,7 @@ impl WorkspaceState {
             text,
         });
         self.comment_target = None;
-        self.comment_text = Field::default();
+        self.comment_text = TextFieldState::default();
     }
 
     /// Takes back the comment at `index` of the open session.
@@ -3748,7 +3742,7 @@ impl WorkspaceState {
     /// Shows `tab` in the review panel from its top.
     pub(crate) fn show_review_tab(&mut self, tab: ReviewTab) {
         self.review_tab = tab;
-        self.tree_scroll = 0.0;
+        self.tree_scroll.jump_to(0.0);
     }
 
     /// Opens the diff scrolled to the change at `index`, unfolded, and keeps it scrolled there while the files above it settle.
@@ -3771,7 +3765,7 @@ impl WorkspaceState {
                     .and_then(|session| session.changes.get(index)),
             )
             .map(|(session, change)| (session, change.path.clone()));
-        self.diff_scroll = 0.0;
+        self.scroll_diff_to(0.0);
         self.pin_diff();
     }
 
@@ -3828,23 +3822,87 @@ impl WorkspaceState {
         }
     }
 
-    /// The state after the diff is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_diff(mut self, delta: f32, room: f32) -> Self {
+    /// Scrolls the diff `offset` logical pixels down from its top, as the state's
+    /// own move rather than the reader's.
+    pub fn scroll_diff_to(&mut self, offset: f32) {
+        self.diff_scroll.jump_to(offset);
+        self.diff_seen = self.diff_scroll.offset();
+    }
+
+    /// Whether the reader scrolled the diff or the conversation since the state
+    /// last looked, so [`follow_scrolls`](Self::follow_scrolls) has something to catch up with.
+    pub fn scrolls_moved(&self) -> bool {
+        self.diff_scroll.offset() != self.diff_seen
+            || self
+                .open_index()
+                .is_some_and(|index| self.sessions[index].chat_back != self.chat_back.offset())
+    }
+
+    /// Every scrolling area the state holds the scroll of.
+    fn scroll_states(&self) -> Vec<&rustle::ScrollState> {
+        let mut states = vec![
+            &self.diff_scroll,
+            &self.tree_scroll,
+            &self.plan_scroll,
+            &self.subagents_scroll,
+            &self.overview_scroll,
+            &self.problems_scroll,
+            &self.history_scroll,
+            &self.chat_back,
+            &self.menu_scroll,
+            &self.update_scroll,
+            &self.debug.stack_scroll,
+            &self.debug.variables_scroll,
+            &self.debug.console_back,
+            &self.git.graph_scroll,
+            &self.settings_page.nav_scroll,
+            &self.settings_servers.scroll,
+            &self.extensions_page.scroll,
+        ];
+        states.extend(self.excerpts.iter().map(|excerpts| &excerpts.scroll));
+        states.extend(self.folder_picker.iter().map(|picker| &picker.scroll));
+        for viewer in &self.git.viewers {
+            states.push(&viewer.scroll);
+            states.push(&viewer.hover_scroll);
+        }
+        states
+    }
+
+    /// Whether the pointer holds the bar of one of the scrolling areas, so a
+    /// press that went to it is not taken as a press on what lies beneath.
+    pub fn scrollbar_held(&self) -> bool {
+        self.scroll_states()
+            .into_iter()
+            .any(rustle::ScrollState::is_scrollbar_dragged)
+    }
+
+    /// Whether the conversation is shown at its end, give or take a pixel.
+    pub fn conversation_at_end(&self) -> bool {
+        self.chat_back.offset().min(self.chat_back.max_offset()) <= 1.0
+    }
+
+    /// Catches up with what the reader scrolled since the state last looked:
+    /// a diff scrolled by hand is no longer kept at the file it was opened at,
+    /// and the open session keeps how far its conversation is scrolled back
+    /// for when it is shown again. Says whether the diff moved, so the diffs
+    /// that came into view can be asked for.
+    pub fn follow_scrolls(&mut self) -> bool {
+        if let Some(index) = self.open_index() {
+            self.sessions[index].chat_back = self.chat_back.offset();
+        }
+        let offset = self.diff_scroll.offset();
+        if offset == self.diff_seen {
+            return false;
+        }
+        self.diff_seen = offset;
         self.diff_anchor = None;
-        self.diff_scroll = (self.diff_scroll + delta).clamp(0.0, room);
-        self
+        true
     }
 
     /// The state after the diff was drawn `width` logical pixels wide, kept scrolled to the file it is anchored to now that its lines wrap at that width.
     pub fn measured_diff(mut self, width: f32) -> Self {
         self.diff_width = width;
         self.pin_diff();
-        self
-    }
-
-    /// The state after the review panel's list is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_tree(mut self, delta: f32, room: f32) -> Self {
-        self.tree_scroll = (self.tree_scroll + delta).clamp(0.0, room);
         self
     }
 
@@ -4087,6 +4145,27 @@ mod tests {
     use crate::git_controls::Pick;
     use crate::panes::{Item, Side};
 
+    /// A press notes what it asks of the app, until the app takes it: a shell taking the
+    /// keyboard, the caret shown again after the find bar, and nothing else for a plain press.
+    #[test]
+    fn a_press_notes_what_it_asks_of_the_app() {
+        let mut state = WorkspaceState::sample().after(TERMINAL);
+        let asked = state.take_asked().expect("a press asks");
+        assert!(asked.keyboard_to_shell && !asked.caret);
+        assert_eq!(state.take_asked(), None);
+        let mut state = state.after(crate::find::FIND_BAR);
+        assert_eq!(
+            state.take_asked(),
+            Some(Asked {
+                focus: None,
+                keyboard_to_shell: false,
+                caret: true,
+            })
+        );
+        let mut state = state.after(TAB_DIFF);
+        assert_eq!(state.take_asked(), Some(Asked::default()));
+    }
+
     /// Taking in an agent's events in place leaves the workspace as taking them in by value does.
     #[test]
     fn hearing_in_place_matches_hearing_by_value() {
@@ -4185,7 +4264,7 @@ mod tests {
             assert!(state.git.marked.contains(&1));
             state.set_staged(&[0, 1], true);
             state.take_outbox();
-            state.message = Field::new("Review folder changes");
+            state.message = TextFieldState::new("Review folder changes");
             state = state.after(COMMIT);
             assert!(state.take_outbox().iter().any(|outgoing| matches!(
                 outgoing,

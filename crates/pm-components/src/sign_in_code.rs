@@ -1,7 +1,10 @@
 //! The code a sign-in waits for the reader to enter on a web page: the dialog that shows it while the sign-in runs, and what its buttons do.
 
-use crate::kit::sp;
-use crate::kit::{FocusId, Role, Side, Styled, Type, label};
+use crate::focus::FocusId;
+use crate::select::styled_text;
+use crate::theme;
+use crate::theme::Role;
+use crate::theme::sp;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
@@ -109,17 +112,17 @@ pub fn code_dialog(state: &WorkspaceState) {
         .width(WIDTH)
         .build_with(move || {
             column_arranged(
-                Modifier::new().pad(5),
+                Modifier::new().padding(theme::sp(5)),
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Start,
                 || {
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         title,
-                        Type::new(15)
-                            .ratio(1.4)
-                            .tone(Role::Text)
-                            .truncate()
-                            .medium(),
+                        theme::text_style(15, 1.4)
+                            .font_weight(rustle::FontWeight::MEDIUM)
+                            .color(theme::color(Role::Text))
+                            .max_lines(1),
                     );
                     for words in wrap(&words, 13, WIDTH - 40.0) {
                         line(words, 13, 1.5, Role::Muted);
@@ -129,14 +132,13 @@ pub fn code_dialog(state: &WorkspaceState) {
                         Arrangement::Start,
                         Alignment::Center,
                         || {
-                            label(
+                            styled_text(
+                                Modifier::new(),
                                 code,
-                                Type::new(24)
-                                    .ratio(1.6)
-                                    .tone(Role::Text)
-                                    .truncate()
-                                    .mono()
-                                    .medium(),
+                                theme::text_style(24, 1.6)
+                                    .font_weight(rustle::FontWeight::MEDIUM)
+                                    .color(theme::color(Role::Text))
+                                    .max_lines(1),
                             );
                         },
                     );
@@ -145,8 +147,8 @@ pub fn code_dialog(state: &WorkspaceState) {
             row_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .pad_x(5)
-                    .pad_side(Side::Bottom, 5),
+                    .padding_xy(theme::sp(5), 0.0)
+                    .padding_each(0.0, 0.0, 0.0, theme::sp(5)),
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Center,
                 || {
@@ -163,11 +165,10 @@ pub fn code_dialog(state: &WorkspaceState) {
 #[cfg(test)]
 fn laid_out_buttons(state: &WorkspaceState) -> Vec<u64> {
     let state = state.clone();
-    let report = crate::kit::report::lay_out(800.0, 600.0, None, move || code_dialog(&state));
-    report
-        .regions
+    let laid = crate::tagged::lay_out(800.0, 600.0, None, move || code_dialog(&state));
+    laid.ids()
         .iter()
-        .map(|region| region.id.0)
+        .map(|id| id.0)
         .filter(|id| {
             [
                 SIGN_IN_CODE_COPY.0,

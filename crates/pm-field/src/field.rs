@@ -57,9 +57,6 @@ pub enum Edit {
     Undo,
     /// Make again the change that was taken back.
     Redo,
-    /// Scroll the field by this many logical pixels: vertically for multiline
-    /// inputs, horizontally otherwise; negative offsets are taken as none.
-    ScrollTo(f32),
     /// Replace the bytes of the text in the range with the text, as one
     /// change, then select from the first offset of the new text to the
     /// second; control characters are dropped as when pasting.
@@ -92,14 +89,6 @@ pub struct Field {
     /// The end of the selection that does not move, as a byte offset on a
     /// character boundary; equal to the caret when nothing is selected.
     anchor: usize,
-    /// The scroll offset in logical pixels: vertical for multiline inputs, horizontal otherwise.
-    scroll: f32,
-    /// Whether the next multiline layout should bring the caret into view.
-    follow_caret: bool,
-    /// How many characters the line may hold, if it is limited.
-    limit: Option<usize>,
-    /// Whether the line is shown as dots and cannot be copied from.
-    masked: bool,
     /// Whether the line can be selected and copied but not changed.
     read_only: bool,
     /// Whether the text may hold line breaks, and so is more than one line.
@@ -133,9 +122,6 @@ struct Snapshot {
     others: Vec<(usize, usize)>,
 }
 
-/// What a masked line shows for each of its characters.
-const MASK: char = '•';
-
 /// How many changes undo remembers.
 const HISTORY: usize = 200;
 
@@ -154,24 +140,11 @@ impl Field {
     pub fn new(text: impl Into<String>) -> Self {
         let text = text.into();
         Self {
-            follow_caret: true,
             caret: text.len(),
             anchor: text.len(),
             text,
             ..Self::default()
         }
-    }
-
-    /// The field limited to `characters` characters.
-    pub fn limited(mut self, characters: usize) -> Self {
-        self.limit = Some(characters);
-        self
-    }
-
-    /// The field shown as dots, whose text cannot be copied.
-    pub fn masked(mut self, masked: bool) -> Self {
-        self.masked = masked;
-        self
     }
 
     /// The field that can be selected and copied from but not changed.
@@ -219,48 +192,19 @@ impl Field {
         !self.future.is_empty()
     }
 
-    /// Whether the line can be copied from: something is selected and the line is not masked.
+    /// Whether the line can be copied from: something is selected.
     pub fn can_copy(&self) -> bool {
         !self.selected().is_empty()
     }
 
-    /// The scroll offset in logical pixels: vertical for multiline inputs, horizontal otherwise.
-    pub fn scroll(&self) -> f32 {
-        self.scroll
-    }
-
-    /// Whether an edit still needs its multiline caret brought into view.
-    pub fn follows_caret(&self) -> bool {
-        self.follow_caret
-    }
-
-    /// The vertical offset for a multiline viewport, following the caret only after an edit.
-    pub fn scroll_for_lines(&self, caret: usize, lines: usize, visible: usize, height: f32) -> f32 {
-        let room = lines.saturating_sub(visible) as f32 * height;
-        let offset = self.scroll.clamp(0.0, room);
-        if !self.follow_caret {
-            return offset;
-        }
-        let top = caret as f32 * height;
-        offset
-            .min(top)
-            .max(top + height - visible as f32 * height)
-            .clamp(0.0, room)
-    }
-
-    /// What the line looks like: its text with what is being composed at the
-    /// caret, or a dot for each character of that when masked.
+    /// What the line looks like: its text with what is being composed at the caret.
     pub fn shown(&self) -> std::borrow::Cow<'_, str> {
-        if self.composing.is_empty() && !self.masked {
+        if self.composing.is_empty() {
             return std::borrow::Cow::Borrowed(&self.text);
         }
         let mut composed = self.text.clone();
         composed.insert_str(self.caret, &self.composing);
-        if self.masked {
-            std::borrow::Cow::Owned(MASK.to_string().repeat(composed.chars().count()))
-        } else {
-            std::borrow::Cow::Owned(composed)
-        }
+        std::borrow::Cow::Owned(composed)
     }
 
     /// The offset in what is shown that matches the byte offset `byte` of the
@@ -287,20 +231,12 @@ impl Field {
     /// The offset in what is shown that matches the byte offset `byte` of the
     /// text, leaving out what is being composed.
     fn to_shown_uncomposed(&self, byte: usize) -> usize {
-        if self.masked {
-            self.text[..byte.min(self.text.len())].chars().count() * MASK.len_utf8()
-        } else {
-            byte
-        }
+        byte
     }
 
     /// How many bytes of what is shown the text being composed takes.
     fn composing_width(&self) -> usize {
-        if self.masked {
-            self.composing.chars().count() * MASK.len_utf8()
-        } else {
-            self.composing.len()
-        }
+        self.composing.len()
     }
 
     /// The byte offset of the text that matches the offset `shown` in what is
@@ -313,28 +249,7 @@ impl Field {
         } else {
             shown.min(start)
         };
-        if !self.masked {
-            return self.boundary(shown);
-        }
-        let characters = shown / MASK.len_utf8();
-        self.text
-            .char_indices()
-            .nth(characters)
-            .map_or(self.text.len(), |(at, _)| at)
-    }
-
-    /// Where the line should scroll to so the caret, `caret_x` logical pixels
-    /// from the start of the line, stays inside a view `view` wide.
-    pub fn scroll_for(&self, caret_x: f32, line: f32, view: f32) -> f32 {
-        let margin = 2.0;
-        let mut scroll = self.scroll;
-        if caret_x - scroll > view - margin {
-            scroll = caret_x - view + margin;
-        }
-        if caret_x - scroll < 0.0 {
-            scroll = caret_x;
-        }
-        scroll.clamp(0.0, (line - view + margin).max(0.0))
+        self.boundary(shown)
     }
 
     /// The line as typed so far, without the caret.
@@ -372,11 +287,8 @@ impl Field {
         all
     }
 
-    /// The text of every selection that holds some, in the order they come, one to a line; empty when the line is masked.
+    /// The text of every selection that holds some, in the order they come, one to a line.
     pub fn selected_all(&self) -> String {
-        if self.masked {
-            return String::new();
-        }
         self.selections()
             .into_iter()
             .filter(|(anchor, caret)| anchor != caret)
@@ -390,48 +302,19 @@ impl Field {
         !self.others.is_empty()
     }
 
-    /// The selected text, empty when nothing is selected or the line is masked.
+    /// The selected text, empty when nothing is selected.
     pub fn selected(&self) -> &str {
         match self.selection() {
-            Some(range) if !self.masked => &self.text[range],
-            _ => "",
+            Some(range) => &self.text[range],
+            None => "",
         }
     }
 
-    /// Makes `edit`. A multiline view follows the caret afterwards only when the edit changed the text, the caret, a selection or what is being composed; one that changes none of them leaves where the reader scrolled to alone.
+    /// Makes `edit` to the text, caret and selections.
     pub fn apply(&mut self, edit: Edit) {
-        let scrolling = matches!(edit, Edit::ScrollTo(_));
-        let before = (
-            self.revision,
-            self.caret,
-            self.anchor,
-            self.others.clone(),
-            self.composing.clone(),
-        );
-        self.carry_out(edit);
-        let after = (
-            self.revision,
-            self.caret,
-            self.anchor,
-            self.others.clone(),
-            self.composing.clone(),
-        );
-        if scrolling {
-            self.follow_caret = false;
-        } else if after != before {
-            self.follow_caret = true;
-        }
-    }
-
-    /// Carries out `edit` on the text, caret and selections, leaving the scroll to [`Field::apply`].
-    fn carry_out(&mut self, edit: Edit) {
         match &edit {
             Edit::Undo => return self.undo(),
             Edit::Redo => return self.redo(),
-            Edit::ScrollTo(offset) => {
-                self.scroll = offset.max(0.0);
-                return;
-            }
             Edit::Compose(text) => {
                 self.composing = if self.read_only {
                     String::new()
@@ -597,7 +480,7 @@ impl Field {
                 }
             }
             Edit::OnlySelection => self.others.clear(),
-            Edit::Undo | Edit::Redo | Edit::ScrollTo(_) | Edit::Compose(_) => {}
+            Edit::Undo | Edit::Redo | Edit::Compose(_) => {}
         }
     }
 
@@ -651,13 +534,6 @@ impl Field {
     /// Replaces what is selected, or else nothing at the caret, with `text`.
     fn replace_selection(&mut self, text: &str) {
         let range = self.selection().unwrap_or(self.caret..self.caret);
-        let limited = self.limit.map(|limit| {
-            let kept = self.text.chars().count() - self.text[range.clone()].chars().count();
-            text.chars()
-                .take(limit.saturating_sub(kept))
-                .collect::<String>()
-        });
-        let text = limited.as_deref().unwrap_or(text);
         self.caret = range.start + text.len();
         self.replace_text(range, text);
         self.anchor = self.caret;
@@ -817,28 +693,10 @@ impl Field {
     }
 }
 
-/// Tests for multiline viewport offsets.
+/// Tests for edits, undo and display offsets.
 #[cfg(test)]
 mod tests {
     use super::{Edit, Field, Motion};
-
-    /// Wheel offsets survive layout until an edit or caret motion requires following again.
-    #[test]
-    fn multiline_scroll_follows_edits_only() {
-        let mut field = Field::new("line\n".repeat(40)).multiline(true);
-        assert_eq!(field.scroll_for_lines(40, 41, 8, 22.0), 726.0);
-        field.apply(Edit::ScrollTo(220.0));
-        assert_eq!(field.scroll_for_lines(40, 41, 8, 22.0), 220.0);
-        field.apply(Edit::Insert('x'));
-        assert_eq!(field.scroll_for_lines(40, 41, 8, 22.0), 726.0);
-        field.apply(Edit::ScrollTo(726.0));
-        field.apply(Edit::Move(Motion::Home, false));
-        assert_eq!(field.scroll_for_lines(0, 41, 8, 22.0), 0.0);
-        field.apply(Edit::ScrollTo(220.0));
-        assert_eq!(field.scroll_for_lines(12, 41, 8, 22.0), 220.0);
-        assert_eq!(field.scroll_for_lines(0, 0, 8, 22.0), 0.0);
-        assert_eq!(field.scroll_for_lines(7, 8, 8, 22.0), 0.0);
-    }
 
     /// Grouped Unicode typing remains one undo step, and revisions ignore caret moves and no-op deletes.
     #[test]
@@ -865,20 +723,19 @@ mod tests {
         assert_eq!(field.text(), "seedcafé🦀");
     }
 
-    /// Character limits still count Unicode characters, and composed and masked offsets round-trip.
+    /// Offsets of the text and of what is shown round-trip around a composition.
     #[test]
-    fn limits_and_display_offsets() {
-        let mut field = Field::new("é").limited(3).masked(true);
-        field.apply(Edit::Paste("🦀abc".to_owned()));
+    fn display_offsets_round_trip_around_a_composition() {
+        let mut field = Field::new("é");
+        field.apply(Edit::Paste("🦀a".to_owned()));
         assert_eq!(field.text(), "é🦀a");
         for byte in [0, 2, 6, 7] {
             assert_eq!(field.to_text(field.to_shown(byte)), byte);
         }
         field.apply(Edit::Compose("字".to_owned()));
+        assert_eq!(field.marked(), Some(7..10));
         assert_eq!(field.to_text(field.to_shown(7)), 7);
         field.apply(Edit::Compose(String::new()));
-        field.apply(Edit::SelectAll);
-        field.apply(Edit::Paste("🙂🙂🙂🙂".to_owned()));
-        assert_eq!(field.text(), "🙂🙂🙂");
+        assert_eq!(field.marked(), None);
     }
 }

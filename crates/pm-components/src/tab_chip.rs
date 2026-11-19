@@ -1,7 +1,12 @@
 //! The tab chip: one tab of a strip inside a pane, with its glyph, its words, marks for what it is and a button that closes it.
 
-use crate::kit::sp;
-use crate::kit::{FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Tooltip};
+use crate::events::Interactive;
+use crate::events::reduce;
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::theme;
+use crate::theme::sp;
+use crate::theme::{Radius, Role};
 use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
@@ -116,41 +121,46 @@ impl TabChip {
         };
         let height = if self.size == Size::Xs { 24.0 } else { 28.0 };
         let looks = if self.selected {
-            Looks::new().idle(Role::SurfaceSelected)
+            theme::InteractionTones::new().idle(Role::SurfaceSelected)
         } else {
-            Looks::new().hover(Role::SurfaceHover)
+            theme::InteractionTones::new().hover(Role::SurfaceHover)
         }
         .radius(Radius::Md);
-        let mut own = Modifier::new()
+        let own = Modifier::new()
             .width(self.width)
             .height(height)
-            .looks_of(looks, self.select)
+            .interaction_focused(crate::focus::is_held(self.select))
+            .interaction_background((looks).colors())
             .cursor(CursorIcon::Pointer)
-            .target(self.select);
-        if let Some(hint) = self.hint {
-            own = own.tooltip(hint);
-        }
-        let own = own.pad_x(2);
+            .control(self.select, reduce(self.select))
+            .padding_xy(theme::sp(2), 0.0);
         let (variant, icon, label, locked, close) =
             (self.variant, self.icon, self.label, self.locked, self.close);
-        row_arranged(
-            self.modifier.chain(own),
-            Arrangement::SpacedBy(sp(1)),
-            Alignment::Center,
-            move || {
-                match variant {
-                    TabVariant::Agent => glyph(IconName::Sparkles, 3.5, Role::Accent),
-                    TabVariant::Page => glyph(icon, 3.5, tone),
-                }
-                clipped(label, 12, tone);
-                if locked {
-                    glyph(IconName::Lock, 3.0, Role::Warning);
-                }
-                Button::icon(IconName::Close, close)
-                    .variant(crate::button::Variant::Ghost)
-                    .size(Size::Xs)
-                    .build();
-            },
-        );
+        let hint = self.hint;
+        let row = move || {
+            row_arranged(
+                self.modifier.chain(own),
+                Arrangement::SpacedBy(sp(1)),
+                Alignment::Center,
+                move || {
+                    match variant {
+                        TabVariant::Agent => glyph(IconName::Sparkles, 3.5, Role::Accent),
+                        TabVariant::Page => glyph(icon, 3.5, tone),
+                    }
+                    clipped(label, 12, tone);
+                    if locked {
+                        glyph(IconName::Lock, 3.0, Role::Warning);
+                    }
+                    Button::icon(IconName::Close, close)
+                        .variant(crate::button::Variant::Ghost)
+                        .size(Size::Xs)
+                        .build();
+                },
+            );
+        };
+        match hint {
+            Some(hint) => crate::tooltip::with_tooltip(hint, row),
+            None => row(),
+        }
     }
 }

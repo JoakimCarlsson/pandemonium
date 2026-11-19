@@ -1,14 +1,18 @@
 //! What floats over the file shown while code is written in it: the list of completions at the caret and the card saying what is known about a place.
 
+use crate::events::reduce;
+use crate::theme;
 use pm_protocol::CompletionKind;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Styled, Tone, Type,
-    at_window, label, scroll_area, selectable, selectable_scope, sp, wrap_lines,
-};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::IconName;
 use crate::marked::{CaretLook, Mark, Paint, marked_line};
+use crate::popups::at_window;
+use crate::select::{selectable, selectable_scope, styled_text};
+use crate::theme::{Radius, Role, Tone, sp};
 
 use crate::color_picker::{
     COLOR_BOX, COLOR_FORMAT_BASE, COLOR_FORMATS_SHOWN, COLOR_HEX, ColorPicking,
@@ -72,9 +76,6 @@ const CARD_GAP: f32 = 4.0;
 /// How wide the card's text is: the card less its padding, in logical pixels.
 const CARD_TEXT: f32 = CARD_WIDTH - 26.0;
 
-/// The scrolling body of the card about a place.
-pub const HOVER_SCROLL: FocusId = FocusId(7_199_997);
-
 /// The shadow under what floats over the file: soft, to lift it off the code.
 /// Each layer is `(x, y, blur, spread, alpha)`.
 const SHADOW: [(f32, f32, f32, f32, f32); 1] = [(0.0, 8.0, 28.0, 0.0, 0.3)];
@@ -95,9 +96,9 @@ fn kind_mark(kind: CompletionKind) -> (&'static str, Role) {
 
 /// Emits a raised box at `at` in the window, the frame of what floats over the file, holding `content`.
 ///
-/// `size` is what bounds the box (its width, its greatest height), `target` the name that keeps a
-/// press on it from counting as outside, `padding` the room inside its edge and `arrangement` how its
-/// column spreads what it holds.
+/// `size` is what bounds the box (its width, its greatest height), `target` the name it answers
+/// to, with which a press outside it asks the app to close what a press elsewhere closes,
+/// `padding` the room inside its edge and `arrangement` how its column spreads what it holds.
 #[track_caller]
 fn floating(
     at: (f32, f32),
@@ -107,7 +108,7 @@ fn floating(
     arrangement: Arrangement,
     content: impl FnOnce(),
 ) {
-    at_window(at.0, at.1, Modifier::new(), move || {
+    at_window(at.0, at.1, target.is_some(), move || {
         framed(size, target, padding, arrangement, content);
     });
 }
@@ -123,12 +124,13 @@ fn framed(
     content: impl FnOnce(),
 ) {
     let own = size
-        .shadows(&SHADOW, Radius::Md)
-        .fill_rounded(Role::Surface, Radius::Md)
-        .stroke(Role::Border, Radius::Md)
-        .clip_to(Radius::None);
+        .draw_behind(theme::shadows(&SHADOW, Radius::Md))
+        .background_rounded(theme::color(Role::Surface), Radius::Md.px())
+        .border(1.0, theme::color(Role::Border), Radius::Md.px())
+        .padding(1.0)
+        .clip();
     let own = match target {
-        Some(id) => own.target(id),
+        Some(id) => own.control(id, reduce(id)),
         None => own,
     };
     column_arranged(own.chain(padding), arrangement, Alignment::Start, content);
@@ -138,7 +140,7 @@ fn framed(
 #[track_caller]
 fn clipped_box(content: impl FnOnce()) {
     column_arranged(
-        Modifier::new().weight(1.0).clip_to(Radius::None),
+        Modifier::new().weight(1.0).clip(),
         Arrangement::Start,
         Alignment::Start,
         content,
@@ -150,7 +152,9 @@ fn clipped_box(content: impl FnOnce()) {
 fn completion_row(place: usize, item: &pm_protocol::Completion, picked: bool) {
     let id = FocusId(COMPLETION_ROW_BASE + place as u64);
     let (letter, tone) = kind_mark(item.kind);
-    let looks = Looks::new().hover(Role::SurfaceHover).radius(Radius::Sm);
+    let looks = theme::InteractionTones::new()
+        .hover(Role::SurfaceHover)
+        .radius(Radius::Sm);
     let looks = if picked {
         looks.idle(Role::SurfaceSelected)
     } else {
@@ -159,42 +163,47 @@ fn completion_row(place: usize, item: &pm_protocol::Completion, picked: bool) {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .h(6)
-            .looks_of(looks, id)
+            .height(theme::sp(6))
+            .interaction_focused(crate::focus::is_held(id))
+            .interaction_background((looks).colors())
             .cursor(CursorIcon::Pointer)
-            .target(id)
-            .pad_x(1.5),
+            .control(id, reduce(id))
+            .padding_xy(theme::sp(1.5), 0.0),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         || {
             row_arranged(
-                Modifier::new().square(4),
+                Modifier::new().size(theme::sp(4), theme::sp(4)),
                 Arrangement::Center,
                 Alignment::Center,
-                || label(letter, Type::code(11).ratio(1.2).tone(tone)),
+                || {
+                    styled_text(
+                        Modifier::new(),
+                        letter,
+                        theme::code_style(11, 1.2).color(theme::color(tone)),
+                    )
+                },
             );
             clipped_box(|| {
-                label(
+                styled_text(
+                    Modifier::new(),
                     item.label.clone(),
-                    Type::code(12).ratio(1.4).tone(Role::Text),
+                    theme::code_style(12, 1.4).color(theme::color(Role::Text)),
                 )
             });
             if let Some(detail) = &item.detail {
                 let short: String = detail.chars().take(48).collect();
                 column_arranged(
-                    Modifier::new()
-                        .max_w_px(LIST_WIDTH * 0.45)
-                        .clip_to(Radius::None),
+                    Modifier::new().width_in(0.0, LIST_WIDTH * 0.45).clip(),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
-                        label(
+                        styled_text(
+                            Modifier::new(),
                             short,
-                            Type::new(11)
-                                .ratio(1.4)
-                                .tone(Role::Subtle)
-                                .truncate()
-                                .mono(),
+                            theme::mono_style(11, 1.4)
+                                .color(theme::color(Role::Subtle))
+                                .max_lines(1),
                         )
                     },
                 );
@@ -217,7 +226,7 @@ fn completion_list(completion: &Completions) {
         completion.at,
         Modifier::new().width(LIST_WIDTH),
         Some(COMPLETION_BODY),
-        Modifier::new().pad(1),
+        Modifier::new().padding(theme::sp(1)),
         Arrangement::Start,
         || {
             for (place, index) in completion
@@ -264,7 +273,9 @@ fn completion_docs(completion: &Completions, shown: bool, language: Option<&str>
             .width(DOCS_WIDTH)
             .height_in(0.0, sp(list_height(completion).max(160.0) / 4.0)),
         None,
-        Modifier::new().pad_x(3).pad_y(2),
+        Modifier::new()
+            .padding_xy(theme::sp(3), 0.0)
+            .padding_xy(0.0, theme::sp(2)),
         Arrangement::SpacedBy(sp(1.5)),
         || {
             if let Some(detail) = &item.detail {
@@ -275,7 +286,7 @@ fn completion_docs(completion: &Completions, shown: bool, language: Option<&str>
                 match piece {
                     Piece::Code(fence, body) => {
                         column_arranged(
-                            Modifier::new().clip_to(Radius::None),
+                            Modifier::new().clip(),
                             Arrangement::Start,
                             Alignment::Start,
                             || {
@@ -384,8 +395,8 @@ fn code_lines(body: &str, language: &str, fallback: Option<&str>, width: f32) {
         .and_then(|grammar| pm_treesitter::Syntax::parse(grammar, &body))
         .map(|syntax| syntax.highlights(&body, 0..body.len()))
         .unwrap_or_default();
-    let kind = Type::code(12).ratio(1.5).tone(Role::Text);
-    for piece in wrap_lines(&body, kind, width) {
+    let kind = theme::code_style(12, 1.5).color(theme::color(Role::Text));
+    for piece in rustle::wrap_at_spaces(&body, &kind, width) {
         let range = piece.start..piece.end;
         marked_line(
             Modifier::new(),
@@ -400,17 +411,22 @@ fn code_lines(body: &str, language: &str, fallback: Option<&str>, width: f32) {
 /// Emits a hairline across the card.
 #[track_caller]
 fn rule() {
-    rustle::spacer(
-        Modifier::new()
-            .height(1.0)
-            .fill_max_width()
-            .fill(Role::Border),
+    rustle::horizontal_divider(
+        Modifier::new(),
+        rustle::DividerDefaults::THICKNESS,
+        rustle::DividerDefaults::color(),
     );
 }
 
-/// Emits the card `card`, of what the language server finds wrong at the place and what it says about it, its code coloured as the file's language `language` when no fence names another, with lines `row` logical pixels tall, in a window `height` logical pixels tall: below the place's line, or above it when there is more room there, and scrolling when it is taller than that room.
+/// Emits the card `card`, scrolled as `scrolled` says, of what the language server finds wrong at the place and what it says about it, its code coloured as the file's language `language` when no fence names another, with lines `row` logical pixels tall, in a window `height` logical pixels tall: below the place's line, or above it when there is more room there, and scrolling when it is taller than that room.
 #[track_caller]
-fn hover_card(row_height: f32, card: &HoverCard, language: Option<&str>, height: f32) {
+fn hover_card(
+    row_height: f32,
+    card: &HoverCard,
+    scrolled: &rustle::ScrollState,
+    language: Option<&str>,
+    height: f32,
+) {
     if card.text.is_none() && card.diagnostics.is_empty() {
         return;
     }
@@ -426,37 +442,32 @@ fn hover_card(row_height: f32, card: &HoverCard, language: Option<&str>, height:
             Modifier::new(),
             Arrangement::Start,
             || {
-                scroll_area(
-                    Modifier::new().fill_max_width().height_in(0.0, room),
-                    Scroll::from_start(HOVER_SCROLL, card.scroll),
-                    || {
-                        column_arranged(
-                            Modifier::new().fill_max_width().pad_x(3).pad_y(2.5),
-                            Arrangement::SpacedBy(sp(2)),
-                            Alignment::Start,
-                            || selectable_scope(HOVER_TEXT, || card_parts(card, language)),
-                        );
-                    },
+                column_arranged(
+                    Modifier::new()
+                        .fill_max_width()
+                        .height_in(0.0, room)
+                        .vertical_scroll(scrolled)
+                        .fill_max_width()
+                        .padding_xy(theme::sp(3), 0.0)
+                        .padding_xy(0.0, theme::sp(2.5)),
+                    Arrangement::SpacedBy(sp(2)),
+                    Alignment::Start,
+                    || selectable_scope(HOVER_TEXT, || card_parts(card, language)),
                 );
             },
         );
     };
     if downward {
-        at_window(card.at.0, line_bottom + CARD_GAP, Modifier::new(), body);
+        at_window(card.at.0, line_bottom + CARD_GAP, false, body);
     } else {
-        at_window(
-            card.at.0,
-            card.at.1 - CARD_GAP - room,
-            Modifier::new(),
-            || {
-                column_arranged(
-                    Modifier::new().width(CARD_WIDTH).height(room),
-                    Arrangement::End,
-                    Alignment::Start,
-                    body,
-                );
-            },
-        );
+        at_window(card.at.0, card.at.1 - CARD_GAP - room, false, || {
+            column_arranged(
+                Modifier::new().width(CARD_WIDTH).height(room),
+                Arrangement::End,
+                Alignment::Start,
+                body,
+            );
+        });
     }
 }
 
@@ -480,17 +491,18 @@ fn card_parts(card: &HoverCard, language: Option<&str>) {
                     Modifier::new(),
                     HOVER_TEXT,
                     format!("{source}{first}"),
-                    Type::new(12)
-                        .ratio(1.5)
-                        .tone(severity_role(diagnostic.severity))
-                        .truncate(),
+                    theme::text_style(12, 1.5)
+                        .color(theme::color(severity_role(diagnostic.severity)))
+                        .max_lines(1),
                 );
                 for rest in lines.take(4) {
                     selectable(
                         Modifier::new(),
                         HOVER_TEXT,
                         rest,
-                        Type::new(12).ratio(1.5).tone(Role::Muted).truncate(),
+                        theme::text_style(12, 1.5)
+                            .color(theme::color(Role::Muted))
+                            .max_lines(1),
                     );
                 }
             },
@@ -505,7 +517,7 @@ fn card_parts(card: &HoverCard, language: Option<&str>) {
             match piece {
                 Piece::Code(fence, body) => {
                     column_arranged(
-                        Modifier::new().clip_to(Radius::None),
+                        Modifier::new().clip(),
                         Arrangement::Start,
                         Alignment::Start,
                         || {
@@ -536,10 +548,11 @@ pub fn assist(state: &WorkspaceState, height: f32) {
         }
         return;
     };
-    if let Some(card) = &document.hover {
+    if let (Some(card), Some(viewer)) = (&document.hover, state.shown_viewer()) {
         hover_card(
             state.editor.row_height(),
             card,
+            &viewer.hover_scroll,
             document.language.as_deref(),
             height,
         );
@@ -605,20 +618,22 @@ fn signature_card(signature: &pm_protocol::Signature, at: (f32, f32)) {
         .map(|line| line.replace('`', ""));
     floating(
         at,
-        Modifier::new().max_w_px(CARD_WIDTH + 120.0),
+        Modifier::new().width_in(0.0, CARD_WIDTH + 120.0),
         None,
-        Modifier::new().pad_x(2).pad_y(1),
+        Modifier::new()
+            .padding_xy(theme::sp(2), 0.0)
+            .padding_xy(0.0, theme::sp(1)),
         Arrangement::SpacedBy(sp(0.5)),
         || {
             column_arranged(
-                Modifier::new().clip_to(Radius::None),
+                Modifier::new().clip(),
                 Arrangement::Start,
                 Alignment::Start,
                 || {
                     marked_line(
                         Modifier::new(),
                         &words,
-                        Type::code(12).ratio(1.5).tone(Role::Text),
+                        theme::code_style(12, 1.5).color(theme::color(Role::Text)),
                         marks,
                         CaretLook::default(),
                     );
@@ -626,7 +641,7 @@ fn signature_card(signature: &pm_protocol::Signature, at: (f32, f32)) {
             );
             if let Some(said) = first_line {
                 column_arranged(
-                    Modifier::new().clip_to(Radius::None),
+                    Modifier::new().clip(),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
@@ -645,7 +660,7 @@ fn go_to_line_box(going: &GoingTo, lines: usize) {
         going.at,
         Modifier::new().width(260.0),
         Some(GO_TO_LINE_BOX),
-        Modifier::new().pad(1.5),
+        Modifier::new().padding(theme::sp(1.5)),
         Arrangement::SpacedBy(sp(1)),
         || {
             Input::new(&going.field, GO_TO_LINE)
@@ -666,10 +681,10 @@ fn go_to_line_box(going: &GoingTo, lines: usize) {
 /// Emits a line of the list over the file, `content` in `pixels` and `tone`, cut short at the edge of the room it is given; in the font for code when `code`.
 #[track_caller]
 fn cell(content: impl Into<String>, pixels: u32, tone: Role, code: bool) {
-    let kind = Type::new(pixels).ratio(1.4).tone(tone);
-    let kind = if code { kind.mono() } else { kind };
+    let kind = theme::text_style(pixels, 1.4).color(theme::color(tone));
+    let kind = if code { theme::in_mono(kind) } else { kind };
     let content = content.into();
-    clipped_box(move || label(content, kind));
+    clipped_box(move || styled_text(Modifier::new(), content, kind));
 }
 
 /// Emits a line of the list over the file that keeps its own width, `content` in `pixels` and `tone`.
@@ -677,9 +692,7 @@ fn cell(content: impl Into<String>, pixels: u32, tone: Role, code: bool) {
 fn tag(content: impl Into<String>, pixels: u32, tone: Role) {
     let content = content.into();
     column_arranged(
-        Modifier::new()
-            .max_w_px(LISTING_WIDTH * 0.5)
-            .clip_to(Radius::None),
+        Modifier::new().width_in(0.0, LISTING_WIDTH * 0.5).clip(),
         Arrangement::Start,
         Alignment::Start,
         move || line(content, pixels, 1.4, tone),
@@ -772,7 +785,7 @@ pub(crate) fn listing_cells(items: &Items, index: usize) {
             };
             rustle::spacer(Modifier::new().width(item.depth.min(8) as f32 * 14.0));
             column_arranged(
-                Modifier::new().width(52.0).clip_to(Radius::None),
+                Modifier::new().width(52.0).clip(),
                 Arrangement::Start,
                 Alignment::Start,
                 || {
@@ -893,12 +906,15 @@ fn listing_panel(listing: &Listing) {
         listing.at,
         Modifier::new().width(LISTING_WIDTH),
         Some(LISTING_BODY),
-        Modifier::new().pad(1),
+        Modifier::new().padding(theme::sp(1)),
         Arrangement::Start,
         || {
             if let Some((filter, hint)) = filter {
                 column_arranged(
-                    Modifier::new().fill_max_width().pad_x(0.5).pad_y(0.5),
+                    Modifier::new()
+                        .fill_max_width()
+                        .padding_xy(theme::sp(0.5), 0.0)
+                        .padding_xy(0.0, theme::sp(0.5)),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
@@ -911,7 +927,10 @@ fn listing_panel(listing: &Listing) {
                 );
             }
             row_arranged(
-                Modifier::new().fill_max_width().h(7).pad_x(1.5),
+                Modifier::new()
+                    .fill_max_width()
+                    .height(theme::sp(7))
+                    .padding_xy(theme::sp(1.5), 0.0),
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Center,
                 || {
@@ -923,7 +942,9 @@ fn listing_panel(listing: &Listing) {
             );
             if let Some(said) = status {
                 column_arranged(
-                    Modifier::new().pad_x(1.5).pad_y(1),
+                    Modifier::new()
+                        .padding_xy(theme::sp(1.5), 0.0)
+                        .padding_xy(0.0, theme::sp(1)),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
@@ -934,7 +955,9 @@ fn listing_panel(listing: &Listing) {
             let end = count.min(first + LISTING_SHOWN);
             for (place, index) in shown.iter().copied().enumerate().take(end).skip(first) {
                 let id = FocusId(LISTING_ROW_BASE + place as u64);
-                let looks = Looks::new().hover(Role::SurfaceHover).radius(Radius::Sm);
+                let looks = theme::InteractionTones::new()
+                    .hover(Role::SurfaceHover)
+                    .radius(Radius::Sm);
                 let looks = if place == listing.picked {
                     looks.idle(Role::SurfaceSelected)
                 } else {
@@ -943,11 +966,15 @@ fn listing_panel(listing: &Listing) {
                 row_arranged(
                     Modifier::new()
                         .fill_max_width()
-                        .h(6.5)
-                        .looks_of(looks, id)
+                        .height(theme::sp(6.5))
+                        .interaction_focused(crate::focus::is_held(id))
+                        .interaction_background((looks).colors())
                         .cursor(CursorIcon::Pointer)
-                        .target(id)
-                        .pad_x(1.5),
+                        .control(id, {
+                            let operations = crate::events::operations();
+                            move || operations.take_listing(Some(place))
+                        })
+                        .padding_xy(theme::sp(1.5), 0.0),
                     Arrangement::SpacedBy(sp(3)),
                     Alignment::Center,
                     || listing_cells(&listing.items, index),
@@ -969,7 +996,7 @@ fn rename_box(renaming: &Renaming) {
         renaming.at,
         Modifier::new().width(320.0),
         Some(RENAME_BOX),
-        Modifier::new().pad(1.5),
+        Modifier::new().padding(theme::sp(1.5)),
         Arrangement::SpacedBy(sp(1)),
         || {
             Input::new(&renaming.field, RENAME_SYMBOL)
@@ -1008,7 +1035,7 @@ fn color_box(picking: &ColorPicking) {
         picking.at,
         Modifier::new().width(260.0),
         Some(COLOR_BOX),
-        Modifier::new().pad(1.5),
+        Modifier::new().padding(theme::sp(1.5)),
         Arrangement::SpacedBy(sp(1)),
         || {
             row_arranged(
@@ -1018,23 +1045,28 @@ fn color_box(picking: &ColorPicking) {
                 || {
                     rustle::spacer(
                         Modifier::new()
-                            .square(7)
-                            .fill_rounded(
-                                Tone::rgb(red, green, blue).alpha(f32::from(alpha) / 255.0),
-                                Radius::Sm,
+                            .size(theme::sp(7), theme::sp(7))
+                            .background_rounded(
+                                theme::color(
+                                    Tone::rgb(red, green, blue).alpha(f32::from(alpha) / 255.0),
+                                ),
+                                Radius::Sm.px(),
                             )
-                            .stroke(Role::Border, Radius::Sm),
+                            .border(1.0, theme::color(Role::Border), Radius::Sm.px())
+                            .padding(1.0),
                     );
                     Input::new(&picking.hex, COLOR_HEX)
                         .size(Size::Sm)
-                        .invalid(crate::color_picker::color_of(picking.hex.text()).is_none())
+                        .invalid(crate::color_picker::color_of(&picking.hex.text()).is_none())
                         .modifier(Modifier::new().weight(1.0))
                         .build();
                 },
             );
             if let Some(said) = status {
                 column_arranged(
-                    Modifier::new().pad_x(1.5).pad_y(1),
+                    Modifier::new()
+                        .padding_xy(theme::sp(1.5), 0.0)
+                        .padding_xy(0.0, theme::sp(1)),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
@@ -1047,20 +1079,26 @@ fn color_box(picking: &ColorPicking) {
                 row_arranged(
                     Modifier::new()
                         .fill_max_width()
-                        .h(6.5)
-                        .looks_of(
-                            Looks::new().hover(Role::SurfaceHover).radius(Radius::Sm),
-                            id,
+                        .height(theme::sp(6.5))
+                        .interaction_focused(crate::focus::is_held(id))
+                        .interaction_background(
+                            (theme::InteractionTones::new()
+                                .hover(Role::SurfaceHover)
+                                .radius(Radius::Sm))
+                            .colors(),
                         )
                         .cursor(CursorIcon::Pointer)
-                        .target(id)
-                        .pad_x(1.5),
+                        .control(id, reduce(id))
+                        .padding_xy(theme::sp(1.5), 0.0),
                     Arrangement::Start,
                     Alignment::Center,
                     || {
-                        label(
+                        styled_text(
+                            Modifier::new(),
                             &format.label,
-                            Type::new(13).ratio(1.4).tone(Role::Text).truncate().mono(),
+                            theme::mono_style(13, 1.4)
+                                .color(theme::color(Role::Text))
+                                .max_lines(1),
                         )
                     },
                 );

@@ -1,8 +1,8 @@
 //! Tasks as the workspace holds them: what the project can be built, tested and run with, the last one run, the toolchains installed on its machine, and what the reader does with them.
 
-use crate::kit::FocusId;
-use pm_field::Field;
+use crate::focus::FocusId;
 use pm_protocol::{Task, ToolchainInfo};
+use rustle::TextFieldState;
 
 use crate::listing::{Items, Listing};
 use crate::quick_choices::Choosing;
@@ -358,7 +358,7 @@ impl WorkspaceState {
             items: Items::Choices {
                 choosing: Choosing::Toolchain,
                 choices: Vec::new(),
-                filter: Field::new(""),
+                filter: TextFieldState::new(""),
                 matched: Vec::new(),
             },
             picked: 0,

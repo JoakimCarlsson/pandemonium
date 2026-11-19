@@ -19,17 +19,29 @@
 //! - [`role`]: the roles a view names instead of colours.
 //! - [`scheme`], [`fonts`], [`family`]: a theme, its font stacks, a family of two.
 //! - [`builtin`], [`extension`]: the shipped families and those extensions add.
+//! - [`typography`]: the rustle text styles of interface text and code, the
+//!   rustle `Typography` widgets read, and the ligature switch.
+//! - [`interaction`]: the theme's fills and rings for rustle's interaction support.
+//! - [`decoration`]: drawing rustle has no modifier for: a line along one side, shadows.
+//!
+//! [`provide`] makes the theme the Compose way for a custom design system:
+//! rustle's `theme` with [`color_scheme`], [`typography()`] and [`shapes`], the
+//! scrollbar look as rustle's `LOCAL_SCROLLBAR_STYLE`, and one composition
+//! local holding the [`Tokens`] rustle's scheme has no slot for.
 
 pub mod builtin;
 pub mod color;
+pub mod decoration;
 pub mod extension;
 pub mod family;
 pub mod fonts;
+pub mod interaction;
 pub mod oklch;
 pub mod palette;
 pub mod role;
 pub mod scheme;
 pub mod srgba;
+pub mod typography;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -38,13 +50,21 @@ use rustle::{CompositionLocal, FontFamily};
 
 pub use builtin::{default_family, families, family_named, shipped_families};
 pub use color::Tone;
+pub use decoration::{
+    FLOATING_SHADOW, MEDIUM_SHADOW, SHADOW_SOFTNESS, ShadowLayer, Side, edge, shadows,
+};
 pub use extension::{family_from_colours, set_extension_families};
 pub use family::{Appearance, ThemeFamily};
 pub use fonts::Fonts;
+pub use interaction::{InteractionTones, focus_ring, outline_by_focus};
 pub use oklch::{Oklab, Oklch};
 pub use role::{Role, Roles};
 pub use scheme::Theme;
 pub use srgba::Srgba;
+pub use typography::{
+    code_ligatures, code_style, fixed_text_style, font_families, font_key, in_mono, mono_style,
+    set_code_ligatures, text_style, typography,
+};
 
 /// Logical pixels in one step of the spacing scale at the comfortable density.
 pub const STEP_PX: f32 = 4.0;
@@ -179,9 +199,88 @@ thread_local! {
 
 /// Composes `content` drawn with `tokens`, which code running outside
 /// composition on this thread, such as measuring text for the host, then uses too.
+///
+/// This is the app's theme, made as Compose's custom design systems are: rustle's
+/// [`theme`](rustle::theme) carries the roles Compose has a slot for ([`color_scheme`]),
+/// the type scale ([`typography`]) and the corner sizes ([`shapes`]), so rustle's
+/// widgets and content colour follow it, and one composition local carries the
+/// tokens it has no slot for (every [`Role`], the syntax colours, the font stacks),
+/// read with [`tokens`], [`theme`] and [`color`].
 pub fn provide(tokens: Tokens, content: impl FnOnce()) {
     LAST_TOKENS.with(|last| *last.borrow_mut() = Some(tokens.clone()));
-    LOCAL_TOKENS.provide(tokens, content);
+    let scheme = color_scheme(&tokens.theme, tokens.appearance);
+    LOCAL_TOKENS.provide(tokens, || {
+        rustle::LOCAL_SCROLLBAR_STYLE.provide(scrollbar(), || {
+            rustle::theme(scheme, typography(), shapes(), content);
+        });
+    });
+}
+
+/// The rustle colour scheme of `theme` in `appearance`: the roles laid on the
+/// Compose roles that mean the same (accent as primary, surfaces and their
+/// hover and pressed fills as the surface containers, borders as outlines,
+/// danger as error), the rest kept from rustle's scheme of that appearance.
+pub fn color_scheme(theme: &Theme, appearance: Appearance) -> rustle::ColorScheme {
+    let role = |role: Role| color_in(theme, role);
+    let base = match appearance {
+        Appearance::Dark => rustle::dark_color_scheme(),
+        Appearance::Light => rustle::light_color_scheme(),
+    };
+    rustle::ColorScheme {
+        primary: role(Role::Accent),
+        on_primary: role(Role::OnAccent),
+        primary_container: role(Role::SurfaceSelected),
+        on_primary_container: role(Role::Text),
+        inverse_primary: role(Role::Accent),
+        secondary: role(Role::Muted),
+        on_secondary: role(Role::Background),
+        secondary_container: role(Role::SurfaceHover),
+        on_secondary_container: role(Role::Text),
+        tertiary: role(Role::Success),
+        on_tertiary: role(Role::OnSuccess),
+        tertiary_container: role(Role::SurfaceActive),
+        on_tertiary_container: role(Role::Text),
+        background: role(Role::Background),
+        on_background: role(Role::Text),
+        surface: role(Role::Surface),
+        on_surface: role(Role::Text),
+        surface_variant: role(Role::SurfaceHover),
+        on_surface_variant: role(Role::Muted),
+        surface_tint: rustle::Color::TRANSPARENT,
+        inverse_surface: role(Role::Text),
+        inverse_on_surface: role(Role::Background),
+        error: role(Role::Danger),
+        on_error: role(Role::OnDanger),
+        error_container: color_in(theme, Tone::from(Role::Danger).alpha(0.15)),
+        on_error_container: role(Role::Danger),
+        outline: role(Role::Border),
+        outline_variant: role(Role::Border),
+        surface_bright: role(Role::SurfaceHover),
+        surface_dim: role(Role::Background),
+        surface_container_lowest: role(Role::Background),
+        surface_container_low: role(Role::Sidebar),
+        surface_container: role(Role::Surface),
+        surface_container_high: role(Role::SurfaceHover),
+        surface_container_highest: role(Role::SurfaceActive),
+        ..base
+    }
+}
+
+/// The corner sizes rustle's widgets read, from the named radii: menus and
+/// fields four pixels, chips six, cards eight, then twelve, sixteen,
+/// twenty-four and thirty-two, and pills fully round.
+pub fn shapes() -> rustle::Shapes {
+    let round = |radius: Radius| rustle::Shape::rounded(radius.px());
+    rustle::Shapes {
+        extra_small: round(Radius::Sm),
+        small: round(Radius::Md),
+        medium: round(Radius::Lg),
+        large: round(Radius::Xl),
+        large_increased: round(Radius::Xl2),
+        extra_large: round(Radius::Xl3),
+        extra_large_increased: round(Radius::Xl4),
+        extra_extra_large: rustle::Shape::Circle,
+    }
 }
 
 /// The tokens the views being composed are drawn with; outside composition,
@@ -210,6 +309,24 @@ pub fn color(tone: impl Into<Tone>) -> rustle::Color {
 pub fn color_in(theme: &Theme, tone: impl Into<Tone>) -> rustle::Color {
     let [r, g, b, a] = tone.into().resolve(theme).to_bytes();
     rustle::Color::rgba(r, g, b, a)
+}
+
+/// How the bar of a scrolling area looks in the theme being composed with: a
+/// thin rounded thumb in the muted colour, a little stronger under the
+/// pointer, always shown while the content is longer than the area, with a
+/// strip along the edge wide enough to take hold of it.
+pub fn scrollbar() -> rustle::ScrollbarStyle {
+    let theme = theme();
+    rustle::ScrollbarStyle {
+        visibility: rustle::ScrollbarVisibility::Always,
+        color: color_in(&theme, Tone::from(Role::Muted).alpha(0.55)),
+        active_color: color_in(&theme, Tone::from(Role::Muted).alpha(0.85)),
+        thickness: 4.0,
+        hit_thickness: 14.0,
+        min_length: 24.0,
+        corner_radius: 2.0,
+        hover_duration: std::time::Duration::ZERO,
+    }
 }
 
 /// The colour of `role` in the theme being composed with.
@@ -261,4 +378,59 @@ fn families_for(fonts: Fonts) -> (FontFamily, FontFamily) {
 /// Forgets the families the font stacks resolved to, after fonts were installed or the reader chose others.
 pub fn fonts_changed() {
     RESOLVED.with(|resolved| *resolved.borrow_mut() = None);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use super::*;
+
+    /// What the root saw of the theme: rustle's scheme, its shapes and type scale, the
+    /// scrollbar look, and the app's own colour of a role rustle has no slot for.
+    type Seen = Option<(
+        rustle::ColorScheme,
+        rustle::Shapes,
+        f32,
+        rustle::ScrollbarStyle,
+        rustle::Color,
+    )>;
+
+    /// Providing the tokens gives rustle's theme the app's roles, corners and type scale,
+    /// the scrollbar its look, and the tokens' own local the roles rustle has no slot for.
+    #[test]
+    fn provide_themes_rustle_and_keeps_the_extra_tokens() {
+        let tokens = Tokens::new(&default_family(), Appearance::Light);
+        let seen: Rc<RefCell<Seen>> = Rc::default();
+        let (held, kept) = (tokens.clone(), Rc::clone(&seen));
+        let mut ui = rustle::Embedded::without_renderer(
+            move || {
+                let kept = Rc::clone(&kept);
+                provide(held.clone(), move || {
+                    *kept.borrow_mut() = Some((
+                        rustle::color_scheme(),
+                        rustle::shapes(),
+                        rustle::typography().label_large.line_height_ratio(),
+                        rustle::LOCAL_SCROLLBAR_STYLE.current(),
+                        color(Role::SyntaxKeyword),
+                    ));
+                });
+            },
+            || {},
+        );
+        ui.resize((100, 100), 1.0);
+        ui.update();
+        let (scheme, corners, ratio, bar, keyword) = seen.borrow().expect("composed");
+        let theme = &tokens.theme;
+        assert_eq!(scheme.primary, color_in(theme, Role::Accent));
+        assert_eq!(scheme.on_primary, color_in(theme, Role::OnAccent));
+        assert_eq!(scheme.background, color_in(theme, Role::Background));
+        assert_eq!(scheme.outline, color_in(theme, Role::Border));
+        assert_eq!(scheme.error, color_in(theme, Role::Danger));
+        assert_eq!(corners.small, rustle::Shape::rounded(Radius::Md.px()));
+        assert!((ratio - 1.4).abs() < 1e-4);
+        assert_eq!(bar.thickness, 4.0);
+        assert_eq!(keyword, color_in(theme, Role::SyntaxKeyword));
+    }
 }

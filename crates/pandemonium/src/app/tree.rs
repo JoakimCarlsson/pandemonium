@@ -1,53 +1,48 @@
 //! The project's files under the pointer and the keyboard: rows dragged into another folder, the keys that cut, copy, paste, rename and delete them, and files of this machine let go on them.
 
-use pm_components::kit::{FocusId, Key, KeyEvent};
 use pm_components::tree_actions::{TreeShortcut, TreeTarget};
 use pm_pages::Screen;
+use rustle::{Key, KeyEvent};
 
-use super::{App, DRAG_DISTANCE};
+use super::App;
 use crate::keys::{self, Clip};
 
 impl App {
-    /// Notes the row of the project's files a press began on, if `on` is one, so that moving the pointer drags it.
-    pub(super) fn tree_press(&mut self, on: Option<FocusId>) {
-        self.tree_press = on
-            .and_then(|id| self.model.read(|screen| screen.tree_row_of(id)))
-            .filter(|target| !target.is_root())
-            .zip(self.pointer.position);
-    }
-
     /// The row of the project's files at `at`, or their root when it is the space under them.
     fn tree_row_at(&self, at: (f32, f32)) -> Option<TreeTarget> {
-        self.output
-            .hit(at)
-            .and_then(|id| self.model.read(|screen| screen.tree_row_of(id)))
+        let shown = self.model.read(|screen| screen.places().shown());
+        shown
+            .into_iter()
+            .filter(|(_, rect)| {
+                let rect = self.framed(*rect);
+                at.0 >= rect.origin.x
+                    && at.1 >= rect.origin.y
+                    && at.0 < rect.origin.x + rect.size.width
+                    && at.1 < rect.origin.y + rect.size.height
+            })
+            .find_map(|(id, _)| self.model.read(|screen| screen.tree_row_of(id)))
     }
 
-    /// Follows the pointer to `at` while a row of the project's files is held down: past a few pixels it is a drag, and the folder under the pointer is where the row would land.
+    /// Follows the pointer to `at` while a row of the project's files is carried: the folder under the pointer is where the row would land.
     pub(super) fn drag_tree(&mut self, at: (f32, f32)) {
-        let Some((from, origin)) = self.tree_press.clone() else {
+        let Some(from) = self.tree_press.clone() else {
             return;
         };
-        if !self.model.read(Screen::tree_dragging)
-            && (at.0 - origin.0).hypot(at.1 - origin.1) < DRAG_DISTANCE
-        {
-            return;
-        }
         let over = self.tree_row_at(at);
         self.model
             .update(|state| *state = std::mem::take(state).tree_dragged(from, over, at));
     }
 
-    /// Ends a drag of rows of the project's files, moving them into the folder they were let go on, or copying them there while the key that copies is held, and says whether there was a drag.
-    pub(super) fn drop_tree(&mut self) -> bool {
+    /// Ends a drag of rows of the project's files, moving them into the folder they were let go on, or copying them there while the key that copies is held in `modifiers`, and says whether there was a drag.
+    pub(super) fn drop_tree(&mut self, modifiers: rustle::Modifiers) -> bool {
         self.tree_press = None;
         if !self.model.read(Screen::tree_dragging) {
             return false;
         }
         let copy = if cfg!(target_os = "macos") {
-            self.modifiers.alt
+            modifiers.alt
         } else {
-            self.modifiers.control
+            modifiers.ctrl
         };
         self.model
             .update(|state| *state = std::mem::take(state).tree_dropped(copy));
@@ -56,9 +51,9 @@ impl App {
     }
 
     /// Carries out a key aimed at the project's files, and says whether it was one: Escape gives up a drag, the clipboard's keys cut, copy and paste, F2 renames and Delete deletes.
-    pub(super) fn tree_key(&mut self, event: KeyEvent) -> bool {
-        let command = event.modifiers.control || event.modifiers.logo;
-        let shortcut = match (keys::clip(&event), event.key) {
+    pub(super) fn tree_key(&mut self, event: &KeyEvent) -> bool {
+        let command = event.modifiers.ctrl || event.modifiers.meta;
+        let shortcut = match (keys::clip(event), &event.key) {
             (_, Key::Escape) if self.model.read(Screen::tree_dragging) => {
                 self.tree_press = None;
                 self.model
@@ -74,7 +69,7 @@ impl App {
                 }
                 TreeShortcut::Paste
             }
-            (None, Key::Function(2)) => TreeShortcut::Rename,
+            (None, Key::F(2)) => TreeShortcut::Rename,
             (None, Key::Delete) => TreeShortcut::Delete,
             (None, Key::Backspace) if cfg!(target_os = "macos") && command => TreeShortcut::Delete,
             _ => return false,

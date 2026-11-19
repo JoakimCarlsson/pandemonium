@@ -11,7 +11,7 @@
 //! A row past the end of its range gets no name from [`IdRange::id`], so it is
 //! drawn without its control rather than answering to a name of another one.
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 
 /// The first name the settings window answers to.
 pub const SETTINGS_START: u64 = 20_000_000;
@@ -280,7 +280,7 @@ pub const RANGES: [IdRange; 37] = [
 ];
 
 /// Every control there is one of, which must each lie in [`SINGLES`] and differ from the others.
-pub const SINGLE_IDS: [FocusId; 63] = [
+pub const SINGLE_IDS: [FocusId; 61] = [
     crate::settings::SETTINGS_CLOSE,
     crate::settings::SETTINGS_ADD,
     crate::settings::SETTINGS_SAVE,
@@ -292,8 +292,6 @@ pub const SINGLE_IDS: [FocusId; 63] = [
     crate::settings::SETTINGS_SEARCH_GO,
     crate::settings::SETTINGS_TOGGLE_INSTALLED,
     crate::settings::SETTINGS_TOGGLE_AVAILABLE,
-    crate::settings::SETTINGS_SCROLL,
-    crate::settings::SETTINGS_NAV_SCROLL,
     crate::settings::SETTINGS_MENU_TOGGLE,
     crate::settings::SETTINGS_MENU_EDIT,
     crate::settings::SETTINGS_MENU_COPY,

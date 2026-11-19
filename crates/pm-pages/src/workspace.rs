@@ -1,6 +1,7 @@
 //! The workspace window: the sidebar of projects and sessions beside the page the reader is on.
 
-use pm_components::kit::{Role, Styled};
+use pm_components::theme;
+use pm_components::theme::Role;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
@@ -12,14 +13,13 @@ use pm_components::arrange::{
 use pm_components::context_menu::{editor_menu, field_menu};
 use pm_components::git_prompts;
 use pm_components::message_menu::message_menu;
-use pm_components::open_files::EDITOR_FIELD;
 use pm_components::title_bar::TITLE_BAR_HEIGHT;
 use pm_components::{Menu, TitleBar, Window};
 use pm_components::{adder, history, plan, review, settings, sidebar, terminal};
 
 pub use pm_components::state::{
-    ADD_PROJECT, ATTACH, CHAT_SCROLL, DIFF_SCROLL, HISTORY, MENU_SCROLL, Outgoing, PLAN_SCROLL,
-    PROMPT, SEND, STOP, TAB_DIFF, TERMINAL, TERMINAL_BODY, TREE_SCROLL, WorkspaceState,
+    ADD_PROJECT, ATTACH, HISTORY, Outgoing, PROMPT, SEND, STOP, TAB_DIFF, TERMINAL, TERMINAL_BODY,
+    WorkspaceState,
 };
 
 use pm_components::sash::{PLAN_SASH, REVIEW_SASH, SIDEBAR_SASH, Sash, TERMINAL_SASH};
@@ -38,64 +38,76 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
     let main_width = state.pane_area((width, height)).width;
     let plan_width = width - sidebar_width - review_width - main_width;
     let paned = state.paned();
-    rustle::stack_with(Modifier::new().fill_max_size(), || {
-        column_arranged(
-            Modifier::new().fill_max_size().fill(Role::Background),
-            Arrangement::Start,
-            Alignment::Start,
-            || {
-                TitleBar::of(state).build();
-                row_arranged(
-                    Modifier::new().weight(1.0).fill_max_width(),
+    let frame = state
+        .selectables
+        .frame(state.code_lines.frame(Modifier::new().fill_max_size()));
+    rustle::stack_with(frame, || {
+        state.selectables.provide(|| {
+            state.places.provide(|| {
+                column_arranged(
+                    Modifier::new()
+                        .fill_max_size()
+                        .background(theme::color(Role::Background)),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
-                        if state.sidebar_open {
-                            sidebar::sidebar(state);
-                        }
-                        match state.page {
-                            _ if paned => panes::main_area(state, (width, height)),
-                            Page::History => history::history(state),
-                            Page::Extensions => pm_components::extensions::extensions(state),
-                            _ => panes::starting_page(state, main_width, page),
-                        }
-                        if let Some(source) = state.plan_shown() {
-                            plan::panel(state, source, plan_width);
-                        }
-                        if let Some(session) = state.review_session().filter(|_| reviewing) {
-                            review::review(state, session, page);
-                        }
+                        TitleBar::of(state).build();
+                        row_arranged(
+                            Modifier::new().weight(1.0).fill_max_width(),
+                            Arrangement::Start,
+                            Alignment::Start,
+                            || {
+                                if state.sidebar_open {
+                                    sidebar::sidebar(state);
+                                }
+                                match state.page {
+                                    _ if paned => panes::main_area(state, (width, height)),
+                                    Page::History => history::history(state),
+                                    Page::Extensions => {
+                                        pm_components::extensions::extensions(state)
+                                    }
+                                    _ => panes::starting_page(state, page),
+                                }
+                                if let Some(source) = state.plan_shown() {
+                                    plan::panel(state, source, plan_width);
+                                }
+                                if let Some(session) = state.review_session().filter(|_| reviewing)
+                                {
+                                    review::review(state, session, page);
+                                }
+                            },
+                        );
                     },
                 );
-            },
-        );
-        if state.sidebar_open {
-            Sash::column(SIDEBAR_SASH)
-                .at((sidebar_width, TITLE_BAR_HEIGHT), page)
-                .build();
-        }
-        if planning {
-            Sash::column(PLAN_SASH)
-                .at((sidebar_width + main_width, TITLE_BAR_HEIGHT), page)
-                .build();
-        }
-        if reviewing {
-            Sash::column(REVIEW_SASH)
-                .at((width - review_width, TITLE_BAR_HEIGHT), page)
-                .build();
-        }
-        if state.docking() {
-            Sash::row(TERMINAL_SASH)
-                .at(
-                    (sidebar_width, height - terminal::height(state, page)),
-                    main_width,
-                )
-                .build();
-        }
-        if paned {
-            panes::main_over(state, (width, height));
-        }
-        over(state, height, reviewing);
+                if state.sidebar_open {
+                    Sash::column(SIDEBAR_SASH)
+                        .at((sidebar_width, TITLE_BAR_HEIGHT), page)
+                        .build();
+                }
+                if planning {
+                    Sash::column(PLAN_SASH)
+                        .at((sidebar_width + main_width, TITLE_BAR_HEIGHT), page)
+                        .build();
+                }
+                if reviewing {
+                    Sash::column(REVIEW_SASH)
+                        .at((width - review_width, TITLE_BAR_HEIGHT), page)
+                        .build();
+                }
+                if state.docking() {
+                    Sash::row(TERMINAL_SASH)
+                        .at(
+                            (sidebar_width, height - terminal::height(state, page)),
+                            main_width,
+                        )
+                        .build();
+                }
+                if paned {
+                    panes::main_over(state, (width, height));
+                }
+                over(state, height, reviewing);
+            })
+        });
     });
 }
 
@@ -105,9 +117,8 @@ fn over(state: &WorkspaceState, height: f32, reviewing: bool) {
     if let Some(menu) = state.menu
         && !settings::is_settings(menu.field)
         && !pm_components::folder_picker::is_picker(menu.field)
-        && let Some(field) = state.field(menu.field)
     {
-        if menu.field == EDITOR_FIELD {
+        if let Some(field) = state.field(menu.field) {
             editor_menu(
                 field,
                 menu,
@@ -115,8 +126,8 @@ fn over(state: &WorkspaceState, height: f32, reviewing: bool) {
                 state.review_is_local(),
                 &state.editor.keymap(),
             );
-        } else {
-            field_menu(field, menu);
+        } else if let Some(field) = state.text_field(menu.field) {
+            field_menu(field, menu, WorkspaceState::is_secure(menu.field));
         }
     }
     sidebar::drag_ghost(state);
@@ -240,9 +251,9 @@ pub(crate) fn settings_window(state: &WorkspaceState, width: f32) {
         })
         .over(move || {
             if let Some(menu) = state.menu.filter(|menu| settings::is_settings(menu.field))
-                && let Some(field) = state.field(menu.field)
+                && let Some(field) = state.text_field(menu.field)
             {
-                field_menu(field, menu);
+                field_menu(field, menu, WorkspaceState::is_secure(menu.field));
             }
         })
         .build();

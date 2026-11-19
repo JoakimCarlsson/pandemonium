@@ -1,6 +1,8 @@
 //! Markdown: a source laid out as paragraphs, headings, lists, code, quotes, fold-outs, rules and tables.
 
-use crate::kit::sp;
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
@@ -8,15 +10,16 @@ use pm_markdown::{Block, Inline, Span};
 use rustle::{CursorIcon, Modifier};
 
 use crate::CodeBox;
+use crate::events::Interactive;
 use crate::figures::{
     Figures, diagram_key, diagram_node, figure_marks, formula_key, image_key, images_node,
     is_diagram,
 };
-use crate::kit::{
-    FocusId, IconName, Interactive, Radius, Role, Side, Styled, Type, label_with, measure,
-    wrap_lines,
-};
+use crate::focus::FocusId;
+use crate::icons::IconName;
 use crate::parts::{glyph, line};
+use crate::select::styled_text;
+use crate::theme::{Radius, Role};
 
 /// The line height of running text, as a share of its size.
 const LEADING: f32 = 1.57;
@@ -270,8 +273,13 @@ impl Layout<'_> {
             Block::Code { text, .. } => self.code(text, width),
             Block::Quote(blocks) => {
                 let own = Modifier::new()
-                    .stroke_side(Side::Left, 2.0, Role::Border)
-                    .pad_side(Side::Left, QUOTE_INDENT / 4.0 - 0.5);
+                    .draw_behind(theme::edge(
+                        theme::Side::Left,
+                        2.0,
+                        theme::color(Role::Border),
+                    ))
+                    .padding_each(2.0, 0.0, 0.0, 0.0)
+                    .padding_each(theme::sp(QUOTE_INDENT / 4.0 - 0.5), 0.0, 0.0, 0.0);
                 row_arranged(own, Arrangement::Start, Alignment::Start, || {
                     self.blocks(
                         Modifier::new(),
@@ -283,12 +291,10 @@ impl Layout<'_> {
                 });
             }
             Block::Details { summary, blocks } => self.fold_out(summary, blocks, tone, width),
-            Block::Rule => rustle::spacer(
-                Modifier::new()
-                    .pad_y(1)
-                    .height(1.0)
-                    .fill_max_width()
-                    .fill(Role::Border),
+            Block::Rule => rustle::horizontal_divider(
+                Modifier::new().padding_xy(0.0, theme::sp(1)),
+                rustle::DividerDefaults::THICKNESS,
+                rustle::DividerDefaults::color(),
             ),
             Block::Table { head, rows } => self.table(head, rows, tone, width),
             Block::Math(text) => self.figure(
@@ -325,7 +331,10 @@ impl Layout<'_> {
         };
         let mut head = Modifier::new().cursor(CursorIcon::Pointer);
         if let Some(base) = self.details {
-            head = head.target(FocusId(base + place as u64));
+            head = head.control(
+                FocusId(base + place as u64),
+                reduce(FocusId(base + place as u64)),
+            );
         }
         let pixels = self.pixels;
         column_arranged(
@@ -369,8 +378,13 @@ impl Layout<'_> {
                     return;
                 }
                 let bar = Modifier::new()
-                    .pad_side(Side::Left, 1.5)
-                    .stroke_side(Side::Left, 2.0, Role::Border)
+                    .padding_each(theme::sp(1.5), 0.0, 0.0, 0.0)
+                    .draw_behind(theme::edge(
+                        theme::Side::Left,
+                        2.0,
+                        theme::color(Role::Border),
+                    ))
+                    .padding_each(2.0, 0.0, 0.0, 0.0)
                     .padding_each(INDENT - 8.0, 0.0, 0.0, 0.0);
                 row_arranged(bar, Arrangement::Start, Alignment::Start, || {
                     self.blocks(Modifier::new(), 3.0, blocks, tone, width - INDENT);
@@ -408,8 +422,11 @@ impl Layout<'_> {
                                     ),
                                     None => rustle::spacer(
                                         Modifier::new()
-                                            .square(1)
-                                            .fill_rounded(Role::Subtle, Radius::Full),
+                                            .size(theme::sp(1), theme::sp(1))
+                                            .background_rounded(
+                                                theme::color(Role::Subtle),
+                                                Radius::Full.px(),
+                                            ),
                                     ),
                                 },
                             );
@@ -430,26 +447,23 @@ impl Layout<'_> {
     /// Emits a block of code in a bordered box, its long lines broken to fit `width`.
     #[track_caller]
     fn code(&mut self, source: &str, width: f32) {
-        let kind = Type::new(self.pixels - 1)
-            .ratio(1.6)
-            .mono()
-            .tone(Role::Text);
+        let kind = theme::mono_style(self.pixels - 1, 1.6).color(theme::color(Role::Text));
         let room = width - 30.0;
         let mut lines = Vec::new();
         for source_line in source.split('\n') {
             let expanded = source_line.replace('\t', "    ");
-            for piece in wrap_lines(&expanded, kind, room) {
+            for piece in rustle::wrap_at_spaces(&expanded, &kind, room) {
                 lines.push(expanded[piece.start..piece.end].to_owned());
             }
         }
         CodeBox::new(move || {
             for content in lines {
                 row_arranged(
-                    Modifier::new().pad_x(3.5),
+                    Modifier::new().padding_xy(theme::sp(3.5), 0.0),
                     Arrangement::Start,
                     Alignment::Start,
                     move || {
-                        label_with(Modifier::new(), content, kind);
+                        styled_text(Modifier::new(), content, kind);
                     },
                 );
             }
@@ -457,7 +471,7 @@ impl Layout<'_> {
         .max_height(UNCUT)
         .modifier(Modifier::new().fill_max_width().width_in(0.0, width))
         .margin(0.0)
-        .inner(Modifier::new().pad_y(2))
+        .inner(Modifier::new().padding_xy(0.0, theme::sp(2)))
         .build();
     }
 
@@ -495,11 +509,12 @@ impl Layout<'_> {
         let cell_width = ((width - 2.0) / columns as f32).floor();
         let pixels = self.pixels - 1;
         let own = Modifier::new()
-            .stroke(Role::Border, Radius::Lg)
-            .clip_to(Radius::None);
+            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+            .padding(1.0)
+            .clip();
         column_arranged(own, Arrangement::Start, Alignment::Start, || {
             row_arranged(
-                Modifier::new().fill(Role::Surface),
+                Modifier::new().background(theme::color(Role::Surface)),
                 Arrangement::Start,
                 Alignment::Start,
                 || {
@@ -510,7 +525,13 @@ impl Layout<'_> {
             );
             for cells in rows {
                 row_arranged(
-                    Modifier::new().stroke_side(Side::Top, 1.0, Role::Border),
+                    Modifier::new()
+                        .draw_behind(theme::edge(
+                            theme::Side::Top,
+                            1.0,
+                            theme::color(Role::Border),
+                        ))
+                        .padding_each(0.0, 1.0, 0.0, 0.0),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
@@ -527,7 +548,10 @@ impl Layout<'_> {
     #[track_caller]
     fn cell(&mut self, spans: &[Span], pixels: u32, strong: bool, tone: Role, width: f32) {
         column_arranged(
-            Modifier::new().width(width).pad_x(2.5).pad_y(1.5),
+            Modifier::new()
+                .width(width)
+                .padding_xy(theme::sp(2.5), 0.0)
+                .padding_xy(0.0, theme::sp(1.5)),
             Arrangement::Start,
             Alignment::Start,
             || self.text(Modifier::new(), spans, pixels, strong, tone, width - 20.0),
@@ -589,9 +613,12 @@ impl Layout<'_> {
                     move || {
                         for (content, inline) in runs {
                             let pressed = match (links, inline.target) {
-                                (Some(base), target) if target > 0 => Modifier::new()
-                                    .cursor(CursorIcon::Pointer)
-                                    .target(FocusId(base + u64::from(target) - 1)),
+                                (Some(base), target) if target > 0 => {
+                                    Modifier::new().cursor(CursorIcon::Pointer).control(
+                                        FocusId(base + u64::from(target) - 1),
+                                        reduce(FocusId(base + u64::from(target) - 1)),
+                                    )
+                                }
                                 _ => Modifier::new(),
                             };
                             run(pressed, content, inline, pixels, strong, tone);
@@ -629,7 +656,9 @@ impl Layout<'_> {
 
     /// How wide `content` is when set as `inline` in `pixels` tall type, heavier when `strong`.
     fn measure(&mut self, content: &str, inline: Inline, pixels: u32, strong: bool) -> f32 {
-        measure(content, setting(inline, pixels, strong)).0
+        rustle::layout_text(content, &setting(inline, pixels, strong), None)
+            .size()
+            .width
     }
 }
 
@@ -658,22 +687,23 @@ fn opening(line: &[(String, Inline)], inline: Inline) -> f32 {
 }
 
 /// The type of text set as `inline` in `pixels` tall type, heavier when `strong`.
-fn setting(inline: Inline, pixels: u32, strong: bool) -> Type {
+fn setting(inline: Inline, pixels: u32, strong: bool) -> rustle::TextStyle {
     let mut kind = if inline.code {
-        Type::new(pixels - 1)
-            .ratio(pixels as f32 * CODE_LEADING / (pixels - 1) as f32)
-            .mono()
+        theme::mono_style(
+            pixels - 1,
+            pixels as f32 * CODE_LEADING / (pixels - 1) as f32,
+        )
     } else {
-        Type::new(pixels).ratio(LEADING)
+        theme::text_style(pixels, LEADING)
     };
     if strong || inline.strong {
-        kind = kind.semibold();
+        kind = kind.font_weight(rustle::FontWeight::SEMI_BOLD);
     }
     if inline.emphasis {
         kind = kind.italic();
     }
     if inline.strike {
-        kind = kind.strike();
+        kind = kind.strikethrough();
     }
     if inline.link {
         kind = kind.underline();
@@ -690,13 +720,13 @@ fn run(modifier: Modifier, content: String, inline: Inline, pixels: u32, strong:
         Inline { strike: true, .. } => Role::Muted,
         _ => tone,
     };
-    let kind = setting(inline, pixels, strong).tone(colour);
+    let kind = setting(inline, pixels, strong).color(theme::color(colour));
     let modifier = match inline.code {
         true => Modifier::new()
-            .fill_rounded(Role::SurfaceHover, Radius::Sm)
+            .background_rounded(theme::color(Role::SurfaceHover), Radius::Sm.px())
             .chain(modifier)
             .padding_xy(CODE_PAD, 0.0),
         false => modifier,
     };
-    label_with(modifier, content, kind);
+    styled_text(modifier, content, kind);
 }

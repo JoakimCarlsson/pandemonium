@@ -1,6 +1,6 @@
 //! Tests of continuing a chat in a project: which projects are offered, what the choice asks of the server, and what the window does with the outcome.
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 
 use super::{CONTINUE, CONTINUE_PROJECT_BASE, CONTINUE_START};
 use crate::sample::{Session, Status};

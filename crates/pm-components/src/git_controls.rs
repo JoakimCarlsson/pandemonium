@@ -1,7 +1,7 @@
 //! What the reader does to the changes with git: picking several files, the menu on them, discarding, ignoring, reading a file and changing branch.
 
-use crate::kit::FocusId;
-use pm_field::Field;
+use crate::focus::FocusId;
+use rustle::TextFieldState;
 
 use crate::change_list::Group;
 use crate::git_menus::{MENU_ROW_BASE, MenuKind, OpenMenu};
@@ -38,9 +38,6 @@ pub const REPOSITORY_BRANCH_BASE: u64 = 8400;
 
 /// How many repositories the list of repositories shows at most: the folder's own and its submodules.
 pub const REPOSITORY_ROWS: usize = 40;
-
-/// The scrolling body of the file being read.
-pub const VIEWER_SCROLL: FocusId = FocusId(7032);
 
 /// Dismisses the banner saying what git refused to do.
 pub const TROUBLE_DISMISS: FocusId = FocusId(7069);
@@ -86,9 +83,6 @@ pub const CHANGES_MORE: FocusId = FocusId(7070);
 
 /// The handle between the changes and the graph, which is dragged to change how tall the graph is.
 pub const GRAPH_SASH: FocusId = FocusId(7071);
-
-/// The scrolling body of the graph.
-pub const GRAPH_SCROLL: FocusId = FocusId(7065);
 
 /// The first of the arrows that open a changed file; the rest follow it.
 pub const OPEN_ARROW_BASE: u64 = 8500;
@@ -145,11 +139,11 @@ pub struct GitControls {
     /// The question or list that is open, if one is.
     pub prompt: Option<Prompt>,
     /// The box a stash is named in.
-    pub stash_message: Field,
+    pub stash_message: TextFieldState,
     /// The box a session is given a new title in.
-    pub rename: Field,
+    pub rename: TextFieldState,
     /// The box a new or renamed file or folder is named in, and what it is for, while the tree is asking.
-    pub naming: Option<(crate::tree_actions::Naming, Field)>,
+    pub naming: Option<(crate::tree_actions::Naming, TextFieldState)>,
     /// The row of the tree last picked, where new files and folders go.
     pub tree_selected: Option<crate::tree_actions::TreeTarget>,
     /// The rows of the tree picked together, in the order they were picked.
@@ -182,7 +176,7 @@ pub struct GitControls {
     /// What each checked out submodule of the open session's folder has checked out: its path and its branch, or `@` and the commit.
     pub submodule_heads: Vec<(String, String)>,
     /// What branches are searched for and a new one is named by.
-    pub filter: Field,
+    pub filter: TextFieldState,
     /// The files open in the window, one tab each, in the order the tabs are in.
     pub viewers: Vec<crate::open_files::Viewer>,
     /// The tab of the file shown when a file is what the main area shows.
@@ -196,7 +190,7 @@ pub struct GitControls {
     /// The commits of the graph, newest first.
     pub history: Vec<pm_git::Commit>,
     /// How far down the graph is scrolled, in logical pixels.
-    pub graph_scroll: f32,
+    pub graph_scroll: rustle::ScrollState,
     /// What is being waited on from the remote, as the button words it.
     pub busy: Option<&'static str>,
     /// The session the graph was asked for, so that it is asked for once.
@@ -216,8 +210,8 @@ impl Default for GitControls {
             gesture: None,
             menu: None,
             prompt: None,
-            stash_message: Field::default(),
-            rename: Field::default(),
+            stash_message: TextFieldState::default(),
+            rename: TextFieldState::default(),
             naming: None,
             tree_selected: None,
             tree_marked: Vec::new(),
@@ -233,14 +227,14 @@ impl Default for GitControls {
             branches: Vec::new(),
             repository: None,
             submodule_heads: Vec::new(),
-            filter: Field::default(),
+            filter: TextFieldState::default(),
             viewers: Vec::new(),
             shown: None,
             changes_open: true,
             graph_open: false,
             graph_all: false,
             history: Vec::new(),
-            graph_scroll: 0.0,
+            graph_scroll: rustle::ScrollState::default(),
             busy: None,
             logged: None,
             working: false,
@@ -262,8 +256,8 @@ impl GitControls {
 
     /// Whether a branch is called exactly what was typed.
     pub fn exists(&self) -> bool {
-        let wanted = self.filter.text().trim();
-        self.branches.iter().any(|name| name == wanted)
+        let wanted = self.filter.text();
+        self.branches.iter().any(|name| name == wanted.trim())
     }
 }
 
@@ -711,12 +705,6 @@ impl WorkspaceState {
         self
     }
 
-    /// The state after the graph is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_graph(mut self, delta: f32, room: f32) -> Self {
-        self.git.graph_scroll = (self.git.graph_scroll + delta).clamp(0.0, room);
-        self
-    }
-
     /// Opens the file at `index` of the changes as it is in the folder.
     pub(crate) fn open_changed_file(&mut self, index: usize) {
         if let Some(path) = self
@@ -771,7 +759,7 @@ impl WorkspaceState {
             GRAPH_TOGGLE => self.git.graph_open = !self.git.graph_open,
             GRAPH_TARGET => {
                 self.git.graph_all = false;
-                self.git.graph_scroll = 0.0;
+                self.git.graph_scroll.jump_to(0.0);
                 self.ask_log();
             }
             GRAPH_FETCH => self.remote("fetch", "Fetching…"),
@@ -803,7 +791,7 @@ impl WorkspaceState {
         };
         self.close_other_menus();
         self.git.branch_menu = true;
-        self.git.filter = Field::default();
+        self.git.filter = TextFieldState::default();
         self.git.branches = Vec::new();
         self.outbox.push(Outgoing::SessionBranches {
             session: open,

@@ -18,7 +18,12 @@ use pm_components::browser_tabs::{TabInfo, changes_page, locked_message};
 use pm_components::elements::Element;
 use pm_components::exhibit::{Helper, PREVIEW_NEEDS_BROWSER, PREVIEW_NEEDS_UPDATE, PreviewRequest};
 use pm_components::figures::Drawing;
-use pm_components::kit::{Button, FocusId, Key, KeyEvent};
+use pm_components::focus::FocusId;
+
+use super::pointer::{Button, PointerState};
+use rustle::{Key, KeyEvent};
+
+use crate::keys;
 use pm_components::state::PROMPT;
 use pm_editor::{Action, Pressed};
 use pm_pages::Screen;
@@ -334,25 +339,22 @@ fn is_local(host: &str) -> bool {
 }
 
 /// The engine's modifiers for the keyboard keys held and the buttons down.
-fn held(keys: pm_components::kit::Modifiers, pointer: pm_components::kit::PointerState) -> Held {
+fn held(keys: rustle::Modifiers, pointer: PointerState) -> Held {
     let mut bits = 0;
     if keys.shift {
         bits |= Held::SHIFT;
     }
-    if keys.control {
+    if keys.ctrl {
         bits |= Held::CONTROL;
     }
     if keys.alt {
         bits |= Held::ALT;
     }
-    if keys.logo {
+    if keys.meta {
         bits |= Held::COMMAND;
     }
     if pointer.left {
         bits |= Held::LEFT_BUTTON;
-    }
-    if pointer.middle {
-        bits |= Held::MIDDLE_BUTTON;
     }
     if pointer.right {
         bits |= Held::RIGHT_BUTTON;
@@ -361,10 +363,12 @@ fn held(keys: pm_components::kit::Modifiers, pointer: pm_components::kit::Pointe
 }
 
 /// The Windows virtual-key code of `key`, which is how the engine names keys, and the text it types.
-fn typed(event: KeyEvent, modifiers: Held) -> Typed {
+fn typed(event: &KeyEvent, modifiers: Held) -> Typed {
     let plain = modifiers.0 & (Held::CONTROL | Held::ALT | Held::COMMAND) == 0;
-    let (code, text): (i32, Option<String>) = match event.key {
-        Key::Character(character) => {
+    let (code, text): (i32, Option<String>) = match &event.key {
+        Key::Character(_) if keys::is_space(event) => (0x20, plain.then(|| " ".to_owned())),
+        Key::Character(_) => {
+            let character = event.code_point().unwrap_or_default();
             let upper = character.to_ascii_uppercase();
             let code = match upper {
                 'A'..='Z' | '0'..='9' => upper as i32,
@@ -392,12 +396,12 @@ fn typed(event: KeyEvent, modifiers: Held) -> Typed {
         Key::End => (0x23, None),
         Key::PageUp => (0x21, None),
         Key::PageDown => (0x22, None),
-        Key::Space => (0x20, plain.then(|| " ".to_owned())),
         Key::ArrowLeft => (0x25, None),
         Key::ArrowUp => (0x26, None),
         Key::ArrowRight => (0x27, None),
         Key::ArrowDown => (0x28, None),
-        Key::Function(number) => (0x6F + i32::from(number), None),
+        Key::F(number) => (0x6F + i32::from(*number), None),
+        _ => (0, None),
     };
     Typed {
         pressed: event.pressed,
@@ -436,11 +440,7 @@ fn pointer_of(shape: Shape) -> Pointer {
 impl App {
     /// Where the window of the page or of the tools was drawn, if it was.
     fn browser_region(&self, id: FocusId) -> Option<Rect> {
-        self.output
-            .regions
-            .iter()
-            .find(|region| region.id == id)
-            .map(|region| region.rect)
+        self.place(id)
     }
 
     /// Whether the question about clearing cookies and site data is open, which covers the whole window.
@@ -508,7 +508,7 @@ impl App {
         self.model
             .update(|screen| *screen = std::mem::take(screen).browser_command(command));
         if command == BrowserCommand::Find {
-            self.focus.claim(BROWSER_FIND_FIELD);
+            self.focus.focus(BROWSER_FIND_FIELD);
         } else {
             self.focus.focus(BROWSER_BODY);
         }
@@ -615,7 +615,6 @@ impl App {
         };
         let button = match button {
             Button::Left => Mouse::Left,
-            Button::Middle => Mouse::Middle,
             Button::Right => Mouse::Right,
         };
         let modifiers = held(self.modifiers, self.pointer);
@@ -675,7 +674,7 @@ impl App {
     }
 
     /// Takes a key meant for what the pane draws over the page, and says whether it did: while the question about clearing is open Escape declines it and every other key is ignored; in the bar for finding Escape closes it, Shift+Enter goes to the previous match and the keys for finding work.
-    fn browser_overlay_key(&mut self, event: KeyEvent) -> bool {
+    fn browser_overlay_key(&mut self, event: &KeyEvent) -> bool {
         if self.browser_clearing() {
             if matches!(event.key, Key::Escape) {
                 self.model.update(|screen| {
@@ -698,7 +697,7 @@ impl App {
                 return true;
             }
             Key::Enter if event.modifiers.shift => Shortcut::FindPrevious,
-            _ => match shortcut_of(&event) {
+            _ => match shortcut_of(event) {
                 Some(shortcut @ (Shortcut::Find | Shortcut::FindNext | Shortcut::FindPrevious)) => {
                     shortcut
                 }
@@ -713,7 +712,7 @@ impl App {
     }
 
     /// Sends a key into the page that holds the keyboard, unless the browser takes it for itself, as for finding, zooming and loading again, or the keymap binds it to something the window does, and says whether it did.
-    pub(super) fn browser_key(&mut self, event: KeyEvent) -> bool {
+    pub(super) fn browser_key(&mut self, event: &KeyEvent) -> bool {
         if self.browser_overlay_key(event) {
             return true;
         }
@@ -721,20 +720,20 @@ impl App {
             return false;
         };
         if id == BROWSER_BODY
-            && let Some(shortcut) = shortcut_of(&event)
+            && let Some(shortcut) = shortcut_of(event)
         {
             self.model.update(|screen| {
                 let Screen::Workspace(state) = screen;
                 state.browser_shortcut(shortcut);
             });
             if shortcut == Shortcut::Find {
-                self.focus.claim(BROWSER_FIND_FIELD);
+                self.focus.focus(BROWSER_FIND_FIELD);
             }
             return true;
         }
         let modifiers = event.modifiers;
-        if (modifiers.control || modifiers.alt || modifiers.logo)
-            && let Some(chord) = Self::chord_of(&event)
+        if (modifiers.ctrl || modifiers.alt || modifiers.meta)
+            && let Some(chord) = Self::chord_of(event)
             && !matches!(
                 self.keymap()
                     .press_among(&self.pending, &chord, Action::everywhere),
@@ -751,14 +750,14 @@ impl App {
     }
 
     /// Tells the page that holds the keyboard a key came up, as pages that listen for `keyup` or track held keys expect, unless the browser took the press for itself.
-    pub(super) fn browser_key_released(&mut self, event: KeyEvent) {
+    pub(super) fn browser_key_released(&mut self, event: &KeyEvent) {
         if self.browser_clearing() {
             return;
         }
         let Some(id) = self.browser_focused() else {
             return;
         };
-        if id == BROWSER_BODY && shortcut_of(&event).is_some() {
+        if id == BROWSER_BODY && shortcut_of(event).is_some() {
             return;
         }
         let key = typed(event, held(event.modifiers, self.pointer));
@@ -1487,7 +1486,7 @@ impl App {
                             || tab.pointer != *pointer
                             || (!(typing && Some(*id) == active)
                                 && !address.is_empty()
-                                && tab.address.text() != address)
+                                && tab.address.text() != *address)
                     })
             })
         });

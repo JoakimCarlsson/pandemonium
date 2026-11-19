@@ -1,7 +1,10 @@
 //! The questions the source control panel asks before it does something that cannot be taken back, and the lists it asks a choice from.
 
-use crate::kit::sp;
-use crate::kit::{FocusId, Role, Side, Styled, Type, label};
+use crate::focus::FocusId;
+use crate::select::styled_text;
+use crate::theme;
+use crate::theme::Role;
+use crate::theme::sp;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
@@ -121,7 +124,7 @@ impl WorkspaceState {
         self.git.menu = None;
         self.git.branch_menu = false;
         if prompt == Prompt::StashMessage {
-            self.git.stash_message = pm_field::Field::default();
+            self.git.stash_message = rustle::TextFieldState::default();
         }
         self.git.prompt = Some(prompt);
     }
@@ -296,12 +299,11 @@ fn question(title: String, words: &str, confirm: &str, variant: Variant) {
 }
 
 /// The type a question's title is set in.
-fn title_type() -> Type {
-    Type::new(15)
-        .ratio(1.4)
-        .tone(Role::Text)
-        .truncate()
-        .medium()
+fn title_type() -> rustle::TextStyle {
+    theme::text_style(15, 1.4)
+        .font_weight(rustle::FontWeight::MEDIUM)
+        .color(theme::color(Role::Text))
+        .max_lines(1)
 }
 
 /// Emits the row of a question's buttons, pushed to its right end: the one that says no, then `confirm` when there is one.
@@ -310,8 +312,8 @@ fn buttons(cancel: FocusId, confirm: Option<(&str, FocusId, Variant)>) {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .pad_x(5)
-            .pad_side(Side::Bottom, 5),
+            .padding_xy(theme::sp(5), 0.0)
+            .padding_each(0.0, 0.0, 0.0, theme::sp(5)),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         || {
@@ -337,12 +339,12 @@ pub(crate) fn question_of(
         .width(WIDTH)
         .build_with(|| {
             column_arranged(
-                Modifier::new().pad(5),
+                Modifier::new().padding(theme::sp(5)),
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Start,
                 || {
                     for title in wrap(&title, 15, WIDTH - 40.0) {
-                        label(title, title_type());
+                        styled_text(Modifier::new(), title, title_type());
                     }
                     for words in wrap(words, 13, WIDTH - 40.0) {
                         line(words, 13, 1.5, Role::Muted);
@@ -355,16 +357,22 @@ pub(crate) fn question_of(
 
 /// Emits a box named `title` for `field` to be typed in, with the button `confirm` that accepts it.
 #[track_caller]
-fn naming_box(title: &str, field: &pm_field::Field, id: FocusId, placeholder: &str, confirm: &str) {
+fn naming_box(
+    title: &str,
+    field: &rustle::TextFieldState,
+    id: FocusId,
+    placeholder: &str,
+    confirm: &str,
+) {
     Modal::new(PROMPT_OUTSIDE, PROMPT_INSIDE)
         .width(WIDTH)
         .build_with(|| {
             column_arranged(
-                Modifier::new().fill_max_width().pad(5),
+                Modifier::new().fill_max_width().padding(theme::sp(5)),
                 Arrangement::SpacedBy(sp(3)),
                 Alignment::Start,
                 || {
-                    label(title, title_type());
+                    styled_text(Modifier::new(), title, title_type());
                     Input::new(field, id)
                         .modifier(Modifier::new().fill_max_width())
                         .placeholder(placeholder)
@@ -386,19 +394,29 @@ fn stash_list(state: &WorkspaceState, action: StashAction) {
         .width(WIDTH)
         .build_with(|| {
             column_arranged(
-                Modifier::new().fill_max_width().pad(3),
+                Modifier::new().fill_max_width().padding(theme::sp(3)),
                 Arrangement::SpacedBy(sp(1)),
                 Alignment::Start,
                 || {
                     column_arranged(
-                        Modifier::new().pad_x(2).pad_side(Side::Bottom, 2),
+                        Modifier::new().padding_xy(theme::sp(2), 0.0).padding_each(
+                            0.0,
+                            0.0,
+                            0.0,
+                            theme::sp(2),
+                        ),
                         Arrangement::Start,
                         Alignment::Start,
-                        || label(action.title(), title_type()),
+                        || styled_text(Modifier::new(), action.title(), title_type()),
                     );
                     if state.git.stashes.is_empty() {
                         column_arranged(
-                            Modifier::new().pad_x(2).pad_side(Side::Bottom, 2),
+                            Modifier::new().padding_xy(theme::sp(2), 0.0).padding_each(
+                                0.0,
+                                0.0,
+                                0.0,
+                                theme::sp(2),
+                            ),
                             Arrangement::Start,
                             Alignment::Start,
                             || line("There are no stashes.", 13, 1.4, Role::Subtle),

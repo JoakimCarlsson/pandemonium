@@ -1,7 +1,10 @@
 //! The bar under a session's header that tells how the pull request of its branch stands, with its checks and review, and offers what can be done next: push, open, update, mark ready, merge, reopen, and delete the branch from its remote. It names the review as the code host its repository is on does, and offers only pushing when that host is not supported.
 
-use crate::kit::sp;
-use crate::kit::{FocusId, IconName, Radius, Role, Side, Styled, Tooltip};
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::theme;
+use crate::theme::Role;
+use crate::theme::sp;
 use pm_git::{CheckState, CodeHost, PullRequestStatus, ReviewDecision};
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, row_arranged};
@@ -162,7 +165,7 @@ fn checks(request: &PullRequestStatus) {
             },
         );
     })
-    .modifier(Modifier::new().tooltip(format!("{summary}: Open the Checks")))
+    .tooltip(format!("{summary}: Open the Checks"))
     .build();
 }
 
@@ -181,19 +184,17 @@ fn review(request: &PullRequestStatus) {
 /// Emits a small button saying `label` that does `id`, filled when it is the `main` thing to do, with `tooltip` when there is one.
 #[track_caller]
 fn action(label: &str, id: FocusId, main: bool, tooltip: Option<String>) {
-    let mut modifier = Modifier::new();
-    if let Some(words) = tooltip {
-        modifier = modifier.tooltip(words);
-    }
-    Button::new(label, id)
+    let button = Button::new(label, id)
         .variant(if main {
             Variant::Default
         } else {
             Variant::Outline
         })
-        .size(Size::Xs)
-        .modifier(modifier)
-        .build();
+        .size(Size::Xs);
+    match tooltip {
+        Some(words) => button.tooltip(words).build(),
+        None => button.build(),
+    }
 }
 
 /// Emits the buttons for what can be done to the branch of `session` and its pull request, as that stands.
@@ -261,10 +262,15 @@ pub fn bar(session: &Session) {
         .map(|host| host.name.as_str())
         .filter(|name| !name.is_empty());
     let modifier = Modifier::new()
-        .h(10)
-        .clip_to(Radius::None)
-        .stroke_side(Side::Bottom, 1.0, Role::Border)
-        .pad_x(5);
+        .height(theme::sp(10))
+        .clip()
+        .draw_behind(theme::edge(
+            theme::Side::Bottom,
+            1.0,
+            theme::color(Role::Border),
+        ))
+        .padding_each(0.0, 0.0, 0.0, 1.0)
+        .padding_xy(theme::sp(5), 0.0);
     row_arranged(
         modifier,
         Arrangement::SpacedBy(sp(3)),
@@ -288,10 +294,10 @@ pub fn bar(session: &Session) {
                         .variant(Variant::Ghost)
                         .size(Size::Xs)
                         .mark(move || state_badge(number, said, tone))
-                        .modifier(Modifier::new().tooltip(match host_name {
+                        .tooltip(match host_name {
                             Some(name) => format!("Open on {name}: {}", request.title),
                             None => format!("Open: {}", request.title),
-                        }))
+                        })
                         .build();
                     checks(request);
                     review(request);

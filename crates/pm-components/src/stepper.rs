@@ -1,7 +1,11 @@
 //! The stepper: stops along a line, the current one marked, as a track to press or as a bar that counts.
 
-use crate::kit::sp;
-use crate::kit::{FocusId, Interactive, Radius, Role, Styled};
+use crate::events::Interactive;
+use crate::events::reduce;
+use crate::focus::FocusId;
+use crate::theme;
+use crate::theme::sp;
+use crate::theme::{Radius, Role};
 use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
@@ -80,9 +84,9 @@ impl Stepper {
         let (stops, current, first) = (self.stops, self.current, self.first);
         let own = Modifier::new()
             .width(112.0)
-            .h(6)
-            .fill_rounded(Role::SurfaceHover, Radius::Full)
-            .pad_x(1);
+            .height(theme::sp(6))
+            .background_rounded(theme::color(Role::SurfaceHover), Radius::Full.px())
+            .padding_xy(theme::sp(1), 0.0);
         row_arranged(
             self.modifier.chain(own),
             Arrangement::SpaceBetween,
@@ -92,23 +96,29 @@ impl Stepper {
                     let id = FocusId(first + position as u64);
                     row_arranged(
                         Modifier::new()
-                            .square(4)
+                            .size(theme::sp(4), theme::sp(4))
                             .cursor(CursorIcon::Pointer)
-                            .target(id),
+                            .control(id, reduce(id)),
                         Arrangement::Center,
                         Alignment::Center,
                         move || {
                             if current == Some(position) {
                                 rustle::spacer(
                                     Modifier::new()
-                                        .square(4)
-                                        .fill_rounded(Role::Text, Radius::Full),
+                                        .size(theme::sp(4), theme::sp(4))
+                                        .background_rounded(
+                                            theme::color(Role::Text),
+                                            Radius::Full.px(),
+                                        ),
                                 );
                             } else {
                                 rustle::spacer(
                                     Modifier::new()
-                                        .square(1)
-                                        .fill_rounded(Role::Subtle, Radius::Full),
+                                        .size(theme::sp(1), theme::sp(1))
+                                        .background_rounded(
+                                            theme::color(Role::Subtle),
+                                            Radius::Full.px(),
+                                        ),
                                 );
                             }
                         },
@@ -140,7 +150,10 @@ impl Stepper {
                                 Role::SurfaceActive
                             };
                             rustle::spacer(
-                                Modifier::new().w(8).h(1.5).fill_rounded(tone, Radius::Full),
+                                Modifier::new()
+                                    .width(theme::sp(8))
+                                    .height(theme::sp(1.5))
+                                    .background_rounded(theme::color(tone), Radius::Full.px()),
                             );
                         }
                     },

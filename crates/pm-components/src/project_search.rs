@@ -1,18 +1,21 @@
 //! Searching the text of every file of the project from the review panel: the box the search is typed in, the ways of matching and the hits, grouped by file.
 
-use crate::kit::sp;
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use std::collections::HashSet;
 use std::ops::Range;
 
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tooltip,
-    Type, label, label_with, scroll_area,
-};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::select::styled_text;
+use crate::theme::Role;
 use pm_editor::Query;
-use pm_field::{Edit, Field};
 use pm_protocol::Location;
+use rustle::TextFieldState;
 use rustle::{CursorIcon, Modifier};
 
 use crate::file_icon::file_icon;
@@ -20,7 +23,7 @@ use crate::find::switch;
 use crate::input::Input;
 use crate::parts::{glyph, line};
 use crate::size::Size;
-use crate::state::{Outgoing, ReviewTab, TREE_SCROLL, WorkspaceState};
+use crate::state::{Outgoing, ReviewTab, WorkspaceState};
 
 /// The field the text looked for in the project is typed in.
 pub const PROJECT_SEARCH_FIELD: FocusId = FocusId(7_406_000);
@@ -71,7 +74,7 @@ type Asked = (usize, String, bool, bool);
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProjectSearch {
     /// What is looked for.
-    pub query: Field,
+    pub query: TextFieldState,
     /// Whether upper and lower case must match.
     pub case: bool,
     /// Whether the text is a regular expression.
@@ -92,7 +95,7 @@ impl Default for ProjectSearch {
     /// An empty search that has asked for nothing.
     fn default() -> Self {
         Self {
-            query: Field::new(""),
+            query: TextFieldState::new(""),
             case: false,
             regex: false,
             asked: None,
@@ -166,15 +169,14 @@ impl WorkspaceState {
         self.review = true;
         self.show_review_tab(ReviewTab::Search);
         if let Some(selected) = selected {
-            self.project_search.query = Field::new(selected);
+            self.project_search.query = TextFieldState::new(selected);
         }
-        self.project_search.query.apply(Edit::SelectAll);
+        self.project_search.query.select_all();
         self.project_searched()
     }
 
-    /// The state after the text looked for was changed by `edit`.
-    pub fn project_search_typed(mut self, edit: Edit) -> Self {
-        self.project_search.query.apply(edit);
+    /// The state after the reader changed the text looked for: the server is asked for its hits.
+    pub fn project_search_typed(self) -> Self {
         self.project_searched()
     }
 
@@ -237,7 +239,7 @@ impl WorkspaceState {
                 search.groups.clear();
             }
         }
-        self.tree_scroll = 0.0;
+        self.tree_scroll.jump_to(0.0);
         self
     }
 
@@ -259,7 +261,7 @@ impl WorkspaceState {
                 return self.project_searched();
             }
             PROJECT_SEARCH_CLEAR => {
-                self.project_search.query = Field::new("");
+                self.project_search.query = TextFieldState::new("");
                 return self.project_searched();
             }
             _ => {}
@@ -324,41 +326,47 @@ fn hit_row(index: usize, location: &Location, matcher: &Query) {
     let id = FocusId(SEARCH_HIT_BASE + index as u64);
     let modifier = Modifier::new()
         .fill_max_width()
-        .h(6)
-        .looks_of(Looks::new().hover(Role::SurfaceHover), id)
+        .height(theme::sp(6))
+        .interaction_focused(crate::focus::is_held(id))
+        .interaction_background((theme::InteractionTones::new().hover(Role::SurfaceHover)).colors())
         .cursor(CursorIcon::Pointer)
-        .target(id)
-        .pad_side(Side::Left, 9)
-        .pad_side(Side::Right, 3);
-    let code = Type::new(12).ratio(1.4).mono();
+        .control(id, reduce(id))
+        .padding_each(theme::sp(9), 0.0, 0.0, 0.0)
+        .padding_each(0.0, 0.0, theme::sp(3), 0.0);
+    let code = theme::mono_style(12, 1.4);
     row_arranged(
         modifier,
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         || {
             row_arranged(
-                Modifier::new().weight(1.0).clip_to(Radius::None),
+                Modifier::new().weight(1.0).clip(),
                 Arrangement::Start,
                 Alignment::Center,
                 || {
-                    label(before, code.tone(Role::Muted));
+                    styled_text(
+                        Modifier::new(),
+                        before,
+                        code.color(theme::color(Role::Muted)),
+                    );
                     if !found.is_empty() {
-                        label_with(
-                            Modifier::new().fill(Role::SurfaceActive),
+                        styled_text(
+                            Modifier::new().background(theme::color(Role::SurfaceActive)),
                             found,
-                            code.tone(Role::Text).truncate(),
+                            code.color(theme::color(Role::Text)).max_lines(1),
                         );
                     }
-                    label_with(
+                    styled_text(
                         Modifier::new().weight(1.0),
                         after,
-                        code.tone(Role::Muted).truncate(),
+                        code.color(theme::color(Role::Muted)).max_lines(1),
                     );
                 },
             );
-            label(
+            styled_text(
+                Modifier::new(),
                 (location.span.start.line + 1).to_string(),
-                Type::new(11).ratio(1.4).mono().tone(Role::Subtle),
+                theme::mono_style(11, 1.4).color(theme::color(Role::Subtle)),
             );
         },
     );
@@ -377,11 +385,12 @@ fn group_row(place: usize, group: &Group, folded: bool) {
     let id = FocusId(SEARCH_GROUP_BASE + place as u64);
     let modifier = Modifier::new()
         .fill_max_width()
-        .h(6)
-        .looks_of(Looks::new().hover(Role::SurfaceHover), id)
+        .height(theme::sp(6))
+        .interaction_focused(crate::focus::is_held(id))
+        .interaction_background((theme::InteractionTones::new().hover(Role::SurfaceHover)).colors())
         .cursor(CursorIcon::Pointer)
-        .target(id)
-        .pad_x(3);
+        .control(id, reduce(id))
+        .padding_xy(theme::sp(3), 0.0);
     row_arranged(
         modifier,
         Arrangement::SpacedBy(sp(1.5)),
@@ -390,10 +399,12 @@ fn group_row(place: usize, group: &Group, folded: bool) {
             glyph(chevron, 3.5, Role::Muted);
             file_icon(name, 4.0);
             line(name, 13, 1.4, Role::Text);
-            label_with(
+            styled_text(
                 Modifier::new().weight(1.0),
                 folder,
-                Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
+                theme::text_style(12, 1.4)
+                    .color(theme::color(Role::Subtle))
+                    .max_lines(1),
             );
             line(group.hits.len().to_string(), 11, 1.4, Role::Muted);
         },
@@ -440,7 +451,10 @@ pub fn panel(state: &WorkspaceState) {
         Alignment::Start,
         || {
             column_arranged(
-                Modifier::new().fill_max_width().pad_x(3).pad_y(2),
+                Modifier::new()
+                    .fill_max_width()
+                    .padding_xy(theme::sp(3), 0.0)
+                    .padding_xy(0.0, theme::sp(2)),
                 Arrangement::SpacedBy(sp(1.5)),
                 Alignment::Start,
                 || {
@@ -470,10 +484,12 @@ pub fn panel(state: &WorkspaceState) {
                         Arrangement::SpacedBy(sp(1)),
                         Alignment::Center,
                         || {
-                            label_with(
+                            styled_text(
                                 Modifier::new().weight(1.0),
                                 said.as_str(),
-                                Type::new(12).ratio(1.4).tone(tone).truncate(),
+                                theme::text_style(12, 1.4)
+                                    .color(theme::color(tone))
+                                    .max_lines(1),
                             );
                             if search.total() > 0 {
                                 crate::button::Button::icon(
@@ -482,38 +498,35 @@ pub fn panel(state: &WorkspaceState) {
                                 )
                                 .variant(crate::button::Variant::Ghost)
                                 .size(Size::Sm)
-                                .modifier(Modifier::new().tooltip("Open Results in Editor"))
+                                .tooltip("Open Results in Editor")
                                 .build();
                             }
                         },
                     );
                 },
             );
-            scroll_area(
+            column_arranged(
                 Modifier::new()
                     .fill_max_width()
                     .weight(1.0)
-                    .clip_to(Radius::None),
-                Scroll::from_start(TREE_SCROLL, state.tree_scroll),
+                    .clip()
+                    .vertical_scroll(&state.tree_scroll)
+                    .fill_max_width()
+                    .padding_xy(0.0, theme::sp(1)),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
-                    column_arranged(
-                        Modifier::new().fill_max_width().pad_y(1),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            let mut index = 0;
-                            for (place, group) in search.groups.iter().enumerate() {
-                                let folded = search.folded.contains(&group.path);
-                                group_row(place, group, folded);
-                                for location in &group.hits {
-                                    if !folded {
-                                        hit_row(index, location, &matcher);
-                                    }
-                                    index += 1;
-                                }
+                    let mut index = 0;
+                    for (place, group) in search.groups.iter().enumerate() {
+                        let folded = search.folded.contains(&group.path);
+                        group_row(place, group, folded);
+                        for location in &group.hits {
+                            if !folded {
+                                hit_row(index, location, &matcher);
                             }
-                        },
-                    );
+                            index += 1;
+                        }
+                    }
                 },
             );
         },

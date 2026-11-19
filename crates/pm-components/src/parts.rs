@@ -1,6 +1,10 @@
 //! Small pieces the screens share: a line of text, a glyph, a check box.
 
-use crate::kit::{IconName, Styled, Tone, Type, icon, label, label_with};
+use crate::icons::IconName;
+use crate::icons::icon;
+use crate::select::styled_text;
+use crate::theme;
+use crate::theme::Tone;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged};
 
@@ -11,9 +15,12 @@ const CHARACTER_WIDTH: f32 = 0.53;
 /// in `tone`, ended with an ellipsis when the box it sits in is too narrow for it.
 #[track_caller]
 pub fn line(content: impl Into<String>, pixels: u32, ratio: f32, tone: impl Into<Tone>) {
-    label(
+    styled_text(
+        Modifier::new(),
         content,
-        Type::new(pixels).ratio(ratio).tone(tone).truncate(),
+        theme::text_style(pixels, ratio)
+            .color(theme::color(tone))
+            .max_lines(1),
     );
 }
 
@@ -26,10 +33,12 @@ pub fn glyph(name: IconName, steps: f32, tone: impl Into<Tone>) {
 /// Emits a box that takes the room left in its row and cuts a line of `content` short at its edge.
 #[track_caller]
 pub fn clipped(content: impl Into<String>, pixels: u32, tone: impl Into<Tone>) {
-    label_with(
+    styled_text(
         Modifier::new().weight(1.0),
         content,
-        Type::new(pixels).ratio(1.4).tone(tone).truncate(),
+        theme::text_style(pixels, 1.4)
+            .color(theme::color(tone))
+            .max_lines(1),
     );
 }
 
@@ -44,9 +53,9 @@ pub fn spacer() {
 /// Lines break as the text is measured, so a word wider than `width` is cut where it must be. A line the wrapping broke at a space keeps it, so that text selected across it is copied as one line.
 #[track_caller]
 pub fn paragraph(content: &str, pixels: u32, ratio: f32, tone: impl Into<Tone>, width: f32) {
-    let kind = Type::new(pixels).ratio(ratio);
+    let kind = theme::text_style(pixels, ratio);
     let tone = tone.into();
-    let lines = crate::kit::wrap_lines(content, kind, width.max(32.0));
+    let lines = rustle::wrap_at_spaces(content, &kind, width.max(32.0));
     column_arranged(
         Modifier::new(),
         Arrangement::Start,
@@ -54,9 +63,13 @@ pub fn paragraph(content: &str, pixels: u32, ratio: f32, tone: impl Into<Tone>, 
         || {
             for part in lines {
                 if part.end == part.start {
-                    rustle::spacer(Modifier::new().h(3));
+                    rustle::spacer(Modifier::new().height(theme::sp(3)));
                 } else {
-                    label(&content[part.start..part.end], kind.tone(tone));
+                    styled_text(
+                        Modifier::new(),
+                        &content[part.start..part.end],
+                        kind.color(theme::color(tone)),
+                    );
                 }
             }
         },
@@ -66,7 +79,7 @@ pub fn paragraph(content: &str, pixels: u32, ratio: f32, tone: impl Into<Tone>, 
 /// The lines `content` breaks into when each may hold as many characters of
 /// `pixels` tall type as fit in `width` logical pixels, since text does not wrap.
 pub fn wrap(content: &str, pixels: u32, width: f32) -> Vec<String> {
-    let character = pixels as f32 * crate::kit::theme::text_scale() * CHARACTER_WIDTH;
+    let character = pixels as f32 * crate::theme::text_scale() * CHARACTER_WIDTH;
     let columns = ((width / character) as usize).max(8);
     let mut lines: Vec<String> = Vec::new();
     for word in content.split_whitespace() {

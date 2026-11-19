@@ -1,12 +1,12 @@
 //! What the keys of a terminal send the shell.
 
-use crate::kit::{Key, KeyEvent};
+use rustle::{Key, KeyEvent};
 
 /// The modifier number the extended forms of a key carry: one, plus one for shift, two for alt and four for control.
 fn modifier_code(event: &KeyEvent) -> u8 {
     1 + u8::from(event.modifiers.shift)
         + 2 * u8::from(event.modifiers.alt)
-        + 4 * u8::from(event.modifiers.control)
+        + 4 * u8::from(event.modifiers.ctrl)
 }
 
 /// The sequence for a key that ends in a letter, such as an arrow, in the plain, the application or the modified form.
@@ -50,13 +50,14 @@ fn control_byte(character: char) -> Option<u8> {
 ///
 /// `application_cursor` is whether the program asked for the application form of the arrow keys.
 pub fn bytes(event: &KeyEvent, application_cursor: bool) -> Option<Vec<u8>> {
-    if !event.pressed || event.modifiers.logo {
+    if !event.pressed || event.modifiers.meta {
         return None;
     }
     let alt = event.modifiers.alt;
-    let control = event.modifiers.control;
+    let control = event.modifiers.ctrl;
     let word_motion = alt && !control && !event.modifiers.shift;
-    let sent = match event.key {
+    let space = matches!(&event.key, Key::Character(text) if text == " ");
+    let sent = match &event.key {
         Key::Enter => b"\r".to_vec(),
         Key::Escape => b"\x1b".to_vec(),
         Key::Tab if event.modifiers.shift => b"\x1b[Z".to_vec(),
@@ -74,14 +75,15 @@ pub fn bytes(event: &KeyEvent, application_cursor: bool) -> Option<Vec<u8>> {
         Key::ArrowLeft => lettered(event, 'D', application_cursor),
         Key::Home => lettered(event, 'H', application_cursor),
         Key::End => lettered(event, 'F', application_cursor),
-        Key::Space if control => vec![0],
-        Key::Space => b" ".to_vec(),
-        Key::Character(character) if control => vec![control_byte(character)?],
-        Key::Character(character) => character.to_string().into_bytes(),
-        Key::Function(number @ 1..=4) => vec![0x1b, b'O', b'P' + number - 1],
-        Key::Function(number) => tilded(event, function_code(number)?),
+        Key::Character(_) if space && control => vec![0],
+        Key::Character(_) if space => b" ".to_vec(),
+        Key::Character(_) if control => vec![control_byte(event.code_point()?)?],
+        Key::Character(_) => event.code_point()?.to_string().into_bytes(),
+        Key::F(number @ 1..=4) => vec![0x1b, b'O', b'P' + number - 1],
+        Key::F(number @ 5..=12) => tilded(event, function_code(*number)?),
+        _ => return None,
     };
-    let alt_prefixed = alt && matches!(event.key, Key::Character(_) | Key::Space | Key::Backspace);
+    let alt_prefixed = alt && matches!(&event.key, Key::Character(_) | Key::Backspace);
     Some(if alt_prefixed {
         [b"\x1b".as_slice(), &sent].concat()
     } else {

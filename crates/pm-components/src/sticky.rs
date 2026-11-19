@@ -1,7 +1,12 @@
 //! Sticky scroll: the lines that open the blocks the first line in view is inside of, kept at the top of the file as it scrolls; pressing one goes to it.
 
-use crate::kit::{FocusId, Hovered, Interactive, Looks, Radius, Role, Side, Styled, Type, label};
+use crate::events::Interactive;
+use crate::events::reduce;
+use crate::focus::FocusId;
 use crate::marked::{CaretLook, Mark, Paint, marked_line};
+use crate::select::styled_text;
+use crate::theme;
+use crate::theme::Role;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
 
@@ -38,43 +43,53 @@ fn kept_line(document: &Document, index: usize, place: usize, settings: &EditorS
     let height = settings.row_height();
     let numbers = settings.line_numbers;
     let id = FocusId(STICKY_BASE + place as u64);
-    let kind = Type::code(font).ratio(1.4);
+    let kind = theme::code_style(font, 1.4);
     let content = document.field.text()[line].to_string();
     row_arranged(
         Modifier::new()
             .fill_max_width()
             .height(height)
-            .looks_of(Looks::new().hover(Role::SurfaceHover), id)
+            .interaction_focused(crate::focus::is_held(id))
+            .interaction_background(
+                (theme::InteractionTones::new().hover(Role::SurfaceHover)).colors(),
+            )
             .cursor(CursorIcon::Pointer)
-            .target(id),
+            .control(id, reduce(id)),
         Arrangement::Start,
         Alignment::Center,
         move || {
             rustle::spacer(Modifier::new().width(3.0));
             let gutter = if numbers {
-                Modifier::new().w(13)
+                Modifier::new().width(theme::sp(13))
             } else {
-                Modifier::new().w(2)
+                Modifier::new().width(theme::sp(2))
             };
             row_arranged(
-                gutter.pad_side(Side::Right, 3),
+                gutter.padding_each(0.0, 0.0, theme::sp(3), 0.0),
                 Arrangement::End,
                 Alignment::Center,
                 move || {
                     if numbers {
-                        label((index + 1).to_string(), kind.tone(Role::Subtle));
+                        styled_text(
+                            Modifier::new(),
+                            (index + 1).to_string(),
+                            kind.color(theme::color(Role::Subtle)),
+                        );
                     }
                 },
             );
             row_arranged(
-                Modifier::new().weight(1.0).clip_to(Radius::None).pad_x(2),
+                Modifier::new()
+                    .weight(1.0)
+                    .clip()
+                    .padding_xy(theme::sp(2), 0.0),
                 Arrangement::Start,
                 Alignment::Start,
                 move || {
                     marked_line(
                         Modifier::new(),
                         &content,
-                        kind.tone(Role::Text),
+                        kind.color(theme::color(Role::Text)),
                         marks,
                         CaretLook::default(),
                     );
@@ -104,8 +119,13 @@ pub(crate) fn sticky(
         Modifier::new()
             .align(BoxAlignment::TopStart)
             .fill_max_width()
-            .fill(Role::Background)
-            .stroke_side(Side::Bottom, 1.0, Role::Border),
+            .background(theme::color(Role::Background))
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0),
         Arrangement::Start,
         Alignment::Start,
         || {
@@ -130,7 +150,7 @@ impl WorkspaceState {
         let crate::open_files::Contents::Text(document) = &mut viewer.contents else {
             return self;
         };
-        let first = (viewer.scroll.max(0.0) / row).floor() as usize;
+        let first = (viewer.scroll.offset().max(0.0) / row).floor() as usize;
         let Some(line) = document
             .sticky_lines(first, columns, MOST)
             .get(above)
@@ -142,7 +162,7 @@ impl WorkspaceState {
         let shown = document
             .wrapped_row_of_line(line, columns)
             .saturating_sub(above);
-        viewer.scroll = shown as f32 * row;
+        viewer.scroll.jump_to(shown as f32 * row);
         self
     }
 }

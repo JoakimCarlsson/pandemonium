@@ -1,11 +1,13 @@
 //! The rows of settings on each page of the settings window, the page of what a search found, and what pressing a row's control or writing in its box does.
 
-use pm_field::{Edit, Field};
+use crate::theme;
 use rustle::Modifier;
+use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
-use crate::kit::{FocusId, Role, Side, Styled, Type, label};
+use crate::focus::FocusId;
 use crate::parts::line;
+use crate::select::styled_text;
 use crate::settings::{SETTINGS_PICK_FILTER, SETTINGS_PICK_FIRST, Section};
 use crate::settings_catalog::{self, LISTS, OPEN_LIST, RESET, Setting};
 use crate::settings_ids::{IdRange, LIST_ADDS, LIST_FIELDS, LIST_LINES, LIST_REMOVES, PICKS};
@@ -15,6 +17,7 @@ use crate::settings_row::{
 };
 use crate::settings_values::Control;
 use crate::state::WorkspaceState;
+use crate::theme::Role;
 
 /// Whether `text` reads as an origin agents may be allowed to open: a host, optionally with a port, or a web address that begins with `http://` or `https://`, with no white space and no user name.
 fn origin_reads(text: &str) -> bool {
@@ -108,7 +111,7 @@ impl WorkspaceState {
             OPEN_LIST => {
                 let open = self.settings_page.picker == Some(setting);
                 self.settings_page.picker = (!open).then_some(setting);
-                self.settings_page.filter = Field::default();
+                self.settings_page.filter = TextFieldState::default();
                 return true;
             }
             _ if setting.is_text() || setting.list_place().is_some() => return true,
@@ -147,7 +150,7 @@ impl WorkspaceState {
         }
         self.settings_page
             .list_adds
-            .insert(listed, Field::default());
+            .insert(listed, TextFieldState::default());
     }
 
     /// Takes the line at `place` out of `listed`'s list, when it has one there.
@@ -173,7 +176,7 @@ impl WorkspaceState {
             return;
         };
         self.settings_page.picker = None;
-        self.settings_page.filter = Field::default();
+        self.settings_page.filter = TextFieldState::default();
         match setting.control(self) {
             Control::Choice(..) => setting.press(self, index),
             _ => setting.pick(self, index),
@@ -181,31 +184,15 @@ impl WorkspaceState {
         self.setting_changed(setting);
     }
 
-    /// Writes `edit` into the box `id` of a setting written as text, or the box narrowing the open list, and puts what the box then holds to work.
-    pub(crate) fn setting_edited(&mut self, id: FocusId, edit: Edit) {
-        if id == SETTINGS_PICK_FILTER {
-            self.settings_page.filter.apply(edit);
-            return;
-        }
-        if let Some(listed) = list_of(LIST_FIELDS, id) {
-            self.settings_page
-                .list_adds
-                .entry(listed)
-                .or_default()
-                .apply(edit);
-            return;
-        }
+    /// Puts to work what the reader wrote in the box `id` of a setting written as text.
+    pub(crate) fn setting_typed(&mut self, id: FocusId) {
         let Some(setting) = Setting::text_of(id) else {
             return;
         };
-        let text = setting.text(self);
-        let field = self
-            .settings_page
-            .fields
-            .entry(setting)
-            .or_insert_with(|| Field::new(text));
-        field.apply(edit);
-        let written = field.text().to_owned();
+        let Some(field) = self.settings_page.fields.get(&setting) else {
+            return;
+        };
+        let written = field.text();
         if written != setting.text(self) {
             setting.set_text(self, written);
             self.setting_changed(setting);
@@ -213,7 +200,7 @@ impl WorkspaceState {
     }
 
     /// The box `id` of a setting written as text, or of a list, or the box narrowing the open list, once it has been written in.
-    pub(crate) fn setting_field(&self, id: FocusId) -> Option<&Field> {
+    pub(crate) fn setting_field(&self, id: FocusId) -> Option<&TextFieldState> {
         if id == SETTINGS_PICK_FILTER {
             return Some(&self.settings_page.filter);
         }
@@ -234,7 +221,7 @@ pub(crate) fn is_setting_field(id: FocusId) -> bool {
 /// Whether `setting` shows in `state`: the pickers of themes only once there is more than one theme, and a language's settings only once a language is installed.
 fn shown(setting: Setting, state: &WorkspaceState) -> bool {
     match setting {
-        Setting::LightTheme | Setting::DarkTheme => crate::kit::theme::families().len() > 1,
+        Setting::LightTheme | Setting::DarkTheme => crate::theme::families().len() > 1,
         Setting::LanguageTabSize
         | Setting::LanguageIndent
         | Setting::LanguageFormat
@@ -271,7 +258,7 @@ pub(crate) fn setting_row(state: &WorkspaceState, setting: Setting, room: f32) {
                 .fields
                 .get(&setting)
                 .cloned()
-                .unwrap_or_else(|| Field::new(setting.text(state)));
+                .unwrap_or_else(|| TextFieldState::new(setting.text(state)));
             match setting.id(0) {
                 Some(id) => row.control(move || text_box(&field, id, placeholder), None),
                 None => row,
@@ -298,7 +285,7 @@ pub(crate) fn setting_row(state: &WorkspaceState, setting: Setting, room: f32) {
             }
         }
         Control::List(lines) => {
-            let empty = Field::default();
+            let empty = TextFieldState::default();
             let field = state
                 .settings_page
                 .list_adds
@@ -346,7 +333,13 @@ pub(crate) fn ruled<T>(items: Vec<T>, emit: impl Fn(T)) {
             for (place, item) in items.into_iter().enumerate() {
                 let modifier = Modifier::new().fill_max_width();
                 let modifier = if place < last {
-                    modifier.stroke_side(Side::Bottom, 1.0, Role::Border)
+                    modifier
+                        .draw_behind(theme::edge(
+                            theme::Side::Bottom,
+                            1.0,
+                            theme::color(Role::Border),
+                        ))
+                        .padding_each(0.0, 0.0, 0.0, 1.0)
                 } else {
                     modifier
                 };
@@ -373,25 +366,32 @@ pub(crate) fn page_rows(state: &WorkspaceState, section: Section, room: f32) {
 #[track_caller]
 pub(crate) fn group(title: &str, rows: impl FnOnce()) {
     column_arranged(
-        Modifier::new().fill_max_width().pad_side(Side::Top, 2),
+        Modifier::new()
+            .fill_max_width()
+            .padding_each(0.0, theme::sp(2), 0.0, 0.0),
         Arrangement::Start,
         Alignment::Start,
         || {
             row_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .stroke_side(Side::Bottom, 1.0, Role::Border)
-                    .pad_side(Side::Bottom, 1),
+                    .draw_behind(theme::edge(
+                        theme::Side::Bottom,
+                        1.0,
+                        theme::color(Role::Border),
+                    ))
+                    .padding_each(0.0, 0.0, 0.0, 1.0)
+                    .padding_each(0.0, 0.0, 0.0, theme::sp(1)),
                 Arrangement::Start,
                 Alignment::Center,
                 || {
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         title,
-                        Type::new(12)
-                            .ratio(1.4)
-                            .tone(Role::Muted)
-                            .truncate()
-                            .medium(),
+                        theme::text_style(12, 1.4)
+                            .font_weight(rustle::FontWeight::MEDIUM)
+                            .color(theme::color(Role::Muted))
+                            .max_lines(1),
                     );
                 },
             );
@@ -403,7 +403,7 @@ pub(crate) fn group(title: &str, rows: impl FnOnce()) {
 /// Emits what a search of every setting found, each under the page it is on, `room` logical pixels across; or a line saying nothing was.
 #[track_caller]
 pub(crate) fn results(state: &WorkspaceState, room: f32) {
-    let found: Vec<Setting> = settings_catalog::found(state.settings_page.find.text())
+    let found: Vec<Setting> = settings_catalog::found(&state.settings_page.find.text())
         .into_iter()
         .filter(|setting| shown(*setting, state))
         .collect();

@@ -4,8 +4,10 @@
 
 use std::rc::Rc;
 
+use pm_components::focus::FocusId;
 use pm_components::folder_picker::{PICKER_FIELD, is_picker};
-use pm_components::kit::{FocusId, PointerState, Report};
+
+use super::pointer::PointerState;
 use pm_components::settings::is_settings;
 use pm_components::state::SETTINGS;
 use pm_pages::Screen;
@@ -116,8 +118,8 @@ pub(super) fn is_aside(id: FocusId) -> bool {
 pub(super) struct Surface {
     /// The window, once rustle opened it.
     window: Option<Rc<dyn Port>>,
-    /// What the last frame of the window found on screen.
-    output: Report,
+    /// The controls the pointer is over in the window, the one it came over last at the end.
+    hovered: Vec<FocusId>,
     /// The pointer as the window's events so far left it.
     pointer: PointerState,
     /// The edge of the window the pointer last showed it resizes, when it did.
@@ -152,14 +154,13 @@ impl App {
                     }
                     *self.surface_of(aside) = Some(Surface {
                         window: Some(window),
-                        output: Report::default(),
+                        hovered: Vec::new(),
                         pointer: PointerState::default(),
                         edge_cursor: None,
                     });
                 }
                 (false, true, _) => {
                     *self.surface_of(aside) = None;
-                    pm_components::kit::report::forget(super::host::report_key(Some(aside)));
                 }
                 _ => {}
             }
@@ -180,7 +181,7 @@ impl App {
         if serial.is_none() {
             return;
         }
-        self.focus.claim(PICKER_FIELD);
+        self.focus.focus(PICKER_FIELD);
         self.recompose = true;
         if let Some(window) = self.window_of(Aside::Picker) {
             window.set_minimized(false);
@@ -193,7 +194,7 @@ impl App {
     pub(super) fn open_settings(&mut self) {
         match self.window_of(Aside::Settings) {
             Some(window) => window.focus_window(),
-            None if self.on_aside.is_none() => self.activate(SETTINGS),
+            None if self.on_aside.is_none() => self.after(SETTINGS),
             None => {}
         }
     }
@@ -227,35 +228,18 @@ impl App {
         };
         self.swap_surface(&mut surface);
         self.on_aside = Some(aside);
-        self.output = self.report_of(Some(aside));
-        self.order_focus(Some(aside));
         act(self);
         self.on_aside = None;
         self.swap_surface(&mut surface);
-        self.output = self.report_of(None);
-        self.order_focus(None);
         if self.model.read(|screen| aside.is_open(screen)) {
             *self.surface_of(aside) = Some(surface);
         }
     }
 
-    /// Makes Tab walk the controls the last frame of the main window, or of
-    /// `aside`'s, drew, in the order it drew them, with whatever of another
-    /// window holds the keyboard kept in the order so it is not lost.
-    pub(super) fn order_focus(&mut self, aside: Option<Aside>) {
-        let held_elsewhere = self.focus.current().filter(|id| match aside {
-            Some(aside) => !aside.owns(*id),
-            None => is_aside(*id),
-        });
-        let mut order = self.output.focus_order();
-        order.extend(held_elsewhere);
-        self.focus.set_order(order);
-    }
-
     /// Trades the main window's surface with `surface`.
     fn swap_surface(&mut self, surface: &mut Surface) {
         std::mem::swap(&mut self.window, &mut surface.window);
-        std::mem::swap(&mut self.output, &mut surface.output);
+        std::mem::swap(&mut self.hovered, &mut surface.hovered);
         std::mem::swap(&mut self.pointer, &mut surface.pointer);
         std::mem::swap(&mut self.edge_cursor, &mut surface.edge_cursor);
     }

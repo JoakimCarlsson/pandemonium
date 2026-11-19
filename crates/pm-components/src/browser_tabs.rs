@@ -1,13 +1,16 @@
 //! The tabs of the browser: what each tab holds, opening, showing and closing them, the lock that keeps agents out of a tab, and the strip that draws them.
 
-use crate::kit::sp;
+use crate::theme;
+use crate::theme::sp;
 use rustle::{Alignment, Arrangement, row_arranged};
 
 use std::ops::Range;
 
-use crate::kit::{FocusId, IconName, Radius, Role, Side, Styled};
-use pm_field::Field;
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::theme::Role;
 use rustle::Modifier;
+use rustle::TextFieldState;
 
 use crate::Button;
 use crate::browser::{Browser, Command, Pointer};
@@ -96,7 +99,7 @@ pub struct BrowserTab {
     /// The number the tab keeps for as long as it lives, which agents name it by.
     pub id: u32,
     /// The line the address is typed in.
-    pub address: Field,
+    pub address: TextFieldState,
     /// The title of the page.
     pub title: String,
     /// The newest picture of the page.
@@ -132,7 +135,7 @@ impl BrowserTab {
     pub(crate) fn new(id: u32, address: &str, host: Option<String>, agent: bool) -> Self {
         Self {
             id,
-            address: Field::new(address),
+            address: TextFieldState::new(address),
             title: String::new(),
             page: None,
             pointer: Pointer::Arrow,
@@ -156,7 +159,8 @@ impl BrowserTab {
         if !title.is_empty() {
             return title.to_owned();
         }
-        let address = self.address.text().trim();
+        let address = self.address.text();
+        let address = address.trim();
         if address.is_empty() || address == "about:blank" {
             "New tab".to_owned()
         } else {
@@ -486,10 +490,15 @@ pub fn tab_strip(browser: &Browser, width: f32) {
         Modifier::new()
             .height(TAB_STRIP)
             .fill_max_width()
-            .clip_to(Radius::None)
-            .fill(Role::Sidebar)
-            .stroke_side(Side::Bottom, 1.0, Role::Border)
-            .pad_x(2),
+            .clip()
+            .background(theme::color(Role::Sidebar))
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(2), 0.0),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Center,
         || {

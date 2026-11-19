@@ -1,14 +1,18 @@
 //! The diff view: every changed file stacked, the old and the new side by side, with notes on lines for the agent.
 
-use crate::kit::sp;
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tone, Type,
-    icon, label, label_with, measure, scroll_area,
-};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::icons::icon;
 use crate::marked::{CaretLook, Mark, marked_line};
+use crate::select::styled_text;
+use crate::theme::{Radius, Role, Tone};
 
 use crate::button::Variant;
 use crate::diff_syntax::{DiffColours, shown};
@@ -18,7 +22,7 @@ use crate::sample::{Change, Comment, DiffLine, Kind, Range, Session};
 use crate::size::Size;
 use crate::state::{
     COMMENT_ADD, COMMENT_CANCEL, COMMENT_FIELD, COMMENT_FILE_BASE, COMMENT_REMOVE_BASE,
-    CommentTarget, DIFF_FOLD_BASE, DIFF_SCROLL, SEND_COMMENTS, VIEWED_BASE, WorkspaceState,
+    CommentTarget, DIFF_FOLD_BASE, SEND_COMMENTS, VIEWED_BASE, WorkspaceState,
 };
 use crate::{Button, Input, Tally};
 
@@ -27,7 +31,7 @@ const ROW: f32 = 20.0;
 
 /// How many pixels one logical pixel of the sizes below comes to: the rows, headers and notes are set in steps that follow the interface size, while the view and the scroll are counted in pixels.
 fn pixels() -> f32 {
-    crate::kit::theme::step_scale()
+    crate::theme::step_scale()
 }
 
 /// The width of what is beside a pair of columns of code: the margins and rules of a file, in logical pixels.
@@ -207,7 +211,7 @@ fn rows(change: &Change) -> Vec<Row<'_>> {
 /// How many characters of code one side of a row holds on a line, in a view `width` wide.
 fn columns(width: f32) -> usize {
     let side = (width - SECTION_SIDES * pixels()) / 2.0 - GUTTER_AND_PADDING * pixels();
-    let character = CODE_PIXELS * crate::kit::theme::text_scale() * CODE_CHARACTER;
+    let character = CODE_PIXELS * crate::theme::text_scale() * CODE_CHARACTER;
     ((side / character) as usize).max(8)
 }
 
@@ -326,8 +330,8 @@ pub fn offset_of(state: &WorkspaceState, session: &Session, index: usize, width:
 }
 
 /// The type the code of a diff is set in: 12 pixels tall, a line height of 1.4 times that, in the code font, in `tone`.
-fn code_type(tone: impl Into<Tone>) -> Type {
-    Type::new(12).ratio(1.4).mono().tone(tone)
+fn code_type(tone: impl Into<Tone>) -> rustle::TextStyle {
+    theme::mono_style(12, 1.4).color(theme::color(tone))
 }
 
 /// Emits one line of a diff: tinted by what it does, written in the code font, its code coloured by `marks`.
@@ -340,9 +344,9 @@ pub fn diff_line(kind: Kind, content: &str, marks: Vec<Mark>) {
         Kind::Remove => ("-", Some(Tone::from(Role::Danger).alpha(0.12)), Role::Text),
     };
     let marker = if kind == Kind::Hunk { "" } else { marker };
-    let mut own = Modifier::new().fill_max_width().h(5);
+    let mut own = Modifier::new().fill_max_width().height(theme::sp(5));
     if let Some(fill) = fill {
-        own = own.fill(fill);
+        own = own.background(theme::color(fill));
     }
     let shift = marker.len();
     let marks = marks
@@ -354,7 +358,7 @@ pub fn diff_line(kind: Kind, content: &str, marks: Vec<Mark>) {
         .collect::<Vec<_>>();
     let content = format!("{marker}{}", shown(content));
     row_arranged(
-        own.pad_x(3),
+        own.padding_xy(theme::sp(3), 0.0),
         Arrangement::Start,
         Alignment::Center,
         move || {
@@ -395,36 +399,36 @@ fn tints(kind: Option<Kind>) -> (Option<Tone>, Option<Tone>, Role) {
 #[track_caller]
 fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<FocusId>) {
     let (_, tint, tone) = tints(kind);
-    let mut own = Modifier::new().fill_max_height().w(11);
+    let mut own = Modifier::new().fill_max_height().width(theme::sp(11));
     own = match id.filter(|_| number.is_some()) {
         Some(id) => {
-            let looks = Looks::new().hover(Role::Accent);
+            let looks = theme::InteractionTones::new().hover(Role::Accent);
             let looks = match tint {
                 Some(tint) => looks.idle(tint),
                 None => looks,
             };
-            own.looks(looks)
+            own.interaction_background(looks.colors())
                 .cursor(CursorIcon::Pointer)
-                .target(id)
-                .draggable_id(id)
+                .control(id, reduce(id))
+                .chain(crate::events::comment_drag(id))
         }
         None => match tint {
-            Some(tint) => own.fill(tint),
+            Some(tint) => own.background(theme::color(tint)),
             None => own,
         },
     };
     let shown_number = number.map(|number| number.to_string()).unwrap_or_default();
     row_arranged(
-        own.pad_side(Side::Right, 2),
+        own.padding_each(0.0, 0.0, theme::sp(2), 0.0),
         Arrangement::End,
         Alignment::Start,
         move || {
             row_arranged(
-                Modifier::new().h(5),
+                Modifier::new().height(theme::sp(5)),
                 Arrangement::Start,
                 Alignment::Center,
                 move || {
-                    label(shown_number, code_type(tone));
+                    styled_text(Modifier::new(), shown_number, code_type(tone));
                 },
             );
         },
@@ -436,7 +440,10 @@ fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<FocusId>) {
 fn code(content: &str, marks: Vec<Mark>, columns: usize) {
     let content = shown(content);
     column_arranged(
-        Modifier::new().weight(1.0).clip_to(Radius::None).pad_x(3),
+        Modifier::new()
+            .weight(1.0)
+            .clip()
+            .padding_xy(theme::sp(3), 0.0),
         Arrangement::Start,
         Alignment::Start,
         || {
@@ -452,14 +459,14 @@ fn code(content: &str, marks: Vec<Mark>, columns: usize) {
                     .collect();
                 let text = &content[piece];
                 row_arranged(
-                    Modifier::new().fill_max_width().h(5),
+                    Modifier::new().fill_max_width().height(theme::sp(5)),
                     Arrangement::Start,
                     Alignment::Center,
                     move || {
                         marked_line(
                             Modifier::new().weight(1.0),
                             text,
-                            code_type(Role::Text).truncate(),
+                            code_type(Role::Text).max_lines(1),
                             within,
                             CaretLook::default(),
                         );
@@ -499,15 +506,23 @@ fn half(
     } else {
         fill
     };
-    let mut own = Modifier::new().weight(1.0).h(5.0 * lines as f32);
+    let mut own = Modifier::new()
+        .weight(1.0)
+        .height(theme::sp(5.0 * lines as f32));
     if let Some(fill) = fill {
-        own = own.fill(fill);
+        own = own.background(theme::color(fill));
     }
     if new {
-        own = own.stroke_side(Side::Left, 1.0, Role::Border);
+        own = own
+            .draw_behind(theme::edge(
+                theme::Side::Left,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(1.0, 0.0, 0.0, 0.0);
     }
     row_arranged(
-        own.clip_to(Radius::None),
+        own.clip(),
         Arrangement::Start,
         Alignment::Start,
         move || {
@@ -527,16 +542,16 @@ fn hunk_row(header: &str) {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .h(5)
-            .fill(Role::Surface)
-            .pad_x(3),
+            .height(theme::sp(5))
+            .background(theme::color(Role::Surface))
+            .padding_xy(theme::sp(3), 0.0),
         Arrangement::Start,
         Alignment::Center,
         || {
-            label_with(
+            styled_text(
                 Modifier::new().weight(1.0),
                 header,
-                code_type(Role::Subtle).truncate(),
+                code_type(Role::Subtle).max_lines(1),
             );
         },
     );
@@ -555,7 +570,9 @@ fn diff_row(
     match row_of {
         Row::Hunk(header) => hunk_row(header),
         Row::Pair(old, new) => row_arranged(
-            Modifier::new().fill_max_width().h(5.0 * lines as f32),
+            Modifier::new()
+                .fill_max_width()
+                .height(theme::sp(5.0 * lines as f32)),
             Arrangement::Start,
             Alignment::Start,
             || {
@@ -607,14 +624,14 @@ fn under(range: Option<Range>, card: impl FnOnce()) {
 /// Emits the card `card` draws in a weighted share of its row, with two steps of margin on every side, the side margins kept out of the share.
 #[track_caller]
 fn margined(card: impl FnOnce()) {
-    rustle::spacer(Modifier::new().w(2));
+    rustle::spacer(Modifier::new().width(theme::sp(2)));
     column_arranged(
-        Modifier::new().weight(1.0).pad_y(2),
+        Modifier::new().weight(1.0).padding_xy(0.0, theme::sp(2)),
         Arrangement::Start,
         Alignment::Start,
         card,
     );
-    rustle::spacer(Modifier::new().w(2));
+    rustle::spacer(Modifier::new().width(theme::sp(2)));
 }
 
 /// Emits the frame of a note: a rounded box on the panel colour, padded when `padded`, spreading what `content` emits by `arrangement`.
@@ -622,9 +639,14 @@ fn margined(card: impl FnOnce()) {
 fn card(padded: bool, arrangement: Arrangement, content: impl FnOnce()) {
     let own = Modifier::new()
         .fill_max_width()
-        .fill_rounded(Role::Surface, Radius::Lg)
-        .stroke(Role::Border, Radius::Lg);
-    let own = if padded { own.pad(3) } else { own };
+        .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
+        .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+        .padding(1.0);
+    let own = if padded {
+        own.padding(theme::sp(3))
+    } else {
+        own
+    };
     column_arranged(own, arrangement, Alignment::Start, content);
 }
 
@@ -640,15 +662,23 @@ fn comment_card(index: usize, comment: &Comment, width: f32) {
             row_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .h(8)
-                    .stroke_side(Side::Bottom, 1.0, Role::Border)
-                    .pad_x(3),
+                    .height(theme::sp(8))
+                    .draw_behind(theme::edge(
+                        theme::Side::Bottom,
+                        1.0,
+                        theme::color(Role::Border),
+                    ))
+                    .padding_each(0.0, 0.0, 0.0, 1.0)
+                    .padding_xy(theme::sp(3), 0.0),
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Center,
                 || {
                     line(about, 12, 1.4, Role::Subtle);
                     column_arranged(
-                        Modifier::new().stroke(Role::Border, Radius::Full).pad_x(2),
+                        Modifier::new()
+                            .border(1.0, theme::color(Role::Border), Radius::Full.px())
+                            .padding(1.0)
+                            .padding_xy(theme::sp(2), 0.0),
                         Arrangement::Start,
                         Alignment::Start,
                         || line("Not sent", 11, 1.4, Role::Muted),
@@ -659,7 +689,9 @@ fn comment_card(index: usize, comment: &Comment, width: f32) {
                 },
             );
             column_arranged(
-                Modifier::new().pad_x(3).pad_y(2.5),
+                Modifier::new()
+                    .padding_xy(theme::sp(3), 0.0)
+                    .padding_xy(0.0, theme::sp(2.5)),
                 Arrangement::Start,
                 Alignment::Start,
                 || {
@@ -681,13 +713,13 @@ fn comment_box(state: &WorkspaceState, target: CommentTarget) {
     let ready = !state.comment_text.text().trim().is_empty();
     under(target.range, || {
         card(true, Arrangement::SpacedBy(sp(2.5)), || {
-            label(
+            styled_text(
+                Modifier::new(),
                 format!("Comment on {about}"),
-                Type::new(13)
-                    .ratio(1.4)
-                    .tone(Role::Text)
-                    .truncate()
-                    .medium(),
+                theme::text_style(13, 1.4)
+                    .font_weight(rustle::FontWeight::MEDIUM)
+                    .color(theme::color(Role::Text))
+                    .max_lines(1),
             );
             Input::new(&state.comment_text, COMMENT_FIELD)
                 .placeholder("Tell the agent what to change")
@@ -739,14 +771,19 @@ const HEADER_MARKS: [f32; 2] = [3.5, 4.0];
 /// When they do not fit, the chevron and the icon give up their width, in proportion to it, as far as the overflow goes or until they have none; the name then takes what it needs of what is left, cut short at its edge, and the folder the rest, cut off at the header's edge.
 #[track_caller]
 fn heading_parts(name: &str, directory: &str, open: bool, room: f32) {
-    let name_kind = Type::new(13)
-        .ratio(1.4)
-        .tone(Role::Text)
-        .truncate()
-        .medium();
-    let directory_kind = Type::new(11).ratio(1.4).mono().tone(Role::Subtle);
-    let name_width = measure(name, name_kind).0.ceil();
-    let directory_width = measure(directory, directory_kind).0.ceil();
+    let name_kind = theme::text_style(13, 1.4)
+        .font_weight(rustle::FontWeight::MEDIUM)
+        .color(theme::color(Role::Text))
+        .max_lines(1);
+    let directory_kind = theme::mono_style(11, 1.4).color(theme::color(Role::Subtle));
+    let name_width = rustle::layout_text(name, &name_kind, None)
+        .size()
+        .width
+        .ceil();
+    let directory_width = rustle::layout_text(directory, &directory_kind, None)
+        .size()
+        .width
+        .ceil();
     let marks = sp(HEADER_MARKS[0] + HEADER_MARKS[1]);
     let gaps = sp(2) * 3.0;
     let over = (marks + name_width + directory_width + gaps - room).max(0.0);
@@ -757,9 +794,7 @@ fn heading_parts(name: &str, directory: &str, open: bool, room: f32) {
         Alignment::Center,
         || {
             column_arranged(
-                Modifier::new()
-                    .width(sp(HEADER_MARKS[0]) * kept)
-                    .clip_to(Radius::None),
+                Modifier::new().width(sp(HEADER_MARKS[0]) * kept).clip(),
                 Arrangement::Start,
                 Alignment::Start,
                 || {
@@ -775,19 +810,17 @@ fn heading_parts(name: &str, directory: &str, open: bool, room: f32) {
                 },
             );
             column_arranged(
-                Modifier::new()
-                    .width(sp(HEADER_MARKS[1]) * kept)
-                    .clip_to(Radius::None),
+                Modifier::new().width(sp(HEADER_MARKS[1]) * kept).clip(),
                 Arrangement::Start,
                 Alignment::Start,
                 || file_icon(name, HEADER_MARKS[1]),
             );
-            label(name, name_kind);
+            styled_text(Modifier::new(), name, name_kind);
             column_arranged(
-                Modifier::new().clip_to(Radius::None),
+                Modifier::new().clip(),
                 Arrangement::Start,
                 Alignment::Start,
-                || label(directory, directory_kind),
+                || styled_text(Modifier::new(), directory, directory_kind),
             );
         },
     );
@@ -796,21 +829,33 @@ fn heading_parts(name: &str, directory: &str, open: bool, room: f32) {
 /// Emits the header of `change`, the change at `index`, unfolded when `open`, with the count of `notes` on it; when the header is too narrow the chevron and the file icon give up their room first, then the folder, which is cut off at the edge.
 #[track_caller]
 fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
-    let mut own = Modifier::new().fill_max_width().h(10).fill(Role::Surface);
+    let mut own = Modifier::new()
+        .fill_max_width()
+        .height(theme::sp(10))
+        .background(theme::color(Role::Surface));
     if open {
-        own = own.stroke_side(Side::Bottom, 1.0, Role::Border);
+        own = own
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0);
     }
     row_arranged(
-        own.pad_x(3),
+        own.padding_xy(theme::sp(3), 0.0),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         || {
             row_arranged(
                 Modifier::new()
                     .weight(1.0)
-                    .clip_to(Radius::None)
+                    .clip()
                     .cursor(CursorIcon::Pointer)
-                    .target(FocusId(DIFF_FOLD_BASE + index as u64)),
+                    .control(
+                        FocusId(DIFF_FOLD_BASE + index as u64),
+                        reduce(FocusId(DIFF_FOLD_BASE + index as u64)),
+                    ),
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Center,
                 || {
@@ -853,7 +898,7 @@ fn file(
 ) {
     let height = section_height(state, session, index, width);
     if top + height < window.0 || top > window.1 {
-        rustle::spacer(Modifier::new().h(height / (4.0 * pixels())));
+        rustle::spacer(Modifier::new().height(theme::sp(height / (4.0 * pixels()))));
         return;
     }
     let change = &session.changes[index];
@@ -869,10 +914,11 @@ fn file(
     column_arranged(
         Modifier::new()
             .fill_max_width()
-            .pad_x(4)
-            .pad_side(Side::Top, 4)
-            .stroke(Role::Border, Radius::Lg)
-            .clip_to(Radius::None),
+            .padding_xy(theme::sp(4), 0.0)
+            .padding_each(0.0, theme::sp(4), 0.0, 0.0)
+            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+            .padding(1.0)
+            .clip(),
         Arrangement::Start,
         Alignment::Start,
         || {
@@ -883,9 +929,9 @@ fn file(
             if !change.loaded {
                 row_arranged(
                     Modifier::new()
-                        .h(change.expected_rows() as f32 * ROW / 4.0)
-                        .pad_x(3)
-                        .pad_y(2),
+                        .height(theme::sp(change.expected_rows() as f32 * ROW / 4.0))
+                        .padding_xy(theme::sp(3), 0.0)
+                        .padding_xy(0.0, theme::sp(2)),
                     Arrangement::Start,
                     Alignment::Start,
                     || line("Reading the diff…", 12, 1.4, Role::Subtle),
@@ -976,7 +1022,7 @@ fn skip(rows: &mut usize) {
     if blank == 0 {
         return;
     }
-    rustle::spacer(Modifier::new().h(blank as f32 * ROW / 4.0));
+    rustle::spacer(Modifier::new().height(theme::sp(blank as f32 * ROW / 4.0)));
 }
 
 /// Emits the strip above the files: how many changed, how many are read, and the button that sends the notes to the agent.
@@ -992,9 +1038,14 @@ fn summary(session: &Session) {
     rustle::layout(
         Modifier::new()
             .fill_max_width()
-            .h(10)
-            .stroke_side(Side::Bottom, 1.0, Role::Border)
-            .pad_x(4),
+            .height(theme::sp(10))
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(4), 0.0),
         SummaryLayout { gap: sp(3) },
         || {
             line(
@@ -1097,9 +1148,10 @@ pub fn diff(state: &WorkspaceState, session: &Session, width: f32, height: f32) 
         .collect();
     let total: f32 = heights.iter().sum();
     let view = (height - CHROME * pixels()).max(0.0);
+    let scrolled = state.diff_scroll.offset();
     let window = (
-        state.diff_scroll.min(total - view) - OVERSCAN * pixels(),
-        state.diff_scroll.min(total) + view + OVERSCAN * pixels(),
+        scrolled.min(total - view) - OVERSCAN * pixels(),
+        scrolled.min(total) + view + OVERSCAN * pixels(),
     );
     column_arranged(
         Modifier::new().weight(1.0),
@@ -1107,24 +1159,21 @@ pub fn diff(state: &WorkspaceState, session: &Session, width: f32, height: f32) 
         Alignment::Start,
         || {
             summary(session);
-            scroll_area(
-                Modifier::new().fill_max_width().weight(1.0),
-                Scroll::from_start(DIFF_SCROLL, state.diff_scroll),
+            column_arranged(
+                state
+                    .diff_bounds
+                    .track(Modifier::new().fill_max_width().weight(1.0))
+                    .vertical_scroll(&state.diff_scroll)
+                    .fill_max_width()
+                    .padding_each(0.0, 0.0, 0.0, theme::sp(4)),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
-                    column_arranged(
-                        Modifier::new().fill_max_width().pad_side(Side::Bottom, 4),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            let mut top = 0.0;
-                            for (index, tall) in heights.iter().enumerate() {
-                                rustle::key(index, || {
-                                    file(state, session, index, width, top, window)
-                                });
-                                top += tall;
-                            }
-                        },
-                    );
+                    let mut top = 0.0;
+                    for (index, tall) in heights.iter().enumerate() {
+                        rustle::key(index, || file(state, session, index, width, top, window));
+                        top += tall;
+                    }
                 },
             );
         },

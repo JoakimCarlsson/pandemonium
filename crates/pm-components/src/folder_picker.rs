@@ -4,24 +4,26 @@
 //! inside. It is what every part of the app that needs a folder opens, for this machine and for a
 //! remote one alike.
 
-use crate::kit::sp;
+use crate::theme;
+use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use pm_config::KnownServer;
-use pm_field::{Edit, Field};
 use rustle::Modifier;
+use rustle::TextFieldState;
 
 use crate::adder::{Found, Kind, Listing, Status, status_line};
 use crate::button::Variant;
-use crate::kit::{
-    FocusId, IconName, Radius, Role, Scroll, Side, Styled, Tooltip, Type, icon, label, label_with,
-    scroll_area,
-};
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::icons::icon;
 use crate::parts::spacer;
+use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
+use crate::theme::Role;
 use crate::tile::Tile;
 use crate::{Button, Input, popover};
 
@@ -54,9 +56,6 @@ pub const PICKER_FORWARD: FocusId = FocusId(21_000_009);
 
 /// Goes up to the folder that holds the one being looked inside.
 pub const PICKER_PARENT: FocusId = FocusId(21_000_010);
-
-/// The scrolling list of folders.
-pub const PICKER_SCROLL: FocusId = FocusId(21_000_011);
 
 /// The first of the parts of the path shown above the folders; the rest follow it.
 const CRUMB_BASE: u64 = 21_000_100;
@@ -124,7 +123,7 @@ pub struct FolderPicker {
     /// The server on another machine whose folders are shown, or this machine's when nothing.
     pub machine: Option<KnownServer>,
     /// What the folders are filtered with.
-    pub field: Field,
+    pub field: TextFieldState,
     /// The folders the server listed for the folder being looked inside.
     pub folders: Listing,
     /// The folder being looked inside, as the server gave it.
@@ -134,7 +133,7 @@ pub struct FolderPicker {
     /// The folder that is highlighted, by position; nothing while the list was just entered.
     pub selected: usize,
     /// How far the list is scrolled, in logical pixels.
-    pub scroll: f32,
+    pub scroll: rustle::ScrollState,
     /// The folders looked inside before the one showing, the latest last.
     behind: Vec<String>,
     /// The folders that going back left, the latest last.
@@ -173,12 +172,12 @@ impl FolderPicker {
             serial: OPENINGS.fetch_add(1, Ordering::Relaxed),
             purpose,
             machine,
-            field: Field::default(),
+            field: TextFieldState::default(),
             folders: Listing::Loading,
             directory: None,
             requested: String::new(),
             selected: usize::MAX,
-            scroll: 0.0,
+            scroll: rustle::ScrollState::default(),
             behind: Vec::new(),
             ahead: Vec::new(),
         };
@@ -221,9 +220,9 @@ impl FolderPicker {
     fn visit(&mut self, path: &str) -> Outgoing {
         self.folders = Listing::Loading;
         self.requested = path.to_owned();
-        self.field = Field::default();
+        self.field = TextFieldState::default();
         self.selected = usize::MAX;
-        self.scroll = 0.0;
+        self.scroll.jump_to(0.0);
         Outgoing::Folders {
             path: path.to_owned(),
             host: self.host(),
@@ -280,7 +279,7 @@ impl FolderPicker {
         let Listing::Found(inside) = &self.folders else {
             return Vec::new();
         };
-        let typed = self.field.text();
+        let typed = &self.field.text();
         inside
             .iter()
             .filter(|held| matches(&held.name, typed))
@@ -370,14 +369,10 @@ impl FolderPicker {
         }
     }
 
-    /// The picker after `edit` was made to the filter.
-    pub fn edited(&mut self, edit: Edit) {
-        let before = self.field.text().to_owned();
-        self.field.apply(edit);
-        if self.field.text() != before {
-            self.selected = 0;
-            self.scroll = 0.0;
-        }
+    /// The picker after the reader changed what is typed: the first folder is selected and the list goes back to its top.
+    pub fn typed(&mut self) {
+        self.selected = 0;
+        self.scroll.jump_to(0.0);
     }
 
     /// The picker with the folders the server listed for `requested`, or why it could not, when that is still the folder wanted.
@@ -407,19 +402,14 @@ impl FolderPicker {
         }
     }
 
-    /// The picker with the list scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled(&mut self, delta: f32, room: f32) {
-        self.scroll = (self.scroll + delta).clamp(0.0, room);
-    }
-
     /// Scrolls the list so that the highlighted folder is in view.
     fn keep_selected_in_view(&mut self) {
         let top = self.selected as f32 * ROW_HEIGHT;
         let bottom = top + ROW_HEIGHT;
-        if top < self.scroll {
-            self.scroll = top;
-        } else if bottom > self.scroll + ROW_HEIGHT * 8.0 {
-            self.scroll = bottom - ROW_HEIGHT * 8.0;
+        if top < self.scroll.offset() {
+            self.scroll.jump_to(top);
+        } else if bottom > self.scroll.offset() + ROW_HEIGHT * 8.0 {
+            self.scroll.jump_to(bottom - ROW_HEIGHT * 8.0);
         }
     }
 
@@ -434,10 +424,7 @@ impl FolderPicker {
                 self.heading();
                 self.bar();
                 row_arranged(
-                    Modifier::new()
-                        .fill_max_width()
-                        .weight(1.0)
-                        .clip_to(Radius::None),
+                    Modifier::new().fill_max_width().weight(1.0).clip(),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
@@ -456,20 +443,31 @@ impl FolderPicker {
         row_arranged(
             Modifier::new()
                 .fill_max_width()
-                .h(11)
-                .stroke_side(Side::Bottom, 1.0, Role::Border)
-                .pad_x(4),
+                .height(theme::sp(11))
+                .draw_behind(theme::edge(
+                    theme::Side::Bottom,
+                    1.0,
+                    theme::color(Role::Border),
+                ))
+                .padding_each(0.0, 0.0, 0.0, 1.0)
+                .padding_xy(theme::sp(4), 0.0),
             Arrangement::SpacedBy(sp(2)),
             Alignment::Center,
             || {
-                label(
+                styled_text(
+                    Modifier::new(),
                     self.title(),
-                    Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
+                    theme::text_style(13, 1.4)
+                        .color(theme::color(Role::Text))
+                        .max_lines(1),
                 );
                 if let Some(machine) = self.machine.as_ref() {
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         format!("on {}", machine.name),
-                        Type::new(13).ratio(1.4).tone(Role::Subtle).truncate(),
+                        theme::text_style(13, 1.4)
+                            .color(theme::color(Role::Subtle))
+                            .max_lines(1),
                     );
                 }
             },
@@ -484,23 +482,28 @@ impl FolderPicker {
         row_arranged(
             Modifier::new()
                 .fill_max_width()
-                .h(12)
-                .stroke_side(Side::Bottom, 1.0, Role::Border)
-                .pad_x(3),
+                .height(theme::sp(12))
+                .draw_behind(theme::edge(
+                    theme::Side::Bottom,
+                    1.0,
+                    theme::color(Role::Border),
+                ))
+                .padding_each(0.0, 0.0, 0.0, 1.0)
+                .padding_xy(theme::sp(3), 0.0),
             Arrangement::SpacedBy(sp(2)),
             Alignment::Center,
             || {
                 Button::icon(IconName::ArrowLeft, PICKER_BACK)
                     .disabled(!self.can_go_back())
-                    .modifier(Modifier::new().tooltip("Back"))
+                    .tooltip("Back")
                     .build();
                 Button::icon(IconName::ArrowRight, PICKER_FORWARD)
                     .disabled(!self.can_go_forward())
-                    .modifier(Modifier::new().tooltip("Forward"))
+                    .tooltip("Forward")
                     .build();
                 Button::icon(IconName::ArrowUp, PICKER_PARENT)
                     .disabled(crumbs.len() < 2)
-                    .modifier(Modifier::new().tooltip("Up"))
+                    .tooltip("Up")
                     .build();
                 row_arranged(
                     Modifier::new().weight(1.0),
@@ -512,18 +515,19 @@ impl FolderPicker {
                                 icon(IconName::ChevronRight, 3.0, Role::Subtle);
                             }
                             let kind = if index == last {
-                                Type::new(13)
-                                    .ratio(1.4)
-                                    .tone(Role::Text)
-                                    .truncate()
-                                    .medium()
+                                theme::text_style(13, 1.4)
+                                    .font_weight(rustle::FontWeight::MEDIUM)
+                                    .color(theme::color(Role::Text))
+                                    .max_lines(1)
                             } else {
-                                Type::new(13).ratio(1.4).tone(Role::Muted).truncate()
+                                theme::text_style(13, 1.4)
+                                    .color(theme::color(Role::Muted))
+                                    .max_lines(1)
                             };
                             Tile::new(FocusId(CRUMB_BASE + index as u64))
                                 .height(7.0)
-                                .inner(Modifier::new().pad_x(1.5))
-                                .build_with(|| label(name.clone(), kind));
+                                .inner(Modifier::new().padding_xy(theme::sp(1.5), 0.0))
+                                .build_with(|| styled_text(Modifier::new(), name.clone(), kind));
                         }
                     },
                 );
@@ -539,23 +543,22 @@ impl FolderPicker {
     /// Emits the folders inside the one being looked into, one to a line, scrolled to where the picker says.
     #[track_caller]
     fn list(&self) {
-        scroll_area(
-            Modifier::new().fill_max_height().weight(1.0),
-            Scroll::from_start(PICKER_SCROLL, self.scroll),
+        column_arranged(
+            Modifier::new()
+                .fill_max_height()
+                .weight(1.0)
+                .vertical_scroll(&self.scroll)
+                .fill_max_width()
+                .padding(theme::sp(2)),
+            Arrangement::SpacedBy(sp(0.5)),
+            Alignment::Start,
             || {
-                column_arranged(
-                    Modifier::new().fill_max_width().pad(2),
-                    Arrangement::SpacedBy(sp(0.5)),
-                    Alignment::Start,
-                    || {
-                        for (index, found) in self.entries().into_iter().enumerate() {
-                            folder_row(&found.name, index == self.selected, index);
-                        }
-                        if let Some(status) = self.status() {
-                            status_line(status);
-                        }
-                    },
-                );
+                for (index, found) in self.entries().into_iter().enumerate() {
+                    folder_row(&found.name, index == self.selected, index);
+                }
+                if let Some(status) = self.status() {
+                    status_line(status);
+                }
             },
         );
     }
@@ -566,9 +569,14 @@ impl FolderPicker {
         row_arranged(
             Modifier::new()
                 .fill_max_width()
-                .h(14)
-                .stroke_side(Side::Top, 1.0, Role::Border)
-                .pad_x(4),
+                .height(theme::sp(14))
+                .draw_behind(theme::edge(
+                    theme::Side::Top,
+                    1.0,
+                    theme::color(Role::Border),
+                ))
+                .padding_each(0.0, 1.0, 0.0, 0.0)
+                .padding_xy(theme::sp(4), 0.0),
             Arrangement::SpacedBy(sp(2)),
             Alignment::Center,
             || {
@@ -592,19 +600,29 @@ fn places() {
         Modifier::new()
             .fill_max_height()
             .width(PLACES_WIDTH)
-            .stroke_side(Side::Right, 1.0, Role::Border)
-            .pad(2),
+            .draw_behind(theme::edge(
+                theme::Side::Right,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 1.0, 0.0)
+            .padding(theme::sp(2)),
         Arrangement::SpacedBy(sp(0.5)),
         Alignment::Start,
         || {
             row_arranged(
-                Modifier::new().h(8).pad_x(2),
+                Modifier::new()
+                    .height(theme::sp(8))
+                    .padding_xy(theme::sp(2), 0.0),
                 Arrangement::Start,
                 Alignment::Center,
                 || {
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         "Places",
-                        Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
+                        theme::text_style(12, 1.4)
+                            .color(theme::color(Role::Subtle))
+                            .max_lines(1),
                     );
                 },
             );
@@ -613,10 +631,16 @@ fn places() {
                     .height(8.0)
                     .gap(2.5)
                     .modifier(Modifier::new().fill_max_width())
-                    .inner(Modifier::new().pad_x(2))
+                    .inner(Modifier::new().padding_xy(theme::sp(2), 0.0))
                     .build_with(|| {
                         icon(*glyph, 4.0, Role::Muted);
-                        label(*name, Type::new(13).ratio(1.4).tone(Role::Text).truncate());
+                        styled_text(
+                            Modifier::new(),
+                            *name,
+                            theme::text_style(13, 1.4)
+                                .color(theme::color(Role::Text))
+                                .max_lines(1),
+                        );
                     });
             }
         },
@@ -630,13 +654,15 @@ fn folder_row(name: &str, selected: bool, index: usize) {
         .selected(selected)
         .height(8.0)
         .modifier(Modifier::new().fill_max_width())
-        .inner(Modifier::new().pad_x(2.5))
+        .inner(Modifier::new().padding_xy(theme::sp(2.5), 0.0))
         .build_with(|| {
             icon(IconName::Folder, 4.0, Role::Accent);
-            label_with(
+            styled_text(
                 Modifier::new().weight(1.0),
                 name,
-                Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
+                theme::text_style(13, 1.4)
+                    .color(theme::color(Role::Text))
+                    .max_lines(1),
             );
         });
 }
@@ -704,10 +730,10 @@ impl WorkspaceState {
         self
     }
 
-    /// The state after `edit` was made to the filter of the folder picker.
-    pub(crate) fn folder_picker_edited(&mut self, edit: Edit) {
+    /// Takes in what the reader typed in the folder picker's box.
+    pub(crate) fn folder_picker_typed(&mut self) {
         if let Some(open) = self.folder_picker.as_mut() {
-            open.edited(edit);
+            open.typed();
         }
     }
 
@@ -719,14 +745,6 @@ impl WorkspaceState {
     ) -> Self {
         if let Some(open) = self.folder_picker.as_mut() {
             open.listed(requested, listed);
-        }
-        self
-    }
-
-    /// The state with the list of the folder picker scrolled by `delta` logical pixels, with `room` pixels to scroll.
-    pub fn scrolled_folder_picker(mut self, delta: f32, room: f32) -> Self {
-        if let Some(open) = self.folder_picker.as_mut() {
-            open.scrolled(delta, room);
         }
         self
     }

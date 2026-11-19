@@ -1,9 +1,16 @@
-//! The check box: a small control that is ticked or not, as a square or as a switch.
+//! The check box: a small control that is ticked or not, as a square or as a switch,
+//! drawn by rustle's check box and switch in the theme's colours. The box itself does
+//! not answer the pointer: the control around it, named by its id, does.
 
-use rustle::{Alignment, Arrangement, row_arranged};
-use rustle::{CursorIcon, Modifier};
+use crate::events::OnClick;
+use rustle::{
+    CheckboxColors, CheckboxDefaults, CursorIcon, Modifier, SwitchColors, ToggleableState,
+};
 
-use crate::kit::{FocusId, IconName, Interactive, Radius, Role, Styled, icon};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::theme;
+use crate::theme::Role;
 
 /// How a check box looks.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -31,6 +38,9 @@ pub struct Checkbox {
     variant: Variant,
     /// What the caller puts around its box.
     modifier: Modifier,
+    /// What clicking it does, when the caller said; the workspace's reducer takes the
+    /// press otherwise.
+    on_click: Option<OnClick>,
 }
 
 impl Checkbox {
@@ -42,7 +52,15 @@ impl Checkbox {
             id,
             variant: Variant::default(),
             modifier: Modifier::new(),
+            on_click: None,
         }
+    }
+
+    /// The check box running `on_click` when clicked, or activated from the keyboard, in
+    /// place of handing the press to the workspace's reducer.
+    pub fn on_click(mut self, on_click: impl Fn() + 'static) -> Self {
+        self.on_click = Some(OnClick::new(on_click));
+        self
     }
 
     /// The check box dashed instead of ticked while `mixed` and not `checked`.
@@ -72,62 +90,85 @@ impl Checkbox {
         }
     }
 
-    /// Emits the square.
+    /// Emits the square, four steps on a side: filled in the accent with its mark while
+    /// ticked or dashed, outlined in the subtle colour while clear.
     #[track_caller]
     fn build_box(self) {
-        let filled = self.checked || self.mixed;
-        let own = Modifier::new().square(4);
-        let own = if filled {
-            own.fill_rounded(Role::Accent, Radius::Sm)
-                .stroke(Role::Accent, Radius::Sm)
-        } else {
-            own.stroke(Role::Subtle, Radius::Sm)
+        let state = match (self.checked, self.mixed) {
+            (true, _) => ToggleableState::On,
+            (false, true) => ToggleableState::Indeterminate,
+            (false, false) => ToggleableState::Off,
         };
-        let own = own.cursor(CursorIcon::Pointer).target(self.id);
-        let (checked, mixed) = (self.checked, self.mixed);
-        row_arranged(
-            self.modifier.chain(own),
-            Arrangement::Center,
-            Alignment::Center,
-            move || {
-                if checked {
-                    icon(IconName::Check, 3.0, Role::OnAccent);
-                } else if mixed {
-                    icon(IconName::Minus, 3.0, Role::OnAccent);
-                }
-            },
+        let side = theme::sp(4);
+        let colors = CheckboxColors {
+            checked_checkmark_color: theme::color(Role::OnAccent),
+            checked_box_color: theme::color(Role::Accent),
+            checked_border_color: theme::color(Role::Accent),
+            unchecked_border_color: theme::color(Role::Subtle),
+            ..CheckboxDefaults::colors()
+        };
+        rustle::tri_state_checkbox(
+            self.modifier
+                .size(side, side)
+                .cursor(CursorIcon::Pointer)
+                .control(self.id, OnClick::or_reduce(self.on_click, self.id).lambda()),
+            state,
+            None,
+            true,
+            colors,
         );
     }
 
-    /// Emits the switch.
+    /// Emits the switch, nine steps by five: a track in the text colour with its knob at
+    /// the end on the background while on, a hovered surface with the knob at the start
+    /// in the muted colour while off.
     #[track_caller]
     fn build_switch(self) {
-        let on = self.checked;
-        let own = Modifier::new()
-            .w(9)
-            .h(5)
-            .fill_rounded(
-                if on { Role::Text } else { Role::SurfaceHover },
-                Radius::Full,
-            )
-            .cursor(CursorIcon::Pointer)
-            .target(self.id)
-            .pad_x(0.5);
-        let arrangement = if on {
-            Arrangement::End
-        } else {
-            Arrangement::Start
+        let colors = SwitchColors {
+            checked_thumb_color: theme::color(Role::Background),
+            checked_track_color: theme::color(Role::Text),
+            unchecked_thumb_color: theme::color(Role::Muted),
+            unchecked_track_color: theme::color(Role::SurfaceHover),
         };
-        row_arranged(
-            self.modifier.chain(own),
-            arrangement,
-            Alignment::Center,
-            move || {
-                rustle::spacer(Modifier::new().square(4).fill_rounded(
-                    if on { Role::Background } else { Role::Muted },
-                    Radius::Full,
-                ));
-            },
+        rustle::switch_with(
+            self.modifier
+                .size(theme::sp(9), theme::sp(5))
+                .cursor(CursorIcon::Pointer)
+                .control(self.id, OnClick::or_reduce(self.on_click, self.id).lambda()),
+            self.checked,
+            None,
+            true,
+            colors,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tagged::lay_out;
+
+    /// The square is four steps on a side and the switch nine by five, each named by its id
+    /// and reached by Tab, drawn by rustle's check box and switch.
+    #[test]
+    fn boxes_and_switches_keep_their_size_and_name() {
+        let (square, switch) = (FocusId(901), FocusId(902));
+        let laid = lay_out(200.0, 100.0, None, move || {
+            rustle::column(|| {
+                Checkbox::new(false, square).mixed(true).build();
+                Checkbox::new(true, switch).variant(Variant::Switch).build();
+            });
+        });
+        let boxed = laid.node(square).expect("square laid out");
+        assert_eq!(
+            (boxed.bounds.size.width, boxed.bounds.size.height),
+            (16.0, 16.0)
+        );
+        let switched = laid.node(switch).expect("switch laid out");
+        assert_eq!(
+            (switched.bounds.size.width, switched.bounds.size.height),
+            (36.0, 20.0)
+        );
+        assert_eq!(laid.focus_order(), vec![square, switch]);
     }
 }

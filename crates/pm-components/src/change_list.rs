@@ -1,17 +1,21 @@
 //! The changed files in groups: staged, tracked and untracked, each file with how it changed, a way to open it and a box that stages it.
 
+use crate::theme;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, row_arranged};
 
 use std::collections::HashSet;
 
 use crate::file_icon::file_icon;
+use crate::focus::FocusId;
 use crate::git_controls::{GROUP_TRACKED, GROUP_UNTRACKED, OPEN_ARROW_BASE};
-use crate::kit::{FocusId, IconName, Radius, Role, Side, Styled, Tone, Type, label, label_with};
+use crate::icons::IconName;
 use crate::parts::glyph;
 use crate::sample::{Change, Session};
+use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{FILE_BASE, FOLDER_BASE, FOLDER_STAGE_BASE, STAGE_BASE, WorkspaceState};
+use crate::theme::{Radius, Role, Tone};
 use crate::tile::Tile;
 use crate::tree::{Entry, Folder, Layout, build_stopping, folders};
 use crate::{Button, Checkbox, Tally};
@@ -100,16 +104,17 @@ fn heading(changes: &[Change], group: Group, repository: Option<&str>) {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .pad_side(Side::Left, 3)
-            .pad_side(Side::Right, 3)
-            .pad_side(Side::Top, 2)
-            .pad_side(Side::Bottom, 1),
+            .padding_each(theme::sp(3), 0.0, 0.0, 0.0)
+            .padding_each(0.0, 0.0, theme::sp(3), 0.0)
+            .padding_each(0.0, theme::sp(2), 0.0, 0.0)
+            .padding_each(0.0, 0.0, 0.0, theme::sp(1)),
         Arrangement::SpaceBetween,
         Alignment::Center,
         || {
-            label(
+            styled_text(
+                Modifier::new(),
                 format!("{} ({})", group.label(), files.len()),
-                Type::new(11).ratio(1.4).tone(Role::Subtle),
+                theme::text_style(11, 1.4).color(theme::color(Role::Subtle)),
             );
             if let Some(id) = group.id() {
                 Checkbox::new(staged == files.len(), id)
@@ -276,35 +281,55 @@ fn commit_count(moved: &pm_git::Moved) -> String {
 fn file_row(state: &WorkspaceState, change: &Change, index: usize, name: &str, depth: usize) {
     let letter = change.mark();
     let tone = mark_color(letter);
-    Tile::new(FocusId(FILE_BASE + index as u64))
+    let operations = crate::events::operations();
+    let id = FocusId(FILE_BASE + index as u64);
+    Tile::new(id)
+        .on_pick(crate::events::picking(id, move |state, how| {
+            state.change_picked(index, how)
+        }))
+        .on_context(move || operations.open_change_menu(index))
         .modifier(Modifier::new().fill_max_width())
         .selected(state.git.marked.contains(&index))
         .height(6.5)
         .gap(2.0)
         .radius(Radius::Sm)
-        .modifier(Modifier::new().clip_to(Radius::None))
+        .modifier(Modifier::new().clip())
         .inner(
             Modifier::new()
-                .pad_side(Side::Left, 3.0 + depth as f32 * INDENT + FILE_OFFSET)
-                .pad_side(Side::Right, 3),
+                .padding_each(
+                    theme::sp(3.0 + depth as f32 * INDENT + FILE_OFFSET),
+                    0.0,
+                    0.0,
+                    0.0,
+                )
+                .padding_each(0.0, 0.0, theme::sp(3), 0.0),
         )
         .build_with(|| {
             match &change.moved {
                 Some(_) => glyph(IconName::Git, 3.5, Role::Muted),
                 None => file_icon(name, 3.5),
             }
-            label_with(
+            styled_text(
                 Modifier::new().weight(1.0),
                 name,
-                Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
+                theme::text_style(13, 1.4)
+                    .color(theme::color(Role::Text))
+                    .max_lines(1),
             );
             if let Some(moved) = change.moved.as_ref() {
-                label(
+                styled_text(
+                    Modifier::new(),
                     commit_count(moved),
-                    Type::new(11).ratio(1.4).tone(Role::Subtle).truncate(),
+                    theme::text_style(11, 1.4)
+                        .color(theme::color(Role::Subtle))
+                        .max_lines(1),
                 );
             }
-            label(letter, Type::new(11).ratio(1.4).mono().tone(tone));
+            styled_text(
+                Modifier::new(),
+                letter,
+                theme::mono_style(11, 1.4).color(theme::color(tone)),
+            );
             if change.moved.is_none() {
                 Button::icon(
                     IconName::ArrowRight,
@@ -354,15 +379,17 @@ fn folder_row(
     let partly = inside.iter().any(|&index| changes[index].staged);
     let added = inside.iter().map(|&index| changes[index].added()).sum();
     let removed = inside.iter().map(|&index| changes[index].removed()).sum();
+    let operations = crate::events::operations();
     Tile::new(FocusId(FOLDER_BASE + position as u64))
+        .on_context(move || operations.open_folder_change_menu(position))
         .modifier(Modifier::new().fill_max_width())
         .height(6.5)
         .gap(2.0)
         .radius(Radius::Sm)
         .inner(
             Modifier::new()
-                .pad_side(Side::Left, 3.0 + depth as f32 * INDENT)
-                .pad_side(Side::Right, 3),
+                .padding_each(theme::sp(3.0 + depth as f32 * INDENT), 0.0, 0.0, 0.0)
+                .padding_each(0.0, 0.0, theme::sp(3), 0.0),
         )
         .build_with(|| {
             glyph(
@@ -383,22 +410,23 @@ fn folder_row(
             if stops(changes, None).contains(&folder.path.as_str()) {
                 glyph(IconName::Git, 3.5, Role::Muted);
             }
-            label_with(
+            styled_text(
                 Modifier::new().weight(1.0),
                 &folder.name,
-                Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
+                theme::text_style(13, 1.4)
+                    .color(theme::color(Role::Text))
+                    .max_lines(1),
             );
             if let Some(standing) = standings
                 .iter()
                 .find(|standing| standing.path == folder.path)
             {
-                label(
+                styled_text(
+                    Modifier::new(),
                     standing_label(standing),
-                    Type::new(11)
-                        .ratio(1.4)
-                        .tone(Role::Subtle)
-                        .truncate()
-                        .mono(),
+                    theme::mono_style(11, 1.4)
+                        .color(theme::color(Role::Subtle))
+                        .max_lines(1),
                 );
             }
             Tally::new(added, removed).size(11).build();

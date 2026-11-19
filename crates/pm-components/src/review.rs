@@ -1,13 +1,18 @@
 //! The source control panel: the branch, the commit message and its button, the changed files in groups, and the graph of commits.
 
-use crate::kit::sp;
+use crate::events::reduce;
+use crate::git_menus::MenuKind;
+use crate::theme;
+use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
+use std::rc::Rc;
 
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tone,
-    Tooltip, Type, label, scroll_area, spinner,
-};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::{IconName, spinner};
+use crate::select::styled_text;
+use crate::theme::{Radius, Role, Tone};
 
 use crate::branch_menu::branch_menu;
 use crate::button::Variant;
@@ -20,8 +25,7 @@ use crate::parts::{clipped, glyph, line, spacer, wrap};
 use crate::sample::Session;
 use crate::size::Size;
 use crate::state::{
-    COMMIT, COMMIT_MESSAGE, OPEN_DIFF, REVIEW_CHANGES, REVIEW_FILES, ReviewTab, TREE_SCROLL,
-    WorkspaceState,
+    COMMIT, COMMIT_MESSAGE, OPEN_DIFF, REVIEW_CHANGES, REVIEW_FILES, ReviewTab, WorkspaceState,
 };
 use crate::tree_actions::{
     TREE_COLLAPSE, TREE_NEW_FILE, TREE_NEW_FOLDER, TREE_REFRESH, TREE_SPACE,
@@ -41,9 +45,14 @@ fn band(height: u32, content: impl FnOnce()) {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .h(height)
-            .stroke_side(Side::Bottom, 1.0, Role::Border)
-            .pad_x(3),
+            .height(theme::sp(height))
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(3), 0.0),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         content,
@@ -53,17 +62,16 @@ fn band(height: u32, content: impl FnOnce()) {
 /// Emits the box that holds the rows of the panel's list, which `content` emits, and scrolls them.
 #[track_caller]
 fn scrolling_list(state: &WorkspaceState, content: impl FnOnce()) {
-    scroll_area(
-        Modifier::new().fill_max_width().weight(1.0),
-        Scroll::from_start(TREE_SCROLL, state.tree_scroll),
-        || {
-            column_arranged(
-                Modifier::new().fill_max_width().pad_y(1),
-                Arrangement::Start,
-                Alignment::Start,
-                content,
-            );
-        },
+    column_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .weight(1.0)
+            .vertical_scroll(&state.tree_scroll)
+            .fill_max_width()
+            .padding_xy(0.0, theme::sp(1)),
+        Arrangement::Start,
+        Alignment::Start,
+        content,
     );
 }
 
@@ -72,20 +80,19 @@ fn scrolling_list(state: &WorkspaceState, content: impl FnOnce()) {
 /// they leave less.
 #[track_caller]
 fn filled_list(state: &WorkspaceState, content: impl FnOnce(), filler: impl FnOnce()) {
-    scroll_area(
-        Modifier::new().fill_max_width().weight(1.0),
-        Scroll::from_start(TREE_SCROLL, state.tree_scroll),
+    rustle::layout(
+        Modifier::new()
+            .fill_max_width()
+            .weight(1.0)
+            .vertical_scroll(&state.tree_scroll)
+            .fill_max_width()
+            .padding_xy(0.0, theme::sp(1)),
+        FilledColumn {
+            least: sp(FILLER_LEAST),
+        },
         || {
-            rustle::layout(
-                Modifier::new().fill_max_width().pad_y(1),
-                FilledColumn {
-                    least: sp(FILLER_LEAST),
-                },
-                || {
-                    content();
-                    filler();
-                },
-            );
+            content();
+            filler();
         },
     );
 }
@@ -153,7 +160,9 @@ impl rustle::Layout for FilledColumn {
 #[track_caller]
 fn nothing(message: &str) {
     row_arranged(
-        Modifier::new().pad_x(4).pad_y(3),
+        Modifier::new()
+            .padding_xy(theme::sp(4), 0.0)
+            .padding_xy(0.0, theme::sp(3)),
         Arrangement::Start,
         Alignment::Start,
         || line(message, 13, 1.4, Role::Subtle),
@@ -173,7 +182,7 @@ fn panel_tab(label: &str, icon: IconName, id: FocusId, shown: bool) {
     Button::icon(icon, id)
         .size(Size::Md)
         .mark(move || glyph(mark, 5.0, tone))
-        .modifier(Modifier::new().tooltip(label))
+        .tooltip(label)
         .build();
 }
 
@@ -183,7 +192,7 @@ fn small_icon_button(icon: IconName, id: FocusId, spinning: bool, tooltip: &str)
     Button::icon(icon, id)
         .size(Size::Sm)
         .spinning(spinning)
-        .modifier(Modifier::new().tooltip(tooltip))
+        .tooltip(tooltip)
         .build();
 }
 
@@ -207,10 +216,12 @@ fn files_header(state: &WorkspaceState) {
 /// Emits `words` as the name of a list, taking the room left in its row.
 #[track_caller]
 fn label_with_grow(words: &str) {
-    crate::kit::label_with(
+    styled_text(
         Modifier::new().weight(1.0),
         words,
-        Type::new(13).ratio(1.4).tone(Role::Subtle).truncate(),
+        theme::text_style(13, 1.4)
+            .color(theme::color(Role::Subtle))
+            .max_lines(1),
     );
 }
 
@@ -233,7 +244,7 @@ fn files(state: &WorkspaceState, height: f32) {
                 || {
                     file_tree::rows(
                         state,
-                        (height - 136.0 * crate::kit::theme::step_scale()).max(0.0),
+                        (height - 136.0 * crate::theme::step_scale()).max(0.0),
                     );
                     if state.files.is_empty() && state.tree_folders.is_empty() {
                         nothing(if state.files_loading() {
@@ -246,11 +257,25 @@ fn files(state: &WorkspaceState, height: f32) {
                 || {
                     let space = Modifier::new().fill_max_width();
                     let space = if landing_at_root {
-                        space.fill_rounded(Tone::from(Role::Accent).alpha(0.24), Radius::Sm)
+                        space.background_rounded(
+                            theme::color(Tone::from(Role::Accent).alpha(0.24)),
+                            Radius::Sm.px(),
+                        )
                     } else {
                         space
                     };
-                    rustle::spacer(space.target(TREE_SPACE));
+                    let operations = crate::events::operations();
+                    let pressed = reduce(TREE_SPACE);
+                    rustle::spacer(crate::bounds::placed(
+                        TREE_SPACE,
+                        space.control_menu(
+                            TREE_SPACE,
+                            move |_| pressed(),
+                            move || {
+                                operations.open_tree_menu(crate::tree_actions::TreeTarget::root())
+                            },
+                        ),
+                    ));
                 },
             );
         },
@@ -284,9 +309,13 @@ fn primary_face(primary: &Primary) {
             } else {
                 glyph(icon, 3.5, tone);
             }
-            label(
+            styled_text(
+                Modifier::new(),
                 words,
-                Type::new(13).ratio(1.4).tone(tone).truncate().medium(),
+                theme::text_style(13, 1.4)
+                    .font_weight(rustle::FontWeight::MEDIUM)
+                    .color(theme::color(tone))
+                    .max_lines(1),
             );
             if let Primary::Sync { ahead, behind } = primary {
                 for (count, arrow) in [(*behind, IconName::ArrowDown), (*ahead, IconName::ArrowUp)]
@@ -313,36 +342,50 @@ fn commit_button(primary: &Primary) {
             ..
         } | Primary::Busy(_)
     );
-    let pressable = |own: Modifier, id: FocusId| {
+    let pressable = |own: Modifier, id: FocusId, on_click: Rc<dyn Fn()>| {
         if enabled {
-            own.looks_of(Looks::new().hover(Role::SurfaceHover), id)
+            own.interaction_focused(crate::focus::is_held(id))
+                .interaction_background(
+                    (theme::InteractionTones::new().hover(Role::SurfaceHover)).colors(),
+                )
                 .cursor(CursorIcon::Pointer)
-                .target(id)
+                .control(id, move || on_click())
         } else {
             own
         }
     };
-    let main = pressable(Modifier::new().weight(1.0).fill_max_height(), COMMIT);
+    let main = pressable(
+        Modifier::new().weight(1.0).fill_max_height(),
+        COMMIT,
+        Rc::new(reduce(COMMIT)),
+    );
+    let operations = crate::events::operations();
     let arrow = pressable(
         Modifier::new()
             .fill_max_height()
-            .stroke_side(Side::Left, 1.0, Role::Border),
+            .draw_behind(theme::edge(
+                theme::Side::Left,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(1.0, 0.0, 0.0, 0.0),
         COMMIT_CHEVRON,
+        Rc::new(move || operations.open_git_menu(MenuKind::Commit, Some(COMMIT_CHEVRON))),
     )
-    .pad_x(2);
+    .padding_xy(theme::sp(2), 0.0);
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .pad_x(3)
-            .pad_side(Side::Bottom, 2),
+            .padding_xy(theme::sp(3), 0.0)
+            .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
         Arrangement::Start,
         Alignment::Start,
         || {
             row_arranged(
                 Modifier::new()
-                    .h(9)
+                    .height(theme::sp(9))
                     .fill_max_width()
-                    .fill_rounded(Role::SurfaceSelected, Radius::Md),
+                    .background_rounded(theme::color(Role::SurfaceSelected), Radius::Md.px()),
                 Arrangement::Start,
                 Alignment::Center,
                 || {
@@ -366,16 +409,25 @@ fn commit_button(primary: &Primary) {
 #[track_caller]
 fn message_box(state: &WorkspaceState) {
     column_arranged(
-        Modifier::new().fill_max_width().pad_x(3).pad_y(2),
+        Modifier::new()
+            .fill_max_width()
+            .padding_xy(theme::sp(3), 0.0)
+            .padding_xy(0.0, theme::sp(2)),
         Arrangement::Start,
         Alignment::Start,
         || {
             column_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .fill_rounded(Role::Background, Radius::Lg)
-                    .stroke_by_focus(COMMIT_MESSAGE, Role::Border, Role::Accent, Radius::Lg)
-                    .focus_of(COMMIT_MESSAGE),
+                    .background_rounded(theme::color(Role::Background), Radius::Lg.px())
+                    .interaction_focused(crate::focus::is_held(COMMIT_MESSAGE))
+                    .draw_behind_interactive(theme::outline_by_focus(
+                        theme::color(Role::Border),
+                        theme::color(Role::Accent),
+                        Radius::Lg,
+                    ))
+                    .padding(1.0)
+                    .interaction_focused(crate::focus::is_held(COMMIT_MESSAGE)),
                 Arrangement::Start,
                 Alignment::Start,
                 || {
@@ -389,7 +441,6 @@ fn message_box(state: &WorkspaceState) {
                             None => "Message (Ctrl+Enter to commit)".to_owned(),
                         })
                         .rows(4)
-                        .wrap(input::inner_width(state.review_width - 24.0))
                         .build();
                 },
             );
@@ -403,7 +454,10 @@ fn section_heading(state: &WorkspaceState, primary: &Primary) {
     let open = state.git.changes_open;
     let committable = matches!(primary, Primary::Commit { stopped: None, .. });
     row_arranged(
-        Modifier::new().fill_max_width().h(8).pad_x(2),
+        Modifier::new()
+            .fill_max_width()
+            .height(theme::sp(8))
+            .padding_xy(theme::sp(2), 0.0),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Center,
         || {
@@ -412,7 +466,7 @@ fn section_heading(state: &WorkspaceState, primary: &Primary) {
                     .weight(1.0)
                     .fill_max_height()
                     .cursor(CursorIcon::Pointer)
-                    .target(CHANGES_TOGGLE),
+                    .control(CHANGES_TOGGLE, reduce(CHANGES_TOGGLE)),
                 Arrangement::SpacedBy(sp(1)),
                 Alignment::Center,
                 || {
@@ -431,7 +485,7 @@ fn section_heading(state: &WorkspaceState, primary: &Primary) {
             Button::icon(IconName::GitCommit, COMMIT)
                 .size(Size::Sm)
                 .disabled(!committable)
-                .modifier(Modifier::new().tooltip("Commit"))
+                .tooltip("Commit")
                 .build();
             small_icon_button(
                 IconName::Refresh,
@@ -439,7 +493,12 @@ fn section_heading(state: &WorkspaceState, primary: &Primary) {
                 state.git.working,
                 "Refresh",
             );
-            small_icon_button(IconName::More, CHANGES_MORE, false, "More Actions…");
+            let operations = crate::events::operations();
+            Button::icon(IconName::More, CHANGES_MORE)
+                .on_click(move || operations.open_git_menu(MenuKind::Source, Some(CHANGES_MORE)))
+                .size(Size::Sm)
+                .tooltip("More Actions…")
+                .build();
         },
     );
 }
@@ -450,17 +509,20 @@ fn trouble(said: &str, width: f32) {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .pad_x(3)
-            .pad_side(Side::Bottom, 2),
+            .padding_xy(theme::sp(3), 0.0)
+            .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
         Arrangement::Start,
         Alignment::Start,
         || {
             row_arranged(
                 Modifier::new()
                     .weight(1.0)
-                    .fill_rounded(Tone::from(Role::Danger).alpha(0.12), Radius::Md)
-                    .pad_x(3)
-                    .pad_y(2),
+                    .background_rounded(
+                        theme::color(Tone::from(Role::Danger).alpha(0.12)),
+                        Radius::Md.px(),
+                    )
+                    .padding_xy(theme::sp(3), 0.0)
+                    .padding_xy(0.0, theme::sp(2)),
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Start,
                 || {
@@ -561,14 +623,21 @@ fn repositories(state: &WorkspaceState, session: &Session) {
     column_arranged(
         Modifier::new()
             .fill_max_width()
-            .stroke_side(Side::Bottom, 1.0, Role::Border)
-            .pad_x(1)
-            .pad_side(Side::Bottom, 2),
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(1), 0.0)
+            .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
         Arrangement::Start,
         Alignment::Start,
         || {
             row_arranged(
-                Modifier::new().h(7).pad_x(2),
+                Modifier::new()
+                    .height(theme::sp(7))
+                    .padding_xy(theme::sp(2), 0.0),
                 Arrangement::Start,
                 Alignment::Center,
                 || line("Repositories", 12, 1.4, Role::Subtle),
@@ -588,8 +657,13 @@ fn repositories(state: &WorkspaceState, session: &Session) {
                     .modifier(Modifier::new().fill_max_width())
                     .inner(
                         Modifier::new()
-                            .pad_side(Side::Left, 2.0 + depth(repository) as f32 * 3.5)
-                            .pad_side(Side::Right, 1),
+                            .padding_each(
+                                theme::sp(2.0 + depth(repository) as f32 * 3.5),
+                                0.0,
+                                0.0,
+                                0.0,
+                            )
+                            .padding_each(0.0, 0.0, theme::sp(1), 0.0),
                     )
                     .build_with(|| {
                         glyph(
@@ -609,7 +683,7 @@ fn repositories(state: &WorkspaceState, session: &Session) {
                             .variant(Variant::Ghost)
                             .size(Size::Sm)
                             .monospace()
-                            .modifier(Modifier::new().tooltip("Checkout Branch…"))
+                            .tooltip("Checkout Branch…")
                             .build();
                     });
             }
@@ -660,8 +734,13 @@ pub fn review(state: &WorkspaceState, session: &Session, height: f32) {
         Modifier::new()
             .width(state.review_width)
             .fill_max_height()
-            .fill(Role::Background)
-            .stroke_side(Side::Left, 1.0, Role::Border),
+            .background(theme::color(Role::Background))
+            .draw_behind(theme::edge(
+                theme::Side::Left,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(1.0, 0.0, 0.0, 0.0),
         || {
             column_arranged(
                 Modifier::new().fill_max_size(),
@@ -670,7 +749,7 @@ pub fn review(state: &WorkspaceState, session: &Session, height: f32) {
                 || {
                     band(12, || {
                         row_arranged(
-                            Modifier::new().weight(1.0).clip_to(Radius::None),
+                            Modifier::new().weight(1.0).clip(),
                             Arrangement::SpacedBy(sp(2)),
                             Alignment::Center,
                             || {
@@ -698,7 +777,7 @@ pub fn review(state: &WorkspaceState, session: &Session, height: f32) {
                         );
                         if shown == ReviewTab::Changes && !session.changes.is_empty() {
                             Button::icon(IconName::GitCompare, OPEN_DIFF)
-                                .modifier(Modifier::new().tooltip("Open Diff"))
+                                .tooltip("Open Diff")
                                 .build();
                         }
                     });

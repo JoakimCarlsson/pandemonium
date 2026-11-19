@@ -1,6 +1,7 @@
 //! The code box: lines in the code font inside a bordered box that cuts them off at a height.
 
-use crate::kit::{Radius, Role, Side, Styled};
+use crate::theme;
+use crate::theme::{Radius, Role};
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged};
 
@@ -74,12 +75,13 @@ impl<'a> CodeBox<'a> {
     #[track_caller]
     pub fn build(self) {
         let own = Modifier::new()
-            .pad_side(Side::Top, self.margin)
-            .pad_side(Side::Bottom, self.margin)
-            .height_in(0.0, crate::kit::sp(self.height / 4.0))
-            .fill_rounded(Role::Background, Radius::Lg)
-            .stroke(Role::Border, Radius::Lg)
-            .clip_to(Radius::None)
+            .padding_each(0.0, theme::sp(self.margin), 0.0, 0.0)
+            .padding_each(0.0, 0.0, 0.0, theme::sp(self.margin))
+            .height_in(0.0, crate::theme::sp(self.height / 4.0))
+            .background_rounded(theme::color(Role::Background), Radius::Lg.px())
+            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+            .padding(1.0)
+            .clip()
             .chain(self.inner.unwrap_or_default());
         column_arranged(
             self.modifier.chain(own),

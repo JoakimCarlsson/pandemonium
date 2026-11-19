@@ -1,6 +1,8 @@
 //! The pages of the settings window that list what agents are given in a project: an overview, the skills, instructions, agent definitions and hooks found in the folders the agent reads, and the tools it may call, each with a switch that leaves it out of new sessions.
 
-use crate::kit::sp;
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use std::path::Path;
@@ -8,9 +10,11 @@ use std::path::Path;
 use pm_protocol::library::{Item, Kind, Product, Scope, Source, ToolSet, locations};
 use rustle::{CursorIcon, Modifier};
 
-use crate::kit::{
-    FocusId, IconName, Interactive, Radius, Role, Side, Styled, Type, label, label_with,
-};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::select::styled_text;
+use crate::theme::Role;
 
 use crate::button::Variant;
 use crate::parts::{glyph, line};
@@ -610,7 +614,7 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
     let name_tone = if on { Role::Text } else { Role::Muted };
     flat_row(|| {
         column_arranged(
-            Modifier::new().weight(1.0).clip_to(Radius::None),
+            Modifier::new().weight(1.0).clip(),
             Arrangement::SpacedBy(sp(1)),
             Alignment::Start,
             || {
@@ -619,9 +623,13 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
                     Arrangement::SpacedBy(sp(2)),
                     Alignment::Center,
                     || {
-                        label(
+                        styled_text(
+                            Modifier::new(),
                             item.name.clone(),
-                            Type::new(13).ratio(1.4).tone(name_tone).truncate().medium(),
+                            theme::text_style(13, 1.4)
+                                .font_weight(rustle::FontWeight::MEDIUM)
+                                .color(theme::color(name_tone))
+                                .max_lines(1),
                         );
                         Badge::new(item.scope.label()).tone(Role::Subtle).build();
                         if !item.tool.is_empty() {
@@ -635,10 +643,12 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
                 if !description.is_empty() {
                     line(description, 12, 1.4, Role::Muted);
                 }
-                label_with(
+                styled_text(
                     Modifier::new().fill_max_width(),
                     detail,
-                    Type::new(11).ratio(1.4).tone(Role::Subtle).truncate(),
+                    theme::text_style(11, 1.4)
+                        .color(theme::color(Role::Subtle))
+                        .max_lines(1),
                 );
             },
         );
@@ -767,9 +777,11 @@ fn set_row(set: &ToolSet, place: usize, open: bool, product: Option<Product>, wi
         ),
         None => source_label(set),
     };
-    let heading = Modifier::new().weight(1.0).clip_to(Radius::None);
+    let heading = Modifier::new().weight(1.0).clip();
     let heading = match SET_FOLDS.id(place) {
-        Some(fold) => heading.cursor(CursorIcon::Pointer).target(fold),
+        Some(fold) => heading
+            .cursor(CursorIcon::Pointer)
+            .control(fold, reduce(fold)),
         None => heading,
     };
     let name_tone = if on { Role::Text } else { Role::Muted };
@@ -781,7 +793,7 @@ fn set_row(set: &ToolSet, place: usize, open: bool, product: Option<Product>, wi
             || {
                 glyph(chevron, 4.0, Role::Muted);
                 column_arranged(
-                    Modifier::new().weight(1.0).clip_to(Radius::None),
+                    Modifier::new().weight(1.0).clip(),
                     Arrangement::SpacedBy(sp(1)),
                     Alignment::Start,
                     || {
@@ -790,9 +802,13 @@ fn set_row(set: &ToolSet, place: usize, open: bool, product: Option<Product>, wi
                             Arrangement::SpacedBy(sp(2)),
                             Alignment::Center,
                             || {
-                                label(
+                                styled_text(
+                                    Modifier::new(),
                                     set.name.clone(),
-                                    Type::new(13).ratio(1.4).tone(name_tone).truncate().medium(),
+                                    theme::text_style(13, 1.4)
+                                        .font_weight(rustle::FontWeight::MEDIUM)
+                                        .color(theme::color(name_tone))
+                                        .max_lines(1),
                                 );
                                 Badge::new(count).build();
                             },
@@ -821,20 +837,23 @@ fn tool_row(
     let name_tone = if on { Role::Text } else { Role::Muted };
     row_arranged(
         Modifier::new()
-            .pad_side(Side::Left, 10)
-            .pad_side(Side::Right, 3)
-            .pad_y(3),
+            .padding_each(theme::sp(10), 0.0, 0.0, 0.0)
+            .padding_each(0.0, 0.0, theme::sp(3), 0.0)
+            .padding_xy(0.0, theme::sp(3)),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         || {
             column_arranged(
-                Modifier::new().weight(1.0).clip_to(Radius::None),
+                Modifier::new().weight(1.0).clip(),
                 Arrangement::SpacedBy(sp(1)),
                 Alignment::Start,
                 || {
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         tool.name.clone(),
-                        Type::new(12).ratio(1.4).tone(name_tone).truncate().mono(),
+                        theme::mono_style(12, 1.4)
+                            .color(theme::color(name_tone))
+                            .max_lines(1),
                     );
                     if let Some(first) = tool.description.lines().next() {
                         line(first.to_owned(), 12, 1.4, Role::Muted);

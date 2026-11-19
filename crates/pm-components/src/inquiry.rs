@@ -1,6 +1,8 @@
 //! The card that puts the agent's questions to the reader one at a time, each with the answers it offers and a box for an answer of the reader's own.
 
-use crate::kit::sp;
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
 use pm_harness::Alternative;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
@@ -8,28 +10,33 @@ use rustle::{BoxAlignment, CursorIcon, Modifier};
 use crate::Button;
 use crate::button::Variant;
 use crate::draft::{CLOSE, Draft, FOLD, MOCKUP_OPEN_BASE, NEXT, OTHER, PICK_BASE, SKIP};
+use crate::events::Interactive;
 use crate::exhibit::{MOCKUP_OFFER_BASE, MOCKUP_VIEWPORT, Offer, Preview, wanted_document};
 use crate::figures::Figures;
+use crate::focus::FocusId;
+use crate::icons::IconName;
 use crate::input::{self, Input};
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Tooltip, Type, label,
-    wrap_lines,
-};
 use crate::parts::line;
+use crate::select::styled_text;
 use crate::size::Size;
+use crate::theme::{Radius, Role};
 
 /// Emits every measured line of agent text within `width`, set in `pixels` tall type in `tone`.
 #[track_caller]
 fn wrapped(content: &str, pixels: u32, tone: Role, width: f32) {
-    let kind = Type::new(pixels).ratio(1.4);
-    let lines = wrap_lines(content, kind, width.max(32.0));
+    let kind = theme::text_style(pixels, 1.4);
+    let lines = rustle::wrap_at_spaces(content, &kind, width.max(32.0));
     column_arranged(
         Modifier::new(),
         Arrangement::Start,
         Alignment::Start,
         || {
             for part in lines {
-                label(&content[part.start..part.end], kind.tone(tone));
+                styled_text(
+                    Modifier::new(),
+                    &content[part.start..part.end],
+                    kind.color(theme::color(tone)),
+                );
             }
         },
     );
@@ -40,9 +47,10 @@ fn wrapped(content: &str, pixels: u32, tone: Role, width: f32) {
 fn key(number: usize) {
     row_arranged(
         Modifier::new()
-            .square(7)
-            .fill_rounded(Role::Background, Radius::Lg)
-            .stroke(Role::Border, Radius::Lg),
+            .size(theme::sp(7), theme::sp(7))
+            .background_rounded(theme::color(Role::Background), Radius::Lg.px())
+            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+            .padding(1.0),
         Arrangement::Center,
         Alignment::Center,
         || line(number.to_string(), 13, 1.4, Role::Muted),
@@ -61,21 +69,24 @@ fn choice(
 ) {
     row_arranged(
         modifier
-            .looks_of(
-                Looks::new()
+            .interaction_focused(crate::focus::is_held(id))
+            .interaction_background(
+                (theme::InteractionTones::new()
                     .idle(Role::SurfaceHover)
                     .hover(Role::SurfaceActive)
-                    .radius(Radius::Lg),
-                id,
+                    .radius(Radius::Lg))
+                .colors(),
             )
-            .stroke(
-                if picked { Role::Accent } else { Role::Surface },
-                Radius::Lg,
+            .border(
+                1.0,
+                theme::color(if picked { Role::Accent } else { Role::Surface }),
+                Radius::Lg.px(),
             )
+            .padding(1.0)
             .cursor(CursorIcon::Pointer)
-            .target(id)
-            .pad_x(3)
-            .pad_y(2),
+            .control(id, reduce(id))
+            .padding_xy(theme::sp(3), 0.0)
+            .padding_xy(0.0, theme::sp(2)),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         || {
@@ -178,20 +189,22 @@ fn mark(icon: IconName, words: &str, tone: Role, form: Marks, tip: &str) {
 /// Emits a small mark on a tile that shows `icon` in `tone`, followed by `words` when it has any, saying `tip` when hovered.
 #[track_caller]
 fn mark_node(icon: IconName, words: Option<&str>, tone: Role, tip: &str) {
-    row_arranged(
-        Modifier::new()
-            .tooltip(tip)
-            .stroke(tone, Radius::Full)
-            .pad_x(1.5),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Center,
-        || {
-            crate::parts::glyph(icon, 3.0, tone);
-            if let Some(words) = words {
-                line(words, 11, 1.5, tone);
-            }
-        },
-    );
+    crate::tooltip::with_tooltip(tip, || {
+        row_arranged(
+            Modifier::new()
+                .border(1.0, theme::color(tone), Radius::Full.px())
+                .padding(1.0)
+                .padding_xy(theme::sp(1.5), 0.0),
+            Arrangement::SpacedBy(sp(1)),
+            Alignment::Center,
+            || {
+                crate::parts::glyph(icon, 3.0, tone);
+                if let Some(words) = words {
+                    line(words, 11, 1.5, tone);
+                }
+            },
+        );
+    });
 }
 
 /// Emits the tile offering `alternative` among answers that are compared: the picture of its mockup when it has one, as `figures` holds it, over its label and description, `width` logical pixels wide. The key `number` picks it, as a press on it does; it is drawn as taken when `picked` and marked when the agent recommends it, and a tile with a mockup has a button that opens the mockup larger. The marks shrink to icons and then go, and the button goes with them, as the tile gets too narrow to hold them, and the tile cuts off whatever would still reach past its edge. A mockup whose picture waits for the embedded browser offers `offer` in its place, shrinking as the marks do.
@@ -210,28 +223,34 @@ fn tile(
     column_arranged(
         Modifier::new()
             .width(width)
-            .looks_of(
-                Looks::new()
+            .interaction_focused(crate::focus::is_held(id))
+            .interaction_background(
+                (theme::InteractionTones::new()
                     .idle(if picked {
                         Role::SurfaceActive
                     } else {
                         Role::SurfaceHover
                     })
                     .hover(Role::SurfaceActive)
-                    .radius(Radius::Lg),
-                id,
+                    .radius(Radius::Lg))
+                .colors(),
             )
-            .stroke(if picked { Role::Accent } else { Role::Border }, Radius::Lg)
-            .clip_to(Radius::None)
+            .border(
+                1.0,
+                theme::color(if picked { Role::Accent } else { Role::Border }),
+                Radius::Lg.px(),
+            )
+            .padding(1.0)
+            .clip()
             .cursor(CursorIcon::Pointer)
-            .target(id)
-            .pad_x(2)
-            .pad_y(2),
+            .control(id, reduce(id))
+            .padding_xy(theme::sp(2), 0.0)
+            .padding_xy(0.0, theme::sp(2)),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Start,
         || {
             row_arranged(
-                Modifier::new().fill_max_width().clip_to(Radius::None),
+                Modifier::new().fill_max_width().clip(),
                 Arrangement::SpacedBy(sp(1.5)),
                 Alignment::Center,
                 || {
@@ -252,11 +271,11 @@ fn tile(
                     if alternative.mockup.is_some() && form != Marks::Hidden {
                         Button::icon(IconName::Maximize, FocusId(MOCKUP_OPEN_BASE + index as u64))
                             .disabled(outdated)
-                            .modifier(Modifier::new().tooltip(if outdated {
+                            .tooltip(if outdated {
                                 "Update the browser to open mockups · it cannot open pages sealed from the network"
                             } else {
                                 "Open larger in the browser pane · sealed from the network"
-                            }))
+                            })
                             .build();
                     }
                 },
@@ -310,17 +329,19 @@ fn other(draft: &Draft, number: usize, modifier: Modifier) {
     let field = &draft.others[draft.step];
     column_arranged(
         modifier
-            .fill_rounded(Role::SurfaceHover, Radius::Lg)
-            .stroke(
-                if field.text().trim().is_empty() {
+            .background_rounded(theme::color(Role::SurfaceHover), Radius::Lg.px())
+            .border(
+                1.0,
+                theme::color(if field.text().trim().is_empty() {
                     Role::Surface
                 } else {
                     Role::Accent
-                },
-                Radius::Lg,
+                }),
+                Radius::Lg.px(),
             )
-            .pad_x(3)
-            .pad_y(2),
+            .padding(1.0)
+            .padding_xy(theme::sp(3), 0.0)
+            .padding_xy(0.0, theme::sp(2)),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Start,
         || {
@@ -343,7 +364,7 @@ fn other(draft: &Draft, number: usize, modifier: Modifier) {
             column_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .fill_rounded(Role::Background, Radius::Lg),
+                    .background_rounded(theme::color(Role::Background), Radius::Lg.px()),
                 Arrangement::Start,
                 Alignment::Start,
                 || {
@@ -364,10 +385,11 @@ pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
     let count = draft.inquiry.questions.len();
     column_arranged(
         Modifier::new()
-            .fill_rounded(Role::Surface, Radius::Xl)
-            .stroke(Role::Border, Radius::Xl)
-            .pad_x(3)
-            .pad_y(2.5),
+            .background_rounded(theme::color(Role::Surface), Radius::Xl.px())
+            .border(1.0, theme::color(Role::Border), Radius::Xl.px())
+            .padding(1.0)
+            .padding_xy(theme::sp(3), 0.0)
+            .padding_xy(0.0, theme::sp(2.5)),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Start,
         || {
@@ -379,9 +401,12 @@ pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
                     if count > 1 {
                         row_arranged(
                             Modifier::new()
-                                .fill_rounded(Role::SurfaceHover, Radius::Full)
-                                .pad_x(3)
-                                .pad_y(1),
+                                .background_rounded(
+                                    theme::color(Role::SurfaceHover),
+                                    Radius::Full.px(),
+                                )
+                                .padding_xy(theme::sp(3), 0.0)
+                                .padding_xy(0.0, theme::sp(1)),
                             Arrangement::Start,
                             Alignment::Center,
                             || {
@@ -482,10 +507,11 @@ pub fn answered(answers: &[(String, Option<String>)], width: f32) {
     column_arranged(
         Modifier::new()
             .align(BoxAlignment::TopStart)
-            .fill_rounded(Role::Background, Radius::Xl)
-            .stroke(Role::Border, Radius::Xl)
-            .pad_x(4)
-            .pad_y(3.5),
+            .background_rounded(theme::color(Role::Background), Radius::Xl.px())
+            .border(1.0, theme::color(Role::Border), Radius::Xl.px())
+            .padding(1.0)
+            .padding_xy(theme::sp(4), 0.0)
+            .padding_xy(0.0, theme::sp(3.5)),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Start,
         || {
@@ -587,10 +613,10 @@ mod tests {
             }],
         });
         let figures = Figures::new();
-        let report = crate::kit::report::lay_out(700.0, 2000.0, None, move || {
+        let laid = crate::tagged::lay_out(700.0, 2000.0, None, move || {
             inquiry(&draft, &figures, &Offer::Nothing, 700.0)
         });
-        let ids: Vec<u64> = report.regions.iter().map(|region| region.id.0).collect();
+        let ids: Vec<u64> = laid.ids().iter().map(|id| id.0).collect();
         for index in 0..3 {
             assert!(ids.contains(&(PICK_BASE + index)), "pick {index}");
         }

@@ -2,12 +2,12 @@
 
 use std::time::Instant;
 
-use pm_components::kit::Step;
-use pm_components::kit::{Key, KeyEvent};
 use pm_components::open_files::EDITOR_FIELD;
+use pm_components::text_lines::Step;
 use pm_editor::LightbulbShown;
 use pm_field::{Edit, Motion};
 use pm_pages::Screen;
+use rustle::{Key, KeyEvent};
 
 use super::{App, DRAG_DISTANCE};
 
@@ -86,8 +86,8 @@ impl App {
         else {
             return;
         };
-        if pm_components::kit::code_ligatures() != on {
-            pm_components::kit::set_code_ligatures(on);
+        if pm_components::theme::code_ligatures() != on {
+            pm_components::theme::set_code_ligatures(on);
             self.recompose = true;
         }
     }
@@ -117,7 +117,7 @@ impl App {
         }
         drag.moving = true;
         self.text_drag = Some(drag);
-        let Some(offset) = self.output.offset_in(EDITOR_FIELD, x, y) else {
+        let Some(offset) = self.code_lines().offset_in(EDITOR_FIELD, x, y) else {
             return;
         };
         self.model.update(|screen| {
@@ -137,7 +137,7 @@ impl App {
             return false;
         };
         if drag.moving {
-            let copy = self.modifiers.control || self.modifiers.logo;
+            let copy = self.modifiers.ctrl || self.modifiers.meta;
             self.model.update(|screen| {
                 let Screen::Workspace(state) = screen;
                 state.editor_dropped(copy);
@@ -171,7 +171,7 @@ impl App {
             _ => return false,
         };
         let modifiers = event.modifiers;
-        if modifiers.control || modifiers.alt || modifiers.logo {
+        if modifiers.ctrl || modifiers.alt || modifiers.meta {
             return false;
         }
         let extend = modifiers.shift;
@@ -195,14 +195,14 @@ impl App {
         if several || (selected && !extend) {
             return false;
         }
-        match self.output.visual_step(EDITOR_FIELD, caret, right) {
+        match self.code_lines().visual_step(EDITOR_FIELD, caret, right) {
             None => false,
             Some(Step::To(target)) => {
                 self.edit_field(EDITOR_FIELD, Edit::Place(target, extend));
                 true
             }
             Some(Step::Edge) => {
-                if let Some(edge) = self.output.line_edge(EDITOR_FIELD, caret, right) {
+                if let Some(edge) = self.code_lines().line_edge(EDITOR_FIELD, caret, right) {
                     self.edit_field(EDITOR_FIELD, Edit::Place(edge, extend));
                 }
                 let motion = if right { Motion::Right } else { Motion::Left };

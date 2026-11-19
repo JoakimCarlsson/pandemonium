@@ -1,6 +1,8 @@
 //! The chips above the prompt box that sum up what the agent is doing, each opening its details.
 
-use crate::kit::sp;
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
 use pm_harness::Progress;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 use rustle::{CursorIcon, Modifier};
@@ -8,18 +10,18 @@ use rustle::{CursorIcon, Modifier};
 use crate::Button;
 use crate::Tally;
 use crate::button::Variant;
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Placement, Radius, Role, Side, Styled,
-    anchored, spinner,
-};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::{IconName, spinner};
 use crate::parts::{clipped, line};
+use crate::popups::{Placement, anchored};
 use crate::sample::{Session, Step};
 use crate::size::Size;
 use crate::state::{
-    APPROVALS_CHIP, Activity, OPEN_DIFF, PLAN_CHIP, SHELLS_CHIP, SUBAGENTS_CHIP, SUBAGENTS_SCROLL,
-    WorkspaceState,
+    APPROVALS_CHIP, Activity, OPEN_DIFF, PLAN_CHIP, SHELLS_CHIP, SUBAGENTS_CHIP, WorkspaceState,
 };
 use crate::steps::{elapsed, plan, question, subagents};
+use crate::theme::{Radius, Role};
 
 /// A pill in the strip of activity that says what there is, filled while it is the one open, answering to `id`.
 fn chip(label: impl Into<String>, id: FocusId) -> Button {
@@ -47,10 +49,11 @@ fn shells(session: &Session) {
     column_arranged(
         Modifier::new()
             .fill_max_width()
-            .fill_rounded(Role::Surface, Radius::Lg)
-            .stroke(Role::Border, Radius::Lg)
-            .pad_x(3.5)
-            .pad_y(3),
+            .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
+            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+            .padding(1.0)
+            .padding_xy(theme::sp(3.5), 0.0)
+            .padding_xy(0.0, theme::sp(3)),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Start,
         || {
@@ -106,7 +109,7 @@ fn subagent_panel(state: &WorkspaceState, session: &Session) {
         reply,
         &|position| page.is_some_and(|open| held.contains(&(open, reply, position))),
         &root.to_string_lossy(),
-        Some((SUBAGENTS_SCROLL, state.subagents_scroll)),
+        Some((&state.subagents_scroll, &state.chat_back)),
     );
 }
 
@@ -129,10 +132,11 @@ fn panel(state: &WorkspaceState, session: &Session, open: Activity, width: f32) 
     column_arranged(
         Modifier::new()
             .width(width)
-            .shadow_md(Radius::Xl)
-            .fill_rounded(Role::Background, Radius::Xl)
-            .stroke(Role::Border, Radius::Xl)
-            .pad(2),
+            .draw_behind(theme::shadows(&theme::MEDIUM_SHADOW, Radius::Xl))
+            .background_rounded(theme::color(Role::Background), Radius::Xl.px())
+            .border(1.0, theme::color(Role::Border), Radius::Xl.px())
+            .padding(1.0)
+            .padding(theme::sp(2)),
         Arrangement::Start,
         Alignment::Start,
         || match open {
@@ -172,9 +176,10 @@ pub fn activity(state: &WorkspaceState, session: &Session, width: f32) {
     }
     let open = state.activity.filter(|&open| has_panel(session, open));
     anchored(
-        Modifier::new().pad_side(Side::Bottom, 2),
+        Modifier::new().padding_each(0.0, 0.0, 0.0, theme::sp(2)),
         Placement::Above,
         2.0,
+        false,
         || chips(state, session, plan_items, awaiting, working_agents),
         open.map(|open| move || panel(state, session, open, width)),
     );
@@ -198,8 +203,8 @@ fn chips(
                     .mark(|| {
                         rustle::spacer(
                             Modifier::new()
-                                .square(1.5)
-                                .fill_rounded(Role::Danger, Radius::Full),
+                                .size(theme::sp(1.5), theme::sp(1.5))
+                                .background_rounded(theme::color(Role::Danger), Radius::Full.px()),
                         )
                     })
                     .selected(state.activity == Some(Activity::Approvals))
@@ -237,15 +242,19 @@ fn chips(
             if !session.changes.is_empty() {
                 row_arranged(
                     Modifier::new()
-                        .h(7)
-                        .looks_of(
-                            Looks::new().hover(Role::SurfaceHover).radius(Radius::Full),
-                            OPEN_DIFF,
+                        .height(theme::sp(7))
+                        .interaction_focused(crate::focus::is_held(OPEN_DIFF))
+                        .interaction_background(
+                            (theme::InteractionTones::new()
+                                .hover(Role::SurfaceHover)
+                                .radius(Radius::Full))
+                            .colors(),
                         )
-                        .stroke(Role::Border, Radius::Full)
+                        .border(1.0, theme::color(Role::Border), Radius::Full.px())
+                        .padding(1.0)
                         .cursor(CursorIcon::Pointer)
-                        .target(OPEN_DIFF)
-                        .pad_x(3),
+                        .control(OPEN_DIFF, reduce(OPEN_DIFF))
+                        .padding_xy(theme::sp(3), 0.0),
                     Arrangement::Start,
                     Alignment::Center,
                     || {

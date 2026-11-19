@@ -1,15 +1,20 @@
-//! The button: one component with a look per variant and a measure per size.
+//! The button: one component with a look per variant and a measure per size, drawn as a
+//! rustle surface in the variant's shape, border and content colour, its fills by
+//! interaction state from rustle's interaction support.
 
-use crate::kit::sp;
+use crate::theme;
+use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use std::fmt;
 use std::rc::Rc;
 
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Tone, Type, icon, label,
-    label_with, spinner, spinning_icon, wrap_lines,
-};
-use rustle::{CursorIcon, Modifier};
+use crate::events::{Interactive, OnClick};
+use crate::focus::FocusId;
+use crate::icons::icon;
+use crate::icons::{IconName, spinner, spinning_icon};
+use crate::select::styled_text;
+use crate::theme::{Radius, Role, Tone};
+use rustle::{BorderStroke, Color, CursorIcon, Modifier, Shape};
 
 use crate::size::Size;
 
@@ -100,6 +105,11 @@ pub struct Button {
     inner: Option<Modifier>,
     /// How the button lays out what it holds, in place of its own, when the caller gave one.
     arranged: Option<(Arrangement, Alignment)>,
+    /// The words shown over the button once the pointer rests on it, if any.
+    tooltip: Option<String>,
+    /// What clicking it does, when the caller said; the workspace's reducer takes the
+    /// press otherwise.
+    on_click: Option<OnClick>,
 }
 
 impl Button {
@@ -125,7 +135,16 @@ impl Button {
             modifier: Modifier::new(),
             inner: None,
             arranged: None,
+            tooltip: None,
+            on_click: None,
         }
+    }
+
+    /// The button running `on_click` when clicked, or activated from the keyboard, in place
+    /// of handing the press to the workspace's reducer.
+    pub fn on_click(mut self, on_click: impl Fn() + 'static) -> Self {
+        self.on_click = Some(OnClick::new(on_click));
+        self
     }
 
     /// A button showing only `icon`, answering to `id`.
@@ -150,6 +169,8 @@ impl Button {
             modifier: Modifier::new(),
             inner: None,
             arranged: None,
+            tooltip: None,
+            on_click: None,
         }
     }
 
@@ -248,7 +269,13 @@ impl Button {
         }
     }
 
-    /// The button with `modifier` put around its box, outside its own: sizes, growth, margins, placement, a tooltip.
+    /// The button with `words` shown over it once the pointer rests on it.
+    pub fn tooltip(mut self, words: impl Into<String>) -> Self {
+        self.tooltip = Some(words.into());
+        self
+    }
+
+    /// The button with `modifier` put around its box, outside its own: sizes, growth, margins, placement.
     pub fn modifier(mut self, modifier: Modifier) -> Self {
         self.modifier = self.modifier.chain(modifier);
         self
@@ -273,17 +300,35 @@ impl Button {
         };
         let (_, side, font, _) = self.measure();
         let inner = (width - 2.0 * side * 4.0).max(32.0);
-        let kind = Type::new(font).ratio(1.4).medium();
-        self.lines = wrap_lines(label, kind, inner)
+        let kind = theme::text_style(font, 1.4).font_weight(rustle::FontWeight::MEDIUM);
+        self.lines = rustle::wrap_at_spaces(label, &kind, inner)
             .into_iter()
             .map(|part| label[part.start..part.end].trim_end().to_owned())
             .collect();
         self
     }
 
-    /// Emits the button.
+    /// Emits the button, inside the area that shows its tooltip when it has one; a button
+    /// that fills the room of its row gives that room to the area and fills it.
     #[track_caller]
-    pub fn build(self) {
+    pub fn build(mut self) {
+        let Some(words) = self.tooltip.take() else {
+            self.build_plain();
+            return;
+        };
+        let area = if self.reach == Reach::Fill {
+            self.reach = Reach::Content;
+            self.modifier = self.modifier.fill_max_width();
+            Modifier::new().weight(1.0)
+        } else {
+            Modifier::new()
+        };
+        crate::tooltip::with_tooltip_in(area, words, move || self.build_plain());
+    }
+
+    /// Emits the button itself.
+    #[track_caller]
+    fn build_plain(self) {
         let ink = self.ink();
         let (height, side, font, square) = self.measure();
         let spread = self.reach != Reach::Content;
@@ -295,33 +340,47 @@ impl Button {
             Reach::Fill => Modifier::new().weight(1.0),
         };
         if self.disabled {
-            own = own.opacity(40.0);
+            own = own.alpha(0.4);
         }
         own = if self.label.is_none() {
-            own.square(square)
+            own.size(theme::sp(square), theme::sp(square))
         } else if several {
-            own.min_h(height)
+            own.height_in(theme::sp(height), f32::INFINITY)
         } else {
-            own.h(height)
+            own.height(theme::sp(height))
         };
-        own = own.looks_of(self.looks(radius), self.id);
-        own = match (self.variant, self.selected) {
-            (Variant::Outline, true) => own.stroke(Role::Muted, radius),
-            (Variant::Outline, false) | (Variant::Field, false) => own.stroke(Role::Border, radius),
-            (Variant::Field, true) => own.stroke(Role::Focused, radius),
-            _ => own,
-        };
-        own = own.focus_ring(self.id, 2.0, radius);
+        own = own
+            .interaction_focused(crate::focus::is_held(self.id))
+            .interaction_background(self.looks(radius).colors());
         own = if self.disabled {
             own.cursor(CursorIcon::NotAllowed)
         } else {
-            own.cursor(CursorIcon::Pointer).target(self.id)
+            own.cursor(CursorIcon::Pointer).control(
+                self.id,
+                OnClick::or_reduce(self.on_click.clone(), self.id).lambda(),
+            )
         };
-        own = match (self.inner, self.label.is_some(), several) {
-            (Some(inner), _, _) => own.chain(inner),
-            (None, true, true) => own.pad_x(side).pad_y(1.5),
-            (None, true, false) => own.pad_x(side),
-            (None, false, _) => own,
+        let border = match (self.variant, self.selected) {
+            (Variant::Outline, true) => Some(Role::Muted),
+            (Variant::Outline, false) | (Variant::Field, false) => Some(Role::Border),
+            (Variant::Field, true) => Some(Role::Focused),
+            _ => None,
+        }
+        .map(|role| BorderStroke::new(1.0, theme::color(role)));
+        let mut inside = Modifier::new();
+        if border.is_some() {
+            inside = inside.padding(1.0);
+        }
+        inside = inside
+            .interaction_focused(crate::focus::is_held(self.id))
+            .draw_over_interactive(theme::focus_ring(2.0, radius));
+        inside = match (self.inner, self.label.is_some(), several) {
+            (Some(inner), _, _) => inside.chain(inner),
+            (None, true, true) => inside
+                .padding_xy(theme::sp(side), 0.0)
+                .padding_xy(0.0, theme::sp(1.5)),
+            (None, true, false) => inside.padding_xy(theme::sp(side), 0.0),
+            (None, false, _) => inside,
         };
         let (arrangement, alignment) = self.arranged.unwrap_or(if spread && self.label.is_some() {
             (Arrangement::SpacedBy(sp(2)), Alignment::Center)
@@ -333,16 +392,16 @@ impl Button {
                 Alignment::Center,
             )
         });
-        let mut kind = Type::new(font).ratio(1.4).tone(ink);
+        let mut kind = theme::text_style(font, 1.4).color(theme::color(ink));
         if !spread || several {
             if self.variant != Variant::Field {
-                kind = kind.medium();
+                kind = kind.font_weight(rustle::FontWeight::MEDIUM);
             }
             if self.variant == Variant::Link {
                 kind = kind.underline();
             }
             if self.monospace {
-                kind = kind.mono();
+                kind = theme::in_mono(kind);
             }
         }
         let spins_first = self.spinning && self.trailing.is_none();
@@ -354,37 +413,41 @@ impl Button {
             self.label,
             self.lines,
         );
-        row_arranged(
+        rustle::surface_custom(
             self.modifier.chain(own),
-            arrangement,
-            alignment,
+            Shape::rounded(radius.px()),
+            Color::TRANSPARENT,
+            theme::color(ink),
+            border,
             move || {
-                if let Some(mark) = mark {
-                    (mark.0)();
-                } else if let Some(name) = leading {
-                    Self::glyph(name, ink, spins_first);
-                }
-                if let Some(words) = words {
-                    if lines.len() > 1 {
-                        column_arranged(
-                            Modifier::new(),
-                            Arrangement::Start,
-                            Alignment::Start,
-                            || {
-                                for part in &lines {
-                                    label(part, kind);
-                                }
-                            },
-                        );
-                    } else if spread {
-                        label_with(Modifier::new().weight(1.0), words, kind.truncate());
-                    } else {
-                        label(words, kind);
+                row_arranged(inside, arrangement, alignment, move || {
+                    if let Some(mark) = mark {
+                        (mark.0)();
+                    } else if let Some(name) = leading {
+                        Self::glyph(name, ink, spins_first);
                     }
-                }
-                if let Some(name) = trailing {
-                    Self::glyph(name, ink, spinning);
-                }
+                    if let Some(words) = words {
+                        if lines.len() > 1 {
+                            column_arranged(
+                                Modifier::new(),
+                                Arrangement::Start,
+                                Alignment::Start,
+                                || {
+                                    for part in &lines {
+                                        styled_text(Modifier::new(), part, kind);
+                                    }
+                                },
+                            );
+                        } else if spread {
+                            styled_text(Modifier::new().weight(1.0), words, kind.max_lines(1));
+                        } else {
+                            styled_text(Modifier::new(), words, kind);
+                        }
+                    }
+                    if let Some(name) = trailing {
+                        Self::glyph(name, ink, spinning);
+                    }
+                });
             },
         );
     }
@@ -410,7 +473,7 @@ impl Button {
     }
 
     /// The fill of the button at rest and, while it is on, under the pointer and pressed, with its corners `radius` round.
-    fn looks(&self, radius: Radius) -> Looks {
+    fn looks(&self, radius: Radius) -> theme::InteractionTones {
         let (resting, hovered, pressed): (Option<Tone>, Option<Tone>, Option<Tone>) =
             match self.variant {
                 Variant::Default => (
@@ -446,7 +509,7 @@ impl Button {
             (_, true) => Some(Role::SurfaceSelected.into()),
             _ => resting,
         };
-        let mut looks = Looks::new().radius(radius);
+        let mut looks = theme::InteractionTones::new().radius(radius);
         if let Some(tone) = resting {
             looks = looks.idle(tone);
         }
@@ -459,5 +522,42 @@ impl Button {
             }
         }
         looks
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tagged::lay_out;
+
+    /// A button drawn on a rustle surface keeps its measure: the height of its size, a fixed
+    /// width when given one, the room of its row when it fills, and a square when it holds
+    /// only an icon; each is named by its id in paint order.
+    #[test]
+    fn buttons_keep_their_measure_on_a_surface() {
+        let (plain, fixed, filling, square) =
+            (FocusId(911), FocusId(912), FocusId(913), FocusId(914));
+        let laid = lay_out(400.0, 200.0, None, move || {
+            rustle::column(|| {
+                Button::new("Plain", plain).build();
+                Button::new("Fixed", fixed)
+                    .variant(Variant::Field)
+                    .width(120.0)
+                    .build();
+                rustle::row_with(Modifier::new().width(300.0), || {
+                    Button::new("Fill", filling).fill().build();
+                });
+                Button::icon(IconName::Close, square).build();
+            });
+        });
+        let size = |id| {
+            let node = laid.node(id).expect("laid out");
+            (node.bounds.size.width, node.bounds.size.height)
+        };
+        assert_eq!(size(plain).1, 36.0);
+        assert_eq!(size(fixed), (120.0, 36.0));
+        assert_eq!(size(filling), (300.0, 36.0));
+        assert_eq!(size(square), (28.0, 28.0));
+        assert_eq!(laid.ids(), vec![plain, fixed, filling, square]);
     }
 }

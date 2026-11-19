@@ -1,6 +1,7 @@
 //! The resolver of a file that a merge, a rebase or a cherry-pick stopped on: each place where the two sides disagree with both sides shown and a choice to take ours, theirs or both, and under them the result, which is the file itself, edited by hand, until the file is marked resolved and staged.
 
-use crate::kit::sp;
+use crate::theme;
+use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use std::ops::Range;
 
@@ -9,14 +10,14 @@ use rustle::Modifier;
 
 use crate::Button;
 use crate::button::Variant;
-use crate::excerpts::{Block, EXCERPTS_SCROLL, ExcerptFile, Source, plain_block};
-use crate::kit::{
-    FocusId, Radius, Role, Scroll, Side, Styled, Tone, Type, label_with, scroll_area,
-};
+use crate::excerpts::{Block, ExcerptFile, Source, plain_block};
+use crate::focus::FocusId;
 use crate::open_files::Contents;
 use crate::parts::{line, spacer};
+use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
+use crate::theme::{Radius, Role, Tone};
 
 /// Takes everything of the file from our side.
 pub const CONFLICT_OURS_ALL: FocusId = FocusId(7_414_001);
@@ -320,7 +321,10 @@ impl<'a> Conflict<'a> {
     #[track_caller]
     fn line_row(height: f32, pad: f32, content: impl FnOnce()) {
         row_arranged(
-            Modifier::new().fill_max_width().height(height).pad_x(pad),
+            Modifier::new()
+                .fill_max_width()
+                .height(height)
+                .padding_xy(theme::sp(pad), 0.0),
             Arrangement::Start,
             Alignment::Center,
             content,
@@ -343,35 +347,32 @@ impl<'a> Conflict<'a> {
                 Modifier::new().fill_max_width(),
             )
         };
-        column_arranged(
-            own.clip_to(Radius::None),
-            Arrangement::Start,
-            Alignment::Start,
-            || {
-                Self::line_row(LABEL, 2.0, || line(name, 11, 1.4, Role::Muted));
-                column_arranged(
-                    tinted.fill(Tone::from(tint).alpha(0.12)),
-                    Arrangement::Start,
-                    Alignment::Start,
-                    || {
-                        for content in text_of.lines().take(MOST_LINES) {
-                            Self::line_row(row, 2.0, || {
-                                label_with(
-                                    Modifier::new().weight(1.0),
-                                    crate::diff_syntax::shown(content),
-                                    Type::code(font).ratio(1.4).tone(Role::Text).truncate(),
-                                );
-                            });
-                        }
-                        if more > 0 {
-                            Self::line_row(row, 2.0, || {
-                                line(format!("… {more} more lines"), 11, 1.4, Role::Subtle);
-                            });
-                        }
-                    },
-                );
-            },
-        );
+        column_arranged(own.clip(), Arrangement::Start, Alignment::Start, || {
+            Self::line_row(LABEL, 2.0, || line(name, 11, 1.4, Role::Muted));
+            column_arranged(
+                tinted.background(theme::color(Tone::from(tint).alpha(0.12))),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    for content in text_of.lines().take(MOST_LINES) {
+                        Self::line_row(row, 2.0, || {
+                            styled_text(
+                                Modifier::new().weight(1.0),
+                                crate::diff_syntax::shown(content),
+                                theme::code_style(font, 1.4)
+                                    .color(theme::color(Role::Text))
+                                    .max_lines(1),
+                            );
+                        });
+                    }
+                    if more > 0 {
+                        Self::line_row(row, 2.0, || {
+                            line(format!("… {more} more lines"), 11, 1.4, Role::Subtle);
+                        });
+                    }
+                },
+            );
+        });
     }
 
     /// Emits both sides of the conflict `region`, named `ours` and `theirs`, lying as the resolver's layout says, `row` pixels a line.
@@ -385,14 +386,18 @@ impl<'a> Conflict<'a> {
         let own = Modifier::new().fill_max_width();
         match self.layout {
             Layout::SideBySide => row_arranged(
-                own.height_intrinsic(rustle::IntrinsicSize::Max).pad_x(3),
+                own.height_intrinsic(rustle::IntrinsicSize::Max)
+                    .padding_xy(theme::sp(3), 0.0),
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Start,
                 both,
             ),
-            Layout::Stacked => {
-                column_arranged(own.pad_x(3), Arrangement::Start, Alignment::Start, both)
-            }
+            Layout::Stacked => column_arranged(
+                own.padding_xy(theme::sp(3), 0.0),
+                Arrangement::Start,
+                Alignment::Start,
+                both,
+            ),
         }
     }
 
@@ -406,8 +411,9 @@ impl<'a> Conflict<'a> {
             Modifier::new()
                 .fill_max_width()
                 .height(self.card_height(region, row) - SPACE)
-                .stroke(Role::Border, Radius::Lg)
-                .clip_to(Radius::None),
+                .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+                .padding(1.0)
+                .clip(),
             Arrangement::Start,
             Alignment::Start,
             || {
@@ -415,13 +421,18 @@ impl<'a> Conflict<'a> {
                     Modifier::new()
                         .fill_max_width()
                         .height(LABEL)
-                        .fill(Role::Surface)
-                        .stroke_side(Side::Bottom, 1.0, Role::Border)
-                        .pad_x(3),
+                        .background(theme::color(Role::Surface))
+                        .draw_behind(theme::edge(
+                            theme::Side::Bottom,
+                            1.0,
+                            theme::color(Role::Border),
+                        ))
+                        .padding_each(0.0, 0.0, 0.0, 1.0)
+                        .padding_xy(theme::sp(3), 0.0),
                     Arrangement::Start,
                     Alignment::Center,
                     || {
-                        label_with(
+                        styled_text(
                             Modifier::new().weight(1.0),
                             format!(
                                 "Conflict {} of {} · line {}",
@@ -429,17 +440,18 @@ impl<'a> Conflict<'a> {
                                 card.count,
                                 region.line + 1
                             ),
-                            Type::new(12)
-                                .ratio(1.4)
-                                .tone(Role::Text)
-                                .truncate()
-                                .medium(),
+                            theme::text_style(12, 1.4)
+                                .font_weight(rustle::FontWeight::MEDIUM)
+                                .color(theme::color(Role::Text))
+                                .max_lines(1),
                         );
                     },
                 );
                 self.sides(region, &ours, &theirs, row);
                 row_arranged(
-                    Modifier::new().height(BUTTONS).pad_x(3),
+                    Modifier::new()
+                        .height(BUTTONS)
+                        .padding_xy(theme::sp(3), 0.0),
                     Arrangement::SpacedBy(sp(2)),
                     Alignment::Center,
                     || {
@@ -476,18 +488,23 @@ impl<'a> Conflict<'a> {
             Modifier::new()
                 .fill_max_width()
                 .height(STRIP)
-                .stroke_side(Side::Bottom, 1.0, Role::Border)
-                .pad_x(4),
+                .draw_behind(theme::edge(
+                    theme::Side::Bottom,
+                    1.0,
+                    theme::color(Role::Border),
+                ))
+                .padding_each(0.0, 0.0, 0.0, 1.0)
+                .padding_xy(theme::sp(4), 0.0),
             Arrangement::SpacedBy(sp(3)),
             Alignment::Center,
             || {
-                crate::kit::label(
+                styled_text(
+                    Modifier::new(),
                     name,
-                    Type::new(13)
-                        .ratio(1.4)
-                        .tone(Role::Text)
-                        .truncate()
-                        .medium(),
+                    theme::text_style(13, 1.4)
+                        .font_weight(rustle::FontWeight::MEDIUM)
+                        .color(theme::color(Role::Text))
+                        .max_lines(1),
                 );
                 line(
                     said,
@@ -538,8 +555,8 @@ impl<'a> Conflict<'a> {
         let regions = text_now.map(regions_in).unwrap_or_default();
         let row = state.editor.row_height();
         let (low, high) = (
-            excerpts.scroll - OVERSCAN,
-            excerpts.scroll + (self.height - STRIP).max(0.0) + OVERSCAN,
+            excerpts.scroll.offset() - OVERSCAN,
+            excerpts.scroll.offset() + (self.height - STRIP).max(0.0) + OVERSCAN,
         );
         let (mut before, mut after, mut top) = (0.0_f32, 0.0_f32, 0.0_f32);
         let mut built = Vec::new();
@@ -574,59 +591,62 @@ impl<'a> Conflict<'a> {
                     Modifier::new()
                         .fill_max_width()
                         .weight(1.0)
-                        .clip_to(Radius::None)
-                        .fill(Role::Background),
+                        .clip()
+                        .background(theme::color(Role::Background)),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
-                        scroll_area(
-                            Modifier::new().fill_max_width().weight(1.0),
-                            Scroll::from_start(EXCERPTS_SCROLL, excerpts.scroll),
+                        column_arranged(
+                            Modifier::new()
+                                .fill_max_width()
+                                .weight(1.0)
+                                .vertical_scroll(&excerpts.scroll)
+                                .fill_max_width(),
+                            Arrangement::Start,
+                            Alignment::Start,
                             || {
-                                column_arranged(
-                                    Modifier::new().fill_max_width(),
-                                    Arrangement::Start,
-                                    Alignment::Start,
-                                    || {
-                                        rustle::spacer(Modifier::new().height(before));
-                                        for card in &built {
-                                            rustle::key(card.place, || {
-                                                column_arranged(
-                                                    Modifier::new().fill_max_width().pad(3),
-                                                    Arrangement::Start,
-                                                    Alignment::Start,
-                                                    || {
-                                                        self.card(card, row);
-                                                    },
-                                                );
-                                            });
-                                        }
-                                        rustle::spacer(Modifier::new().height(after));
-                                        row_arranged(
-                                            Modifier::new()
-                                                .fill_max_width()
-                                                .height(LABEL)
-                                                .fill(Role::Surface)
-                                                .stroke_side(Side::Bottom, 1.0, Role::Border)
-                                                .pad_x(3),
+                                rustle::spacer(Modifier::new().height(before));
+                                for card in &built {
+                                    rustle::key(card.place, || {
+                                        column_arranged(
+                                            Modifier::new().fill_max_width().padding(theme::sp(3)),
                                             Arrangement::Start,
-                                            Alignment::Center,
+                                            Alignment::Start,
                                             || {
-                                                crate::kit::label(
-                                                    "Result",
-                                                    Type::new(12)
-                                                        .ratio(1.4)
-                                                        .tone(Role::Text)
-                                                        .truncate()
-                                                        .medium(),
-                                                );
+                                                self.card(card, row);
                                             },
                                         );
-                                        if let Some(index) = index {
-                                            plain_block(state, index, &whole, doc_top, (low, high));
-                                        }
+                                    });
+                                }
+                                rustle::spacer(Modifier::new().height(after));
+                                row_arranged(
+                                    Modifier::new()
+                                        .fill_max_width()
+                                        .height(LABEL)
+                                        .background(theme::color(Role::Surface))
+                                        .draw_behind(theme::edge(
+                                            theme::Side::Bottom,
+                                            1.0,
+                                            theme::color(Role::Border),
+                                        ))
+                                        .padding_each(0.0, 0.0, 0.0, 1.0)
+                                        .padding_xy(theme::sp(3), 0.0),
+                                    Arrangement::Start,
+                                    Alignment::Center,
+                                    || {
+                                        styled_text(
+                                            Modifier::new(),
+                                            "Result",
+                                            theme::text_style(12, 1.4)
+                                                .font_weight(rustle::FontWeight::MEDIUM)
+                                                .color(theme::color(Role::Text))
+                                                .max_lines(1),
+                                        );
                                     },
                                 );
+                                if let Some(index) = index {
+                                    plain_block(state, index, &whole, doc_top, (low, high));
+                                }
                             },
                         );
                     },

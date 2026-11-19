@@ -2,14 +2,16 @@
 //! the menu over a message that copies it or the message.
 
 use pm_components::assist::HOVER_CARD;
-use pm_components::kit::{FocusId, Key, KeyEvent};
+use pm_components::focus::FocusId;
 use pm_components::message_menu::{
     MESSAGE_MENU_COPY, MESSAGE_MENU_SELECT_ALL, is_message_menu_item,
 };
 use pm_components::panes::pane_of;
+use pm_components::select::TextSelection;
 use pm_components::state::CHAT_TEXT;
 use pm_field::{Edit, Reach};
 use pm_pages::Screen;
+use rustle::{Key, KeyEvent};
 
 use super::gesture::ChatText;
 use super::{App, DOUBLE_CLICK};
@@ -38,7 +40,7 @@ impl App {
         let Some((id, point)) = self
             .pointer
             .position
-            .and_then(|at| self.output.text_under(at))
+            .and_then(|at| self.selectables().text_under(at))
         else {
             return;
         };
@@ -46,7 +48,7 @@ impl App {
             && let Some(before) = before.filter(|held| held.id == id)
         {
             let mut text = ChatText {
-                output: &self.output,
+                selectables: &self.selectables(),
                 selection: &mut self.text_selection,
                 id,
             };
@@ -56,7 +58,7 @@ impl App {
         }
         let reach = Reach::of_clicks(self.clicks.press(id, DOUBLE_CLICK));
         let mut text = ChatText {
-            output: &self.output,
+            selectables: &self.selectables(),
             selection: &mut self.text_selection,
             id,
         };
@@ -69,9 +71,9 @@ impl App {
         let Some(selection) = self.text_selection else {
             return;
         };
-        if let Some(point) = self.output.text_point(selection.id, at) {
+        if let Some(point) = self.selectables().text_point(selection.id, at) {
             let mut text = ChatText {
-                output: &self.output,
+                selectables: &self.selectables(),
                 selection: &mut self.text_selection,
                 id: selection.id,
             };
@@ -93,11 +95,11 @@ impl App {
     /// Selects the whole conversation, copies the selected text or lets go
     /// of it when a key asks for that outside a text field, and says whether
     /// it did.
-    pub(super) fn text_key(&mut self, event: KeyEvent) -> bool {
+    pub(super) fn text_key(&mut self, event: &KeyEvent) -> bool {
         if self.focus.current().is_some_and(Screen::is_field) {
             return false;
         }
-        if matches!(keys::edit(&event), Some(Edit::SelectAll)) {
+        if matches!(keys::edit(event), Some(Edit::SelectAll)) {
             self.select_all_text();
             return self.text_selection.is_some();
         }
@@ -108,7 +110,7 @@ impl App {
             self.text_selection = None;
             return true;
         }
-        if keys::clip(&event) != Some(Clip::Copy) {
+        if keys::clip(event) != Some(Clip::Copy) {
             return false;
         }
         self.copy_selection();
@@ -117,8 +119,18 @@ impl App {
 
     /// Selects the text of the whole conversation, when one is drawn.
     fn select_all_text(&mut self) {
-        self.text_selection = self.output.select_all(CHAT_TEXT);
+        self.text_selection = self.selectables().select_all(CHAT_TEXT);
         self.text_gesture.release();
+    }
+
+    /// Where the selectable text of the screen was placed, and what of it is selected.
+    pub(super) fn selectables(&self) -> pm_components::select::Selectables {
+        self.model.read(Screen::selectables)
+    }
+
+    /// What `selection` covers of the selectable text, as it is copied.
+    pub(super) fn selected_text(&self, selection: &TextSelection) -> String {
+        self.selectables().selected_text(selection)
     }
 
     /// Puts the selected text on the clipboard, when some is selected.
@@ -126,7 +138,7 @@ impl App {
         let Some(selection) = self.text_selection.filter(|held| !held.is_empty()) else {
             return;
         };
-        let text = self.output.selected_text(&selection);
+        let text = self.selected_text(&selection);
         if let Some(clipboard) = self.clipboard() {
             clipboard.set_text(text);
         }
@@ -139,7 +151,7 @@ impl App {
             return;
         };
         let message = self
-            .output
+            .selectables()
             .selectable_at(at)
             .filter(|(id, _)| *id == CHAT_TEXT)
             .map(|(_, message)| message);

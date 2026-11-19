@@ -3,9 +3,12 @@
 //! sent, a popover previews it, and in the message the screenshots go as attached pictures and the
 //! console as a fenced block that everything the page said is set off inside.
 
-use crate::kit::{
-    FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, scroll_area, sp,
-};
+use crate::events::Interactive;
+use crate::events::reduce;
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::theme;
+use crate::theme::{Radius, Role, sp};
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
@@ -14,7 +17,7 @@ use crate::elements::{code, fence, one_line, section, words};
 use crate::parts::line;
 use crate::popover::anchored;
 use crate::size::Size;
-use crate::state::{MENU_BODY, MENU_SCROLL, Picker, WorkspaceState};
+use crate::state::{MENU_BODY, Picker, WorkspaceState};
 use crate::{Button, Popover};
 
 /// The first of the chips that open a capture's popover; the rest follow it.
@@ -194,7 +197,7 @@ fn picture_card(state: &WorkspaceState, shot: &Shot) {
                     Modifier::new()
                         .width((shown.width() as f32 * scale).floor().max(1.0))
                         .height((shown.height() as f32 * scale).floor().max(1.0))
-                        .clip_to(Radius::None),
+                        .clip(),
                     shown,
                     rustle::ContentScale::Crop,
                 );
@@ -209,22 +212,18 @@ fn picture_card(state: &WorkspaceState, shot: &Shot) {
 fn popover(capture: &Capture, state: &WorkspaceState) {
     Popover::new()
         .width(WIDTH)
-        .modifier(Modifier::new().target(MENU_BODY))
+        .modifier(Modifier::new().control(MENU_BODY, reduce(MENU_BODY)))
         .build_with(|| {
-            scroll_area(
+            column_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .height_in(0.0, sp(HEIGHT / 4.0)),
-                Scroll::from_start(MENU_SCROLL, state.menu_scroll),
+                    .height_in(0.0, sp(HEIGHT / 4.0))
+                    .vertical_scroll(&state.menu_scroll)
+                    .fill_max_width(),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Start,
                 || {
-                    column_arranged(
-                        Modifier::new().fill_max_width(),
-                        Arrangement::SpacedBy(sp(2)),
-                        Alignment::Start,
-                        || {
-                            cards(capture, state);
-                        },
-                    );
+                    cards(capture, state);
                 },
             );
         });
@@ -283,7 +282,12 @@ pub fn chips(state: &WorkspaceState) {
     anchored(
         || {
             flow_row_with(
-                Modifier::new().pad_x(3).pad_side(Side::Top, 3),
+                Modifier::new().padding_xy(theme::sp(3), 0.0).padding_each(
+                    0.0,
+                    theme::sp(3),
+                    0.0,
+                    0.0,
+                ),
                 FlowOptions::new(sp(2), sp(2)),
                 || {
                     for (index, capture) in state.captures.iter().enumerate() {
@@ -303,8 +307,8 @@ pub fn chips(state: &WorkspaceState) {
 fn pill(index: usize, capture: &Capture, selected: bool) {
     row_arranged(
         Modifier::new()
-            .fill_rounded(Role::SurfaceHover, Radius::Lg)
-            .pad_side(Side::Right, 1),
+            .background_rounded(theme::color(Role::SurfaceHover), Radius::Lg.px())
+            .padding_each(0.0, 0.0, theme::sp(1), 0.0),
         Arrangement::SpacedBy(sp(0.5)),
         Alignment::Center,
         || {

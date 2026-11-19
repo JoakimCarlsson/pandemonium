@@ -3,11 +3,11 @@
 //! settings window and the folder picker's opening, taking input and closing.
 
 use pm_components::git_prompts::{PROMPT_CONFIRM, Prompt};
-use pm_components::kit::{Key, Modifiers};
 use pm_components::state::SETTINGS;
 use pm_components::title_bar::{
     FRAMELESS, TITLE_BAR, WINDOW_CLOSE, WINDOW_MAXIMIZE, WINDOW_MINIMIZE,
 };
+use rustle::{Key, Modifiers};
 use winit::event::MouseButton;
 use winit::window::ResizeDirection;
 
@@ -18,17 +18,14 @@ use crate::snapshot::Shot;
 /// Control held.
 const CONTROL: Modifiers = Modifiers {
     shift: false,
-    control: true,
+    ctrl: true,
     alt: false,
-    logo: false,
+    meta: false,
 };
 
 /// A place on the title bar with nothing else on it.
 fn bare_title_bar(rig: &Rig) -> (f32, f32) {
-    let bar = rig
-        .report()
-        .region(TITLE_BAR)
-        .expect("the title bar is drawn");
+    let bar = rig.region(TITLE_BAR).expect("the title bar is drawn");
     (bar.origin.x + 200.0, bar.origin.y + bar.size.height / 2.0)
 }
 
@@ -49,6 +46,36 @@ fn the_title_bar_moves_and_maximizes() {
     rig.click(at);
     rig.click(at);
     assert!(!rig.window().maximized.get());
+}
+
+/// A press in the band around a floating frame, or just inside its edge, resizes the
+/// window by that edge or corner.
+#[test]
+fn the_frame_edges_resize_the_window() {
+    if !FRAMELESS {
+        return;
+    }
+    let mut rig = Rig::shot(Shot::Workspace);
+    let west = (-10.0, 300.0);
+    rig.move_to(west);
+    rig.button_in(None, winit::event::MouseButton::Left, true, west);
+    rig.button_in(None, winit::event::MouseButton::Left, false, west);
+    let corner = (2.0, 2.0);
+    rig.move_to(corner);
+    rig.button_in(None, winit::event::MouseButton::Left, true, corner);
+    rig.button_in(None, winit::event::MouseButton::Left, false, corner);
+    assert_eq!(
+        *rig.window().resized.borrow(),
+        [
+            winit::window::ResizeDirection::West,
+            winit::window::ResizeDirection::NorthWest
+        ]
+    );
+    assert_eq!(
+        rig.window().moved.get(),
+        0,
+        "the title bar under the corner is not pressed"
+    );
 }
 
 /// Two presses on the title bar far apart in time both move the window.
@@ -135,7 +162,7 @@ fn settings_open_in_their_window_and_escape_closes_it() {
     let mut rig = Rig::shot(Shot::Workspace);
     rig.click_on(SETTINGS);
     assert!(rig.aside_open(Aside::Settings));
-    assert!(rig.aside_report(Aside::Settings).regions.len() > 1);
+    assert!(rig.tagged_in(Some(Aside::Settings)).len() > 1);
     rig.key_in(Some(Aside::Settings), Key::Escape);
     assert!(!rig.aside_open(Aside::Settings));
 }
@@ -146,7 +173,7 @@ fn settings_open_in_their_window_and_escape_closes_it() {
 fn the_settings_window_closes_and_comes_forward() {
     let mut rig = Rig::shot(Shot::Workspace);
     rig.click_on(SETTINGS);
-    rig.chord(CONTROL, Key::Character(','));
+    rig.chord(CONTROL, Key::Character(",".into()));
     assert_eq!(rig.aside_window(Aside::Settings).raised.get(), 1);
     rig.close(Some(Aside::Settings));
     assert!(!rig.aside_open(Aside::Settings));
@@ -158,10 +185,7 @@ fn the_settings_window_closes_and_comes_forward() {
 fn resizing_lays_out_again() {
     let mut rig = Rig::shot(Shot::Workspace);
     rig.resize((900.0, 600.0));
-    let bar = rig
-        .report()
-        .region(TITLE_BAR)
-        .expect("the title bar is drawn");
+    let bar = rig.region(TITLE_BAR).expect("the title bar is drawn");
     assert!((bar.size.width - 900.0).abs() < 1.0, "{bar:?}");
 }
 
@@ -193,8 +217,8 @@ fn the_folder_picker_window() {
     rig.type_in(Some(Aside::Picker), "src");
     let filter = rig.read(|screen| {
         screen
-            .field(pm_components::folder_picker::PICKER_FIELD)
-            .map(|field| field.text().to_owned())
+            .text_field(pm_components::folder_picker::PICKER_FIELD)
+            .map(rustle::TextFieldState::text)
     });
     assert_eq!(filter.as_deref(), Some("src"));
     rig.key_in(Some(Aside::Picker), Key::Escape);
@@ -214,10 +238,10 @@ fn the_settings_list_picks_a_section() {
     rig.key_in(Some(Aside::Settings), Key::Tab);
     let focused = rig.focused().expect("Tab gave something the keyboard");
     assert_eq!(
-        rig.aside_report(Aside::Settings).focus_order().first(),
+        rig.focus_order_in(Some(Aside::Settings)).first(),
         Some(&focused)
     );
-    assert!(!rig.report().drawn(focused) || focused == TITLE_BAR);
+    assert!(!rig.drawn(focused) || focused == TITLE_BAR);
 }
 
 /// A tooltip of the main window shows in the main window only, not in the

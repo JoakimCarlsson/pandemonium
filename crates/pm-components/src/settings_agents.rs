@@ -1,12 +1,16 @@
 //! The page of the agents and their accounts: a card for each agent with how it signs in, its switch, and its accounts or its API key.
 
-use crate::kit::sp;
-use pm_field::{Edit, Field};
+use crate::theme;
+use crate::theme::sp;
 use pm_harness::SignIn;
 use rustle::Modifier;
+use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
-use crate::kit::{FocusId, IconName, Radius, Role, Side, Styled, Tooltip, Type, label};
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::select::styled_text;
+use crate::theme::{Radius, Role};
 
 use crate::button::Variant;
 use crate::input::Input;
@@ -96,7 +100,7 @@ pub struct KeyForm {
     /// The added account the key is for, by id, or nothing for the agent's default account.
     login: Option<String>,
     /// The key being typed, shown as dots.
-    key: Field,
+    key: TextFieldState,
 }
 
 /// The box for an added account's name while it is open.
@@ -105,7 +109,7 @@ pub struct NameForm {
     /// The account, by its place in the list of logins.
     login: usize,
     /// The name being typed.
-    name: Field,
+    name: TextFieldState,
 }
 
 impl WorkspaceState {
@@ -165,7 +169,7 @@ impl WorkspaceState {
                 self.settings_servers.key_form = None;
                 self.settings_servers.name_form = Some(NameForm {
                     login: position,
-                    name: Field::new(&name),
+                    name: TextFieldState::new(&name),
                 });
             }
         }
@@ -224,7 +228,7 @@ impl WorkspaceState {
         self.settings_servers.key_form = Some(KeyForm {
             agent,
             login,
-            key: Field::new("").masked(true),
+            key: TextFieldState::new(""),
         });
     }
 
@@ -289,19 +293,8 @@ impl WorkspaceState {
         }
     }
 
-    /// The state after `edit` was made to the box `id`: the one for an API key or the one for an account's name.
-    pub(crate) fn key_edited(&mut self, id: FocusId, edit: Edit) {
-        if id == NAME_FIELD {
-            if let Some(form) = self.settings_servers.name_form.as_mut() {
-                form.name.apply(edit);
-            }
-        } else if let Some(form) = self.settings_servers.key_form.as_mut() {
-            form.key.apply(edit);
-        }
-    }
-
     /// The box `id`, the one for an API key or the one for an account's name, while it is open.
-    pub(crate) fn key_field(&self, id: FocusId) -> Option<&Field> {
+    pub(crate) fn key_field(&self, id: FocusId) -> Option<&TextFieldState> {
         if id == NAME_FIELD {
             return self
                 .settings_servers
@@ -339,8 +332,8 @@ fn how_it_signs_in(sign_in: Option<SignIn>, keyed: bool, credentials: Option<&st
 fn emblem(icon: IconName, dim: bool) {
     row_arranged(
         Modifier::new()
-            .square(8)
-            .fill_rounded(Role::SurfaceActive, Radius::Md),
+            .size(theme::sp(8), theme::sp(8))
+            .background_rounded(theme::color(Role::SurfaceActive), Radius::Md.px()),
         Arrangement::Center,
         Alignment::Center,
         || glyph(icon, 4.5, if dim { Role::Subtle } else { Role::Text }),
@@ -351,7 +344,7 @@ fn emblem(icon: IconName, dim: bool) {
 #[track_caller]
 fn titled(title: &str, under: &str, tone: Role, badges: impl FnOnce()) {
     column_arranged(
-        Modifier::new().weight(1.0).clip_to(Radius::None),
+        Modifier::new().weight(1.0).clip(),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Start,
         || {
@@ -360,9 +353,13 @@ fn titled(title: &str, under: &str, tone: Role, badges: impl FnOnce()) {
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Center,
                 || {
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         title,
-                        Type::new(13).ratio(1.4).tone(tone).truncate().medium(),
+                        theme::text_style(13, 1.4)
+                            .font_weight(rustle::FontWeight::MEDIUM)
+                            .color(theme::color(tone))
+                            .max_lines(1),
                     );
                     badges();
                 },
@@ -400,7 +397,7 @@ fn icon_button(icon: IconName, tooltip: &str, id: FocusId) {
     Button::icon(icon, id)
         .variant(Variant::Ghost)
         .size(Size::Sm)
-        .modifier(Modifier::new().tooltip(tooltip))
+        .tooltip(tooltip)
         .build();
 }
 
@@ -409,9 +406,9 @@ fn icon_button(icon: IconName, tooltip: &str, id: FocusId) {
 fn inset_row(inset: u32, content: impl FnOnce()) {
     row_arranged(
         Modifier::new()
-            .pad_side(Side::Left, inset)
-            .pad_side(Side::Right, 3)
-            .pad_y(3),
+            .padding_each(theme::sp(inset), 0.0, 0.0, 0.0)
+            .padding_each(0.0, 0.0, theme::sp(3), 0.0)
+            .padding_xy(0.0, theme::sp(3)),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         content,
@@ -524,14 +521,20 @@ fn account_buttons(
 
 /// Emits the box `id` an account's name or API key is typed into, holding `field` and showing `placeholder` while empty, with its buttons `save` and `cancel`, in place of the account's row.
 #[track_caller]
-fn form_row(field: &Field, id: FocusId, placeholder: &str, save: FocusId, cancel: FocusId) {
+fn form_row(
+    field: &TextFieldState,
+    id: FocusId,
+    placeholder: &str,
+    save: FocusId,
+    cancel: FocusId,
+) {
     let mut input = Input::new(field, id)
         .variant(crate::input::Variant::Bordered)
         .size(Size::Sm)
         .placeholder(placeholder)
         .modifier(Modifier::new().weight(1.0));
     if id == KEY_FIELD {
-        input = input.leading_icon(IconName::Lock);
+        input = input.leading_icon(IconName::Lock).secure(true);
     }
     rustle::key(id.0, || {
         inner_row(|| {
@@ -768,7 +771,7 @@ mod tests {
                 .key_field(KEY_FIELD)
                 .is_some_and(|field| field.text().is_empty())
         );
-        state.key_edited(KEY_FIELD, Edit::Paste(" sk-or-1 ".to_owned()));
+        state = state.typed(KEY_FIELD, " sk-or-1 ");
         assert!(state.agents_pressed(KEY_SAVE));
         assert!(state.key_field(KEY_FIELD).is_none());
         let sent = state.take_outbox();
@@ -840,13 +843,13 @@ mod tests {
         assert!(state.agents_pressed(DEFAULT_USES.id(claude).unwrap()));
         assert!(state.in_use.is_empty());
         assert!(state.agents_pressed(AccountControl::Rename.id(0).unwrap()));
-        state.key_edited(NAME_FIELD, Edit::Paste(" Acme".to_owned()));
+        state = state.typed(NAME_FIELD, " Acme");
         assert!(state.agents_pressed(NAME_SAVE));
         assert_eq!(state.logins[0].2, "Account 2 Acme");
         state.take_outbox();
         assert!(state.agents_pressed(AccountControl::SignIn.id(0).unwrap()));
         assert!(state.agents_pressed(AccountControl::SetKey.id(0).unwrap()));
-        state.key_edited(KEY_FIELD, Edit::Paste("sk-2".to_owned()));
+        state = state.typed(KEY_FIELD, "sk-2");
         assert!(state.agents_pressed(KEY_SAVE));
         let sent = state.take_outbox();
         assert!(sent.iter().any(|outgoing| matches!(

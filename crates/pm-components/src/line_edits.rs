@@ -1,8 +1,8 @@
 //! The keys that work on whole lines and on the selection of the file shown: commenting, indenting, moving, duplicating and deleting lines, growing and shrinking the selection along the syntax tree, going to the next problem and to a line by its number.
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 use pm_editor::{Case, Document, LineOrder};
-use pm_field::{Edit, Field, Motion};
+use pm_field::{Edit, Motion};
 
 use crate::state::WorkspaceState;
 
@@ -110,7 +110,7 @@ pub enum LineEdit {
 #[derive(Clone, Debug, PartialEq)]
 pub struct GoingTo {
     /// The number being typed.
-    pub field: Field,
+    pub field: rustle::TextFieldState,
     /// Where it hangs, in logical pixels of the window.
     pub at: (f32, f32),
 }
@@ -310,7 +310,7 @@ impl WorkspaceState {
     pub fn go_to_line_requested(mut self, at: (f32, f32)) -> Self {
         if self.shown_document().is_some() {
             self.going_to = Some(GoingTo {
-                field: Field::new(""),
+                field: rustle::TextFieldState::default(),
                 at,
             });
         }

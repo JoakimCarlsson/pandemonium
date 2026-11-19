@@ -1,7 +1,7 @@
 //! Where the window was when it was closed, kept on this machine so that the next launch opens on the same page.
 
 use pm_components::browser_tabs::SavedTab;
-use pm_components::kit::FocusId;
+use pm_components::focus::FocusId;
 use pm_components::open_files::{Contents, EDITOR_FIELD, Left};
 use pm_components::panes::{Layout, Panes};
 use pm_components::state::{
@@ -372,7 +372,7 @@ impl View {
                         path: viewer.path.clone(),
                         head: viewer.head,
                         preview: viewer.preview,
-                        scroll: viewer.scroll,
+                        scroll: viewer.scroll.offset(),
                         caret: document.map_or(0, |document| document.field.caret()),
                         unsaved: document
                             .filter(|document| document.is_dirty())
@@ -412,8 +412,8 @@ impl View {
             files_tab: state.review_tab == ReviewTab::Files,
             open_tree: sorted(&state.open_tree),
             closed_folders: sorted(&state.closed_folders),
-            tree_scroll: state.tree_scroll,
-            diff_scroll: state.diff_scroll,
+            tree_scroll: state.tree_scroll.offset(),
+            diff_scroll: state.diff_scroll.offset(),
             changes_open: state.git.changes_open,
             graph_open: state.git.graph_open,
             graph_all: state.git.graph_all,
@@ -561,8 +561,8 @@ impl View {
         }
         state.review_tab = self.review_tab();
         state.sidebar_scroll = self.scroll;
-        state.tree_scroll = self.tree_scroll;
-        state.diff_scroll = self.diff_scroll;
+        state.tree_scroll.jump_to(self.tree_scroll);
+        state.scroll_diff_to(self.diff_scroll);
         state.refresh_files();
         if let Some(saved) = &self.panes {
             state.panes = Panes {
@@ -600,7 +600,7 @@ impl View {
                 .find(|viewer| viewer.path == file.path && viewer.head == file.head)
             {
                 viewer.preview = file.preview;
-                viewer.scroll = file.scroll;
+                viewer.scroll.jump_to(file.scroll);
                 viewer.left = Some(Left {
                     unsaved: file.unsaved.clone(),
                     caret: file.caret,

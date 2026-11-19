@@ -2,13 +2,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use pm_field::{Edit, Field};
 use pm_protocol::{
     Breakpoint, DebugAction, DebugAdapter, DebugEvent, DebugFile, DebugProcess, DebugScenario,
     DebugView, Location, Position, Span, Standing,
 };
+use rustle::TextFieldState;
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 
 use crate::listing::{Items, Listing};
 use crate::quick_choices::Choosing;
@@ -49,15 +49,6 @@ pub const DEBUG_WATCH_ADD: FocusId = FocusId(20_100_010);
 
 /// Evaluates the expression typed in the console field.
 pub const DEBUG_CONSOLE_SUBMIT: FocusId = FocusId(20_100_011);
-
-/// The scrolling list of the stack.
-pub const DEBUG_STACK_SCROLL: FocusId = FocusId(20_100_012);
-
-/// The scrolling list of the variables.
-pub const DEBUG_VARIABLES_SCROLL: FocusId = FocusId(20_100_013);
-
-/// The scrolling console.
-pub const DEBUG_CONSOLE_SCROLL: FocusId = FocusId(20_100_014);
 
 /// The first of the rows of the stack; the rest follow it.
 pub const DEBUG_FRAME_BASE: u64 = 20_101_000;
@@ -159,15 +150,15 @@ pub struct DebugState {
     /// The expressions watched.
     pub watches: Vec<String>,
     /// The expression being typed to be evaluated.
-    pub console: Field,
+    pub console: TextFieldState,
     /// The expression being typed to be watched.
-    pub watch: Field,
+    pub watch: TextFieldState,
     /// How far the stack is scrolled down.
-    pub stack_scroll: f32,
+    pub stack_scroll: rustle::ScrollState,
     /// How far the variables are scrolled down.
-    pub variables_scroll: f32,
+    pub variables_scroll: rustle::ScrollState,
     /// How far the console is scrolled back from its end.
-    pub console_back: f32,
+    pub console_back: rustle::ScrollState,
     /// Why the last start failed.
     pub trouble: Option<String>,
     /// The frame the reader chose in the stack, whose line is to be shown.
@@ -455,7 +446,7 @@ impl WorkspaceState {
             items: Items::Choices {
                 choosing: Choosing::DebugScenario,
                 choices: Vec::new(),
-                filter: Field::new(""),
+                filter: TextFieldState::new(""),
                 matched: Vec::new(),
             },
             picked: 0,
@@ -478,7 +469,7 @@ impl WorkspaceState {
             items: Items::Choices {
                 choosing: Choosing::DebugProcess,
                 choices: Vec::new(),
-                filter: Field::new(""),
+                filter: TextFieldState::new(""),
                 matched: Vec::new(),
             },
             picked: 0,
@@ -584,7 +575,7 @@ impl WorkspaceState {
         match started {
             Ok((debug, view)) => {
                 self.debug.unfolded.clear();
-                self.debug.console_back = 0.0;
+                self.debug.console_back.jump_to(0.0);
                 self.debug.run = Some(Run {
                     session,
                     debug,
@@ -785,8 +776,8 @@ impl WorkspaceState {
         if expression.is_empty() {
             return;
         }
-        self.debug.console = Field::new("");
-        self.debug.console_back = 0.0;
+        self.debug.console = TextFieldState::new("");
+        self.debug.console_back.jump_to(0.0);
         self.send_debug(DebugAction::Evaluate { expression });
     }
 
@@ -796,7 +787,7 @@ impl WorkspaceState {
         if expression.is_empty() {
             return;
         }
-        self.debug.watch = Field::new("");
+        self.debug.watch = TextFieldState::new("");
         if !self.debug.watches.contains(&expression) {
             self.debug.watches.push(expression);
         }
@@ -807,30 +798,6 @@ impl WorkspaceState {
     fn send_watches(&mut self) {
         let watches = self.debug.watches.clone();
         self.send_debug(DebugAction::SetWatches { watches });
-    }
-
-    /// The state after `edit` is made to one of the debug tab's fields, when `id` names one.
-    pub(crate) fn debug_field_edited(&mut self, id: FocusId, edit: Edit) {
-        match id {
-            DEBUG_CONSOLE_FIELD => self.debug.console.apply(edit),
-            DEBUG_WATCH_FIELD => self.debug.watch.apply(edit),
-            _ => {}
-        }
-    }
-
-    /// The state after one of the debug tab's lists was scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_debug(mut self, list: FocusId, delta: f32, room: f32) -> Self {
-        match list {
-            DEBUG_STACK_SCROLL => {
-                self.debug.stack_scroll = (self.debug.stack_scroll + delta).clamp(0.0, room);
-            }
-            DEBUG_VARIABLES_SCROLL => {
-                self.debug.variables_scroll =
-                    (self.debug.variables_scroll + delta).clamp(0.0, room);
-            }
-            _ => self.debug.console_back = (self.debug.console_back - delta).clamp(0.0, room),
-        }
-        self
     }
 
     /// Brings the breakpoints and the program being debugged up to date after the sessions moved: `moved` says, for each old position, the new one, or nothing for a session that is gone.

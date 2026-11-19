@@ -32,9 +32,10 @@ impl WorkspaceState {
         let Some(session) = self.sessions.get(index) else {
             return;
         };
-        let from = self.diff_scroll - REACH / 4.0;
-        let to = self.diff_scroll + REACH;
-        let (seen_from, seen_to) = (self.diff_scroll, self.diff_scroll + VIEW);
+        let scrolled = self.diff_scroll.offset();
+        let from = scrolled - REACH / 4.0;
+        let to = scrolled + REACH;
+        let (seen_from, seen_to) = (scrolled, scrolled + VIEW);
         let mut top = 0.0;
         let (mut in_view, mut beyond) = (Vec::new(), Vec::new());
         for (at, change) in session.changes.iter().enumerate() {
@@ -125,7 +126,7 @@ impl WorkspaceState {
                     .map(|index| crate::diff::offset_of(self, held, index, self.diff_width))
             });
         match offset {
-            Some(offset) => self.diff_scroll = offset,
+            Some(offset) => self.scroll_diff_to(offset),
             None => self.diff_anchor = None,
         }
     }

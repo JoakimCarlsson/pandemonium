@@ -1,12 +1,15 @@
 //! The settings window: the sections of settings down its left side and the one chosen on its right, filling a window of its own.
 
-use crate::kit::sp;
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, scroll_area,
-};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::theme::{Radius, Role};
 
 use crate::input::Input;
 use crate::parts::{clipped, glyph, line};
@@ -42,12 +45,6 @@ pub const SETTINGS_SEARCH: FocusId = SINGLES.at(30);
 
 /// Searches the registry for the words in the search box, which is what Enter in the box does.
 pub const SETTINGS_SEARCH_GO: FocusId = SINGLES.at(31);
-
-/// The scrolling page of the section showing.
-pub const SETTINGS_SCROLL: FocusId = SINGLES.at(40);
-
-/// The scrolling list of sections down the left side.
-pub const SETTINGS_NAV_SCROLL: FocusId = SINGLES.at(41);
 
 /// Folds the list of what is installed away, or shows it again.
 pub const SETTINGS_TOGGLE_INSTALLED: FocusId = SINGLES.at(32);
@@ -415,8 +412,8 @@ impl WorkspaceState {
                 return self.without_settings();
             }
             SETTINGS_FIND_CLEAR => {
-                self.settings_page.find = pm_field::Field::default();
-                self.settings_servers.scroll = 0.0;
+                self.settings_page.find = rustle::TextFieldState::default();
+                self.settings_servers.scroll.jump_to(0.0);
             }
             action if self.slots_pressed(action) => {}
             action if self.setting_pressed(action) => {}
@@ -448,7 +445,7 @@ impl WorkspaceState {
             self.settings_servers.folded = showing && !self.settings_servers.folded;
         }
         self.settings = Some(section);
-        self.settings_page.find = pm_field::Field::default();
+        self.settings_page.find = rustle::TextFieldState::default();
         self.settings_page.picker = None;
         self.settings_page.slots.picking = None;
         self.recording = None;
@@ -469,12 +466,6 @@ impl WorkspaceState {
         if crate::settings_library::lists(section) {
             self.read_library();
         }
-    }
-
-    /// The state after the list of sections is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_settings_nav(mut self, delta: f32, room: f32) -> Self {
-        self.settings_page.nav_scroll = (self.settings_page.nav_scroll + delta).clamp(0.0, room);
-        self
     }
 
     /// Whether settings are being searched, which shows what was found in place of the section picked.
@@ -508,7 +499,9 @@ pub fn settings(state: &WorkspaceState, width: f32) -> bool {
         section
     };
     row_arranged(
-        Modifier::new().fill_max_size().fill(Role::Surface),
+        Modifier::new()
+            .fill_max_size()
+            .background(theme::color(Role::Surface)),
         Arrangement::Start,
         Alignment::Start,
         || {
@@ -527,13 +520,20 @@ fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32
         Modifier::new()
             .fill_max_height()
             .width(width)
-            .stroke_side(Side::Right, 1.0, Role::Border)
-            .pad(3),
+            .draw_behind(theme::edge(
+                theme::Side::Right,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 1.0, 0.0)
+            .padding(theme::sp(3)),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Start,
         || {
             row_arranged(
-                Modifier::new().h(9).pad_x(2),
+                Modifier::new()
+                    .height(theme::sp(9))
+                    .padding_xy(theme::sp(2), 0.0),
                 Arrangement::Start,
                 Alignment::Center,
                 || {
@@ -541,33 +541,33 @@ fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32
                 },
             );
             find(state, searching);
-            scroll_area(
-                Modifier::new().fill_max_width().weight(1.0),
-                Scroll::from_start(SETTINGS_NAV_SCROLL, state.settings_page.nav_scroll),
+            column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .weight(1.0)
+                    .vertical_scroll(&state.settings_page.nav_scroll)
+                    .fill_max_width(),
+                Arrangement::SpacedBy(sp(1)),
+                Alignment::Start,
                 || {
-                    column_arranged(
-                        Modifier::new().fill_max_width(),
-                        Arrangement::SpacedBy(sp(1)),
-                        Alignment::Start,
-                        || {
-                            for section in Section::ALL.into_iter().filter(|section| match section
-                                .parent()
-                            {
+                    for section in
+                        Section::ALL
+                            .into_iter()
+                            .filter(|section| match section.parent() {
                                 Some(Section::Agents) => !folded,
                                 Some(parent) => {
                                     showing == parent || showing.parent() == Some(parent)
                                 }
                                 None => true,
-                            }) {
-                                entry(
-                                    section,
-                                    !searching && section == showing,
-                                    folded,
-                                    state.library_count(section),
-                                );
-                            }
-                        },
-                    );
+                            })
+                    {
+                        entry(
+                            section,
+                            !searching && section == showing,
+                            folded,
+                            state.library_count(section),
+                        );
+                    }
                 },
             );
         },
@@ -578,7 +578,9 @@ fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32
 #[track_caller]
 fn find(state: &WorkspaceState, searching: bool) {
     row_arranged(
-        Modifier::new().fill_max_width().pad_side(Side::Bottom, 2),
+        Modifier::new()
+            .fill_max_width()
+            .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Center,
         || {
@@ -590,13 +592,16 @@ fn find(state: &WorkspaceState, searching: bool) {
             if searching {
                 row_arranged(
                     Modifier::new()
-                        .square(6)
-                        .looks_of(
-                            Looks::new().hover(Role::SurfaceHover).radius(Radius::Sm),
-                            SETTINGS_FIND_CLEAR,
+                        .size(theme::sp(6), theme::sp(6))
+                        .interaction_focused(crate::focus::is_held(SETTINGS_FIND_CLEAR))
+                        .interaction_background(
+                            (theme::InteractionTones::new()
+                                .hover(Role::SurfaceHover)
+                                .radius(Radius::Sm))
+                            .colors(),
                         )
                         .cursor(CursorIcon::Pointer)
-                        .target(SETTINGS_FIND_CLEAR),
+                        .control(SETTINGS_FIND_CLEAR, reduce(SETTINGS_FIND_CLEAR)),
                     Arrangement::Center,
                     Alignment::Center,
                     || glyph(IconName::Close, 3.5, Role::Muted),
@@ -617,8 +622,8 @@ fn entry(section: Section, showing: bool, folded: bool, count: Option<usize>) {
         .modifier(Modifier::new().fill_max_width())
         .inner(
             Modifier::new()
-                .pad_side(Side::Left, left)
-                .pad_side(Side::Right, 2),
+                .padding_each(theme::sp(left), 0.0, 0.0, 0.0)
+                .padding_each(0.0, 0.0, theme::sp(2), 0.0),
         )
         .build_with(|| {
             match section {
@@ -648,16 +653,16 @@ fn content(state: &WorkspaceState, section: Section, room: f32) {
         Modifier::new()
             .fill_max_height()
             .weight(1.0)
-            .fill(Role::Background),
+            .background(theme::color(Role::Background)),
         Arrangement::Start,
         Alignment::Start,
         || {
             row_arranged(
                 Modifier::new()
-                    .pad_side(Side::Left, 8)
-                    .pad_side(Side::Right, 8)
-                    .pad_side(Side::Top, 6)
-                    .pad_side(Side::Bottom, 4),
+                    .padding_each(theme::sp(8), 0.0, 0.0, 0.0)
+                    .padding_each(0.0, 0.0, theme::sp(8), 0.0)
+                    .padding_each(0.0, theme::sp(6), 0.0, 0.0)
+                    .padding_each(0.0, 0.0, 0.0, theme::sp(4)),
                 Arrangement::Start,
                 Alignment::Center,
                 || settings_servers::page_title(section),
@@ -671,7 +676,6 @@ fn content(state: &WorkspaceState, section: Section, room: f32) {
 /// Tests for what pressing the controls of the settings window does.
 mod tests {
     use pm_config::KnownServer;
-    use pm_field::Edit;
     use pm_protocol::library::Kind;
 
     use super::*;
@@ -701,7 +705,7 @@ mod tests {
         let state = open_on(Section::Appearance)
             .with_fonts(families, Vec::new())
             .settings_pressed(Setting::InterfaceFont.id(OPEN_LIST).unwrap());
-        let mut state = state.edited(SETTINGS_PICK_FILTER, Edit::Paste(needle.to_owned()));
+        let mut state = state.typed(SETTINGS_PICK_FILTER, needle);
         state.take_outbox();
         state
     }
@@ -748,7 +752,7 @@ mod tests {
         let place = Setting::VimBindings.list_place().unwrap();
         let field = LIST_FIELDS.at(place as u64);
         let include = open_on(Section::Editor).machine.git.worktree_include;
-        let state = open_on(Section::Editor).edited(field, Edit::Paste(binding.to_owned()));
+        let state = open_on(Section::Editor).typed(field, binding);
         let add = WorkspaceState::submit_of(field);
         assert_eq!(add, LIST_ADDS.at(place as u64));
         let state = state.settings_pressed(add);
@@ -756,7 +760,7 @@ mod tests {
         assert_eq!(state.machine.git.worktree_include, include);
         assert!(
             state
-                .field(field)
+                .text_field(field)
                 .is_some_and(|field| field.text().is_empty())
         );
     }

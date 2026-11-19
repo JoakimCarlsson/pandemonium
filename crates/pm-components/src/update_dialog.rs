@@ -1,11 +1,14 @@
 //! The page that offers a newer release: its notes, and the button that downloads it and restarts into it.
 
 use crate::button::Variant;
-use crate::kit::sp;
-use crate::kit::{FocusId, Radius, Role, Scroll, Styled, Type, label, scroll_area};
+use crate::focus::FocusId;
 use crate::parts::{line, spacer, wrap};
+use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
+use crate::theme;
+use crate::theme::Role;
+use crate::theme::sp;
 use crate::update::{RUNNING, Update};
 use crate::{Button, Markdown};
 use rustle::Modifier;
@@ -25,9 +28,6 @@ pub const UPDATE_CLOSE: FocusId = FocusId(7_411_001);
 
 /// Closes the tab of the release notes, or cancels the download first.
 pub const UPDATE_LATER: FocusId = FocusId(7_411_002);
-
-/// The box the notes of the release scroll in.
-pub const UPDATE_SCROLL: FocusId = FocusId(7_026);
 
 /// The space around the page's column, in logical pixels, which the notes' width is taken from.
 const MARGIN: f32 = 48.0;
@@ -56,7 +56,7 @@ impl WorkspaceState {
     pub(crate) fn open_release(&mut self) {
         if matches!(self.settings_page.release, Some(Update::Newer { .. })) {
             if !self.update_open {
-                self.update_scroll = 0.0;
+                self.update_scroll.jump_to(0.0);
             }
             self.update_open = true;
             self.tab = crate::state::Tab::Update;
@@ -75,12 +75,6 @@ impl WorkspaceState {
                 self.tab = crate::state::Tab::Chat;
             }
         }
-    }
-
-    /// The state after the notes of the update were scrolled by `delta` logical pixels, with `room` pixels to scroll.
-    pub fn scrolled_update(mut self, delta: f32, room: f32) -> Self {
-        self.update_scroll = (self.update_scroll + delta).clamp(0.0, room);
-        self
     }
 
     /// The state knowing how far the download of the update has got.
@@ -188,7 +182,10 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
     );
     let installing = matches!(state.update_run, UpdateRun::Installing);
     row_arranged(
-        Modifier::new().weight(1.0).fill(Role::Background).pad_x(6),
+        Modifier::new()
+            .weight(1.0)
+            .background(theme::color(Role::Background))
+            .padding_xy(theme::sp(6), 0.0),
         Arrangement::Start,
         Alignment::Start,
         || {
@@ -197,26 +194,27 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
                     .fill_max_height()
                     .weight(1.0)
                     .fill_max_width()
-                    .pad_y(8),
+                    .padding_xy(0.0, theme::sp(8)),
                 Arrangement::SpacedBy(sp(3)),
                 Alignment::Start,
                 || {
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         name,
-                        Type::new(22)
-                            .ratio(1.3)
-                            .tone(Role::Text)
-                            .truncate()
-                            .medium(),
+                        theme::text_style(22, 1.3)
+                            .font_weight(rustle::FontWeight::MEDIUM)
+                            .color(theme::color(Role::Text))
+                            .max_lines(1),
                     );
                     line(format!("This is {RUNNING}{date}."), 13, 1.4, Role::Muted);
                     if let Some(notes) = body {
-                        scroll_area(
+                        rustle::column_with(
                             Modifier::new()
                                 .fill_max_width()
                                 .weight(1.0)
-                                .clip_to(Radius::None),
-                            Scroll::from_start(UPDATE_SCROLL, state.update_scroll),
+                                .clip()
+                                .vertical_scroll(&state.update_scroll)
+                                .fill_max_width(),
                             || Markdown::new(notes, text_width).build(),
                         );
                     } else {

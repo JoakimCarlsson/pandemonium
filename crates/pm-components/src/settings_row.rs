@@ -1,19 +1,23 @@
 //! A row of the settings window: what a setting is called and does beside, or above, its one control, and the button that puts it back as it comes once it was changed; with the controls a row is made of.
 
-use crate::kit::sp;
-use pm_field::Field;
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
+use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use crate::Button;
 use crate::button::Variant;
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::IconName;
 use crate::input::Input;
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Side, Styled, Type, label,
-};
 use crate::parts::{clipped, glyph, line, wrap};
+use crate::select::styled_text;
 use crate::settings_ids::PICKS;
 use crate::size::Size;
+use crate::theme::{Radius, Role};
 use crate::tile::Tile;
 
 /// The room between what a setting says and its control, in logical pixels.
@@ -48,28 +52,22 @@ const _: () = assert!(
 /// How many choices a list has before it offers a box to narrow it.
 const FILTERED_FROM: usize = 10;
 
-/// Emits a switch that is on while `on` is true, answering to `id`; with no name it is drawn but cannot be pressed.
+/// Emits a switch that is on while `on` is true, answering to `id`; with no name it is drawn
+/// but cannot be pressed. It is rustle's switch with a text-coloured knob on the success
+/// colour while on and on the border colour while off.
 #[track_caller]
 pub fn switch(on: bool, id: Option<FocusId>) {
-    let mut modifier = Modifier::new()
-        .width(SWITCH_WIDTH)
-        .h(5)
-        .fill_rounded(if on { Role::Success } else { Role::Border }, Radius::Full);
+    let mut modifier = Modifier::new().size(SWITCH_WIDTH, theme::sp(5));
     if let Some(id) = id {
-        modifier = modifier.cursor(CursorIcon::Pointer).target(id);
+        modifier = modifier.cursor(CursorIcon::Pointer).control(id, reduce(id));
     }
-    let arrangement = if on {
-        Arrangement::End
-    } else {
-        Arrangement::Start
+    let colors = rustle::SwitchColors {
+        checked_thumb_color: theme::color(Role::Text),
+        checked_track_color: theme::color(Role::Success),
+        unchecked_thumb_color: theme::color(Role::Text),
+        unchecked_track_color: theme::color(Role::Border),
     };
-    row_arranged(modifier.pad(0.5), arrangement, Alignment::Center, || {
-        rustle::spacer(
-            Modifier::new()
-                .square(4)
-                .fill_rounded(Role::Text, Radius::Full),
-        );
-    });
+    rustle::switch_with(modifier, on, None, true, colors);
 }
 
 /// How wide the choices `names` are drawn side by side, in logical pixels, at most.
@@ -84,9 +82,10 @@ pub fn choices_width(names: &[&str]) -> f32 {
 #[track_caller]
 pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> Option<FocusId>) {
     let modifier = Modifier::new()
-        .h(8)
-        .stroke(Role::Border, Radius::Md)
-        .pad_x(0.5);
+        .height(theme::sp(8))
+        .border(1.0, theme::color(Role::Border), Radius::Md.px())
+        .padding(1.0)
+        .padding_xy(theme::sp(0.5), 0.0);
     row_arranged(
         modifier,
         Arrangement::SpacedBy(sp(0.5)),
@@ -101,7 +100,7 @@ pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> Option<Fo
                     .selected(on)
                     .height(6.5)
                     .radius(Radius::Sm)
-                    .inner(Modifier::new().pad_x(2.5))
+                    .inner(Modifier::new().padding_xy(theme::sp(2.5), 0.0))
                     .arrangement(Arrangement::Center)
                     .build_with(|| {
                         line(*name, 12, 1.4, if on { Role::Text } else { Role::Muted });
@@ -125,9 +124,10 @@ pub fn number(shown: String, smaller: FocusId, bigger: FocusId) {
     };
     row_arranged(
         Modifier::new()
-            .h(8)
-            .stroke(Role::Border, Radius::Md)
-            .pad_x(0.5),
+            .height(theme::sp(8))
+            .border(1.0, theme::color(Role::Border), Radius::Md.px())
+            .padding(1.0)
+            .padding_xy(theme::sp(0.5), 0.0),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Center,
         || {
@@ -137,9 +137,12 @@ pub fn number(shown: String, smaller: FocusId, bigger: FocusId) {
                 Arrangement::Center,
                 Alignment::Start,
                 || {
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         shown,
-                        Type::new(12).ratio(1.4).tone(Role::Text).truncate().mono(),
+                        theme::mono_style(12, 1.4)
+                            .color(theme::color(Role::Text))
+                            .max_lines(1),
                     );
                 },
             );
@@ -165,7 +168,7 @@ pub fn picker(shown: &str, width: f32, id: FocusId, open: bool) {
 }
 
 /// The places among `options` of the ones the open list shows, narrowed to those holding what `filter` holds; the row of each is its place in what is returned.
-pub fn picker_shown(options: &[String], filter: &Field) -> Vec<usize> {
+pub fn picker_shown(options: &[String], filter: &TextFieldState) -> Vec<usize> {
     let needle = filter.text().trim().to_lowercase();
     options
         .iter()
@@ -177,21 +180,22 @@ pub fn picker_shown(options: &[String], filter: &Field) -> Vec<usize> {
 
 /// Emits the open list of `options` under a row, `picked` marked, narrowed by what `filter` holds when they are many; each row shown answers to its row in [`PICKS`], so a list of any length names its rows the same way.
 #[track_caller]
-pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&Field, FocusId)) {
+pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&TextFieldState, FocusId)) {
     let shown = picker_shown(options, filter.0);
     let more = shown.len().saturating_sub(MOST_LISTED);
     column_arranged(
         Modifier::new()
             .fill_max_width()
-            .fill_rounded(Role::Surface, Radius::Md)
-            .stroke(Role::Border, Radius::Md)
-            .pad(1),
+            .background_rounded(theme::color(Role::Surface), Radius::Md.px())
+            .border(1.0, theme::color(Role::Border), Radius::Md.px())
+            .padding(1.0)
+            .padding(theme::sp(1)),
         Arrangement::SpacedBy(sp(0.5)),
         Alignment::Start,
         || {
             if options.len() >= FILTERED_FROM {
                 column_arranged(
-                    Modifier::new().fill_max_width().pad(1),
+                    Modifier::new().fill_max_width().padding(theme::sp(1)),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
@@ -213,7 +217,7 @@ pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&Field, F
                     .height(7.0)
                     .gap(2.0)
                     .radius(Radius::Sm)
-                    .inner(Modifier::new().pad_x(2))
+                    .inner(Modifier::new().padding_xy(theme::sp(2), 0.0))
                     .arrangement(Arrangement::SpaceBetween)
                     .build_with(|| {
                         clipped(name.as_str(), 12, if on { Role::Text } else { Role::Muted });
@@ -224,7 +228,9 @@ pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&Field, F
             }
             if more > 0 {
                 row_arranged(
-                    Modifier::new().h(6).pad_x(2),
+                    Modifier::new()
+                        .height(theme::sp(6))
+                        .padding_xy(theme::sp(2), 0.0),
                     Arrangement::Start,
                     Alignment::Center,
                     || {
@@ -243,7 +249,7 @@ pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&Field, F
 
 /// Emits the box `field` is written in, answering to `id`, saying `placeholder` while empty.
 #[track_caller]
-pub fn text_box(field: &Field, id: FocusId, placeholder: &str) {
+pub fn text_box(field: &TextFieldState, id: FocusId, placeholder: &str) {
     Input::new(field, id)
         .size(Size::Sm)
         .placeholder(placeholder)
@@ -255,7 +261,7 @@ pub fn text_box(field: &Field, id: FocusId, placeholder: &str) {
 pub fn list(
     lines: &[String],
     remove_of: impl Fn(usize) -> Option<FocusId>,
-    field: (&Field, FocusId),
+    field: (&TextFieldState, FocusId),
     add: (FocusId, &str),
     placeholder: &str,
 ) {
@@ -268,9 +274,14 @@ pub fn list(
                 row_arranged(
                     Modifier::new()
                         .fill_max_width()
-                        .h(6)
-                        .looks(Looks::new().hover(Role::SurfaceHover).radius(Radius::Sm))
-                        .pad_x(2),
+                        .height(theme::sp(6))
+                        .interaction_background(
+                            (theme::InteractionTones::new()
+                                .hover(Role::SurfaceHover)
+                                .radius(Radius::Sm))
+                            .colors(),
+                        )
+                        .padding_xy(theme::sp(2), 0.0),
                     Arrangement::SpacedBy(sp(2)),
                     Alignment::Center,
                     || {
@@ -279,9 +290,12 @@ pub fn list(
                             Arrangement::Start,
                             Alignment::Center,
                             || {
-                                label(
+                                styled_text(
+                                    Modifier::new(),
                                     text.as_str(),
-                                    Type::new(12).ratio(1.4).tone(Role::Text).truncate().mono(),
+                                    theme::mono_style(12, 1.4)
+                                        .color(theme::color(Role::Text))
+                                        .max_lines(1),
                                 );
                             },
                         );
@@ -292,7 +306,7 @@ pub fn list(
                 );
             }
             row_arranged(
-                Modifier::new().pad_side(Side::Top, 1),
+                Modifier::new().padding_each(0.0, theme::sp(1), 0.0, 0.0),
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Center,
                 || {
@@ -396,7 +410,7 @@ impl<'a> SettingRow<'a> {
         let modifier = Modifier::new()
             .fill_max_width()
             .chain(self.modifier)
-            .chain(Modifier::new().pad_y(3));
+            .chain(Modifier::new().padding_xy(0.0, theme::sp(3)));
         column_arranged(
             modifier,
             Arrangement::SpacedBy(sp(2)),

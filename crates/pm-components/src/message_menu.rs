@@ -3,7 +3,7 @@
 //! and selecting the whole conversation.
 
 use crate::Menu;
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 use crate::state::{Outgoing, WorkspaceState};
 
 /// Copies the selected text of the conversation.
@@ -43,7 +43,9 @@ pub fn is_message_menu_item(id: FocusId) -> bool {
 /// Emits the menu opened at `open`.
 #[track_caller]
 pub fn message_menu(open: MessageMenu) {
+    let operations = crate::events::operations();
     Menu::new(open.at.0, open.at.1)
+        .on_pick(move |row| operations.message_menu_picked(row))
         .item("Copy", Some("Ctrl+C"), MESSAGE_MENU_COPY, !open.selected)
         .separator()
         .item("Copy reply", None, MESSAGE_MENU_COPY_REPLY, false)

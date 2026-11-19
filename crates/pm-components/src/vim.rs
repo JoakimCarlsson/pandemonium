@@ -1,8 +1,8 @@
 //! Modal editing in the window: the keys of the reader carried out by vim's engine on the file shown, the effects it asks of the window, and what its status bar says.
 
-use crate::kit::{Key, KeyEvent};
 use pm_editor::{ModalView, VimClipboard};
 use pm_vim::{Clipboard, Command, Effect, Keystroke, Placement, Vim};
+use rustle::{Key, KeyEvent};
 
 use crate::state::WorkspaceState;
 
@@ -20,12 +20,11 @@ pub struct VimStatus {
 /// The keystroke of modal editing that `event` is, or nothing for a key it has no use for.
 pub fn keystroke(event: &KeyEvent) -> Option<Keystroke> {
     let modifiers = event.modifiers;
-    if modifiers.logo || (modifiers.alt && !modifiers.control) {
+    if modifiers.meta || (modifiers.alt && !modifiers.ctrl) {
         return None;
     }
-    let key = match event.key {
-        Key::Character(ch) => pm_vim::Key::Char(ch),
-        Key::Space => pm_vim::Key::Char(' '),
+    let key = match &event.key {
+        Key::Character(_) => pm_vim::Key::Char(event.code_point()?),
         Key::Escape => pm_vim::Key::Escape,
         Key::Enter => pm_vim::Key::Enter,
         Key::Backspace => pm_vim::Key::Backspace,
@@ -39,9 +38,9 @@ pub fn keystroke(event: &KeyEvent) -> Option<Keystroke> {
         Key::End => pm_vim::Key::End,
         Key::PageUp => pm_vim::Key::PageUp,
         Key::PageDown => pm_vim::Key::PageDown,
-        Key::Function(_) => return None,
+        _ => return None,
     };
-    let ctrl = modifiers.control;
+    let ctrl = modifiers.ctrl;
     let key = match key {
         pm_vim::Key::Char(ch) if ctrl => pm_vim::Key::Char(ch.to_ascii_lowercase()),
         key => key,
@@ -124,7 +123,7 @@ impl WorkspaceState {
         let view = ModalView {
             top: self
                 .shown_viewer()
-                .map_or(0, |viewer| (viewer.scroll / row.max(1.0)) as usize),
+                .map_or(0, |viewer| (viewer.scroll.offset() / row.max(1.0)) as usize),
             rows,
             margin: self.editor.vertical_scroll_margin,
             wrap: self.editor.preferred_line_length,
@@ -193,12 +192,14 @@ impl WorkspaceState {
         let line = document.line_of(document.field.caret());
         let at = document.wrapped_row_of_line(line, columns) as f32;
         let rows = rows as f32;
-        viewer.scroll = match placement {
-            Placement::Top => at * row,
-            Placement::Center => (at - (rows / 2.0).floor()) * row,
-            Placement::Bottom => (at - (rows - 1.0)) * row,
-        }
-        .max(0.0);
+        viewer.scroll.jump_to(
+            match placement {
+                Placement::Top => at * row,
+                Placement::Center => (at - (rows / 2.0).floor()) * row,
+                Placement::Bottom => (at - (rows - 1.0)) * row,
+            }
+            .max(0.0),
+        );
     }
 
     /// Scrolls the view by `lines`, down when positive.
@@ -209,7 +210,9 @@ impl WorkspaceState {
             .shown
             .and_then(|index| self.git.viewers.get_mut(index))
         {
-            viewer.scroll = (viewer.scroll + lines as f32 * row).max(0.0);
+            viewer
+                .scroll
+                .jump_to((viewer.scroll.offset() + lines as f32 * row).max(0.0));
         }
     }
 }

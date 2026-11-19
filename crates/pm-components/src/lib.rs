@@ -1,10 +1,14 @@
 //! The components the app is built from.
 //!
 //! A component is a composable: a function or a builder that emits what it
-//! draws, in place, while the app composes its window. Components are made
-//! with the kit ([`kit`]), which lays boxes out in rows, columns, blocks and
-//! layers, sets type, draws icons, fields and marked text, and turns what the
-//! user does into actions named by focus ids. A builder is made with `new`,
+//! draws, in place, while the app composes its window. Components are rustle
+//! composables and rustle widgets themed through rustle's theme: [`theme`]
+//! provides the colour scheme, type scale and shapes rustle's `theme` carries,
+//! and one composition local for the app's own tokens (every colour role,
+//! syntax colours, font stacks); text is set in rustle `TextStyle`s through the
+//! selection-aware [`select::styled_text`]; [`icons`] maps icon names onto
+//! rustle's Phosphor set; and what the user does reaches the app through the
+//! handler of [`events`], named by focus ids. A builder is made with `new`,
 //! given a variant for how it looks and a size for how big it is, and emitted
 //! with `build`; the caller puts what goes around it with `.modifier(..)`,
 //! replaces its padding with `.inner(..)` and adds children with
@@ -22,6 +26,7 @@ pub mod assist;
 pub mod avatar;
 pub mod badge;
 pub mod bar_row;
+pub mod bounds;
 pub mod branch_menu;
 pub mod branch_tasks;
 pub mod browser;
@@ -70,6 +75,7 @@ pub mod file_actions;
 pub mod file_icon;
 pub mod file_tree;
 pub mod find;
+pub mod focus;
 pub mod folder_picker;
 pub mod git_controls;
 pub mod git_menus;
@@ -78,10 +84,10 @@ pub mod graph;
 mod hand_over;
 pub mod hearing;
 pub mod history;
+pub mod icons;
 pub mod inline_values;
 pub mod input;
 pub mod inquiry;
-pub mod kit;
 pub mod language_offer;
 pub mod lazy_diffs;
 pub mod lightbulb;
@@ -101,6 +107,7 @@ pub mod panes;
 pub mod parts;
 pub mod plan;
 pub mod popover;
+pub mod popups;
 pub mod preview;
 pub mod problems_panel;
 pub mod project;
@@ -115,6 +122,7 @@ pub mod review;
 pub mod sample;
 pub mod sash;
 pub mod scroll_marks;
+pub mod select;
 mod session_attention;
 pub mod settings;
 pub mod settings_agents;
@@ -150,13 +158,17 @@ pub mod surface;
 pub mod tab_chip;
 pub mod tab_menu;
 pub mod tab_steps;
+pub mod tagged;
 pub mod tally;
 pub mod tasks;
 pub mod terminal;
 pub mod terminal_keys;
 pub mod terminal_menu;
+pub mod text_lines;
+pub mod theme;
 pub mod tile;
 pub mod title_bar;
+pub mod tooltip;
 pub mod trail;
 pub mod tree;
 pub mod tree_actions;
@@ -196,6 +208,6 @@ pub use tally::Tally;
 pub use tile::Tile;
 pub use title_bar::TitleBar;
 pub use window::{
-    FRAME_RADIUS, SHADOW_MARGIN, WINDOW_SHADOW, Window, framed, set_floating, set_shadow_outside,
-    shadow_margin, shadow_outside, shadowed,
+    FRAME_RADIUS, RESIZE_EDGE, SHADOW_MARGIN, WINDOW_SHADOW, Window, framed, resize_edges,
+    set_floating, set_shadow_outside, shadow_margin, shadow_outside, shadowed,
 };

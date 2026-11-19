@@ -1,9 +1,9 @@
-//! The card: a rounded, bordered row that stands alone and holds its children side by side.
+//! The card: a rounded, bordered row that stands alone and holds its children side by side,
+//! drawn as rustle's outlined card with the theme's border and corner.
 
-use crate::kit::sp;
-use crate::kit::{Radius, Role, Styled};
-use rustle::Modifier;
-use rustle::{Alignment, Arrangement, row_arranged};
+use crate::theme;
+use crate::theme::{Radius, Role};
+use rustle::{Alignment, Arrangement, BorderStroke, CardColors, Modifier, row_arranged};
 
 /// A card being described: how tall it is.
 ///
@@ -54,15 +54,26 @@ impl Card {
     /// Emits the card holding what `content` emits, side by side.
     #[track_caller]
     pub fn build_with(self, content: impl FnOnce()) {
-        let own = Modifier::new()
-            .h(self.height as f32)
-            .fill_max_width()
-            .stroke(Role::Border, Radius::Xl);
-        let own = own.chain(self.inner.unwrap_or_else(|| Modifier::new().pad_x(4)));
+        let inner = Modifier::new().fill_max_size().padding(1.0).chain(
+            self.inner
+                .unwrap_or_else(|| Modifier::new().padding_xy(theme::sp(4), 0.0)),
+        );
         let (arrangement, alignment) = self
             .arranged
-            .unwrap_or((Arrangement::SpacedBy(sp(3)), Alignment::Center));
-        row_arranged(self.modifier.chain(own), arrangement, alignment, content);
+            .unwrap_or((Arrangement::SpacedBy(theme::sp(3)), Alignment::Center));
+        let colors = CardColors {
+            container_color: rustle::Color::TRANSPARENT,
+            content_color: theme::color(Role::Text),
+        };
+        rustle::outlined_card(
+            self.modifier
+                .height(theme::sp(self.height as f32))
+                .fill_max_width(),
+            rustle::Shape::rounded(Radius::Xl.px()),
+            colors,
+            BorderStroke::new(1.0, theme::color(Role::Border)),
+            || row_arranged(inner, arrangement, alignment, content),
+        );
     }
 
     /// Emits the empty card.

@@ -1,6 +1,6 @@
 //! Tests of which keys the browser takes for itself.
 
-use crate::kit::{Key, KeyEvent, Modifiers};
+use rustle::{Key, KeyEvent, Modifiers};
 
 use super::{Shortcut, shortcut_of};
 use crate::browser::{Command, ZoomStep};
@@ -17,90 +17,79 @@ fn commands(state: &mut WorkspaceState) -> Vec<Command> {
 
 /// A press of `key` with Control, and Shift when `shift`.
 fn control(key: Key, shift: bool) -> KeyEvent {
-    KeyEvent {
-        key,
-        modifiers: Modifiers {
-            shift,
-            control: true,
-            alt: false,
-            logo: false,
-        },
-        pressed: true,
-    }
+    let modifiers = if shift {
+        Modifiers::CTRL.with_shift()
+    } else {
+        Modifiers::CTRL
+    };
+    KeyEvent::press(key, modifiers)
 }
 
 /// A press of `key` with no modifier.
 fn plain(key: Key) -> KeyEvent {
-    KeyEvent {
-        key,
-        modifiers: Modifiers::default(),
-        pressed: true,
-    }
+    KeyEvent::press(key, Modifiers::NONE)
 }
 
 /// Control with a letter, a digit or a sign picks the browser's own commands, and plain letters go to the page.
 #[test]
 fn control_chords_are_the_browsers() {
     assert_eq!(
-        shortcut_of(&control(Key::Character('f'), false)),
+        shortcut_of(&control(Key::Character("f".into()), false)),
         Some(Shortcut::Find)
     );
     assert_eq!(
-        shortcut_of(&control(Key::Character('F'), true)),
+        shortcut_of(&control(Key::Character("F".into()), true)),
         Some(Shortcut::Find)
     );
     assert_eq!(
-        shortcut_of(&control(Key::Character('g'), false)),
+        shortcut_of(&control(Key::Character("g".into()), false)),
         Some(Shortcut::FindNext)
     );
     assert_eq!(
-        shortcut_of(&control(Key::Character('g'), true)),
+        shortcut_of(&control(Key::Character("g".into()), true)),
         Some(Shortcut::FindPrevious)
     );
     assert_eq!(
-        shortcut_of(&control(Key::Character('='), false)),
+        shortcut_of(&control(Key::Character("=".into()), false)),
         Some(Shortcut::ZoomIn)
     );
     assert_eq!(
-        shortcut_of(&control(Key::Character('+'), true)),
+        shortcut_of(&control(Key::Character("+".into()), true)),
         Some(Shortcut::ZoomIn)
     );
     assert_eq!(
-        shortcut_of(&control(Key::Character('-'), false)),
+        shortcut_of(&control(Key::Character("-".into()), false)),
         Some(Shortcut::ZoomOut)
     );
     assert_eq!(
-        shortcut_of(&control(Key::Character('0'), false)),
+        shortcut_of(&control(Key::Character("0".into()), false)),
         Some(Shortcut::ZoomReset)
     );
     assert_eq!(
-        shortcut_of(&control(Key::Character('r'), false)),
+        shortcut_of(&control(Key::Character("r".into()), false)),
         Some(Shortcut::Reload)
     );
     assert_eq!(
-        shortcut_of(&control(Key::Character('R'), true)),
+        shortcut_of(&control(Key::Character("R".into()), true)),
         Some(Shortcut::HardReload)
     );
-    assert_eq!(shortcut_of(&plain(Key::Character('f'))), None);
-    assert_eq!(shortcut_of(&control(Key::Character('c'), false)), None);
+    assert_eq!(shortcut_of(&plain(Key::Character("f".into()))), None);
+    assert_eq!(
+        shortcut_of(&control(Key::Character("c".into()), false)),
+        None
+    );
 }
 
 /// The function keys do what a browser's do.
 #[test]
 fn function_keys_step_and_reload() {
+    assert_eq!(shortcut_of(&plain(Key::F(3))), Some(Shortcut::FindNext));
+    assert_eq!(shortcut_of(&plain(Key::F(5))), Some(Shortcut::Reload));
     assert_eq!(
-        shortcut_of(&plain(Key::Function(3))),
-        Some(Shortcut::FindNext)
-    );
-    assert_eq!(
-        shortcut_of(&plain(Key::Function(5))),
-        Some(Shortcut::Reload)
-    );
-    assert_eq!(
-        shortcut_of(&control(Key::Function(5), false)),
+        shortcut_of(&control(Key::F(5), false)),
         Some(Shortcut::HardReload)
     );
-    assert_eq!(shortcut_of(&plain(Key::Function(1))), None);
+    assert_eq!(shortcut_of(&plain(Key::F(1))), None);
 }
 
 /// Finding shows the bar, looks again for the text kept, and closing it clears the marks; stepping asks the engine for the next match.
@@ -112,7 +101,7 @@ fn find_opens_steps_and_closes() {
     state.browser_shortcut(Shortcut::Find);
     assert!(state.browser_find_open());
     assert!(commands(&mut state).is_empty());
-    state.browser_find_edited(pm_field::Edit::Paste("ab".to_owned()));
+    state = state.typed(crate::browser::BROWSER_FIND_FIELD, "ab");
     assert_eq!(
         commands(&mut state),
         vec![Command::Find {

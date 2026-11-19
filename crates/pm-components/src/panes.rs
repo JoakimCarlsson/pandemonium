@@ -1,6 +1,6 @@
 //! The panes of the main area: tab groups laid side by side or one above the other, each tab dragged to another group or to the edge of one to split it.
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 use serde::{Deserialize, Serialize};
 
 use crate::open_files::FILE_TAB_BASE;
@@ -13,9 +13,6 @@ pub const PANE_BASE: u64 = 4_500_000;
 
 /// The first of the handles between two panes; the rest follow it in the order the splits are laid out.
 pub const SPLIT_SASH_BASE: u64 = 4_600_000;
-
-/// The first of the scrolling boxes of files shown in a pane other than the focused one; the rest follow it by the file's position.
-pub const PEEK_SCROLL_BASE: u64 = 4_700_000;
 
 /// The button in the strip of tabs that opens the menu of panes.
 pub const PANE_MENU: FocusId = FocusId(7096);
@@ -688,13 +685,6 @@ pub fn pane_of(id: FocusId) -> Option<usize> {
         .map(|offset| offset as usize)
 }
 
-/// Which open file `id` scrolls while it is shown in a pane other than the focused one, by position.
-pub fn peek_of(id: FocusId) -> Option<usize> {
-    id.0.checked_sub(PEEK_SCROLL_BASE)
-        .filter(|offset| *offset < RANGE)
-        .map(|offset| offset as usize)
-}
-
 impl WorkspaceState {
     /// Whether the page shows its views in panes: a session, a page for starting work or a project's overview.
     pub fn paned(&self) -> bool {
@@ -1023,13 +1013,5 @@ impl WorkspaceState {
             *ratio = size.clamp(room, extent - room) / extent.max(1.0);
         }
         self.panes = panes;
-    }
-
-    /// The state after the file at `index` in a pane other than the focused one is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_peek(mut self, index: usize, delta: f32, room: f32) -> Self {
-        if let Some(viewer) = self.git.viewers.get_mut(index) {
-            viewer.scroll = (viewer.scroll + delta).clamp(0.0, room);
-        }
-        self
     }
 }

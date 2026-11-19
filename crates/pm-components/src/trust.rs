@@ -1,16 +1,20 @@
 //! The card above the prompt box that asks the reader to trust the project a session works in, listing what the agent goes without until they do.
 
-use crate::kit::sp;
+use crate::theme;
+use crate::theme::sp;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
 use std::path::Path;
 
 use crate::Button;
 use crate::button::Variant;
-use crate::kit::{FocusId, IconName, Radius, Role, Styled, Type, label, label_with, wrap_lines};
+use crate::focus::FocusId;
+use crate::icons::IconName;
 use crate::parts::{glyph, line, paragraph};
+use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{Outgoing, Page, WorkspaceState};
+use crate::theme::{Radius, Role};
 use pm_harness::{Input, Skipped, Standing, TrustRequest, Verdict};
 use rustle::Modifier;
 
@@ -119,36 +123,40 @@ fn item(skipped: &Skipped, root: &Path, filed: bool, width: f32) {
         _ => skipped.name.clone(),
     };
     let beside = (!filed && file != named).then_some(file);
-    let file_type = Type::new(11)
-        .ratio(1.5)
-        .tone(Role::Subtle)
-        .mono()
-        .truncate();
+    let file_type = theme::mono_style(11, 1.5)
+        .color(theme::color(Role::Subtle))
+        .max_lines(1);
     if skipped.kind != Input::Hook {
         row_arranged(
             Modifier::new().fill_max_width(),
             Arrangement::SpacedBy(sp(2)),
             Alignment::Center,
             move || {
-                label(named, Type::new(12).ratio(1.5).tone(Role::Text).truncate());
+                styled_text(
+                    Modifier::new(),
+                    named,
+                    theme::text_style(12, 1.5)
+                        .color(theme::color(Role::Text))
+                        .max_lines(1),
+                );
                 if let Some(file) = beside {
-                    label_with(Modifier::new().weight(1.0), file, file_type);
+                    styled_text(Modifier::new().weight(1.0), file, file_type);
                 }
             },
         );
         return;
     }
-    let mono = Type::new(12).ratio(1.5).mono().tone(Role::Text);
+    let mono = theme::mono_style(12, 1.5).color(theme::color(Role::Text));
     column_arranged(
         Modifier::new(),
         Arrangement::Start,
         Alignment::Start,
         move || {
-            for piece in wrap_lines(&named, mono, width) {
-                label(&named[piece.start..piece.end], mono);
+            for piece in rustle::wrap_at_spaces(&named, &mono, width) {
+                styled_text(Modifier::new(), &named[piece.start..piece.end], mono);
             }
             if let Some(file) = beside {
-                label(file, file_type);
+                styled_text(Modifier::new(), file, file_type);
             }
         },
     );
@@ -188,22 +196,29 @@ fn group(request: &TrustRequest, kind: Input, width: f32) {
                 || {
                     if kind == Input::Hook {
                         glyph(IconName::Terminal, 3.5, Role::Warning);
-                        label(
+                        styled_text(
+                            Modifier::new(),
                             format!("{title} · run commands"),
-                            Type::new(12).ratio(1.4).tone(Role::Warning).truncate(),
+                            theme::text_style(12, 1.4)
+                                .color(theme::color(Role::Warning))
+                                .max_lines(1),
                         );
                     } else {
-                        label(title, Type::new(12).ratio(1.4).tone(Role::Muted).truncate());
+                        styled_text(
+                            Modifier::new(),
+                            title,
+                            theme::text_style(12, 1.4)
+                                .color(theme::color(Role::Muted))
+                                .max_lines(1),
+                        );
                     }
                     if let Some(file) = file {
-                        label_with(
+                        styled_text(
                             Modifier::new().weight(1.0),
                             file,
-                            Type::new(11)
-                                .ratio(1.4)
-                                .tone(Role::Subtle)
-                                .mono()
-                                .truncate(),
+                            theme::mono_style(11, 1.4)
+                                .color(theme::color(Role::Subtle))
+                                .max_lines(1),
                         );
                     }
                 },
@@ -259,12 +274,13 @@ fn choices(width: f32) {
 pub fn card(request: &TrustRequest, width: f32) {
     let inner = width - CARD_INSET;
     let (title, said) = words(request);
-    let title_type = Type::new(13).ratio(1.4).tone(Role::Text);
+    let title_type = theme::text_style(13, 1.4).color(theme::color(Role::Text));
     let own = Modifier::new()
-        .fill_rounded(Role::Surface, Radius::Xl)
-        .stroke(Role::Border, Radius::Xl)
-        .pad_x(4)
-        .pad_y(3);
+        .background_rounded(theme::color(Role::Surface), Radius::Xl.px())
+        .border(1.0, theme::color(Role::Border), Radius::Xl.px())
+        .padding(1.0)
+        .padding_xy(theme::sp(4), 0.0)
+        .padding_xy(0.0, theme::sp(3));
     column_arranged(
         own,
         Arrangement::SpacedBy(sp(2.5)),
@@ -276,18 +292,19 @@ pub fn card(request: &TrustRequest, width: f32) {
                 Alignment::Center,
                 || {
                     glyph(IconName::Lock, 3.5, Role::Muted);
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         "Project trust",
-                        Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
+                        theme::text_style(12, 1.4)
+                            .color(theme::color(Role::Muted))
+                            .max_lines(1),
                     );
-                    label_with(
+                    styled_text(
                         Modifier::new().weight(1.0),
                         request.root.display().to_string(),
-                        Type::new(11)
-                            .ratio(1.4)
-                            .tone(Role::Subtle)
-                            .mono()
-                            .truncate(),
+                        theme::mono_style(11, 1.4)
+                            .color(theme::color(Role::Subtle))
+                            .max_lines(1),
                     );
                 },
             );
@@ -296,8 +313,8 @@ pub fn card(request: &TrustRequest, width: f32) {
                 Arrangement::Start,
                 Alignment::Start,
                 || {
-                    for piece in wrap_lines(&title, title_type, inner) {
-                        label(&title[piece.start..piece.end], title_type);
+                    for piece in rustle::wrap_at_spaces(&title, &title_type, inner) {
+                        styled_text(Modifier::new(), &title[piece.start..piece.end], title_type);
                     }
                 },
             );
@@ -305,9 +322,9 @@ pub fn card(request: &TrustRequest, width: f32) {
             column_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .fill_rounded(Role::Background, Radius::Lg)
-                    .pad_x(3)
-                    .pad_y(2.5),
+                    .background_rounded(theme::color(Role::Background), Radius::Lg.px())
+                    .padding_xy(theme::sp(3), 0.0)
+                    .padding_xy(0.0, theme::sp(2.5)),
                 Arrangement::SpacedBy(sp(2.5)),
                 Alignment::Start,
                 || {

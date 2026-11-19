@@ -2,7 +2,7 @@
 
 use pm_protocol::{CodeLens, FileEdit, InlayHint, Location, Seek, SemanticToken};
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 use crate::listing::{Items, Listing};
 use crate::state::{Outgoing, WorkspaceState};
 
@@ -122,7 +122,7 @@ impl WorkspaceState {
             return None;
         }
         let row = self.editor.row_height().max(1.0);
-        let scroll = self.shown_viewer()?.scroll;
+        let scroll = self.shown_viewer()?.scroll.offset();
         let height = self.code_height.unwrap_or(VIEW_HEIGHT);
         let first = (scroll / row).floor().max(0.0) as usize;
         let count = (height / row).ceil() as usize + 1;

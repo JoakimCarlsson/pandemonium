@@ -1,5 +1,7 @@
 //! What an agent did on the way to a reply: the steps it took, its plan and its questions.
 
+use crate::events::reduce;
+use crate::theme;
 use pm_harness::{
     Diff, Kind as ToolKind, Merge, Permission, PlanStep, Progress, ToolState, Verdict, Worktree,
 };
@@ -11,15 +13,16 @@ use crate::Tile;
 use crate::button::Variant;
 use crate::diff::diff_line;
 use crate::diff_syntax::DiffColours;
+use crate::events::Interactive;
 use crate::file_icon::{file_icon, file_language};
-use crate::kit::{
-    FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, Tooltip, Type, label,
-    label_with, scroll_area, sp, spinner, wrap_lines,
-};
+use crate::focus::FocusId;
+use crate::icons::{IconName, spinner};
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::sample::{DiffLine, Kind, Step, ToolUse};
+use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{CHOICE_BASE, STEP_BASE, SUBAGENT_STOP_BASE};
+use crate::theme::{Radius, Role, sp};
 use crate::{CodeBox, Tally};
 
 /// How many unchanged lines an edit shows around what changed.
@@ -77,9 +80,11 @@ fn step_line(
     id: Option<FocusId>,
     open: bool,
 ) {
-    let mut own = Modifier::new().fill_max_width().min_h(8);
+    let mut own = Modifier::new()
+        .fill_max_width()
+        .height_in(theme::sp(8), f32::INFINITY);
     if let Some(id) = id {
-        own = own.cursor(CursorIcon::Pointer).target(id);
+        own = own.cursor(CursorIcon::Pointer).control(id, reduce(id));
     }
     row_arranged(
         own,
@@ -87,7 +92,7 @@ fn step_line(
         Alignment::Center,
         || {
             row_arranged(
-                Modifier::new().square(4),
+                Modifier::new().size(theme::sp(4), theme::sp(4)),
                 Arrangement::Start,
                 Alignment::Center,
                 mark,
@@ -117,23 +122,25 @@ fn step_line(
 /// Emits a box that takes the room left in its row and cuts a line of code short at its edge, on a chip when `chip` is set.
 #[track_caller]
 fn clipped_mono(content: &str, chip: bool) {
-    let code = Type::new(12).ratio(1.4).mono().tone(Role::Text).truncate();
+    let code = theme::mono_style(12, 1.4)
+        .color(theme::color(Role::Text))
+        .max_lines(1);
     row_arranged(
         Modifier::new().weight(1.0),
         Arrangement::Start,
         Alignment::Start,
         || {
-            let holder = Modifier::new().clip_to(Radius::None);
+            let holder = Modifier::new().clip();
             let holder = if chip {
                 Modifier::new()
-                    .fill_rounded(Role::Surface, Radius::Md)
-                    .clip_to(Radius::None)
-                    .pad_x(1.5)
+                    .background_rounded(theme::color(Role::Surface), Radius::Md.px())
+                    .clip()
+                    .padding_xy(theme::sp(1.5), 0.0)
             } else {
                 holder
             };
             row_arranged(holder, Arrangement::Start, Alignment::Start, || {
-                label(content, code)
+                styled_text(Modifier::new(), content, code)
             });
         },
     );
@@ -197,13 +204,14 @@ fn tool_detail(tool: &ToolUse) {
             .take(40)
         {
             row_arranged(
-                Modifier::new().pad_x(3.5),
+                Modifier::new().padding_xy(theme::sp(3.5), 0.0),
                 Arrangement::Start,
                 Alignment::Start,
                 || {
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         printed.replace('\t', "    "),
-                        Type::new(12).ratio(1.6).mono().tone(Role::Muted),
+                        theme::mono_style(12, 1.6).color(theme::color(Role::Muted)),
                     );
                 },
             );
@@ -297,15 +305,15 @@ pub fn elapsed(seconds: u64) -> String {
 #[track_caller]
 fn agent_mark(state: ToolState) {
     row_arranged(
-        Modifier::new().square(4),
+        Modifier::new().size(theme::sp(4), theme::sp(4)),
         Arrangement::Start,
         Alignment::Center,
         || match state {
             ToolState::Running => spinner(3.5, Role::Muted),
             ToolState::Done => rustle::spacer(
                 Modifier::new()
-                    .square(1.5)
-                    .fill_rounded(Role::Subtle, Radius::Full),
+                    .size(theme::sp(1.5), theme::sp(1.5))
+                    .background_rounded(theme::color(Role::Subtle), Radius::Full.px()),
             ),
             ToolState::Failed => glyph(IconName::Close, 3.5, Role::Danger),
         },
@@ -327,13 +335,17 @@ fn worktree_chip(worktree: &Worktree) {
     };
     row_arranged(
         Modifier::new()
-            .fill_rounded(Role::SurfaceHover, Radius::Md)
-            .pad_x(1.5),
+            .background_rounded(theme::color(Role::SurfaceHover), Radius::Md.px())
+            .padding_xy(theme::sp(1.5), 0.0),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Center,
         || {
             glyph(IconName::GitFork, 3.0, role);
-            label(words, Type::new(12).ratio(1.4).tone(role));
+            styled_text(
+                Modifier::new(),
+                words,
+                theme::text_style(12, 1.4).color(theme::color(role)),
+            );
         },
     );
 }
@@ -353,24 +365,26 @@ fn quiet_label(words: String) {
 /// Emits `words` small and muted on a chip.
 #[track_caller]
 fn quiet_text(words: String) {
-    let kind = Type::new(12).ratio(1.4).tone(Role::Muted);
+    let kind = theme::text_style(12, 1.4).color(theme::color(Role::Muted));
     row_arranged(
         Modifier::new()
-            .fill_rounded(Role::SurfaceHover, Radius::Md)
-            .pad_x(1.5),
+            .background_rounded(theme::color(Role::SurfaceHover), Radius::Md.px())
+            .padding_xy(theme::sp(1.5), 0.0),
         Arrangement::Start,
         Alignment::Start,
-        || label(words, kind),
+        || styled_text(Modifier::new(), words, kind),
     );
 }
 
 /// Emits what a subagent has cost so far, `micros` millionths of a US dollar, as a muted amount cut short when the row runs out of room.
 #[track_caller]
 fn cost_label(micros: u64) {
-    label_with(
-        Modifier::new().clip_to(Radius::None),
+    styled_text(
+        Modifier::new().clip(),
         crate::spend::dollars(micros),
-        Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
+        theme::text_style(12, 1.4)
+            .color(theme::color(Role::Subtle))
+            .max_lines(1),
     );
 }
 
@@ -397,7 +411,8 @@ pub fn is_inside_card(all: &[Step], position: usize) -> bool {
 
 /// Emits the card of subagents: how many there are and how many are at work, then a row for each that folds out the tools it used, with a button that stops it while it is at work and can be stopped.
 ///
-/// `scroll` bounds the rows to 240 logical pixels and scrolls them independently.
+/// `scroll` bounds the rows to 240 logical pixels and scrolls them independently as its
+/// first state says, handing the wheel to its second, the area around, at either end.
 /// `at` are the positions in `all`, the steps of the reply at `message`, of the tools that start them.
 #[track_caller]
 pub fn subagents(
@@ -406,7 +421,7 @@ pub fn subagents(
     message: usize,
     opened: &dyn Fn(usize) -> bool,
     root: &str,
-    scroll: Option<(FocusId, f32)>,
+    scroll: Option<(&rustle::ScrollState, &rustle::ScrollState)>,
 ) {
     let agents: Vec<(usize, &ToolUse)> = at
         .iter()
@@ -425,9 +440,9 @@ pub fn subagents(
         (1, _) => "1 subagent · running".to_owned(),
         (count, working) => format!("{count} subagents · {working} running"),
     };
-    let rows = move || {
+    let rows = move |modifier: Modifier| {
         column_arranged(
-            Modifier::new().fill_max_width(),
+            modifier.fill_max_width(),
             Arrangement::Start,
             Alignment::Start,
             || {
@@ -442,18 +457,24 @@ pub fn subagents(
     column_arranged(
         Modifier::new()
             .fill_max_width()
-            .fill_rounded(Role::Surface, Radius::Lg)
-            .stroke(Role::Border, Radius::Lg)
-            .clip_to(Radius::None),
+            .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
+            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+            .padding(1.0)
+            .clip(),
         Arrangement::Start,
         Alignment::Start,
         || {
             row_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .h(10)
-                    .stroke_side(Side::Bottom, 1.0, Role::Border)
-                    .pad_x(3.5),
+                    .height(theme::sp(10))
+                    .draw_behind(theme::edge(
+                        theme::Side::Bottom,
+                        1.0,
+                        theme::color(Role::Border),
+                    ))
+                    .padding_each(0.0, 0.0, 0.0, 1.0)
+                    .padding_xy(theme::sp(3.5), 0.0),
                 Arrangement::SpacedBy(sp(2.5)),
                 Alignment::Center,
                 || {
@@ -462,15 +483,41 @@ pub fn subagents(
                 },
             );
             match scroll {
-                Some((id, offset)) => scroll_area(
-                    Modifier::new().fill_max_width().height_in(0.0, sp(60)),
-                    Scroll::from_start(id, offset),
-                    rows,
+                Some((own, parent)) => rows(
+                    handing_on(
+                        Modifier::new().fill_max_width().height_in(0.0, sp(60)),
+                        own,
+                        parent,
+                    )
+                    .vertical_scroll(own),
                 ),
-                None => rows(),
+                None => rows(Modifier::new()),
             }
         },
     );
+}
+
+/// `modifier` handing the wheel to `parent` while `own`, which the area scrolls, is at
+/// the end the wheel turns towards, so the area around goes on scrolling.
+fn handing_on(
+    modifier: Modifier,
+    own: &rustle::ScrollState,
+    parent: &rustle::ScrollState,
+) -> Modifier {
+    let (own, parent) = (own.clone(), parent.clone());
+    modifier.pointer_input(move |event| {
+        if event.phase != rustle::PointerInputPhase::Scroll {
+            return false;
+        }
+        let pixels = -event.scroll_delta.y;
+        let room = own.max_offset();
+        let offset = own.offset().clamp(0.0, room);
+        let at_end = (pixels > 0.0 && offset >= room) || (pixels < 0.0 && offset <= 0.0);
+        if at_end {
+            parent.scroll_drawn_by(pixels);
+        }
+        at_end
+    })
 }
 
 /// Emits the row of the subagent started by `tool`, at `position` of `all`, the steps of the reply at `message`, folded out to the tools it used while `opened` says so.
@@ -496,7 +543,7 @@ fn agent_row(
                 .height(10.0)
                 .gap(2.5)
                 .radius(Radius::Xs)
-                .inner(Modifier::new().pad_x(3.5))
+                .inner(Modifier::new().padding_xy(theme::sp(3.5), 0.0))
                 .modifier(Modifier::new().fill_max_width())
                 .build_with(|| {
                     agent_mark(tool.state);
@@ -528,7 +575,7 @@ fn agent_row(
                             FocusId(SUBAGENT_STOP_BASE + (message * 1000 + position) as u64),
                         )
                         .size(Size::Xs)
-                        .modifier(Modifier::new().tooltip("Stop this subagent"))
+                        .tooltip("Stop this subagent")
                         .build();
                     }
                     glyph(
@@ -545,9 +592,9 @@ fn agent_row(
                 column_arranged(
                     Modifier::new()
                         .fill_max_width()
-                        .pad_side(Side::Left, 10)
-                        .pad_side(Side::Right, 3.5)
-                        .pad_side(Side::Bottom, 2),
+                        .padding_each(theme::sp(10), 0.0, 0.0, 0.0)
+                        .padding_each(0.0, 0.0, theme::sp(3.5), 0.0)
+                        .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
                     Arrangement::SpacedBy(sp(1)),
                     Alignment::Start,
                     || {
@@ -567,16 +614,19 @@ fn plan_mark(progress: Progress) {
     match progress {
         Progress::Done => row_arranged(
             Modifier::new()
-                .square(4)
-                .fill_rounded(Role::Success, Radius::Full),
+                .size(theme::sp(4), theme::sp(4))
+                .background_rounded(theme::color(Role::Success), Radius::Full.px()),
             Arrangement::Center,
             Alignment::Center,
             || glyph(IconName::Check, 3.0, Role::OnSuccess),
         ),
         Progress::Doing => spinner(4.0, Role::Muted),
-        Progress::Pending => {
-            rustle::spacer(Modifier::new().square(4).stroke(Role::Subtle, Radius::Full))
-        }
+        Progress::Pending => rustle::spacer(
+            Modifier::new()
+                .size(theme::sp(4), theme::sp(4))
+                .border(1.0, theme::color(Role::Subtle), Radius::Full.px())
+                .padding(1.0),
+        ),
     }
 }
 
@@ -591,18 +641,24 @@ pub fn plan(items: &[PlanStep]) {
     column_arranged(
         Modifier::new()
             .fill_max_width()
-            .fill_rounded(Role::Surface, Radius::Xl)
-            .stroke(Role::Border, Radius::Xl)
-            .clip_to(Radius::None),
+            .background_rounded(theme::color(Role::Surface), Radius::Xl.px())
+            .border(1.0, theme::color(Role::Border), Radius::Xl.px())
+            .padding(1.0)
+            .clip(),
         Arrangement::Start,
         Alignment::Start,
         || {
             row_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .h(12)
-                    .stroke_side(Side::Bottom, 1.0, Role::Border)
-                    .pad_x(4),
+                    .height(theme::sp(12))
+                    .draw_behind(theme::edge(
+                        theme::Side::Bottom,
+                        1.0,
+                        theme::color(Role::Border),
+                    ))
+                    .padding_each(0.0, 0.0, 0.0, 1.0)
+                    .padding_xy(theme::sp(4), 0.0),
                 Arrangement::SpacedBy(sp(3)),
                 Alignment::Center,
                 || {
@@ -620,7 +676,10 @@ pub fn plan(items: &[PlanStep]) {
                 },
             );
             column_arranged(
-                Modifier::new().fill_max_width().pad_x(4).pad_y(3.5),
+                Modifier::new()
+                    .fill_max_width()
+                    .padding_xy(theme::sp(4), 0.0)
+                    .padding_xy(0.0, theme::sp(3.5)),
                 Arrangement::SpacedBy(sp(3)),
                 Alignment::Start,
                 || {
@@ -630,24 +689,22 @@ pub fn plan(items: &[PlanStep]) {
                             Progress::Doing => (Role::Text, false),
                             Progress::Pending => (Role::Muted, false),
                         };
-                        let kind = Type::new(13).ratio(1.4).tone(tone).truncate();
-                        let kind = if struck { kind.strike() } else { kind };
+                        let kind = theme::text_style(13, 1.4)
+                            .color(theme::color(tone))
+                            .max_lines(1);
+                        let kind = if struck { kind.strikethrough() } else { kind };
                         row_arranged(
                             Modifier::new().fill_max_width(),
                             Arrangement::SpacedBy(sp(3)),
                             Alignment::Center,
                             || {
                                 row_arranged(
-                                    Modifier::new().square(4),
+                                    Modifier::new().size(theme::sp(4), theme::sp(4)),
                                     Arrangement::Start,
                                     Alignment::Center,
                                     || plan_mark(item.progress),
                                 );
-                                label_with(
-                                    Modifier::new().weight(1.0).clip_to(Radius::None),
-                                    &item.text,
-                                    kind,
-                                );
+                                styled_text(Modifier::new().weight(1.0).clip(), &item.text, kind);
                             },
                         );
                     }
@@ -669,8 +726,13 @@ pub fn steps(
 ) {
     column_arranged(
         Modifier::new()
-            .stroke_side(Side::Left, 1.0, Role::Border)
-            .pad_side(Side::Left, 4),
+            .draw_behind(theme::edge(
+                theme::Side::Left,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(1.0, 0.0, 0.0, 0.0)
+            .padding_each(theme::sp(4), 0.0, 0.0, 0.0),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Start,
         || {
@@ -721,7 +783,9 @@ pub fn steps(
                                     );
                                     if open {
                                         column_arranged(
-                                            Modifier::new().pad_y(1).pad_side(Side::Left, 4),
+                                            Modifier::new()
+                                                .padding_xy(0.0, theme::sp(1))
+                                                .padding_each(theme::sp(4), 0.0, 0.0, 0.0),
                                             Arrangement::Start,
                                             Alignment::Start,
                                             || {
@@ -751,13 +815,14 @@ const CARD_INSET: f32 = 34.0;
 /// Emits the card that asks whether the agent may go ahead, `width` logical pixels wide: what it wants to do, its command broken to fit, and a button for each answer.
 #[track_caller]
 pub fn question(ask: &Permission, width: f32) {
-    let title = Type::new(13).ratio(1.4).tone(Role::Text);
+    let title = theme::text_style(13, 1.4).color(theme::color(Role::Text));
     column_arranged(
         Modifier::new()
-            .fill_rounded(Role::Surface, Radius::Xl)
-            .stroke(Role::Border, Radius::Xl)
-            .pad_x(4)
-            .pad_y(3),
+            .background_rounded(theme::color(Role::Surface), Radius::Xl.px())
+            .border(1.0, theme::color(Role::Border), Radius::Xl.px())
+            .padding(1.0)
+            .padding_xy(theme::sp(4), 0.0)
+            .padding_xy(0.0, theme::sp(3)),
         Arrangement::SpacedBy(sp(2.5)),
         Alignment::Start,
         || {
@@ -767,26 +832,26 @@ pub fn question(ask: &Permission, width: f32) {
                 Arrangement::Start,
                 Alignment::Start,
                 || {
-                    for piece in wrap_lines(&ask.title, title, width - CARD_INSET) {
-                        label(&ask.title[piece.start..piece.end], title);
+                    for piece in rustle::wrap_at_spaces(&ask.title, &title, width - CARD_INSET) {
+                        styled_text(Modifier::new(), &ask.title[piece.start..piece.end], title);
                     }
                 },
             );
             if let Some(command) = &ask.command {
-                let kind = Type::new(12).ratio(1.6).mono().tone(Role::Text);
+                let kind = theme::mono_style(12, 1.6).color(theme::color(Role::Text));
                 let shown = format!("$ {command}").replace('\t', "    ");
                 let room = width - COMMAND_INSET;
                 column_arranged(
                     Modifier::new()
                         .fill_max_width()
-                        .fill_rounded(Role::Background, Radius::Lg)
-                        .pad_x(3)
-                        .pad_y(2),
+                        .background_rounded(theme::color(Role::Background), Radius::Lg.px())
+                        .padding_xy(theme::sp(3), 0.0)
+                        .padding_xy(0.0, theme::sp(2)),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
-                        for piece in wrap_lines(&shown, kind, room) {
-                            label(&shown[piece.start..piece.end], kind);
+                        for piece in rustle::wrap_at_spaces(&shown, &kind, room) {
+                            styled_text(Modifier::new(), &shown[piece.start..piece.end], kind);
                         }
                     },
                 );

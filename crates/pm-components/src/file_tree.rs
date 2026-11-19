@@ -1,22 +1,26 @@
 //! Every file of the project as a tree of folders, folders first, with the files git sees changed marked.
 
-use crate::kit::sp;
+use crate::theme;
+use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 use rustle::Modifier;
 
 use crate::Input;
 use crate::change_list::mark_color;
 use crate::file_icon::{file_icon, folder_icon};
-use crate::kit::theme::step_scale;
-use crate::kit::{
-    FocusId, IconName, Interactive, Radius, Role, Side, Styled, Tone, Type, icon as icon_of, label,
-    label_with,
-};
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::icons::icon as icon_of;
+use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{TREE_BASE, WorkspaceState};
+use crate::theme::step_scale;
+use crate::theme::{Radius, Role, Tone};
 use crate::tile::Tile;
 use crate::tree::{Entry, folders};
 
@@ -162,7 +166,7 @@ fn look(
     }
 }
 
-/// Emits one row: a name beside `icon`, the icon of what it is, `depth` levels down, with a chevron when `fold` says whether it is an open or closed folder, answering to `id`, drawn as `look` says, and the letter it is marked with.
+/// Emits one row: a name beside `icon`, the icon of what it is, `depth` levels down, with a chevron when `fold` says whether it is an open or closed folder, answering to `id` and standing for `target`, drawn as `look` says, and the letter it is marked with. Clicked with Shift, Control or Command it is picked among others; its menu opens on a secondary press.
 #[track_caller]
 fn entry_row(
     icon: impl FnOnce(),
@@ -170,8 +174,11 @@ fn entry_row(
     depth: usize,
     fold: Option<bool>,
     id: FocusId,
+    target: TreeTarget,
     look: &Look,
 ) {
+    let operations = crate::events::operations();
+    let picked = target.clone();
     let tone = match look.changed.tone {
         _ if look.cut => Tone::from(Role::Subtle),
         Some(tone) => tone,
@@ -179,39 +186,51 @@ fn entry_row(
     };
     let mut around = Modifier::new().fill_max_width();
     if look.cut {
-        around = around.opacity(60.0);
+        around = around.alpha(0.6);
     }
     if look.landing {
-        around = around.fill_rounded(Tone::from(Role::Accent).alpha(0.24), Radius::Sm);
+        around = around.background_rounded(
+            theme::color(Tone::from(Role::Accent).alpha(0.24)),
+            Radius::Sm.px(),
+        );
     }
     let letter = look.changed.letter;
     Tile::new(id)
+        .on_pick(crate::events::picking(id, move |state, how| {
+            state.tree_row_picked(picked.clone(), how)
+        }))
+        .on_context(move || operations.open_tree_menu(target.clone()))
         .selected(look.selected)
         .height(6.0)
         .gap(1.5)
         .radius(Radius::Sm)
-        .modifier(around)
+        .modifier(crate::bounds::placed(id, around))
         .inner(
             Modifier::new()
-                .pad_side(Side::Left, 3.0 + depth as f32 * INDENT)
-                .pad_side(Side::Right, 3),
+                .padding_each(theme::sp(3.0 + depth as f32 * INDENT), 0.0, 0.0, 0.0)
+                .padding_each(0.0, 0.0, theme::sp(3), 0.0),
         )
         .build_with(|| {
             match fold {
                 Some(true) => icon_of(IconName::ChevronDown, 3.5, Role::Muted),
                 Some(false) => icon_of(IconName::ChevronRight, 3.5, Role::Muted),
-                None => rustle::spacer(Modifier::new().square(3.5)),
+                None => rustle::spacer(Modifier::new().size(theme::sp(3.5), theme::sp(3.5))),
             }
             icon();
-            label_with(
+            styled_text(
                 Modifier::new().weight(1.0),
                 name,
-                Type::new(13).ratio(1.4).tone(tone).truncate(),
+                theme::text_style(13, 1.4)
+                    .color(theme::color(tone))
+                    .max_lines(1),
             );
             if let Some(letter) = letter {
-                label(
+                styled_text(
+                    Modifier::new(),
                     letter,
-                    Type::new(11).ratio(1.4).tone(tone).truncate().mono(),
+                    theme::mono_style(11, 1.4)
+                        .color(theme::color(tone))
+                        .max_lines(1),
                 );
             }
         });
@@ -235,13 +254,14 @@ pub fn drag_ghost(state: &WorkspaceState) {
     };
     row_arranged(
         Modifier::new()
-            .at(drag.at.0 + 12.0, drag.at.1 + 10.0)
+            .offset(drag.at.0 + 12.0, drag.at.1 + 10.0)
             .z_index_unclipped(60)
-            .h(7)
-            .shadow_md(Radius::Md)
-            .fill_rounded(Role::Surface, Radius::Md)
-            .stroke(Role::Border, Radius::Md)
-            .pad_x(2),
+            .height(theme::sp(7))
+            .draw_behind(theme::shadows(&theme::MEDIUM_SHADOW, Radius::Md))
+            .background_rounded(theme::color(Role::Surface), Radius::Md.px())
+            .border(1.0, theme::color(Role::Border), Radius::Md.px())
+            .padding(1.0)
+            .padding_xy(theme::sp(2), 0.0),
         Arrangement::SpacedBy(sp(1.5)),
         Alignment::Center,
         || {
@@ -252,7 +272,13 @@ pub fn drag_ghost(state: &WorkspaceState) {
             } else {
                 file_icon(name, 4.0);
             }
-            label(&words, Type::new(13).ratio(1.4).tone(Role::Text).truncate());
+            styled_text(
+                Modifier::new(),
+                &words,
+                theme::text_style(13, 1.4)
+                    .color(theme::color(Role::Text))
+                    .max_lines(1),
+            );
         },
     );
 }
@@ -268,17 +294,17 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) -> usize {
         row_arranged(
             Modifier::new()
                 .fill_max_width()
-                .h(6)
-                .pad_side(Side::Left, 3.0 + depth as f32 * INDENT)
-                .pad_side(Side::Right, 3),
+                .height(theme::sp(6))
+                .padding_each(theme::sp(3.0 + depth as f32 * INDENT), 0.0, 0.0, 0.0)
+                .padding_each(0.0, 0.0, theme::sp(3), 0.0),
             Arrangement::SpacedBy(sp(2)),
             Alignment::Center,
             || {
-                rustle::spacer(Modifier::new().square(3.5));
+                rustle::spacer(Modifier::new().size(theme::sp(3.5), theme::sp(3.5)));
                 if folder {
                     folder_icon(false, 4.0);
                 } else {
-                    file_icon(field.text(), 4.0);
+                    file_icon(&field.text(), 4.0);
                 }
                 Input::new(field, ENTRY_FIELD)
                     .size(Size::Sm)
@@ -293,15 +319,18 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) -> usize {
     };
     column_arranged(
         Modifier::new()
-            .pad_side(Side::Left, 3.0 + depth as f32 * INDENT + 8.0)
-            .pad_side(Side::Right, 3)
-            .pad_side(Side::Bottom, 1),
+            .padding_each(theme::sp(3.0 + depth as f32 * INDENT + 8.0), 0.0, 0.0, 0.0)
+            .padding_each(0.0, 0.0, theme::sp(3), 0.0)
+            .padding_each(0.0, 0.0, 0.0, theme::sp(1)),
         Arrangement::Start,
         Alignment::Start,
         || {
-            label(
+            styled_text(
+                Modifier::new(),
                 problem,
-                Type::new(12).ratio(1.4).tone(Role::Danger).truncate(),
+                theme::text_style(12, 1.4)
+                    .color(theme::color(Role::Danger))
+                    .max_lines(1),
             )
         },
     );
@@ -334,7 +363,8 @@ fn picked(picked: &[TreeTarget], path: &str, folder: bool) -> bool {
         .any(|target| target.path == path && target.folder == folder)
 }
 
-/// The rows of the tree being emitted: only those near the viewport are drawn, and runs of the others become one spacer each.
+/// The rows of the tree being emitted: only those near the viewport and the one the app
+/// keeps focus on are drawn, and runs of the others become one spacer each.
 struct Rows {
     /// The row indices drawn, with a small margin around the viewport.
     visible: std::ops::Range<usize>,
@@ -346,14 +376,30 @@ struct Rows {
     skipped: Vec<FocusId>,
     /// How many rows, name lines and spacers have been emitted so far.
     emitted: usize,
+    /// Every row in tree order, whether drawn or not, for Tab to walk into rows not drawn.
+    walk: Rc<RefCell<TreeWalk>>,
+}
+
+/// The rows of the tree as Tab walks them: every row in tree order, which of them were
+/// drawn, and how to bring one into view.
+#[derive(Default)]
+struct TreeWalk {
+    /// Every row, in tree order.
+    order: Vec<FocusId>,
+    /// The rows drawn.
+    built: HashSet<FocusId>,
 }
 
 impl Rows {
-    /// Adds the row answering to `id`, emitting it with `build` only when it can be seen.
+    /// Adds the row answering to `id`, emitting it with `build` only when it can be seen
+    /// or the app keeps focus on it, so a focused row stays composed while scrolled away,
+    /// as a lazy list keeps its focused item.
     #[track_caller]
     fn push(&mut self, id: FocusId, build: impl FnOnce()) {
-        if self.visible.contains(&self.index) {
+        self.walk.borrow_mut().order.push(id);
+        if self.visible.contains(&self.index) || crate::focus::is_held(id) {
             self.flush();
+            self.walk.borrow_mut().built.insert(id);
             rustle::key(id.0, build);
             self.emitted += 1;
         } else {
@@ -362,18 +408,58 @@ impl Rows {
         self.index += 1;
     }
 
-    /// Emits the consecutive offscreen rows held as one spacer of their total height that keeps their keyboard identities.
+    /// Emits the consecutive offscreen rows held as one spacer of their total height.
     #[track_caller]
     fn flush(&mut self) {
         if !self.skipped.is_empty() {
             rustle::spacer(
                 Modifier::new()
-                    .height(self.skipped.len() as f32 * self.height)
-                    .virtual_focus(std::mem::take(&mut self.skipped)),
+                    .height(std::mem::take(&mut self.skipped).len() as f32 * self.height),
             );
             self.emitted += 1;
         }
     }
+}
+
+/// The key handler of the tree: Tab from the last row drawn, or Shift+Tab from the first,
+/// scrolls the next row in tree order into view and asks for focus on it, as a lazy list
+/// brings the item focus moves to into view; otherwise Tab is left to walk the rows drawn.
+fn walks_into_hidden_rows(
+    walk: Rc<RefCell<TreeWalk>>,
+    scroll: rustle::ScrollState,
+    height: f32,
+    viewport: f32,
+) -> Modifier {
+    let keys = crate::focus::keys();
+    Modifier::new().on_key_event(move |event| {
+        if !event.pressed || event.key != rustle::Key::Tab {
+            return false;
+        }
+        let walk = walk.borrow();
+        let Some(at) = keys
+            .held
+            .and_then(|held| walk.order.iter().position(|id| *id == held))
+        else {
+            return false;
+        };
+        let next = if event.modifiers.shift {
+            at.checked_sub(1)
+        } else {
+            Some(at + 1).filter(|next| *next < walk.order.len())
+        };
+        let Some(next) = next.filter(|next| !walk.built.contains(&walk.order[*next])) else {
+            return false;
+        };
+        let top = next as f32 * height;
+        let offset = scroll.offset();
+        if top < offset {
+            scroll.jump_to(top);
+        } else if top + height > offset + viewport {
+            scroll.jump_to(top + height - viewport);
+        }
+        (keys.request)(walk.order[next]);
+        true
+    })
 }
 
 /// Emits the entries in open folders, drawing only the rows inside `rows`' viewport.
@@ -407,6 +493,10 @@ fn rows_of(
                         depth,
                         None,
                         id,
+                        TreeTarget {
+                            path: path.to_owned(),
+                            folder: false,
+                        },
                         &look(state, chosen, path, false, changed),
                     );
                 });
@@ -436,6 +526,10 @@ fn rows_of(
                             depth,
                             Some(open),
                             id,
+                            TreeTarget {
+                                path: folder.path.clone(),
+                                folder: true,
+                            },
                             &look(state, chosen, &folder.path, true, changed),
                         );
                     });
@@ -479,32 +573,37 @@ fn emit_rows(state: &WorkspaceState, viewport: f32) -> usize {
     let height = 24.0 * step_scale();
     let count = row_count(&entries, &state.open_tree);
     let room = (count as f32 * height + 128.0 * step_scale() - viewport).max(0.0);
-    let offset = state.tree_scroll.clamp(0.0, room);
+    let offset = state.tree_scroll.offset().clamp(0.0, room);
     let first = (offset / height).floor() as usize;
     let visible = if state.git.naming.is_some() {
         0..usize::MAX
     } else {
         first.saturating_sub(2)..((offset + viewport.max(0.0)) / height).ceil() as usize + 2
     };
+    let walk: Rc<RefCell<TreeWalk>> = Rc::default();
     let mut rows = Rows {
         visible,
         index: 0,
         height,
         skipped: Vec::new(),
         emitted: 0,
+        walk: Rc::clone(&walk),
     };
-    if let Some(is_folder) = new_in(state, "") {
-        rows.emitted += name_lines(state, is_folder, 0);
-    }
-    rows_of(
-        state,
-        &marks(state),
-        &state.tree_picked(),
-        &entries,
-        0,
-        &mut rows,
-    );
-    rows.flush();
+    let keys = walks_into_hidden_rows(walk, state.tree_scroll.clone(), height, viewport);
+    rustle::column_with(Modifier::new().fill_max_width().chain(keys), || {
+        if let Some(is_folder) = new_in(state, "") {
+            rows.emitted += name_lines(state, is_folder, 0);
+        }
+        rows_of(
+            state,
+            &marks(state),
+            &state.tree_picked(),
+            &entries,
+            0,
+            &mut rows,
+        );
+        rows.flush();
+    });
     rows.emitted
 }
 

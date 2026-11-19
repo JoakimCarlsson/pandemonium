@@ -575,6 +575,7 @@ impl WorkspaceState {
             return self;
         };
         let path = viewer.path.clone();
+        let card_scroll = viewer.hover_scroll.clone();
         let Some(document) = document_of(viewer) else {
             return self;
         };
@@ -595,8 +596,8 @@ impl WorkspaceState {
             at,
             text: None,
             diagnostics,
-            scroll: 0.0,
         });
+        card_scroll.jump_to(0.0);
         if document.synced {
             let request = Outgoing::Hover {
                 session,
@@ -628,17 +629,6 @@ impl WorkspaceState {
                     document.hover = None;
                 }
             }
-        }
-        self
-    }
-
-    /// The state after the card about a place is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_hover(mut self, delta: f32, room: f32) -> Self {
-        if let Some((_, viewer)) = self.shown_mut()
-            && let Some(document) = document_of(viewer)
-            && let Some(card) = &mut document.hover
-        {
-            card.scroll = (card.scroll + delta).clamp(0.0, room);
         }
         self
     }
@@ -764,7 +754,7 @@ impl WorkspaceState {
                     Some(document) => {
                         let scroll =
                             crate::open_files::jump(document, location.span.start, row, columns);
-                        viewer.scroll = scroll;
+                        viewer.scroll.jump_to(scroll);
                     }
                     None => viewer.jump = Some(location.span.start),
                 }
@@ -791,7 +781,8 @@ impl WorkspaceState {
             path: location.path.clone(),
             head: false,
             contents: Contents::Text(Box::new(document)),
-            scroll,
+            scroll: rustle::ScrollState::new(scroll),
+            hover_scroll: rustle::ScrollState::default(),
             preview: true,
             left: None,
             jump: None,

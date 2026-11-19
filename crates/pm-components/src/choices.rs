@@ -1,6 +1,6 @@
 //! What the reader picks around the prompt box: the agent's settings, a command behind a slash, and where new work is done.
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 use pm_harness::{Discovery, Setting, Slash};
 use pm_protocol::ExtensionCommand;
 
@@ -139,7 +139,7 @@ impl WorkspaceState {
 
     /// The commands, skills and extension commands offered behind a slash that fit what has been typed.
     pub fn slash_matches(&self) -> Vec<Slash> {
-        let typed = self.prompt.text();
+        let typed = &self.prompt.text();
         let Some(rest) = typed.strip_prefix('/') else {
             return Vec::new();
         };
@@ -374,7 +374,7 @@ impl WorkspaceState {
 
     /// The word being typed at the end of the prompt, when it starts with an `@`, without the `@`.
     pub fn mention_query(&self) -> Option<String> {
-        let typed = self.prompt.text();
+        let typed = &self.prompt.text();
         let word = typed.rsplit(char::is_whitespace).next()?;
         word.strip_prefix('@').map(str::to_lowercase)
     }
@@ -404,17 +404,17 @@ impl WorkspaceState {
     fn keep_slash_in_view(&mut self) {
         let top = self.slash as f32 * LIST_ROW_HEIGHT;
         let window = LIST_ROW_HEIGHT * LIST_ROWS as f32;
-        if top < self.menu_scroll {
-            self.menu_scroll = top;
-        } else if top + LIST_ROW_HEIGHT > self.menu_scroll + window {
-            self.menu_scroll = top + LIST_ROW_HEIGHT - window;
+        if top < self.menu_scroll.offset() {
+            self.menu_scroll.jump_to(top);
+        } else if top + LIST_ROW_HEIGHT > self.menu_scroll.offset() + window {
+            self.menu_scroll.jump_to(top + LIST_ROW_HEIGHT - window);
         }
     }
 
     /// Puts the highlight and the scroll offset of the list of files, commands or skills back at the first row.
     pub(crate) fn reset_slash(&mut self) {
         self.slash = 0;
-        self.menu_scroll = 0.0;
+        self.menu_scroll.jump_to(0.0);
     }
 
     /// The state with the highlight in the list of commands moved by `delta` rows, wrapping round.
@@ -884,13 +884,13 @@ impl WorkspaceState {
         } else if let Some(index) = within(ELEMENT_BASE, MOST_ELEMENTS) {
             let wanted = (index < self.elements.len()).then_some(Picker::Element(index));
             self.picker = if self.picker == wanted { None } else { wanted };
-            self.menu_scroll = 0.0;
+            self.menu_scroll.jump_to(0.0);
         } else if let Some(index) = within(ELEMENT_REMOVE_BASE, MOST_ELEMENTS) {
             self.remove_element(index);
         } else if let Some(index) = within(CAPTURE_BASE, MOST_CAPTURES) {
             let wanted = (index < self.captures.len()).then_some(Picker::Capture(index));
             self.picker = if self.picker == wanted { None } else { wanted };
-            self.menu_scroll = 0.0;
+            self.menu_scroll.jump_to(0.0);
         } else if let Some(index) = within(CAPTURE_REMOVE_BASE, MOST_CAPTURES) {
             self.remove_capture(index);
         } else if id == SLASH_BUTTON.0 {
@@ -934,8 +934,8 @@ impl WorkspaceState {
             let shown = Self::chips(self.settings_now());
             let wanted = shown.get(index).copied().map(Picker::Setting);
             self.picker = if self.picker == wanted { None } else { wanted };
-            self.menu_filter = pm_field::Field::default();
-            self.menu_scroll = self.scroll_to_current();
+            self.menu_filter = rustle::TextFieldState::default();
+            self.menu_scroll.jump_to(self.scroll_to_current());
         } else if let Some(index) = within(MENU_PICK_BASE, MENU_PICK_ROOM) {
             self.pick(index);
         } else if id == MENU_FILTER_PICK.0 {
@@ -1530,7 +1530,7 @@ mod tests {
         assert!(state.menu_filters());
         assert_eq!(state.menu_filter_focus(opened), Some(MENU_FILTER));
         assert_eq!(state.menu_matches().len(), 150);
-        state = state.edited(MENU_FILTER, pm_field::Edit::Paste("QWEN 14".to_owned()));
+        state = state.typed(MENU_FILTER, "QWEN 14");
         let left: Vec<String> = state
             .menu_matches()
             .iter()
@@ -1629,7 +1629,7 @@ mod tests {
     /// The settings the first message of new work was started with, once it was sent.
     fn started_with(state: WorkspaceState) -> Vec<(String, String)> {
         let mut state = state
-            .edited(crate::state::PROMPT, pm_field::Edit::Paste("Go".to_owned()))
+            .typed(crate::state::PROMPT, "Go")
             .after(crate::state::SEND);
         state
             .take_outbox()
@@ -1668,12 +1668,7 @@ mod tests {
     /// The command behind a slash is offered where the mode is, toggles it when taken from the list or sent as typed, and is never handed to the agent.
     #[test]
     fn the_orchestrate_command_toggles_the_mode() {
-        let typed = |state: WorkspaceState, words: &str| {
-            state.edited(
-                crate::state::PROMPT,
-                pm_field::Edit::Paste(words.to_owned()),
-            )
-        };
+        let typed = |state: WorkspaceState, words: &str| state.typed(crate::state::PROMPT, words);
         let state = typed(starting(), "/orch");
         let offered: Vec<String> = state
             .slash_matches()
@@ -1769,7 +1764,7 @@ mod tests {
         ];
         state.press_choice(SLASH_BUTTON.0);
         assert_eq!(state.slash_matches().len(), 2);
-        state = state.edited(crate::state::PROMPT, pm_field::Edit::Insert('r'));
+        state = state.typed(crate::state::PROMPT, "r");
         let matches = state.slash_matches();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].name, "review");
@@ -1791,16 +1786,16 @@ mod tests {
         for _ in 0..19 {
             state = state.slash_moved(1);
             let top = state.slash as f32 * LIST_ROW_HEIGHT;
-            assert!(state.menu_scroll <= top);
-            assert!(top + LIST_ROW_HEIGHT <= state.menu_scroll + window);
+            assert!(state.menu_scroll.offset() <= top);
+            assert!(top + LIST_ROW_HEIGHT <= state.menu_scroll.offset() + window);
         }
         assert_eq!(state.slash, 19);
-        assert_eq!(state.menu_scroll, 20.0 * LIST_ROW_HEIGHT - window);
+        assert_eq!(state.menu_scroll.offset(), 20.0 * LIST_ROW_HEIGHT - window);
         state = state.slash_moved(-1);
         assert_eq!(state.slash, 18);
         state = state.slash_moved(2);
         assert_eq!(state.slash, 0);
-        assert_eq!(state.menu_scroll, 0.0);
+        assert_eq!(state.menu_scroll.offset(), 0.0);
     }
 
     /// Opening the list again after choosing from a scrolled one starts at the first row.
@@ -1813,7 +1808,7 @@ mod tests {
         state = state.slash_taken();
         state.press_choice(SLASH_BUTTON.0);
         assert_eq!(state.slash, 0);
-        assert_eq!(state.menu_scroll, 0.0);
+        assert_eq!(state.menu_scroll.offset(), 0.0);
     }
 
     /// Narrowing the list by typing puts the highlight and the scroll offset back at the first match.
@@ -1823,10 +1818,10 @@ mod tests {
         for _ in 0..15 {
             state = state.slash_moved(1);
         }
-        assert!(state.menu_scroll > 0.0);
-        state = state.edited(crate::state::PROMPT, pm_field::Edit::Insert('1'));
+        assert!(state.menu_scroll.offset() > 0.0);
+        state = state.typed(crate::state::PROMPT, "1");
         assert_eq!(state.slash, 0);
-        assert_eq!(state.menu_scroll, 0.0);
+        assert_eq!(state.menu_scroll.offset(), 0.0);
         assert!(state.slash_matches().len() < 20);
     }
 

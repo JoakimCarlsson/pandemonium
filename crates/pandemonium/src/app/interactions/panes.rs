@@ -2,9 +2,9 @@
 //! the view's size told to the screen, and the browser's address field and menu.
 
 use pm_components::browser::{BROWSER_ADDRESS, BROWSER_BODY};
-use pm_components::kit::Key;
 use pm_components::open_files::EDITOR_FIELD;
 use pm_pages::Screen;
+use rustle::Key;
 
 use crate::app::headless::Rig;
 use crate::snapshot::Shot;
@@ -34,10 +34,7 @@ fn the_code_takes_typing() {
 #[test]
 fn the_code_view_size_reaches_the_screen() {
     let rig = Rig::shot(Shot::Code);
-    let drawn = rig
-        .report()
-        .scroller(pm_components::git_controls::VIEWER_SCROLL)
-        .map(|view| view.rect.size.height);
+    let drawn = rig.area(Screen::code_area).map(|view| view.size.height);
     assert!(drawn.is_some());
     assert_eq!(rig.read(Screen::code_height), drawn);
 }
@@ -54,8 +51,8 @@ fn the_browser_address_and_menu() {
     let address = |rig: &Rig| {
         rig.read(|screen| {
             screen
-                .field(BROWSER_ADDRESS)
-                .map(|field| field.text().to_owned())
+                .text_field(BROWSER_ADDRESS)
+                .map(rustle::TextFieldState::text)
         })
         .unwrap_or_default()
     };
@@ -86,7 +83,7 @@ fn resting_on_code_waits_to_ask_about_it() {
         .expect("a file is shown");
     let word = text.find("HashMap").expect("the word is in the file") + 2;
     let caret = rig
-        .report()
+        .read(pm_pages::Screen::code_lines)
         .caret_rect(EDITOR_FIELD, word)
         .expect("the word is drawn");
     let at = (caret.origin.x, caret.origin.y + caret.size.height / 2.0);
@@ -102,7 +99,7 @@ fn resting_on_code_waits_to_ask_about_it() {
 /// Where byte `offset` of the file shown is drawn, halfway down its line.
 fn code_point(rig: &Rig, offset: usize) -> (f32, f32) {
     let caret = rig
-        .report()
+        .read(pm_pages::Screen::code_lines)
         .caret_rect(EDITOR_FIELD, offset)
         .expect("the place is drawn");
     (
@@ -165,13 +162,13 @@ fn alt_shift_drag_selects_columns() {
     rig.click_on(EDITOR_FIELD);
     let from = code_point(&rig, first);
     let to = code_point(&rig, third + 3);
-    rig.hold(pm_components::kit::Modifiers {
+    rig.hold(rustle::Modifiers {
         alt: true,
         shift: true,
         ..Default::default()
     });
     rig.drag(from, to, 4);
-    rig.hold(pm_components::kit::Modifiers::default());
+    rig.hold(rustle::Modifiers::default());
     let cursors = rig.read(|screen| {
         screen
             .field(EDITOR_FIELD)

@@ -1,9 +1,9 @@
 //! The lists the quick input offers to pick one thing from: a theme, a keymap, a setting of the agent and its values, a message to rewind to or fork from, a branch to check out, or what to type to list something else; and what picking each does.
 
 use pm_editor::Preset;
-use pm_field::Field;
+use rustle::TextFieldState;
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 
 use crate::listing::{Items, Listing};
 use crate::state::{FORK_BASE, Outgoing, Page, RESTORE_BASE, REWIND_BASE, WorkspaceState};
@@ -171,7 +171,7 @@ impl WorkspaceState {
         match choosing {
             Choosing::Theme => {
                 let held = &self.window.appearance.dark_theme;
-                crate::kit::theme::families()
+                crate::theme::families()
                     .into_iter()
                     .map(|family| {
                         let current = family.name == *held;
@@ -340,7 +340,7 @@ impl WorkspaceState {
                 submodule: None,
             });
         }
-        let filter = Field::new(if choosing == Choosing::Help { "?" } else { "" });
+        let filter = TextFieldState::new(if choosing == Choosing::Help { "?" } else { "" });
         let choices = self.choices_of(choosing);
         let matched = crate::listing::matching_choices(&choices, "");
         let picked = matched
@@ -396,8 +396,8 @@ impl WorkspaceState {
             } = &mut listing.items
             && *held == choosing
         {
-            let renewed = Self::with_new_branch(choosing, renewed, filter.text());
-            *matched = crate::listing::matching_choices(&renewed, filter.text());
+            let renewed = Self::with_new_branch(choosing, renewed, &filter.text());
+            *matched = crate::listing::matching_choices(&renewed, &filter.text());
             *choices = renewed;
             listing.problem = choices.is_empty().then(|| choosing.empty().to_owned());
         }

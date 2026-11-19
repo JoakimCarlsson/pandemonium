@@ -1,6 +1,8 @@
 //! The terminal dock under the session: tabs of shells above the window of the one showing.
 
-use crate::kit::sp;
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use std::hash::{Hash, Hasher};
@@ -11,16 +13,17 @@ use rustle::{CursorIcon, Modifier};
 
 use crate::Button;
 use crate::dock::{BottomTab, TerminalTab};
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Side, Styled, Tone, Type, label,
-    label_with, measure,
-};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::IconName;
 use crate::parts::{glyph, line, spacer};
 use crate::sample::Session;
+use crate::select::styled_text;
 use crate::state::{
     BOTTOM_PROBLEMS, BOTTOM_TERMINAL, MAXIMIZE_TERMINAL, NEW_TERMINAL, TERMINAL, TERMINAL_BODY,
     TERMINAL_CLOSE_BASE, TERMINAL_TAB_BASE, WorkspaceState,
 };
+use crate::theme::{Radius, Role, Side, Tone};
 
 /// How tall the dock is until it is dragged taller or shorter, in logical pixels.
 pub const HEIGHT: f32 = 280.0;
@@ -71,13 +74,17 @@ impl Look {
 
 /// How wide and how tall one cell of the shell's window is, in logical pixels, with type `font` tall.
 pub fn cell_size(font: f32) -> (f32, f32) {
-    let (width, height) = measure(&"M".repeat(SAMPLE), cell_type(font));
-    (width / SAMPLE as f32, height)
+    let kind = cell_type(font);
+    let size = rustle::layout_text(&"M".repeat(SAMPLE), &kind, None).size();
+    (
+        size.width / SAMPLE as f32,
+        size.height.max(kind.line_height),
+    )
 }
 
 /// The type the cells of a shell are set in: monospaced, `font` logical pixels tall, lines [`LEADING`] times that.
-fn cell_type(font: f32) -> Type {
-    Type::code(font).ratio(LEADING)
+fn cell_type(font: f32) -> rustle::TextStyle {
+    theme::code_style(font, LEADING)
 }
 
 /// How many columns and lines fit in the window of a shell that is `width` by `height` logical pixels with its padding.
@@ -114,17 +121,27 @@ pub fn terminal(state: &WorkspaceState, session: &Session, width: f32, page: f32
         Modifier::new()
             .fill_max_width()
             .height(height(state, page))
-            .fill(Role::Background)
-            .stroke_side(Side::Top, 1.0, Role::Border),
+            .background(theme::color(Role::Background))
+            .draw_behind(theme::edge(
+                theme::Side::Top,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 1.0, 0.0, 0.0),
         Arrangement::Start,
         Alignment::Start,
         || {
             row_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .h(10)
-                    .stroke_side(Side::Bottom, 1.0, Role::Border)
-                    .pad_x(2),
+                    .height(theme::sp(10))
+                    .draw_behind(theme::edge(
+                        theme::Side::Bottom,
+                        1.0,
+                        theme::color(Role::Border),
+                    ))
+                    .padding_each(0.0, 0.0, 0.0, 1.0)
+                    .padding_xy(theme::sp(2), 0.0),
                 Arrangement::SpacedBy(sp(1)),
                 Alignment::Center,
                 || {
@@ -198,18 +215,19 @@ pub fn terminal(state: &WorkspaceState, session: &Session, width: f32, page: f32
 fn pane_tab(label: &str, count: Option<usize>, shown: bool, id: FocusId) {
     let tone = if shown { Role::Text } else { Role::Muted };
     let looks = if shown {
-        Looks::new().idle(Role::SurfaceSelected)
+        theme::InteractionTones::new().idle(Role::SurfaceSelected)
     } else {
-        Looks::new().hover(Role::SurfaceHover)
+        theme::InteractionTones::new().hover(Role::SurfaceHover)
     }
     .radius(Radius::Lg);
     row_arranged(
         Modifier::new()
-            .h(8)
-            .looks_of(looks, id)
+            .height(theme::sp(8))
+            .interaction_focused(crate::focus::is_held(id))
+            .interaction_background((looks).colors())
             .cursor(CursorIcon::Pointer)
-            .target(id)
-            .pad_x(3),
+            .control(id, reduce(id))
+            .padding_xy(theme::sp(3), 0.0),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         || {
@@ -217,8 +235,8 @@ fn pane_tab(label: &str, count: Option<usize>, shown: bool, id: FocusId) {
             if let Some(count) = count {
                 row_arranged(
                     Modifier::new()
-                        .fill_rounded(Role::Accent, Radius::Lg)
-                        .pad_x(1.5),
+                        .background_rounded(theme::color(Role::Accent), Radius::Lg.px())
+                        .padding_xy(theme::sp(1.5), 0.0),
                     Arrangement::Start,
                     Alignment::Center,
                     || line(count.to_string(), 11, 1.3, Role::OnAccent),
@@ -235,8 +253,13 @@ fn shell_list(session: &Session) {
         Modifier::new()
             .fill_max_height()
             .width(SHELL_LIST_WIDTH)
-            .stroke_side(Side::Left, 1.0, Role::Border)
-            .clip_to(Radius::None),
+            .draw_behind(theme::edge(
+                theme::Side::Left,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(1.0, 0.0, 0.0, 0.0)
+            .clip(),
         Arrangement::Start,
         Alignment::Start,
         || {
@@ -254,28 +277,28 @@ fn shell_list(session: &Session) {
 fn shell_row(index: usize, tab: &TerminalTab, shown: bool) {
     let tone = if shown { Role::Text } else { Role::Muted };
     let looks = if shown {
-        Looks::new().idle(Role::SurfaceSelected)
+        theme::InteractionTones::new().idle(Role::SurfaceSelected)
     } else {
-        Looks::new().hover(Role::SurfaceHover)
+        theme::InteractionTones::new().hover(Role::SurfaceHover)
     };
     let select = FocusId(TERMINAL_TAB_BASE + index as u64);
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .h(7)
-            .looks(looks)
-            .pad_side(Side::Right, 1),
+            .height(theme::sp(7))
+            .interaction_background(looks.colors())
+            .padding_each(0.0, 0.0, theme::sp(1), 0.0),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         || {
             row_arranged(
                 Modifier::new()
                     .weight(1.0)
-                    .h(7)
-                    .clip_to(Radius::None)
+                    .height(theme::sp(7))
+                    .clip()
                     .cursor(CursorIcon::Pointer)
-                    .target(select)
-                    .pad_side(Side::Left, 3),
+                    .control(select, reduce(select))
+                    .padding_each(theme::sp(3), 0.0, 0.0, 0.0),
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Center,
                 || {
@@ -311,10 +334,15 @@ fn window(tab: &TerminalTab, width: f32, look: Look) {
         Modifier::new()
             .fill_max_height()
             .weight(1.0)
-            .fill(Role::Background)
-            .clip_to(Radius::None)
+            .background(theme::color(Role::Background))
+            .clip()
             .cursor(CursorIcon::Text)
-            .target(TERMINAL_BODY)
+            .pressable_menu(TERMINAL_BODY, reduce(TERMINAL_BODY), {
+                let operations = crate::events::operations();
+                move || operations.open_terminal_menu()
+            })
+            .chain(crate::bounds::placed(TERMINAL_BODY, Modifier::new()))
+            .chain(crate::focus::keyboard_focus(TERMINAL_BODY))
             .padding_xy(PADDING_X, PADDING_Y),
         Arrangement::Start,
         Alignment::Start,
@@ -467,7 +495,11 @@ fn line_of(
 /// Emits `composing`, text an input method has not committed yet, underlined in the default colours, `font` logical pixels tall.
 #[track_caller]
 fn composing_node(composing: &str, font: f32) {
-    label(composing, cell_type(font).tone(Role::Text).underline());
+    styled_text(
+        Modifier::new(),
+        composing,
+        cell_type(font).color(theme::color(Role::Text)).underline(),
+    );
 }
 
 /// How a paint is shown: a colour, or the default one of `role`.
@@ -482,7 +514,7 @@ fn shown(paint: Paint, role: Role) -> Tone {
     }
 }
 
-/// Emits `content` as the cells of `look` share, with type and cursor as `drawn` says.
+/// Emits `content` as the cells of `look` share, with type and cursor as `drawn` says; the cell under the cursor tells the window, through `ime_caret`, where an input method's candidates go while the shell has the keyboard.
 #[track_caller]
 fn run_node(look: Run, content: String, drawn: Look) {
     let inverse = look.flags.has(Flags::INVERSE);
@@ -514,26 +546,45 @@ fn run_node(look: Run, content: String, drawn: Look) {
         kind = kind.underline();
     }
     if look.flags.has(Flags::STRIKE) {
-        kind = kind.strike();
+        kind = kind.strikethrough();
     }
     let mut modifier = Modifier::new().fill_max_height();
     if let Some(ground) = ground {
-        modifier = modifier.fill(ground);
+        modifier = modifier.background(theme::color(ground));
     }
     if look.cursor {
+        let line = kind.line_height;
+        let modifier = modifier.ime_caret(rustle::Rect::new(
+            rustle::Offset::new(0.0, 0.0),
+            rustle::Size::new(1.0, line),
+        ));
         let (modifier, ink) = cursor_cell(modifier, ink, drawn.cursor);
-        label_with(modifier, content, kind.tone(ink));
+        styled_text(modifier, content, kind.color(theme::color(ink)));
         return;
     }
-    label_with(modifier, content, kind.tone(ink));
+    styled_text(modifier, content, kind.color(theme::color(ink)));
+}
+
+/// Fills a block cursor's cell in `idle`, or in `focused` while the window holds the keyboard.
+fn block_cursor(
+    idle: rustle::Color,
+    focused: rustle::Color,
+) -> impl Fn(&mut rustle::Canvas, rustle::Interaction) + 'static {
+    move |canvas, interaction| {
+        let fill = if interaction.focused { focused } else { idle };
+        canvas.rect(0.0, 0.0, canvas.width(), canvas.height(), fill);
+    }
 }
 
 /// `modifier`, of the cell under the cursor, with the cursor drawn as `shape` says: subtle, and in the text colour while the window holds the keyboard; and the ink its character takes instead of `ink`.
 fn cursor_cell(modifier: Modifier, ink: Tone, shape: TerminalCursor) -> (Modifier, Tone) {
-    let modifier = modifier.focus_of(TERMINAL_BODY);
+    let modifier = modifier.interaction_focused(crate::focus::is_held(TERMINAL_BODY));
     match shape {
         TerminalCursor::Block => (
-            modifier.looks(Looks::new().idle(Role::Subtle).focus(Role::Text)),
+            modifier.draw_behind_interactive(block_cursor(
+                theme::color(Role::Subtle),
+                theme::color(Role::Text),
+            )),
             Role::Background.into(),
         ),
         TerminalCursor::Bar => (
@@ -550,10 +601,10 @@ fn cursor_cell(modifier: Modifier, ink: Tone, shape: TerminalCursor) -> (Modifie
 /// `modifier` with a line two pixels thick along its `side`, subtle, and in the text colour while the window holds the keyboard.
 fn cursor_edge(modifier: Modifier, side: Side) -> Modifier {
     let (idle, focused) = (
-        crate::kit::color(Role::Subtle),
-        crate::kit::color(Role::Text),
+        crate::theme::color(Role::Subtle),
+        crate::theme::color(Role::Text),
     );
-    modifier.styled_by(move |canvas, interaction| {
+    modifier.draw_behind_interactive(move |canvas, interaction| {
         let color = if interaction.focused { focused } else { idle };
         let (width, height) = (canvas.width(), canvas.height());
         match side {

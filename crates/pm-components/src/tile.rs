@@ -1,9 +1,15 @@
 //! The tile: a row of a list that holds its children side by side, answers to a press and fills under the pointer and while it is selected.
 
-use crate::kit::sp;
-use crate::kit::{FocusId, Hovered, Interactive, Looks, Radius, Role, Styled};
+use crate::events::Interactive;
+use crate::events::{OnClick, reduce};
+use crate::focus::FocusId;
+use crate::theme;
+use crate::theme::sp;
+use crate::theme::{Radius, Role};
+use rustle::Modifiers;
 use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
+use std::rc::Rc;
 
 /// A tile being described: what it answers to, how tall it is and whether it is selected.
 ///
@@ -30,6 +36,22 @@ pub struct Tile {
     inner: Modifier,
     /// What the caller puts around its box.
     modifier: Modifier,
+    /// What clicking it does, told the modifier keys held, when the caller said; the
+    /// workspace's reducer takes the press otherwise.
+    on_click: Option<Picked>,
+    /// What a secondary press on it does, when it has a menu of its own.
+    on_context: Option<OnClick>,
+}
+
+/// What clicking a tile does, told the modifier keys held, as its builder keeps it.
+#[derive(Clone)]
+struct Picked(Rc<dyn Fn(Modifiers)>);
+
+impl std::fmt::Debug for Picked {
+    /// Writes that there is a lambda, which has nothing else to show.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Picked")
+    }
 }
 
 impl Tile {
@@ -45,7 +67,51 @@ impl Tile {
             alignment: Alignment::Center,
             inner: Modifier::new(),
             modifier: Modifier::new(),
+            on_click: None,
+            on_context: None,
         }
+    }
+
+    /// The tile running `on_context` when the secondary button goes down on it: what opens
+    /// its menu, in place of the menu of the conversation's text.
+    pub fn on_context(mut self, on_context: impl Fn() + 'static) -> Self {
+        self.on_context = Some(OnClick::new(on_context));
+        self
+    }
+
+    /// The modifier that makes the tile a control running its lambdas.
+    #[track_caller]
+    fn reacting(&self) -> Modifier {
+        match self.on_context.clone() {
+            Some(on_context) => {
+                Modifier::new().control_menu(self.id, self.clicked(), on_context.lambda())
+            }
+            None => Modifier::new().control_with(self.id, self.clicked()),
+        }
+    }
+
+    /// What clicking the tile does: the caller's lambda, or the workspace's reducer taking
+    /// the press.
+    fn clicked(&self) -> impl Fn(Modifiers) + 'static {
+        let given = self.on_click.clone();
+        let reduced = reduce(self.id);
+        move |held| match &given {
+            Some(Picked(on_pick)) => on_pick(held),
+            None => reduced(),
+        }
+    }
+
+    /// The tile running `on_click` when clicked, or activated from the keyboard, in place of
+    /// handing the press to the workspace's reducer.
+    pub fn on_click(self, on_click: impl Fn() + 'static) -> Self {
+        self.on_pick(move |_| on_click())
+    }
+
+    /// The tile running `on_pick` with the modifier keys held when clicked, or activated
+    /// from the keyboard, for a row the reader picks several of with Shift or Control.
+    pub fn on_pick(mut self, on_pick: impl Fn(Modifiers) + 'static) -> Self {
+        self.on_click = Some(Picked(Rc::new(on_pick)));
+        self
     }
 
     /// The tile `height` steps tall.
@@ -100,18 +166,20 @@ impl Tile {
     #[track_caller]
     pub fn build_with(self, content: impl FnOnce()) {
         let looks = if self.selected {
-            Looks::new().idle(Role::SurfaceSelected)
+            theme::InteractionTones::new().idle(Role::SurfaceSelected)
         } else {
-            Looks::new().hover(Role::SurfaceHover)
+            theme::InteractionTones::new().hover(Role::SurfaceHover)
         }
         .active(Role::SurfaceActive)
         .radius(self.radius);
+        let reacting = self.reacting();
         let modifier = self.modifier.chain(
             Modifier::new()
-                .h(self.height)
-                .looks_of(looks, self.id)
+                .height(theme::sp(self.height))
+                .interaction_focused(crate::focus::is_held(self.id))
+                .interaction_background((looks).colors())
                 .cursor(CursorIcon::Pointer)
-                .target(self.id)
+                .chain(reacting)
                 .chain(self.inner),
         );
         row_arranged(

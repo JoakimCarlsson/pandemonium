@@ -2,7 +2,7 @@
 
 use pm_field::Edit;
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 
 use crate::git_prompts::Prompt;
 use crate::panes::Item;
@@ -48,7 +48,9 @@ pub struct Viewer {
     /// What it holds.
     pub contents: Contents,
     /// How far down it is scrolled, in logical pixels.
-    pub scroll: f32,
+    pub scroll: rustle::ScrollState,
+    /// How far down the card about a place in it is scrolled, in logical pixels.
+    pub hover_scroll: rustle::ScrollState,
     /// Whether it is only being looked at: its tab is given up to the next file looked at, until the file is changed.
     pub preview: bool,
     /// Where the file was left when the window last closed, put back once its text arrives.
@@ -132,7 +134,7 @@ impl WorkspaceState {
     /// How many characters a row of the file shown holds when long lines wrap, as soft wrap and the view's width say, or nothing when they do not.
     pub fn wrap_columns(&self) -> Option<usize> {
         let fitting = self.code_view.map(|(width, cell)| {
-            let scale = crate::kit::theme::step_scale();
+            let scale = crate::theme::step_scale();
             let numbers = if self.editor.line_numbers { 13.0 } else { 2.0 };
             let runs = match self.git.shown {
                 Some(file) if !self.run_lines_of(file).is_empty() => crate::viewer::RUN_CELL,
@@ -199,7 +201,8 @@ impl WorkspaceState {
                     path: path.clone(),
                     head,
                     contents: Contents::Loading,
-                    scroll: 0.0,
+                    scroll: rustle::ScrollState::default(),
+                    hover_scroll: rustle::ScrollState::default(),
                     preview: true,
                     left: None,
                     jump: None,
@@ -266,7 +269,8 @@ impl WorkspaceState {
             path: path.to_owned(),
             head: false,
             contents: Contents::Loading,
-            scroll: 0.0,
+            scroll: rustle::ScrollState::default(),
+            hover_scroll: rustle::ScrollState::default(),
             preview: false,
             left: None,
             jump: None,
@@ -419,7 +423,9 @@ impl WorkspaceState {
                         left.put_back(&mut document);
                     }
                     if let Some(position) = viewer.jump.take() {
-                        viewer.scroll = jump(&mut document, position, row, columns);
+                        viewer
+                            .scroll
+                            .jump_to(jump(&mut document, position, row, columns));
                     }
                     Contents::Text(Box::new(document))
                 }
@@ -492,7 +498,7 @@ impl WorkspaceState {
             return;
         };
         viewer.source = source;
-        viewer.scroll = 0.0;
+        viewer.scroll.jump_to(0.0);
         let draw = viewer.draw_request(session);
         self.outbox.extend(draw);
         self.ask_shown_figures();
@@ -538,16 +544,6 @@ impl WorkspaceState {
         }
     }
 
-    /// The state after the file shown is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_viewer(mut self, delta: f32, room: f32) -> Self {
-        if let Some(index) = self.git.shown
-            && let Some(viewer) = self.git.viewers.get_mut(index)
-        {
-            viewer.scroll = (viewer.scroll + delta).clamp(0.0, room);
-        }
-        self
-    }
-
     /// The state with the file shown scrolled just far enough to show the caret, in a view `height` logical pixels tall.
     pub fn with_caret_shown(mut self, height: f32) -> Self {
         let row = self.editor.row_height();
@@ -566,10 +562,10 @@ impl WorkspaceState {
         let view = (height - STRIP).max(row);
         let room = (view / row / 2.0).floor().max(0.0) as usize;
         let margin = self.editor.vertical_scroll_margin.min(room) as f32 * row;
-        if top - margin < viewer.scroll {
-            viewer.scroll = (top - margin).max(0.0);
-        } else if bottom + margin > viewer.scroll + view {
-            viewer.scroll = bottom + margin - view;
+        if top - margin < viewer.scroll.offset() {
+            viewer.scroll.jump_to((top - margin).max(0.0));
+        } else if bottom + margin > viewer.scroll.offset() + view {
+            viewer.scroll.jump_to(bottom + margin - view);
         }
         self
     }

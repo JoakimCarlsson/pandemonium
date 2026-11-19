@@ -1,9 +1,11 @@
 //! The avatar: a project's colour with its first letter, at a measure per size.
 
+use crate::theme;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, row_arranged};
 
-use crate::kit::{Radius, Styled, Tone, Type, label};
+use crate::select::styled_text;
+use crate::theme::{Radius, Tone};
 
 use crate::Project;
 use crate::size::Size;
@@ -66,17 +68,20 @@ impl Avatar {
             Size::Lg => (8.0, 18),
         };
         let own = Modifier::new()
-            .square(side)
-            .fill_rounded(self.color, Radius::Md);
+            .size(theme::sp(side), theme::sp(side))
+            .background_rounded(theme::color(self.color), Radius::Md.px());
         let initial = self.initial;
         row_arranged(
             self.modifier.chain(own),
             Arrangement::Center,
             Alignment::Center,
             move || {
-                label(
+                styled_text(
+                    Modifier::new(),
                     initial,
-                    Type::new(font).ratio(1.2).semibold().tone(Tone::White),
+                    theme::text_style(font, 1.2)
+                        .font_weight(rustle::FontWeight::SEMI_BOLD)
+                        .color(theme::color(Tone::White)),
                 );
             },
         );

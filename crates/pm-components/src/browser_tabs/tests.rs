@@ -1,6 +1,6 @@
 //! Tests of the tabs of the browser: opening, showing, closing, the lock and what is kept across a restart.
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 
 use super::{
     BROWSER_LOCK, BROWSER_NEW_TAB, BROWSER_TAB_CLOSE, BROWSER_TAB_SELECT, SavedTab, changes_page,
@@ -22,7 +22,7 @@ fn a_new_tab_is_shown() {
     let browser = state.browser.as_ref().unwrap();
     assert_eq!(browser.tabs.len(), 2);
     assert_eq!(browser.active, 1);
-    assert_eq!(browser.tabs[1].address.text(), "about:blank");
+    assert_eq!(&browser.tabs[1].address.text(), "about:blank");
 }
 
 /// Selecting a tab shows it and closing the one shown shows its neighbour; the last tab closes the browser.

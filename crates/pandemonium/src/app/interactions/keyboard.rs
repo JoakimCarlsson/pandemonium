@@ -3,8 +3,9 @@
 //! prompt offers, digits answering a question, and Escape closing what is
 //! open before letting go of the focus.
 
-use pm_components::kit::{FocusId, Key, Modifiers};
+use pm_components::focus::FocusId;
 use pm_components::state::{PROMPT, Page, SESSION_BASE, TAB_DIFF, Tab};
+use rustle::{Key, Modifiers};
 
 use crate::app::headless::Rig;
 use crate::snapshot::Shot;
@@ -12,14 +13,14 @@ use crate::snapshot::Shot;
 /// Shift held.
 const SHIFT: Modifiers = Modifiers {
     shift: true,
-    control: false,
+    ctrl: false,
     alt: false,
-    logo: false,
+    meta: false,
 };
 
 /// The text of the prompt.
 fn prompt(rig: &Rig) -> String {
-    rig.read(|screen| screen.field(PROMPT).map(|field| field.text().to_owned()))
+    rig.read(|screen| screen.text_field(PROMPT).map(rustle::TextFieldState::text))
         .unwrap_or_default()
 }
 
@@ -32,7 +33,7 @@ fn tab_walks_the_focus() {
     rig.key(Key::Tab);
     let next = rig.focused();
     assert!(next.is_some() && next != Some(PROMPT), "{next:?}");
-    let order = rig.report().focus_order();
+    let order = rig.focus_order_in(None);
     let at = |id| order.iter().position(|held| *held == id);
     assert_eq!(
         at(next.unwrap_or(PROMPT)),
@@ -42,15 +43,18 @@ fn tab_walks_the_focus() {
     assert_eq!(rig.focused(), Some(PROMPT));
 }
 
-/// Enter and Space press the control that has the keyboard.
+/// Enter and Space press the control that has the keyboard, once the focus the app keeps
+/// on it is composed into rustle's.
 #[test]
 fn enter_and_space_press_what_has_the_keyboard() {
     let mut rig = Rig::shot(Shot::Workspace);
     rig.app.borrow_mut().focus.focus(TAB_DIFF);
+    rig.settle();
     rig.key(Key::Enter);
     assert_eq!(rig.state(|state| state.tab), Tab::Diff);
     rig.app.borrow_mut().focus.focus(FocusId(SESSION_BASE + 2));
-    rig.key(Key::Space);
+    rig.settle();
+    rig.key(Key::Character(" ".into()));
     assert_eq!(rig.state(|state| state.page), Page::Session(2));
 }
 
@@ -94,7 +98,7 @@ fn a_digit_answers_a_question() {
     let mut rig = Rig::shot(Shot::Inquiring);
     let picks = |rig: &Rig| rig.state(|state| state.draft().map(|draft| draft.picks.clone()));
     let before = picks(&rig).expect("a question waits");
-    rig.key(Key::Character('1'));
+    rig.key(Key::Character("1".into()));
     let after = picks(&rig).expect("a question waits");
     assert_ne!(before, after);
 }
@@ -121,10 +125,10 @@ fn select_all_marks_every_changed_file() {
     rig.click_on(row);
     rig.chord(
         Modifiers {
-            control: true,
+            ctrl: true,
             ..Modifiers::default()
         },
-        Key::Character('a'),
+        Key::Character("a".into()),
     );
     let marked = rig.state(|state| state.git.marked.len());
     assert!(marked > 1, "{marked}");
@@ -144,9 +148,9 @@ fn modal_editing_moves_then_types() {
     rig.click_on(editor);
     let before = text(&rig);
     rig.key(Key::Escape);
-    rig.key(Key::Character('j'));
+    rig.key(Key::Character("j".into()));
     assert_eq!(text(&rig), before);
-    rig.key(Key::Character('i'));
+    rig.key(Key::Character("i".into()));
     rig.type_text("q");
     assert_eq!(text(&rig).len(), before.len() + 1);
 }

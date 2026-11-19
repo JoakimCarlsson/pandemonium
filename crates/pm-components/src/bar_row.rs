@@ -1,10 +1,11 @@
 //! The bar row: a name with a figure beside it and a bar under them, as long as the row's share of the longest.
 
-use crate::kit::sp;
+use crate::theme;
+use crate::theme::sp;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
-use crate::kit::{Radius, Role, Styled, Tone};
+use crate::theme::{Radius, Role, Tone};
 
 use crate::parts::line;
 
@@ -111,7 +112,7 @@ impl BarRow {
                     Alignment::Center,
                     || {
                         column_arranged(
-                            Modifier::new().weight(1.0).clip_to(Radius::None),
+                            Modifier::new().weight(1.0).clip(),
                             Arrangement::Start,
                             Alignment::Start,
                             || {
@@ -128,8 +129,8 @@ impl BarRow {
                     Modifier::new()
                         .width(width)
                         .height(BAR_HEIGHT)
-                        .fill_rounded(Role::SurfaceHover, Radius::Sm)
-                        .clip_to(Radius::None),
+                        .background_rounded(theme::color(Role::SurfaceHover), Radius::Sm.px())
+                        .clip(),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
@@ -138,7 +139,7 @@ impl BarRow {
                                 Modifier::new()
                                     .width(filled)
                                     .height(BAR_HEIGHT)
-                                    .fill_rounded(tone, Radius::Sm),
+                                    .background_rounded(theme::color(tone), Radius::Sm.px()),
                             );
                         }
                     },

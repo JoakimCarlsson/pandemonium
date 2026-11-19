@@ -1,13 +1,17 @@
 //! What keeps the reader safe in the browser pane: the questions a page asks about the reader's machine, a site whose certificate is not trusted, and the files a page downloaded.
 
-use crate::kit::sp;
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use std::time::{Duration, Instant};
 
-use crate::kit::{
-    FocusId, IconName, Interactive, Radius, Role, Side, Styled, Type, label, label_with,
-};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::select::styled_text;
+use crate::theme::{Radius, Role};
 use rustle::Modifier;
 
 use crate::Button;
@@ -244,10 +248,10 @@ impl Safety {
         };
         question_bar(
             Modifier::new()
-                .at(0.0, 0.0)
+                .offset(0.0, 0.0)
                 .width(width)
                 .z_index(40)
-                .target(BROWSER_QUESTION_BAR),
+                .control(BROWSER_QUESTION_BAR, reduce(BROWSER_QUESTION_BAR)),
             asked,
             self.questions.len() - 1,
             self.allow_ready(now),
@@ -267,9 +271,14 @@ fn bar(modifier: Modifier, content: impl FnOnce()) {
         modifier
             .height(BAR)
             .fill_max_width()
-            .fill(Role::Surface)
-            .stroke_side(Side::Bottom, 1.0, Role::Border)
-            .pad_x(3),
+            .background(theme::color(Role::Surface))
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(3), 0.0),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         content,
@@ -360,19 +369,23 @@ fn paragraph(content: &str, pixels: u32, tone: Role, room: f32) {
 #[track_caller]
 fn detail(name: &str, value: &str, mono: bool) {
     let value = if value.is_empty() { "unknown" } else { value };
-    let kind = Type::new(12).ratio(1.4).tone(Role::Text).truncate();
-    let kind = if mono { kind.mono() } else { kind };
+    let kind = theme::text_style(12, 1.4)
+        .color(theme::color(Role::Text))
+        .max_lines(1);
+    let kind = if mono { theme::in_mono(kind) } else { kind };
     row_arranged(
         Modifier::new().fill_max_width(),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Start,
         || {
-            label_with(
+            styled_text(
                 Modifier::new().width(108.0),
                 name,
-                Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
+                theme::text_style(12, 1.4)
+                    .color(theme::color(Role::Muted))
+                    .max_lines(1),
             );
-            label_with(Modifier::new().weight(1.0), value, kind);
+            styled_text(Modifier::new().weight(1.0), value, kind);
         },
     );
 }
@@ -398,27 +411,28 @@ pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) {
         Modifier::new()
             .width(width)
             .height(height)
-            .fill(Role::Background)
-            .pad(6),
+            .background(theme::color(Role::Background))
+            .padding(theme::sp(6)),
         Arrangement::Center,
         Alignment::Center,
         || {
             column_arranged(
                 Modifier::new()
                     .width(across)
-                    .fill_rounded(Role::Surface, Radius::Xl)
-                    .stroke(Role::Border, Radius::Xl)
-                    .pad(5),
+                    .background_rounded(theme::color(Role::Surface), Radius::Xl.px())
+                    .border(1.0, theme::color(Role::Border), Radius::Xl.px())
+                    .padding(1.0)
+                    .padding(theme::sp(5)),
                 Arrangement::SpacedBy(sp(3)),
                 Alignment::Start,
                 || {
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         "Not secure: certificate not trusted",
-                        Type::new(18)
-                            .ratio(1.3)
-                            .tone(Role::Danger)
-                            .truncate()
-                            .semibold(),
+                        theme::text_style(18, 1.3)
+                            .font_weight(rustle::FontWeight::SEMI_BOLD)
+                            .color(theme::color(Role::Danger))
+                            .max_lines(1),
                     );
                     paragraph(
                         &format!(
@@ -435,7 +449,9 @@ pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) {
                         room,
                     );
                     column_arranged(
-                        Modifier::new().fill_max_width().pad_y(2),
+                        Modifier::new()
+                            .fill_max_width()
+                            .padding_xy(0.0, theme::sp(2)),
                         Arrangement::SpacedBy(sp(1)),
                         Alignment::Start,
                         || {

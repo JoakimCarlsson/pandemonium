@@ -1,9 +1,10 @@
 //! The list that hangs over the file shown to pick from: the places a search from the caret found, the changes the language server offers there, the commits that changed the file, or what the problems are; and the quick input over the command center, whose first character says what it lists: the files of the project, `>` the commands of the window, `#` the symbols of the project, `@` the items of the file's outline and `%` the lines of the project holding what is typed.
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 use pm_editor::Action;
-use pm_field::{Edit, Field};
+use pm_field::Edit;
 use pm_protocol::{CodeAction, ExtensionCommand, Location, Seek, Task};
+use rustle::TextFieldState;
 
 use crate::state::{Outgoing, WorkspaceState};
 
@@ -135,21 +136,21 @@ pub enum Items {
         /// The items, in the order they start.
         items: Vec<pm_treesitter::Item>,
         /// What the names are narrowed to.
-        filter: Field,
+        filter: TextFieldState,
     },
     /// The symbols of the project whose names match what is typed, as the language server of the file shown finds them.
     Symbols {
         /// The file whose language server is asked.
         path: String,
         /// What the names are matched against.
-        filter: Field,
+        filter: TextFieldState,
         /// The symbols, as the server last named them.
         locations: Vec<Location>,
     },
     /// The lines of the files of the project holding what is typed.
     Search {
         /// What is looked for.
-        filter: Field,
+        filter: TextFieldState,
         /// The lines, as the server last found them.
         locations: Vec<Location>,
     },
@@ -158,7 +159,7 @@ pub enum Items {
         /// Every file, by path from the root of the project.
         paths: Vec<String>,
         /// What the paths are narrowed to.
-        filter: Field,
+        filter: TextFieldState,
         /// The files that match, best first, by place among `paths`.
         matched: Vec<usize>,
         /// How many of `matched` were opened recently.
@@ -175,7 +176,7 @@ pub enum Items {
         /// The commands extensions bring for the machine the prompt is for, each with that machine; they follow the tasks in the places `matched` counts by.
         extras: Vec<(Option<String>, ExtensionCommand)>,
         /// What the titles are narrowed to.
-        filter: Field,
+        filter: TextFieldState,
         /// The commands that match, the recently used first and then the best, then the tasks that match, by place among `commands` and then `tasks`.
         matched: Vec<usize>,
         /// How many of `matched` were used recently.
@@ -186,7 +187,7 @@ pub enum Items {
         /// Each place to go to, with its name and what is said beside it.
         sessions: Vec<(Destination, String, String)>,
         /// What the titles are narrowed to.
-        filter: Field,
+        filter: TextFieldState,
         /// The sessions that match, best first, by place among `sessions`.
         matched: Vec<usize>,
         /// A preview of the message that matched what is typed, for each session the servers found by what was said in it, by place among `sessions`.
@@ -195,7 +196,7 @@ pub enum Items {
     /// The line of the file shown to go to, by the number typed.
     Line {
         /// What is typed: `:` and the number.
-        filter: Field,
+        filter: TextFieldState,
         /// How many lines the file has.
         lines: usize,
         /// The line the caret is on, counted from one.
@@ -208,7 +209,7 @@ pub enum Items {
         /// Every one of them, in the order they are listed.
         choices: Vec<crate::quick_choices::Choice>,
         /// What their names are narrowed to.
-        filter: Field,
+        filter: TextFieldState,
         /// The choices that match, best first, by place among `choices`.
         matched: Vec<usize>,
     },
@@ -549,7 +550,7 @@ impl Items {
             | Self::Commands { matched, .. }
             | Self::Sessions { matched, .. }
             | Self::Choices { matched, .. } => matched.clone(),
-            Self::Line { lines, .. } => line_named(self.query(), *lines)
+            Self::Line { lines, .. } => line_named(&self.query(), *lines)
                 .map(|_| vec![0])
                 .unwrap_or_default(),
             Self::Symbols { locations, .. } | Self::Search { locations, .. } => {
@@ -578,7 +579,7 @@ impl Items {
     }
 
     /// The field narrowing the items, when they have one.
-    pub fn filter(&self) -> Option<&Field> {
+    pub fn filter(&self) -> Option<&TextFieldState> {
         match self {
             Self::Outline { filter, .. }
             | Self::Files { filter, .. }
@@ -604,12 +605,13 @@ impl Items {
     }
 
     /// What is typed to narrow the items, without the character that says what the quick input lists.
-    pub fn query(&self) -> &str {
+    pub fn query(&self) -> String {
         let Some(filter) = self.filter() else {
-            return "";
+            return String::new();
         };
         let prefix = self.quick().map_or("", Quick::prefix);
-        filter.text().strip_prefix(prefix).unwrap_or(filter.text())
+        let text = filter.text();
+        text.strip_prefix(prefix).unwrap_or(&text).to_owned()
     }
 
     /// How many rows there are.
@@ -745,22 +747,22 @@ impl WorkspaceState {
 
     /// Opens the quick input at `at` over the items of the outline of the file shown, to go to one by typing part of its name.
     pub fn outline_requested(self, at: (f32, f32)) -> Self {
-        self.quick_opened(Field::new(Quick::Outline.prefix()), at)
+        self.quick_opened(TextFieldState::new(Quick::Outline.prefix()), at)
     }
 
     /// Opens the quick input at `at` over the files of the project the review panel is about, to open one by typing part of its path.
     pub fn file_finder_requested(self, at: (f32, f32)) -> Self {
-        self.quick_opened(Field::new(Quick::Files.prefix()), at)
+        self.quick_opened(TextFieldState::new(Quick::Files.prefix()), at)
     }
 
     /// Opens the quick input at `at` over the commands that can be carried out where the keyboard is, to carry one out by typing part of its name.
     pub fn commands_requested(self, at: (f32, f32)) -> Self {
-        self.quick_opened(Field::new(Quick::Commands.prefix()), at)
+        self.quick_opened(TextFieldState::new(Quick::Commands.prefix()), at)
     }
 
     /// Opens the quick input at `at` over the symbols of the project, as the language server of the file shown finds them.
     pub fn symbols_requested(self, at: (f32, f32)) -> Self {
-        self.quick_opened(Field::new(Quick::Symbols.prefix()), at)
+        self.quick_opened(TextFieldState::new(Quick::Symbols.prefix()), at)
     }
 
     /// Opens the quick input at `at` over the lines of the files of the project holding what is typed, starting from what is selected in the file shown.
@@ -771,27 +773,27 @@ impl WorkspaceState {
             .filter(|selected| !selected.is_empty() && !selected.contains('\n'))
             .unwrap_or_default();
         let typed = format!("{}{selected}", Quick::Search.prefix());
-        self.quick_opened(Field::new(typed), at)
+        self.quick_opened(TextFieldState::new(typed), at)
     }
 
     /// Opens the quick input at `at` over the sessions of every project, the latest changed first, to go to one by typing part of its name.
     pub fn sessions_requested(self, at: (f32, f32)) -> Self {
-        self.quick_as(Quick::Sessions, Field::new(""), at)
+        self.quick_as(Quick::Sessions, TextFieldState::new(""), at)
     }
 
     /// The quick input at `at` holding `typed`, listing what its first character says.
     pub(crate) fn quick_typed(self, typed: &str, at: (f32, f32)) -> Self {
-        self.quick_opened(Field::new(typed), at)
+        self.quick_opened(TextFieldState::new(typed), at)
     }
 
     /// The quick input at `at` holding `filter`, listing what its first character says, or saying why it cannot.
-    fn quick_opened(self, filter: Field, at: (f32, f32)) -> Self {
-        let quick = Quick::of(filter.text());
+    fn quick_opened(self, filter: TextFieldState, at: (f32, f32)) -> Self {
+        let quick = Quick::of(&filter.text());
         self.quick_as(quick, filter, at)
     }
 
     /// The quick input at `at` holding `filter` and listing what `quick` says, or saying why it cannot.
-    fn quick_as(mut self, quick: Quick, filter: Field, at: (f32, f32)) -> Self {
+    fn quick_as(mut self, quick: Quick, filter: TextFieldState, at: (f32, f32)) -> Self {
         let query = filter
             .text()
             .strip_prefix(quick.prefix())
@@ -1006,12 +1008,12 @@ impl WorkspaceState {
     }
 
     /// The field narrowing the list, when the list has one.
-    pub fn listing_filter(&self) -> Option<&Field> {
+    pub fn listing_filter(&self) -> Option<&TextFieldState> {
         self.listing.as_ref()?.items.filter()
     }
 
-    /// The state after the field narrowing the list was changed by `edit`: the first row is picked, and the quick input lists something else when its first character says to.
-    pub fn listing_filtered(mut self, edit: Edit) -> Self {
+    /// The state after the reader changed the field narrowing the list: the first row is picked, and the quick input lists something else when its first character says to.
+    pub fn listing_filtered(mut self) -> Self {
         let has_session = self.review_index().is_some();
         let Some(listing) = self.listing.as_mut() else {
             return self;
@@ -1019,35 +1021,21 @@ impl WorkspaceState {
         if listing.quick
             && let Some(filter) = listing.items.filter()
         {
-            let mut changed = filter.clone();
-            changed.apply(edit.clone());
             let held = listing.items.quick().unwrap_or(Quick::Files);
-            let wanted = held.after_typing(changed.text());
+            let wanted = held.after_typing(&filter.text());
             if held != wanted {
-                let at = listing.at;
-                return self.quick_as(wanted, changed, at);
+                let (at, filter) = (listing.at, filter.clone());
+                return self.quick_as(wanted, filter, at);
             }
         }
         let recent = self.recent_commands.clone();
         let recent_files = self.recent_files.clone();
         let session = listing.session;
         let items = &mut listing.items;
-        let before = items.query().to_owned();
-        match items {
-            Items::Outline { filter, .. } => filter.apply(edit),
-            Items::Files { filter, .. }
-            | Items::Commands { filter, .. }
-            | Items::Sessions { filter, .. }
-            | Items::Line { filter, .. }
-            | Items::Choices { filter, .. }
-            | Items::Symbols { filter, .. }
-            | Items::Search { filter, .. } => filter.apply(edit),
-            _ => return self,
-        }
-        let query = items.query().to_owned();
-        if query == before {
+        if items.filter().is_none() {
             return self;
         }
+        let query = items.query();
         match items {
             Items::Files {
                 paths,
@@ -1161,7 +1149,7 @@ impl WorkspaceState {
             return self;
         };
         let session = listing.session;
-        let typed = listing.items.query().to_owned();
+        let typed = listing.items.query();
         let at = listing.at;
         match listing.items {
             Items::Outline { items, .. } => {

@@ -1,9 +1,9 @@
 //! The answers being given to a form of questions the agent asked, and what pressing its buttons does.
 
-use pm_field::Field;
 use pm_harness::{Inquiry, Question, Reply};
+use rustle::TextFieldState;
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 
 use crate::state::{Outgoing, Page, WorkspaceState};
 
@@ -44,7 +44,7 @@ pub struct Draft {
     /// The alternatives picked for each question, by position.
     pub picks: Vec<Vec<usize>>,
     /// What was typed as an answer of the reader's own for each question.
-    pub others: Vec<Field>,
+    pub others: Vec<TextFieldState>,
     /// Whether the form is folded down to its title.
     pub folded: bool,
 }
@@ -57,7 +57,7 @@ impl Draft {
             inquiry,
             step: 0,
             picks: vec![Vec::new(); count],
-            others: vec![Field::default(); count],
+            others: vec![TextFieldState::default(); count],
             folded: false,
         }
     }
@@ -122,7 +122,7 @@ impl WorkspaceState {
     }
 
     /// The field the reader types their own answer in, while a form is open.
-    pub fn other_field(&self) -> Option<&Field> {
+    pub fn other_field(&self) -> Option<&TextFieldState> {
         self.draft().map(|draft| &draft.others[draft.step])
     }
 
@@ -198,7 +198,7 @@ impl WorkspaceState {
         if !keep {
             let step = draft.step;
             draft.picks[step].clear();
-            draft.others[step] = Field::default();
+            draft.others[step] = TextFieldState::default();
         }
         if !draft.last() {
             draft.step += 1;

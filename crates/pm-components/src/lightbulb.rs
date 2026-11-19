@@ -1,6 +1,6 @@
 //! The marker beside the line of the caret that says the language server offers changes there, and the question that finds out.
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 use pm_editor::LightbulbShown;
 
 use crate::state::{Outgoing, WorkspaceState};

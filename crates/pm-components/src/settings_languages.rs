@@ -2,7 +2,8 @@
 
 use pm_protocol::ExtensionInfo;
 
-use crate::kit::{FocusId, Role};
+use crate::focus::FocusId;
+use crate::theme::Role;
 
 use crate::extensions::{group, pickable, row};
 use crate::parts::line;

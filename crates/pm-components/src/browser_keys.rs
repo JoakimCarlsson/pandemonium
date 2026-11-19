@@ -1,6 +1,6 @@
 //! The keys a page of the browser takes for the browser itself, as a browser's own do, instead of passing them to the page.
 
-use crate::kit::{Key, KeyEvent};
+use rustle::{Key, KeyEvent};
 
 use crate::browser::{Command, ZoomStep};
 use crate::state::WorkspaceState;
@@ -33,9 +33,9 @@ pub enum Shortcut {
 /// What `event` does in the browser while a page has the keyboard, if it is a key the browser takes: with Control or Command, `F` finds, `G` steps through the matches, `=`, `-` and `0` zoom, `R` reloads and with Shift reloads without the cache, `T` opens a new tab and `W` closes the tab; and `F3`, `F5` and Control `F5` do the same on their own.
 pub fn shortcut_of(event: &KeyEvent) -> Option<Shortcut> {
     let modifiers = event.modifiers;
-    let command = (modifiers.control || modifiers.logo) && !modifiers.alt;
-    match event.key {
-        Key::Character(character) if command => match character.to_ascii_lowercase() {
+    let command = (modifiers.ctrl || modifiers.meta) && !modifiers.alt;
+    match &event.key {
+        Key::Character(_) if command => match event.code_point()?.to_ascii_lowercase() {
             'f' => Some(Shortcut::Find),
             'g' if modifiers.shift => Some(Shortcut::FindPrevious),
             'g' => Some(Shortcut::FindNext),
@@ -48,12 +48,12 @@ pub fn shortcut_of(event: &KeyEvent) -> Option<Shortcut> {
             'w' => Some(Shortcut::CloseTab),
             _ => None,
         },
-        Key::Function(3) if !modifiers.alt && !command => Some(if modifiers.shift {
+        Key::F(3) if !modifiers.alt && !command => Some(if modifiers.shift {
             Shortcut::FindPrevious
         } else {
             Shortcut::FindNext
         }),
-        Key::Function(5) if !modifiers.alt => Some(if command || modifiers.shift {
+        Key::F(5) if !modifiers.alt => Some(if command || modifiers.shift {
             Shortcut::HardReload
         } else {
             Shortcut::Reload

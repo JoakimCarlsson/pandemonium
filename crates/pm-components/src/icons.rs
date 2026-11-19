@@ -7,7 +7,8 @@
 //! a selected state. The panels on the right are Phosphor's left sidebar
 //! drawn mirrored. Only artwork that arrives at run time, such as an
 //! extension's icon or a file icon ([`Artwork::arrived`]), goes through
-//! resvg.
+//! resvg. The spinner and the turning icon turn on rustle's infinite
+//! animation, on the composition's frame clock.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -15,7 +16,7 @@ use std::sync::{LazyLock, Mutex, PoisonError};
 
 use rustle::{ImageData, Modifier, Path, PathCommand, phosphor};
 
-use crate::kit::theme::{self, Tone, sp};
+use crate::theme::{self, Tone, sp};
 
 /// One of the app's icons, at whatever size it is asked for.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -421,4 +422,31 @@ pub fn artwork_with(modifier: Modifier, art: Artwork, pixels: f32, tone: impl In
         Some(mask) => rustle::mask_image(modifier.size(pixels, pixels), &mask, color),
         None => rustle::spacer(modifier.size(pixels, pixels)),
     }
+}
+
+/// How long a spinner takes to turn once.
+const TURN: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The angle, in degrees, of something turning once a [`TURN`], on the
+/// composition's frame clock.
+#[track_caller]
+fn turning() -> rustle::State<f32> {
+    rustle::infinite_float_repeating(0.0, 360.0, TURN, rustle::Easing::Linear)
+}
+
+/// Emits a spinner `steps` of the spacing scale across in `tone`: rustle's
+/// dashed ring, the loading icon, turning once a second, its angle read when
+/// it is painted, so it turns without composing again.
+#[track_caller]
+pub fn spinner(steps: f32, tone: impl Into<Tone>) {
+    let turned = turning();
+    rustle::dashed_spinner(sp(steps), theme::color(tone), move || turned.get());
+}
+
+/// Emits `name` turning once a second, `steps` of the spacing scale across,
+/// in `tone`, for an icon other than the loading ring, which is [`spinner`].
+#[track_caller]
+pub fn spinning_icon(name: IconName, steps: f32, tone: impl Into<Tone>) {
+    let turned = turning();
+    icon_with(Modifier::new().rotate(turned.get()), name, sp(steps), tone);
 }

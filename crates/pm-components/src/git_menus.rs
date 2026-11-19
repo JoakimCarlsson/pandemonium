@@ -1,10 +1,10 @@
 //! The menus of the source control panel: on changed files, under the commit button, over the panel's own actions, on the graph's references and on a commit.
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 
 use crate::Menu;
 use crate::branch_tasks::BranchTask;
-use crate::git_controls::{BRANCH_BUTTON, CHANGES_MORE, COMMIT_CHEVRON, GRAPH_REFS};
+use crate::git_controls::BRANCH_BUTTON;
 use crate::git_prompts::{Prompt, StashAction};
 use crate::state::{ADD_PROJECT, Outgoing, WorkspaceState};
 use crate::tree_actions::TreeTarget;
@@ -176,16 +176,6 @@ fn row_if(label: impl Into<String>, command: Command, enabled: bool) -> Entry {
 }
 
 impl WorkspaceState {
-    /// The menu button `id` is, if it is one: a press on it opens that menu.
-    pub fn menu_button_of(id: FocusId) -> Option<MenuKind> {
-        match id {
-            COMMIT_CHEVRON => Some(MenuKind::Commit),
-            CHANGES_MORE => Some(MenuKind::Source),
-            GRAPH_REFS => Some(MenuKind::Refs),
-            _ => None,
-        }
-    }
-
     /// Whether `id` names a row of the menu that is open.
     pub fn is_menu_row(&self, id: FocusId) -> bool {
         (self.git.menu.is_some() && id.0.checked_sub(MENU_ROW_BASE).is_some_and(|row| row < 40))
@@ -193,13 +183,6 @@ impl WorkspaceState {
             || self.is_tab_menu_row(id)
             || self.is_terminal_menu_row(id)
             || self.is_browser_menu_row(id)
-    }
-
-    /// Which commit of the graph the row `id` is, if it is one.
-    pub fn history_row_of(&self, id: FocusId) -> Option<usize> {
-        id.0.checked_sub(crate::graph::HISTORY_ROW_BASE)
-            .map(|row| row as usize)
-            .filter(|row| *row < self.git.history.len())
     }
 
     /// The state with the menu `kind` open at `at`, and the others closed.
@@ -728,7 +711,7 @@ impl WorkspaceState {
             }
             Command::Auto | Command::All => {
                 self.git.graph_all = command == Command::All;
-                self.git.graph_scroll = 0.0;
+                self.git.graph_scroll.jump_to(0.0);
                 self.ask_log();
             }
             Command::CherryPick => {

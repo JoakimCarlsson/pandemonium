@@ -42,7 +42,7 @@ impl WorkspaceState {
 mod tests {
     use super::*;
     use crate::arrange::SESSION_MENU_READ;
-    use crate::kit::FocusId;
+    use crate::focus::FocusId;
     use crate::sample::{Session, Status};
     use crate::state::{Page, SESSION_BASE};
     use pm_harness::{Event, Permission};
@@ -153,11 +153,12 @@ mod tests {
     #[test]
     fn switching_sessions_preserves_scrollback() {
         let mut state = WorkspaceState::sample().after(FocusId(SESSION_BASE));
-        state = state.scrolled_chat(-200.0, 500.0);
+        state.chat_back.jump_to(200.0);
+        state.follow_scrolls();
         state = state
             .after(FocusId(SESSION_BASE + 1))
             .after(FocusId(SESSION_BASE));
-        assert_eq!(state.chat_back, 200.0);
+        assert_eq!(state.chat_back.offset(), 200.0);
     }
 
     /// Saved acknowledgements survive replay and a subsequent response becomes unread.

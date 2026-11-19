@@ -2,19 +2,22 @@
 //! message is sent, a popover lists everything about it, and in the message it is written out in
 //! sections.
 
+use crate::events::reduce;
+use crate::theme;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
-use crate::kit::{
-    FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, Tone, Type, label,
-    scroll_area, sp, wrap_lines,
-};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::select::styled_text;
+use crate::theme::{Radius, Role, Tone, sp};
 
 use crate::button::Variant;
 use crate::parts::line;
 use crate::popover::anchored;
 use crate::size::Size;
-use crate::state::{MENU_BODY, MENU_SCROLL, Picker, WorkspaceState};
+use crate::state::{MENU_BODY, Picker, WorkspaceState};
 use crate::{Button, Popover};
 
 /// The first of the chips that open an element's popover; the rest follow it.
@@ -207,10 +210,11 @@ pub fn sent_chips(labels: &[String]) {
         for label in labels {
             row_arranged(
                 Modifier::new()
-                    .fill_rounded(Role::Surface, Radius::Lg)
-                    .stroke(Role::Border, Radius::Lg)
-                    .pad_x(2)
-                    .pad_y(1),
+                    .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
+                    .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+                    .padding(1.0)
+                    .padding_xy(theme::sp(2), 0.0)
+                    .padding_xy(0.0, theme::sp(1)),
                 Arrangement::SpacedBy(sp(1.5)),
                 Alignment::Center,
                 || {
@@ -332,8 +336,9 @@ pub(crate) fn section(title: &str, body: impl FnOnce()) {
     column_arranged(
         Modifier::new()
             .fill_max_width()
-            .stroke(Role::Border, Radius::Lg)
-            .pad(2.5),
+            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+            .padding(1.0)
+            .padding(theme::sp(2.5)),
         Arrangement::SpacedBy(sp(1.5)),
         Alignment::Start,
         || {
@@ -348,16 +353,20 @@ pub(crate) fn section(title: &str, body: impl FnOnce()) {
 #[track_caller]
 pub(crate) fn words(content: &str, mono: bool, tone: Role, width: f32) {
     let content = one_line(content);
-    let kind = Type::new(12).ratio(1.5);
-    let kind = if mono { kind.mono() } else { kind };
-    let lines = wrap_lines(&content, kind, width);
+    let kind = theme::text_style(12, 1.5);
+    let kind = if mono { theme::in_mono(kind) } else { kind };
+    let lines = rustle::wrap_at_spaces(&content, &kind, width);
     column_arranged(
         Modifier::new(),
         Arrangement::Start,
         Alignment::Start,
         || {
             for piece in lines {
-                label(&content[piece.start..piece.end], kind.tone(tone));
+                styled_text(
+                    Modifier::new(),
+                    &content[piece.start..piece.end],
+                    kind.color(theme::color(tone)),
+                );
             }
         },
     );
@@ -396,9 +405,10 @@ fn pair(name: &str, value: &str) {
                             Modifier::new()
                                 .width(12.0)
                                 .height(12.0)
-                                .fill_rounded(tone, Radius::Sm)
-                                .stroke(Role::Border, Radius::Sm)
-                                .pad_side(Side::Top, 0.5),
+                                .background_rounded(theme::color(tone), Radius::Sm.px())
+                                .border(1.0, theme::color(Role::Border), Radius::Sm.px())
+                                .padding(1.0)
+                                .padding_each(0.0, theme::sp(0.5), 0.0, 0.0),
                         );
                     }
                     words(value, false, Role::Text, room);
@@ -436,51 +446,47 @@ fn popover(element: &Element, state: &WorkspaceState) {
     Popover::new()
         .width(WIDTH)
         .inner(Modifier::new().padding_each(6.0, -1.0, 6.0, 6.0))
-        .modifier(Modifier::new().target(MENU_BODY))
+        .modifier(Modifier::new().control(MENU_BODY, reduce(MENU_BODY)))
         .build_with(|| {
-            scroll_area(
+            column_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .height_in(0.0, sp(HEIGHT / 4.0)),
-                Scroll::from_start(MENU_SCROLL, state.menu_scroll),
+                    .height_in(0.0, sp(HEIGHT / 4.0))
+                    .vertical_scroll(&state.menu_scroll)
+                    .fill_max_width(),
+                Arrangement::SpacedBy(sp(2)),
+                Alignment::Start,
                 || {
-                    column_arranged(
-                        Modifier::new().fill_max_width(),
-                        Arrangement::SpacedBy(sp(2)),
-                        Alignment::Start,
-                        || {
-                            section("ELEMENT", || {
-                                column_arranged(
-                                    Modifier::new(),
-                                    Arrangement::SpacedBy(sp(1)),
-                                    Alignment::Start,
-                                    || {
-                                        words(&element.opening_tag(), true, Role::Text, CARD_TEXT);
-                                        words(&element.size(), false, Role::Muted, CARD_TEXT);
-                                    },
-                                );
-                            });
-                            section("PATH", || {
-                                words(&element.selector, true, Role::Text, CARD_TEXT);
-                            });
-                            if let Some(component) = element.component_tag() {
-                                section("COMPONENT", || {
-                                    words(&component, true, Role::Text, CARD_TEXT);
-                                });
-                            }
-                            if !element.attributes.is_empty() {
-                                section("ATTRIBUTES", || pairs(&element.attributes));
-                            }
-                            if !styles.is_empty() {
-                                section("COMPUTED STYLES", || pairs(&styles));
-                            }
-                            if !element.text.is_empty() {
-                                section("INNER TEXT", || {
-                                    words(&element.text, false, Role::Text, CARD_TEXT);
-                                });
-                            }
-                        },
-                    );
+                    section("ELEMENT", || {
+                        column_arranged(
+                            Modifier::new(),
+                            Arrangement::SpacedBy(sp(1)),
+                            Alignment::Start,
+                            || {
+                                words(&element.opening_tag(), true, Role::Text, CARD_TEXT);
+                                words(&element.size(), false, Role::Muted, CARD_TEXT);
+                            },
+                        );
+                    });
+                    section("PATH", || {
+                        words(&element.selector, true, Role::Text, CARD_TEXT);
+                    });
+                    if let Some(component) = element.component_tag() {
+                        section("COMPONENT", || {
+                            words(&component, true, Role::Text, CARD_TEXT);
+                        });
+                    }
+                    if !element.attributes.is_empty() {
+                        section("ATTRIBUTES", || pairs(&element.attributes));
+                    }
+                    if !styles.is_empty() {
+                        section("COMPUTED STYLES", || pairs(&styles));
+                    }
+                    if !element.text.is_empty() {
+                        section("INNER TEXT", || {
+                            words(&element.text, false, Role::Text, CARD_TEXT);
+                        });
+                    }
                 },
             );
         });
@@ -494,7 +500,9 @@ pub fn chips(state: &WorkspaceState) {
         return;
     }
     flow_row_with(
-        Modifier::new().pad_x(3).pad_side(Side::Top, 3),
+        Modifier::new()
+            .padding_xy(theme::sp(3), 0.0)
+            .padding_each(0.0, theme::sp(3), 0.0, 0.0),
         FlowOptions::new(sp(2), sp(2)),
         || {
             for (index, element) in state.elements.iter().enumerate() {
@@ -504,8 +512,11 @@ pub fn chips(state: &WorkspaceState) {
                         || {
                             row_arranged(
                                 Modifier::new()
-                                    .fill_rounded(Role::SurfaceHover, Radius::Lg)
-                                    .pad_side(Side::Right, 1),
+                                    .background_rounded(
+                                        theme::color(Role::SurfaceHover),
+                                        Radius::Lg.px(),
+                                    )
+                                    .padding_each(0.0, 0.0, theme::sp(1), 0.0),
                                 Arrangement::SpacedBy(sp(0.5)),
                                 Alignment::Center,
                                 || {

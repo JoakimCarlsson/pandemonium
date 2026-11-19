@@ -1,6 +1,10 @@
 //! What an agent puts in front of the reader to look at: the card of a diagram or a prototype it showed in the conversation, and the picture of a document it wrote, a prototype or the mockup of an answer, which the window has rendered sealed from the network.
 
-use crate::kit::{FocusId, IconName, Radius, Role, Styled, Tooltip, Type, icon_with, label, sp};
+use crate::focus::FocusId;
+use crate::icons::{IconName, icon_with};
+use crate::select::styled_text;
+use crate::theme;
+use crate::theme::{Radius, Role, sp};
 use pm_harness::{Exhibit, ExhibitKind};
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
@@ -205,20 +209,20 @@ impl Offer {
             Alignment::Center,
             || {
                 if spelled {
-                    caption(self.words(), tone, Modifier::new().tooltip(hint.clone()));
+                    let words = self.words();
+                    crate::tooltip::with_tooltip_in(
+                        Modifier::new().fill_max_width(),
+                        hint.clone(),
+                        || caption(words, tone, Modifier::new()),
+                    );
                 }
                 if let Some(button) = button {
-                    button
-                        .modifier(Modifier::new().tooltip(hint.clone()))
-                        .build();
+                    button.tooltip(hint.clone()).build();
                 }
                 if lone {
-                    icon_with(
-                        Modifier::new().tooltip(hint.clone()),
-                        IconName::Globe,
-                        sp(3.5),
-                        tone,
-                    );
+                    crate::tooltip::with_tooltip(hint.clone(), || {
+                        icon_with(Modifier::new(), IconName::Globe, sp(3.5), tone);
+                    });
                 }
             },
         );
@@ -242,9 +246,13 @@ fn failure(reason: &str, id: FocusId, form: Marks) {
         Alignment::Center,
         || {
             if form == Marks::Words {
-                caption(reason, Role::Danger, Modifier::new().tooltip(hint.clone()));
+                crate::tooltip::with_tooltip_in(
+                    Modifier::new().fill_max_width(),
+                    hint.clone(),
+                    || caption(reason, Role::Danger, Modifier::new()),
+                );
             }
-            button.modifier(Modifier::new().tooltip(hint)).build();
+            button.tooltip(hint).build();
         },
     );
 }
@@ -253,12 +261,18 @@ fn failure(reason: &str, id: FocusId, form: Marks) {
 #[track_caller]
 fn caption(words: &str, tone: Role, modifier: Modifier) {
     row_arranged(
-        modifier.fill_max_width().pad_x(3),
+        modifier.fill_max_width().padding_xy(theme::sp(3), 0.0),
         Arrangement::SpacedByAligned(sp(1.5), Alignment::Center),
         Alignment::Center,
         || {
             glyph(IconName::Globe, 3.5, tone);
-            label(words, Type::new(12).ratio(1.4).tone(tone).truncate());
+            styled_text(
+                Modifier::new(),
+                words,
+                theme::text_style(12, 1.4)
+                    .color(theme::color(tone))
+                    .max_lines(1),
+            );
         },
     );
 }
@@ -355,9 +369,10 @@ impl<'a> Preview<'a> {
             Modifier::new()
                 .width(width)
                 .height(height)
-                .fill_rounded(Role::Background, Radius::Lg)
-                .stroke(Role::Border, Radius::Lg)
-                .clip_to(Radius::None)
+                .background_rounded(theme::color(Role::Background), Radius::Lg.px())
+                .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+                .padding(1.0)
+                .clip()
         };
         let (arrangement, alignment) = self
             .arranged
@@ -371,8 +386,8 @@ impl<'a> Preview<'a> {
                         Modifier::new()
                             .width(width)
                             .height(height)
-                            .fill_rounded(Role::Background, Radius::Lg)
-                            .clip_to(Radius::None),
+                            .background_rounded(theme::color(Role::Background), Radius::Lg.px())
+                            .clip(),
                     ),
                     || {
                         rustle::image(
@@ -408,7 +423,7 @@ impl<'a> Preview<'a> {
                             failure(words, id, marks_in(width));
                         } else {
                             row_arranged(
-                                Modifier::new().pad_x(3),
+                                Modifier::new().padding_xy(theme::sp(3), 0.0),
                                 Arrangement::SpacedBy(sp(1.5)),
                                 Alignment::Center,
                                 || {
@@ -522,10 +537,16 @@ impl<'a> ExhibitCard<'a> {
             || {
                 glyph(icon, 3.5, Role::Subtle);
                 clipped(title, 13, Role::Text);
-                label(kind, Type::new(12).ratio(1.4).tone(Role::Subtle).truncate());
+                styled_text(
+                    Modifier::new(),
+                    kind,
+                    theme::text_style(12, 1.4)
+                        .color(theme::color(Role::Subtle))
+                        .max_lines(1),
+                );
                 if let Some(id) = self.copy {
                     Button::icon(IconName::Copy, id)
-                        .modifier(Modifier::new().tooltip("Copy source"))
+                        .tooltip("Copy source")
                         .build();
                 }
                 if let Some(id) = opens {
@@ -534,11 +555,11 @@ impl<'a> ExhibitCard<'a> {
                         .size(Size::Sm)
                         .with_icon(IconName::Maximize)
                         .disabled(outdated)
-                        .modifier(Modifier::new().tooltip(if outdated {
+                        .tooltip(if outdated {
                             OPEN_NEEDS_UPDATE
                         } else {
                             "Open live in the browser pane · sealed from the network"
-                        }))
+                        })
                         .build();
                 }
             },
@@ -585,12 +606,14 @@ impl<'a> ExhibitCard<'a> {
     #[track_caller]
     pub fn build(self) {
         let inner = (self.width - CARD_INSET).max(64.0);
-        let padding = self
-            .inner
-            .clone()
-            .unwrap_or_else(|| Modifier::new().pad_x(4).pad_y(3));
+        let padding = self.inner.clone().unwrap_or_else(|| {
+            Modifier::new()
+                .padding_xy(theme::sp(4), 0.0)
+                .padding_xy(0.0, theme::sp(3))
+        });
         let own = Modifier::new()
-            .stroke(Role::Border, Radius::Xl)
+            .border(1.0, theme::color(Role::Border), Radius::Xl.px())
+            .padding(1.0)
             .chain(padding);
         let (arrangement, alignment) = self
             .arranged

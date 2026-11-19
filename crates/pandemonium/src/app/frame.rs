@@ -1,39 +1,26 @@
-//! The frame of the main window, drawn by the window itself: moving it by its title bar, maximizing it with a second press there, resizing it by its edges, and the buttons that minimize, maximize and close it.
+//! The frame of the main window, drawn by the window itself: moving it by its title bar, maximizing it with a second press there, resizing it by the edges its views lay over it, and the buttons that minimize, maximize and close it.
 
 use std::time::Instant;
 
 use pm_components::SHADOW_MARGIN;
-use pm_components::kit::FocusId;
-use pm_components::title_bar::{
-    FRAMELESS, TITLE_BAR, WINDOW_CLOSE, WINDOW_MAXIMIZE, WINDOW_MINIMIZE, is_window_control,
-};
+use pm_components::title_bar::FRAMELESS;
 use pm_pages::Screen;
-use rustle::CursorIcon;
+use rustle::ResizeEdge;
 use winit::window::ResizeDirection;
 
 use super::{App, DOUBLE_CLICK};
 
-/// How far in from the frame of the window a press resizes it, in logical pixels; so does a press anywhere in the band around the frame that holds its shadow.
-const EDGE: f32 = 4.0;
-
-/// The edge or corner of a window whose frame is `size` logical pixels wide and tall that a press at `at` grabs, measured from the corner of the frame, when it is near enough to one or outside the frame.
-fn edge_at(at: (f32, f32), size: (f32, f32)) -> Option<ResizeDirection> {
-    let (x, y) = at;
-    let (width, height) = size;
-    let west = x < EDGE;
-    let east = x > width - EDGE;
-    let north = y < EDGE;
-    let south = y > height - EDGE;
-    match (north, south, west, east) {
-        (true, _, true, _) => Some(ResizeDirection::NorthWest),
-        (true, _, _, true) => Some(ResizeDirection::NorthEast),
-        (_, true, true, _) => Some(ResizeDirection::SouthWest),
-        (_, true, _, true) => Some(ResizeDirection::SouthEast),
-        (true, ..) => Some(ResizeDirection::North),
-        (_, true, ..) => Some(ResizeDirection::South),
-        (_, _, true, _) => Some(ResizeDirection::West),
-        (_, _, _, true) => Some(ResizeDirection::East),
-        _ => None,
+/// The edge winit resizes a window by for the edge rustle names.
+fn direction_of(edge: ResizeEdge) -> ResizeDirection {
+    match edge {
+        ResizeEdge::North => ResizeDirection::North,
+        ResizeEdge::South => ResizeDirection::South,
+        ResizeEdge::West => ResizeDirection::West,
+        ResizeEdge::East => ResizeDirection::East,
+        ResizeEdge::NorthWest => ResizeDirection::NorthWest,
+        ResizeEdge::NorthEast => ResizeDirection::NorthEast,
+        ResizeEdge::SouthWest => ResizeDirection::SouthWest,
+        ResizeEdge::SouthEast => ResizeDirection::SouthEast,
     }
 }
 
@@ -56,16 +43,6 @@ pub(super) fn without_band(size: (f32, f32)) -> (f32, f32) {
     (size.0 - band(), size.1 - band())
 }
 
-/// The pointer shape that says the edge or corner `direction` resizes the window.
-pub(super) fn edge_icon(direction: ResizeDirection) -> CursorIcon {
-    match direction {
-        ResizeDirection::North | ResizeDirection::South => CursorIcon::NsResize,
-        ResizeDirection::West | ResizeDirection::East => CursorIcon::EwResize,
-        ResizeDirection::NorthWest | ResizeDirection::SouthEast => CursorIcon::NwseResize,
-        ResizeDirection::NorthEast | ResizeDirection::SouthWest => CursorIcon::NeswResize,
-    }
-}
-
 impl App {
     /// Tells the windows built next whether they float, with a band around them for their shadow, composing them again when that changed: they float unless the window is maximized or full screen.
     pub(super) fn sync_floating(&mut self) {
@@ -76,29 +53,21 @@ impl App {
         pm_components::set_floating(floating);
     }
 
-    /// The edge or corner of the window the pointer is on, when the window draws its own frame and is not maximized.
-    pub(super) fn frame_edge(&self) -> Option<ResizeDirection> {
-        let window = self.window.as_ref()?;
-        if !FRAMELESS || !window.floats() {
-            return None;
+    /// Asks the desktop to resize the window by its edge or corner `edge`, pressed on the
+    /// strips [`resize_edges`](pm_components::resize_edges) lays over the frame.
+    pub(super) fn edge_pressed(&mut self, edge: ResizeEdge) {
+        if let Some(window) = self.window.clone() {
+            window.drag_resize(direction_of(edge));
         }
-        edge_at(self.pointer.position?, self.window_size())
     }
 
-    /// Resizes the window when the left button goes down on its edge, moves it when it goes down on the title bar and maximizes or restores it when that is the second press there in a row. Says whether the press was taken.
-    pub(super) fn frame_press(&mut self, window: &dyn super::port::Port) -> bool {
-        if let Some(direction) = self.frame_edge() {
-            window.drag_resize(direction);
-            return true;
-        }
-        let on_bar = self
-            .pointer
-            .position
-            .and_then(|at| self.output.hit(at))
-            .is_some_and(|id| id == TITLE_BAR);
-        if !on_bar {
+    /// Moves the window when the primary button goes down on its bare title bar, and
+    /// maximizes or restores it when that is the second press there in a row. Says whether
+    /// the press was taken: there is a window.
+    pub(super) fn title_bar_pressed(&mut self) -> bool {
+        let Some(window) = self.window.clone() else {
             return false;
-        }
+        };
         let again = self
             .title_press
             .is_some_and(|at| at.elapsed() < DOUBLE_CLICK);
@@ -112,24 +81,32 @@ impl App {
         true
     }
 
-    /// Carries out the control of the window `id` names, and says whether it was one. Closing a window beside the main one closes what it shows.
-    pub(super) fn window_control(&mut self, id: FocusId) -> bool {
-        if !is_window_control(id) {
-            return false;
+    /// Makes the window an icon on the desktop's bar, as its button for that does.
+    pub(super) fn minimize_window(&mut self) {
+        if let Some(window) = self.window.clone() {
+            window.set_minimized(true);
         }
-        let Some(window) = self.window.clone() else {
-            return true;
-        };
-        match id {
-            WINDOW_MINIMIZE => window.set_minimized(true),
-            WINDOW_MAXIMIZE => window.set_maximized(!window.is_maximized()),
-            WINDOW_CLOSE if let Some(aside) = self.on_aside => self
+    }
+
+    /// Fills the screen with the window, or gives it back its size, as its button for that does.
+    pub(super) fn toggle_maximized(&mut self) {
+        if let Some(window) = self.window.clone() {
+            window.set_maximized(!window.is_maximized());
+        }
+    }
+
+    /// Carries out the window's close button: a window beside the main one closes what it
+    /// shows, and the main window asks to close.
+    pub(super) fn close_button_pressed(&mut self) {
+        if self.window.is_none() {
+            return;
+        }
+        match self.on_aside {
+            Some(aside) => self
                 .model
                 .update(|state| *state = aside.closed(std::mem::take(state))),
-            WINDOW_CLOSE => self.closing = self.close_window(),
-            _ => {}
+            None => self.closing = self.close_window(),
         }
-        true
     }
 
     /// Asks the window to close, as its close button or the desktop does, and says whether it is to close now: once nothing is left to ask first.

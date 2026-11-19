@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 
 use crate::Project;
 use crate::sample::Session;

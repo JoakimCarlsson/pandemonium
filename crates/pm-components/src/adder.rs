@@ -1,20 +1,23 @@
 //! Adding a project: the modal that offers a folder on this computer or a repository to clone, found through the accounts and organizations on GitHub.
 
-use pm_field::{Edit, Field};
+use crate::events::reduce;
+use crate::theme;
+use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use crate::Input;
 use crate::Modal;
+use crate::events::Interactive;
+use crate::focus::FocusId;
 use crate::folder_picker::Purpose;
+use crate::icons::{IconName, spinner};
 use crate::input;
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Type,
-    label, label_with, scroll_area, sp, spinner,
-};
 use crate::parts::{glyph, line};
+use crate::select::styled_text;
+use crate::theme::{Radius, Role, sp};
 
-use crate::state::{MENU_SCROLL, Outgoing, WorkspaceState};
+use crate::state::{Outgoing, WorkspaceState};
 
 /// Closes the panel, which is what pressing outside it does.
 pub const ADDER_SCRIM: FocusId = FocusId(6000);
@@ -107,7 +110,7 @@ pub struct Adder {
     /// What the panel is showing.
     pub step: Step,
     /// What the reader types.
-    pub field: Field,
+    pub field: TextFieldState,
     /// The accounts and organizations the server listed.
     pub owners: Listing,
     /// The repositories the server listed for the account picked.
@@ -162,7 +165,7 @@ impl Adder {
     fn new(machine: Option<pm_config::KnownServer>) -> Self {
         Self {
             step: Step::Choices,
-            field: Field::default(),
+            field: TextFieldState::default(),
             owners: Listing::Loading,
             repositories: Listing::Loading,
             owner: None,
@@ -184,7 +187,7 @@ impl Adder {
     /// The panel on `step`, with nothing typed and the first row highlighted.
     fn moved_to(&mut self, step: Step) {
         self.step = step;
-        self.field = Field::default();
+        self.field = TextFieldState::default();
         self.selected = 0;
         self.trouble = None;
     }
@@ -202,7 +205,7 @@ impl Adder {
         if self.step == Step::Choices {
             return Vec::new();
         }
-        let typed = self.field.text();
+        let typed = &self.field.text();
         let mut entries = Vec::new();
         if is_address(typed) {
             entries.push(Found {
@@ -319,17 +322,22 @@ pub fn adder(state: &WorkspaceState) {
     };
     Modal::new(ADDER_SCRIM, ADDER_BODY)
         .width(WIDTH)
-        .build_with(|| panel(open, state.menu_scroll));
+        .build_with(|| panel(open, &state.menu_scroll));
 }
 
-/// Emits what the modal holds: its heading, the field when the step has one and the list.
+/// Emits what the modal holds: its heading, the field when the step has one and the list, scrolled as `scrolled` says.
 #[track_caller]
-fn panel(open: &Adder, scrolled: f32) {
+fn panel(open: &Adder, scrolled: &rustle::ScrollState) {
     let banded = || {
         Modifier::new()
-            .h(11)
-            .stroke_side(Side::Bottom, 1.0, Role::Border)
-            .pad_x(4)
+            .height(theme::sp(11))
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(4), 0.0)
     };
     row_arranged(
         banded(),
@@ -351,28 +359,26 @@ fn panel(open: &Adder, scrolled: f32) {
                 .build();
         });
     }
-    scroll_area(
-        Modifier::new().height_in(0.0, sp(LIST_HEIGHT / 4.0)),
-        Scroll::from_start(MENU_SCROLL, scrolled),
+    column_arranged(
+        Modifier::new()
+            .height_in(0.0, sp(LIST_HEIGHT / 4.0))
+            .vertical_scroll(scrolled)
+            .fill_max_width()
+            .padding(theme::sp(1.5)),
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            column_arranged(
-                Modifier::new().fill_max_width().pad(1.5),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    for (index, row) in open.rows().iter().enumerate() {
-                        let id = if open.step == Step::Choices {
-                            choice_id(index)
-                        } else {
-                            FocusId(ADDER_ROW_BASE + index as u64)
-                        };
-                        entry(row, id, index == open.selected);
-                    }
-                    if let Some(status) = open.status() {
-                        status_line(status);
-                    }
-                },
-            );
+            for (index, row) in open.rows().iter().enumerate() {
+                let id = if open.step == Step::Choices {
+                    choice_id(index)
+                } else {
+                    FocusId(ADDER_ROW_BASE + index as u64)
+                };
+                entry(row, id, index == open.selected);
+            }
+            if let Some(status) = open.status() {
+                status_line(status);
+            }
         },
     );
 }
@@ -389,7 +395,9 @@ fn heading_hint(open: &Adder) -> Option<String> {
 #[track_caller]
 pub(crate) fn status_line(status: Status) {
     row_arranged(
-        Modifier::new().pad_x(2.5).pad_y(2),
+        Modifier::new()
+            .padding_xy(theme::sp(2.5), 0.0)
+            .padding_xy(0.0, theme::sp(2)),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         || match status {
@@ -405,7 +413,9 @@ pub(crate) fn status_line(status: Status) {
 /// Emits one row of the list: a glyph, a name and what is said under it, highlighted while it is the one the keys act on.
 #[track_caller]
 fn entry(row_of: &Row, id: FocusId, selected: bool) {
-    let looks = Looks::new().hover(Role::SurfaceHover).radius(Radius::Lg);
+    let looks = theme::InteractionTones::new()
+        .hover(Role::SurfaceHover)
+        .radius(Radius::Lg);
     let looks = if selected {
         looks.idle(Role::SurfaceSelected)
     } else {
@@ -414,11 +424,12 @@ fn entry(row_of: &Row, id: FocusId, selected: bool) {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .looks_of(looks, id)
+            .interaction_focused(crate::focus::is_held(id))
+            .interaction_background((looks).colors())
             .cursor(CursorIcon::Pointer)
-            .target(id)
-            .pad_x(2.5)
-            .pad_y(1.5),
+            .control(id, reduce(id))
+            .padding_xy(theme::sp(2.5), 0.0)
+            .padding_xy(0.0, theme::sp(1.5)),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         || {
@@ -428,15 +439,20 @@ fn entry(row_of: &Row, id: FocusId, selected: bool) {
                 Arrangement::Start,
                 Alignment::Start,
                 || {
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         row_of.name.clone(),
-                        Type::new(13).ratio(1.4).tone(Role::Text).truncate(),
+                        theme::text_style(13, 1.4)
+                            .color(theme::color(Role::Text))
+                            .max_lines(1),
                     );
                     if !row_of.detail.is_empty() {
-                        label_with(
+                        styled_text(
                             Modifier::new(),
                             row_of.detail.clone(),
-                            Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
+                            theme::text_style(12, 1.4)
+                                .color(theme::color(Role::Subtle))
+                                .max_lines(1),
                         );
                     }
                 },
@@ -470,7 +486,7 @@ impl WorkspaceState {
     /// The state with the panel closed.
     pub fn without_adder(mut self) -> Self {
         self.adder = None;
-        self.menu_scroll = 0.0;
+        self.menu_scroll.jump_to(0.0);
         self
     }
 
@@ -488,7 +504,7 @@ impl WorkspaceState {
                     Step::Repositories => Step::Owners,
                     _ => Step::Choices,
                 });
-                self.menu_scroll = 0.0;
+                self.menu_scroll.jump_to(0.0);
             }
             ADDER_UP | ADDER_DOWN if !working => {
                 let last = open.count().saturating_sub(1);
@@ -510,14 +526,14 @@ impl WorkspaceState {
                 return self;
             }
             ADDER_BROWSE if !working => {
-                self.menu_scroll = 0.0;
+                self.menu_scroll.jump_to(0.0);
                 self.open_folder_picker(Purpose::Open, open.machine);
                 return self;
             }
             ADDER_CLONE if !working => {
                 open.moved_to(Step::Owners);
                 open.owners = Listing::Loading;
-                self.menu_scroll = 0.0;
+                self.menu_scroll.jump_to(0.0);
                 self.outbox.push(Outgoing::Owners);
             }
             _ => {}
@@ -541,7 +557,7 @@ impl WorkspaceState {
                 open.moved_to(Step::Repositories);
                 open.repositories = Listing::Loading;
                 open.owner = Some((login.clone(), organization));
-                self.menu_scroll = 0.0;
+                self.menu_scroll.jump_to(0.0);
                 self.outbox.push(Outgoing::Repositories {
                     login,
                     organization,
@@ -559,23 +575,19 @@ impl WorkspaceState {
     pub(crate) fn with_adder(mut self) -> Self {
         self.menu = None;
         self.picker = None;
-        self.menu_scroll = 0.0;
+        self.menu_scroll.jump_to(0.0);
         self.adder = Some(Adder::new(self.window.servers.default_target().cloned()));
         self
     }
 
-    /// The state after `edit` was made to the field of the panel.
-    pub(crate) fn adder_edited(&mut self, edit: Edit) {
+    /// Takes in what the reader wrote in the field of the panel: the list starts over from its first row.
+    pub(crate) fn adder_typed(&mut self) {
         let Some(open) = self.adder.as_mut() else {
             return;
         };
-        let before = open.field.text().to_owned();
-        open.field.apply(edit);
-        if open.field.text() != before {
-            open.selected = 0;
-            open.trouble = None;
-            self.menu_scroll = 0.0;
-        }
+        open.selected = 0;
+        open.trouble = None;
+        self.menu_scroll.jump_to(0.0);
     }
 
     /// The state with the accounts and organizations the server listed, or why it could not.
@@ -627,10 +639,10 @@ impl WorkspaceState {
         let row = ENTRY_HEIGHT;
         let top = selected as f32 * row;
         let bottom = top + row;
-        if top < self.menu_scroll {
-            self.menu_scroll = top;
-        } else if bottom > self.menu_scroll + LIST_HEIGHT - 12.0 {
-            self.menu_scroll = bottom - LIST_HEIGHT + 12.0;
+        if top < self.menu_scroll.offset() {
+            self.menu_scroll.jump_to(top);
+        } else if bottom > self.menu_scroll.offset() + LIST_HEIGHT - 12.0 {
+            self.menu_scroll.jump_to(bottom - LIST_HEIGHT + 12.0);
         }
     }
 }

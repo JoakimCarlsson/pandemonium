@@ -2,7 +2,7 @@
 //! between panes, rows of the project's files into folders, and the
 //! minimap of the file shown.
 
-use pm_components::kit::FocusId;
+use pm_components::focus::FocusId;
 use pm_components::minimap::MINIMAP;
 use pm_components::sash::{REVIEW_SASH, SIDEBAR_SASH};
 use pm_components::state::PROJECT_BASE;
@@ -14,8 +14,8 @@ use crate::snapshot::Shot;
 /// The first region drawn whose name `pick` accepts, from the end of the
 /// list when `last`.
 fn region_where(rig: &Rig, last: bool, pick: impl Fn(&Screen, FocusId) -> bool) -> FocusId {
-    let report = rig.report();
-    let mut ids = report.regions.iter().map(|region| region.id);
+    let tagged = rig.tagged();
+    let mut ids = tagged.iter().map(|node| node.id);
     let found = if last {
         ids.rev().find(|id| rig.read(|screen| pick(screen, *id)))
     } else {
@@ -75,6 +75,27 @@ fn projects_reorder_by_dragging() {
     assert_eq!(after.iter().position(|name| *name == before[0]), Some(2));
 }
 
+/// A project header pressed and moved less than the distance a drag takes stays where it
+/// is: the press is a click, not a drag.
+#[test]
+fn a_short_move_of_a_project_is_no_drag() {
+    let mut rig = Rig::shot(Shot::Workspace);
+    let names = |rig: &Rig| {
+        rig.state(|state| {
+            state
+                .projects
+                .iter()
+                .map(|project| project.name.clone())
+                .collect::<Vec<_>>()
+        })
+    };
+    let before = names(&rig);
+    let from = rig.center(FocusId(PROJECT_BASE));
+    rig.drag(from, (from.0 + 3.0, from.1 + 4.0), 4);
+    assert_eq!(names(&rig), before);
+    assert!(rig.state(|state| state.project_drag.is_none()));
+}
+
 /// Dragging a tab of one pane into the other moves it there.
 #[test]
 fn tabs_move_between_panes() {
@@ -110,7 +131,7 @@ fn files_drag_into_folders() {
     rig.move_to((from.0, from.1 - 20.0));
     rig.move_to(to);
     assert!(rig.read(Screen::tree_dragging));
-    rig.key(pm_components::kit::Key::Escape);
+    rig.key(rustle::Key::Escape);
     assert!(!rig.read(Screen::tree_dragging));
     rig.button_in(None, winit::event::MouseButton::Left, false, to);
     let _ = rig.app.borrow_mut().work.asked();
@@ -128,15 +149,20 @@ fn files_drag_into_folders() {
 #[test]
 fn the_minimap_scrolls_the_file() {
     let mut rig = Rig::shot(Shot::Code);
-    let map = rig.report().region(MINIMAP).expect("the minimap is drawn");
-    let viewer = pm_components::git_controls::VIEWER_SCROLL;
-    let before = rig.report().scroller(viewer).map(|held| held.offset);
+    let map = rig.region(MINIMAP).expect("the minimap is drawn");
+    let scrolled = |rig: &Rig| {
+        rig.read(|screen| {
+            let Screen::Workspace(state) = screen;
+            state.shown_viewer().map(|viewer| viewer.scroll.offset())
+        })
+    };
+    let before = scrolled(&rig);
     let at = (
         map.origin.x + map.size.width / 2.0,
         map.origin.y + map.size.height / 2.0,
     );
     rig.drag(at, (at.0, at.1 - 1.0), 1);
-    let after = rig.report().scroller(viewer).map(|held| held.offset);
+    let after = scrolled(&rig);
     assert_ne!(before, after);
 }
 
@@ -144,16 +170,15 @@ fn the_minimap_scrolls_the_file() {
 #[test]
 fn the_gutter_marks_lines_for_a_comment() {
     let mut rig = Rig::shot(Shot::Diff);
-    let report = rig.report();
-    let mut gutters: Vec<(FocusId, f32, f32)> = report
-        .regions
+    let mut gutters: Vec<(FocusId, f32, f32)> = rig
+        .tagged()
         .iter()
-        .filter(|region| pm_components::diff::gutter_of(region.id).is_some())
-        .map(|region| {
+        .filter(|node| pm_components::diff::gutter_of(node.id).is_some())
+        .map(|node| {
             (
-                region.id,
-                region.rect.origin.x + region.rect.size.width / 2.0,
-                region.rect.origin.y + region.rect.size.height / 2.0,
+                node.id,
+                node.visible.origin.x + node.visible.size.width / 2.0,
+                node.visible.origin.y + node.visible.size.height / 2.0,
             )
         })
         .collect();

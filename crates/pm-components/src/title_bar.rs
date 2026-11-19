@@ -1,9 +1,15 @@
 //! The bar across the top of the window: back and forward, the command center naming where the window is, the button that opens a newer release while one is out, the settings, and the controls of a window the desktop draws no frame around.
 
-use crate::kit::sp;
-use crate::kit::{FocusId, IconName, Interactive, Role, Side, Styled, Tooltip};
+use crate::events::Interactive;
+use crate::events::reduce;
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::theme;
+use crate::theme::Role;
+use crate::theme::sp;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, row_arranged};
+use std::rc::Rc;
 
 use crate::Button;
 use crate::button::Variant;
@@ -110,22 +116,33 @@ impl TitleBar {
         let own = Modifier::new()
             .fill_max_width()
             .height(TITLE_BAR_HEIGHT)
-            .fill(Role::Sidebar)
-            .stroke_side(Side::Bottom, 1.0, Role::Border)
-            .target(TITLE_BAR);
+            .background(theme::color(Role::Sidebar))
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .control(TITLE_BAR, reduce(TITLE_BAR));
         rustle::layout(own, BarLayout, move || {
             row_arranged(
-                Modifier::new().fill_max_height().pad_x(2),
+                Modifier::new()
+                    .fill_max_height()
+                    .padding_xy(theme::sp(2), 0.0),
                 Arrangement::SpacedBy(sp(0.5)),
                 Alignment::Center,
                 || {
                     rustle::spacer(Modifier::new().width(DESKTOP_CONTROLS));
                     if navigation {
+                        let back = crate::events::operations();
                         Button::icon(IconName::ArrowLeft, GO_BACK)
-                            .modifier(Modifier::new().tooltip("Go Back"))
+                            .on_click(move || back.navigate(-1))
+                            .tooltip("Go Back")
                             .build();
+                        let forward = crate::events::operations();
                         Button::icon(IconName::ArrowRight, GO_FORWARD)
-                            .modifier(Modifier::new().tooltip("Go Forward"))
+                            .on_click(move || forward.navigate(1))
+                            .tooltip("Go Forward")
                             .build();
                     }
                 },
@@ -143,11 +160,8 @@ impl TitleBar {
                             .variant(Variant::Ghost)
                             .tone(Role::Accent)
                             .size(Size::Sm)
-                            .modifier(
-                                Modifier::new()
-                                    .pad_side(Side::Right, 1)
-                                    .tooltip("A newer language or language server is available"),
-                            )
+                            .modifier(Modifier::new().padding_each(0.0, 0.0, theme::sp(1), 0.0))
+                            .tooltip("A newer language or language server is available")
                             .build();
                     }
                     if self.update {
@@ -155,11 +169,8 @@ impl TitleBar {
                             .variant(Variant::Ghost)
                             .tone(Role::Accent)
                             .size(Size::Sm)
-                            .modifier(
-                                Modifier::new()
-                                    .pad_side(Side::Right, 1)
-                                    .tooltip("Update Available"),
-                            )
+                            .modifier(Modifier::new().padding_each(0.0, 0.0, theme::sp(1), 0.0))
+                            .tooltip("Update Available")
                             .build();
                     }
                     if navigation {
@@ -182,7 +193,7 @@ impl TitleBar {
                             self.review_open,
                         );
                         Button::icon(IconName::Settings, SETTINGS)
-                            .modifier(Modifier::new().tooltip("Open Settings"))
+                            .tooltip("Open Settings")
                             .build();
                     }
                     if FRAMELESS {
@@ -277,14 +288,16 @@ fn layout_toggle(icon: IconName, id: FocusId, words: &str, open: bool) {
     };
     Button::icon(icon, id)
         .mark(move || crate::parts::glyph(mark, 5.0, Role::Muted))
-        .modifier(Modifier::new().tooltip(words))
+        .tooltip(words)
         .build();
 }
 
 /// Emits the box in the middle of the bar that says where the window is pointed and lists every command when it is pressed.
 #[track_caller]
 fn command_center(place: String) {
+    let operations = crate::events::operations();
     Button::new(place, COMMAND_CENTER)
+        .on_click(move || operations.open_command_palette())
         .variant(Variant::Field)
         .with_icon(IconName::Search)
         .tone(Role::Subtle)
@@ -298,8 +311,9 @@ fn command_center(place: String) {
             Modifier::new()
                 .width_in(COMMAND_CENTER_MIN_WIDTH, COMMAND_CENTER_WIDTH)
                 .height(COMMAND_CENTER_HEIGHT)
-                .tooltip("Show All Commands"),
+                .chain(crate::bounds::placed(COMMAND_CENTER, Modifier::new())),
         )
+        .tooltip("Show All Commands")
         .build();
 }
 
@@ -307,24 +321,38 @@ fn command_center(place: String) {
 #[track_caller]
 fn window_controls(close_only: bool) {
     row_arranged(
-        Modifier::new().pad_x(1.5).fill_max_height(),
+        Modifier::new()
+            .padding_xy(theme::sp(1.5), 0.0)
+            .fill_max_height(),
         Arrangement::SpacedBy(sp(0.5)),
         Alignment::Center,
         || {
+            let operations = crate::events::operations();
             if !close_only {
-                control(IconName::Minus, WINDOW_MINIMIZE, "Minimize");
-                control(IconName::Maximize, WINDOW_MAXIMIZE, "Maximize");
+                let minimize = Rc::clone(&operations);
+                control(IconName::Minus, WINDOW_MINIMIZE, "Minimize", move || {
+                    minimize.minimize_window()
+                });
+                let maximize = Rc::clone(&operations);
+                control(IconName::Maximize, WINDOW_MAXIMIZE, "Maximize", move || {
+                    maximize.toggle_maximized()
+                });
             }
-            control(IconName::Close, WINDOW_CLOSE, "Close");
+            control(IconName::Close, WINDOW_CLOSE, "Close", move || {
+                operations.close_window()
+            });
         },
     );
 }
 
-/// Emits one control of the window, showing `icon`, answering to `id` and named `words`.
+/// Emits one control of the window, showing `icon`, answering to `id`, named `words` and
+/// running `on_click` when clicked.
 #[track_caller]
-fn control(icon: IconName, id: FocusId, words: &str) {
+fn control(icon: IconName, id: FocusId, words: &str, on_click: impl Fn() + 'static) {
     Button::icon(icon, id)
-        .modifier(Modifier::new().width(32.0).tooltip(words))
+        .on_click(on_click)
+        .modifier(Modifier::new().width(32.0))
+        .tooltip(words)
         .build();
 }
 
@@ -351,9 +379,4 @@ fn whereabouts(state: &WorkspaceState) -> String {
         Page::Extensions => Some("Extensions".to_owned()),
     };
     named.unwrap_or_else(|| "Search commands".to_owned())
-}
-
-/// Whether `id` is one of the controls of the window.
-pub fn is_window_control(id: FocusId) -> bool {
-    [WINDOW_MINIMIZE, WINDOW_MAXIMIZE, WINDOW_CLOSE].contains(&id)
 }

@@ -1,19 +1,24 @@
 //! Finding and replacing text in the file shown: the bar over its top right corner, what it looks for, and the matches it steps through.
 
+use crate::events::reduce;
+use crate::theme;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use std::ops::Range;
 
 use pm_editor::{Document, Query};
-use pm_field::{Edit, Field};
+use pm_field::Edit;
+use rustle::TextFieldState;
 use rustle::{BoxAlignment, CursorIcon, Modifier};
 
 use crate::button::{Button, Variant};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::IconName;
 use crate::input::Input;
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Styled, Type, label_with, sp,
-};
+use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::WorkspaceState;
+use crate::theme::{Radius, Role, sp};
 
 /// The field the text looked for is typed in.
 pub const FIND_FIELD: FocusId = FocusId(7_402_100);
@@ -64,9 +69,9 @@ type Matches = Result<Vec<Range<usize>>, String>;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Finding {
     /// What is looked for.
-    pub query: Field,
+    pub query: TextFieldState,
     /// What replaces it.
-    pub replacement: Field,
+    pub replacement: TextFieldState,
     /// Whether the row for replacing shows.
     pub replacing: bool,
     /// Whether upper and lower case must match.
@@ -122,8 +127,8 @@ impl WorkspaceState {
             .filter(|selected| !selected.is_empty() && !selected.contains('\n'))
             .filter(|_| self.editor.seed_search_from_selection);
         let mut finding = self.finding.take().unwrap_or(Finding {
-            query: Field::new(""),
-            replacement: Field::new(""),
+            query: TextFieldState::new(""),
+            replacement: TextFieldState::new(""),
             replacing,
             case: false,
             word: false,
@@ -132,9 +137,9 @@ impl WorkspaceState {
         });
         finding.replacing |= replacing;
         if let Some(selected) = selected {
-            finding.query = Field::new(selected);
+            finding.query = TextFieldState::new(selected);
         }
-        finding.query.apply(Edit::SelectAll);
+        finding.query.select_all();
         let mode = self.editor.auto_find_in_selection;
         if let Some(document) = self.shown_text() {
             let selected = document.field.selected().to_owned();
@@ -198,12 +203,11 @@ impl WorkspaceState {
         self
     }
 
-    /// The state after the text looked for was changed by `edit`: the first match from the selection on is selected.
-    pub fn find_typed(mut self, edit: Edit) -> Self {
-        let Some(finding) = self.finding.as_mut() else {
+    /// The state after the reader changed the text looked for: the first match from the selection on is selected.
+    pub fn find_typed(self) -> Self {
+        if self.finding.is_none() {
             return self;
-        };
-        finding.query.apply(edit);
+        }
         self.select_first_match()
     }
 
@@ -217,14 +221,6 @@ impl WorkspaceState {
             .and_then(|document| document.first_match_edit(&matches));
         if let Some(edit) = edit {
             self.file_edited(edit);
-        }
-        self
-    }
-
-    /// The state after the replacement was changed by `edit`.
-    pub fn replacement_typed(mut self, edit: Edit) -> Self {
-        if let Some(finding) = self.finding.as_mut() {
-            finding.replacement.apply(edit);
         }
         self
     }
@@ -341,23 +337,27 @@ impl WorkspaceState {
 #[track_caller]
 pub(crate) fn switch(label: &str, id: FocusId, on: bool) {
     let looks = if on {
-        Looks::new().idle(Role::SurfaceActive)
+        theme::InteractionTones::new().idle(Role::SurfaceActive)
     } else {
-        Looks::new()
+        theme::InteractionTones::new()
     }
     .hover(Role::SurfaceHover)
     .radius(Radius::Sm);
-    let mut own = Modifier::new().w(6.5).h(6).looks_of(looks, id);
+    let mut own = Modifier::new()
+        .width(theme::sp(6.5))
+        .height(theme::sp(6))
+        .interaction_focused(crate::focus::is_held(id))
+        .interaction_background((looks).colors());
     if on {
-        own = own.stroke(Role::Accent, Radius::Sm);
+        own = own
+            .border(1.0, theme::color(Role::Accent), Radius::Sm.px())
+            .padding(1.0);
     }
-    let own = own.cursor(CursorIcon::Pointer).target(id);
-    let kind = Type::new(11)
-        .ratio(1.2)
-        .mono()
-        .tone(if on { Role::Text } else { Role::Subtle });
+    let own = own.cursor(CursorIcon::Pointer).control(id, reduce(id));
+    let kind =
+        theme::mono_style(11, 1.2).color(theme::color(if on { Role::Text } else { Role::Subtle }));
     row_arranged(own, Arrangement::Center, Alignment::Center, || {
-        crate::kit::label(label, kind);
+        styled_text(Modifier::new(), label, kind);
     });
 }
 
@@ -394,13 +394,14 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
         Modifier::new()
             .wrap_content_width(BoxAlignment::TopEnd, true)
             .align(BoxAlignment::TopEnd)
-            .at(-sp(6), sp(2))
+            .offset(-sp(6), sp(2))
             .z_index(40)
-            .shadows(&SHADOW, Radius::Md)
-            .fill_rounded(Role::Surface, Radius::Md)
-            .stroke(Role::Border, Radius::Md)
-            .target(FIND_BAR)
-            .pad(1),
+            .draw_behind(theme::shadows(&SHADOW, Radius::Md))
+            .background_rounded(theme::color(Role::Surface), Radius::Md.px())
+            .border(1.0, theme::color(Role::Border), Radius::Md.px())
+            .padding(1.0)
+            .control(FIND_BAR, reduce(FIND_BAR))
+            .padding(theme::sp(1)),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Start,
         || {
@@ -420,10 +421,12 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
                     switch("ab", FIND_WORD, finding.word);
                     switch(".*", FIND_REGEX, finding.regex);
                     switch("sel", FIND_IN_SELECTION, finding.scoped);
-                    label_with(
-                        Modifier::new().width(84.0).pad_x(1),
+                    styled_text(
+                        Modifier::new().width(84.0).padding_xy(theme::sp(1), 0.0),
                         said,
-                        Type::new(11).ratio(1.4).tone(tone).truncate(),
+                        theme::text_style(11, 1.4)
+                            .color(theme::color(tone))
+                            .max_lines(1),
                     );
                     Button::icon(IconName::ArrowUp, FIND_PREVIOUS).build();
                     Button::icon(IconName::ArrowDown, FIND_NEXT).build();
@@ -436,7 +439,7 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
                     Arrangement::SpacedBy(sp(1)),
                     Alignment::Center,
                     || {
-                        rustle::spacer(Modifier::new().w(7));
+                        rustle::spacer(Modifier::new().width(theme::sp(7)));
                         Input::new(&finding.replacement, REPLACE_FIELD)
                             .size(Size::Sm)
                             .placeholder("Replace")

@@ -14,9 +14,11 @@
 - Keep dependencies pointing down the layers. Pages use components; components
   never depend on pages. Keep domain work on the server and the `pandemonium`
   binary limited to wiring the layers together.
-- Build interface elements as rustle composables with the kit in
-  `pm-components/src/kit` and the existing component APIs; the binary hosts
-  them with `rustle::Host`. Use winit and wgpu, through rustle, for portability.
+- Build interface elements as rustle composables and rustle widgets themed
+  through rustle's theme (`pm-components/src/theme` provides it), with plain
+  rustle modifiers, text styles and interaction support and the existing
+  component APIs; the binary hosts them with `rustle::Host`. Use winit and
+  wgpu, through rustle, for portability.
 - Give each operation one implementation. Reuse the same path for session
   creation, project resolution and worktree teardown wherever it is called.
 - When a control is repeated or needed by a second page, extract it into

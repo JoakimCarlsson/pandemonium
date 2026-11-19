@@ -716,7 +716,7 @@ impl Setting {
                 .collect()
         };
         match self {
-            Self::LightTheme | Self::DarkTheme => crate::kit::theme::families()
+            Self::LightTheme | Self::DarkTheme => crate::theme::families()
                 .iter()
                 .map(|family| family.name.to_owned())
                 .collect(),

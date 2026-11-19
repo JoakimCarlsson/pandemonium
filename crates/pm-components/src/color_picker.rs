@@ -1,8 +1,8 @@
 //! Choosing another colour for a stretch of the file that spells one: the colour typed in hex, the ways the language server offers to write it, and the one picked written in place of the stretch.
 
-use crate::kit::FocusId;
-use pm_field::{Edit, Field};
+use crate::focus::FocusId;
 use pm_protocol::{ColorPresentation, Span};
+use rustle::TextFieldState;
 
 use crate::state::{Outgoing, WorkspaceState};
 
@@ -58,7 +58,7 @@ pub struct ColorPicking {
     /// The colour as it is now, as red, green, blue and opacity from 0 to 255.
     pub color: [u8; 4],
     /// The colour as typed, in hex.
-    pub hex: Field,
+    pub hex: TextFieldState,
     /// The ways the language server offers to write the colour, as it last said.
     pub formats: Vec<ColorPresentation>,
     /// Where the box hangs, in logical pixels of the window.
@@ -127,8 +127,8 @@ impl WorkspaceState {
             document.position_of(range.end),
         );
         let version = document.version;
-        let mut hex = Field::new(hex_of(color));
-        hex.apply(Edit::SelectAll);
+        let hex = TextFieldState::new(hex_of(color));
+        hex.select_all();
         self.color_picking = Some(ColorPicking {
             session,
             path: path.clone(),
@@ -162,13 +162,12 @@ impl WorkspaceState {
         self
     }
 
-    /// Takes `edit` to the hex typed in the box; when it spells a colour other than the one held, the language server is asked how that can be written.
-    pub(crate) fn color_hex_edited(&mut self, edit: Edit) {
+    /// Takes in the hex the reader typed in the box; when it spells a colour other than the one held, the language server is asked how that can be written.
+    pub(crate) fn color_hex_typed(&mut self) {
         let Some(picking) = self.color_picking.as_mut() else {
             return;
         };
-        picking.hex.apply(edit);
-        let Some(color) = color_of(picking.hex.text()).filter(|color| *color != picking.color)
+        let Some(color) = color_of(&picking.hex.text()).filter(|color| *color != picking.color)
         else {
             return;
         };

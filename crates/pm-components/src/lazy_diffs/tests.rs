@@ -1,6 +1,6 @@
 //! Tests of keeping an opened file at the top of the diff while the diffs of the files above it arrive.
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 
 use crate::diff::offset_of;
 use crate::sample::Change;
@@ -53,12 +53,12 @@ fn opened_offset(state: &WorkspaceState) -> f32 {
 fn opened_file_stays_at_top_when_diffs_above_arrive() {
     let mut state = listed_workspace();
     state.open_change(OPENED);
-    let estimated = state.diff_scroll;
+    let estimated = state.diff_scroll.offset();
     assert_eq!(estimated, opened_offset(&state));
     let (asked, files) = diffs_above();
     let state = state.with_diffs(0, &asked, files);
-    assert!(state.diff_scroll > estimated);
-    assert_eq!(state.diff_scroll, opened_offset(&state));
+    assert!(state.diff_scroll.offset() > estimated);
+    assert_eq!(state.diff_scroll.offset(), opened_offset(&state));
 }
 
 /// Folding and unfolding a file above the opened one keeps the opened file's header at the top.
@@ -70,10 +70,10 @@ fn folding_above_keeps_opened_file_at_top() {
     state = state.with_diffs(0, &asked, files);
     state = state.after(FocusId(DIFF_FOLD_BASE));
     assert!(state.closed_diffs.contains(&path(0)));
-    assert_eq!(state.diff_scroll, opened_offset(&state));
+    assert_eq!(state.diff_scroll.offset(), opened_offset(&state));
     state = state.after(FocusId(DIFF_FOLD_BASE));
     assert!(!state.closed_diffs.contains(&path(0)));
-    assert_eq!(state.diff_scroll, opened_offset(&state));
+    assert_eq!(state.diff_scroll.offset(), opened_offset(&state));
 }
 
 /// Once the diff is scrolled by hand, diffs that arrive afterwards leave it where it was.
@@ -81,12 +81,13 @@ fn folding_above_keeps_opened_file_at_top() {
 fn diffs_after_a_scroll_leave_the_view_alone() {
     let mut state = listed_workspace();
     state.open_change(OPENED);
-    state = state.scrolled_diff(-40.0, 100_000.0);
-    let scrolled = state.diff_scroll;
+    state.diff_scroll.jump_to(state.diff_scroll.offset() - 40.0);
+    assert!(state.follow_scrolls());
+    let scrolled = state.diff_scroll.offset();
     let (asked, files) = diffs_above();
     let state = state.with_diffs(0, &asked, files);
-    assert_eq!(state.diff_scroll, scrolled);
-    assert_ne!(state.diff_scroll, opened_offset(&state));
+    assert_eq!(state.diff_scroll.offset(), scrolled);
+    assert_ne!(state.diff_scroll.offset(), opened_offset(&state));
 }
 
 /// Drawing the diff narrower than it was taken to be wraps the long lines above the opened file onto more rows, and the diff follows the opened file's header down.
@@ -107,8 +108,8 @@ fn narrower_diff_keeps_opened_file_at_top() {
         .collect();
     state = state.with_diffs(0, &asked, files);
     state.open_change(OPENED);
-    let (wide, narrow) = (state.diff_scroll, state.diff_width / 2.0);
+    let (wide, narrow) = (state.diff_scroll.offset(), state.diff_width / 2.0);
     let state = state.measured_diff(narrow);
-    assert!(state.diff_scroll > wide);
-    assert_eq!(state.diff_scroll, opened_offset(&state));
+    assert!(state.diff_scroll.offset() > wide);
+    assert_eq!(state.diff_scroll.offset(), opened_offset(&state));
 }

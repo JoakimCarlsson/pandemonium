@@ -1,30 +1,33 @@
 //! The pages of the settings panel that list servers: the agents that can be started and the tool servers every agent is started with, each with the ones added, a form to add or change one, and what the public registry offers.
 
-use crate::kit::sp;
-use pm_field::{Edit, Field};
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
 use pm_protocol::{McpServer, ToolListing};
+use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
 
 use crate::agent_list::AgentEntry;
 use crate::button::Variant;
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::IconName;
 use crate::input::Input;
-use crate::kit::{
-    FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, Type, label, scroll_area,
-};
 use crate::menu::Menu;
 use crate::parts::{glyph, line, wrap};
+use crate::select::styled_text;
 use crate::settings::{
     SETTINGS_ADD, SETTINGS_CANCEL, SETTINGS_DOCS, SETTINGS_ENV, SETTINGS_MENU_COPY,
     SETTINGS_MENU_EDIT, SETTINGS_MENU_REMOVE, SETTINGS_MENU_TOGGLE, SETTINGS_MENU_WEBSITE,
-    SETTINGS_NAME, SETTINGS_RELEASE, SETTINGS_SAVE, SETTINGS_SCROLL, SETTINGS_SEARCH,
-    SETTINGS_SEARCH_GO, SETTINGS_TARGET, SETTINGS_TOGGLE_AVAILABLE, SETTINGS_TOGGLE_INSTALLED,
-    Section,
+    SETTINGS_NAME, SETTINGS_RELEASE, SETTINGS_SAVE, SETTINGS_SEARCH, SETTINGS_SEARCH_GO,
+    SETTINGS_TARGET, SETTINGS_TOGGLE_AVAILABLE, SETTINGS_TOGGLE_INSTALLED, Section,
 };
 use crate::settings_ids::{INSTALLS, SERVER_MORES, SERVER_SWITCHES};
 use crate::settings_row::switch;
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
+use crate::theme::{Radius, Role};
 use crate::tile::Tile;
 use crate::update::Update;
 use crate::{Badge, Button};
@@ -95,11 +98,11 @@ pub struct ServerSettings {
     /// The words the tool registry was last searched for.
     pub searched: String,
     /// The box the list showing is searched with.
-    pub search: Field,
+    pub search: TextFieldState,
     /// The form for adding or changing a server, while one is open.
     pub form: Option<ServerForm>,
     /// How far the page showing is scrolled, in logical pixels.
-    pub scroll: f32,
+    pub scroll: rustle::ScrollState,
     /// Whether the list of what is installed is folded away.
     pub installed_folded: bool,
     /// Whether the list of what the registry offers is folded away.
@@ -142,11 +145,11 @@ pub struct ServerForm {
     /// The place in its list of the server being changed, or nothing for a new one.
     index: Option<usize>,
     /// What the server is called.
-    name: Field,
+    name: TextFieldState,
     /// The command that starts it, or the address it listens at.
-    target: Field,
+    target: TextFieldState,
     /// The environment it is started with, as `NAME=value` pairs.
-    env: Field,
+    env: TextFieldState,
     /// What it is for, kept from the registry listing it was opened from.
     description: String,
     /// Where its publisher describes it, kept from the registry listing it was opened from.
@@ -158,9 +161,9 @@ impl ServerForm {
     fn holding(index: Option<usize>, name: &str, target: &str, env: &[(String, String)]) -> Self {
         Self {
             index,
-            name: Field::new(name),
-            target: Field::new(target),
-            env: Field::new(written(env)),
+            name: TextFieldState::new(name),
+            target: TextFieldState::new(target),
+            env: TextFieldState::new(written(env)),
             description: String::new(),
             website: String::new(),
         }
@@ -217,17 +220,11 @@ impl WorkspaceState {
         self.settings_page.server_form = None;
         self.settings_page.models.form = None;
         self.settings_page.library.draft = None;
-        self.settings_servers.scroll = 0.0;
-        self.settings_servers.search = Field::default();
+        self.settings_servers.scroll.jump_to(0.0);
+        self.settings_servers.search = TextFieldState::default();
         if !self.settings_servers.searched.is_empty() {
             self.search_tools(String::new());
         }
-    }
-
-    /// The state after the page showing in the settings panel is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_settings(mut self, delta: f32, room: f32) -> Self {
-        self.settings_servers.scroll = (self.settings_servers.scroll + delta).clamp(0.0, room);
-        self
     }
 
     /// Asks the tool registry for what matches `query`.
@@ -294,7 +291,7 @@ impl WorkspaceState {
         let (name, target, env) = (
             form.name.text().trim().to_owned(),
             form.target.text().trim().to_owned(),
-            parsed(form.env.text()),
+            parsed(&form.env.text()),
         );
         if self.settings != Some(Section::McpServers) {
             return;
@@ -352,11 +349,6 @@ impl WorkspaceState {
     pub fn with_settings_menu(mut self, index: usize, at: (f32, f32)) -> Self {
         self.settings_servers.menu = Some(ServerMenu { index, at });
         self
-    }
-
-    /// Which server's menu button `id` is, if it is one.
-    pub fn settings_more_of(&self, id: FocusId) -> Option<usize> {
-        self.settings.and(SERVER_MORES.index_of(id))
     }
 
     /// Whether `id` names a row of the menu of a server that is open.
@@ -434,25 +426,8 @@ impl WorkspaceState {
         }
     }
 
-    /// The state after `edit` was made to the box `id` of the page.
-    pub(crate) fn server_form_edited(&mut self, id: FocusId, edit: Edit) {
-        if id == SETTINGS_SEARCH {
-            self.settings_servers.search.apply(edit);
-            return;
-        }
-        let Some(form) = self.settings_servers.form.as_mut() else {
-            return;
-        };
-        match id {
-            SETTINGS_NAME => form.name.apply(edit),
-            SETTINGS_TARGET => form.target.apply(edit),
-            SETTINGS_ENV => form.env.apply(edit),
-            _ => {}
-        }
-    }
-
     /// The box `id` of the page, if it is open and `id` names one.
-    pub(crate) fn server_form_field(&self, id: FocusId) -> Option<&Field> {
+    pub(crate) fn server_form_field(&self, id: FocusId) -> Option<&TextFieldState> {
         if id == SETTINGS_SEARCH {
             return Some(&self.settings_servers.search);
         }
@@ -615,8 +590,11 @@ fn summary(section: Section) -> &'static str {
 }
 
 /// The type of the title of a list or a row: `pixels` tall, medium weight, in `tone`, cut short at the edge of its box.
-fn title_type(pixels: u32, tone: Role) -> Type {
-    Type::new(pixels).ratio(1.4).tone(tone).truncate().medium()
+fn title_type(pixels: u32, tone: Role) -> rustle::TextStyle {
+    theme::text_style(pixels, 1.4)
+        .font_weight(rustle::FontWeight::MEDIUM)
+        .color(theme::color(tone))
+        .max_lines(1)
 }
 
 /// Emits the words `content` breaks into, one line under another, in no more than `room` logical pixels across.
@@ -645,13 +623,13 @@ pub(crate) fn page_title(section: Section) {
             if let Some(parent) = section.parent() {
                 line(parent.title(), 12, 1.4, Role::Muted);
             }
-            label(
+            styled_text(
+                Modifier::new(),
                 section.title(),
-                Type::new(22)
-                    .ratio(1.3)
-                    .tone(Role::Text)
-                    .truncate()
-                    .medium(),
+                theme::text_style(22, 1.3)
+                    .font_weight(rustle::FontWeight::MEDIUM)
+                    .color(theme::color(Role::Text))
+                    .max_lines(1),
             );
         },
     );
@@ -660,26 +638,23 @@ pub(crate) fn page_title(section: Section) {
 /// Emits what the right side of the window holds under the title of `section`: what it is for, then its settings, `room` logical pixels across, scrolled as the page showing is.
 #[track_caller]
 pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) {
-    scroll_area(
-        Modifier::new().weight(1.0).clip_to(Radius::None),
-        Scroll::from_start(SETTINGS_SCROLL, state.settings_servers.scroll),
+    column_arranged(
+        Modifier::new()
+            .weight(1.0)
+            .clip()
+            .vertical_scroll(&state.settings_servers.scroll)
+            .fill_max_width()
+            .padding_xy(theme::sp(8), 0.0)
+            .padding_each(0.0, 0.0, 0.0, theme::sp(6)),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             column_arranged(
-                Modifier::new()
-                    .fill_max_width()
-                    .pad_x(8)
-                    .pad_side(Side::Bottom, 6),
-                Arrangement::Start,
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(sp(4)),
                 Alignment::Start,
                 || {
-                    column_arranged(
-                        Modifier::new().fill_max_width(),
-                        Arrangement::SpacedBy(sp(4)),
-                        Alignment::Start,
-                        || {
-                            section_content(state, section, room);
-                        },
-                    );
+                    section_content(state, section, room);
                 },
             );
         },
@@ -736,7 +711,7 @@ fn section_content(state: &WorkspaceState, section: Section, room: f32) {
         Section::Agents => {
             about();
             crate::settings_pages::page_rows(state, section, room);
-            label("Explore", title_type(15, Role::Text));
+            styled_text(Modifier::new(), "Explore", title_type(15, Role::Text));
             for part in [
                 Section::AgentServers,
                 Section::McpServers,
@@ -826,9 +801,10 @@ pub(crate) fn boxed(rows: impl FnOnce()) {
     column_arranged(
         Modifier::new()
             .fill_max_width()
-            .fill_rounded(Role::Surface, Radius::Lg)
-            .stroke(Role::Border, Radius::Lg)
-            .clip_to(Radius::None),
+            .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
+            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+            .padding(1.0)
+            .clip(),
         Arrangement::Start,
         Alignment::Start,
         || {
@@ -836,7 +812,13 @@ pub(crate) fn boxed(rows: impl FnOnce()) {
                 let ruled = if place == last {
                     Modifier::new()
                 } else {
-                    Modifier::new().stroke_side(Side::Bottom, 1.0, Role::Border)
+                    Modifier::new()
+                        .draw_behind(theme::edge(
+                            theme::Side::Bottom,
+                            1.0,
+                            theme::color(Role::Border),
+                        ))
+                        .padding_each(0.0, 0.0, 0.0, 1.0)
                 };
                 held.modifier = Modifier::new()
                     .fill_max_width()
@@ -867,9 +849,14 @@ pub(crate) fn card(section: Section, count: String) {
         .modifier(
             Modifier::new()
                 .fill_max_width()
-                .fill_rounded(Role::Surface, Radius::Lg),
+                .background_rounded(theme::color(Role::Surface), Radius::Lg.px()),
         )
-        .inner(Modifier::new().stroke(Role::Border, Radius::Lg).pad(4))
+        .inner(
+            Modifier::new()
+                .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+                .padding(1.0)
+                .padding(theme::sp(4)),
+        )
         .alignment(Alignment::Start)
         .build_with(|| {
             column_arranged(
@@ -882,7 +869,11 @@ pub(crate) fn card(section: Section, count: String) {
                         Arrangement::SpaceBetween,
                         Alignment::Center,
                         || {
-                            label(section.title(), title_type(14, Role::Text));
+                            styled_text(
+                                Modifier::new(),
+                                section.title(),
+                                title_type(14, Role::Text),
+                            );
                             line(count, 12, 1.4, Role::Muted);
                         },
                     );
@@ -896,7 +887,9 @@ pub(crate) fn card(section: Section, count: String) {
 #[track_caller]
 pub(crate) fn flat_row(content: impl FnOnce()) {
     row_arranged(
-        Modifier::new().pad_x(3).pad_y(3),
+        Modifier::new()
+            .padding_xy(theme::sp(3), 0.0)
+            .padding_xy(0.0, theme::sp(3)),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         content,
@@ -1017,14 +1010,14 @@ fn heading(title: &str, count: usize, open: bool, toggle: FocusId) {
     };
     row_arranged(
         Modifier::new()
-            .h(9)
+            .height(theme::sp(9))
             .cursor(CursorIcon::Pointer)
-            .target(toggle),
+            .control(toggle, reduce(toggle)),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         || {
             glyph(chevron, 4.0, Role::Muted);
-            label(title, title_type(15, Role::Text));
+            styled_text(Modifier::new(), title, title_type(15, Role::Text));
             Badge::new(count.to_string()).build();
         },
     );
@@ -1034,11 +1027,11 @@ fn heading(title: &str, count: usize, open: bool, toggle: FocusId) {
 #[track_caller]
 pub(crate) fn heading_only(title: &str, count: usize) {
     row_arranged(
-        Modifier::new().h(9),
+        Modifier::new().height(theme::sp(9)),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         || {
-            label(title, title_type(15, Role::Text));
+            styled_text(Modifier::new(), title, title_type(15, Role::Text));
             Badge::new(count.to_string()).build();
         },
     );
@@ -1198,14 +1191,17 @@ fn offer(index: usize, title: &str, description: &str, how: &str, action: &str, 
     });
     flat_row(|| {
         column_arranged(
-            Modifier::new().weight(1.0).clip_to(Radius::None),
+            Modifier::new().weight(1.0).clip(),
             Arrangement::SpacedBy(sp(1)),
             Alignment::Start,
             || {
-                label(title, title_type(13, Role::Text));
-                label(
+                styled_text(Modifier::new(), title, title_type(13, Role::Text));
+                styled_text(
+                    Modifier::new(),
                     description,
-                    Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
+                    theme::text_style(12, 1.4)
+                        .color(theme::color(Role::Muted))
+                        .max_lines(1),
                 );
             },
         );
@@ -1215,13 +1211,12 @@ fn offer(index: usize, title: &str, description: &str, how: &str, action: &str, 
             Alignment::Center,
             || {
                 if !how.is_empty() {
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         how,
-                        Type::new(11)
-                            .ratio(1.5)
-                            .tone(Role::Subtle)
-                            .truncate()
-                            .mono(),
+                        theme::mono_style(11, 1.5)
+                            .color(theme::color(Role::Subtle))
+                            .max_lines(1),
                     );
                 }
                 if let Some(button) = button {
@@ -1238,7 +1233,7 @@ fn installed_row(shown: InstalledRow) {
     let dim = shown.enabled == Some(false);
     flat_row(|| {
         column_arranged(
-            Modifier::new().weight(1.0).clip_to(Radius::None),
+            Modifier::new().weight(1.0).clip(),
             Arrangement::SpacedBy(sp(1)),
             Alignment::Start,
             || {
@@ -1247,7 +1242,8 @@ fn installed_row(shown: InstalledRow) {
                     Arrangement::SpacedBy(sp(2)),
                     Alignment::Center,
                     || {
-                        label(
+                        styled_text(
+                            Modifier::new(),
                             shown.title.as_str(),
                             title_type(13, if dim { Role::Muted } else { Role::Text }),
                         );
@@ -1257,14 +1253,20 @@ fn installed_row(shown: InstalledRow) {
                     },
                 );
                 if !shown.description.is_empty() {
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         shown.description.as_str(),
-                        Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
+                        theme::text_style(12, 1.4)
+                            .color(theme::color(Role::Muted))
+                            .max_lines(1),
                     );
                 }
-                label(
+                styled_text(
+                    Modifier::new(),
                     shown.detail.as_str(),
-                    Type::new(11).ratio(1.4).tone(Role::Subtle).truncate(),
+                    theme::text_style(11, 1.4)
+                        .color(theme::color(Role::Subtle))
+                        .max_lines(1),
                 );
             },
         );
@@ -1279,7 +1281,12 @@ fn installed_row(shown: InstalledRow) {
                     switch(on, SERVER_SWITCHES.id(place));
                 }
                 if let Some(more) = shown.place.and_then(|place| SERVER_MORES.id(place)) {
-                    Button::icon(IconName::More, more).size(Size::Sm).build();
+                    let operations = crate::events::operations();
+                    let index = shown.place.unwrap_or_default();
+                    Button::icon(IconName::More, more)
+                        .on_click(move || operations.open_settings_menu(index))
+                        .size(Size::Sm)
+                        .build();
                 }
             },
         );
@@ -1300,9 +1307,10 @@ fn form_node(form: &ServerForm, section: Section) {
     column_arranged(
         Modifier::new()
             .fill_max_width()
-            .fill_rounded(Role::Surface, Radius::Lg)
-            .stroke(Role::Border, Radius::Lg)
-            .pad(4),
+            .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
+            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+            .padding(1.0)
+            .padding(theme::sp(4)),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Start,
         || {
@@ -1330,7 +1338,7 @@ fn form_node(form: &ServerForm, section: Section) {
 
 /// Emits a box under the words that say what is written in it.
 #[track_caller]
-fn labelled(words: &str, field: &Field, id: FocusId, placeholder: &str) {
+fn labelled(words: &str, field: &TextFieldState, id: FocusId, placeholder: &str) {
     column_arranged(
         Modifier::new().fill_max_width(),
         Arrangement::SpacedBy(sp(1)),

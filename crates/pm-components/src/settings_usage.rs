@@ -1,11 +1,14 @@
 //! The usage page of the settings window: what the sessions of every connected server used over the last days, as headline totals, a bar for each day stacked by model, a row for each model and the sessions that used most.
 
-use crate::kit::sp;
+use crate::theme;
+use crate::theme::sp;
 use pm_protocol::{UsageDay, UsageModel, UsageReport, UsageSession, UsageTotals};
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
-use crate::kit::{FocusId, Radius, Role, Side, Styled, Tone, Tooltip, Type, label};
+use crate::focus::FocusId;
+use crate::select::styled_text;
+use crate::theme::{Radius, Role, Tone};
 
 use crate::BarRow;
 use crate::parts::line;
@@ -333,20 +336,21 @@ fn headline(title: &str, value: String, more: String, width: f32) {
     column_arranged(
         Modifier::new()
             .width(width)
-            .fill_rounded(Role::Surface, Radius::Lg)
-            .stroke(Role::Border, Radius::Lg)
-            .pad(3),
+            .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
+            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+            .padding(1.0)
+            .padding(theme::sp(3)),
         Arrangement::SpacedBy(sp(0.5)),
         Alignment::Start,
         || {
             line(title, 12, 1.4, Role::Muted);
-            label(
+            styled_text(
+                Modifier::new(),
                 value,
-                Type::new(18)
-                    .ratio(1.3)
-                    .tone(Role::Text)
-                    .truncate()
-                    .medium(),
+                theme::text_style(18, 1.3)
+                    .font_weight(rustle::FontWeight::MEDIUM)
+                    .color(theme::color(Role::Text))
+                    .max_lines(1),
             );
             line(more, 12, 1.4, Role::Muted);
         },
@@ -400,29 +404,28 @@ fn day_bar(day: &UsageDay, series: &[String], measure: Measure, most: u64, width
     let whole: u64 = amounts.iter().sum();
     let parts = heights(&amounts, most, CHART_HEIGHT);
     let said = format!("{}: {}", day_label(&day.day), figure(whole, measure));
-    column_arranged(
-        Modifier::new()
-            .width(width)
-            .height(CHART_HEIGHT)
-            .tooltip(said),
-        Arrangement::End,
-        Alignment::Start,
-        move || {
-            for (place, tall) in parts
-                .into_iter()
-                .enumerate()
-                .rev()
-                .filter(|(_, tall)| *tall > 0.0)
-            {
-                rustle::spacer(
-                    Modifier::new()
-                        .width(width)
-                        .height(tall.max(1.0))
-                        .fill(series_tone(place)),
-                );
-            }
-        },
-    );
+    crate::tooltip::with_tooltip(said, || {
+        column_arranged(
+            Modifier::new().width(width).height(CHART_HEIGHT),
+            Arrangement::End,
+            Alignment::Start,
+            move || {
+                for (place, tall) in parts
+                    .into_iter()
+                    .enumerate()
+                    .rev()
+                    .filter(|(_, tall)| *tall > 0.0)
+                {
+                    rustle::spacer(
+                        Modifier::new()
+                            .width(width)
+                            .height(tall.max(1.0))
+                            .background(theme::color(series_tone(place))),
+                    );
+                }
+            },
+        );
+    });
 }
 
 /// Emits one entry of the chart's legend: a swatch of `tone` and the name it stands for.
@@ -437,7 +440,7 @@ fn legend_entry(name: &str, tone: Tone) {
                 Modifier::new()
                     .width(8.0)
                     .height(8.0)
-                    .fill_rounded(tone, Radius::Sm),
+                    .background_rounded(theme::color(tone), Radius::Sm.px()),
             );
             line(name, 12, 1.4, Role::Muted);
         },
@@ -492,7 +495,12 @@ fn chart(report: &UsageReport, room: f32) {
                 Modifier::new()
                     .width(room)
                     .height(CHART_HEIGHT + 1.0)
-                    .stroke_side(Side::Bottom, 1.0, Role::Border)
+                    .draw_behind(theme::edge(
+                        theme::Side::Bottom,
+                        1.0,
+                        theme::color(Role::Border),
+                    ))
+                    .padding_each(0.0, 0.0, 0.0, 1.0)
                     .padding_each(0.0, 0.0, 0.0, 1.0),
                 Arrangement::SpaceBetween,
                 Alignment::End,
@@ -530,14 +538,13 @@ fn chart(report: &UsageReport, room: f32) {
 /// Emits the title of the chart, set medium, taking the room its row leaves and cut short at its edge.
 #[track_caller]
 fn label_grown(title: &str) {
-    crate::kit::label_with(
+    styled_text(
         Modifier::new().weight(1.0),
         title,
-        Type::new(15)
-            .ratio(1.4)
-            .tone(Role::Text)
-            .truncate()
-            .medium(),
+        theme::text_style(15, 1.4)
+            .font_weight(rustle::FontWeight::MEDIUM)
+            .color(theme::color(Role::Text))
+            .max_lines(1),
     );
 }
 
@@ -547,10 +554,17 @@ fn padded(last: bool, content: impl FnOnce()) {
     let own = if last {
         Modifier::new()
     } else {
-        Modifier::new().stroke_side(Side::Bottom, 1.0, Role::Border)
+        Modifier::new()
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
     };
     row_arranged(
-        own.pad_x(3).pad_y(3),
+        own.padding_xy(theme::sp(3), 0.0)
+            .padding_xy(0.0, theme::sp(3)),
         Arrangement::Start,
         Alignment::Start,
         content,

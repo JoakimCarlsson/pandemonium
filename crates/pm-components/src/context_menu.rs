@@ -1,9 +1,9 @@
 //! The menu that opens over a text field: its rows and the field it acts on.
 
-use pm_field::Field;
+use rustle::TextFieldState;
 
 use crate::Menu;
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 
 /// Takes back the last change to the field the menu was opened on.
 pub const MENU_UNDO: FocusId = FocusId(200);
@@ -154,7 +154,7 @@ pub const EDITOR_MENU_HEIGHT: f32 = 18.0 * 26.0 + 3.0 * 9.0 + 10.0;
 /// Emits the menu over the file shown, opened at `open`: the language server's ways around the code when `coding`, what the selection allows, and the file's place on this machine when it is on this machine, `local`; `keymap` names the keys of each command.
 #[track_caller]
 pub fn editor_menu(
-    field: &Field,
+    field: &pm_field::Field,
     open: ContextMenu,
     coding: bool,
     local: bool,
@@ -166,7 +166,10 @@ pub fn editor_menu(
         let keys = which.action().and_then(|action| keymap.label(action));
         menu.item(label, keys.as_deref(), which.id(), !on)
     };
-    let menu = Menu::new(open.at.0, open.at.1).width(66.0).row_height(6.5);
+    let menu = Menu::new(open.at.0, open.at.1)
+        .width(66.0)
+        .row_height(6.5)
+        .on_pick(picked_in_field());
     let menu = command(
         menu,
         "Go to Definition",
@@ -300,32 +303,27 @@ pub fn editor_menu(
     .build();
 }
 
-/// Emits the menu opened at `open`, with each row enabled by what `field` can do.
+/// What picking a row of a field's menu does: the app carries the row out on the field
+/// the menu is open over.
+fn picked_in_field() -> impl Fn(FocusId) + 'static {
+    let operations = crate::events::operations();
+    move |row| operations.field_menu_picked(row)
+}
+
+/// Emits the menu opened at `open`, with each row enabled by what `field` can
+/// do; nothing is copied or cut from a `secure` field.
 #[track_caller]
-pub fn field_menu(field: &Field, open: ContextMenu) {
-    let editable = !field.is_read_only();
+pub fn field_menu(field: &TextFieldState, open: ContextMenu, secure: bool) {
+    let undo = field.undo_state();
+    let copies = !secure && !field.selection().collapsed();
     Menu::new(open.at.0, open.at.1)
-        .item(
-            "Undo",
-            Some("Ctrl+Z"),
-            MENU_UNDO,
-            !(editable && field.can_undo()),
-        )
-        .item(
-            "Redo",
-            Some("Ctrl+Shift+Z"),
-            MENU_REDO,
-            !(editable && field.can_redo()),
-        )
+        .on_pick(picked_in_field())
+        .item("Undo", Some("Ctrl+Z"), MENU_UNDO, !undo.can_undo())
+        .item("Redo", Some("Ctrl+Shift+Z"), MENU_REDO, !undo.can_redo())
         .separator()
-        .item(
-            "Cut",
-            Some("Ctrl+X"),
-            MENU_CUT,
-            !(editable && field.can_copy()),
-        )
-        .item("Copy", Some("Ctrl+C"), MENU_COPY, !field.can_copy())
-        .item("Paste", Some("Ctrl+V"), MENU_PASTE, !editable)
+        .item("Cut", Some("Ctrl+X"), MENU_CUT, !copies)
+        .item("Copy", Some("Ctrl+C"), MENU_COPY, !copies)
+        .item("Paste", Some("Ctrl+V"), MENU_PASTE, false)
         .separator()
         .item(
             "Select all",

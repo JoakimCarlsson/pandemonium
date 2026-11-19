@@ -1,10 +1,14 @@
 //! The model slots of the settings window: the models page, with the job slots the harness asks a model for, such as `fast` for summaries and `plan` for plan mode, each with its model, effort and backups, the file a change is saved to, and the presets that set every slot at once; and what the orchestration page shares with it, the work categories the agent hands work to in orchestrator mode, each also with its description and prompt addition.
 
-use crate::kit::sp;
-use crate::kit::{FocusId, Hovered, IconName, Radius, Role, Side, Styled, Type, label, label_with};
-use pm_field::{Edit, Field};
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::select::styled_text;
+use crate::theme;
+use crate::theme::sp;
+use crate::theme::{Radius, Role};
 use pm_harness::{PresetInfo, SlotChange, SlotInfo, SlotScope, SlotSource};
 use rustle::Modifier;
+use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
 use crate::button::Variant;
@@ -155,9 +159,9 @@ pub struct SlotNotes {
     /// The category's name.
     pub name: String,
     /// The box for what kind of work the category is for, on one line.
-    pub description: Field,
+    pub description: TextFieldState,
     /// The box for the text added to the system prompt of a subagent started in the category, on several lines.
-    pub prompt: Field,
+    pub prompt: TextFieldState,
     /// Whether either box was changed since it was last saved.
     pub edited: bool,
 }
@@ -167,8 +171,8 @@ impl SlotNotes {
     fn told(name: &str, description: Option<&str>, prompt: Option<&str>) -> Self {
         Self {
             name: name.to_owned(),
-            description: Field::new(description.unwrap_or_default()),
-            prompt: Field::new(prompt.unwrap_or_default()).multiline(true),
+            description: TextFieldState::new(description.unwrap_or_default()),
+            prompt: TextFieldState::new(prompt.unwrap_or_default()),
             edited: false,
         }
     }
@@ -181,7 +185,7 @@ impl SlotNotes {
 }
 
 /// What is written in `field` with the space around it taken off, or nothing when that is empty.
-fn written(field: &Field) -> Option<String> {
+fn written(field: &TextFieldState) -> Option<String> {
     Some(field.text().trim().to_owned()).filter(|text| !text.is_empty())
 }
 
@@ -207,11 +211,11 @@ pub struct ModelSlots {
     /// The list of models open, while one is.
     pub picking: Option<SlotPicking>,
     /// The box a new slot is named in, on the models page.
-    pub new_slot: Field,
+    pub new_slot: TextFieldState,
     /// The box a new category is named in, on the orchestration page.
-    pub new_category: Field,
+    pub new_category: TextFieldState,
     /// The box a new preset is named in.
-    pub preset_name: Field,
+    pub preset_name: TextFieldState,
     /// Why the slots could not be read or changed, when the last attempt failed.
     pub error: Option<String>,
 }
@@ -275,22 +279,12 @@ impl ModelSlots {
             .collect();
     }
 
-    /// Writes `edit` into the box in `column` of the category at `row`, and marks its boxes as changed when the words did.
-    fn edit_notes(&mut self, row: usize, column: usize, edit: Edit) {
+    /// Marks the boxes of the category at `row` as changed, after the reader wrote in one.
+    fn notes_typed(&mut self, row: usize) {
         let Some(name) = self.name_at(row).map(str::to_owned) else {
             return;
         };
-        let Some(notes) = self.notes.iter_mut().find(|notes| notes.name == name) else {
-            return;
-        };
-        let field = if column == DESCRIPTION_COLUMN {
-            &mut notes.description
-        } else {
-            &mut notes.prompt
-        };
-        let before = field.text().to_owned();
-        field.apply(edit);
-        if field.text() != before {
+        if let Some(notes) = self.notes.iter_mut().find(|notes| notes.name == name) {
             notes.edited = true;
         }
     }
@@ -381,6 +375,11 @@ fn notes_cell(id: FocusId) -> Option<(usize, usize)> {
 /// Whether the box `id` saves what was written in it when the reader leaves it: the description and the prompt box of a category.
 pub(crate) fn saves_on_leaving(id: FocusId) -> bool {
     notes_cell(id).is_some()
+}
+
+/// Whether `id` names the box of a category's prompt, which holds several lines.
+pub(crate) fn is_prompt_field(id: FocusId) -> bool {
+    notes_cell(id).is_some_and(|(_, column)| column != DESCRIPTION_COLUMN)
 }
 
 /// Whether `id` names a box of the models or the orchestration page.
@@ -629,7 +628,7 @@ impl WorkspaceState {
                 let page = &mut self.settings_page.slots;
                 page.picking =
                     (page.picking != Some(SlotPicking::Provider)).then_some(SlotPicking::Provider);
-                self.settings_page.filter = Field::default();
+                self.settings_page.filter = TextFieldState::default();
             }
             SLOT_ADD => self.add_slot(),
             CATEGORY_ADD => self.add_category(),
@@ -663,7 +662,7 @@ impl WorkspaceState {
                 };
                 let page = &mut self.settings_page.slots;
                 page.picking = (page.picking != Some(wanted)).then_some(wanted);
-                self.settings_page.filter = Field::default();
+                self.settings_page.filter = TextFieldState::default();
             }
             SUGGEST_COLUMN => {
                 if let Some(suggested) = slot.suggested.clone() {
@@ -691,7 +690,7 @@ impl WorkspaceState {
                 page.expanded =
                     (page.expanded.as_deref() != Some(slot.name.as_str())).then_some(slot.name);
                 page.picking = None;
-                self.settings_page.filter = Field::default();
+                self.settings_page.filter = TextFieldState::default();
             }
             effort if (EFFORT_COLUMN..DESCRIPTION_COLUMN).contains(&effort) => {
                 let Some(model) = slot.model.as_deref() else {
@@ -756,7 +755,7 @@ impl WorkspaceState {
         let options = self.slot_model_choices();
         let shown = picker_shown(&options, &self.settings_page.filter);
         self.settings_page.slots.picking = None;
-        self.settings_page.filter = Field::default();
+        self.settings_page.filter = TextFieldState::default();
         let Some(chosen) = shown
             .get(row)
             .and_then(|place| options.get(*place))
@@ -798,7 +797,7 @@ impl WorkspaceState {
         let options = self.provider_choices();
         let shown = picker_shown(&options, &self.settings_page.filter);
         self.settings_page.slots.picking = None;
-        self.settings_page.filter = Field::default();
+        self.settings_page.filter = TextFieldState::default();
         let Some(place) = shown.get(row).copied() else {
             return;
         };
@@ -825,7 +824,7 @@ impl WorkspaceState {
     }
 
     /// The name written in `field` with the space around it taken off, when it can name a slot and no slot the pages show has it.
-    fn new_name(&self, field: &Field) -> Option<String> {
+    fn new_name(&self, field: &TextFieldState) -> Option<String> {
         let name = field.text().trim().to_owned();
         (valid_name(&name) && !self.slot_rows().iter().any(|slot| slot.name == name))
             .then_some(name)
@@ -838,7 +837,7 @@ impl WorkspaceState {
         };
         let page = &mut self.settings_page.slots;
         page.plain.push(name);
-        page.new_slot = Field::default();
+        page.new_slot = TextFieldState::default();
     }
 
     /// Adds the category named in the box of the orchestration page with its editor open, to describe and give a model, when the name is valid and not taken, and empties the box.
@@ -848,7 +847,7 @@ impl WorkspaceState {
         };
         let page = &mut self.settings_page.slots;
         page.added.push(name.clone());
-        page.new_category = Field::default();
+        page.new_category = TextFieldState::default();
         page.expanded = Some(name);
         page.picking = None;
         page.sync_notes();
@@ -866,27 +865,19 @@ impl WorkspaceState {
         if !valid_name(&name) {
             return;
         }
-        self.settings_page.slots.preset_name = Field::default();
+        self.settings_page.slots.preset_name = TextFieldState::default();
         self.change_slots(SlotChange::SavePreset { name, effort: None });
     }
 
-    /// Writes `edit` into the box `id` of the page.
-    pub(crate) fn slot_edited(&mut self, id: FocusId, edit: Edit) {
-        let page = &mut self.settings_page.slots;
-        match id {
-            SLOT_NEW_NAME => page.new_slot.apply(edit),
-            CATEGORY_NEW_NAME => page.new_category.apply(edit),
-            PRESET_NAME => page.preset_name.apply(edit),
-            _ => {
-                if let Some((row, column)) = notes_cell(id) {
-                    page.edit_notes(row, column, edit);
-                }
-            }
+    /// Takes in what the reader wrote in the box `id` of the page: a category's boxes are marked as changed.
+    pub(crate) fn slot_typed(&mut self, id: FocusId) {
+        if let Some((row, _)) = notes_cell(id) {
+            self.settings_page.slots.notes_typed(row);
         }
     }
 
     /// The box `id` of the page.
-    pub(crate) fn slot_field(&self, id: FocusId) -> Option<&Field> {
+    pub(crate) fn slot_field(&self, id: FocusId) -> Option<&TextFieldState> {
         let page = &self.settings_page.slots;
         match id {
             SLOT_NEW_NAME => Some(&page.new_slot),
@@ -968,15 +959,19 @@ fn backup_button(name: IconName, id: Option<FocusId>, disabled: bool) {
 fn backup_chip(place: usize, backup: &str, ids: [Option<FocusId>; 3], first: bool, last: bool) {
     row_arranged(
         Modifier::new()
-            .stroke(Role::Border, Radius::Md)
-            .pad_side(Side::Left, 2),
+            .border(1.0, theme::color(Role::Border), Radius::Md.px())
+            .padding(1.0)
+            .padding_each(theme::sp(2), 0.0, 0.0, 0.0),
         Arrangement::SpacedBy(sp(0.5)),
         Alignment::Center,
         || {
             line(format!("{}", place + 1), 11, 1.4, Role::Subtle);
-            label(
+            styled_text(
+                Modifier::new(),
                 backup,
-                Type::new(12).ratio(1.4).tone(Role::Text).truncate().mono(),
+                theme::mono_style(12, 1.4)
+                    .color(theme::color(Role::Text))
+                    .max_lines(1),
             );
             backup_button(IconName::ArrowUp, ids[0], first);
             backup_button(IconName::ArrowDown, ids[1], last);
@@ -1039,9 +1034,9 @@ fn labelled(label_text: &str, field: impl FnOnce()) {
     );
 }
 
-/// Emits the boxes of the category at `row`, each `room` logical pixels across: what it is for on one line, then what it adds to a subagent's system prompt on several.
+/// Emits the boxes of the category at `row`: what it is for on one line, then what it adds to a subagent's system prompt on several.
 #[track_caller]
-fn notes_node(row: usize, notes: &SlotNotes, room: f32) {
+fn notes_node(row: usize, notes: &SlotNotes) {
     let id = |column: usize| SLOT_CONTROLS.cell(row, column, SLOT_COLUMNS);
     column_arranged(
         Modifier::new().fill_max_width(),
@@ -1062,9 +1057,15 @@ fn notes_node(row: usize, notes: &SlotNotes, room: f32) {
                     column_arranged(
                         Modifier::new()
                             .fill_max_width()
-                            .fill_rounded(Role::Background, Radius::Md)
-                            .stroke_by_focus(id, Role::Border, Role::Accent, Radius::Md)
-                            .focus_of(id),
+                            .background_rounded(theme::color(Role::Background), Radius::Md.px())
+                            .interaction_focused(crate::focus::is_held(id))
+                            .draw_behind_interactive(theme::outline_by_focus(
+                                theme::color(Role::Border),
+                                theme::color(Role::Accent),
+                                Radius::Md,
+                            ))
+                            .padding(1.0)
+                            .interaction_focused(crate::focus::is_held(id)),
                         Arrangement::Start,
                         Alignment::Start,
                         || {
@@ -1072,7 +1073,6 @@ fn notes_node(row: usize, notes: &SlotNotes, room: f32) {
                                 .variant(input::Variant::Multiline)
                                 .placeholder("Added to a subagent's system prompt")
                                 .rows(PROMPT_ROWS)
-                                .wrap(input::inner_width(room))
                                 .build();
                         },
                     );
@@ -1164,7 +1164,7 @@ pub(crate) fn slot_controls(state: &WorkspaceState, row: usize, slot: &SlotRow, 
             open_list(state, row, SlotPicking::Model(row));
             backups_node(state, row, slot);
             if let Some(notes) = notes {
-                notes_node(row, notes, room);
+                notes_node(row, notes);
             }
         },
     );
@@ -1174,7 +1174,9 @@ pub(crate) fn slot_controls(state: &WorkspaceState, row: usize, slot: &SlotRow, 
 #[track_caller]
 pub(crate) fn slot_row(state: &WorkspaceState, row: usize, slot: &SlotRow, room: f32) {
     column_arranged(
-        Modifier::new().pad_x(3).pad_y(3),
+        Modifier::new()
+            .padding_xy(theme::sp(3), 0.0)
+            .padding_xy(0.0, theme::sp(3)),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Start,
         || {
@@ -1189,14 +1191,13 @@ pub(crate) fn slot_row(state: &WorkspaceState, row: usize, slot: &SlotRow, room:
                         Arrangement::SpacedBy(sp(2)),
                         Alignment::Center,
                         || {
-                            label(
+                            styled_text(
+                                Modifier::new(),
                                 format!("@{}", slot.name),
-                                Type::new(13)
-                                    .ratio(1.4)
-                                    .tone(Role::Text)
-                                    .truncate()
-                                    .mono()
-                                    .medium(),
+                                theme::text_style(13, 1.4)
+                                    .font_weight(rustle::FontWeight::MEDIUM)
+                                    .color(theme::color(Role::Text))
+                                    .max_lines(1),
                             );
                             source_badge(slot);
                         },
@@ -1245,7 +1246,9 @@ fn preset_summary(preset: &PresetInfo) -> String {
 fn preset_row(row: usize, preset: &PresetInfo) {
     let id = |column: usize| PRESET_CONTROLS.cell(row, column, PRESET_COLUMNS);
     row_arranged(
-        Modifier::new().pad_x(3).pad_y(3),
+        Modifier::new()
+            .padding_xy(theme::sp(3), 0.0)
+            .padding_xy(0.0, theme::sp(3)),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         || {
@@ -1254,18 +1257,20 @@ fn preset_row(row: usize, preset: &PresetInfo) {
                 Arrangement::SpacedBy(sp(0.5)),
                 Alignment::Start,
                 || {
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         preset.name.clone(),
-                        Type::new(13)
-                            .ratio(1.4)
-                            .tone(Role::Text)
-                            .truncate()
-                            .medium(),
+                        theme::text_style(13, 1.4)
+                            .font_weight(rustle::FontWeight::MEDIUM)
+                            .color(theme::color(Role::Text))
+                            .max_lines(1),
                     );
-                    label_with(
+                    styled_text(
                         Modifier::new(),
                         preset_summary(preset),
-                        Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
+                        theme::text_style(12, 1.4)
+                            .color(theme::color(Role::Muted))
+                            .max_lines(1),
                     );
                 },
             );
@@ -1294,7 +1299,12 @@ fn preset_row(row: usize, preset: &PresetInfo) {
 
 /// Emits a box and the button beside it that hands in what is written in it.
 #[track_caller]
-pub(crate) fn entry(field: &Field, id: FocusId, placeholder: &str, button: (&str, FocusId)) {
+pub(crate) fn entry(
+    field: &TextFieldState,
+    id: FocusId,
+    placeholder: &str,
+    button: (&str, FocusId),
+) {
     row_arranged(
         Modifier::new(),
         Arrangement::SpacedBy(sp(2)),
@@ -1689,14 +1699,14 @@ mod tests {
     /// A slot of the reader's own shows until it is set, and a name that is not valid or taken is refused.
     #[test]
     fn a_slot_of_ones_own_is_added() {
-        let state = open().edited(SLOT_NEW_NAME, Edit::Paste("docs".to_owned()));
+        let state = open().typed(SLOT_NEW_NAME, "docs");
         let state = state.settings_pressed(SLOT_ADD);
         let added = state.model_rows().pop().unwrap().1;
         assert_eq!(added.name, "docs");
         assert!(!added.category);
         assert!(state.category_cards().is_empty());
         let state = state
-            .edited(SLOT_NEW_NAME, Edit::Paste("fast".to_owned()))
+            .typed(SLOT_NEW_NAME, "fast")
             .settings_pressed(SLOT_ADD);
         assert_eq!(state.slot_rows().len(), 4);
         let mut book = pm_harness::SlotBook {
@@ -1713,7 +1723,7 @@ mod tests {
     #[test]
     fn presets_are_saved_applied_and_deleted() {
         let mut state = open()
-            .edited(PRESET_NAME, Edit::Paste("night".to_owned()))
+            .typed(PRESET_NAME, "night")
             .settings_pressed(PRESET_SAVE);
         assert_eq!(
             sent(&mut state),
@@ -1799,11 +1809,14 @@ mod tests {
             "Read every caller first."
         );
         assert_eq!(
-            state.field(cell(3, DESCRIPTION_COLUMN)).unwrap().text(),
+            state
+                .text_field(cell(3, DESCRIPTION_COLUMN))
+                .unwrap()
+                .text(),
             "Small changes."
         );
-        assert!(state.field(cell(4, PROMPT_COLUMN)).unwrap().is_multiline());
-        assert!(state.field(cell(1, DESCRIPTION_COLUMN)).is_none());
+        assert!(WorkspaceState::is_multiline(cell(4, PROMPT_COLUMN)));
+        assert!(state.text_field(cell(1, DESCRIPTION_COLUMN)).is_none());
         let listed: Vec<String> = state
             .model_rows()
             .into_iter()
@@ -1825,7 +1838,7 @@ mod tests {
         assert!(WorkspaceState::is_field(description));
         let state = with_categories()
             .settings_pressed(SLOTS_SCOPE_PROJECT)
-            .edited(description, Edit::Paste(" Slowly.".to_owned()));
+            .typed(description, " Slowly.");
         assert!(state.settings_page.slots.notes_of("deep").unwrap().edited);
         let mut state = state.settings_pressed(description);
         assert!(state.take_outbox().is_empty());
@@ -1851,10 +1864,10 @@ mod tests {
         assert!(!WorkspaceState::saves_on_leaving(SLOT_NEW_NAME));
         let mut state = with_categories().field_left(prompt);
         assert!(state.take_outbox().is_empty());
-        let mut state = state
-            .edited(prompt, Edit::SelectAll)
-            .edited(prompt, Edit::Backspace)
-            .field_left(prompt);
+        if let Some(field) = state.text_field(prompt) {
+            field.select_all();
+        }
+        let mut state = state.typed(prompt, "").field_left(prompt);
         assert_eq!(
             sent(&mut state),
             SlotChange::Describe {
@@ -1870,14 +1883,14 @@ mod tests {
     #[test]
     fn changed_boxes_outlast_the_slots_being_told() {
         let description = cell(3, DESCRIPTION_COLUMN);
-        let state = with_categories().edited(description, Edit::Paste(" Fast.".to_owned()));
+        let state = with_categories().typed(description, " Fast.");
         let book = pm_harness::SlotBook {
             slots: state.settings_page.slots.slots.clone(),
             presets: Vec::new(),
         };
         let state = state.with_model_slots(book);
         assert_eq!(
-            state.field(description).unwrap().text(),
+            state.text_field(description).unwrap().text(),
             "Small changes. Fast."
         );
         let mut state = state.settings_pressed(SLOTS_SCOPE_PROJECT);
@@ -1896,7 +1909,7 @@ mod tests {
     #[test]
     fn an_added_category_is_described() {
         let state = with_categories()
-            .edited(CATEGORY_NEW_NAME, Edit::Paste("docs".to_owned()))
+            .typed(CATEGORY_NEW_NAME, "docs")
             .settings_pressed(WorkspaceState::submit_of(CATEGORY_NEW_NAME));
         let rows = state.slot_rows();
         let added = rows.last().unwrap();
@@ -1905,12 +1918,9 @@ mod tests {
         assert_eq!(state.settings_page.slots.expanded.as_deref(), Some("docs"));
         assert_eq!(state.settings_page.slots.new_category.text(), "");
         let description = cell(rows.len() - 1, DESCRIPTION_COLUMN);
-        assert_eq!(state.field(description).unwrap().text(), "");
+        assert_eq!(state.text_field(description).unwrap().text(), "");
         let mut state = state
-            .edited(
-                description,
-                Edit::Paste("Writing documentation.".to_owned()),
-            )
+            .typed(description, "Writing documentation.")
             .field_left(description);
         assert_eq!(
             sent(&mut state),

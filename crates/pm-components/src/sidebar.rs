@@ -1,12 +1,14 @@
 //! The sidebar: ways to start and find work, the chats that belong to no project, and every project with its sessions.
 
+use crate::theme;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, BoxAlignment, column_arranged, row_arranged};
+use std::rc::Rc;
 
-use crate::kit::{
-    FocusId, IconName, Radius, Role, Side, Styled, Tooltip, Type, at_window, label_with, sp,
-    spinner,
-};
+use crate::focus::FocusId;
+use crate::icons::{IconName, spinner};
+use crate::select::styled_text;
+use crate::theme::{Radius, Role, sp};
 
 use crate::Avatar;
 use crate::Button;
@@ -72,7 +74,9 @@ pub const HEADING_HEIGHT: f32 = ROW;
 #[track_caller]
 fn heading(words: &str) {
     row_arranged(
-        Modifier::new().h(9).pad_x(2),
+        Modifier::new()
+            .height(theme::sp(9))
+            .padding_xy(theme::sp(2), 0.0),
         Arrangement::Start,
         Alignment::Center,
         || {
@@ -118,27 +122,34 @@ pub fn status_icon(status: Status) {
         Status::Idle => "Idle",
         Status::Unreachable => "Server out of reach",
     };
-    row_arranged(
-        Modifier::new().square(4).tooltip(meaning),
-        Arrangement::Center,
-        Alignment::Center,
-        move || match status {
-            Status::Working => spinner(3.5, Role::Muted),
-            Status::Unread => {
-                rustle::spacer(
-                    Modifier::new()
-                        .square(2)
-                        .fill_rounded(Role::Accent, Radius::Full),
-                );
-            }
-            Status::Error => glyph(IconName::Close, 3.5, Role::Danger),
-            Status::NeedsInput => glyph(IconName::Message, 3.5, Role::Warning),
-            Status::Unreachable => glyph(IconName::Plug, 3.5, Role::Warning),
-            Status::Idle => {
-                rustle::spacer(Modifier::new().square(2).stroke(Role::Subtle, Radius::Full));
-            }
-        },
-    );
+    crate::tooltip::with_tooltip(meaning, || {
+        row_arranged(
+            Modifier::new().size(theme::sp(4), theme::sp(4)),
+            Arrangement::Center,
+            Alignment::Center,
+            move || match status {
+                Status::Working => spinner(3.5, Role::Muted),
+                Status::Unread => {
+                    rustle::spacer(
+                        Modifier::new()
+                            .size(theme::sp(2), theme::sp(2))
+                            .background_rounded(theme::color(Role::Accent), Radius::Full.px()),
+                    );
+                }
+                Status::Error => glyph(IconName::Close, 3.5, Role::Danger),
+                Status::NeedsInput => glyph(IconName::Message, 3.5, Role::Warning),
+                Status::Unreachable => glyph(IconName::Plug, 3.5, Role::Warning),
+                Status::Idle => {
+                    rustle::spacer(
+                        Modifier::new()
+                            .size(theme::sp(2), theme::sp(2))
+                            .border(1.0, theme::color(Role::Subtle), Radius::Full.px())
+                            .padding(1.0),
+                    );
+                }
+            },
+        );
+    });
 }
 
 /// Emits one of the ways in at the top: a glyph and a label.
@@ -148,7 +159,7 @@ fn entry(icon: IconName, label: &str, id: FocusId, selected: bool) {
     Tile::new(id)
         .modifier(Modifier::new().fill_max_width())
         .selected(selected)
-        .inner(Modifier::new().pad_x(2))
+        .inner(Modifier::new().padding_xy(theme::sp(2), 0.0))
         .build_with(|| {
             glyph(icon, 4.0, tone);
             line(label, 14, 1.4, tone);
@@ -158,13 +169,15 @@ fn entry(icon: IconName, label: &str, id: FocusId, selected: bool) {
 /// Emits the row of one session under its project, set in `indent` steps.
 #[track_caller]
 fn session_row(index: usize, session: &Session, selected: bool, indent: f32) {
+    let operations = crate::events::operations();
     Tile::new(FocusId(SESSION_BASE + index as u64))
+        .on_context(move || operations.open_session_menu(index))
         .modifier(Modifier::new().fill_max_width())
         .selected(selected)
         .inner(
             Modifier::new()
-                .pad_side(Side::Left, indent)
-                .pad_side(Side::Right, 2),
+                .padding_each(theme::sp(indent), 0.0, 0.0, 0.0)
+                .padding_each(0.0, 0.0, theme::sp(2), 0.0),
         )
         .build_with(|| {
             status_icon(session.shown());
@@ -196,22 +209,24 @@ fn submodule_row(project: &Project, relative: &str, position: usize, starting: b
         .selected(starting)
         .inner(
             Modifier::new()
-                .pad_side(Side::Left, 2)
-                .pad_side(Side::Right, 2),
+                .padding_each(theme::sp(2), 0.0, 0.0, 0.0)
+                .padding_each(0.0, 0.0, theme::sp(2), 0.0),
         )
         .build_with(|| {
             Avatar::new(name, project.color()).size(Size::Xs).build();
             row_arranged(
-                Modifier::new().weight(1.0).clip_to(Radius::None),
+                Modifier::new().weight(1.0).clip(),
                 Arrangement::SpacedBy(sp(1.5)),
                 Alignment::Center,
                 || {
                     line(name, 13, 1.4, Role::Text);
                     if !folder.is_empty() {
-                        label_with(
+                        styled_text(
                             Modifier::new().weight(1.0),
                             format!("{folder}/"),
-                            Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
+                            theme::text_style(12, 1.4)
+                                .color(theme::color(Role::Subtle))
+                                .max_lines(1),
                         );
                     }
                 },
@@ -250,8 +265,13 @@ fn submodule_tree(
     column_arranged(
         Modifier::new()
             .fill_max_width()
-            .pad_side(Side::Left, SUBMODULE_RAIL)
-            .stroke_side(Side::Left, 1.0, project.color()),
+            .padding_each(theme::sp(SUBMODULE_RAIL), 0.0, 0.0, 0.0)
+            .draw_behind(theme::edge(
+                theme::Side::Left,
+                1.0,
+                theme::color(project.color()),
+            ))
+            .padding_each(1.0, 0.0, 0.0, 0.0),
         Arrangement::Start,
         Alignment::Start,
         || {
@@ -302,21 +322,28 @@ fn project(state: &WorkspaceState, index: usize) {
         _ => None,
     };
     let starting = state.page == Page::New(index) && state.new_in.is_none();
-    let section = Modifier::new().fill_max_width().pad_side(Side::Bottom, 3);
+    let section = Modifier::new()
+        .fill_max_width()
+        .padding_each(0.0, 0.0, 0.0, theme::sp(3));
     let section = if dragged {
-        section.opacity(35.0)
+        section.alpha(0.35)
     } else {
         section
     };
     column_arranged(section, Arrangement::Start, Alignment::Start, || {
+        let operations = crate::events::operations();
+        let opens = Rc::clone(&operations);
         Tile::new(FocusId(PROJECT_BASE + index as u64))
+            .on_context(move || opens.open_project_menu(index))
             .modifier(Modifier::new().fill_max_width())
             .selected(state.page == Page::Project(index))
-            .inner(Modifier::new().pad_x(2))
+            .inner(Modifier::new().padding_xy(theme::sp(2), 0.0))
             .build_with(|| {
                 Avatar::of(project).build();
                 clipped(&project.name, 14, Role::Text);
-                Button::icon(IconName::More, FocusId(PROJECT_MORE_BASE + index as u64)).build();
+                Button::icon(IconName::More, FocusId(PROJECT_MORE_BASE + index as u64))
+                    .on_click(move || operations.open_project_menu(index))
+                    .build();
             });
         for &(position, session) in members
             .iter()
@@ -329,7 +356,7 @@ fn project(state: &WorkspaceState, index: usize) {
         Tile::new(FocusId(NEW_IN_BASE + index as u64))
             .modifier(Modifier::new().fill_max_width())
             .selected(starting)
-            .inner(Modifier::new().pad_side(Side::Left, 3))
+            .inner(Modifier::new().padding_each(theme::sp(3), 0.0, 0.0, 0.0))
             .build_with(|| {
                 glyph(IconName::Plus, 4.0, tone);
                 line("New session", 14, 1.4, tone);
@@ -349,7 +376,9 @@ fn chats(state: &WorkspaceState) {
         _ => None,
     };
     column_arranged(
-        Modifier::new().fill_max_width().pad_side(Side::Bottom, 3),
+        Modifier::new()
+            .fill_max_width()
+            .padding_each(0.0, 0.0, 0.0, theme::sp(3)),
         Arrangement::Start,
         Alignment::Start,
         || {
@@ -373,17 +402,22 @@ pub fn sidebar(state: &WorkspaceState) {
         Modifier::new()
             .width(state.sidebar_width)
             .fill_max_height()
-            .fill(Role::Sidebar)
-            .stroke_side(Side::Right, 1.0, Role::Border),
+            .background(theme::color(Role::Sidebar))
+            .draw_behind(theme::edge(
+                theme::Side::Right,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 1.0, 0.0),
         Arrangement::Start,
         Alignment::Start,
         || {
             column_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .pad_x(2)
-                    .pad_side(Side::Top, 3)
-                    .pad_side(Side::Bottom, 2),
+                    .padding_xy(theme::sp(2), 0.0)
+                    .padding_each(0.0, theme::sp(3), 0.0, 0.0)
+                    .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
                 Arrangement::SpacedBy(sp(0.5)),
                 Alignment::Start,
                 || {
@@ -408,30 +442,24 @@ pub fn sidebar(state: &WorkspaceState) {
                     );
                 },
             );
-            rustle::stack_with(
-                Modifier::new()
-                    .weight(1.0)
-                    .fill_max_width()
-                    .clip_to(Radius::None),
-                || {
-                    column_arranged(
-                        Modifier::new()
-                            .at(0.0, -state.sidebar_scroll)
-                            .wrap_content_height(BoxAlignment::TopStart, true)
-                            .fill_max_width()
-                            .pad_x(2),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            chats(state);
-                            heading("Workspaces");
-                            for index in state.display_order() {
-                                rustle::key(index, || project(state, index));
-                            }
-                        },
-                    );
-                },
-            );
+            rustle::stack_with(Modifier::new().weight(1.0).fill_max_width().clip(), || {
+                column_arranged(
+                    Modifier::new()
+                        .offset(0.0, -state.sidebar_scroll)
+                        .wrap_content_height(BoxAlignment::TopStart, true)
+                        .fill_max_width()
+                        .padding_xy(theme::sp(2), 0.0),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        chats(state);
+                        heading("Workspaces");
+                        for index in state.display_order() {
+                            rustle::key(index, || project(state, index));
+                        }
+                    },
+                );
+            });
         },
     );
 }
@@ -445,15 +473,16 @@ pub fn drag_ghost(state: &WorkspaceState) {
     let Some(project) = state.projects.get(drag.from) else {
         return;
     };
-    at_window(sp(2.0), drag.at.1 - ROW / 2.0, Modifier::new(), || {
+    crate::popups::at_window(sp(2.0), drag.at.1 - ROW / 2.0, false, || {
         row_arranged(
             Modifier::new()
-                .h(9)
+                .height(theme::sp(9))
                 .width(state.sidebar_width - 16.0)
-                .shadow_md(Radius::Md)
-                .fill_rounded(Role::Surface, Radius::Md)
-                .stroke(Role::Border, Radius::Md)
-                .pad_x(2),
+                .draw_behind(theme::shadows(&theme::MEDIUM_SHADOW, Radius::Md))
+                .background_rounded(theme::color(Role::Surface), Radius::Md.px())
+                .border(1.0, theme::color(Role::Border), Radius::Md.px())
+                .padding(1.0)
+                .padding_xy(theme::sp(2), 0.0),
             Arrangement::SpacedBy(sp(3)),
             Alignment::Center,
             || {

@@ -1,6 +1,6 @@
 //! Tests of the browsers of sessions: each session keeps tabs of its own, which survive switching away and back.
 
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 
 use crate::browser_tabs::SavedTab;
 use crate::state::{SESSION_BASE, Tab, WorkspaceState};

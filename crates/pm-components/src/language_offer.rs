@@ -1,11 +1,14 @@
 //! The offer, at the top of a file, to install the language it is written in when the server's machine has not got it.
 
-use crate::kit::sp;
+use crate::theme;
+use crate::theme::sp;
 use pm_protocol::ExtensionInfo;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, row_arranged};
 
-use crate::kit::{FocusId, Role, Side, Styled, Type, label_with};
+use crate::focus::FocusId;
+use crate::select::styled_text;
+use crate::theme::Role;
 
 use crate::Button;
 use crate::button::Variant;
@@ -71,19 +74,24 @@ pub(crate) fn offer(state: &WorkspaceState, viewer: &Viewer) {
     let retry = extension.problem.is_some();
     row_arranged(
         Modifier::new()
-            .fill(Role::Surface)
-            .stroke_side(Side::Bottom, 1.0, Role::Border)
-            .pad_x(4)
-            .pad_y(1),
+            .background(theme::color(Role::Surface))
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(4), 0.0)
+            .padding_xy(0.0, theme::sp(1)),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         move || {
-            label_with(
-                Modifier::new()
-                    .weight(1.0)
-                    .clip_to(crate::kit::Radius::None),
+            styled_text(
+                Modifier::new().weight(1.0).clip(),
                 words,
-                Type::new(12).ratio(1.4).tone(Role::Muted).truncate(),
+                theme::text_style(12, 1.4)
+                    .color(theme::color(Role::Muted))
+                    .max_lines(1),
             );
             if idle {
                 Button::new(if retry { "Try again" } else { "Install" }, OFFER_INSTALL)

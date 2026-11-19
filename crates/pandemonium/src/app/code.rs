@@ -13,8 +13,7 @@ use pm_components::assist::{
 use pm_components::color_picker::{COLOR_BOX, COLOR_HEX, color_format_of};
 use pm_components::extensions::EXTENSIONS;
 use pm_components::find::{FIND_CASE, FIND_FIELD, FIND_REGEX, FIND_WORD, REPLACE_FIELD};
-use pm_components::kit::theme::Appearance;
-use pm_components::kit::{FocusId, Key, KeyEvent};
+use pm_components::focus::FocusId;
 use pm_components::line_edits::{GO_TO_LINE, GO_TO_LINE_BOX, LineEdit};
 use pm_components::listing::{
     LISTING_BODY, LISTING_FILTER, LISTING_HEIGHT, LISTING_TAKE, LISTING_WIDTH, QUICK_INSET,
@@ -29,6 +28,7 @@ use pm_components::state::{
     ADD_PROJECT, HISTORY, NEW_TERMINAL, PROMPT, REVIEW, STOP, TAB_CHAT, TAB_DIFF, TERMINAL,
 };
 use pm_components::tab_menu::TabCommand;
+use pm_components::theme::Appearance;
 use pm_components::title_bar::{COMMAND_CENTER, TITLE_BAR_HEIGHT};
 use pm_config::ThemeMode;
 use pm_editor::{Action, Case, Chord, Keymap, LineOrder, Pressed};
@@ -37,6 +37,7 @@ use pm_harness::Verdict;
 use pm_pages::Screen;
 use pm_protocol::{DebugAction, Seek};
 use pm_treesitter::TextObject;
+use rustle::{Key, KeyEvent};
 
 use super::App;
 use crate::keys;
@@ -60,13 +61,19 @@ const HIGHLIGHT_REST: Duration = Duration::from_millis(250);
 const GAP: f32 = 2.0;
 
 impl App {
+    /// Where the lines of code text were drawn in the latest frame, in the
+    /// coordinates of the main window's frame.
+    pub(super) fn code_lines(&self) -> pm_components::text_lines::TextLines {
+        self.model.read(Screen::code_lines)
+    }
+
     /// Where the byte `offset` of the file shown was drawn in the last frame: its left edge, and the top and height of its line.
     fn editor_point(&self, offset: usize) -> Option<(f32, f32, f32)> {
         let line = self
-            .output
-            .field_lines
-            .iter()
-            .filter(|held| held.id == EDITOR_FIELD && held.start <= offset)
+            .code_lines()
+            .of(EDITOR_FIELD)
+            .into_iter()
+            .filter(|held| held.start <= offset)
             .max_by_key(|held| held.start)?;
         let caret = line
             .layout
@@ -80,11 +87,13 @@ impl App {
 
     /// The byte of the file shown under the point `x`, `y`, when the point is on a drawn character.
     fn editor_byte_at(&self, x: f32, y: f32) -> Option<usize> {
-        let line = self.output.field_lines.iter().find(|held| {
-            held.id == EDITOR_FIELD
-                && y >= held.rect.origin.y
-                && y < held.rect.origin.y + held.rect.size.height
-        })?;
+        let line = self
+            .code_lines()
+            .of(EDITOR_FIELD)
+            .into_iter()
+            .find(|held| {
+                y >= held.rect.origin.y && y < held.rect.origin.y + held.rect.size.height
+            })?;
         if x < line.rect.origin.x || x > line.rect.origin.x + line.layout.size().width {
             return None;
         }
@@ -201,7 +210,7 @@ impl App {
             return Some(due);
         }
         self.autosave_wait = None;
-        self.activate(EDITOR_SAVE);
+        self.after(EDITOR_SAVE);
         None
     }
 
@@ -278,11 +287,11 @@ impl App {
     }
 
     /// Copies the text selected in the card about a place when the keys that copy are pressed, and says whether they were.
-    pub(super) fn card_key(&mut self, event: KeyEvent) -> bool {
+    pub(super) fn card_key(&mut self, event: &KeyEvent) -> bool {
         let selected = self
             .text_selection
             .is_some_and(|held| held.id == HOVER_TEXT && !held.is_empty());
-        if !selected || keys::clip(&event) != Some(keys::Clip::Copy) {
+        if !selected || keys::clip(event) != Some(keys::Clip::Copy) {
             return false;
         }
         self.copy_selection();
@@ -381,8 +390,9 @@ impl App {
     /// The chord a press of keys makes, as the keymap names it.
     pub(super) fn chord_of(event: &KeyEvent) -> Option<Chord> {
         let modifiers = event.modifiers;
-        let name = match event.key {
-            Key::Character(character) => character.to_string(),
+        let name = match &event.key {
+            Key::Character(_) if keys::is_space(event) => "space".to_owned(),
+            Key::Character(_) => event.code_point()?.to_string(),
             Key::Enter => "enter".to_owned(),
             Key::Escape => "escape".to_owned(),
             Key::Tab => "tab".to_owned(),
@@ -392,16 +402,16 @@ impl App {
             Key::End => "end".to_owned(),
             Key::PageUp => "pageup".to_owned(),
             Key::PageDown => "pagedown".to_owned(),
-            Key::Space => "space".to_owned(),
             Key::ArrowUp => "up".to_owned(),
             Key::ArrowDown => "down".to_owned(),
             Key::ArrowLeft => "left".to_owned(),
             Key::ArrowRight => "right".to_owned(),
-            Key::Function(number) => format!("f{number}"),
+            Key::F(number @ 1..=12) => format!("f{number}"),
+            _ => return None,
         };
         Some(Chord::new(
             &name,
-            modifiers.control || modifiers.logo,
+            modifiers.ctrl || modifiers.meta,
             modifiers.alt,
             modifiers.shift,
         ))
@@ -429,7 +439,7 @@ impl App {
     }
 
     /// Takes a press of keys while keys are recorded for an action on the keymap page: Escape gives up, anything else becomes its keys. Says whether it took the press.
-    pub(super) fn recording_key(&mut self, event: KeyEvent) -> bool {
+    pub(super) fn recording_key(&mut self, event: &KeyEvent) -> bool {
         if !self.model.read(Screen::recording_keys) {
             self.recorded.clear();
             return false;
@@ -441,7 +451,7 @@ impl App {
                 .update(|screen| *screen = std::mem::take(screen).keys_recorded(None));
             return true;
         }
-        let Some(chord) = Self::chord_of(&event) else {
+        let Some(chord) = Self::chord_of(event) else {
             return true;
         };
         self.recorded.push(chord.written());
@@ -477,14 +487,14 @@ impl App {
     }
 
     /// Takes a press of keys the keymap binds to an action, or that starts a binding of more chords, and says whether it took it; typing goes on as typing.
-    pub(super) fn keymap_key(&mut self, event: KeyEvent) -> bool {
+    pub(super) fn keymap_key(&mut self, event: &KeyEvent) -> bool {
         let modifiers = event.modifiers;
-        let typing = matches!(event.key, Key::Character(_) | Key::Space)
-            && !(modifiers.control || modifiers.logo || modifiers.alt);
+        let typing = matches!(event.key, Key::Character(_))
+            && !(modifiers.ctrl || modifiers.meta || modifiers.alt);
         if typing && self.pending.is_empty() {
             return false;
         }
-        let Some(chord) = Self::chord_of(&event) else {
+        let Some(chord) = Self::chord_of(event) else {
             return false;
         };
         match self.keymap().press(&self.pending, &chord) {
@@ -507,12 +517,7 @@ impl App {
     /// Where a list opened from anywhere hangs: over the command center in the middle of the title bar, its field lying on the command center.
     fn across_top(&self) -> (f32, f32) {
         let width = self.window_size().0;
-        let center = self
-            .output
-            .regions
-            .iter()
-            .find(|region| region.id == COMMAND_CENTER)
-            .map(|region| region.rect);
+        let center = self.place(COMMAND_CENTER);
         let (middle, field_top) = center.map_or(
             (width / 2.0, (TITLE_BAR_HEIGHT - FIELD_HEIGHT) / 2.0),
             |rect| (rect.origin.x + rect.size.width / 2.0, rect.origin.y),
@@ -705,13 +710,13 @@ impl App {
                 let replacing = action == Action::Replace;
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).find_opened(replacing));
-                self.focus.claim(FIND_FIELD);
+                self.focus.focus(FIND_FIELD);
                 self.show_editor_caret();
             }
             Action::ToggleFindInSelection => {
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).find_scope_toggled());
-                self.focus.claim(FIND_FIELD);
+                self.focus.focus(FIND_FIELD);
                 self.show_editor_caret();
             }
             Action::FindNext | Action::FindPrevious => {
@@ -750,7 +755,7 @@ impl App {
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).project_search_opened());
                 self.focus
-                    .claim(pm_components::project_search::PROJECT_SEARCH_FIELD);
+                    .focus(pm_components::project_search::PROJECT_SEARCH_FIELD);
             }
             Action::Problems => {
                 self.model
@@ -811,7 +816,7 @@ impl App {
                     .update(|screen| *screen = std::mem::take(screen).debug_do(what));
                 self.deliver();
             }
-            Action::Save => self.activate(EDITOR_SAVE),
+            Action::Save => self.after(EDITOR_SAVE),
             Action::CompareWithClipboard => {
                 let text = self
                     .clipboard()
@@ -848,26 +853,26 @@ impl App {
             }
             Action::NewSession => {
                 if let Some(id) = self.model.read(Screen::new_session_button) {
-                    self.activate(id);
+                    self.after(id);
                 }
             }
-            Action::NewChat => self.activate(pm_components::chats::NEW_CHAT),
-            Action::AddProject => self.activate(ADD_PROJECT),
-            Action::ShowHistory => self.activate(HISTORY),
-            Action::ShowExtensions => self.activate(EXTENSIONS),
+            Action::NewChat => self.after(pm_components::chats::NEW_CHAT),
+            Action::AddProject => self.after(ADD_PROJECT),
+            Action::ShowHistory => self.after(HISTORY),
+            Action::ShowExtensions => self.after(EXTENSIONS),
             Action::WorkspaceBack => self.navigate(-1),
             Action::WorkspaceForward => self.navigate(1),
             Action::Quit => self.closing = self.close_window(),
-            Action::ShowChat => self.activate(TAB_CHAT),
-            Action::ShowDiff => self.activate(TAB_DIFF),
-            Action::StopAgent => self.activate(STOP),
-            Action::ToggleTerminal => self.activate(TERMINAL),
-            Action::NewTerminal => self.activate(NEW_TERMINAL),
+            Action::ShowChat => self.after(TAB_CHAT),
+            Action::ShowDiff => self.after(TAB_DIFF),
+            Action::StopAgent => self.after(STOP),
+            Action::ToggleTerminal => self.after(TERMINAL),
+            Action::NewTerminal => self.after(NEW_TERMINAL),
             Action::OpenBrowser => self.open_browser(),
             Action::ToggleBrowserTools => {
-                self.activate(pm_components::browser::BROWSER_TOOLS);
+                self.after(pm_components::browser::BROWSER_TOOLS);
             }
-            Action::ToggleSourceControl => self.activate(REVIEW),
+            Action::ToggleSourceControl => self.after(REVIEW),
             Action::ChangeModel | Action::ChangeMode => {
                 let category = if action == Action::ChangeModel {
                     "model"
@@ -917,7 +922,7 @@ impl App {
                     _ => Verdict::Reject,
                 };
                 if let Some(id) = self.model.read(|screen| screen.answer_of(verdict)) {
-                    self.activate(id);
+                    self.after(id);
                 }
             }
             Action::RenameSession => self.session_command(SESSION_MENU_RENAME),
@@ -946,10 +951,10 @@ impl App {
             Action::CopyRelativePath => self.tab_command(TabCommand::CopyRelativePath),
             Action::RevealInProject => self.tab_command(TabCommand::RevealInProject),
             Action::OpenPermalink => self.tab_command(TabCommand::OpenPermalink),
-            Action::SplitRight => self.activate(SPLIT_RIGHT),
-            Action::SplitLeft => self.activate(SPLIT_LEFT),
-            Action::SplitUp => self.activate(SPLIT_UP),
-            Action::SplitDown => self.activate(SPLIT_DOWN),
+            Action::SplitRight => self.after(SPLIT_RIGHT),
+            Action::SplitLeft => self.after(SPLIT_LEFT),
+            Action::SplitUp => self.after(SPLIT_UP),
+            Action::SplitDown => self.after(SPLIT_DOWN),
             Action::FocusNextPane | Action::FocusPreviousPane => {
                 let delta = if action == Action::FocusNextPane {
                     1
@@ -1016,7 +1021,7 @@ impl App {
     }
 
     /// Takes a key pressed while the box for a new name or for a line to go to has the keyboard: Escape closes it and gives the keyboard back to the file. Says whether it took the key.
-    pub(super) fn rename_key(&mut self, event: KeyEvent) -> bool {
+    pub(super) fn rename_key(&mut self, event: &KeyEvent) -> bool {
         let focused = self.focus.current();
         if event.key != Key::Escape
             || !(focused == Some(RENAME_SYMBOL)
@@ -1036,7 +1041,7 @@ impl App {
     }
 
     /// Takes a key pressed while the field narrowing the list over the file has the keyboard: the arrows move the pick and Escape closes the list. Says whether it took the key.
-    pub(super) fn listing_key(&mut self, event: KeyEvent) -> bool {
+    pub(super) fn listing_key(&mut self, event: &KeyEvent) -> bool {
         let focused = self.focus.current();
         let held = focused == Some(LISTING_FILTER) || focused.is_none();
         if !held || !self.model.read(Screen::listing_open) {
@@ -1063,17 +1068,17 @@ impl App {
     }
 
     /// Takes a key pressed while the bar for finding has the keyboard: Escape closes it, Shift+Enter goes back a match, Ctrl+Alt+Enter replaces every match, and Alt with C, W or R switches matching case, whole words or regular expressions. Says whether it took the key.
-    pub(super) fn find_key(&mut self, event: KeyEvent) -> bool {
+    pub(super) fn find_key(&mut self, event: &KeyEvent) -> bool {
         let focused = self.focus.current();
         if focused != Some(FIND_FIELD) && focused != Some(REPLACE_FIELD) {
             return false;
         }
         let modifiers = event.modifiers;
-        let command = modifiers.control || modifiers.logo;
-        let toggled = match event.key {
-            Key::Character('c' | 'C') if modifiers.alt => Some(FIND_CASE),
-            Key::Character('w' | 'W') if modifiers.alt => Some(FIND_WORD),
-            Key::Character('r' | 'R') if modifiers.alt => Some(FIND_REGEX),
+        let command = modifiers.ctrl || modifiers.meta;
+        let toggled = match keys::letter(event) {
+            Some('c') if modifiers.alt => Some(FIND_CASE),
+            Some('w') if modifiers.alt => Some(FIND_WORD),
+            Some('r') if modifiers.alt => Some(FIND_REGEX),
             _ => None,
         };
         if let Some(which) = toggled {
@@ -1105,7 +1110,7 @@ impl App {
     /// What the keys of `event` that work as in any editor do to the lines or the selection of the file shown, when they do something, with whether the selection runs over lines, `spanning`: Home, Tab and Shift+Tab, and Backspace.
     fn line_edit_of(event: &KeyEvent, spanning: bool) -> Option<LineEdit> {
         let modifiers = event.modifiers;
-        let command = modifiers.control || modifiers.logo;
+        let command = modifiers.ctrl || modifiers.meta;
         let (alt, shift) = (modifiers.alt, modifiers.shift);
         match event.key {
             Key::Home if !command && !alt => Some(LineEdit::Home(shift)),
@@ -1117,7 +1122,7 @@ impl App {
     }
 
     /// Closes the list over the file and the box for a new name when the press at `on` is outside them.
-    pub(super) fn press_beside_code(&mut self, on: Option<pm_components::kit::FocusId>) {
+    pub(super) fn press_beside_code(&mut self, on: Option<pm_components::focus::FocusId>) {
         let on_listing = on.is_some_and(|id| {
             id == LISTING_BODY || id == LISTING_FILTER || listing_row_of(id).is_some()
         });
@@ -1163,12 +1168,12 @@ impl App {
     }
 
     /// Takes a key pressed while the file shown has the keyboard, when it is one of the keys for writing code, and says whether it was.
-    pub(super) fn editor_key(&mut self, event: KeyEvent) -> bool {
+    pub(super) fn editor_key(&mut self, event: &KeyEvent) -> bool {
         if self.focus.current() != Some(EDITOR_FIELD) {
             return false;
         }
         let modifiers = event.modifiers;
-        let command = modifiers.control || modifiers.logo;
+        let command = modifiers.ctrl || modifiers.meta;
         let spanning = self.model.read(Screen::selection_spans_lines);
         if event.key == Key::Tab
             && modifiers.shift
@@ -1180,7 +1185,7 @@ impl App {
             self.show_editor_caret();
             return true;
         }
-        if let Some(what) = Self::line_edit_of(&event, spanning) {
+        if let Some(what) = Self::line_edit_of(event, spanning) {
             self.model
                 .update(|screen| *screen = std::mem::take(screen).lines_edited(what));
             self.show_editor_caret();
@@ -1243,7 +1248,7 @@ impl App {
                     Some(screen.editor_newline())
                 }
                 Key::Tab if !modifiers.shift && !command => Some(screen.editor_tab()),
-                _ => match keys::edit(&event) {
+                _ => match keys::edit(event) {
                     Some(Edit::Insert(character)) if !command => {
                         Some(screen.editor_typed(character))
                     }
@@ -1270,7 +1275,7 @@ impl App {
 
     /// Notes where the pointer rests over the file shown, so the language server is asked about the word there once it has rested long enough. A card about a word stays while the pointer is on the word or on the card; it is taken away a moment after the pointer left the word, so the pointer can cross to the card, and at once when the pointer leaves the card itself.
     pub(super) fn editor_pointer_moved(&mut self, x: f32, y: f32) {
-        let over = self.output.hit((x, y));
+        let over = self.under_pointer();
         let on_card = over.is_some_and(|id| {
             id == HOVER_CARD || (HOVER_LINK_BASE..HOVER_LINK_END).contains(&id.0)
         });
@@ -1285,10 +1290,7 @@ impl App {
             return;
         }
         let stretch = self.word_under(over, x, y);
-        self.reach(
-            self.reach_under(over, x, y)
-                .filter(|_| self.modifiers.control),
-        );
+        self.reach(self.reach_under(over, x, y).filter(|_| self.modifiers.ctrl));
         let word = stretch.map(|stretch| stretch.start);
         let shown = self.model.read(|screen| match screen {
             Screen::Workspace(state) => state
@@ -1319,7 +1321,7 @@ impl App {
     /// The link of the file shown under the point `x`, `y`, where `over` is what the point is over, when it is on one: the bytes it covers and where it leads.
     fn link_under_point(
         &self,
-        over: Option<pm_components::kit::FocusId>,
+        over: Option<pm_components::focus::FocusId>,
         x: f32,
         y: f32,
     ) -> Option<(std::ops::Range<usize>, pm_protocol::LinkTarget)> {
@@ -1332,7 +1334,7 @@ impl App {
     /// What Ctrl underlines under the point `x`, `y`: the link there, or else the word, which is what a press takes to its definition.
     fn reach_under(
         &self,
-        over: Option<pm_components::kit::FocusId>,
+        over: Option<pm_components::focus::FocusId>,
         x: f32,
         y: f32,
     ) -> Option<std::ops::Range<usize>> {
@@ -1344,7 +1346,7 @@ impl App {
     /// The word of the file shown under the point `x`, `y`, where `over` is what the point is over, when it is on one.
     fn word_under(
         &self,
-        over: Option<pm_components::kit::FocusId>,
+        over: Option<pm_components::focus::FocusId>,
         x: f32,
         y: f32,
     ) -> Option<std::ops::Range<usize>> {
@@ -1403,20 +1405,20 @@ impl App {
         let stretch = self
             .pointer
             .position
-            .filter(|_| self.modifiers.control)
-            .and_then(|(x, y)| self.reach_under(self.output.hit((x, y)), x, y));
+            .filter(|_| self.modifiers.ctrl)
+            .and_then(|(x, y)| self.reach_under(self.under_pointer(), x, y));
         self.reach(stretch);
     }
 
     /// Takes the reader to where the word under the pointer is defined, when Ctrl is held as the file shown is pressed, and says whether it did.
     pub(super) fn editor_reach_pressed(&mut self) -> bool {
-        if !self.modifiers.control {
+        if !self.modifiers.ctrl {
             return false;
         }
         let Some((x, y)) = self.pointer.position else {
             return false;
         };
-        if let Some((_, target)) = self.link_under_point(self.output.hit((x, y)), x, y) {
+        if let Some((_, target)) = self.link_under_point(self.under_pointer(), x, y) {
             self.model.update(|screen| {
                 *screen = std::mem::take(screen)
                     .with_reach(None)
@@ -1425,7 +1427,7 @@ impl App {
             self.deliver();
             return true;
         }
-        let Some(stretch) = self.word_under(self.output.hit((x, y)), x, y) else {
+        let Some(stretch) = self.word_under(self.under_pointer(), x, y) else {
             return false;
         };
         let at = self.hung(stretch.start, LISTING_HEIGHT);

@@ -38,7 +38,7 @@ impl WorkspaceState {
             path: viewer.path.clone(),
             head: viewer.head,
             caret,
-            scroll: viewer.scroll,
+            scroll: viewer.scroll.offset(),
         });
         let surplus = self.closed_tabs.len().saturating_sub(REMEMBERED);
         self.closed_tabs.drain(..surplus);
@@ -99,7 +99,7 @@ impl WorkspaceState {
         {
             viewer.preview = false;
             if matches!(viewer.contents, Contents::Loading) {
-                viewer.scroll = closed.scroll;
+                viewer.scroll.jump_to(closed.scroll);
                 viewer.left = closed.caret.map(|caret| Left {
                     unsaved: None,
                     caret,

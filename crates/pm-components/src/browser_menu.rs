@@ -2,7 +2,7 @@
 
 use crate::Menu;
 use crate::browser::{Command, ZoomStep};
-use crate::kit::FocusId;
+use crate::focus::FocusId;
 use crate::state::WorkspaceState;
 
 /// The first of the rows of the menu over a page; each command's row follows it by the command's place.
@@ -218,7 +218,15 @@ pub fn browser_menu(open: BrowserMenu) {
     let row = |menu: Menu, command: BrowserCommand| {
         menu.item(command.label(), command.keys(), command.id(), false)
     };
-    let menu = Menu::new(open.at.0, open.at.1).width(68.0).row_height(6.5);
+    let operations = crate::events::operations();
+    let menu = Menu::new(open.at.0, open.at.1)
+        .width(68.0)
+        .row_height(6.5)
+        .on_pick(move |row| {
+            if let Some(command) = BrowserCommand::of(row) {
+                operations.browser_menu_command(command);
+            }
+        });
     if open.captures_only {
         BrowserCommand::CAPTURES.into_iter().fold(menu, row).build();
         return;

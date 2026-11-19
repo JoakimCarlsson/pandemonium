@@ -1,12 +1,14 @@
 //! The history page: every session of every project, newest first, grouped by when it last changed and narrowed by a search.
 
-use crate::kit::sp;
+use crate::theme;
+use crate::theme::sp;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
-use crate::kit::{
-    FocusId, IconName, Radius, Role, Scroll, Side, Styled, Type, label, label_with, scroll_area,
-};
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::select::styled_text;
+use crate::theme::{Radius, Role};
 
 use crate::age::{self, Span};
 use crate::input::{self, Input};
@@ -16,16 +18,7 @@ use crate::size::Size;
 use crate::state::{HISTORY_SEARCH, SESSION_BASE, WorkspaceState};
 use crate::tile::Tile;
 
-/// The scrolling list of session groups on the history page.
-pub const HISTORY_SCROLL: FocusId = FocusId(9_300_000);
-
-impl WorkspaceState {
-    /// The state after the history list is scrolled by `delta` logical pixels, kept within `room` pixels of overflow.
-    pub fn scrolled_history(mut self, delta: f32, room: f32) -> Self {
-        self.history_scroll = (self.history_scroll + delta).clamp(0.0, room);
-        self
-    }
-}
+impl WorkspaceState {}
 
 /// How wide the search box is.
 const SEARCH_WIDTH: f32 = 500.0;
@@ -57,20 +50,19 @@ pub fn history(state: &WorkspaceState) {
         || {
             heading();
             search(state);
-            scroll_area(
-                Modifier::new().fill_max_width().weight(1.0),
-                Scroll::from_start(HISTORY_SCROLL, state.history_scroll),
+            column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .weight(1.0)
+                    .vertical_scroll(&state.history_scroll)
+                    .fill_max_width()
+                    .padding_xy(theme::sp(5), 0.0),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
-                    column_arranged(
-                        Modifier::new().fill_max_width().pad_x(5),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            for span in Span::ALL {
-                                group(state, span, &rows, now);
-                            }
-                        },
-                    );
+                    for span in Span::ALL {
+                        group(state, span, &rows, now);
+                    }
                 },
             );
         },
@@ -83,19 +75,24 @@ fn heading() {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .h(12)
-            .stroke_side(Side::Bottom, 1.0, Role::Border)
-            .pad_x(5),
+            .height(theme::sp(12))
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(5), 0.0),
         Arrangement::Start,
         Alignment::Center,
         || {
-            label(
+            styled_text(
+                Modifier::new(),
                 "History",
-                Type::new(14)
-                    .ratio(1.4)
-                    .tone(Role::Text)
-                    .truncate()
-                    .medium(),
+                theme::text_style(14, 1.4)
+                    .font_weight(rustle::FontWeight::MEDIUM)
+                    .color(theme::color(Role::Text))
+                    .max_lines(1),
             );
         },
     );
@@ -106,19 +103,20 @@ fn heading() {
 fn search(state: &WorkspaceState) {
     column_arranged(
         Modifier::new()
-            .pad_x(5)
-            .pad_side(Side::Top, 5)
-            .pad_side(Side::Bottom, 2),
+            .padding_xy(theme::sp(5), 0.0)
+            .padding_each(0.0, theme::sp(5), 0.0, 0.0)
+            .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
         Arrangement::Start,
         Alignment::Start,
         || {
             row_arranged(
                 Modifier::new()
                     .width(SEARCH_WIDTH)
-                    .h(10)
-                    .fill_rounded(Role::Surface, Radius::Lg)
-                    .stroke(Role::Border, Radius::Lg)
-                    .pad_x(3),
+                    .height(theme::sp(10))
+                    .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
+                    .border(1.0, theme::color(Role::Border), Radius::Lg.px())
+                    .padding(1.0)
+                    .padding_xy(theme::sp(3), 0.0),
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Center,
                 || {
@@ -174,22 +172,26 @@ fn group(state: &WorkspaceState, span: Span, rows: &[usize], now: u64) {
         return;
     }
     column_arranged(
-        Modifier::new().fill_max_width().pad_side(Side::Top, 5),
+        Modifier::new()
+            .fill_max_width()
+            .padding_each(0.0, theme::sp(5), 0.0, 0.0),
         Arrangement::SpacedBy(sp(0.5)),
         Alignment::Start,
         || {
             row_arranged(
-                Modifier::new().h(8).pad_x(3),
+                Modifier::new()
+                    .height(theme::sp(8))
+                    .padding_xy(theme::sp(3), 0.0),
                 Arrangement::Start,
                 Alignment::Center,
                 || {
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         span.title(),
-                        Type::new(14)
-                            .ratio(1.4)
-                            .tone(Role::Text)
-                            .truncate()
-                            .medium(),
+                        theme::text_style(14, 1.4)
+                            .font_weight(rustle::FontWeight::MEDIUM)
+                            .color(theme::color(Role::Text))
+                            .max_lines(1),
                     );
                 },
             );
@@ -212,26 +214,33 @@ fn row_of(state: &WorkspaceState, index: usize) {
         .flatten()
         .unwrap_or_else(|| LOCAL_MACHINE.to_owned());
     let agent = state.agent_look(session.agent);
+    let operations = crate::events::operations();
     Tile::new(FocusId(SESSION_BASE + index as u64))
+        .on_context(move || operations.open_session_menu(index))
         .height(12.0)
         .modifier(Modifier::new().fill_max_width())
-        .inner(Modifier::new().pad_x(3))
+        .inner(Modifier::new().padding_xy(theme::sp(3), 0.0))
         .build_with(|| {
             row_arranged(
                 Modifier::new().weight(1.0),
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Center,
                 || {
-                    label_with(
-                        Modifier::new().max_w_px(560.0),
+                    styled_text(
+                        Modifier::new().width_in(0.0, 560.0),
                         &session.title,
-                        Type::new(14).ratio(1.4).tone(Role::Text).truncate(),
+                        theme::text_style(14, 1.4)
+                            .color(theme::color(Role::Text))
+                            .max_lines(1),
                     );
                     glyph(IconName::ChevronRight, 4.0, Role::Subtle);
                     glyph(agent.icon, 4.0, Role::Muted);
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         agent.name,
-                        Type::new(14).ratio(1.4).tone(Role::Muted).truncate(),
+                        theme::text_style(14, 1.4)
+                            .color(theme::color(Role::Muted))
+                            .max_lines(1),
                     );
                 },
             );
@@ -251,7 +260,7 @@ fn cell(content: &str, width: f32, end: bool) {
         Arrangement::Start
     };
     row_arranged(
-        Modifier::new().width(width).clip_to(Radius::None),
+        Modifier::new().width(width).clip(),
         arrangement,
         Alignment::Start,
         || clipped(content, 14, Role::Muted),

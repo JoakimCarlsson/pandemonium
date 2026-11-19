@@ -1,6 +1,6 @@
 //! A project: a folder or repository the work happens in.
 
-use crate::kit::Tone;
+use crate::theme::Tone;
 
 /// The perceptual lightness every avatar shares, so white letters read on all of them.
 const LIGHTNESS: f32 = 0.55;

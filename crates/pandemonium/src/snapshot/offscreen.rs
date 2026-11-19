@@ -7,12 +7,10 @@
 
 use std::time::Duration;
 
-use pm_components::kit::frame::{self, Frame};
-use pm_components::kit::icon;
-use pm_components::kit::overlay;
-use pm_components::kit::report::{self, Report};
-use pm_components::kit::theme::{self, Appearance, ThemeFamily, Tokens};
-use pm_components::kit::{FocusId, TextSelection};
+use pm_components::focus::FocusId;
+use pm_components::focus::{self, FocusKeys};
+use pm_components::icons;
+use pm_components::theme::{self, Appearance, ThemeFamily, Tokens};
 use rustle::{Offset, PixelRounding, PreviewOptions};
 
 /// How to draw one snapshot.
@@ -30,10 +28,10 @@ pub(crate) struct Shot {
     pub(crate) pointer: Option<(f32, f32)>,
     /// The control holding keyboard focus.
     pub(crate) focused: Option<FocusId>,
-    /// The stretch of selectable text selected.
-    pub(crate) selection: Option<TextSelection>,
     /// Whether what is not drawn stays see-through, as around a floating window's frame.
     pub(crate) transparent: bool,
+    /// What an input method is composing in what holds the keyboard.
+    pub(crate) preedit: Option<String>,
     /// The theme family.
     pub(crate) family: ThemeFamily,
     /// Light or dark.
@@ -51,8 +49,8 @@ impl Shot {
             clock_ms: 700.0,
             pointer: None,
             focused: None,
-            selection: None,
             transparent: false,
+            preedit: None,
             family: theme::default_family(),
             appearance: Appearance::Dark,
         }
@@ -60,8 +58,8 @@ impl Shot {
 }
 
 /// Draws `content` as `shot` says into a PNG file at `path`, inside the
-/// theme of `shot` and a root that starts the frame's report and draws
-/// tooltips over everything, and returns what was painted where.
+/// theme of `shot` and a root that shows tooltips at once, with the
+/// app's focus on the shot's control and rustle's focus given to it.
 ///
 /// # Errors
 ///
@@ -71,24 +69,18 @@ pub(crate) fn write_png(
     path: &std::path::Path,
     shot: &Shot,
     content: impl Fn() + 'static,
-) -> Result<Report, Box<dyn std::error::Error>> {
-    frame::set(Frame {
-        focused: shot.focused,
-        clock_ms: shot.clock_ms,
-        selection: shot.selection,
-        ..Frame::default()
-    });
+) -> Result<(), Box<dyn std::error::Error>> {
     rustle_wgpu::set_legible_text(false);
     rustle_wgpu::set_gamma_blending(true);
-    icon::set_pixel_scale(shot.scale);
-    overlay::set_tooltip_delay(0.0);
-    overlay::reset_tooltip();
+    icons::set_pixel_scale(shot.scale);
     let tokens = Tokens::new(&shot.family, shot.appearance);
+    let focused = shot.focused;
     let root = move || {
-        theme::provide(tokens.clone(), || {
-            report::root(|| {
-                content();
-                overlay::tooltips(report::MAIN);
+        focus::provide(FocusKeys::resting(focused), || {
+            theme::provide(tokens.clone(), || {
+                pm_components::tooltip::provide_tooltip_delay(0, || {
+                    rustle::stack_with(rustle::Modifier::new().fill_max_size(), &content)
+                })
             })
         })
     };
@@ -100,8 +92,19 @@ pub(crate) fn write_png(
         pointer: shot.pointer.map(|(x, y)| Offset::new(x, y)),
         transparent: shot.transparent,
         rounding: PixelRounding::Logical,
+        focused_tag: shot.focused.map(FocusId::tag),
     };
-    let (width, height, rgba) = rustle::preview_pixels(root, options)?;
+    let (width, height, rgba) = match &shot.preedit {
+        Some(text) => rustle::preview_pixels_composing(
+            root,
+            options,
+            &rustle::Preedit {
+                text: text.clone(),
+                cursor: Some((text.len(), text.len())),
+            },
+        )?,
+        None => rustle::preview_pixels(root, options)?,
+    };
     let image = rustle::ImageData::from_rgba(width, height, rgba)
         .ok_or("the picture's size does not match its pixels")?;
     let png = image.encode_png()?;
@@ -109,5 +112,5 @@ pub(crate) fn write_png(
         std::fs::create_dir_all(folder)?;
     }
     std::fs::write(path, png)?;
-    Ok(report::last())
+    Ok(())
 }

@@ -1,15 +1,18 @@
 //! Lines of files shown as one document, one under another, each edited in place in the file it comes from: the lines around the hits of a search, the lines a set of changes touched, or a file set against one of the states it was saved in.
 
-use crate::kit::sp;
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use std::ops::Range;
 
-use crate::kit::{
-    FocusId, IconName, Interactive, Radius, Role, Scroll, Side, Styled, Tone, Tooltip, Type, label,
-    label_with, scroll_area,
-};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::IconName;
 use crate::marked::{Mark, Paint};
+use crate::select::styled_text;
+use crate::theme::{Role, Tone};
 use pm_protocol::Location;
 use rustle::{CursorIcon, Modifier};
 
@@ -29,9 +32,6 @@ pub const TAB_EXCERPTS: FocusId = FocusId(7_410_000);
 
 /// Closes the excerpts.
 pub const EXCERPTS_CLOSE: FocusId = FocusId(7_410_001);
-
-/// The scrolling box of the excerpts.
-pub const EXCERPTS_SCROLL: FocusId = FocusId(7_410_002);
 
 /// Puts the file shown back as it was in the state it is set against.
 pub const EXCERPTS_RESTORE: FocusId = FocusId(7_410_003);
@@ -170,8 +170,8 @@ pub struct Excerpts {
     pub source: Source,
     /// The files, in the order they are listed.
     pub files: Vec<ExcerptFile>,
-    /// How far down it is scrolled, in logical pixels.
-    pub scroll: f32,
+    /// How far down it is scrolled.
+    pub scroll: rustle::ScrollState,
 }
 
 impl Excerpts {
@@ -306,7 +306,7 @@ impl WorkspaceState {
         self.excerpts = Some(Excerpts {
             source,
             files,
-            scroll: 0.0,
+            scroll: rustle::ScrollState::default(),
         });
         self.tab = Tab::Excerpts;
     }
@@ -494,14 +494,6 @@ impl WorkspaceState {
             }
         }
     }
-
-    /// The state after the excerpts were scrolled by `delta` logical pixels, with `room` to scroll.
-    pub fn scrolled_excerpts(mut self, delta: f32, room: f32) -> Self {
-        if let Some(excerpts) = self.excerpts.as_mut() {
-            excerpts.scroll = (excerpts.scroll + delta).clamp(0.0, room);
-        }
-        self
-    }
 }
 
 /// How many lines of `viewer` the block shows: the lines it holds, up to the end of the file once that is read.
@@ -533,18 +525,26 @@ fn header(
         Modifier::new()
             .fill_max_width()
             .height(header_height(size))
-            .fill(Role::Surface)
-            .stroke_side(Side::Bottom, 1.0, Role::Border)
-            .pad_x(3),
+            .background(theme::color(Role::Surface))
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(3), 0.0),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         || {
             row_arranged(
                 Modifier::new()
                     .weight(1.0)
-                    .clip_to(Radius::None)
+                    .clip()
                     .cursor(CursorIcon::Pointer)
-                    .target(FocusId(EXCERPTS_FILE_BASE + position as u64)),
+                    .control(
+                        FocusId(EXCERPTS_FILE_BASE + position as u64),
+                        reduce(FocusId(EXCERPTS_FILE_BASE + position as u64)),
+                    ),
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Center,
                 || {
@@ -560,18 +560,20 @@ fn header(
                         );
                     }
                     file_icon(name, 4.0);
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         name,
-                        Type::new(13)
-                            .ratio(1.4)
-                            .tone(Role::Text)
-                            .truncate()
-                            .medium(),
+                        theme::text_style(13, 1.4)
+                            .font_weight(rustle::FontWeight::MEDIUM)
+                            .color(theme::color(Role::Text))
+                            .max_lines(1),
                     );
-                    label_with(
-                        Modifier::new().weight(1.0).clip_to(Radius::None),
+                    styled_text(
+                        Modifier::new().weight(1.0).clip(),
                         folder,
-                        Type::new(12).ratio(1.4).tone(Role::Subtle).truncate(),
+                        theme::text_style(12, 1.4)
+                            .color(theme::color(Role::Subtle))
+                            .max_lines(1),
                     );
                 },
             );
@@ -581,26 +583,29 @@ fn header(
             match &excerpts.source {
                 Source::Search { .. } => {
                     let hits: usize = file.blocks.iter().map(|block| block.hits.len()).sum();
-                    label(
+                    styled_text(
+                        Modifier::new(),
                         hits.to_string(),
-                        Type::new(11).ratio(1.4).tone(Role::Muted).truncate(),
+                        theme::text_style(11, 1.4)
+                            .color(theme::color(Role::Muted))
+                            .max_lines(1),
                     );
                 }
                 _ => {
                     if let Some(mark) = file.mark {
-                        label(
+                        styled_text(
+                            Modifier::new(),
                             mark,
-                            Type::new(11).ratio(1.4).tone(mark_tone(mark)).truncate(),
+                            theme::text_style(11, 1.4)
+                                .color(theme::color(mark_tone(mark)))
+                                .max_lines(1),
                         );
                     }
                     Tally::new(file.tally.0, file.tally.1).size(11).build();
                     if matches!(excerpts.source, Source::Revision { turn: Some(_), .. }) {
                         Button::icon(IconName::Undo, FocusId(EXCERPT_UNDO_BASE + position as u64))
                             .size(Size::Sm)
-                            .modifier(
-                                Modifier::new()
-                                    .tooltip("Take what this turn changed back out of this file"),
-                            )
+                            .tooltip("Take what this turn changed back out of this file")
                             .build();
                     }
                 }
@@ -650,25 +655,28 @@ enum Row<'a> {
 fn removed_row(content: &str, settings: &pm_editor::EditorSettings) {
     let height = settings.row_height();
     let numbers = if settings.line_numbers {
-        Modifier::new().w(13)
+        Modifier::new().width(theme::sp(13))
     } else {
-        Modifier::new().w(2)
+        Modifier::new().width(theme::sp(2))
     };
-    let kind = Type::code(settings.font_size).ratio(1.4).tone(Role::Muted);
+    let kind = theme::code_style(settings.font_size, 1.4).color(theme::color(Role::Muted));
     let shown = crate::diff_syntax::shown(content);
     row_arranged(
         Modifier::new()
             .fill_max_width()
             .height(height)
-            .fill(Tone::from(Role::Danger).alpha(0.12))
-            .clip_to(Radius::None),
+            .background(theme::color(Tone::from(Role::Danger).alpha(0.12)))
+            .clip(),
         Arrangement::Start,
         Alignment::Center,
         move || {
             rustle::spacer(Modifier::new().width(BREAKPOINT_CELL + 3.0));
-            rustle::spacer(numbers.pad_side(Side::Right, 3));
-            label_with(
-                Modifier::new().weight(1.0).clip_to(Radius::None).pad_x(2),
+            rustle::spacer(numbers.padding_each(0.0, 0.0, theme::sp(3), 0.0));
+            styled_text(
+                Modifier::new()
+                    .weight(1.0)
+                    .clip()
+                    .padding_xy(theme::sp(2), 0.0),
                 shown,
                 kind,
             );
@@ -779,14 +787,14 @@ impl Drawing<'_> {
                         segments,
                         beside,
                         self.settings,
-                        owner,
+                        (owner, &self.state.code_lines),
                     );
                 };
                 if hit && self.matcher.is_none() {
                     column_arranged(
                         Modifier::new()
                             .fill_max_width()
-                            .fill(Tone::from(Role::Success).alpha(0.12)),
+                            .background(theme::color(Tone::from(Role::Success).alpha(0.12))),
                         Arrangement::Start,
                         Alignment::Start,
                         shown,
@@ -805,7 +813,7 @@ impl Drawing<'_> {
                     Modifier::new()
                         .fill_max_width()
                         .cursor(CursorIcon::Text)
-                        .target(owner),
+                        .control(owner, reduce(owner)),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
@@ -898,8 +906,8 @@ pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: Size) {
         },
     };
     let (low, high) = (
-        excerpts.scroll - OVERSCAN,
-        excerpts.scroll + height + OVERSCAN,
+        excerpts.scroll.offset() - OVERSCAN,
+        excerpts.scroll.offset() + height + OVERSCAN,
     );
     let (mut before, mut after, mut top) = (0.0_f32, 0.0_f32, 0.0_f32);
     let mut built: Vec<(&Entry, f32, f32)> = Vec::new();
@@ -948,31 +956,29 @@ pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: Size) {
     column_arranged(
         Modifier::new()
             .weight(1.0)
-            .clip_to(Radius::None)
-            .fill(Role::Background),
+            .clip()
+            .background(theme::color(Role::Background)),
         Arrangement::Start,
         Alignment::Start,
         || {
-            scroll_area(
-                Modifier::new().fill_max_width().weight(1.0),
-                Scroll::from_start(EXCERPTS_SCROLL, excerpts.scroll),
+            column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .weight(1.0)
+                    .vertical_scroll(&excerpts.scroll)
+                    .fill_max_width(),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
-                    column_arranged(
-                        Modifier::new().fill_max_width(),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            rustle::spacer(Modifier::new().height(before));
-                            for (entry, start, size) in built {
-                                let identity = match entry {
-                                    Entry::Header(place) => (*place, None),
-                                    Entry::Block(place, step) => (*place, Some(*step)),
-                                };
-                                rustle::key(identity, || draw(entry, start, size));
-                            }
-                            rustle::spacer(Modifier::new().height(after));
-                        },
-                    );
+                    rustle::spacer(Modifier::new().height(before));
+                    for (entry, start, size) in built {
+                        let identity = match entry {
+                            Entry::Header(place) => (*place, None),
+                            Entry::Block(place, step) => (*place, Some(*step)),
+                        };
+                        rustle::key(identity, || draw(entry, start, size));
+                    }
+                    rustle::spacer(Modifier::new().height(after));
                 },
             );
         },

@@ -1,11 +1,16 @@
 //! The questions and lists for publishing a branch, choosing what it follows, renaming, deleting, merging and rebasing it.
 
-use crate::kit::sp;
-use pm_field::Field;
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
+use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
-use crate::kit::{FocusId, Interactive, Role, Side, Styled, Type, label};
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::select::styled_text;
+use crate::theme::Role;
 
 use crate::button::Variant;
 use crate::git_prompts::{PROMPT_CANCEL, PROMPT_CONFIRM, PROMPT_INSIDE, PROMPT_OUTSIDE, Prompt};
@@ -61,7 +66,7 @@ pub struct Branching {
     /// Whether to carry the rename or deletion over to the branch on the remote.
     pub with_remote: bool,
     /// The name typed, or what the list is searched for.
-    pub field: Field,
+    pub field: TextFieldState,
 }
 
 impl BranchTask {
@@ -87,9 +92,9 @@ impl WorkspaceState {
         let current = self.current_branch_name();
         let field = match task {
             BranchTask::Publish | BranchTask::Rename => {
-                Field::new(current.as_deref().unwrap_or(""))
+                TextFieldState::new(current.as_deref().unwrap_or(""))
             }
-            _ => Field::default(),
+            _ => TextFieldState::default(),
         };
         self.git.branching = Some(Branching {
             task,
@@ -369,8 +374,8 @@ fn tick(label: &str, checked: bool) {
     row_arranged(
         Modifier::new()
             .cursor(CursorIcon::Pointer)
-            .target(BRANCH_TASK_REMOTE)
-            .pad_x(2),
+            .control(BRANCH_TASK_REMOTE, reduce(BRANCH_TASK_REMOTE))
+            .padding_xy(theme::sp(2), 0.0),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         || {
@@ -404,13 +409,13 @@ fn choice_rows(choices: &[(String, String, bool)]) {
 /// Emits a line of `words` set as a title, `pixels` tall, in the text colour and medium weight.
 #[track_caller]
 fn title_line(words: impl Into<String>, pixels: u32) {
-    label(
+    styled_text(
+        Modifier::new(),
         words,
-        Type::new(pixels)
-            .ratio(1.4)
-            .tone(Role::Text)
-            .truncate()
-            .medium(),
+        theme::text_style(pixels, 1.4)
+            .font_weight(rustle::FontWeight::MEDIUM)
+            .color(theme::color(Role::Text))
+            .max_lines(1),
     );
 }
 
@@ -430,7 +435,7 @@ pub fn branch_prompt(state: &WorkspaceState, task: BranchTask) {
         .width(WIDTH)
         .build_with(|| {
             let mut confirm: Option<(&str, Variant)> = None;
-            column_arranged(Modifier::new().pad(5), Arrangement::SpacedBy(sp(3)), Alignment::Start, || {
+            column_arranged(Modifier::new().padding(theme::sp(5)), Arrangement::SpacedBy(sp(3)), Alignment::Start, || {
                 title_line(task.title(), 15);
                 if loading {
                     line("Reading the remotes…", 13, 1.4, Role::Subtle);
@@ -524,7 +529,7 @@ pub fn branch_prompt(state: &WorkspaceState, task: BranchTask) {
                 }
             });
             row_arranged(
-                Modifier::new().fill_max_width().pad_x(5).pad_side(Side::Bottom, 5),
+                Modifier::new().fill_max_width().padding_xy(theme::sp(5), 0.0).padding_each(0.0, 0.0, 0.0, theme::sp(5)),
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Center,
                 || {

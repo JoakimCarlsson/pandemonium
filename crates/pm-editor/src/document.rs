@@ -46,8 +46,6 @@ pub struct HoverCard {
     pub text: Option<String>,
     /// What the language server finds wrong there.
     pub diagnostics: Vec<Diagnostic>,
-    /// How far down the card is scrolled, in logical pixels.
-    pub scroll: f32,
 }
 
 /// The highlights of a window of lines, kept until the text is parsed again.

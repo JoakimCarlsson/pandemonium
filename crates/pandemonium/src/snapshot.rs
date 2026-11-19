@@ -7,15 +7,13 @@ use pm_components::adder::{ADDER_BROWSE, ADDER_CLONE, ADDER_ROW_BASE, Found, Kin
 use pm_components::branch_tasks::{BRANCH_TASK_ROW_BASE, BranchTask};
 use pm_components::browser_safety::{Certificate, Download, Question as Asked, Saving};
 use pm_components::diff::gutter_id;
+use pm_components::focus::FocusId;
 use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing};
 use pm_components::git_menus::MenuKind;
 use pm_components::git_prompts::Prompt;
-use pm_components::kit::FocusId;
-use pm_components::kit::report::lay_out;
-use pm_components::kit::theme::{Appearance, default_family};
-use pm_components::kit::{TextPoint, TextSelection};
 use pm_components::open_files::EDITOR_FIELD;
 use pm_components::panes::{Item, SPLIT_RIGHT, Side};
+use pm_components::select::{TextPoint, TextSelection};
 use pm_components::settings::{SETTINGS_ADD, SETTINGS_FIND, Section};
 use pm_components::settings_catalog::{OPEN_LIST, Setting as SettingsCatalogue};
 use pm_components::settings_machines::{MACHINE_ADD, MACHINE_ADDRESS, MACHINE_NAME};
@@ -24,6 +22,8 @@ use pm_components::state::{
     REVIEW_FILES, STAGE_BASE, SUBAGENTS_CHIP, TAB_CHAT,
 };
 use pm_components::state::{LOCATION, SETTINGS};
+use pm_components::tagged::lay_out;
+use pm_components::theme::{Appearance, default_family};
 use pm_components::tree_actions::{TREE_NEW_FOLDER, TreeTarget};
 use pm_field::Edit;
 use pm_harness::{
@@ -807,7 +807,10 @@ fn project_search() -> WorkspaceState {
     };
     let mut state = code().project_search_opened();
     for character in "names".chars() {
-        state = state.project_search_typed(pm_field::Edit::Insert(character));
+        state = state.typed(
+            pm_components::project_search::PROJECT_SEARCH_FIELD,
+            &character.to_string(),
+        );
     }
     let session = state.review_index().unwrap_or_default();
     state.with_project_search(
@@ -1189,7 +1192,7 @@ fn chat_search() -> WorkspaceState {
     };
     code()
         .sessions_requested((340.0, 0.0))
-        .listing_filtered(Edit::Paste("restore".to_owned()))
+        .typed(pm_components::listing::LISTING_FILTER, "restore")
         .with_chats(
             "restore",
             vec![
@@ -1894,10 +1897,7 @@ fn browser_finding(tools: bool) -> WorkspaceState {
     );
     state.browser_zoomed(first, 1.25);
     state.browser_find_opened();
-    let mut state = state.edited(
-        pm_components::browser::BROWSER_FIND_FIELD,
-        Edit::Paste("route".to_owned()),
-    );
+    let mut state = state.typed(pm_components::browser::BROWSER_FIND_FIELD, "route");
     state.browser_found(first, 2, 7);
     if tools {
         state = state.browser_tools_shown();
@@ -2141,7 +2141,7 @@ fn diff_compact() -> WorkspaceState {
         .collect::<Vec<_>>()
         .join("\n");
     state.sessions[0].changes[0] = pm_components::sample::Change::new("src/long.rs", &source);
-    state.scrolled_diff(40_000.0, 200_000.0)
+    scrolled(state, |held| &held.diff_scroll, 40_000.0, 200_000.0)
 }
 
 /// The workspace on the diff with a comment kept on some lines and a box open to write another on a file.
@@ -2151,16 +2151,16 @@ fn commenting() -> WorkspaceState {
         .comment_drag_begun(gutter_id(1, true, 23))
         .comment_drag_extended(gutter_id(1, true, 26))
         .comment_drag_ended()
-        .edited(
+        .typed(
             COMMENT_FIELD,
-            Edit::Paste("Return the id from checkpoint() and drop the unwrap.".to_owned()),
+            "Return the id from checkpoint() and drop the unwrap.",
         )
         .after(COMMENT_ADD);
-    state
+    let state = state
         .comment_drag_begun(gutter_id(1, false, 18))
         .comment_drag_extended(gutter_id(1, false, 19))
-        .comment_drag_ended()
-        .scrolled_diff(560.0, 5000.0)
+        .comment_drag_ended();
+    scrolled(state, |held| &held.diff_scroll, 560.0, 5000.0)
 }
 
 /// The commits of a graph with a branch that forks off and is merged back.
@@ -2252,10 +2252,7 @@ fn source() -> WorkspaceState {
         .after(TAB_DIFF)
         .after(FocusId(STAGE_BASE))
         .after(FocusId(FILE_BASE + 1))
-        .edited(
-            COMMIT_MESSAGE,
-            Edit::Paste("Restore sessions from checkpoints".to_owned()),
-        )
+        .typed(COMMIT_MESSAGE, "Restore sessions from checkpoints")
         .with_history(0, commits());
     if let Some(session) = state.sessions.get_mut(0) {
         session.changes[3].untracked = true;
@@ -2306,7 +2303,7 @@ fn branching() -> WorkspaceState {
         .after(TAB_DIFF)
         .after(BRANCH_BUTTON)
         .with_session_branches(0, names.map(str::to_owned).to_vec())
-        .edited(BRANCH_FILTER, Edit::Paste("t".to_owned()))
+        .typed(BRANCH_FILTER, "t")
 }
 
 /// The workspace reading a file of the first session as it is in the last commit.
@@ -2466,7 +2463,7 @@ fn large_files(scrolled: bool) -> WorkspaceState {
         .chain((0..100).map(|index| format!("src/module-{index:03}")))
         .collect();
     if scrolled {
-        state.tree_scroll = 120_000.0;
+        state.tree_scroll.jump_to(120_000.0);
     }
     state
 }
@@ -2637,6 +2634,17 @@ fn held_captures() -> WorkspaceState {
 }
 
 impl Shot {
+    /// What an input method is composing in the prompt in this snapshot, which
+    /// then holds the keyboard whatever focus the snapshot was given, since only
+    /// a field with the keyboard shows a composition.
+    fn preedit(self) -> Option<&'static str> {
+        match self {
+            Self::Composing => Some("\u{a8}"),
+            Self::InputStressComposing => Some("\u{5b57}"),
+            _ => None,
+        }
+    }
+
     /// Whether this snapshot shows the folder picker's window instead of the main one.
     fn in_picker_window(self) -> bool {
         matches!(self, Self::Folders)
@@ -2912,30 +2920,22 @@ impl Shot {
                 ]
                 .map(str::to_owned)
                 .to_vec();
-                Screen::Workspace(state.file_finder_requested((340.0, 0.0)).edited(
-                    pm_components::listing::LISTING_FILTER,
-                    Edit::Paste("ses".to_owned()),
+                Screen::Workspace(state.file_finder_requested((340.0, 0.0)).typed(pm_components::listing::LISTING_FILTER, "ses",
                 ))
             }
-            Self::QuickHelp => Screen::Workspace(code().file_finder_requested((340.0, 0.0)).edited(
-                pm_components::listing::LISTING_FILTER,
-                Edit::Paste("?".to_owned()),
+            Self::QuickHelp => Screen::Workspace(code().file_finder_requested((340.0, 0.0)).typed(pm_components::listing::LISTING_FILTER, "?",
             )),
             Self::Themes => Screen::Workspace(code().choices_requested(
                 pm_components::quick_choices::Choosing::Theme,
                 (340.0, 0.0),
             )),
-            Self::GoLine => Screen::Workspace(code().file_finder_requested((340.0, 0.0)).edited(
-                pm_components::listing::LISTING_FILTER,
-                Edit::Paste(":12".to_owned()),
+            Self::GoLine => Screen::Workspace(code().file_finder_requested((340.0, 0.0)).typed(pm_components::listing::LISTING_FILTER, ":12",
             )),
             Self::Tasks => Screen::Workspace(
                 code()
                     .with_tasks(0, sample_tasks(), None)
                     .commands_requested((340.0, 0.0))
-                    .edited(
-                        pm_components::listing::LISTING_FILTER,
-                        Edit::Paste("task".to_owned()),
+                    .typed(pm_components::listing::LISTING_FILTER, "task",
                     ),
             ),
             Self::RunButtons => Screen::Workspace(runnable()),
@@ -2951,15 +2951,13 @@ impl Shot {
                     .command_used(pm_editor::Action::FileFinder)
                     .command_used(pm_editor::Action::GoToLine)
                     .commands_requested((340.0, 0.0))
-                    .edited(
-                        pm_components::listing::LISTING_FILTER,
-                        Edit::Paste("go".to_owned()),
+                    .typed(pm_components::listing::LISTING_FILTER, "go",
                     ),
             ),
             Self::Folded => Screen::Workspace(
                 code().lines_edited(pm_components::line_edits::LineEdit::Fold),
             ),
-            Self::Sticky => Screen::Workspace(code().scrolled_viewer(360.0, 10_000.0)),
+            Self::Sticky => Screen::Workspace(scrolled(code(), viewer_scroll, 360.0, 10_000.0)),
             Self::Cursors => {
                 let state = code();
                 let at = state
@@ -2987,19 +2985,19 @@ impl Shot {
             Self::Outline => Screen::Workspace(
                 code()
                     .outline_requested((340.0, 0.0))
-                    .edited(pm_components::listing::LISTING_FILTER, Edit::Paste("n".to_owned())),
+                    .typed(pm_components::listing::LISTING_FILTER, "n"),
             ),
             Self::Finding => Screen::Workspace(
                 code()
                     .edited(EDITOR_FIELD, Edit::Place(0, false))
                     .find_opened(true)
-                    .find_typed(Edit::Paste("names".to_owned()))
+                    .typed(pm_components::find::FIND_FIELD, "names")
                     .find_stepped(false),
             ),
             Self::FindReopened => Screen::Workspace(
                 code()
                     .find_opened(false)
-                    .find_typed(Edit::Paste("names".to_owned()))
+                    .typed(pm_components::find::FIND_FIELD, "names")
                     .find_opened(false),
             ),
             Self::Extensions => Screen::Workspace(
@@ -3017,12 +3015,10 @@ impl Shot {
                     ),
             ),
             Self::ComposerLong => {
-                let prompt = (1..=40).map(|line| format!("Prompt line {line}\n")).collect();
-                Screen::Workspace(
-                    workspace()
-                        .edited(PROMPT, Edit::Paste(prompt))
-                        .edited(PROMPT, Edit::ScrollTo(220.0)),
-                )
+                let prompt: String = (1..=40).map(|line| format!("Prompt line {line}\n")).collect();
+                let state = workspace().typed(PROMPT, &prompt);
+                state.prompt_scroll.jump_to(220.0);
+                Screen::Workspace(state)
             }
             Self::SignedOut => {
                 let mut state = workspace();
@@ -3163,15 +3159,11 @@ impl Shot {
             Self::FilesScrolled => Screen::Workspace(large_files(true)),
             Self::InputStress => Screen::Workspace(input_stress(true, true)),
             Self::InputStressScrolled => {
-                let mut state = input_stress(true, true);
-                state.prompt.apply(pm_field::Edit::ScrollTo(700.0));
+                let state = input_stress(true, true);
+                state.prompt_scroll.jump_to(700.0);
                 Screen::Workspace(state)
             }
-            Self::InputStressComposing => {
-                let mut state = input_stress(true, true);
-                state.prompt.apply(pm_field::Edit::Compose("字".to_owned()));
-                Screen::Workspace(state)
-            }
+            Self::InputStressComposing => Screen::Workspace(input_stress(true, true)),
             Self::IgnoredFiles => Screen::Workspace(ignored_files()),
             Self::Source => Screen::Workspace(source()),
             Self::SourceMenu(trigger) => {
@@ -3406,8 +3398,7 @@ impl Shot {
             }
             Self::Composing => Screen::Workspace(
                 welcome()
-                    .edited(PROMPT, Edit::Paste("Varför försvinner sm".to_owned()))
-                    .edited(PROMPT, Edit::Compose("¨".to_owned())),
+                    .typed(PROMPT, "Varför försvinner sm"),
             ),
             Self::DevContainer => Screen::Workspace(
                 welcome()
@@ -3430,7 +3421,7 @@ impl Shot {
                     state.sessions.push(session);
                 }
                 if self == Self::HistoryScrolled {
-                    state.history_scroll = f32::MAX;
+                    state.history_scroll.jump_to(f32::MAX);
                 }
                 Screen::Workspace(state)
             }
@@ -3507,15 +3498,11 @@ impl Shot {
                 Some((0, Side::Right)),
                 (900.0, 420.0),
             )),
-            Self::Wrapped => Screen::Workspace(welcome().edited(
-                PROMPT,
-                Edit::Paste(
-                    "Why does the sidebar lose its scroll position whenever a project is added, and what would it take to keep it where the reader left it? Start with the state that stores the offset.\nThen write the fix.".to_owned(),
-                ),
+            Self::Wrapped => Screen::Workspace(welcome().typed(PROMPT, "Why does the sidebar lose its scroll position whenever a project is added, and what would it take to keep it where the reader left it? Start with the state that stores the offset.\nThen write the fix.",
             )),
             Self::Slashed => Screen::Workspace(
                 welcome()
-                    .edited(PROMPT, Edit::Paste("/c".to_owned()))
+                    .typed(PROMPT, "/c")
                     .after(FocusId(4401)),
             ),
             Self::SlashScrolled => {
@@ -3535,10 +3522,15 @@ impl Shot {
             Self::SlashSession => {
                 let mut state = WorkspaceState::sample();
                 state.sessions[0].commands = claude_discovery().commands;
-                Screen::Workspace(state.edited(PROMPT, Edit::Paste("/".to_owned())))
+                Screen::Workspace(state.typed(PROMPT, "/"))
             }
             Self::Scrolling => {
-                Screen::Workspace(welcome().after(FocusId(4200)).scrolled_menu(1000.0, 1000.0))
+                Screen::Workspace(scrolled(
+                    welcome().after(FocusId(4200)),
+                    |held| &held.menu_scroll,
+                    1000.0,
+                    1000.0,
+                ))
             }
             Self::Placing => {
                 let here = std::env::current_dir().unwrap_or_default();
@@ -3677,7 +3669,7 @@ impl Shot {
                     .find(|(_, _, tool)| tool.id == "a1").unwrap();
                 state = state.after(SUBAGENTS_CHIP).after(FocusId(pm_components::state::STEP_BASE + (reply * 1000 + position) as u64));
                 if matches!(self, Self::AgentsScrolled) {
-                    state.subagents_scroll = 10000.0;
+                    state.subagents_scroll.jump_to(10000.0);
                 }
                 Screen::Workspace(state)
             }
@@ -3781,7 +3773,7 @@ impl Shot {
             Self::Kept => Screen::Workspace(kept()),
             Self::LongLine => Screen::Workspace(long_line()),
             Self::Restored => Screen::Workspace(restored()),
-            Self::RestoredTop => Screen::Workspace(restored().scrolled_chat(-2000.0, 2000.0)),
+            Self::RestoredTop => Screen::Workspace(scrolled(restored(), |held| &held.chat_back, 2000.0, 2000.0)),
             Self::Restoring => Screen::Workspace(kept().after(FocusId(RESTORE_BASE))),
             Self::TurnChanges => Screen::Workspace(turn_changes()),
             Self::Picking => Screen::Workspace(welcome().after(FocusId(4200))),
@@ -3789,7 +3781,7 @@ impl Shot {
             Self::ModelsFiltered => Screen::Workspace(
                 many_models()
                     .after(FocusId(4200))
-                    .edited(pm_components::state::MENU_FILTER, Edit::Paste("gpt".to_owned())),
+                    .typed(pm_components::state::MENU_FILTER, "gpt"),
             ),
             Self::Expanded => {
                 load_installed_grammar("rust");
@@ -3821,7 +3813,7 @@ impl Shot {
                 let state = state
                     .pane_dragged(Item::Browser, Some((0, Side::Right)), (0.0, 0.0))
                     .pane_dropped()
-                    .edited(PROMPT, Edit::Paste("hello".to_owned()))
+                    .typed(PROMPT, "hello")
                     .after(SEND);
                 Screen::Workspace(state)
             }
@@ -3829,7 +3821,7 @@ impl Shot {
                 let mut state = with_shell(welcome());
                 state.open_browser("http://localhost:5173");
                 let mut state = state
-                    .edited(PROMPT, Edit::Paste("Fix the header".to_owned()))
+                    .typed(PROMPT, "Fix the header")
                     .after(SEND);
                 state.rescope_browser();
                 Screen::Workspace(state.after(pm_components::browser::TAB_BROWSER))
@@ -3847,7 +3839,7 @@ impl Shot {
                         pm_components::elements::message(&elements)
                     );
                 }
-                state.chat_back = 1.0e6;
+                state.chat_back.jump_to(1.0e6);
                 Screen::Workspace(state)
             }
             Self::Captures => Screen::Workspace(held_captures()),
@@ -3879,17 +3871,17 @@ impl Shot {
                         pm_components::captures::message(&captures)
                     );
                 }
-                state.chat_back = 1.0e6;
+                state.chat_back.jump_to(1.0e6);
                 Screen::Workspace(state)
             }
             Self::ElementScrolled => {
                 let mut state = picked_elements();
                 state.picker = Some(pm_components::state::Picker::Element(0));
-                state.menu_scroll = 330.0;
+                state.menu_scroll.jump_to(330.0);
                 Screen::Workspace(state)
             }
             Self::Missing => {
-                Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("@zzzzqq".to_owned())))
+                Screen::Workspace(welcome().typed(PROMPT, "@zzzzqq"))
             }
             Self::SettingsOrigins(narrow) => {
                 let state = browser_settings_sample(Section::Browser);
@@ -3901,7 +3893,7 @@ impl Shot {
             Self::SettingsPage(Section::Usage, _) => Screen::Workspace(usage_sample()),
             Self::SettingsPage(section, _) => Screen::Workspace(browser_settings_sample(section)),
             Self::SettingsSearch(_) => Screen::Workspace(
-                settings_sample().edited(SETTINGS_FIND, Edit::Paste("font".to_owned())),
+                settings_sample().typed(SETTINGS_FIND, "font"),
             ),
             Self::SettingsPicker(narrow) => Screen::Workspace(
                 settings_sample()
@@ -3928,20 +3920,16 @@ impl Shot {
                 settings_sample()
                     .after(Section::Servers.id())
                     .after(MACHINE_ADD)
-                    .edited(MACHINE_NAME, Edit::Paste("Lab".to_owned()))
-                    .edited(MACHINE_ADDRESS, Edit::Paste("100.64.0.9:6868".to_owned()))
+                    .typed(MACHINE_NAME, "Lab")
+                    .typed(MACHINE_ADDRESS, "100.64.0.9:6868")
                     .scrolled_settings(if narrow { 300.0 } else { 0.0 }, 2000.0),
             ),
             Self::SettingsDraft(narrow) => Screen::Workspace(
                 browser_settings_sample(Section::Skills)
                     .after(pm_components::settings_drafts::DRAFT_NEW)
-                    .edited(
-                        pm_components::settings_drafts::DRAFT_NAME,
-                        Edit::Paste("ship-it".to_owned()),
+                    .typed(pm_components::settings_drafts::DRAFT_NAME, "ship-it",
                     )
-                    .edited(
-                        pm_components::settings_drafts::DRAFT_DESCRIPTION,
-                        Edit::Paste("Tags a release once CI is green on every OS".to_owned()),
+                    .typed(pm_components::settings_drafts::DRAFT_DESCRIPTION, "Tags a release once CI is green on every OS",
                     )
                     .after(
                         pm_components::settings_drafts::draft_scope(
@@ -4068,7 +4056,7 @@ impl Shot {
                     .with_repositories("JoakimCarlsson", Ok(repositories())),
             ),
             Self::Slashing => {
-                Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("/c".to_owned())))
+                Screen::Workspace(welcome().typed(PROMPT, "/c"))
             }
         }
     }
@@ -4747,10 +4735,7 @@ fn model_slots() -> pm_harness::SlotBook {
 /// A conversation whose agent was answering when its model was overloaded, so the rest of the turn asked the `main` slot's backup, with the notice of the switch beside the reply.
 fn model_fallback() -> WorkspaceState {
     let state = live(Turn::Finished)
-        .edited(
-            PROMPT,
-            Edit::Paste("Now add a test for the clamp".to_owned()),
-        )
+        .typed(PROMPT, "Now add a test for the clamp")
         .after(SEND);
     let last = state.sessions.len() - 1;
     [
@@ -4793,9 +4778,7 @@ fn aside() -> WorkspaceState {
                 failed: false,
             },
         )
-        .edited(
-            PROMPT,
-            Edit::Paste("/handoff Add a test for the clamp".to_owned()),
+        .typed(PROMPT, "/handoff Add a test for the clamp",
         )
         .after(SEND);
     [
@@ -4845,10 +4828,7 @@ fn queued() -> WorkspaceState {
     ]
     .into_iter()
     .fold(state, |state, event| state.heard(session, event))
-    .edited(
-        PROMPT,
-        Edit::Paste("Stop, the clamp lives in pm-ui".to_owned()),
-    )
+    .typed(PROMPT, "Stop, the clamp lives in pm-ui")
 }
 
 /// A conversation on a turn with a long, multi-line prompt waiting first and a short one with a file behind it.
@@ -4929,10 +4909,8 @@ fn queued_elements() -> WorkspaceState {
 
 /// A conversation told as the server tells it after a restart, from what the harness saved: the offer first, then each turn with its tools, its context meter and its end, the stopped and the failed turns among them.
 fn restored() -> WorkspaceState {
-    let state = WorkspaceState::new(&projects()).edited(
-        PROMPT,
-        Edit::Paste("Why does the sidebar lose its scroll position?".to_owned()),
-    );
+    let state = WorkspaceState::new(&projects())
+        .typed(PROMPT, "Why does the sidebar lose its scroll position?");
     let state = state.after(SEND);
     let session = state.open_index().unwrap();
     let tool = |id: &str, title: &str, kind, target: &str, state| Tool {
@@ -5030,18 +5008,17 @@ fn restored() -> WorkspaceState {
 fn kept() -> WorkspaceState {
     let state = live(Turn::Finished);
     let session = state.open_index().unwrap_or(0);
-    state
-        .heard(
-            session,
-            Event::Prompted {
-                text: "Why does the sidebar lose its scroll position?".to_owned(),
-                files: Vec::new(),
-                checkpoint: true,
-                turn: 0,
-                saved: None,
-            },
-        )
-        .scrolled_chat(-400.0, 400.0)
+    let state = state.heard(
+        session,
+        Event::Prompted {
+            text: "Why does the sidebar lose its scroll position?".to_owned(),
+            files: Vec::new(),
+            checkpoint: true,
+            turn: 0,
+            saved: None,
+        },
+    );
+    scrolled(state, |held| &held.chat_back, 400.0, 400.0)
 }
 
 /// A file a turn changed, at `path`, marked with `letter`, with the lines `diff`.
@@ -5125,10 +5102,7 @@ fn live(turn: Turn) -> WorkspaceState {
         worktree: None,
     };
     let mut state = WorkspaceState::new(&projects())
-        .edited(
-            PROMPT,
-            Edit::Paste("Why does the sidebar lose its scroll position?".to_owned()),
-        )
+        .typed(PROMPT, "Why does the sidebar lose its scroll position?")
         .after(SEND);
     let mut events = vec![
         Event::Settings(claude_settings()),
@@ -5414,12 +5388,12 @@ fn find_in_selection(replaced: bool) -> WorkspaceState {
     let state = state
         .edited(EDITOR_FIELD, Edit::Select(start, end))
         .find_opened(replaced)
-        .find_typed(Edit::Paste("names".to_owned()));
+        .typed(pm_components::find::FIND_FIELD, "names");
     if !replaced {
         return state;
     }
     state
-        .replacement_typed(Edit::Paste("labels".to_owned()))
+        .typed(pm_components::find::REPLACE_FIELD, "labels")
         .replaced_all()
 }
 
@@ -5568,35 +5542,39 @@ pub fn write(
     } else {
         None
     };
+    let preedit = shot.preedit();
+    let focused = if preedit.is_some() {
+        Some(PROMPT)
+    } else {
+        focused
+    };
     let mut screen = shot.screen();
     let Screen::Workspace(held) = &screen;
     let looks = &held.window.appearance;
     scene::set_fonts(&looks.interface_font, &looks.code_font);
-    pm_components::kit::set_code_ligatures(held.editor.ligatures);
-    let rested = lay_out(
+    pm_components::theme::set_code_ligatures(held.editor.ligatures);
+    lay_out(
         target.0,
         target.1,
         focused,
         content(screen.clone(), window, target),
     );
-    let frame_report = rested.shifted(-band, -band);
-    if let Some(measured) = screen.diff_resized(&frame_report.scrollers) {
+    if let Some(measured) = screen.diff_resized() {
         screen = screen.measured_diff(measured);
     }
     let frame = Frame {
         clock_ms: elapsed_ms,
         pointer: pointer.map(|(x, y)| (x + band, y + band)),
         focused,
-        selection: shot.selection(),
         family: default_family(),
         appearance,
         transparent: pm_components::framed(),
         scale,
+        preedit: preedit.map(str::to_owned),
         ..Frame::new(target.0, target.1)
     };
-    write_png(path, &frame, content(screen, window, target))
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    screen.selectables().select(shot.selection());
+    write_png(path, &frame, content(screen, window, target)).map_err(|error| error.to_string())
 }
 
 /// What a snapshot draws of `screen`: the window beside the main one `window`
@@ -5604,7 +5582,7 @@ pub fn write(
 /// picture `target` logical pixels across.
 fn content(
     screen: Screen,
-    window: Option<pm_components::kit::report::WindowKey>,
+    window: Option<scene::WindowKey>,
     target: (f32, f32),
 ) -> impl Fn() + 'static {
     move || {
@@ -5644,8 +5622,8 @@ fn previewed(path: &str) -> WorkspaceState {
             .with_drawn(0, path, false, crate::work::picture::draw(PREVIEW_VECTOR)),
         _ => {
             let palette = crate::work::picture::Palette::of(
-                pm_components::kit::theme::default_family()
-                    .variant(pm_components::kit::theme::Appearance::Dark),
+                pm_components::theme::default_family()
+                    .variant(pm_components::theme::Appearance::Dark),
                 true,
             );
             pm_components::figures::figures_of(PREVIEW_MARKDOWN, Some(path))
@@ -5737,8 +5715,8 @@ fn exhibited(kind: pm_harness::ExhibitKind, pictured: bool) -> WorkspaceState {
         pm_components::figures::Wanted::Diagram(source) => crate::work::picture::diagram(
             &source,
             &crate::work::picture::Palette::of(
-                pm_components::kit::theme::default_family()
-                    .variant(pm_components::kit::theme::Appearance::Dark),
+                pm_components::theme::default_family()
+                    .variant(pm_components::theme::Appearance::Dark),
                 true,
             ),
         ),
@@ -5889,6 +5867,45 @@ fn tool_listing(title: &str, name: &str, target: &str) -> pm_protocol::ToolListi
     }
 }
 
+/// `state` with the scrolling area `area` picks moved `by` logical pixels on
+/// from where it is, towards its end, and no further than `room`, as the reader
+/// scrolling it would before it is drawn: for a conversation, `by` is how much
+/// further back from its end it goes.
+fn scrolled(
+    mut state: WorkspaceState,
+    area: impl Fn(&WorkspaceState) -> &rustle::ScrollState,
+    by: f32,
+    room: f32,
+) -> WorkspaceState {
+    let scroll = area(&state);
+    scroll.jump_to((scroll.offset() + by).clamp(0.0, room));
+    state.follow_scrolls();
+    state
+}
+
+/// How far the file shown in `state` is scrolled.
+fn viewer_scroll(state: &WorkspaceState) -> &rustle::ScrollState {
+    &state.shown_viewer().expect("a file is shown").scroll
+}
+
+/// How far the page of the settings of `state` that lists servers is scrolled.
+fn settings_scroll(state: &WorkspaceState) -> &rustle::ScrollState {
+    &state.settings_servers.scroll
+}
+
+/// Fixtures that scroll an area of the workspace in a chain of changes.
+trait Scrolls {
+    /// The workspace with the settings page scrolled `by` logical pixels
+    /// further down, no further than `room`.
+    fn scrolled_settings(self, by: f32, room: f32) -> Self;
+}
+
+impl Scrolls for WorkspaceState {
+    fn scrolled_settings(self, by: f32, room: f32) -> Self {
+        scrolled(self, settings_scroll, by, room)
+    }
+}
+
 #[cfg(test)]
 mod offer_tests {
     use super::*;
@@ -5968,7 +5985,7 @@ mod performance_tests {
     static ALLOCATOR: Counting = Counting;
 
     /// Lays the main window out at the snapshot size, with `focused` holding focus, as a frame would.
-    fn laid(screen: &Screen, width: f32, focused: Option<FocusId>) -> pm_components::kit::Report {
+    fn laid(screen: &Screen, width: f32, focused: Option<FocusId>) -> pm_components::tagged::Laid {
         super::lay_out(
             width,
             HEIGHT as f32,
@@ -6054,11 +6071,11 @@ mod performance_tests {
         state.open_tree.insert("crates".to_owned());
         let screen = Screen::Workspace(state);
         let changed = laid(&screen, WIDTH as f32, None);
-        assert!(changed.regions.len() > first.regions.len());
+        assert!(changed.nodes.len() > first.nodes.len());
         let resized = laid(&screen, 1000.0, None);
-        assert_ne!(changed.regions, resized.regions);
+        assert_ne!(changed.nodes, resized.nodes);
         let rebuilt = laid(&screen, 1000.0, None);
-        assert_eq!(resized.regions, rebuilt.regions);
+        assert_eq!(resized.nodes, rebuilt.nodes);
     }
 
     /// Measures editing and laying out independently for prompt size and conversation size.
@@ -6072,7 +6089,7 @@ mod performance_tests {
             let mut samples = Vec::new();
             for version in 0..21 {
                 let started = std::time::Instant::now();
-                screen = screen.edited(PROMPT, pm_field::Edit::Insert('x'));
+                screen = screen.typed(PROMPT, "x");
                 std::hint::black_box(laid(&screen, WIDTH as f32, Some(PROMPT)));
                 if version > 0 {
                     samples.push(started.elapsed().as_secs_f64() * 1000.0);
@@ -6193,7 +6210,7 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
     drop(tools_view);
     drop(page);
     drop(engine);
-    written.map(|_| ()).map_err(|error| error.to_string())
+    written.map_err(|error| error.to_string())
 }
 
 /// `state` with Ollama and OpenRouter hidden from new sessions, as the settings keep it.

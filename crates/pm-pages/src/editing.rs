@@ -116,19 +116,14 @@ impl Screen {
         self.in_workspace(|state| state.hover_requested(offset, at))
     }
 
-    /// The screen after the card about a place is scrolled by `delta` logical pixels, with `room` pixels to scroll.
-    pub fn scrolled_hover(self, delta: f32, room: f32) -> Self {
-        self.in_workspace(|state| state.scrolled_hover(delta, room))
-    }
-
     /// The screen with the file shown formatted as its language says, without writing it.
     pub fn formatted_by_hand(self) -> Self {
         self.in_workspace(WorkspaceState::formatted_by_hand)
     }
 
     /// The screen after a press or drag on the minimap scrolled the file shown.
-    pub fn minimap_pressed(self, y: f32, height: f32, view: f32, room: f32) -> Self {
-        self.in_workspace(|state| state.minimap_pressed(y, height, view, room))
+    pub fn minimap_pressed(self, y: f32, height: f32) -> Self {
+        self.in_workspace(|state| state.minimap_pressed(y, height))
     }
 
     /// The screen after the line kept at the top of the file shown with this many lines above it was pressed.
@@ -218,12 +213,12 @@ impl Screen {
     }
 
     /// The screen with the menu of the session shown pressed on its row `row`.
-    pub fn session_command(self, row: pm_components::kit::FocusId) -> Self {
+    pub fn session_command(self, row: pm_components::focus::FocusId) -> Self {
         self.in_workspace(|state| state.session_command(row))
     }
 
     /// The control answering what the agent of the session shown asks with an answer of `verdict`, when it asks.
-    pub fn answer_of(&self, verdict: pm_harness::Verdict) -> Option<pm_components::kit::FocusId> {
+    pub fn answer_of(&self, verdict: pm_harness::Verdict) -> Option<pm_components::focus::FocusId> {
         match self {
             Self::Workspace(state) => state.answer_of(verdict),
         }
@@ -270,10 +265,10 @@ impl Screen {
     }
 
     /// The button that starts a new session in the project shown, when there is a project.
-    pub fn new_session_button(&self) -> Option<pm_components::kit::FocusId> {
+    pub fn new_session_button(&self) -> Option<pm_components::focus::FocusId> {
         match self {
             Self::Workspace(state) if !state.projects.is_empty() => {
-                Some(pm_components::kit::FocusId(
+                Some(pm_components::focus::FocusId(
                     pm_components::state::NEW_IN_BASE + state.current_project() as u64,
                 ))
             }
@@ -314,11 +309,6 @@ impl Screen {
             state.show_problems();
             state
         })
-    }
-
-    /// The screen after the list of problems in the dock was scrolled.
-    pub fn scrolled_problems(self, delta: f32, room: f32) -> Self {
-        self.in_workspace(|state| state.scrolled_problems(delta, room))
     }
 
     /// The screen after the server said what is wrong with the files of the project of the session at `session`.
@@ -614,7 +604,7 @@ impl Screen {
     }
 
     /// The position among the open files of the file whose lines in the excerpts the element `id` holds.
-    pub fn excerpt_owner_of(&self, id: pm_components::kit::FocusId) -> Option<usize> {
+    pub fn excerpt_owner_of(&self, id: pm_components::focus::FocusId) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.excerpt_owner_of(id),
         }
@@ -673,7 +663,7 @@ impl Screen {
     }
 
     /// The screen with the way of matching `which` names switched.
-    pub fn find_toggled(self, which: pm_components::kit::FocusId) -> Self {
+    pub fn find_toggled(self, which: pm_components::focus::FocusId) -> Self {
         self.in_workspace(|state| state.find_toggled(which))
     }
 
@@ -901,17 +891,6 @@ impl Screen {
     /// The screen with the menu on the tab of the open file at `index` open at `at`.
     pub fn with_tab_menu(self, index: usize, at: (f32, f32)) -> Self {
         self.in_workspace(|state| state.with_tab_menu(index, at))
-    }
-
-    /// The tab of an open file the element `id` is, when it is one.
-    pub fn file_tab_of(&self, id: pm_components::kit::FocusId) -> Option<usize> {
-        match self {
-            Self::Workspace(state) => {
-                id.0.checked_sub(pm_components::open_files::FILE_TAB_BASE)
-                    .map(|index| index as usize)
-                    .filter(|index| *index < state.git.viewers.len())
-            }
-        }
     }
 
     /// The screen with `text` put on the clipboard.
@@ -1215,21 +1194,6 @@ impl Screen {
         command: pm_protocol::ExtensionCommand,
     ) -> Self {
         self.in_workspace(|state| state.extension_command_run(host, command))
-    }
-
-    /// The screen after the extensions page is scrolled by `delta` logical pixels, with `room` pixels to scroll.
-    pub fn scrolled_extensions(self, delta: f32, room: f32) -> Self {
-        self.in_workspace(|state| state.scrolled_extensions(delta, room))
-    }
-
-    /// The screen after a project's overview is scrolled by `delta` logical pixels, with `room` pixels to scroll.
-    pub fn scrolled_overview(self, delta: f32, room: f32) -> Self {
-        self.in_workspace(|state| state.scrolled_overview(delta, room))
-    }
-
-    /// Scrolls the history list by `delta` logical pixels, kept within `room` pixels of overflow.
-    pub fn scrolled_history(self, delta: f32, room: f32) -> Self {
-        self.in_workspace(|state| state.scrolled_history(delta, room))
     }
 
     /// The screen after the server of `host` said how its languages stand.

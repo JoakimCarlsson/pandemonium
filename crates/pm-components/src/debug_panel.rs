@@ -1,24 +1,27 @@
 //! The debug tab of the dock: the controls over a program being debugged, its stack, its variables and watches, and its console.
 
-use crate::kit::sp;
+use crate::events::reduce;
+use crate::theme;
+use crate::theme::sp;
 use pm_protocol::{DebugCategory, DebugView, Standing};
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
 
 use crate::Button;
 use crate::debug::{
-    DEBUG_CONSOLE_FIELD, DEBUG_CONSOLE_SCROLL, DEBUG_CONTINUE, DEBUG_FRAME_BASE, DEBUG_PAUSE,
-    DEBUG_ROWS, DEBUG_STACK_SCROLL, DEBUG_START, DEBUG_STEP_IN, DEBUG_STEP_OUT, DEBUG_STEP_OVER,
-    DEBUG_STOP, DEBUG_VARIABLE_BASE, DEBUG_VARIABLES_SCROLL, DEBUG_WATCH_FIELD,
-    DEBUG_WATCH_REMOVE_BASE, Run, variable_rows,
+    DEBUG_CONSOLE_FIELD, DEBUG_CONTINUE, DEBUG_FRAME_BASE, DEBUG_PAUSE, DEBUG_ROWS, DEBUG_START,
+    DEBUG_STEP_IN, DEBUG_STEP_OUT, DEBUG_STEP_OVER, DEBUG_STOP, DEBUG_VARIABLE_BASE,
+    DEBUG_WATCH_FIELD, DEBUG_WATCH_REMOVE_BASE, Run, variable_rows,
 };
+use crate::events::Interactive;
+use crate::focus::FocusId;
+use crate::icons::IconName;
+use crate::icons::icon;
 use crate::input::Input;
-use crate::kit::{
-    FocusId, Hovered, IconName, Interactive, Looks, Radius, Role, Scroll, Side, Styled, Tone,
-    Tooltip, Type, icon, label, label_with, measure, scroll_area,
-};
+use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::WorkspaceState;
+use crate::theme::{Role, Tone};
 
 /// How wide the list of the stack is, in logical pixels.
 const STACK_WIDTH: f32 = 220.0;
@@ -35,8 +38,10 @@ fn standing_words(view: &DebugView) -> String {
 }
 
 /// The type of a line of the tab: `pixels` tall with a line height of 1.4 times that, in `tone`, cut short at the edge of its box.
-fn small(pixels: u32, tone: impl Into<Tone>) -> Type {
-    Type::new(pixels).ratio(1.4).tone(tone).truncate()
+fn small(pixels: u32, tone: impl Into<Tone>) -> rustle::TextStyle {
+    theme::text_style(pixels, 1.4)
+        .color(theme::color(tone))
+        .max_lines(1)
 }
 
 /// Emits one icon button of the controls: `icon` answering to `id`, explained by `tip`, pressable while `enabled`.
@@ -45,7 +50,7 @@ fn control(icon: IconName, id: FocusId, tip: &'static str, enabled: bool) {
     Button::icon(icon, id)
         .size(Size::Sm)
         .disabled(!enabled)
-        .modifier(Modifier::new().tooltip(tip))
+        .tooltip(tip)
         .build();
 }
 
@@ -58,9 +63,14 @@ fn controls(run: &Run) {
     row_arranged(
         Modifier::new()
             .fill_max_width()
-            .h(9)
-            .stroke_side(Side::Bottom, 1.0, Role::Border)
-            .pad_x(3),
+            .height(theme::sp(9))
+            .draw_behind(theme::edge(
+                theme::Side::Bottom,
+                1.0,
+                theme::color(Role::Border),
+            ))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(3), 0.0),
         Arrangement::SpacedBy(sp(1)),
         Alignment::Center,
         || {
@@ -78,13 +88,13 @@ fn controls(run: &Run) {
             control(IconName::StepInto, DEBUG_STEP_IN, "Step into", paused);
             control(IconName::StepOut, DEBUG_STEP_OUT, "Step out", paused);
             control(IconName::Stop, DEBUG_STOP, "Stop", live);
-            label_with(
-                Modifier::new().pad_side(Side::Left, 2),
+            styled_text(
+                Modifier::new().padding_each(theme::sp(2), 0.0, 0.0, 0.0),
                 view.label.clone(),
                 small(12, Role::Muted),
             );
-            label_with(
-                Modifier::new().pad_side(Side::Left, 2),
+            styled_text(
+                Modifier::new().padding_each(theme::sp(2), 0.0, 0.0, 0.0),
                 standing_words(view),
                 small(12, Role::Subtle),
             );
@@ -100,16 +110,23 @@ fn section(title: &str, width: Option<f32>, body: impl FnOnce()) {
         None => Modifier::new().fill_max_height().weight(1.0),
     };
     column_arranged(
-        size.stroke_side(Side::Left, 1.0, Role::Border),
+        size.draw_behind(theme::edge(
+            theme::Side::Left,
+            1.0,
+            theme::color(Role::Border),
+        ))
+        .padding_each(1.0, 0.0, 0.0, 0.0),
         Arrangement::Start,
         Alignment::Start,
         || {
             row_arranged(
-                Modifier::new().h(7).pad_x(3),
+                Modifier::new()
+                    .height(theme::sp(7))
+                    .padding_xy(theme::sp(3), 0.0),
                 Arrangement::Start,
                 Alignment::Center,
                 || {
-                    label(title, small(11, Role::Subtle));
+                    styled_text(Modifier::new(), title, small(11, Role::Subtle));
                 },
             );
             body();
@@ -117,45 +134,43 @@ fn section(title: &str, width: Option<f32>, body: impl FnOnce()) {
     );
 }
 
-/// Emits a box scrolled `scrolled` pixels from the top by the list `id`, holding the rows `content` emits.
+/// Emits a box scrolled as `scrolled` says, holding the rows `content` emits.
 #[track_caller]
-fn rows_box(id: FocusId, scrolled: f32, content: impl FnOnce()) {
-    scroll_area(
-        Modifier::new().fill_max_width().weight(1.0),
-        Scroll::from_start(id, scrolled),
-        || {
-            column_arranged(
-                Modifier::new().fill_max_width(),
-                Arrangement::Start,
-                Alignment::Start,
-                content,
-            )
-        },
+fn rows_box(scrolled: &rustle::ScrollState, content: impl FnOnce()) {
+    column_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .weight(1.0)
+            .vertical_scroll(scrolled)
+            .fill_max_width(),
+        Arrangement::Start,
+        Alignment::Start,
+        content,
     );
 }
 
 /// Emits one row of a list holding what `content` emits, pressed as `id` when it is given one, marked while `selected`.
 #[track_caller]
 fn list_row(id: Option<FocusId>, selected: bool, content: impl FnOnce()) {
-    let mut own = Modifier::new().fill_max_width().h(6);
+    let mut own = Modifier::new().fill_max_width().height(theme::sp(6));
     own = match id {
         Some(id) => {
-            let looks = Looks::new().hover(Role::SurfaceHover);
+            let looks = theme::InteractionTones::new().hover(Role::SurfaceHover);
             let looks = if selected {
                 looks.idle(Role::SurfaceSelected)
             } else {
                 looks
             };
-            own.looks(looks)
-                .clip_to(Radius::None)
+            own.interaction_background(looks.colors())
+                .clip()
                 .cursor(CursorIcon::Pointer)
-                .target(id)
+                .control(id, reduce(id))
         }
-        None if selected => own.fill(Role::SurfaceSelected).clip_to(Radius::None),
-        None => own.clip_to(Radius::None),
+        None if selected => own.background(theme::color(Role::SurfaceSelected)).clip(),
+        None => own.clip(),
     };
     row_arranged(
-        own.pad_x(3),
+        own.padding_xy(theme::sp(3), 0.0),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         content,
@@ -167,14 +182,16 @@ fn list_row(id: Option<FocusId>, selected: bool, content: impl FnOnce()) {
 fn stack(state: &WorkspaceState, run: &Run) {
     let view = &run.view;
     section("Call stack", Some(STACK_WIDTH), || {
-        rows_box(DEBUG_STACK_SCROLL, state.debug.stack_scroll, || {
+        rows_box(&state.debug.stack_scroll, || {
             if view.frames.is_empty() {
                 let said = if view.standing == Standing::Running {
                     "Running"
                 } else {
                     "Not paused"
                 };
-                list_row(None, false, || label(said, small(12, Role::Subtle)));
+                list_row(None, false, || {
+                    styled_text(Modifier::new(), said, small(12, Role::Subtle))
+                });
                 return;
             }
             for (index, frame) in view.frames.iter().take(DEBUG_ROWS as usize).enumerate() {
@@ -189,8 +206,15 @@ fn stack(state: &WorkspaceState, run: &Run) {
                         Some(FocusId(DEBUG_FRAME_BASE + index as u64)),
                         view.frame == Some(frame.id),
                         || {
-                            label(frame.name.clone(), small(12, Role::Text).mono().truncate());
-                            label_with(Modifier::new(), place, small(12, Role::Subtle));
+                            styled_text(
+                                Modifier::new(),
+                                frame.name.clone(),
+                                small(12, Role::Text)
+                                    .font_family(theme::mono())
+                                    .ligatures(theme::code_ligatures())
+                                    .max_lines(1),
+                            );
+                            styled_text(Modifier::new(), place, small(12, Role::Subtle));
                         },
                     );
                 });
@@ -224,19 +248,34 @@ fn variable_parts(entry: &crate::debug::VariableRow, room: f32) {
     } else {
         Role::Text.into()
     };
-    let name_kind = small(12, tone).mono();
+    let name_kind = small(12, tone)
+        .font_family(theme::mono())
+        .ligatures(theme::code_ligatures());
     let equals_kind = small(12, Role::Subtle);
-    let value_kind = small(12, Role::SyntaxString).mono();
+    let value_kind = small(12, Role::SyntaxString)
+        .font_family(theme::mono())
+        .ligatures(theme::code_ligatures());
     let type_kind = small(11, Role::Subtle);
     let indent = entry.depth as f32 * 12.0;
-    let typed = entry
-        .kind
-        .as_deref()
-        .map_or(0.0, |kind| measure(kind, type_kind).0.ceil());
-    let mut used = indent + VARIABLE_CHEVRON + measure(&entry.name, name_kind).0.ceil() + typed;
+    let typed = entry.kind.as_deref().map_or(0.0, |kind| {
+        rustle::layout_text(kind, &type_kind, None)
+            .size()
+            .width
+            .ceil()
+    });
+    let mut used = indent
+        + VARIABLE_CHEVRON
+        + rustle::layout_text(&entry.name, &name_kind, None)
+            .size()
+            .width
+            .ceil()
+        + typed;
     let mut parts = 3 + usize::from(entry.kind.is_some());
     if !entry.value.is_empty() {
-        used += measure("=", equals_kind).0.ceil();
+        used += rustle::layout_text("=", &equals_kind, None)
+            .size()
+            .width
+            .ceil();
         parts += 2;
     }
     used += sp(2) * (parts - 1) as f32;
@@ -276,13 +315,13 @@ fn variable_parts(entry: &crate::debug::VariableRow, room: f32) {
             } else {
                 rustle::spacer(Modifier::new().width(VARIABLE_CHEVRON));
             }
-            label_with(Modifier::new(), entry.name.clone(), name_kind);
+            styled_text(Modifier::new(), entry.name.clone(), name_kind);
             if !entry.value.is_empty() {
-                label_with(Modifier::new(), "=", equals_kind);
-                label_with(Modifier::new().weight(1.0), entry.value.clone(), value_kind);
+                styled_text(Modifier::new(), "=", equals_kind);
+                styled_text(Modifier::new().weight(1.0), entry.value.clone(), value_kind);
             }
             if let Some(kind) = &entry.kind {
-                label_with(
+                styled_text(
                     Modifier::new().width_in(0.0, typed * kept),
                     kind.clone(),
                     type_kind,
@@ -296,7 +335,10 @@ fn variable_parts(entry: &crate::debug::VariableRow, room: f32) {
 #[track_caller]
 fn field_box(field: impl FnOnce()) {
     column_arranged(
-        Modifier::new().fill_max_width().pad_x(2).pad_y(1),
+        Modifier::new()
+            .fill_max_width()
+            .padding_xy(theme::sp(2), 0.0)
+            .padding_xy(0.0, theme::sp(1)),
         Arrangement::Start,
         Alignment::Start,
         field,
@@ -309,21 +351,23 @@ fn variables(state: &WorkspaceState, run: &Run) {
     let view = &run.view;
     let rows = variable_rows(view, &state.debug.unfolded);
     section("Variables", None, || {
-        rows_box(DEBUG_VARIABLES_SCROLL, state.debug.variables_scroll, || {
+        rows_box(&state.debug.variables_scroll, || {
             if rows.is_empty() {
                 list_row(None, false, || {
-                    label("Nothing to show", small(12, Role::Subtle))
+                    styled_text(Modifier::new(), "Nothing to show", small(12, Role::Subtle))
                 });
             }
             for (index, entry) in rows.iter().take(DEBUG_ROWS as usize).enumerate() {
                 rustle::key(index, || variable_row(index, entry));
             }
             row_arranged(
-                Modifier::new().h(6).pad_x(3),
+                Modifier::new()
+                    .height(theme::sp(6))
+                    .padding_xy(theme::sp(3), 0.0),
                 Arrangement::Start,
                 Alignment::Center,
                 || {
-                    label("Watch", small(11, Role::Subtle));
+                    styled_text(Modifier::new(), "Watch", small(11, Role::Subtle));
                 },
             );
             for (index, expression) in state
@@ -346,12 +390,20 @@ fn variables(state: &WorkspaceState, run: &Run) {
                 };
                 rustle::key(("watch", index), || {
                     list_row(None, false, || {
-                        label(expression.clone(), small(12, Role::Text).mono());
-                        label("=", small(12, Role::Subtle));
-                        label_with(
+                        styled_text(
+                            Modifier::new(),
+                            expression.clone(),
+                            small(12, Role::Text)
+                                .font_family(theme::mono())
+                                .ligatures(theme::code_ligatures()),
+                        );
+                        styled_text(Modifier::new(), "=", small(12, Role::Subtle));
+                        styled_text(
                             Modifier::new().weight(1.0),
                             shown.0,
-                            small(12, shown.1).mono(),
+                            small(12, shown.1)
+                                .font_family(theme::mono())
+                                .ligatures(theme::code_ligatures()),
                         );
                         Button::icon(
                             IconName::Close,
@@ -392,26 +444,25 @@ fn console(state: &WorkspaceState, run: &Run) {
             Arrangement::Start,
             Alignment::Start,
             || {
-                scroll_area(
-                    Modifier::new().fill_max_width().weight(1.0),
-                    Scroll::from_end(DEBUG_CONSOLE_SCROLL, state.debug.console_back),
+                column_arranged(
+                    Modifier::new()
+                        .fill_max_width()
+                        .weight(1.0)
+                        .vertical_scroll_with(&state.debug.console_back, true)
+                        .fill_max_width()
+                        .padding_xy(theme::sp(3), 0.0),
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
-                        column_arranged(
-                            Modifier::new().fill_max_width().pad_x(3),
-                            Arrangement::Start,
-                            Alignment::Start,
-                            || {
-                                for entry in &run.view.lines {
-                                    label(
-                                        entry.text.clone(),
-                                        Type::code(12)
-                                            .ratio(1.4)
-                                            .tone(console_tone(entry.category))
-                                            .truncate(),
-                                    );
-                                }
-                            },
-                        );
+                        for entry in &run.view.lines {
+                            styled_text(
+                                Modifier::new(),
+                                entry.text.clone(),
+                                theme::code_style(12, 1.4)
+                                    .color(theme::color(console_tone(entry.category)))
+                                    .max_lines(1),
+                            );
+                        }
                     },
                 );
                 field_box(|| {
@@ -434,11 +485,11 @@ fn idle(state: &WorkspaceState) {
         .clone()
         .unwrap_or_else(|| "Nothing is being debugged.".to_owned());
     column_arranged(
-        Modifier::new().weight(1.0).pad_y(6),
+        Modifier::new().weight(1.0).padding_xy(0.0, theme::sp(6)),
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         || {
-            label(said, small(13, Role::Subtle));
+            styled_text(Modifier::new(), said, small(13, Role::Subtle));
             Button::new("Start debugging", DEBUG_START)
                 .size(Size::Sm)
                 .build();
