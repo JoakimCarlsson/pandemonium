@@ -22,6 +22,7 @@ pub use pm_components::state::{
     WorkspaceState,
 };
 
+use pm_components::revision::region;
 use pm_components::sash::{PLAN_SASH, REVIEW_SASH, SIDEBAR_SASH, Sash, TERMINAL_SASH};
 use pm_components::state::Page;
 
@@ -38,6 +39,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
     let main_width = state.pane_area((width, height)).width;
     let plan_width = width - sidebar_width - review_width - main_width;
     let paned = state.paned();
+    let inner = state.inner_sizes();
     let frame = state.code_lines.frame(Modifier::new().fill_max_size());
     rustle::stack_with(frame, || {
         state.places.provide(|| {
@@ -48,26 +50,42 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
                 Arrangement::Start,
                 Alignment::Start,
                 || {
-                    TitleBar::of(state).build();
+                    region((width, height, inner), || TitleBar::of(state).build());
                     row_arranged(
                         Modifier::new().weight(1.0).fill_max_width(),
                         Arrangement::Start,
                         Alignment::Start,
                         || {
                             if state.sidebar_open {
-                                sidebar::sidebar(state);
+                                region((state.sidebar_width, height, inner), || {
+                                    sidebar::sidebar(state);
+                                });
                             }
+                            let rooms = (
+                                width,
+                                height,
+                                sidebar_width,
+                                review_width,
+                                plan_width,
+                                inner,
+                            );
                             match state.page {
                                 _ if paned => panes::main_area(state, (width, height)),
-                                Page::History => history::history(state),
-                                Page::Extensions => pm_components::extensions::extensions(state),
-                                _ => panes::starting_page(state, page),
+                                Page::History => region(rooms, || history::history(state)),
+                                Page::Extensions => region(rooms, || {
+                                    pm_components::extensions::extensions(state);
+                                }),
+                                _ => region(rooms, || panes::starting_page(state, page)),
                             }
                             if let Some(source) = state.plan_shown() {
-                                plan::panel(state, source, plan_width);
+                                region((plan_width, height, inner), || {
+                                    plan::panel(state, source, plan_width);
+                                });
                             }
                             if let Some(session) = state.review_session().filter(|_| reviewing) {
-                                review::review(state, session);
+                                region((review_width, height, inner), || {
+                                    review::review(state, session)
+                                });
                             }
                         },
                     );

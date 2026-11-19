@@ -2321,7 +2321,7 @@ impl Work {
             Pending::Added => match response {
                 Response::Directory { path } => {
                     Self::in_workspace(model, |state| state.adder_landed(&path));
-                    if let Some(paths) = model.get().project_paths() {
+                    if let Some(paths) = model.read(Screen::project_paths) {
                         self.save_projects(paths);
                     }
                     self.relist();
@@ -2872,7 +2872,8 @@ impl Work {
             if self.shells.contains_key(&key) {
                 continue;
             }
-            let Some(session) = model.get().session_in(origin, &info.directory) else {
+            let Some(session) = model.read(|screen| screen.session_in(origin, &info.directory))
+            else {
                 continue;
             };
             let mut adopted = None;

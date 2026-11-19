@@ -1,5 +1,11 @@
 //! The screen the app holds, hoisted in one rustle state that every window's
 //! root reads, and that the app's logic and its work change.
+//!
+//! Every change composes the roots again. The model counts the changes, as the
+//! screen's revision, except those that only resize panels, so the regions of the
+//! screen keyed by the revision and by their own size
+//! ([`pm_components::revision::region`]) are composed again only when what they
+//! show or their room changed.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -14,6 +20,10 @@ pub struct Model {
     state: rustle::State<Screen>,
     /// Whether the screen changed since the app last composed for it.
     changed: Rc<Cell<bool>>,
+    /// The screen's revision: how many changes there were that are not only of the
+    /// sizes of panels, and how often the windows were composed again for something
+    /// outside the screen.
+    revision: Rc<Cell<u64>>,
 }
 
 impl Model {
@@ -22,6 +32,7 @@ impl Model {
         Self {
             state: rustle::mutable_state(screen),
             changed: Rc::new(Cell::new(false)),
+            revision: Rc::new(Cell::new(0)),
         }
     }
 
@@ -30,15 +41,31 @@ impl Model {
         self.state.with(read)
     }
 
-    /// Changes the screen in place through `change`, and marks it changed.
+    /// Changes the screen in place through `change`, marks it changed and moves
+    /// its revision on.
     pub fn update(&self, change: impl FnOnce(&mut Screen)) {
+        self.state.update(change);
+        self.changed.set(true);
+        self.revise();
+    }
+
+    /// Changes only the sizes of panels in the screen through `change`, marking it
+    /// changed but leaving its revision, so only the regions whose room changed are
+    /// composed again. `change` must change nothing but such sizes.
+    pub fn resize(&self, change: impl FnOnce(&mut Screen)) {
         self.state.update(change);
         self.changed.set(true);
     }
 
-    /// A copy of the screen.
-    pub fn get(&self) -> Screen {
-        self.state.get()
+    /// Moves the screen's revision on, for a change of something the views read
+    /// besides the screen, so every region is composed again.
+    pub fn revise(&self) {
+        self.revision.set(self.revision.get() + 1);
+    }
+
+    /// The screen's revision; see [`Model::revise`].
+    pub fn revision(&self) -> u64 {
+        self.revision.get()
     }
 
     /// The mark set by every change, for the app to clear once it composed.
@@ -63,5 +90,18 @@ mod tests {
         });
         assert!(changes.get());
         assert!(model.read(|screen| *screen != Screen::default()));
+    }
+
+    /// A change moves the revision on and a resize marks the model changed but leaves it.
+    #[test]
+    fn only_a_resize_leaves_the_revision() {
+        let model = Model::new(Screen::default());
+        let changes = model.changes();
+        let before = model.revision();
+        model.resize(|_| {});
+        assert!(changes.get());
+        assert_eq!(model.revision(), before);
+        model.update(|_| {});
+        assert_eq!(model.revision(), before + 1);
     }
 }

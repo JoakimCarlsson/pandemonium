@@ -27,6 +27,7 @@
 //! - What the servers answer: the work runs offline, so requests are checked
 //!   as asked, and answers are not simulated.
 
+mod benchmarks;
 mod diff;
 mod drags;
 mod fields;

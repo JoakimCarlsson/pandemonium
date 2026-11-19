@@ -16,7 +16,72 @@ complete list because validation messages have variable heights.
 
 Hover, press and focus styling is resolved when the interface is painted, so
 moving the pointer repaints without composing the screen again; only a model
-change composes it.
+change composes it. Spinners read their angle when they are painted, so a
+turning spinner paints the window again each frame without composing or
+measuring it.
+
+## Interactions on a heavy workspace
+
+```sh
+CARGO_TARGET_DIR=build cargo test -p pandemonium benchmark_interactions -- --ignored --nocapture --test-threads=1
+```
+
+The benchmarks in `crates/pandemonium/src/app/interactions/benchmarks.rs`
+drive the app headless through the interaction rig, as the event loop feeds
+it, on a heavy workspace (`snapshot::heavy_workspace`): the file shown, the
+conversation and the diff side by side in panes, 40 replies of 30 markdown
+paragraphs each, and the review panel open on a tree of 400 files. They drag
+the sidebar's handle, the review panel's handle and a seam between panes a
+pixel a frame for 100 frames, move the pointer over the panes, scroll, type
+into the prompt and stream 100 chunks of an agent's reply, and print for each
+frame the main window's composing time and layout plus painting time (from
+rustle's `Embedded::update_timing`) and the whole turn of the loop, as
+p50/p95/max in milliseconds. Add `--release` for the release profile; the
+numbers below are from the `dev` profile `make run` uses, which is optimized.
+
+Three causes made every frame of these slow, measured with the benchmarks
+and a sampling profile:
+
+- Text was shaped again on every frame. Ellipsized labels, canvases and
+  editable and selectable text asked rustle's text engine for a layout while
+  composing and again while painting, and nothing kept it: shaping was half
+  of a frame. rustle now keeps text layouts per thread by their runs, style,
+  width and fonts, and text measured for editing goes through the same layouts.
+- A spinner turning anywhere on the screen composed, measured and painted the
+  whole window on every frame while an agent worked, and so on every pointer
+  move. The spinner reads its angle while it is drawn; rustle now records
+  state read while drawing (or measuring) and draws (or lays out) again for
+  it without composing.
+- Every change, including a pane's width, composed the whole screen. The
+  workspace's regions (title bar, sidebar, each pane, the dock, the plan and
+  review panels) are now `pm_components::revision::region` blocks keyed by
+  the screen's revision and their room, and a handle's drag changes only
+  sizes (`Model::resize`), so the regions whose room did not change keep what
+  they emitted.
+
+Measured on the same machine (`dev` profile, milliseconds, p50 / p95 of the
+whole turn; before is the earlier interface with text sizes cached as a
+window's renderer caches them):
+
+| Interaction | Before | After |
+| --- | --- | --- |
+| Drag the sidebar's handle | 34.2 / 36.2 | 2.9 / 3.2 |
+| Drag the review panel's handle | 38.1 / 56.2 | 5.2 / 6.8 |
+| Drag a seam between panes | 55.0 / 57.7 | 5.8 / 9.3 |
+| Move the pointer | 22.8 / 24.4 | 0.6 / 0.9 |
+| Scroll | 34.1 / 35.7 | 3.2 / 3.3 |
+| Type into the prompt | 56.8 / 60.6 | 4.1 / 4.2 |
+| Stream an agent's reply | 91.1 / 124.0 | 11.6 / 15.0 |
+
+Medians moved by up to a third between runs while other work loaded the
+machine; compare before and after in the same session. The release profile
+measured 27.2 ms before and 2.4 ms after for the
+sidebar's handle, 41.8 ms and 5.8 ms for a seam, and 72.2 ms and 11.4 ms for
+streaming. What costs most now is composing the panes whose width changed
+(the conversation and the code view compose their visible rows again) and,
+while streaming, composing every region again, since any change of the screen
+moves its revision; then measuring and painting the whole tree, which rustle
+caches only per restartable scope.
 
 ## Measure a running window
 

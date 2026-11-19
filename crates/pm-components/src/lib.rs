@@ -120,6 +120,7 @@ pub mod quick_input;
 pub mod quick_sessions;
 mod reach;
 pub mod review;
+pub mod revision;
 pub mod sample;
 pub mod sash;
 pub mod scroll_marks;

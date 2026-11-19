@@ -111,6 +111,9 @@ pub struct App {
     window: Option<Rc<dyn port::Port>>,
     /// Whether something changed outside the model that the windows must be composed again for.
     recompose: bool,
+    /// The control the app kept focus on when the windows were last composed, so focus kept
+    /// anywhere else since composes them again.
+    composed_focus: Option<FocusId>,
     /// What the interface made of the event being handled.
     claimed: controller::Claims,
     /// Optional CPU frame timings and pointer response measurements.
@@ -351,6 +354,7 @@ impl App {
             shell: host::Shell::new(model.clone(), focus.clone(), proxy),
             window: None,
             recompose: true,
+            composed_focus: None,
             claimed: controller::Claims::default(),
             fonts_applied: (
                 window_settings.appearance.interface_font.clone(),
@@ -926,7 +930,7 @@ impl App {
                 .map(|(size, grows)| (id, size, grows));
         }
         if let Some((id, size, grows)) = self.sash_drag {
-            self.model.update(|state| {
+            self.model.resize(|state| {
                 *state = std::mem::take(state).with_sash_size(
                     id,
                     size + grows.by((0.0, 0.0), by),

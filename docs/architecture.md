@@ -60,6 +60,14 @@ One crate per layer, each depending only on the layers below it.
   to close what that press closes. Tooltips are rustle's `tooltip_area`
   (`pm-components/src/tooltip.rs`, `Button::tooltip`), shown after a rest on
   the frame clock, at once in snapshots.
+  The screen is one rustle state the window roots read, so a change composes
+  the root again. The regions of the workspace (title bar, sidebar, each pane,
+  the dock, the plan and review panels) are `pm_components::revision::region`
+  blocks keyed by the screen's revision and the room they are given; dragging
+  the handle between panels changes sizes only (`Model::resize`), which leaves
+  the revision, so only the regions whose room changed are composed again.
+  Spinners read their angle while they are drawn, so they turn without
+  composing (see `docs/performance.md`).
   There is no frame report: what the binary needs of the geometry comes from
   the composables' own callbacks into holders the model owns (`Bounds`,
   `Places` for the few areas the app asks about by name, `TextLines`,

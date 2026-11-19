@@ -164,8 +164,10 @@ impl Shell {
     }
 
     /// Composes everything again at the next wake-up, or once the windows
-    /// have handled the event they are busy with.
+    /// have handled the event they are busy with, moving the screen's revision
+    /// on so no region keeps what it emitted.
     pub(super) fn invalidate(&mut self) {
+        self.shared.model.revise();
         match self.host.try_borrow_mut() {
             Ok(mut host) => {
                 if let Some(host) = host.as_mut() {
@@ -306,10 +308,13 @@ pub(super) fn main_view(shared: &Shared) {
     let tokens = shared.tokens.borrow().clone();
     let size = shared.sizes.borrow()[0];
     let cursor = shared.cursor.get();
+    let revision = shared.model.revision();
     shared.under_operations(None, || {
-        shared
-            .model
-            .read(|screen| scene::main_root(screen, size.0, size.1, tokens, cursor));
+        pm_components::revision::provide(revision, || {
+            shared
+                .model
+                .read(|screen| scene::main_root(screen, size.0, size.1, tokens, cursor));
+        });
     });
 }
 
@@ -396,15 +401,23 @@ impl App {
         }
     }
 
-    /// Composes again when anything asked for it since the last time, and
-    /// runs what follows a composed frame.
+    /// Composes again when anything asked for it since the last time, the screen
+    /// changed or focus is kept on another control than when the windows were last
+    /// composed, and runs what follows a composed frame. A change of the screen alone
+    /// is composed through the screen's own state, without invalidating everything, so
+    /// a change that only resized panels leaves the screen's revision and the regions
+    /// whose room did not change keep what they emitted.
     pub(super) fn flush(&mut self) {
-        if std::mem::take(&mut self.recompose)
-            || self.dirty.replace(false)
-            || self.shell.take_deferred()
-        {
+        let focus = self.focus.current();
+        let forced = std::mem::take(&mut self.recompose)
+            | self.shell.take_deferred()
+            | (focus != self.composed_focus);
+        if forced || self.dirty.replace(false) {
             let started = self.timings.start();
-            self.shell.invalidate();
+            if forced {
+                self.shell.invalidate();
+            }
+            self.composed_focus = focus;
             self.shell.wake();
             self.focus.settle(asides::is_aside);
             let painted = self.timings.start();

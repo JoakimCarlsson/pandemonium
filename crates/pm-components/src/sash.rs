@@ -186,7 +186,23 @@ impl Sash {
     }
 }
 
+/// The sizes set by the handles inside panels rather than between them: the git graph's
+/// height, the browser tools' width, and the dock's height and whether it is maximized. A
+/// region of the screen keyed by its room holds these too, whichever panel it is, since a
+/// drag of these handles changes no revision.
+pub type InnerSizes = (f32, Option<f32>, f32, bool);
+
 impl WorkspaceState {
+    /// The sizes the handles inside panels set; see [`InnerSizes`].
+    pub fn inner_sizes(&self) -> InnerSizes {
+        (
+            self.git.graph_height,
+            self.browser.as_ref().map(|browser| browser.tools_width),
+            self.terminal_height,
+            self.terminal_maximized,
+        )
+    }
+
     /// How big the panel the handle `id` resizes is now, in a window `window` logical pixels wide and tall, and which way the handle is pulled to grow it.
     pub fn sash(&self, id: FocusId, window: (f32, f32)) -> Option<(f32, Grows)> {
         match id {

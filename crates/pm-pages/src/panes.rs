@@ -23,6 +23,7 @@ use pm_components::panes::{
     SPLIT_LEFT, SPLIT_RIGHT, SPLIT_UP,
 };
 use pm_components::parts::{glyph, line, spacer};
+use pm_components::revision::region;
 use pm_components::sash::Sash;
 use pm_components::state::{Page, TAB_CHAT, TAB_DIFF, WorkspaceState};
 use pm_components::title_bar::TITLE_BAR_HEIGHT;
@@ -490,7 +491,14 @@ fn laid(
             *next += 1;
             let toggle = here.area.y <= whole.y + 0.5
                 && here.area.x + here.area.width >= whole.x + whole.width - 0.5;
-            rustle::key(here.index, || pane(state, here, toggle, extra));
+            rustle::key(here.index, || {
+                region(
+                    (here.index, here.area, toggle, extra, state.inner_sizes()),
+                    || {
+                        pane(state, here, toggle, extra);
+                    },
+                );
+            });
         }
         Layout::Split {
             axis,
@@ -601,7 +609,9 @@ pub(crate) fn main_area(state: &WorkspaceState, window: (f32, f32)) {
                 },
             );
             if let Some(session) = state.docked().filter(|_| state.docking()) {
-                terminal::terminal(state, session, area.width, page);
+                region((area, page, state.inner_sizes()), || {
+                    terminal::terminal(state, session, area.width, page);
+                });
             }
         },
     );

@@ -177,6 +177,9 @@ pub(super) struct Screens {
     /// what waits on the frame clock (a tooltip's delay, a caret's blink) does not wait on
     /// the real clock.
     pub(super) clock: Rc<Cell<Duration>>,
+    /// The time the main window's interface spent composing and laying out
+    /// since [`Rig::take_spent`] last took it.
+    spent: rustle::UpdateTiming,
 }
 
 /// An interface laid out with no window, of `root`, at whole logical pixels, its frames
@@ -207,6 +210,7 @@ impl Screens {
         resize(&mut main, size);
         Self {
             clock,
+            spent: rustle::UpdateTiming::default(),
             main,
             asides: [None, None],
             ports: [
@@ -230,6 +234,9 @@ impl Screens {
     pub(super) fn wake(&mut self, shared: &Shared) {
         resize(&mut self.main, shared.size_of(None));
         self.main.update();
+        let timing = self.main.update_timing();
+        self.spent.compose += timing.compose;
+        self.spent.layout += timing.layout;
         for aside in Aside::ALL {
             let open = shared.reads(|screen| aside.is_open(screen));
             let held = &mut self.asides[slot(aside)];
@@ -324,6 +331,26 @@ impl Rig {
     /// The app showing the screen of the snapshot `shot`, at the snapshots' size.
     pub(super) fn shot(shot: crate::snapshot::Shot) -> Self {
         Self::new(shot.screen(), SIZE)
+    }
+
+    /// The time the main window's interface spent composing and laying out
+    /// since this was last asked, which it starts counting again from zero.
+    pub(super) fn take_spent(&mut self) -> rustle::UpdateTiming {
+        self.screens
+            .borrow_mut()
+            .as_mut()
+            .map(|screens| std::mem::take(&mut screens.spent))
+            .unwrap_or_default()
+    }
+
+    /// Hands the open session's agent event `event` to the screen, as the
+    /// work does when the agent says something, and comes to rest.
+    pub(super) fn hear(&mut self, event: pm_harness::Event) {
+        self.app
+            .borrow()
+            .model
+            .update(|screen| *screen = std::mem::take(screen).heard(0, event));
+        self.settle();
     }
 
     /// Lets the event loop come to rest, as it does after every turn, twice

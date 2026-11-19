@@ -42,6 +42,25 @@ fn the_sidebar_handle_resizes_it() {
     assert_eq!(rig.state(|state| state.sidebar_width), before + 60.0);
 }
 
+/// While the sidebar's handle is dragged the first pane follows its edge, and the review
+/// panel, whose room does not change, stays drawn where it was.
+#[test]
+fn a_drag_moves_what_its_room_changed_and_keeps_the_rest() {
+    let mut rig = Rig::shot(Shot::Workspace);
+    let pane = FocusId(pm_components::panes::PANE_BASE);
+    let review = pm_components::state::REVIEW_FILES;
+    let (pane_before, review_before) = (rig.region(pane), rig.region(review));
+    assert!(pane_before.is_some() && review_before.is_some());
+    let from = rig.center(SIDEBAR_SASH);
+    rig.drag(from, (from.0 + 40.0, from.1), 4);
+    let (pane_after, review_after) = (rig.region(pane), rig.region(review));
+    assert_eq!(
+        pane_after.map(|area| area.origin.x),
+        pane_before.map(|area| area.origin.x + 40.0)
+    );
+    assert_eq!(review_after, review_before);
+}
+
 /// Dragging the handle of the review panel left makes it wider.
 #[test]
 fn the_review_handle_resizes_it() {

@@ -225,9 +225,15 @@ pub fn spinner(steps: f32, tone: impl Into<Tone>) {
 }
 
 /// Emits `icon` turning once a second, `steps` of the spacing scale across,
-/// in `tone`, for an icon other than the loading ring, which is [`spinner`].
+/// in `tone`, for an icon other than the loading ring, which is [`spinner`]:
+/// its angle read when it is painted, so it turns without composing again.
 #[track_caller]
 pub fn spinning_icon(icon: Icon, steps: f32, tone: impl Into<Tone>) {
     let turned = turning();
-    icon_with(Modifier::new().rotate(turned.get()), icon, sp(steps), tone);
+    icon_with(
+        Modifier::new().rotate_with(move || turned.get()),
+        icon,
+        sp(steps),
+        tone,
+    );
 }

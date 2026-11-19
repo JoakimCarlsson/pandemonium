@@ -2469,6 +2469,41 @@ fn input_stress(long_prompt: bool, long_chat: bool) -> WorkspaceState {
     state
 }
 
+/// The heaviest everyday workspace, for measuring interactions: the file shown,
+/// the conversation and the diff side by side in panes, a conversation of 40
+/// replies of 30 markdown paragraphs each, and the review panel open on a
+/// tree of 400 files.
+#[cfg(test)]
+pub(crate) fn heavy_workspace() -> WorkspaceState {
+    let mut state = code()
+        .pane_dragged(code_item(), Some((0, Side::Right)), (0.0, 0.0))
+        .pane_dropped()
+        .pane_dragged(Item::Diff, Some((0, Side::Bottom)), (0.0, 0.0))
+        .pane_dropped()
+        .after(TAB_CHAT);
+    let mut reply = state.sessions[0]
+        .messages
+        .iter()
+        .find(|message| !message.from_user)
+        .expect("the sample has a reply")
+        .clone();
+    reply.text = "A paragraph of agent output with **formatting**, `code` and a [link](https://example.com) that wraps over a few lines at the width of the pane.\n\n- an item\n- another item\n\n".repeat(10);
+    reply.said.clear();
+    reply.steps.clear();
+    reply.answers.clear();
+    state.sessions[0].messages = vec![reply; 40];
+    state.review = true;
+    let key = state.files_of.clone().unwrap_or_default();
+    let files = (0..400)
+        .map(|index| format!("src/module-{:02}/file-{:03}.rs", index / 20, index))
+        .collect();
+    let mut state = state.with_files(&key, files, Vec::new(), Vec::new());
+    state.open_tree = std::iter::once("src".to_owned())
+        .chain((0..20).map(|index| format!("src/module-{index:02}")))
+        .collect();
+    state
+}
+
 /// A large expanded tree with stable names, optionally scrolled halfway down.
 fn large_files(scrolled: bool) -> WorkspaceState {
     let mut state = files();
