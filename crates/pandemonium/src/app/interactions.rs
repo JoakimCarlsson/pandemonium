@@ -18,9 +18,6 @@
 //! - The card about a word of code and the links a language server finds:
 //!   asking needs a language server that has the file. The wait before
 //!   asking is covered.
-//! - Files dragged over the window on Wayland, which the app follows through
-//!   the compositor's data device rather than winit: that needs a compositor.
-//!   Files let go through the interface's drop area are covered.
 //! - The desktop's file dialog for attaching files, opening a folder in the
 //!   file manager, and pictures on the system clipboard: they reach outside
 //!   the app.

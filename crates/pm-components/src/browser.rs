@@ -12,7 +12,7 @@ use std::ops::{Deref, DerefMut};
 
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::{panel_right, panel_right_filled};
+use crate::icons::panel_right;
 use crate::theme::Role;
 
 use crate::browser_address::address_of;
@@ -774,15 +774,10 @@ fn toolbar(browser: &Browser) {
                 "Lock this tab so agents cannot change it"
             })
             .build();
-            Button::icon(
-                if browser.tools {
-                    panel_right_filled()
-                } else {
-                    panel_right()
-                },
-                BROWSER_TOOLS,
-            )
-            .build();
+            let tools = browser.tools;
+            Button::icon(phosphor::SIDEBAR_SIMPLE, BROWSER_TOOLS)
+                .mark(move || panel_right(tools, 4.0, Role::Muted))
+                .build();
         },
     );
 }

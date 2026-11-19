@@ -4,23 +4,8 @@ use pm_components::SHADOW_MARGIN;
 use pm_components::title_bar::FRAMELESS;
 use pm_pages::Screen;
 use rustle::ResizeEdge;
-use winit::window::ResizeDirection;
 
 use super::App;
-
-/// The edge winit resizes a window by for the edge rustle names.
-fn direction_of(edge: ResizeEdge) -> ResizeDirection {
-    match edge {
-        ResizeEdge::North => ResizeDirection::North,
-        ResizeEdge::South => ResizeDirection::South,
-        ResizeEdge::West => ResizeDirection::West,
-        ResizeEdge::East => ResizeDirection::East,
-        ResizeEdge::NorthWest => ResizeDirection::NorthWest,
-        ResizeEdge::NorthEast => ResizeDirection::NorthEast,
-        ResizeEdge::SouthWest => ResizeDirection::SouthWest,
-        ResizeEdge::SouthEast => ResizeDirection::SouthEast,
-    }
-}
 
 /// How much wider and taller a window is than its frame, in logical pixels: the band on both sides that holds its shadow, when the window draws its own frame and its shadow is not shown outside it.
 fn band() -> f32 {
@@ -55,7 +40,7 @@ impl App {
     /// strips [`resize_edges`](pm_components::resize_edges) lays over the frame.
     pub(super) fn edge_pressed(&mut self, edge: ResizeEdge) {
         if let Some(window) = self.window.clone() {
-            window.drag_resize(direction_of(edge));
+            window.drag_resize(edge);
         }
     }
 

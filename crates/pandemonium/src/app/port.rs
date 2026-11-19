@@ -1,13 +1,12 @@
-//! What the app asks of the platform around it, behind traits so the same
-//! logic runs against a native window and the system clipboard, and against
-//! stand-ins that record what was asked when no window is open.
+//! What the app asks of the window around it, behind a trait so the same
+//! logic runs against a native window, and against a stand-in that records
+//! what was asked when no window is open.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use rustle::{ResizeEdge, WindowHandle};
 use winit::dpi::{LogicalPosition, LogicalSize};
-use winit::window::{ImeRequest, ImeRequestData, ResizeDirection, UserAttentionType, Window};
+use winit::window::{ImeRequest, ImeRequestData, UserAttentionType, Window};
 
 /// A window of the app, as its logic sees it: how large it is, whether it
 /// floats, and what the app asks of it.
@@ -46,8 +45,8 @@ pub(crate) trait Port {
     /// Lets the pointer move the window, from a press on its title bar.
     fn drag_window(&self);
 
-    /// Lets the pointer resize the window by its edge or corner `direction`.
-    fn drag_resize(&self, direction: ResizeDirection);
+    /// Lets the pointer resize the window by its edge or corner `edge`.
+    fn drag_resize(&self, edge: ResizeEdge);
 
     /// Tells the input method that the caret is at `area`, as x, y, width and
     /// height in logical pixels of the window's surface.
@@ -66,20 +65,6 @@ impl NativePort {
     /// The port of `window`, which rustle controls by `handle`.
     pub(crate) fn new(window: Arc<dyn Window>, handle: WindowHandle) -> Self {
         Self { window, handle }
-    }
-}
-
-/// The edge rustle resizes a window by for the edge winit names.
-fn edge_of(direction: ResizeDirection) -> ResizeEdge {
-    match direction {
-        ResizeDirection::North => ResizeEdge::North,
-        ResizeDirection::South => ResizeEdge::South,
-        ResizeDirection::West => ResizeEdge::West,
-        ResizeDirection::East => ResizeEdge::East,
-        ResizeDirection::NorthWest => ResizeEdge::NorthWest,
-        ResizeDirection::NorthEast => ResizeEdge::NorthEast,
-        ResizeDirection::SouthWest => ResizeEdge::SouthWest,
-        ResizeDirection::SouthEast => ResizeEdge::SouthEast,
     }
 }
 
@@ -145,8 +130,8 @@ impl Port for NativePort {
     }
 
     /// Hands the window to the desktop to resize.
-    fn drag_resize(&self, direction: ResizeDirection) {
-        self.handle.drag_resize_window(edge_of(direction));
+    fn drag_resize(&self, edge: ResizeEdge) {
+        self.handle.drag_resize_window(edge);
     }
 
     /// Updates the input method's caret area.
@@ -156,42 +141,5 @@ impl Port for NativePort {
             LogicalSize::new(area.2, area.3).into(),
         );
         let _ = self.window.request_ime_update(ImeRequest::Update(data));
-    }
-}
-
-/// The clipboard, as the app's logic sees it.
-pub(crate) trait Board {
-    /// The text on the clipboard, if it holds text.
-    fn text(&mut self) -> Option<String>;
-
-    /// Puts `text` on the clipboard.
-    fn set_text(&mut self, text: String);
-
-    /// The files on the clipboard, if another program put files there.
-    fn files(&mut self) -> Vec<PathBuf>;
-
-    /// The picture on the clipboard, if it holds one.
-    fn image(&mut self) -> Option<arboard::ImageData<'static>>;
-}
-
-impl Board for arboard::Clipboard {
-    /// The system clipboard's text.
-    fn text(&mut self) -> Option<String> {
-        self.get_text().ok()
-    }
-
-    /// Writes the system clipboard's text.
-    fn set_text(&mut self, text: String) {
-        let _ = arboard::Clipboard::set_text(self, text);
-    }
-
-    /// The system clipboard's file list.
-    fn files(&mut self) -> Vec<PathBuf> {
-        self.get().file_list().unwrap_or_default()
-    }
-
-    /// The system clipboard's picture.
-    fn image(&mut self) -> Option<arboard::ImageData<'static>> {
-        self.get_image().ok()
     }
 }

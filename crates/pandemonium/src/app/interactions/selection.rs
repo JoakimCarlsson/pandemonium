@@ -95,16 +95,21 @@ fn select_all_and_let_go() {
 }
 
 /// Files let go over the conversation from another application are
-/// attached to the prompt once the pointer is seen again.
+/// attached to the prompt where they were let go, every one of them, without
+/// waiting for the pointer to be seen again.
 #[test]
 fn files_dropped_attach_to_the_prompt() {
     let mut rig = at_start();
     let at = words_at(&rig, "Checkpoints are in.");
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
-    rig.drop_files(at, vec![path.clone()]);
-    rig.move_to((at.0 + 1.0, at.1));
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let paths = vec![manifest.join("Cargo.toml"), manifest.join("src")];
+    rig.drop_files(at, paths.clone());
     let attached = rig.state(|state| state.attachments.clone());
-    assert_eq!(attached, vec![path.to_string_lossy().into_owned()]);
+    let expected: Vec<String> = paths
+        .iter()
+        .map(|path| path.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(attached, expected);
 }
 
 /// Dragging from one message of the conversation's list to another selects across both, and

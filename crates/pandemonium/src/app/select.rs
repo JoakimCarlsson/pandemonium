@@ -96,7 +96,7 @@ impl App {
             return;
         };
         if let Some(clipboard) = self.clipboard() {
-            clipboard.set_text(text);
+            clipboard.set_text(&text);
         }
     }
 

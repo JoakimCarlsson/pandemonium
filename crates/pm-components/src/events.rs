@@ -21,9 +21,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use rustle::{
-    CompositionLocal, DragAndDropEvent, DragAndDropTarget, DragAndDropTransferData, Key, KeyEvent,
-    LOCAL_VIEW_CONFIGURATION, Modifier, Modifiers, Offset, PointerButton, PointerPhase, Rect,
-    ResizeEdge, ViewConfiguration,
+    CompositionLocal, DragAndDropEvent, DragAndDropTarget, DragAndDropTransferData, DragData, Key,
+    KeyEvent, LOCAL_VIEW_CONFIGURATION, Modifier, Modifiers, Offset, PointerButton, PointerPhase,
+    Rect, ResizeEdge, ViewConfiguration,
 };
 
 use crate::browser_menu::BrowserCommand;
@@ -57,8 +57,11 @@ pub trait Operations {
     /// A key went down or up in the window, before whatever holds rustle's focus sees it.
     /// Returns whether the holder took it, in which case nothing else in the window does.
     fn key(&self, event: &KeyEvent) -> bool;
-    /// A file from another application was dropped on the window.
-    fn dropped(&self, path: PathBuf);
+    /// Files from another application are held over the window at `at`, or left it, or
+    /// were let go elsewhere, when `at` is `None`.
+    fn files_held(&self, at: Option<(f32, f32)>);
+    /// Files from another application, at `paths`, were let go over the window at `at`.
+    fn files_dropped(&self, paths: Vec<PathBuf>, at: (f32, f32));
     /// The pointer came over the control `id`, or left it when not `over`.
     fn hovered(&self, id: FocusId, over: bool);
     /// The handle `id` on the edge of a panel is dragged `by` logical pixels across and
@@ -165,7 +168,10 @@ impl Operations for Unattended {
     }
 
     /// Does nothing.
-    fn dropped(&self, _: PathBuf) {}
+    fn files_held(&self, _: Option<(f32, f32)>) {}
+
+    /// Does nothing.
+    fn files_dropped(&self, _: Vec<PathBuf>, _: (f32, f32)) {}
 
     /// Does nothing.
     fn hovered(&self, _: FocusId, _: bool) {}
@@ -481,10 +487,56 @@ pub fn comment_drag(id: FocusId) -> Modifier {
         .on_drag(move |_| operations.comment_dragged(id))
 }
 
-/// The modifier that hands a file dropped on the area from another application to the app.
+/// The window's root as the place files dragged in from another application are held over
+/// and let go: Compose's `dragAndDropTarget` taking `DragData.FilesList`, telling the app
+/// where the files are held, that they left, and where they were let go.
+struct FilesFromOutside {
+    /// The app's state holder.
+    operations: Rc<dyn Operations>,
+}
+
+impl FilesFromOutside {
+    /// Where `event` is, as the holder takes a place in the window.
+    fn at(event: &DragAndDropEvent) -> (f32, f32) {
+        (event.position.x, event.position.y)
+    }
+}
+
+impl DragAndDropTarget for FilesFromOutside {
+    /// Hands the files let go to the holder, with where they were let go.
+    fn on_drop(&self, event: &DragAndDropEvent) -> bool {
+        let Some(DragData::FilesList(files)) = event.drag_data() else {
+            return false;
+        };
+        self.operations
+            .files_dropped(files.clone(), Self::at(event));
+        true
+    }
+
+    /// Tells the holder where the files came over the window.
+    fn on_entered(&self, event: &DragAndDropEvent) {
+        self.operations.files_held(Some(Self::at(event)));
+    }
+
+    /// Tells the holder where the files are held.
+    fn on_moved(&self, event: &DragAndDropEvent) {
+        self.operations.files_held(Some(Self::at(event)));
+    }
+
+    /// Tells the holder the files left the window.
+    fn on_exited(&self, _: &DragAndDropEvent) {
+        self.operations.files_held(None);
+    }
+}
+
+/// The modifier for a window's root that follows files dragged in from another application
+/// and hands them to the app where they are let go.
 pub fn file_drop() -> Modifier {
     let operations = operations();
-    Modifier::new().on_file_drop(move |path| operations.dropped(path))
+    Modifier::new().drag_and_drop_target(
+        |event| matches!(event.drag_data(), Some(DragData::FilesList(_))),
+        FilesFromOutside { operations },
+    )
 }
 
 /// What a secondary press on a control does when it has no menu of its own: the menu of

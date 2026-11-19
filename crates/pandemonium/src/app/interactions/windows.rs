@@ -7,9 +7,9 @@ use pm_components::state::SETTINGS;
 use pm_components::title_bar::{
     FRAMELESS, TITLE_BAR, WINDOW_CLOSE, WINDOW_MAXIMIZE, WINDOW_MINIMIZE,
 };
+use rustle::ResizeEdge;
 use rustle::{Key, Modifiers};
 use winit::event::MouseButton;
-use winit::window::ResizeDirection;
 
 use crate::app::asides::Aside;
 use crate::app::headless::Rig;
@@ -66,10 +66,7 @@ fn the_frame_edges_resize_the_window() {
     rig.button_in(None, winit::event::MouseButton::Left, false, corner);
     assert_eq!(
         *rig.window().resized.borrow(),
-        [
-            winit::window::ResizeDirection::West,
-            winit::window::ResizeDirection::NorthWest
-        ]
+        [ResizeEdge::West, ResizeEdge::NorthWest]
     );
     assert_eq!(
         rig.window().moved.get(),
@@ -113,7 +110,7 @@ fn the_edges_resize() {
     rig.button_in(None, MouseButton::Left, false, (1279.0, 799.0));
     assert_eq!(
         *rig.window().resized.borrow(),
-        vec![ResizeDirection::West, ResizeDirection::SouthEast]
+        vec![ResizeEdge::West, ResizeEdge::SouthEast]
     );
     rig.window().maximized.set(true);
     rig.move_to((1.0, 400.0));

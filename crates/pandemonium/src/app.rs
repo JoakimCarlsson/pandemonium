@@ -39,7 +39,6 @@ mod browser;
 mod capture;
 mod code;
 mod controller;
-mod drops;
 mod editing;
 mod focus;
 mod frame;
@@ -58,8 +57,6 @@ mod select;
 mod terminal;
 mod tree;
 mod vim;
-#[cfg(target_os = "linux")]
-mod wayland;
 
 use self::gesture::CodeText;
 use self::pointer::{Button, PointerEvent, PointerState};
@@ -152,8 +149,6 @@ pub struct App {
     raised_picker: Option<u64>,
     /// The window beside the main one that stands in for it, while one of its events is handled.
     on_aside: Option<asides::Aside>,
-    /// The clipboard, once something has needed it.
-    clipboard: Option<Box<dyn port::Board>>,
     /// The field a press began in, while the button is held, so dragging selects.
     dragging: Option<FocusId>,
     /// What the press held in a field took, so dragging extends by the same amount.
@@ -203,8 +198,6 @@ pub struct App {
     pane_dragging: bool,
     /// The row of the project's files being carried, from when its drag started.
     tree_press: Option<TreeTarget>,
-    /// What is known of files dragged in from outside the window.
-    outside: drops::Outside,
     /// Whether the prompt of the page for starting work was given keyboard focus on arriving there.
     autofocused: bool,
     /// Whether the tree was asking for a name when the last frame was drawn.
@@ -215,8 +208,6 @@ pub struct App {
     press_clicks: u32,
     /// The view configuration in effect where the last pressed control was composed.
     press_configuration: rustle::ViewConfiguration,
-    /// The edge of the window the pointer showed it resizes, when it did.
-    edge_cursor: Option<winit::window::ResizeDirection>,
     /// Whether the window's own close button asked it to close and nothing is left to ask first.
     closing: bool,
     /// Whether the field narrowing the list over the file is to take the keyboard once it is drawn.
@@ -371,7 +362,6 @@ impl App {
             picker_surface: None,
             raised_picker: None,
             on_aside: None,
-            clipboard: None,
             dragging: None,
             field_gesture: Gesture::default(),
             column_press: None,
@@ -391,7 +381,6 @@ impl App {
             pane_press: None,
             pane_dragging: false,
             tree_press: None,
-            outside: drops::Outside::default(),
             saved_choices: Vec::new(),
             saved_editor: editor,
             autosave_wait: None,
@@ -402,7 +391,6 @@ impl App {
             focus_before: None,
             press_clicks: 1,
             press_configuration: rustle::ViewConfiguration::default(),
-            edge_cursor: None,
             closing: false,
             focus_filter: false,
             focus_terminal: false,
@@ -600,7 +588,7 @@ impl App {
     fn deliver(&mut self) {
         for text in self.work.deliver(&self.model) {
             if let Some(clipboard) = self.clipboard() {
-                clipboard.set_text(text);
+                clipboard.set_text(&text);
             }
         }
         if chosen_family(&self.saved_window.appearance) != self.family {
@@ -1603,14 +1591,9 @@ impl App {
         }
     }
 
-    /// The clipboard, the system's opened on first use.
-    fn clipboard(&mut self) -> Option<&mut (dyn port::Board + 'static)> {
-        if self.clipboard.is_none() {
-            self.clipboard = arboard::Clipboard::new()
-                .ok()
-                .map(|clipboard| Box::new(clipboard) as Box<dyn port::Board>);
-        }
-        self.clipboard.as_deref_mut()
+    /// The clipboard rustle installed for the windows, or the one a test installed in its place.
+    fn clipboard(&self) -> Option<Rc<dyn rustle::Clipboard>> {
+        rustle::clipboard()
     }
 
     /// Carries out a clipboard shortcut in the field `id`.
@@ -1654,7 +1637,7 @@ impl App {
                     self.copied = Some((selected.clone(), indentation, whole_lines));
                 }
                 if let Some(clipboard) = self.clipboard() {
-                    clipboard.set_text(selected);
+                    clipboard.set_text(&selected);
                 }
                 if action == Clip::Cut {
                     if whole_lines {
@@ -1698,7 +1681,7 @@ impl App {
                     return;
                 }
                 if let Some(clipboard) = self.clipboard() {
-                    clipboard.set_text(selected);
+                    clipboard.set_text(&selected);
                 }
                 if action == Clip::Cut {
                     field.edit(|buffer| {
@@ -1996,7 +1979,6 @@ impl App {
     fn rest(&mut self) -> (ControlFlow, bool) {
         self.work.discover();
         self.work.poll(&self.model);
-        self.pump_drops();
         self.settle_rename_focus();
         if self.model.read(Screen::editor_settings_wanted) {
             let settings = self.saved_editor.clone();
@@ -2031,7 +2013,6 @@ impl App {
             self.recording_due(),
             self.release_due(),
             self.view_save_deadline(),
-            self.drop_deadline(),
         ]
         .into_iter()
         .flatten()

@@ -48,7 +48,10 @@ impl Operations for Recording {
     }
 
     /// Does nothing.
-    fn dropped(&self, _: PathBuf) {}
+    fn files_held(&self, _: Option<(f32, f32)>) {}
+
+    /// Does nothing.
+    fn files_dropped(&self, _: Vec<PathBuf>, _: (f32, f32)) {}
 
     /// Does nothing.
     fn hovered(&self, _: FocusId, _: bool) {}

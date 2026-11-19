@@ -1,7 +1,7 @@
 //! The extensions page: what the server on this machine has installed, then what it can install, narrowed by a search, each a row saying what the extension gives the files of a project and whether it works, and the button that installs one from a folder.
 
 use crate::focus::FocusId;
-use crate::icons::{Artwork, artwork_with};
+use crate::icons::artwork_with;
 use crate::theme::{self, family_from_colours, set_extension_families};
 use crate::theme::{Radius, Role, sp};
 use pm_protocol::{ExtensionAssets, ExtensionCommand, ExtensionInfo};
@@ -449,14 +449,14 @@ fn mark(extension: &ExtensionInfo) {
         .icon
         .as_ref()
         .filter(|_| extension.installed)
-        .map(|source| Artwork::arrived(&format!("extension-{}", extension.id), source));
+        .and_then(|source| rustle::SvgPainter::from_str(source).ok());
     match artwork {
         Some(art) => {
             let (_, tone) = crate::file_icon::file_kind(&format!(
                 "file.{}",
                 extension.suffixes.first().cloned().unwrap_or_default()
             ));
-            artwork_with(Modifier::new(), art, sp(5.0), tone);
+            artwork_with(Modifier::new(), &art, sp(5.0), tone);
         }
         None if extension.kind == "extension" => glyph(phosphor::PLUG, 5.0, Role::Subtle),
         None => glyph(phosphor::CODE, 5.0, Role::Subtle),

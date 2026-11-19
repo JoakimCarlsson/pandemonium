@@ -209,13 +209,23 @@ impl Operations for Controller {
         self.with(|app| app.edge_pressed(edge));
     }
 
-    /// Takes a file dropped on the window, unless the drag is the desktop's
-    /// own one the app follows itself.
-    fn dropped(&self, path: PathBuf) {
+    /// Shows where files held over the window would land in the project's files.
+    fn files_held(&self, at: Option<(f32, f32)>) {
         self.with(|app| {
-            if !app.outside_offered() {
-                app.file_dropped(path);
-            }
+            let at = at.map(|at| app.framed_point(at));
+            app.files_hovered(at);
+        });
+    }
+
+    /// Takes in the files let go over the window where they were let go.
+    fn files_dropped(&self, paths: Vec<PathBuf>, at: (f32, f32)) {
+        self.with(|app| {
+            let at = app.framed_point(at);
+            let paths = paths
+                .iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect();
+            app.files_dropped(paths, Some(at));
         });
     }
 

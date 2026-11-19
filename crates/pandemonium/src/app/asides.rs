@@ -12,7 +12,6 @@ use pm_components::settings::is_settings;
 use pm_components::state::SETTINGS;
 use pm_pages::Screen;
 use rustle::WindowOptions;
-use winit::window::WindowLevel;
 
 use super::App;
 use super::host::Input;
@@ -86,6 +85,7 @@ impl Aside {
             macos_titlebar_transparent: true,
             macos_fullsize_content: true,
             macos_title_hidden: true,
+            always_on_top: self.kept_in_front(),
             ..WindowOptions::default()
         }
     }
@@ -98,12 +98,9 @@ impl Aside {
         }
     }
 
-    /// Where the window sits among the others: the folder picker stays in front of the windows of the app.
-    fn level(self) -> WindowLevel {
-        match self {
-            Self::Settings => WindowLevel::Normal,
-            Self::Picker => WindowLevel::AlwaysOnTop,
-        }
+    /// Whether the window stays in front of the others: the folder picker stays in front of the windows of the app.
+    fn kept_in_front(self) -> bool {
+        matches!(self, Self::Picker)
     }
 }
 
@@ -112,9 +109,8 @@ pub(super) fn is_aside(id: FocusId) -> bool {
     Aside::ALL.iter().any(|aside| aside.owns(id))
 }
 
-/// A window and what it alone keeps: its native window once open, where the
-/// pointer is over it, what its last frame found and the edge it last showed
-/// it resizes.
+/// A window and what it alone keeps: its native window once open, the
+/// controls the pointer is over and the pointer as its events left it.
 pub(super) struct Surface {
     /// The window, once rustle opened it.
     window: Option<Rc<dyn Port>>,
@@ -122,8 +118,6 @@ pub(super) struct Surface {
     hovered: Vec<FocusId>,
     /// The pointer as the window's events so far left it.
     pointer: PointerState,
-    /// The edge of the window the pointer last showed it resizes, when it did.
-    edge_cursor: Option<winit::window::ResizeDirection>,
 }
 
 impl App {
@@ -149,14 +143,12 @@ impl App {
             match (open, showing, self.shell.port_of(aside)) {
                 (true, false, Some(window)) => {
                     if let Some(native) = window.native() {
-                        native.set_window_level(aside.level());
                         super::host::enable_ime(&*native);
                     }
                     *self.surface_of(aside) = Some(Surface {
                         window: Some(window),
                         hovered: Vec::new(),
                         pointer: PointerState::default(),
-                        edge_cursor: None,
                     });
                 }
                 (false, true, _) => {
@@ -241,6 +233,5 @@ impl App {
         std::mem::swap(&mut self.window, &mut surface.window);
         std::mem::swap(&mut self.hovered, &mut surface.hovered);
         std::mem::swap(&mut self.pointer, &mut surface.pointer);
-        std::mem::swap(&mut self.edge_cursor, &mut surface.edge_cursor);
     }
 }

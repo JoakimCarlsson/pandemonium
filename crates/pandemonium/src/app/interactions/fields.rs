@@ -114,6 +114,19 @@ fn the_clipboard_copies_cuts_and_pastes() {
     assert_eq!(prompt(&rig), "betaalpha ");
 }
 
+/// Files another program put on the clipboard are attached to the prompt when
+/// pasted there, instead of their names being typed.
+#[test]
+fn files_on_the_clipboard_attach_to_the_prompt() {
+    let mut rig = typing();
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+    *rig.clipboard.files.borrow_mut() = vec![path.clone()];
+    rig.chord(CONTROL, Key::Character("v".into()));
+    let attached = rig.state(|state| state.attachments.clone());
+    assert_eq!(attached, vec![path.to_string_lossy().into_owned()]);
+    assert_eq!(prompt(&rig), "");
+}
+
 /// Ctrl+A selects everything, and typing replaces it.
 #[test]
 fn select_all_then_type_replaces() {

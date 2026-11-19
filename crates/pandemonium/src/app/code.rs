@@ -295,7 +295,7 @@ impl App {
             return false;
         };
         if let Some(clipboard) = self.clipboard() {
-            clipboard.set_text(text);
+            clipboard.set_text(&text);
         }
         true
     }

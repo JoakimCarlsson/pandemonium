@@ -3,7 +3,7 @@
 use crate::events::Interactive;
 use crate::events::reduce;
 use crate::focus::FocusId;
-use crate::icons::{panel_bottom, panel_right, panel_right_filled};
+use crate::icons::{panel_bottom, panel_right};
 use crate::theme;
 use crate::theme::Role;
 use crate::theme::sp;
@@ -177,21 +177,21 @@ impl TitleBar {
                     if navigation {
                         layout_toggle(
                             phosphor::SIDEBAR_SIMPLE,
-                            phosphor::fill::SIDEBAR_SIMPLE,
+                            sidebar_mark,
                             SIDEBAR_TOGGLE,
                             "Toggle Primary Side Bar",
                             self.sidebar_open,
                         );
                         layout_toggle(
-                            panel_bottom(),
-                            phosphor::fill::SQUARE_HALF_BOTTOM,
+                            phosphor::BROWSER,
+                            panel_mark,
                             TERMINAL,
                             "Toggle Panel",
                             self.panel_open,
                         );
                         layout_toggle(
-                            panel_right(),
-                            panel_right_filled(),
+                            phosphor::SIDEBAR_SIMPLE,
+                            review_mark,
                             REVIEW,
                             "Toggle Review Panel",
                             self.review_open,
@@ -281,15 +281,42 @@ impl rustle::Layout for BarLayout {
     }
 }
 
-/// Emits the button that shows or hides a panel, drawn with `icon`, or with
-/// `filled`, the same window with its panel filled, while `open`.
+/// Emits the button that shows or hides a panel, standing for `icon`, its
+/// look drawn by `mark`, which is told whether the panel is `open`.
 #[track_caller]
-fn layout_toggle(icon: Icon, filled: Icon, id: FocusId, words: &str, open: bool) {
-    let mark = if open { filled } else { icon.clone() };
+fn layout_toggle(icon: Icon, mark: fn(bool), id: FocusId, words: &str, open: bool) {
     Button::icon(icon, id)
-        .mark(move || crate::parts::glyph(mark.clone(), 5.0, Role::Muted))
+        .mark(move || mark(open))
         .tooltip(words)
         .build();
+}
+
+/// Emits the primary side bar's toggle: Phosphor's sidebar, filled while `open`.
+#[track_caller]
+fn sidebar_mark(open: bool) {
+    let sidebar = if open {
+        phosphor::fill::SIDEBAR_SIMPLE
+    } else {
+        phosphor::SIDEBAR_SIMPLE
+    };
+    crate::parts::glyph(sidebar, 5.0, Role::Muted);
+}
+
+/// Emits the bottom panel's toggle: a window with a band along its bottom,
+/// the bottom half filled while `open`.
+#[track_caller]
+fn panel_mark(open: bool) {
+    if open {
+        crate::parts::glyph(phosphor::fill::SQUARE_HALF_BOTTOM, 5.0, Role::Muted);
+    } else {
+        panel_bottom(5.0, Role::Muted);
+    }
+}
+
+/// Emits the review panel's toggle: a window with a panel on its right, filled while `open`.
+#[track_caller]
+fn review_mark(open: bool) {
+    panel_right(open, 5.0, Role::Muted);
 }
 
 /// Emits the box in the middle of the bar that says where the window is pointed and lists every command when it is pressed.

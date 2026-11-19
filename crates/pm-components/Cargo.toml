@@ -21,4 +21,3 @@ similar = "3.2.0"
 rustle = { git = "https://github.com/JoakimCarlsson/rustle", version = "0.1.0", features = ["icons-fill"] }
 rustle-wgpu = { git = "https://github.com/JoakimCarlsson/rustle", version = "0.1.0" }
 pm-field = { version = "0.15.0-rc.4", path = "../pm-field" }
-resvg = "0.48.1"

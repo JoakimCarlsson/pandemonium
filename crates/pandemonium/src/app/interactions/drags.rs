@@ -164,6 +164,42 @@ fn files_drag_into_folders() {
     );
 }
 
+/// Files from another application held over a folder of the project's files show the
+/// folder they would land in, show none once they leave the window, and, let go over it,
+/// are asked to be brought into it rather than attached to the prompt.
+#[test]
+fn files_from_outside_land_in_the_folder_under_them() {
+    let mut rig = Rig::shot(Shot::Files);
+    let folder = region_where(&rig, false, |screen, id| {
+        screen
+            .tree_row_of(id)
+            .is_some_and(|row| row.folder && !row.is_root())
+    });
+    let to = rig.center(folder);
+    let landing =
+        |rig: &Rig| rig.state(|state| state.git.tree_drag.as_ref().map(|drag| drag.into.clone()));
+    rig.hold_files(to);
+    assert!(
+        matches!(landing(&rig), Some(Some(_))),
+        "{:?}",
+        landing(&rig)
+    );
+    rig.files_leave();
+    assert_eq!(landing(&rig), None);
+    let _ = rig.app.borrow_mut().work.asked();
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+    rig.drop_files(to, vec![path]);
+    assert_eq!(landing(&rig), None);
+    assert!(rig.state(|state| state.attachments.is_empty()));
+    let asked = rig.app.borrow_mut().work.asked();
+    assert!(
+        asked
+            .iter()
+            .any(|(_, request)| format!("{request:?}").contains("Import")),
+        "{asked:?}"
+    );
+}
+
 /// Pressing the minimap scrolls the file shown to the place pressed.
 #[test]
 fn the_minimap_scrolls_the_file() {

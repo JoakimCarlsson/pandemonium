@@ -13,15 +13,15 @@ use std::time::Duration;
 use pm_components::focus::FocusId;
 use pm_components::state::WorkspaceState;
 use pm_pages::Screen;
-use rustle::{Embedded, Offset, PixelRounding, PointerButton, Rect};
+use rustle::{Clipboard, ClipboardImage, Embedded, Offset, PixelRounding, PointerButton, Rect};
 use rustle::{Key, KeyEvent, Modifiers};
 use winit::event::MouseButton;
-use winit::window::{ResizeDirection, Window};
+use winit::window::Window;
 
 use super::App;
 use super::asides::Aside;
 use super::host::{Input, Shared, aside_size, aside_view, main_view, slot};
-use super::port::{Board, Port};
+use super::port::Port;
 use crate::work::Work;
 
 /// A window that is not there: it keeps its size and state, and records
@@ -43,7 +43,7 @@ pub(super) struct StandIn {
     /// How often the pointer was let move it.
     pub(super) moved: Cell<u32>,
     /// The edges the pointer was let resize it by, in order.
-    pub(super) resized: RefCell<Vec<ResizeDirection>>,
+    pub(super) resized: RefCell<Vec<rustle::ResizeEdge>>,
     /// Where the input method was last told the caret is.
     pub(super) ime_area: Cell<Option<(f32, f32, f32, f32)>>,
 }
@@ -123,8 +123,8 @@ impl Port for StandIn {
     }
 
     /// Records the edge the pointer was let resize it by.
-    fn drag_resize(&self, direction: ResizeDirection) {
-        self.resized.borrow_mut().push(direction);
+    fn drag_resize(&self, edge: rustle::ResizeEdge) {
+        self.resized.borrow_mut().push(edge);
     }
 
     /// Keeps where the input method was told the caret is.
@@ -133,34 +133,37 @@ impl Port for StandIn {
     }
 }
 
-/// A clipboard kept in memory, shared with whoever holds the other end.
+/// A clipboard kept in memory, installed as rustle's clipboard in place of the system's and
+/// shared with whoever holds the other end.
 #[derive(Clone, Debug, Default)]
 pub(super) struct Memory {
     /// The text on it.
     pub(super) text: Rc<RefCell<Option<String>>>,
     /// The files on it.
     pub(super) files: Rc<RefCell<Vec<PathBuf>>>,
+    /// The picture on it.
+    pub(super) image: Rc<RefCell<Option<ClipboardImage>>>,
 }
 
-impl Board for Memory {
+impl Clipboard for Memory {
     /// The text kept.
-    fn text(&mut self) -> Option<String> {
+    fn text(&self) -> Option<String> {
         self.text.borrow().clone()
     }
 
     /// Keeps `text`.
-    fn set_text(&mut self, text: String) {
-        *self.text.borrow_mut() = Some(text);
+    fn set_text(&self, text: &str) {
+        *self.text.borrow_mut() = Some(text.to_owned());
     }
 
     /// The files kept.
-    fn files(&mut self) -> Vec<PathBuf> {
+    fn files(&self) -> Vec<PathBuf> {
         self.files.borrow().clone()
     }
 
-    /// Never a picture.
-    fn image(&mut self) -> Option<arboard::ImageData<'static>> {
-        None
+    /// The picture kept.
+    fn image(&self) -> Option<ClipboardImage> {
+        self.image.borrow().clone()
     }
 }
 
@@ -313,7 +316,7 @@ impl Rig {
         *app.shell.headless.borrow_mut() = Some(screens);
         let screens = Rc::clone(&app.shell.headless);
         let clipboard = Memory::default();
-        app.clipboard = Some(Box::new(clipboard.clone()));
+        rustle::set_clipboard(Rc::new(clipboard.clone()));
         app.apply_appearance();
         app.recompose = true;
         let app = Rc::new(RefCell::new(app));
@@ -562,13 +565,51 @@ impl Rig {
         });
     }
 
-    /// Lets go of a drag of `paths` from another application at `at` in the main window.
-    pub(super) fn drop_files(&mut self, at: (f32, f32), paths: Vec<PathBuf>) {
+    /// Holds a drag of files from another application at `at` in the main window, as the
+    /// desktop reports a drag it follows: the pointer itself is not heard of meanwhile.
+    pub(super) fn hold_files(&mut self, at: (f32, f32)) {
         let outer = Self::outer(None, at);
-        self.send(None, Input::Moved(outer), |ui| {
-            ui.pointer_moved(Offset::new(outer.0, outer.1));
+        self.feed(None, |ui| {
+            ui.files_dragged_over(Offset::new(outer.0, outer.1));
+        });
+    }
+
+    /// Takes a drag of files from another application out of the main window without
+    /// letting go of them.
+    pub(super) fn files_leave(&mut self) {
+        self.feed(None, Embedded::files_drag_left);
+    }
+
+    /// Lets go of a drag of `paths` from another application at `at` in the main window,
+    /// held there first.
+    pub(super) fn drop_files(&mut self, at: (f32, f32), paths: Vec<PathBuf>) {
+        self.hold_files(at);
+        let outer = Self::outer(None, at);
+        self.feed(None, |ui| {
             ui.files_dropped(Offset::new(outer.0, outer.1), paths);
         });
+    }
+
+    /// Hands what `feed` does to the interface of the main window, or of `aside`'s, for an
+    /// event of the window the app does not act on itself, then composes what its lambdas
+    /// changed and lets the loop come to rest, as the event loop does for such an event.
+    fn feed(&mut self, aside: Option<Aside>, feed: impl FnOnce(&mut Embedded)) {
+        if let Some(ui) = self
+            .screens
+            .borrow_mut()
+            .as_mut()
+            .and_then(|screens| screens.ui(aside))
+        {
+            feed(ui);
+        }
+        {
+            let mut app = self.app.borrow_mut();
+            if std::mem::take(&mut app.claimed).acted || app.shell.take_deferred() {
+                app.recompose = true;
+                app.flush();
+            }
+        }
+        self.settle();
     }
 
     /// The desktop asks the main window, or `aside`'s, to close.

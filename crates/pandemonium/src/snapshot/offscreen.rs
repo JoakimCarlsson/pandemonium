@@ -9,7 +9,6 @@ use std::time::Duration;
 
 use pm_components::focus::FocusId;
 use pm_components::focus::{self, FocusKeys};
-use pm_components::icons;
 use pm_components::theme::{self, Appearance, ThemeFamily, Tokens};
 use rustle::{Offset, PixelRounding, PreviewOptions};
 
@@ -71,7 +70,6 @@ pub(crate) fn write_png(
     content: impl Fn() + 'static,
 ) -> Result<(), Box<dyn std::error::Error>> {
     rustle_wgpu::set_legible_text(false);
-    icons::set_pixel_scale(shot.scale);
     let tokens = Tokens::new(&shot.family, shot.appearance);
     let focused = shot.focused;
     let root = move || {

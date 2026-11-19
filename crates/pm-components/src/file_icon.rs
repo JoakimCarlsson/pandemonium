@@ -5,10 +5,10 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
 use pm_protocol::{ExtensionIconTheme, ExtensionInfo};
-use rustle::Modifier;
+use rustle::{Modifier, SvgPainter};
 
 use crate::icons::icon;
-use crate::icons::{Artwork, artwork_with, icon_with};
+use crate::icons::{artwork_with, icon_with};
 use crate::theme::{Role, Tone, sp};
 
 /// What an installed language says of the files whose names end as it reads.
@@ -17,7 +17,7 @@ struct Known {
     /// The language, by its folder's name.
     language: String,
     /// The icon and colour its files are shown with, when it has one.
-    icon: Option<(Artwork, Tone)>,
+    icon: Option<(SvgPainter, Tone)>,
 }
 
 /// What the installed languages of one machine say of their files: by the ending of a file name, and by the whole names and name patterns that are read before an ending is.
@@ -36,7 +36,7 @@ type Learned = HashMap<Option<String>, Machine>;
 static LEARNED: LazyLock<Mutex<Learned>> = LazyLock::new(Default::default);
 
 /// The icons the icon themes of each machine give the endings of file names: by machine, then by ending.
-type Themed = HashMap<Option<String>, HashMap<String, (Artwork, Tone)>>;
+type Themed = HashMap<Option<String>, HashMap<String, (SvgPainter, Tone)>>;
 
 /// What was learned from the icon themes installed on the machines reached.
 static THEMED: LazyLock<Mutex<Themed>> = LazyLock::new(Default::default);
@@ -58,14 +58,14 @@ fn colour_of(hex: &str) -> Option<Tone> {
 pub fn learn_languages(host: &Option<String>, extensions: &[ExtensionInfo]) {
     let mut machine = Machine::default();
     for extension in extensions.iter().filter(|extension| extension.installed) {
-        let icon = extension.icon.as_ref().map(|source| {
-            let svg = Artwork::arrived(&format!("extension-{}", extension.id), source);
+        let icon = extension.icon.as_ref().and_then(|source| {
+            let svg = SvgPainter::from_str(source).ok()?;
             let tone = extension
                 .color
                 .as_deref()
                 .and_then(colour_of)
                 .unwrap_or_else(|| Tone::from(Role::Muted));
-            (svg, tone)
+            Some((svg, tone))
         });
         let known = Known {
             language: extension.id.clone(),
@@ -99,13 +99,9 @@ pub fn learn_icon_themes(host: &Option<String>, themes: &[ExtensionIconTheme]) {
                 .as_deref()
                 .and_then(colour_of)
                 .unwrap_or_else(|| Tone::from(Role::Muted));
-            let svg = Artwork::arrived(
-                &format!(
-                    "icon-theme-{}-{}-{}",
-                    theme.extension, theme.name, icon.suffix
-                ),
-                &icon.svg,
-            );
+            let Ok(svg) = SvgPainter::from_str(&icon.svg) else {
+                continue;
+            };
             endings.insert(icon.suffix.to_lowercase(), (svg, tone));
         }
     }
@@ -144,15 +140,15 @@ pub fn file_language(path: &str) -> Option<String> {
 }
 
 /// The icon and colour of the file `path` names: its installed language's or its icon theme's artwork, or no artwork, meaning the plain file icon, in muted.
-pub fn file_kind(path: &str) -> (Option<Artwork>, Tone) {
+pub fn file_kind(path: &str) -> (Option<SvgPainter>, Tone) {
     let suffix = suffix_of(path);
     let themed = THEMED.lock().ok().and_then(|themed| {
         themed
             .values()
-            .find_map(|endings| endings.get(&suffix).copied())
+            .find_map(|endings| endings.get(&suffix).cloned())
     });
     themed
-        .or_else(|| learned_of(path, |known| known.icon))
+        .or_else(|| learned_of(path, |known| known.icon.clone()))
         .map_or((None, Tone::from(Role::Muted)), |(art, tone)| {
             (Some(art), tone)
         })
@@ -162,7 +158,7 @@ pub fn file_kind(path: &str) -> (Option<Artwork>, Tone) {
 #[track_caller]
 pub fn file_icon(path: &str, steps: f32) {
     match file_kind(path) {
-        (Some(art), tone) => artwork_with(Modifier::new(), art, sp(steps), tone),
+        (Some(art), tone) => artwork_with(Modifier::new(), &art, sp(steps), tone),
         (None, tone) => icon_with(Modifier::new(), phosphor::FILE, sp(steps), tone),
     }
 }

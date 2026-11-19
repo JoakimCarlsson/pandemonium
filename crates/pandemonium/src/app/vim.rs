@@ -9,19 +9,19 @@ use pm_pages::Screen;
 
 use super::App;
 
-/// The system clipboard, as modal editing reaches it.
-struct Desktop<'a>(&'a mut Option<Box<dyn super::port::Board>>);
+/// The clipboard rustle installed, as modal editing reaches it.
+struct Desktop(Option<std::rc::Rc<dyn rustle::Clipboard>>);
 
-impl pm_vim::Clipboard for Desktop<'_> {
+impl pm_vim::Clipboard for Desktop {
     /// What is on the clipboard, if it holds text.
     fn read(&mut self) -> Option<String> {
-        self.0.as_mut()?.text()
+        self.0.as_ref()?.text()
     }
 
     /// Puts `text` on the clipboard.
     fn write(&mut self, text: String) {
-        if let Some(clipboard) = self.0.as_mut() {
-            clipboard.set_text(text);
+        if let Some(clipboard) = self.0.as_ref() {
+            clipboard.set_text(&text);
         }
     }
 }
@@ -82,11 +82,10 @@ impl App {
             .model
             .read(Screen::code_area)
             .map_or_else(|| self.window_height(), |view| view.size.height + STRIP);
-        self.clipboard();
-        let clipboard = &mut self.clipboard;
+        let clipboard = self.clipboard();
         let mut commands = None;
         self.model.update(|screen| {
-            commands = screen.vim_key(key, height, &mut Desktop(clipboard));
+            commands = screen.vim_key(key, height, &mut Desktop(clipboard.clone()));
         });
         let Some(commands) = commands else {
             return false;

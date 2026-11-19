@@ -2,7 +2,7 @@
 
 use crate::theme;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with};
-use rustle::{BoxAlignment, Modifier};
+use rustle::{BoxAlignment, Modifier, phosphor};
 
 use crate::Button;
 use crate::button::Variant;
@@ -98,7 +98,8 @@ pub fn welcome(state: &WorkspaceState, above: f32) {
             },
         );
         if !state.review && reviewable {
-            Button::icon(panel_right(), REVIEW)
+            Button::icon(phosphor::SIDEBAR_SIMPLE, REVIEW)
+                .mark(|| panel_right(false, 4.0, Role::Muted))
                 .modifier(
                     Modifier::new()
                         .align(BoxAlignment::TopEnd)

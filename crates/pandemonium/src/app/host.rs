@@ -628,7 +628,6 @@ impl App {
                 let received = self.timings.start();
                 let at = (position.0 - band, position.1 - band);
                 self.pointer(PointerEvent::Moved(at.0, at.1));
-                self.settle_drop();
                 self.browser_moved(at);
                 if self.on_aside.is_none() {
                     self.timings.pointer(received);

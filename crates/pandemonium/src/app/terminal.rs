@@ -185,7 +185,7 @@ impl App {
             && !text.is_empty()
             && let Some(clipboard) = self.clipboard()
         {
-            clipboard.set_text(text);
+            clipboard.set_text(&text);
         }
     }
 
@@ -202,7 +202,7 @@ impl App {
                 if let Some(text) = self.model.read(|screen| screen.terminal_selection())
                     && let Some(clipboard) = self.clipboard()
                 {
-                    clipboard.set_text(text);
+                    clipboard.set_text(&text);
                 }
             }
         }
