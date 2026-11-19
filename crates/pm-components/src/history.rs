@@ -3,10 +3,10 @@
 use crate::theme;
 use crate::theme::sp;
 use rustle::Modifier;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::theme::{Radius, Role};
 
 use crate::age::{self, Span};
@@ -120,7 +120,7 @@ fn search(state: &WorkspaceState) {
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Center,
                 || {
-                    glyph(IconName::Search, 4.0, Role::Muted);
+                    glyph(phosphor::MAGNIFYING_GLASS, 4.0, Role::Muted);
                     Input::new(&state.history_search, HISTORY_SEARCH)
                         .variant(input::Variant::Ghost)
                         .size(Size::Sm)
@@ -235,7 +235,7 @@ fn row_of(state: &WorkspaceState, index: usize) {
                             .max_lines(1),
                         rustle::TextOverflow::Ellipsis,
                     );
-                    glyph(IconName::ChevronRight, 4.0, Role::Subtle);
+                    glyph(phosphor::CARET_RIGHT, 4.0, Role::Subtle);
                     glyph(agent.icon, 4.0, Role::Muted);
                     rustle::basic_text(
                         Modifier::new(),

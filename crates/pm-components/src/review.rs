@@ -6,11 +6,12 @@ use crate::theme;
 use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
+use rustle::{Icon, phosphor};
 use std::rc::Rc;
 
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::{IconName, spinner};
+use crate::icons::spinner;
 use crate::theme::{Radius, Role, Tone};
 
 use crate::branch_menu::branch_menu;
@@ -85,26 +86,22 @@ pub(crate) fn nothing(message: &str) {
     );
 }
 
-/// Emits one of the tabs at the top of the panel, a glyph that says its name when the pointer rests on it, filled while it is the one shown.
+/// Emits one of the tabs at the top of the panel, `icon`, a glyph that says
+/// its name when the pointer rests on it, drawn as `filled` while it is the one shown.
 #[track_caller]
-fn panel_tab(label: &str, icon: IconName, id: FocusId, shown: bool) {
-    let mark = match (icon, shown) {
-        (IconName::Git, true) => IconName::GitFilled,
-        (IconName::Folder, true) => IconName::FolderFilled,
-        (IconName::Search, true) => IconName::SearchFilled,
-        _ => icon,
-    };
+fn panel_tab(label: &str, icon: Icon, filled: Icon, id: FocusId, shown: bool) {
+    let mark = if shown { filled } else { icon.clone() };
     let tone = if shown { Role::Text } else { Role::Muted };
     Button::icon(icon, id)
         .size(Size::Md)
-        .mark(move || glyph(mark, 5.0, tone))
+        .mark(move || glyph(mark.clone(), 5.0, tone))
         .tooltip(label)
         .build();
 }
 
 /// Emits a small button showing only `icon`, answering to `id`, turning while `spinning`, saying what it does with `tooltip`.
 #[track_caller]
-fn small_icon_button(icon: IconName, id: FocusId, spinning: bool, tooltip: &str) {
+fn small_icon_button(icon: Icon, id: FocusId, spinning: bool, tooltip: &str) {
     Button::icon(icon, id)
         .size(Size::Sm)
         .spinning(spinning)
@@ -117,15 +114,20 @@ fn small_icon_button(icon: IconName, id: FocusId, spinning: bool, tooltip: &str)
 fn files_header(state: &WorkspaceState) {
     band(10, || {
         label_with_grow("Files");
-        small_icon_button(IconName::FilePlus, TREE_NEW_FILE, false, "New File…");
-        small_icon_button(IconName::FolderPlus, TREE_NEW_FOLDER, false, "New Folder…");
+        small_icon_button(phosphor::FILE_PLUS, TREE_NEW_FILE, false, "New File…");
+        small_icon_button(phosphor::FOLDER_PLUS, TREE_NEW_FOLDER, false, "New Folder…");
         small_icon_button(
-            IconName::Refresh,
+            phosphor::ARROWS_CLOCKWISE,
             TREE_REFRESH,
             state.git.working,
             "Refresh",
         );
-        small_icon_button(IconName::Collapse, TREE_COLLAPSE, false, "Collapse Folders");
+        small_icon_button(
+            phosphor::ARROWS_IN_LINE_VERTICAL,
+            TREE_COLLAPSE,
+            false,
+            "Collapse Folders",
+        );
     });
 }
 
@@ -168,10 +170,10 @@ fn primary_face(primary: &Primary) {
     );
     let tone = if enabled { Role::Text } else { Role::Subtle };
     let (icon, words) = match primary {
-        Primary::Commit { title, stopped } => (IconName::Check, stopped.unwrap_or(title)),
-        Primary::Sync { .. } => (IconName::Refresh, "Sync Changes"),
-        Primary::Publish => (IconName::GitPush, "Publish Branch"),
-        Primary::Busy(doing) => (IconName::Loading, *doing),
+        Primary::Commit { title, stopped } => (phosphor::CHECK, stopped.unwrap_or(title)),
+        Primary::Sync { .. } => (phosphor::ARROWS_CLOCKWISE, "Sync Changes"),
+        Primary::Publish => (phosphor::ARROW_LINE_UP, "Publish Branch"),
+        Primary::Busy(doing) => (phosphor::CIRCLE_DASHED, *doing),
     };
     row_arranged(
         Modifier::new(),
@@ -193,8 +195,10 @@ fn primary_face(primary: &Primary) {
                 rustle::TextOverflow::Ellipsis,
             );
             if let Primary::Sync { ahead, behind } = primary {
-                for (count, arrow) in [(*behind, IconName::ArrowDown), (*ahead, IconName::ArrowUp)]
-                {
+                for (count, arrow) in [
+                    (*behind, phosphor::ARROW_DOWN),
+                    (*ahead, phosphor::ARROW_UP),
+                ] {
                     if count > 0 {
                         line(count.to_string(), 13, 1.4, tone);
                         glyph(arrow, 3.0, tone);
@@ -269,7 +273,7 @@ fn commit_button(primary: &Primary) {
                     });
                     row_arranged(arrow, Arrangement::Start, Alignment::Center, || {
                         glyph(
-                            IconName::ChevronDown,
+                            phosphor::CARET_DOWN,
                             3.0,
                             if enabled { Role::Text } else { Role::Subtle },
                         )
@@ -347,9 +351,9 @@ fn section_heading(state: &WorkspaceState, primary: &Primary) {
                 || {
                     glyph(
                         if open {
-                            IconName::ChevronDown
+                            phosphor::CARET_DOWN
                         } else {
-                            IconName::ChevronRight
+                            phosphor::CARET_RIGHT
                         },
                         3.5,
                         Role::Subtle,
@@ -357,19 +361,19 @@ fn section_heading(state: &WorkspaceState, primary: &Primary) {
                     line("Changes", 13, 1.4, Role::Text);
                 },
             );
-            Button::icon(IconName::GitCommit, COMMIT)
+            Button::icon(phosphor::GIT_COMMIT, COMMIT)
                 .size(Size::Sm)
                 .disabled(!committable)
                 .tooltip("Commit")
                 .build();
             small_icon_button(
-                IconName::Refresh,
+                phosphor::ARROWS_CLOCKWISE,
                 CHANGES_REFRESH,
                 state.git.working,
                 "Refresh",
             );
             let operations = crate::events::operations();
-            Button::icon(IconName::More, CHANGES_MORE)
+            Button::icon(phosphor::DOTS_THREE, CHANGES_MORE)
                 .on_click(move || operations.open_git_menu(MenuKind::Source, Some(CHANGES_MORE)))
                 .size(Size::Sm)
                 .tooltip("More Actions…")
@@ -411,7 +415,7 @@ fn trouble(said: &str, width: f32) {
                             }
                         },
                     );
-                    Button::icon(IconName::Close, TROUBLE_DISMISS)
+                    Button::icon(phosphor::X, TROUBLE_DISMISS)
                         .size(Size::Sm)
                         .build();
                 },
@@ -543,9 +547,9 @@ fn repositories(state: &WorkspaceState, session: &Session) {
                     .build_with(|| {
                         glyph(
                             if repository.is_some() {
-                                IconName::GitFork
+                                phosphor::GIT_FORK
                             } else {
-                                IconName::Git
+                                phosphor::GIT_BRANCH
                             },
                             3.5,
                             Role::Muted,
@@ -585,13 +589,13 @@ fn branch_button(state: &WorkspaceState, session: &Session, working: bool) {
         .variant(Variant::Ghost)
         .size(Size::Sm)
         .tone(Role::Text)
-        .with_icon(IconName::GitFork)
+        .with_icon(phosphor::GIT_FORK)
         .monospace()
         .fill()
         .trailing_icon(if working {
-            IconName::Loading
+            phosphor::CIRCLE_DASHED
         } else {
-            IconName::ChevronDown
+            phosphor::CARET_DOWN
         })
         .spinning(working)
         .build();
@@ -631,27 +635,30 @@ pub fn review(state: &WorkspaceState, session: &Session) {
                                 if versioned {
                                     panel_tab(
                                         "Source Control",
-                                        IconName::Git,
+                                        phosphor::GIT_BRANCH,
+                                        phosphor::fill::GIT_BRANCH,
                                         REVIEW_CHANGES,
                                         shown == ReviewTab::Changes,
                                     );
                                 }
                                 panel_tab(
                                     "Files",
-                                    IconName::Folder,
+                                    phosphor::FOLDER,
+                                    phosphor::fill::FOLDER,
                                     REVIEW_FILES,
                                     shown == ReviewTab::Files,
                                 );
                                 panel_tab(
                                     "Search",
-                                    IconName::Search,
+                                    phosphor::MAGNIFYING_GLASS,
+                                    phosphor::fill::MAGNIFYING_GLASS,
                                     crate::project_search::REVIEW_SEARCH,
                                     shown == ReviewTab::Search,
                                 );
                             },
                         );
                         if shown == ReviewTab::Changes && !session.changes.is_empty() {
-                            Button::icon(IconName::GitCompare, OPEN_DIFF)
+                            Button::icon(phosphor::GIT_DIFF, OPEN_DIFF)
                                 .tooltip("Open Diff")
                                 .build();
                         }

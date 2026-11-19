@@ -6,11 +6,11 @@
 use crate::events::Interactive;
 use crate::events::reduce;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::theme;
 use crate::theme::{Radius, Role, sp};
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
+use rustle::{Icon, phosphor};
 
 use crate::button::Variant;
 use crate::elements::{code, fence, one_line, section, words};
@@ -100,22 +100,22 @@ impl Capture {
     }
 
     /// The icon of the chip.
-    fn icon(&self) -> IconName {
+    fn icon(&self) -> Icon {
         match self.kind {
-            Kind::Console => IconName::Terminal,
-            Kind::Area => IconName::Scan,
-            Kind::Failed => IconName::Close,
-            Kind::Screenshot | Kind::FullPage => IconName::Camera,
+            Kind::Console => phosphor::TERMINAL,
+            Kind::Area => phosphor::FRAME_CORNERS,
+            Kind::Failed => phosphor::X,
+            Kind::Screenshot | Kind::FullPage => phosphor::CAMERA,
         }
     }
 
     /// The icon of the chip a sent message shows for the capture that was written out under `label`, or the picker's icon when it is the words of an element.
-    pub(crate) fn icon_of_label(label: &str) -> IconName {
+    pub(crate) fn icon_of_label(label: &str) -> Icon {
         match label {
-            "Screenshot" | "Full page" => IconName::Camera,
-            "Area" | "Page, area skipped" => IconName::Scan,
-            _ if label.starts_with("Console") => IconName::Terminal,
-            _ => IconName::Pick,
+            "Screenshot" | "Full page" => phosphor::CAMERA,
+            "Area" | "Page, area skipped" => phosphor::FRAME_CORNERS,
+            _ if label.starts_with("Console") => phosphor::TERMINAL,
+            _ => phosphor::SELECTION,
         }
     }
 
@@ -318,7 +318,7 @@ fn pill(index: usize, capture: &Capture, selected: bool) {
                 .with_icon(capture.icon())
                 .selected(selected)
                 .build();
-            Button::icon(IconName::Close, FocusId(CAPTURE_REMOVE_BASE + index as u64)).build();
+            Button::icon(phosphor::X, FocusId(CAPTURE_REMOVE_BASE + index as u64)).build();
         },
     );
 }

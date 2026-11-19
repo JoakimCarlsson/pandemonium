@@ -1,12 +1,13 @@
 //! The extensions page: what the server on this machine has installed, then what it can install, narrowed by a search, each a row saying what the extension gives the files of a project and whether it works, and the button that installs one from a folder.
 
 use crate::focus::FocusId;
-use crate::icons::{Artwork, IconName, artwork_with};
+use crate::icons::{Artwork, artwork_with};
 use crate::theme::{self, family_from_colours, set_extension_families};
 use crate::theme::{Radius, Role, sp};
 use pm_protocol::{ExtensionAssets, ExtensionCommand, ExtensionInfo};
 use rustle::Modifier;
 use rustle::TextFieldState;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::button::Variant;
@@ -457,8 +458,8 @@ fn mark(extension: &ExtensionInfo) {
             ));
             artwork_with(Modifier::new(), art, sp(5.0), tone);
         }
-        None if extension.kind == "extension" => glyph(IconName::Plug, 5.0, Role::Subtle),
-        None => glyph(IconName::FileCode, 5.0, Role::Subtle),
+        None if extension.kind == "extension" => glyph(phosphor::PLUG, 5.0, Role::Subtle),
+        None => glyph(phosphor::CODE, 5.0, Role::Subtle),
     }
 }
 

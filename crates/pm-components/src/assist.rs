@@ -3,12 +3,12 @@
 use crate::events::reduce;
 use crate::theme;
 use pm_protocol::CompletionKind;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::marked::{CaretLook, Mark, Paint, marked_line};
 use crate::popups::at_window;
 use crate::theme::{Radius, Role, Tone, sp};
@@ -847,7 +847,7 @@ pub(crate) fn listing_cells(items: &Items, index: usize) {
                 let Some(commit) = commits.get(*place) else {
                     return;
                 };
-                glyph(IconName::GitCommit, 3.5, Role::Muted);
+                glyph(phosphor::GIT_COMMIT, 3.5, Role::Muted);
                 cell(commit.summary.clone(), 12, Role::Text, false);
                 tag(
                     format!("{} · {} · {}", commit.id, commit.author, commit.when),
@@ -859,7 +859,7 @@ pub(crate) fn listing_cells(items: &Items, index: usize) {
                 let Some(version) = versions.get(*place) else {
                     return;
                 };
-                glyph(IconName::History, 3.5, Role::Muted);
+                glyph(phosphor::CLOCK_COUNTER_CLOCKWISE, 3.5, Role::Muted);
                 cell("Saved", 12, Role::Text, false);
                 tag(
                     format!(

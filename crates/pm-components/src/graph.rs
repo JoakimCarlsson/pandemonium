@@ -9,6 +9,7 @@ use crate::theme::sp;
 use pm_git::{Commit, Edge, Half, Lanes};
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
+use rustle::{Icon, phosphor};
 
 use crate::Sash;
 use crate::events::Interactive;
@@ -17,7 +18,6 @@ use crate::git_controls::{
     CHANGES_REFRESH, GRAPH_FETCH, GRAPH_PULL, GRAPH_PUSH, GRAPH_REFS, GRAPH_SASH, GRAPH_TARGET,
     GRAPH_TOGGLE,
 };
-use crate::icons::IconName;
 use crate::parts::{glyph, line};
 use crate::size::Size;
 use crate::state::WorkspaceState;
@@ -278,9 +278,9 @@ fn refs_button(all: bool, tip: &str) {
             Arrangement::SpacedBy(sp(1)),
             Alignment::Center,
             || {
-                glyph(IconName::GitFork, 3.5, Role::Muted);
+                glyph(phosphor::GIT_FORK, 3.5, Role::Muted);
                 line(if all { "All" } else { "Auto" }, 12, 1.4, Role::Text);
-                glyph(IconName::ChevronDown, 3.0, Role::Muted);
+                glyph(phosphor::CARET_DOWN, 3.0, Role::Muted);
             },
         );
     });
@@ -288,7 +288,7 @@ fn refs_button(all: bool, tip: &str) {
 
 /// Emits a small button showing `icon` that answers to `id`, spinning while `spinning`, with `tip` shown while it is hovered.
 #[track_caller]
-fn strip_button(icon: IconName, id: FocusId, spinning: bool, tip: &str) {
+fn strip_button(icon: Icon, id: FocusId, spinning: bool, tip: &str) {
     Button::icon(icon, id)
         .size(Size::Sm)
         .spinning(spinning)
@@ -310,9 +310,9 @@ fn strip(state: &WorkspaceState) {
         || {
             strip_button(
                 if open {
-                    IconName::ChevronDown
+                    phosphor::CARET_DOWN
                 } else {
-                    IconName::ChevronRight
+                    phosphor::CARET_RIGHT
                 },
                 GRAPH_TOGGLE,
                 false,
@@ -325,20 +325,25 @@ fn strip(state: &WorkspaceState) {
             line("Graph", 13, 1.4, Role::Text);
             refs_button(git.graph_all, "Choose history references");
             strip_button(
-                IconName::Target,
+                phosphor::TARGET,
                 GRAPH_TARGET,
                 false,
                 "Go to current history item",
             );
             strip_button(
-                IconName::GitFetch,
+                phosphor::CLOUD_ARROW_DOWN,
                 GRAPH_FETCH,
                 false,
                 "Fetch from all remotes",
             );
-            strip_button(IconName::GitPull, GRAPH_PULL, false, "Pull");
-            strip_button(IconName::GitPush, GRAPH_PUSH, false, "Push");
-            strip_button(IconName::Refresh, CHANGES_REFRESH, git.working, "Refresh");
+            strip_button(phosphor::ARROW_LINE_DOWN, GRAPH_PULL, false, "Pull");
+            strip_button(phosphor::ARROW_LINE_UP, GRAPH_PUSH, false, "Push");
+            strip_button(
+                phosphor::ARROWS_CLOCKWISE,
+                CHANGES_REFRESH,
+                git.working,
+                "Refresh",
+            );
         },
     );
 }

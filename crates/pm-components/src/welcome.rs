@@ -8,7 +8,7 @@ use crate::Button;
 use crate::button::Variant;
 use crate::composer::composer;
 use crate::focus::FocusId;
-use crate::icons::IconName;
+use crate::icons::panel_right;
 use crate::size::Size;
 use crate::state::{AGENT_BASE, Page, REVIEW, WorkspaceState};
 use crate::theme::{Role, sp};
@@ -98,7 +98,7 @@ pub fn welcome(state: &WorkspaceState, above: f32) {
             },
         );
         if !state.review && reviewable {
-            Button::icon(IconName::PanelRight, REVIEW)
+            Button::icon(panel_right(), REVIEW)
                 .modifier(
                     Modifier::new()
                         .align(BoxAlignment::TopEnd)

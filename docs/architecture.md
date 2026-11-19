@@ -47,9 +47,11 @@ One crate per layer, each depending only on the layers below it.
   the theme's `InteractionTones`; buttons, cards, badges and surfaces are
   rustle `surface_custom`/`outlined_card`, check boxes and switches rustle's
   `tri_state_checkbox`/`switch_with`, rules rustle's dividers, all in the
-  theme's colours, sizes and corners. Icons are rustle's Phosphor set by name
-  (`pm-components/src/icons.rs`), with artwork that arrives at run time
-  rasterised there. What floats
+  theme's colours, sizes and corners. Icons are rustle's Phosphor constants
+  (`rustle::phosphor::X`, `phosphor::fill::X`) used directly, drawn by the
+  helpers in `pm-components/src/icons.rs`, which also holds the few panel
+  drawings made from Phosphor's own and rasterises artwork that arrives at
+  run time. What floats
   over the screen is rustle popups (`pm-components/src/popups.rs`): popovers
   placed against the box they are declared in, menus and code assists at a
   window point, kept inside the window's frame clear of its shadow band by a

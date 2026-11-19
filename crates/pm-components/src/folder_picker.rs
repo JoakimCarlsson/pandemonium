@@ -7,6 +7,7 @@
 use crate::theme;
 use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Icon, phosphor};
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -17,7 +18,6 @@ use rustle::TextFieldState;
 use crate::adder::{Found, Kind, Listing, Status, status_line};
 use crate::button::Variant;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::icons::icon;
 use crate::parts::spacer;
 use crate::size::Size;
@@ -81,12 +81,12 @@ const ROW_HEIGHT: f32 = 32.0;
 static OPENINGS: AtomicU64 = AtomicU64::new(0);
 
 /// The places that are one press away: what they are called, where they are and their glyph.
-pub const PLACES: [(&str, &str, IconName); 5] = [
-    ("Home", "~", IconName::Folder),
-    ("Desktop", "~/Desktop", IconName::Folder),
-    ("Documents", "~/Documents", IconName::Folder),
-    ("Downloads", "~/Downloads", IconName::Folder),
-    ("Root", "/", IconName::Folder),
+pub static PLACES: [(&str, &str, Icon); 5] = [
+    ("Home", "~", phosphor::FOLDER),
+    ("Desktop", "~/Desktop", phosphor::FOLDER),
+    ("Documents", "~/Documents", phosphor::FOLDER),
+    ("Downloads", "~/Downloads", phosphor::FOLDER),
+    ("Root", "/", phosphor::FOLDER),
 ];
 
 /// What the folder chosen is for.
@@ -494,15 +494,15 @@ impl FolderPicker {
             Arrangement::SpacedBy(sp(2)),
             Alignment::Center,
             || {
-                Button::icon(IconName::ArrowLeft, PICKER_BACK)
+                Button::icon(phosphor::ARROW_LEFT, PICKER_BACK)
                     .disabled(!self.can_go_back())
                     .tooltip("Back")
                     .build();
-                Button::icon(IconName::ArrowRight, PICKER_FORWARD)
+                Button::icon(phosphor::ARROW_RIGHT, PICKER_FORWARD)
                     .disabled(!self.can_go_forward())
                     .tooltip("Forward")
                     .build();
-                Button::icon(IconName::ArrowUp, PICKER_PARENT)
+                Button::icon(phosphor::ARROW_UP, PICKER_PARENT)
                     .disabled(crumbs.len() < 2)
                     .tooltip("Up")
                     .build();
@@ -513,7 +513,7 @@ impl FolderPicker {
                     || {
                         for (index, (name, _)) in crumbs.iter().enumerate() {
                             if index > 0 {
-                                icon(IconName::ChevronRight, 3.0, Role::Subtle);
+                                icon(phosphor::CARET_RIGHT, 3.0, Role::Subtle);
                             }
                             let kind = if index == last {
                                 theme::text_style(13, 1.4)
@@ -642,7 +642,7 @@ fn places() {
                     .modifier(Modifier::new().fill_max_width())
                     .inner(Modifier::new().padding_xy(theme::sp(2), 0.0))
                     .build_with(|| {
-                        icon(*glyph, 4.0, Role::Muted);
+                        icon(glyph.clone(), 4.0, Role::Muted);
                         rustle::basic_text(
                             Modifier::new(),
                             *name,
@@ -666,7 +666,7 @@ fn folder_row(name: &str, selected: bool, index: usize) {
         .modifier(Modifier::new().fill_max_width())
         .inner(Modifier::new().padding_xy(theme::sp(2.5), 0.0))
         .build_with(|| {
-            icon(IconName::Folder, 4.0, Role::Accent);
+            icon(phosphor::FOLDER, 4.0, Role::Accent);
             rustle::basic_text(
                 Modifier::new().weight(1.0),
                 name,

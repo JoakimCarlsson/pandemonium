@@ -3,10 +3,10 @@
 use crate::events::Interactive;
 use crate::events::reduce;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::theme;
 use crate::theme::sp;
 use crate::theme::{Radius, Role};
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
@@ -246,7 +246,7 @@ pub fn row(name: &str, description: &str, current: bool, id: FocusId) {
                 },
             );
             if current {
-                glyph(IconName::Check, 4.0, Role::Text);
+                glyph(phosphor::CHECK, 4.0, Role::Text);
             }
         },
     );

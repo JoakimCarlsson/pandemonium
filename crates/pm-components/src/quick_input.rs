@@ -3,13 +3,13 @@
 use crate::events::reduce;
 use crate::theme;
 use crate::theme::sp;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use crate::assist::listing_cells;
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::input::Input;
 use crate::listing::{
     Destination, Items, LISTING_BODY, LISTING_FILTER, LISTING_ROW_BASE, LISTING_WIDTH, Listing,
@@ -303,7 +303,7 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
                         cut(Modifier::new(), choice.detail.clone(), 12, Role::Subtle);
                     }
                     if choice.current {
-                        glyph(IconName::Check, 3.5, Role::Muted);
+                        glyph(phosphor::CHECK, 3.5, Role::Muted);
                     }
                 }
             });

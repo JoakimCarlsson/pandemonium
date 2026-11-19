@@ -6,6 +6,7 @@ use crate::theme::sp;
 use pm_protocol::{DebugCategory, DebugView, Standing};
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
+use rustle::{Icon, phosphor};
 
 use crate::Button;
 use crate::debug::{
@@ -15,7 +16,6 @@ use crate::debug::{
 };
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::icons::icon;
 use crate::input::Input;
 use crate::size::Size;
@@ -45,7 +45,7 @@ fn small(pixels: u32, tone: impl Into<Tone>) -> rustle::TextStyle {
 
 /// Emits one icon button of the controls: `icon` answering to `id`, explained by `tip`, pressable while `enabled`.
 #[track_caller]
-fn control(icon: IconName, id: FocusId, tip: &'static str, enabled: bool) {
+fn control(icon: Icon, id: FocusId, tip: &'static str, enabled: bool) {
     Button::icon(icon, id)
         .size(Size::Sm)
         .disabled(!enabled)
@@ -74,19 +74,29 @@ fn controls(run: &Run) {
         Alignment::Center,
         || {
             if paused || !live {
-                control(IconName::Continue, DEBUG_CONTINUE, "Continue", paused);
+                control(phosphor::SKIP_FORWARD, DEBUG_CONTINUE, "Continue", paused);
             } else {
                 control(
-                    IconName::Pause,
+                    phosphor::PAUSE,
                     DEBUG_PAUSE,
                     "Pause",
                     view.standing == Standing::Running,
                 );
             }
-            control(IconName::StepOver, DEBUG_STEP_OVER, "Step over", paused);
-            control(IconName::StepInto, DEBUG_STEP_IN, "Step into", paused);
-            control(IconName::StepOut, DEBUG_STEP_OUT, "Step out", paused);
-            control(IconName::Stop, DEBUG_STOP, "Stop", live);
+            control(
+                phosphor::ARROW_ARC_RIGHT,
+                DEBUG_STEP_OVER,
+                "Step over",
+                paused,
+            );
+            control(
+                phosphor::ARROW_LINE_DOWN,
+                DEBUG_STEP_IN,
+                "Step into",
+                paused,
+            );
+            control(phosphor::ARROW_LINE_UP, DEBUG_STEP_OUT, "Step out", paused);
+            control(phosphor::STOP, DEBUG_STOP, "Stop", live);
             rustle::basic_text(
                 Modifier::new().padding_each(theme::sp(2), 0.0, 0.0, 0.0),
                 view.label.clone(),
@@ -320,9 +330,9 @@ fn variable_parts(entry: &crate::debug::VariableRow, room: f32) {
                     || {
                         icon(
                             if entry.unfolded {
-                                IconName::ChevronDown
+                                phosphor::CARET_DOWN
                             } else {
-                                IconName::ChevronRight
+                                phosphor::CARET_RIGHT
                             },
                             3.0 * kept,
                             Role::Muted,
@@ -455,12 +465,9 @@ fn variables(state: &WorkspaceState, run: &Run) {
                                 .ligatures(theme::code_ligatures()),
                             rustle::TextOverflow::Ellipsis,
                         );
-                        Button::icon(
-                            IconName::Close,
-                            FocusId(DEBUG_WATCH_REMOVE_BASE + index as u64),
-                        )
-                        .size(Size::Sm)
-                        .build();
+                        Button::icon(phosphor::X, FocusId(DEBUG_WATCH_REMOVE_BASE + index as u64))
+                            .size(Size::Sm)
+                            .build();
                     });
                 });
             }

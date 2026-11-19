@@ -1,7 +1,6 @@
 //! The model slots of the settings window: the models page, with the job slots the harness asks a model for, such as `fast` for summaries and `plan` for plan mode, each with its model, effort and backups, the file a change is saved to, and the presets that set every slot at once; and what the orchestration page shares with it, the work categories the agent hands work to in orchestrator mode, each also with its description and prompt addition.
 
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::theme;
 use crate::theme::sp;
 use crate::theme::{Radius, Role};
@@ -9,6 +8,7 @@ use pm_harness::{PresetInfo, SlotChange, SlotInfo, SlotScope, SlotSource};
 use rustle::Modifier;
 use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
+use rustle::{Icon, phosphor};
 
 use crate::button::Variant;
 use crate::input::{self, Input};
@@ -943,7 +943,7 @@ const BACKUP_PICKER_WIDTH: f32 = 132.0;
 
 /// Emits a small muted icon button showing `name` that answers to `id`, greyed out while `disabled`, when there is an `id`.
 #[track_caller]
-fn backup_button(name: IconName, id: Option<FocusId>, disabled: bool) {
+fn backup_button(name: Icon, id: Option<FocusId>, disabled: bool) {
     if let Some(id) = id {
         Button::icon(name, id)
             .size(Size::Sm)
@@ -973,9 +973,9 @@ fn backup_chip(place: usize, backup: &str, ids: [Option<FocusId>; 3], first: boo
                     .max_lines(1),
                 rustle::TextOverflow::Ellipsis,
             );
-            backup_button(IconName::ArrowUp, ids[0], first);
-            backup_button(IconName::ArrowDown, ids[1], last);
-            backup_button(IconName::Close, ids[2], false);
+            backup_button(phosphor::ARROW_UP, ids[0], first);
+            backup_button(phosphor::ARROW_DOWN, ids[1], last);
+            backup_button(phosphor::X, ids[2], false);
         },
     );
 }

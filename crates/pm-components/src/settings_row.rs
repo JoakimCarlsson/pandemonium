@@ -6,12 +6,12 @@ use crate::theme::sp;
 use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
+use rustle::{Icon, phosphor};
 
 use crate::Button;
 use crate::button::Variant;
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::input::Input;
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::settings_ids::PICKS;
@@ -142,7 +142,7 @@ pub const NUMBER_WIDTH: f32 = 136.0;
 /// Emits the number `shown` between the buttons `smaller` and `bigger` that change it.
 #[track_caller]
 pub fn number(shown: String, smaller: FocusId, bigger: FocusId) {
-    let button = |icon: IconName, id: FocusId| {
+    let button = |icon: Icon, id: FocusId| {
         Button::icon(icon, id)
             .size(Size::Sm)
             .tone(Role::Text)
@@ -157,7 +157,7 @@ pub fn number(shown: String, smaller: FocusId, bigger: FocusId) {
         Arrangement::SpacedBy(sp(1)),
         Alignment::Center,
         || {
-            button(IconName::Minus, smaller);
+            button(phosphor::MINUS, smaller);
             row_arranged(
                 Modifier::new().width(64.0),
                 Arrangement::Center,
@@ -173,7 +173,7 @@ pub fn number(shown: String, smaller: FocusId, bigger: FocusId) {
                     );
                 },
             );
-            button(IconName::Plus, bigger);
+            button(phosphor::PLUS, bigger);
         },
     );
 }
@@ -187,9 +187,9 @@ pub fn picker(shown: &str, width: f32, id: FocusId, open: bool) {
         .width(width)
         .selected(open)
         .trailing_icon(if open {
-            IconName::ChevronDown
+            phosphor::CARET_DOWN
         } else {
-            IconName::ChevronRight
+            phosphor::CARET_RIGHT
         })
         .build();
 }
@@ -249,7 +249,7 @@ pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&TextFiel
                     .build_with(|| {
                         clipped(name.as_str(), 12, if on { Role::Text } else { Role::Muted });
                         if on {
-                            glyph(IconName::Check, 3.5, Role::Text);
+                            glyph(phosphor::CHECK, 3.5, Role::Text);
                         }
                     });
             }
@@ -328,7 +328,7 @@ pub fn list(
                             },
                         );
                         if let Some(remove) = remove_of(place) {
-                            Button::icon(IconName::Close, remove).size(Size::Xs).build();
+                            Button::icon(phosphor::X, remove).size(Size::Xs).build();
                         }
                     },
                 );
@@ -356,7 +356,9 @@ pub fn list(
 /// Emits the button that puts a setting back as it comes, answering to `id`.
 #[track_caller]
 fn reset_button(id: FocusId) {
-    Button::icon(IconName::Undo, id).size(Size::Xs).build();
+    Button::icon(phosphor::ARROW_COUNTER_CLOCKWISE, id)
+        .size(Size::Xs)
+        .build();
 }
 
 /// What a row emits for its control or for what opens under it, kept until the row is built.

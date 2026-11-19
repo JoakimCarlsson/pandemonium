@@ -4,6 +4,7 @@ use crate::events::reduce;
 use crate::theme;
 use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Icon, phosphor};
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -12,7 +13,6 @@ use std::rc::Rc;
 
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::marked::{Mark, Paint};
 use crate::theme::{Role, Tone};
 use pm_protocol::Location;
@@ -188,12 +188,12 @@ impl Excerpts {
     }
 
     /// The glyph of the tab of the excerpts.
-    pub fn icon(&self) -> IconName {
+    pub fn icon(&self) -> Icon {
         match &self.source {
-            Source::Search { .. } => IconName::Search,
-            Source::Revision { .. } => IconName::GitCompare,
-            Source::Timeline { .. } => IconName::History,
-            Source::Conflict(_) => IconName::GitFork,
+            Source::Search { .. } => phosphor::MAGNIFYING_GLASS,
+            Source::Revision { .. } => phosphor::GIT_DIFF,
+            Source::Timeline { .. } => phosphor::CLOCK_COUNTER_CLOCKWISE,
+            Source::Conflict(_) => phosphor::GIT_FORK,
         }
     }
 
@@ -550,9 +550,9 @@ fn header(
                     if excerpts.folds() {
                         glyph(
                             if file.closed {
-                                IconName::ChevronRight
+                                phosphor::CARET_RIGHT
                             } else {
-                                IconName::ChevronDown
+                                phosphor::CARET_DOWN
                             },
                             3.5,
                             Role::Muted,
@@ -579,7 +579,7 @@ fn header(
                 },
             );
             if viewer.is_some_and(Viewer::is_dirty) {
-                glyph(IconName::Pencil, 3.0, Role::Muted);
+                glyph(phosphor::PENCIL_SIMPLE, 3.0, Role::Muted);
             }
             match &excerpts.source {
                 Source::Search { .. } => {
@@ -606,10 +606,13 @@ fn header(
                     }
                     Tally::new(file.tally.0, file.tally.1).size(11).build();
                     if matches!(excerpts.source, Source::Revision { turn: Some(_), .. }) {
-                        Button::icon(IconName::Undo, FocusId(EXCERPT_UNDO_BASE + position as u64))
-                            .size(Size::Sm)
-                            .tooltip("Take what this turn changed back out of this file")
-                            .build();
+                        Button::icon(
+                            phosphor::ARROW_COUNTER_CLOCKWISE,
+                            FocusId(EXCERPT_UNDO_BASE + position as u64),
+                        )
+                        .size(Size::Sm)
+                        .tooltip("Take what this turn changed back out of this file")
+                        .build();
                     }
                 }
             }
@@ -630,7 +633,7 @@ fn mark_tone(mark: &str) -> Role {
 #[track_caller]
 pub(crate) fn restore_button() {
     Button::new("Restore this version", EXCERPTS_RESTORE)
-        .with_icon(IconName::History)
+        .with_icon(phosphor::CLOCK_COUNTER_CLOCKWISE)
         .size(Size::Sm)
         .build();
 }

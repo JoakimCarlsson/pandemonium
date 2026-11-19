@@ -2,6 +2,7 @@
 
 use crate::theme;
 use crate::theme::sp;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use std::collections::{HashMap, HashSet};
@@ -14,7 +15,6 @@ use crate::change_list::mark_color;
 use crate::events::Interactive;
 use crate::file_icon::{file_icon, folder_icon};
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::icons::icon as icon_of;
 use crate::size::Size;
 use crate::state::{TREE_BASE, WorkspaceState};
@@ -210,8 +210,8 @@ fn entry_row(
         )
         .build_with(|| {
             match fold {
-                Some(true) => icon_of(IconName::ChevronDown, 3.5, Role::Muted),
-                Some(false) => icon_of(IconName::ChevronRight, 3.5, Role::Muted),
+                Some(true) => icon_of(phosphor::CARET_DOWN, 3.5, Role::Muted),
+                Some(false) => icon_of(phosphor::CARET_RIGHT, 3.5, Role::Muted),
                 None => rustle::spacer(Modifier::new().size(theme::sp(3.5), theme::sp(3.5))),
             }
             icon();
@@ -266,7 +266,7 @@ pub fn drag_ghost(state: &WorkspaceState) {
         Alignment::Center,
         || {
             if count != 1 {
-                icon_of(IconName::Copy, 4.0, Role::Muted);
+                icon_of(phosphor::COPY, 4.0, Role::Muted);
             } else if first.folder {
                 folder_icon(false, 4.0);
             } else {

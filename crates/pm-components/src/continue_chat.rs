@@ -5,12 +5,12 @@
 use crate::events::reduce;
 use crate::theme;
 use rustle::Modifier;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::Button;
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::parts::line;
 use crate::popover::{Popover, anchored, heading};
 use crate::sample::{Message, Session, Status};
@@ -309,7 +309,7 @@ pub(crate) fn chip(state: &WorkspaceState, chat: &Session) {
             Button::new(label, CONTINUE)
                 .variant(crate::button::Variant::Ghost)
                 .size(Size::Xs)
-                .with_icon(IconName::GitFork)
+                .with_icon(phosphor::GIT_FORK)
                 .selected(open)
                 .disabled(!state.can_continue(chat))
                 .build();

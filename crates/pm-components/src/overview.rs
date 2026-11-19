@@ -3,13 +3,13 @@
 use crate::events::reduce;
 use crate::theme;
 use crate::theme::sp;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use crate::events::Interactive;
 use crate::extensions::group_of_fixed_rows as group;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::parts::{clipped, glyph, line, spacer};
 use crate::sample::{Session, Status};
 use crate::sidebar::status_icon;
@@ -116,7 +116,7 @@ fn heading(state: &WorkspaceState, project: usize) {
             }
             spacer();
             Button::new("New session", FocusId(NEW_IN_BASE + project as u64))
-                .with_icon(IconName::Plus)
+                .with_icon(phosphor::PLUS)
                 .size(Size::Sm)
                 .build();
         },
@@ -247,7 +247,7 @@ fn repository(state: &WorkspaceState) {
     if home.branch.is_empty() {
         group("Repository", || {
             card_row(Modifier::new(), || {
-                glyph(IconName::Folder, 4.0, Role::Muted);
+                glyph(phosphor::FOLDER, 4.0, Role::Muted);
                 line(
                     if home.unknown {
                         "Reading the folder…"
@@ -275,7 +275,7 @@ fn repository(state: &WorkspaceState) {
     };
     group("Repository", || {
         card_row(Modifier::new(), || {
-            glyph(IconName::GitFork, 4.0, Role::Muted);
+            glyph(phosphor::GIT_FORK, 4.0, Role::Muted);
             rustle::basic_text(
                 Modifier::new().weight(1.0),
                 &home.branch,
@@ -287,7 +287,7 @@ fn repository(state: &WorkspaceState) {
             line(standing, 13, 1.4, Role::Muted);
         });
         card_row(Modifier::new(), || {
-            glyph(IconName::GitCompare, 4.0, Role::Muted);
+            glyph(phosphor::GIT_DIFF, 4.0, Role::Muted);
             match home.changes.len() {
                 0 => clipped("No uncommitted changes", 13, Role::Muted),
                 count => {
@@ -319,7 +319,7 @@ fn commits(state: &WorkspaceState) {
     group("Recent commits", || {
         for commit in state.git.history.iter().take(COMMITS_SHOWN) {
             card_row(Modifier::new(), || {
-                glyph(IconName::GitCommit, 4.0, Role::Subtle);
+                glyph(phosphor::GIT_COMMIT, 4.0, Role::Subtle);
                 rustle::basic_text(
                     Modifier::new(),
                     commit.id.chars().take(SHORT_ID).collect::<String>(),

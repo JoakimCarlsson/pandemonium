@@ -1,12 +1,12 @@
 //! The plan an agent proposes before it starts: the panel that reads it and the band above the prompt that answers it.
 
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::theme;
 use crate::theme::sp;
 use crate::theme::{Radius, Role};
 use pm_harness::{Permission, Verdict};
 use rustle::Modifier;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
 use crate::button::Variant;
@@ -60,7 +60,7 @@ pub fn panel(state: &WorkspaceState, source: &str, width: f32) {
                 || {
                     line("Plan", 13, 1.4, Role::Muted);
                     spacer();
-                    Button::icon(IconName::Close, CLOSE_PLAN).build();
+                    Button::icon(phosphor::X, CLOSE_PLAN).build();
                 },
             );
             column_arranged(

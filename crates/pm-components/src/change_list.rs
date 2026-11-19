@@ -2,6 +2,7 @@
 
 use crate::theme;
 use rustle::Modifier;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, row_arranged};
 
 use std::collections::HashSet;
@@ -9,7 +10,6 @@ use std::collections::HashSet;
 use crate::file_icon::file_icon;
 use crate::focus::FocusId;
 use crate::git_controls::{GROUP_TRACKED, GROUP_UNTRACKED, OPEN_ARROW_BASE};
-use crate::icons::IconName;
 use crate::parts::glyph;
 use crate::sample::{Change, Session};
 use crate::size::Size;
@@ -306,7 +306,7 @@ fn file_row(state: &WorkspaceState, change: &Change, index: usize, name: &str, d
         )
         .build_with(|| {
             match &change.moved {
-                Some(_) => glyph(IconName::Git, 3.5, Role::Muted),
+                Some(_) => glyph(phosphor::GIT_BRANCH, 3.5, Role::Muted),
                 None => file_icon(name, 3.5),
             }
             rustle::basic_text(
@@ -335,7 +335,7 @@ fn file_row(state: &WorkspaceState, change: &Change, index: usize, name: &str, d
             );
             if change.moved.is_none() {
                 Button::icon(
-                    IconName::ArrowRight,
+                    phosphor::ARROW_RIGHT,
                     FocusId(OPEN_ARROW_BASE + index as u64),
                 )
                 .size(Size::Sm)
@@ -397,9 +397,9 @@ fn folder_row(
         .build_with(|| {
             glyph(
                 if open {
-                    IconName::ChevronDown
+                    phosphor::CARET_DOWN
                 } else {
-                    IconName::ChevronRight
+                    phosphor::CARET_RIGHT
                 },
                 3.5,
                 Role::Muted,
@@ -411,7 +411,7 @@ fn folder_row(
             .mixed(partly && staged < inside.len())
             .build();
             if stops(changes, None).contains(&folder.path.as_str()) {
-                glyph(IconName::Git, 3.5, Role::Muted);
+                glyph(phosphor::GIT_BRANCH, 3.5, Role::Muted);
             }
             rustle::basic_text(
                 Modifier::new().weight(1.0),

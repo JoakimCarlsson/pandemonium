@@ -1,13 +1,13 @@
 //! The bar under a session's header that tells how the pull request of its branch stands, with its checks and review, and offers what can be done next: push, open, update, mark ready, merge, reopen, and delete the branch from its remote. It names the review as the code host its repository is on does, and offers only pushing when that host is not supported.
 
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::theme;
 use crate::theme::Role;
 use crate::theme::sp;
 use pm_git::{CheckState, CodeHost, PullRequestStatus, ReviewDecision};
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, row_arranged};
+use rustle::{Icon, phosphor};
 
 use crate::Button;
 use crate::badge::{Badge, Variant as BadgeVariant};
@@ -107,7 +107,7 @@ fn standing(request: &PullRequestStatus) -> (&'static str, Role) {
 
 /// Emits a glyph in `tone` followed by `count`; emits nothing when the count is nothing.
 #[track_caller]
-fn tally(icon: IconName, tone: Role, count: usize) {
+fn tally(icon: Icon, tone: Role, count: usize) {
     if count == 0 {
         return;
     }
@@ -159,9 +159,9 @@ fn checks(request: &PullRequestStatus) {
             Arrangement::SpacedBy(sp(2)),
             Alignment::Center,
             || {
-                tally(IconName::CheckCircle, Role::Success, counts.0);
-                tally(IconName::Close, Role::Danger, counts.1);
-                tally(IconName::Progress, Role::Warning, counts.2);
+                tally(phosphor::CHECK_CIRCLE, Role::Success, counts.0);
+                tally(phosphor::X, Role::Danger, counts.1);
+                tally(phosphor::TIMER, Role::Warning, counts.2);
             },
         );
     })
@@ -283,7 +283,7 @@ pub fn bar(session: &Session) {
                     } else {
                         format!("{} is not supported yet", host.name)
                     };
-                    glyph(IconName::GitCompare, 3.5, Role::Muted);
+                    glyph(phosphor::GIT_DIFF, 3.5, Role::Muted);
                     line(said, 12, 1.4, Role::Muted);
                     spacer();
                 }
@@ -304,14 +304,14 @@ pub fn bar(session: &Session) {
                     spacer();
                 }
                 (None, None) => {
-                    glyph(IconName::GitCompare, 3.5, Role::Muted);
+                    glyph(phosphor::GIT_DIFF, 3.5, Role::Muted);
                     line(format!("No {}", noun(session)), 12, 1.4, Role::Muted);
                     spacer();
                 }
             }
             match session.pull_busy {
                 Some(doing) => {
-                    glyph(IconName::Loading, 3.5, Role::Muted);
+                    glyph(phosphor::CIRCLE_DASHED, 3.5, Role::Muted);
                     line(doing, 12, 1.4, Role::Muted);
                 }
                 None => actions(session),

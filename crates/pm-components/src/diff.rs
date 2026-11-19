@@ -3,12 +3,12 @@
 use crate::events::reduce;
 use crate::theme;
 use crate::theme::sp;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::icons::icon;
 use crate::marked::{CaretLook, Mark, marked_line};
 use crate::theme::{Radius, Role, Tone};
@@ -592,8 +592,7 @@ fn comment_card(index: usize, comment: &Comment, width: f32) {
                         || line("Not sent", 11, 1.4, Role::Muted),
                     );
                     spacer();
-                    Button::icon(IconName::Close, FocusId(COMMENT_REMOVE_BASE + index as u64))
-                        .build();
+                    Button::icon(phosphor::X, FocusId(COMMENT_REMOVE_BASE + index as u64)).build();
                 },
             );
             column_arranged(
@@ -656,7 +655,7 @@ fn comment_box(state: &WorkspaceState, target: CommentTarget) {
 /// Emits the button that marks a file as read, or takes the mark off.
 #[track_caller]
 fn viewed_button(viewed: bool, id: FocusId) {
-    Button::icon(IconName::Check, id)
+    Button::icon(phosphor::CHECK, id)
         .size(Size::Xs)
         .round()
         .tone(if viewed { Role::Success } else { Role::Subtle })
@@ -701,9 +700,9 @@ fn heading_parts(name: &str, directory: &str, open: bool, room: f32) {
                 || {
                     icon(
                         if open {
-                            IconName::ChevronDown
+                            phosphor::CARET_DOWN
                         } else {
-                            IconName::ChevronRight
+                            phosphor::CARET_RIGHT
                         },
                         HEADER_MARKS[0],
                         Role::Muted,
@@ -785,7 +784,7 @@ fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
                     Arrangement::SpacedBy(sp(1)),
                     Alignment::Center,
                     || {
-                        icon(IconName::Message, 3.5, Role::Muted);
+                        icon(phosphor::CHAT_CIRCLE, 3.5, Role::Muted);
                         line(notes.to_string(), 11, 1.4, Role::Muted);
                     },
                 );
@@ -794,7 +793,11 @@ fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
                 .size(11)
                 .build();
             viewed_button(change.viewed, FocusId(VIEWED_BASE + index as u64));
-            Button::icon(IconName::Message, FocusId(COMMENT_FILE_BASE + index as u64)).build();
+            Button::icon(
+                phosphor::CHAT_CIRCLE,
+                FocusId(COMMENT_FILE_BASE + index as u64),
+            )
+            .build();
         },
     );
 }

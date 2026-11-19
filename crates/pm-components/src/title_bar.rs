@@ -3,12 +3,13 @@
 use crate::events::Interactive;
 use crate::events::reduce;
 use crate::focus::FocusId;
-use crate::icons::IconName;
+use crate::icons::{panel_bottom, panel_right, panel_right_filled};
 use crate::theme;
 use crate::theme::Role;
 use crate::theme::sp;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, row_arranged};
+use rustle::{Icon, phosphor};
 use std::rc::Rc;
 
 use crate::Button;
@@ -135,12 +136,12 @@ impl TitleBar {
                     rustle::spacer(Modifier::new().width(DESKTOP_CONTROLS));
                     if navigation {
                         let back = crate::events::operations();
-                        Button::icon(IconName::ArrowLeft, GO_BACK)
+                        Button::icon(phosphor::ARROW_LEFT, GO_BACK)
                             .on_click(move || back.navigate(-1))
                             .tooltip("Go Back")
                             .build();
                         let forward = crate::events::operations();
-                        Button::icon(IconName::ArrowRight, GO_FORWARD)
+                        Button::icon(phosphor::ARROW_RIGHT, GO_FORWARD)
                             .on_click(move || forward.navigate(1))
                             .tooltip("Go Forward")
                             .build();
@@ -175,24 +176,27 @@ impl TitleBar {
                     }
                     if navigation {
                         layout_toggle(
-                            IconName::PanelLeft,
+                            phosphor::SIDEBAR_SIMPLE,
+                            phosphor::fill::SIDEBAR_SIMPLE,
                             SIDEBAR_TOGGLE,
                             "Toggle Primary Side Bar",
                             self.sidebar_open,
                         );
                         layout_toggle(
-                            IconName::PanelBottom,
+                            panel_bottom(),
+                            phosphor::fill::SQUARE_HALF_BOTTOM,
                             TERMINAL,
                             "Toggle Panel",
                             self.panel_open,
                         );
                         layout_toggle(
-                            IconName::PanelRight,
+                            panel_right(),
+                            panel_right_filled(),
                             REVIEW,
                             "Toggle Review Panel",
                             self.review_open,
                         );
-                        Button::icon(IconName::Settings, SETTINGS)
+                        Button::icon(phosphor::GEAR, SETTINGS)
                             .tooltip("Open Settings")
                             .build();
                     }
@@ -277,17 +281,13 @@ impl rustle::Layout for BarLayout {
     }
 }
 
-/// Emits the button that shows or hides a panel, filling its part of the icon while open.
+/// Emits the button that shows or hides a panel, drawn with `icon`, or with
+/// `filled`, the same window with its panel filled, while `open`.
 #[track_caller]
-fn layout_toggle(icon: IconName, id: FocusId, words: &str, open: bool) {
-    let mark = match (icon, open) {
-        (IconName::PanelLeft, true) => IconName::PanelLeftFilled,
-        (IconName::PanelRight, true) => IconName::PanelRightFilled,
-        (IconName::PanelBottom, true) => IconName::PanelBottomFilled,
-        _ => icon,
-    };
+fn layout_toggle(icon: Icon, filled: Icon, id: FocusId, words: &str, open: bool) {
+    let mark = if open { filled } else { icon.clone() };
     Button::icon(icon, id)
-        .mark(move || crate::parts::glyph(mark, 5.0, Role::Muted))
+        .mark(move || crate::parts::glyph(mark.clone(), 5.0, Role::Muted))
         .tooltip(words)
         .build();
 }
@@ -299,7 +299,7 @@ fn command_center(place: String) {
     Button::new(place, COMMAND_CENTER)
         .on_click(move || operations.open_command_palette())
         .variant(Variant::Field)
-        .with_icon(IconName::Search)
+        .with_icon(phosphor::MAGNIFYING_GLASS)
         .tone(Role::Subtle)
         .width(COMMAND_CENTER_WIDTH)
         .resting(Role::Background)
@@ -330,15 +330,18 @@ fn window_controls(close_only: bool) {
             let operations = crate::events::operations();
             if !close_only {
                 let minimize = Rc::clone(&operations);
-                control(IconName::Minus, WINDOW_MINIMIZE, "Minimize", move || {
+                control(phosphor::MINUS, WINDOW_MINIMIZE, "Minimize", move || {
                     minimize.minimize_window()
                 });
                 let maximize = Rc::clone(&operations);
-                control(IconName::Maximize, WINDOW_MAXIMIZE, "Maximize", move || {
-                    maximize.toggle_maximized()
-                });
+                control(
+                    phosphor::ARROWS_OUT_SIMPLE,
+                    WINDOW_MAXIMIZE,
+                    "Maximize",
+                    move || maximize.toggle_maximized(),
+                );
             }
-            control(IconName::Close, WINDOW_CLOSE, "Close", move || {
+            control(phosphor::X, WINDOW_CLOSE, "Close", move || {
                 operations.close_window()
             });
         },
@@ -348,7 +351,7 @@ fn window_controls(close_only: bool) {
 /// Emits one control of the window, showing `icon`, answering to `id`, named `words` and
 /// running `on_click` when clicked.
 #[track_caller]
-fn control(icon: IconName, id: FocusId, words: &str, on_click: impl Fn() + 'static) {
+fn control(icon: Icon, id: FocusId, words: &str, on_click: impl Fn() + 'static) {
     Button::icon(icon, id)
         .on_click(on_click)
         .modifier(Modifier::new().width(32.0))

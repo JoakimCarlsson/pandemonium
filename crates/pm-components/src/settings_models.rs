@@ -5,10 +5,10 @@ use crate::theme::sp;
 use pm_harness::{ModelServer, ServerWire};
 use rustle::Modifier;
 use rustle::TextFieldState;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::theme::{Radius, Role};
 
 use crate::agent_list::AgentEntry;
@@ -582,7 +582,7 @@ fn form_node(form: &ModelServerForm, room: f32) {
                     Button::new("Find models", MODEL_FIND)
                         .variant(Variant::Outline)
                         .size(Size::Sm)
-                        .with_icon(IconName::Search)
+                        .with_icon(phosphor::MAGNIFYING_GLASS)
                         .disabled(
                             form.base_url.text().trim().is_empty() || form.found.asking.is_some(),
                         )

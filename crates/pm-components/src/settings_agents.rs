@@ -6,9 +6,9 @@ use pm_harness::SignIn;
 use rustle::Modifier;
 use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Icon, phosphor};
 
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::theme::{Radius, Role};
 
 use crate::button::Variant;
@@ -328,7 +328,7 @@ fn how_it_signs_in(sign_in: Option<SignIn>, keyed: bool, credentials: Option<&st
 }
 
 /// Emits the square an agent's glyph sits in at the start of its card, the glyph quieter when `dim`.
-fn emblem(icon: IconName, dim: bool) {
+fn emblem(icon: Icon, dim: bool) {
     row_arranged(
         Modifier::new()
             .size(theme::sp(8), theme::sp(8))
@@ -393,7 +393,7 @@ fn small(label: &str, id: FocusId, variant: Variant) {
 
 /// Emits a small button showing only `icon`, saying what it does with `tooltip`, answering to `id`.
 #[track_caller]
-fn icon_button(icon: IconName, tooltip: &str, id: FocusId) {
+fn icon_button(icon: Icon, tooltip: &str, id: FocusId) {
     Button::icon(icon, id)
         .variant(Variant::Ghost)
         .size(Size::Sm)
@@ -534,7 +534,7 @@ fn form_row(
         .placeholder(placeholder)
         .modifier(Modifier::new().weight(1.0));
     if id == KEY_FIELD {
-        input = input.leading_icon(IconName::Lock).secure(true);
+        input = input.leading_icon(phosphor::LOCK_SIMPLE).secure(true);
     }
     rustle::key(id.0, || {
         inner_row(|| {
@@ -669,10 +669,10 @@ fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing
                         ],
                     );
                     if let Some(rename) = AccountControl::Rename.id(position) {
-                        icon_button(IconName::Pencil, "Rename", rename);
+                        icon_button(phosphor::PENCIL_SIMPLE, "Rename", rename);
                     }
                     if let Some(remove) = ACCOUNT_REMOVES.id(position) {
-                        icon_button(IconName::Trash, "Remove account", remove);
+                        icon_button(phosphor::TRASH, "Remove account", remove);
                     }
                 });
             });
@@ -683,7 +683,7 @@ fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing
             Button::new("Add account", add)
                 .variant(Variant::Ghost)
                 .size(Size::Sm)
-                .with_icon(IconName::Plus)
+                .with_icon(phosphor::PLUS)
                 .build();
         }
     });

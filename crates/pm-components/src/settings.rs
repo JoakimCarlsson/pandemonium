@@ -5,10 +5,10 @@ use crate::theme;
 use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
+use rustle::{Icon, phosphor};
 
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::theme::{Radius, Role};
 
 use crate::input::Input;
@@ -237,36 +237,36 @@ impl Section {
     }
 
     /// The glyph before its name in the list.
-    fn icon(self) -> IconName {
+    fn icon(self) -> Icon {
         match self {
-            Self::General | Self::Results => IconName::Settings,
-            Self::Appearance => IconName::Pencil,
-            Self::Languages => IconName::File,
-            Self::Terminal => IconName::Terminal,
-            Self::Browser => IconName::Globe,
-            Self::Git | Self::Worktrees => IconName::Git,
-            Self::Servers => IconName::Plug,
+            Self::General | Self::Results => phosphor::GEAR,
+            Self::Appearance => phosphor::PENCIL_SIMPLE,
+            Self::Languages => phosphor::FILE,
+            Self::Terminal => phosphor::TERMINAL,
+            Self::Browser => phosphor::GLOBE,
+            Self::Git | Self::Worktrees => phosphor::GIT_BRANCH,
+            Self::Servers => phosphor::PLUG,
             Self::Editor
             | Self::EditorAppearance
             | Self::EditorEditing
             | Self::EditorSaving
             | Self::EditorIntelligence
             | Self::EditorSearch
-            | Self::EditorVim => IconName::FileCode,
-            Self::Keymap => IconName::SquareSlash,
-            Self::Agents => IconName::Sparkles,
-            Self::AgentServers => IconName::Folder,
-            Self::McpServers => IconName::Plug,
-            Self::ModelServers => IconName::Zap,
-            Self::ModelSlots => IconName::Sparkles,
-            Self::Orchestration => IconName::Split,
-            Self::Usage => IconName::Progress,
+            | Self::EditorVim => phosphor::CODE,
+            Self::Keymap => phosphor::COMMAND,
+            Self::Agents => phosphor::SPARKLE,
+            Self::AgentServers => phosphor::FOLDER,
+            Self::McpServers => phosphor::PLUG,
+            Self::ModelServers => phosphor::LIGHTNING,
+            Self::ModelSlots => phosphor::SPARKLE,
+            Self::Orchestration => phosphor::SLIDERS_HORIZONTAL,
+            Self::Usage => phosphor::TIMER,
             Self::Customizations
             | Self::Skills
             | Self::Instructions
             | Self::AgentDefinitions
             | Self::Hooks
-            | Self::Tools => IconName::Sparkles,
+            | Self::Tools => phosphor::SPARKLE,
         }
     }
 
@@ -604,7 +604,7 @@ fn find(state: &WorkspaceState, searching: bool) {
                         .control(SETTINGS_FIND_CLEAR, reduce(SETTINGS_FIND_CLEAR)),
                     Arrangement::Center,
                     Alignment::Center,
-                    || glyph(IconName::Close, 3.5, Role::Muted),
+                    || glyph(phosphor::X, 3.5, Role::Muted),
                 );
             }
         },
@@ -629,9 +629,9 @@ fn entry(section: Section, showing: bool, folded: bool, count: Option<usize>) {
             match section {
                 Section::Agents => glyph(
                     if folded {
-                        IconName::ChevronRight
+                        phosphor::CARET_RIGHT
                     } else {
-                        IconName::ChevronDown
+                        phosphor::CARET_DOWN
                     },
                     4.0,
                     tone,

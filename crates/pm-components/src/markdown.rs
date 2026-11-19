@@ -3,6 +3,7 @@
 use crate::events::reduce;
 use crate::theme;
 use crate::theme::sp;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
@@ -16,7 +17,6 @@ use crate::figures::{
     is_diagram,
 };
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::parts::{glyph, line};
 use crate::theme::{Radius, Role};
 
@@ -353,9 +353,9 @@ impl Layout<'_> {
                             || {
                                 glyph(
                                     if open {
-                                        IconName::ChevronDown
+                                        phosphor::CARET_DOWN
                                     } else {
-                                        IconName::ChevronRight
+                                        phosphor::CARET_RIGHT
                                     },
                                     3.5,
                                     Role::Subtle,

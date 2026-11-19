@@ -1,5 +1,6 @@
 //! File and folder icons, and which installed language a file is written in: a file is shown with the icon of that language, and as a plain file otherwise; nothing language-specific ships with the app.
 
+use rustle::phosphor;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
@@ -7,7 +8,7 @@ use pm_protocol::{ExtensionIconTheme, ExtensionInfo};
 use rustle::Modifier;
 
 use crate::icons::icon;
-use crate::icons::{Artwork, IconName, artwork_with, icon_with};
+use crate::icons::{Artwork, artwork_with, icon_with};
 use crate::theme::{Role, Tone, sp};
 
 /// What an installed language says of the files whose names end as it reads.
@@ -162,7 +163,7 @@ pub fn file_kind(path: &str) -> (Option<Artwork>, Tone) {
 pub fn file_icon(path: &str, steps: f32) {
     match file_kind(path) {
         (Some(art), tone) => artwork_with(Modifier::new(), art, sp(steps), tone),
-        (None, tone) => icon_with(Modifier::new(), IconName::File, sp(steps), tone),
+        (None, tone) => icon_with(Modifier::new(), phosphor::FILE, sp(steps), tone),
     }
 }
 
@@ -170,9 +171,9 @@ pub fn file_icon(path: &str, steps: f32) {
 #[track_caller]
 pub fn folder_icon(open: bool, steps: f32) {
     let name = if open {
-        IconName::FolderOpen
+        phosphor::FOLDER_OPEN
     } else {
-        IconName::Folder
+        phosphor::FOLDER
     };
     icon(name, steps, Tone::rgb(0xd9, 0xa9, 0x5b));
 }

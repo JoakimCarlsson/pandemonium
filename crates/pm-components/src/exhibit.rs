@@ -1,12 +1,13 @@
 //! What an agent puts in front of the reader to look at: the card of a diagram or a prototype it showed in the conversation, and the picture of a document it wrote, a prototype or the mockup of an answer, which the window has rendered sealed from the network.
 
 use crate::focus::FocusId;
-use crate::icons::{IconName, icon_with};
+use crate::icons::icon_with;
 use crate::theme;
 use crate::theme::{Radius, Role, sp};
 use pm_harness::{Exhibit, ExhibitKind};
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Icon, phosphor};
 
 use crate::button::Variant;
 use crate::figures::{Drawing, Figures, Wanted, diagram_key, diagram_node, prototype_key};
@@ -142,13 +143,13 @@ pub fn offer(enabled: bool, helper: &Helper) -> Offer {
 
 impl Offer {
     /// The label and the icon of the button offered, when one is.
-    pub fn button(&self) -> Option<(&'static str, IconName)> {
+    pub fn button(&self) -> Option<(&'static str, Icon)> {
         match self {
             Self::Nothing | Self::Downloading(_) => None,
-            Self::Install => Some((INSTALL_LABEL, IconName::Globe)),
-            Self::TurnOn => Some((TURN_ON_LABEL, IconName::Globe)),
-            Self::Failed(_) => Some((INSTALL_LABEL, IconName::Refresh)),
-            Self::Update(_) => Some((UPDATE_LABEL, IconName::Refresh)),
+            Self::Install => Some((INSTALL_LABEL, phosphor::GLOBE)),
+            Self::TurnOn => Some((TURN_ON_LABEL, phosphor::GLOBE)),
+            Self::Failed(_) => Some((INSTALL_LABEL, phosphor::ARROWS_CLOCKWISE)),
+            Self::Update(_) => Some((UPDATE_LABEL, phosphor::ARROWS_CLOCKWISE)),
         }
     }
 
@@ -220,7 +221,7 @@ impl Offer {
                 }
                 if lone {
                     crate::tooltip::with_tooltip(hint.clone(), || {
-                        icon_with(Modifier::new(), IconName::Globe, sp(3.5), tone);
+                        icon_with(Modifier::new(), phosphor::GLOBE, sp(3.5), tone);
                     });
                 }
             },
@@ -232,11 +233,11 @@ impl Offer {
 #[track_caller]
 fn failure(reason: &str, id: FocusId, form: Marks) {
     let button = match form {
-        Marks::Hidden => Button::icon(IconName::Refresh, id),
+        Marks::Hidden => Button::icon(phosphor::ARROWS_CLOCKWISE, id),
         _ => Button::new(RETRY_LABEL, id)
             .variant(Variant::Outline)
             .size(Size::Sm)
-            .with_icon(IconName::Refresh),
+            .with_icon(phosphor::ARROWS_CLOCKWISE),
     };
     let hint = format!("{reason} · press to render it again");
     column_arranged(
@@ -264,7 +265,7 @@ fn caption(words: &str, tone: Role, modifier: Modifier) {
         Arrangement::SpacedByAligned(sp(1.5), Alignment::Center),
         Alignment::Center,
         || {
-            glyph(IconName::Globe, 3.5, tone);
+            glyph(phosphor::GLOBE, 3.5, tone);
             rustle::basic_text(
                 Modifier::new(),
                 words,
@@ -427,7 +428,7 @@ impl<'a> Preview<'a> {
                                 Arrangement::SpacedBy(sp(1.5)),
                                 Alignment::Center,
                                 || {
-                                    glyph(IconName::Globe, 3.5, Role::Subtle);
+                                    glyph(phosphor::GLOBE, 3.5, Role::Subtle);
                                     line(words, 12, 1.4, Role::Subtle);
                                 },
                             );
@@ -517,8 +518,8 @@ impl<'a> ExhibitCard<'a> {
     #[track_caller]
     fn heading(&self) {
         let (icon, kind) = match self.exhibit.kind {
-            ExhibitKind::Diagram => (IconName::Sparkles, "Diagram"),
-            ExhibitKind::Prototype => (IconName::Globe, "Prototype"),
+            ExhibitKind::Diagram => (phosphor::SPARKLE, "Diagram"),
+            ExhibitKind::Prototype => (phosphor::GLOBE, "Prototype"),
         };
         let title = match self.exhibit.title.trim() {
             "" => kind,
@@ -546,7 +547,7 @@ impl<'a> ExhibitCard<'a> {
                     rustle::TextOverflow::Ellipsis,
                 );
                 if let Some(id) = self.copy {
-                    Button::icon(IconName::Copy, id)
+                    Button::icon(phosphor::COPY, id)
                         .tooltip("Copy source")
                         .build();
                 }
@@ -554,7 +555,7 @@ impl<'a> ExhibitCard<'a> {
                     Button::new("Open", id)
                         .variant(Variant::Outline)
                         .size(Size::Sm)
-                        .with_icon(IconName::Maximize)
+                        .with_icon(phosphor::ARROWS_OUT_SIMPLE)
                         .disabled(outdated)
                         .tooltip(if outdated {
                             OPEN_NEEDS_UPDATE

@@ -5,13 +5,14 @@
 use crate::theme;
 use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Icon, phosphor};
 use std::fmt;
 use std::rc::Rc;
 
 use crate::events::{Interactive, OnClick};
 use crate::focus::FocusId;
 use crate::icons::icon;
-use crate::icons::{IconName, spinner, spinning_icon};
+use crate::icons::{spinner, spinning_icon};
 use crate::theme::{Radius, Role, Tone};
 use rustle::{BorderStroke, Color, CursorIcon, Modifier, Shape};
 
@@ -69,11 +70,11 @@ pub struct Button {
     /// The words on the button, if any.
     label: Option<String>,
     /// The icon before the words, or alone.
-    icon: Option<IconName>,
+    icon: Option<Icon>,
     /// What is drawn before the words in place of an icon, if anything.
     mark: Option<Mark>,
     /// The icon after the words, if any.
-    trailing: Option<IconName>,
+    trailing: Option<Icon>,
     /// How it looks.
     variant: Variant,
     /// How big it is.
@@ -147,7 +148,7 @@ impl Button {
     }
 
     /// A button showing only `icon`, answering to `id`.
-    pub fn icon(icon: IconName, id: FocusId) -> Self {
+    pub fn icon(icon: Icon, id: FocusId) -> Self {
         Self {
             label: None,
             icon: Some(icon),
@@ -204,7 +205,7 @@ impl Button {
     }
 
     /// The button with `icon` before its words.
-    pub fn with_icon(mut self, icon: IconName) -> Self {
+    pub fn with_icon(mut self, icon: Icon) -> Self {
         self.icon = Some(icon);
         self
     }
@@ -216,7 +217,7 @@ impl Button {
     }
 
     /// The button with `icon` after its words.
-    pub fn trailing_icon(mut self, icon: IconName) -> Self {
+    pub fn trailing_icon(mut self, icon: Icon) -> Self {
         self.trailing = Some(icon);
         self
     }
@@ -466,13 +467,16 @@ impl Button {
         );
     }
 
-    /// Emits `name` four steps across in `ink`, turning while `spinning` is true.
+    /// Emits `name` four steps across in `ink`, turning while `spinning` is
+    /// true: the loading ring as the [`spinner`], any other icon turned whole.
     #[track_caller]
-    fn glyph(name: IconName, ink: Role, spinning: bool) {
-        match (spinning, name) {
-            (true, IconName::Loading) => spinner(4.0, ink),
-            (true, name) => spinning_icon(name, 4.0, ink),
-            (false, name) => icon(name, 4.0, ink),
+    fn glyph(name: Icon, ink: Role, spinning: bool) {
+        if !spinning {
+            icon(name, 4.0, ink);
+        } else if name == phosphor::CIRCLE_DASHED {
+            spinner(4.0, ink);
+        } else {
+            spinning_icon(name, 4.0, ink);
         }
     }
 
@@ -561,7 +565,7 @@ mod tests {
                 rustle::row_with(Modifier::new().width(300.0), || {
                     Button::new("Fill", filling).fill().build();
                 });
-                Button::icon(IconName::Close, square).build();
+                Button::icon(phosphor::X, square).build();
             });
         });
         let size = |id| {

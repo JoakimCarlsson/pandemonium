@@ -3,6 +3,7 @@
 use crate::events::reduce;
 use crate::theme;
 use crate::theme::sp;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use std::hash::{Hash, Hasher};
@@ -15,7 +16,6 @@ use crate::Button;
 use crate::dock::{BottomTab, TerminalTab};
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::parts::{glyph, line, spacer};
 use crate::sample::Session;
 use crate::state::{
@@ -166,18 +166,18 @@ pub fn terminal(state: &WorkspaceState, session: &Session, width: f32, page: f32
                     );
                     spacer();
                     if shown == BottomTab::Terminal {
-                        Button::icon(IconName::Plus, NEW_TERMINAL).build();
+                        Button::icon(phosphor::PLUS, NEW_TERMINAL).build();
                     }
                     Button::icon(
                         if state.terminal_maximized {
-                            IconName::Minimize
+                            phosphor::ARROWS_IN_SIMPLE
                         } else {
-                            IconName::Maximize
+                            phosphor::ARROWS_OUT_SIMPLE
                         },
                         MAXIMIZE_TERMINAL,
                     )
                     .build();
-                    Button::icon(IconName::Close, TERMINAL).build();
+                    Button::icon(phosphor::X, TERMINAL).build();
                 },
             );
             match shown {
@@ -301,11 +301,11 @@ fn shell_row(index: usize, tab: &TerminalTab, shown: bool) {
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Center,
                 || {
-                    glyph(IconName::Terminal, 3.5, tone);
+                    glyph(phosphor::TERMINAL, 3.5, tone);
                     line(tab.name(), 13, 1.4, tone);
                 },
             );
-            Button::icon(IconName::Close, FocusId(TERMINAL_CLOSE_BASE + index as u64)).build();
+            Button::icon(phosphor::X, FocusId(TERMINAL_CLOSE_BASE + index as u64)).build();
         },
     );
 }

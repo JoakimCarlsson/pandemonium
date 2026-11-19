@@ -3,13 +3,13 @@
 use crate::events::reduce;
 use crate::theme;
 use crate::theme::sp;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use std::time::{Duration, Instant};
 
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::theme::{Radius, Role};
 use rustle::Modifier;
 
@@ -328,7 +328,7 @@ fn download_bar(download: &Download) {
     };
     bar(Modifier::new(), || {
         clipped(words, 13, tone);
-        Button::icon(IconName::Close, BROWSER_DISMISS).build();
+        Button::icon(phosphor::X, BROWSER_DISMISS).build();
     });
 }
 

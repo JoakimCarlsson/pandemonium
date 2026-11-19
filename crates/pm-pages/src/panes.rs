@@ -3,12 +3,12 @@
 use pm_components::events::Interactive;
 use pm_components::events::reduce;
 use pm_components::focus::FocusId;
-use pm_components::icons::IconName;
 use pm_components::theme;
 use pm_components::theme::sp;
 use pm_components::theme::{Radius, Role, Side};
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{BoxAlignment, Canvas, CursorIcon, Interaction, Modifier};
+use rustle::{Icon, phosphor};
 use std::rc::Rc;
 
 use pm_components::Menu;
@@ -85,7 +85,7 @@ fn tab_tone(shown: bool) -> Role {
 
 /// Emits one tab of a pane's strip answering to `id`: a glyph and a label, filled while it is the one shown, then `extra`.
 #[track_caller]
-fn tab_with(icon: IconName, label: &str, id: FocusId, shown: bool, extra: impl FnOnce()) {
+fn tab_with(icon: Icon, label: &str, id: FocusId, shown: bool, extra: impl FnOnce()) {
     let tone = tab_tone(shown);
     row_arranged(
         tab_modifier(shown, id, None),
@@ -101,13 +101,13 @@ fn tab_with(icon: IconName, label: &str, id: FocusId, shown: bool, extra: impl F
 
 /// Emits one tab of a pane's strip: a glyph and a label, filled while it is the one shown.
 #[track_caller]
-fn tab(icon: IconName, label: &str, id: FocusId, shown: bool) {
+fn tab(icon: Icon, label: &str, id: FocusId, shown: bool) {
     tab_with(icon, label, id, shown, || {});
 }
 
 /// Emits the small button closing a tab, answering to `id`, showing `icon`.
 #[track_caller]
-fn close_button(icon: IconName, id: FocusId) {
+fn close_button(icon: Icon, id: FocusId) {
     Button::icon(icon, id).size(Size::Sm).build();
 }
 
@@ -149,9 +149,9 @@ fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) {
             }
             close_button(
                 if viewer.pinned {
-                    IconName::Pin
+                    phosphor::PUSH_PIN
                 } else {
-                    IconName::Close
+                    phosphor::X
                 },
                 FocusId(FILE_CLOSE_BASE + index as u64),
             );
@@ -171,7 +171,7 @@ fn excerpts_tab(state: &WorkspaceState, shown: bool) {
         TAB_EXCERPTS,
         shown,
         || {
-            close_button(IconName::Close, EXCERPTS_CLOSE);
+            close_button(phosphor::X, EXCERPTS_CLOSE);
         },
     );
 }
@@ -187,22 +187,22 @@ fn browser_tab(state: &WorkspaceState, shown: bool) {
     } else {
         browser.title.as_str()
     };
-    tab_with(IconName::Globe, title, TAB_BROWSER, shown, || {
-        close_button(IconName::Close, BROWSER_CLOSE);
+    tab_with(phosphor::GLOBE, title, TAB_BROWSER, shown, || {
+        close_button(phosphor::X, BROWSER_CLOSE);
     });
 }
 
 /// Emits the tab of the release notes, filled while `shown`.
 #[track_caller]
 fn update_tab(shown: bool) {
-    tab_with(IconName::ArrowDown, "Update", TAB_UPDATE, shown, || {
-        close_button(IconName::Close, UPDATE_CLOSE);
+    tab_with(phosphor::ARROW_DOWN, "Update", TAB_UPDATE, shown, || {
+        close_button(phosphor::X, UPDATE_CLOSE);
     });
 }
 
 /// Emits a square button in the strip of tabs holding only `icon`, answering to `id`, filled while `on`, saying `hint` when the pointer rests on it and running `on_click` when clicked.
 #[track_caller]
-fn strip_button(icon: IconName, id: FocusId, on: bool, hint: &str, on_click: impl Fn() + 'static) {
+fn strip_button(icon: Icon, id: FocusId, on: bool, hint: &str, on_click: impl Fn() + 'static) {
     let looks = theme::InteractionTones::new()
         .hover(Role::SurfaceHover)
         .radius(Radius::Lg);
@@ -236,7 +236,7 @@ fn strip_buttons(state: &WorkspaceState) {
         Alignment::End,
         || {
             strip_button(
-                IconName::SquareSplit,
+                phosphor::SQUARE_SPLIT_HORIZONTAL,
                 PANE_MENU,
                 state.pane_menu.is_some(),
                 "Split pane",
@@ -261,14 +261,14 @@ pub(crate) fn pane_menu(at: (f32, f32)) {
 }
 
 /// The glyph and label of the tab of the page itself.
-fn page_label(state: &WorkspaceState) -> (IconName, String) {
+fn page_label(state: &WorkspaceState) -> (Icon, String) {
     match (state.page, state.open()) {
         (Page::Session(_), Some(session)) => {
-            (IconName::Sparkles, state.agent_look(session.agent).name)
+            (phosphor::SPARKLE, state.agent_look(session.agent).name)
         }
-        (Page::Project(_), _) => (IconName::Folder, "Overview".to_owned()),
-        (Page::Chat, _) => (IconName::Message, "New Chat".to_owned()),
-        _ => (IconName::Plus, "New Session".to_owned()),
+        (Page::Project(_), _) => (phosphor::FOLDER, "Overview".to_owned()),
+        (Page::Chat, _) => (phosphor::CHAT_CIRCLE, "New Chat".to_owned()),
+        _ => (phosphor::PLUS, "New Session".to_owned()),
     }
 }
 
@@ -303,7 +303,7 @@ fn item_tab(state: &WorkspaceState, item: &Item, shown: bool) {
             let (icon, label) = page_label(state);
             tab(icon, &label, TAB_CHAT, shown);
         }
-        Item::Diff => tab(IconName::GitCompare, "Diff", TAB_DIFF, shown),
+        Item::Diff => tab(phosphor::GIT_DIFF, "Diff", TAB_DIFF, shown),
         Item::Excerpts => excerpts_tab(state, shown),
         Item::Browser => browser_tab(state, shown),
         Item::Update => update_tab(shown),
@@ -397,7 +397,7 @@ fn excerpts_item(state: &WorkspaceState, width: f32) {
 
 /// Emits a secondary button of an empty pane saying `words` beside `icon`, answering to `id`.
 #[track_caller]
-fn put_button(words: &str, icon: IconName, id: FocusId) {
+fn put_button(words: &str, icon: Icon, id: FocusId) {
     Button::new(words, id)
         .with_icon(icon)
         .variant(Variant::Secondary)
@@ -431,10 +431,10 @@ fn empty_pane(state: &WorkspaceState, index: usize) {
                 || {
                     put_button(&label_text, icon, put(0));
                     if changed {
-                        put_button("Diff", IconName::GitCompare, put(1));
+                        put_button("Diff", phosphor::GIT_DIFF, put(1));
                     }
-                    put_button("Browser", IconName::Globe, put(4));
-                    put_button("Open a file", IconName::File, put(2));
+                    put_button("Browser", phosphor::GLOBE, put(4));
+                    put_button("Open a file", phosphor::FILE, put(2));
                     Button::new("Close pane", put(3))
                         .variant(Variant::Ghost)
                         .size(Size::Sm)

@@ -5,11 +5,11 @@
 use crate::events::reduce;
 use crate::theme;
 use rustle::Modifier;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::theme::{Radius, Role, Tone, sp};
 
 use crate::button::Variant;
@@ -526,11 +526,11 @@ pub fn chips(state: &WorkspaceState) {
                                     )
                                     .variant(Variant::Ghost)
                                     .size(Size::Xs)
-                                    .with_icon(IconName::Pick)
+                                    .with_icon(phosphor::SELECTION)
                                     .selected(open)
                                     .build();
                                     Button::icon(
-                                        IconName::Close,
+                                        phosphor::X,
                                         FocusId(ELEMENT_REMOVE_BASE + index as u64),
                                     )
                                     .build();

@@ -1,9 +1,9 @@
 //! Small pieces the screens share: a line of text, a glyph, a check box.
 
-use crate::icons::IconName;
 use crate::icons::icon;
 use crate::theme;
 use crate::theme::Tone;
+use rustle::Icon;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged};
 
@@ -26,7 +26,7 @@ pub fn line(content: impl Into<String>, pixels: u32, ratio: f32, tone: impl Into
 
 /// Emits `name` drawn in `tone` in a square `steps` on a side.
 #[track_caller]
-pub fn glyph(name: IconName, steps: f32, tone: impl Into<Tone>) {
+pub fn glyph(name: Icon, steps: f32, tone: impl Into<Tone>) {
     icon(name, steps, tone);
 }
 

@@ -3,10 +3,11 @@
 use crate::theme;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, BoxAlignment, column_arranged, row_arranged};
+use rustle::{Icon, phosphor};
 use std::rc::Rc;
 
 use crate::focus::FocusId;
-use crate::icons::{IconName, spinner};
+use crate::icons::spinner;
 use crate::theme::{Radius, Role, sp};
 
 use crate::Avatar;
@@ -135,9 +136,9 @@ pub fn status_icon(status: Status) {
                             .background_rounded(theme::color(Role::Accent), Radius::Full.px()),
                     );
                 }
-                Status::Error => glyph(IconName::Close, 3.5, Role::Danger),
-                Status::NeedsInput => glyph(IconName::Message, 3.5, Role::Warning),
-                Status::Unreachable => glyph(IconName::Plug, 3.5, Role::Warning),
+                Status::Error => glyph(phosphor::X, 3.5, Role::Danger),
+                Status::NeedsInput => glyph(phosphor::CHAT_CIRCLE, 3.5, Role::Warning),
+                Status::Unreachable => glyph(phosphor::PLUG, 3.5, Role::Warning),
                 Status::Idle => {
                     rustle::spacer(
                         Modifier::new()
@@ -153,7 +154,7 @@ pub fn status_icon(status: Status) {
 
 /// Emits one of the ways in at the top: a glyph and a label.
 #[track_caller]
-fn entry(icon: IconName, label: &str, id: FocusId, selected: bool) {
+fn entry(icon: Icon, label: &str, id: FocusId, selected: bool) {
     let tone = if selected { Role::Text } else { Role::Muted };
     Tile::new(id)
         .modifier(Modifier::new().fill_max_width())
@@ -232,7 +233,7 @@ fn submodule_row(project: &Project, relative: &str, position: usize, starting: b
                 },
             );
             glyph(
-                IconName::Plus,
+                phosphor::PLUS,
                 3.5,
                 if starting { Role::Text } else { Role::Subtle },
             );
@@ -341,9 +342,12 @@ fn project(state: &WorkspaceState, index: usize) {
             .build_with(|| {
                 Avatar::of(project).build();
                 clipped(&project.name, 14, Role::Text);
-                Button::icon(IconName::More, FocusId(PROJECT_MORE_BASE + index as u64))
-                    .on_click(move || operations.open_project_menu(index))
-                    .build();
+                Button::icon(
+                    phosphor::DOTS_THREE,
+                    FocusId(PROJECT_MORE_BASE + index as u64),
+                )
+                .on_click(move || operations.open_project_menu(index))
+                .build();
             });
         for &(position, session) in members
             .iter()
@@ -358,7 +362,7 @@ fn project(state: &WorkspaceState, index: usize) {
             .selected(starting)
             .inner(Modifier::new().padding_each(theme::sp(3), 0.0, 0.0, 0.0))
             .build_with(|| {
-                glyph(IconName::Plus, 4.0, tone);
+                glyph(phosphor::PLUS, 4.0, tone);
                 line("New session", 14, 1.4, tone);
             });
     });
@@ -422,20 +426,20 @@ pub fn sidebar(state: &WorkspaceState) {
                 Alignment::Start,
                 || {
                     entry(
-                        IconName::Message,
+                        phosphor::CHAT_CIRCLE,
                         "New chat",
                         crate::chats::NEW_CHAT,
                         state.page == Page::Chat,
                     );
-                    entry(IconName::Plus, "New workspace", ADD_PROJECT, false);
+                    entry(phosphor::PLUS, "New workspace", ADD_PROJECT, false);
                     entry(
-                        IconName::History,
+                        phosphor::CLOCK_COUNTER_CLOCKWISE,
                         "History",
                         HISTORY,
                         state.page == Page::History,
                     );
                     entry(
-                        IconName::FileCode,
+                        phosphor::CODE,
                         "Extensions",
                         crate::extensions::EXTENSIONS,
                         state.page == Page::Extensions,

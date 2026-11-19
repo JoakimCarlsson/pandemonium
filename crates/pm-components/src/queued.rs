@@ -7,9 +7,9 @@ use crate::theme::sp;
 use rustle::Modifier;
 use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Icon, phosphor};
 
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::theme::{Radius, Role, Tone};
 
 use crate::Button;
@@ -222,7 +222,7 @@ fn body(content: &str, tone: Role, width: f32) {
 
 /// Emits a button showing only `icon`, saying what it does with `tooltip`, answering to `id`.
 #[track_caller]
-fn icon_button(icon: IconName, tooltip: &str, id: FocusId) {
+fn icon_button(icon: Icon, tooltip: &str, id: FocusId) {
     Button::icon(icon, id)
         .variant(Variant::Ghost)
         .size(Size::Sm)
@@ -250,7 +250,7 @@ fn frame(content: impl FnOnce()) {
 
 /// Emits `name` in `tone`, lowered by a step to sit on the first line of a row's text.
 #[track_caller]
-fn leading_glyph(name: IconName, tone: Role) {
+fn leading_glyph(name: Icon, tone: Role) {
     row_arranged(
         Modifier::new().padding_each(0.0, theme::sp(1), 0.0, 0.0),
         Arrangement::Start,
@@ -269,7 +269,7 @@ fn waiting(index: usize, queued: &Queued, width: f32) {
     };
     let room = (width - CHROME - BESIDE_TEXT - counted).max(120.0);
     frame(|| {
-        leading_glyph(IconName::Progress, Role::Muted);
+        leading_glyph(phosphor::TIMER, Role::Muted);
         body(&queued.text, Role::Text, room);
         if !queued.files.is_empty() {
             let count = queued.files.len();
@@ -287,19 +287,19 @@ fn waiting(index: usize, queued: &Queued, width: f32) {
             Alignment::Center,
             || {
                 icon_button(
-                    IconName::Pencil,
+                    phosphor::PENCIL_SIMPLE,
                     "Edit",
                     FocusId(EDIT_QUEUED_BASE + index as u64),
                 );
                 Button::new("Send now", FocusId(HURRY_BASE + index as u64))
                     .variant(Variant::Ghost)
                     .size(Size::Sm)
-                    .with_icon(IconName::Zap)
+                    .with_icon(phosphor::LIGHTNING)
                     .build();
                 Button::new("Remove", FocusId(REMOVE_QUEUED_BASE + index as u64))
                     .variant(Variant::Ghost)
                     .size(Size::Sm)
-                    .with_icon(IconName::Trash)
+                    .with_icon(phosphor::TRASH)
                     .build();
             },
         );
@@ -311,12 +311,12 @@ fn waiting(index: usize, queued: &Queued, width: f32) {
 fn editing(queued: &Queued, width: f32) {
     let room = (width - CHROME - BESIDE_EDIT).max(120.0);
     frame(|| {
-        leading_glyph(IconName::Pencil, Role::Accent);
+        leading_glyph(phosphor::PENCIL_SIMPLE, Role::Accent);
         body(&queued.text, Role::Muted, room);
         Button::new("Cancel", QUEUED_CANCEL)
             .variant(Variant::Ghost)
             .size(Size::Sm)
-            .with_icon(IconName::Close)
+            .with_icon(phosphor::X)
             .build();
     });
 }

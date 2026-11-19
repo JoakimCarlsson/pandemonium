@@ -118,8 +118,9 @@ rustle-widgets = { path = "../../rustle/crates/rustle-widgets" }
 The rules for `Cargo.lock` are the ones above: never commit its local-path
 lines, and build a release against a pushed rustle commit with the override
 off. When the interface needs something rustle lacks, add it to rustle by its
-own rules, never as a framework of our own here. Named icons come from
-rustle's Phosphor set; only artwork that arrives while the app runs is
+own rules, never as a framework of our own here. Icons are rustle's
+Phosphor constants (`rustle::phosphor::X`) used directly, never through a
+name enum of our own; only artwork that arrives while the app runs is
 rasterised here.
 
 ## Verification

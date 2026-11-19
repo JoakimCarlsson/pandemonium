@@ -2,12 +2,12 @@
 
 use crate::theme;
 use crate::theme::sp;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, row_arranged};
 
 use std::ops::Range;
 
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::theme::Role;
 use rustle::Modifier;
 use rustle::TextFieldState;
@@ -503,7 +503,7 @@ pub fn tab_strip(browser: &Browser, width: f32) {
         Alignment::Center,
         || {
             if scrolls {
-                Button::icon(IconName::ArrowLeft, BROWSER_TABS_PREVIOUS)
+                Button::icon(phosphor::ARROW_LEFT, BROWSER_TABS_PREVIOUS)
                     .variant(Variant::Ghost)
                     .size(Size::Xs)
                     .disabled(shown.start == 0)
@@ -535,13 +535,13 @@ pub fn tab_strip(browser: &Browser, width: f32) {
                 });
             }
             if scrolls {
-                Button::icon(IconName::ArrowRight, BROWSER_TABS_NEXT)
+                Button::icon(phosphor::ARROW_RIGHT, BROWSER_TABS_NEXT)
                     .variant(Variant::Ghost)
                     .size(Size::Xs)
                     .disabled(shown.end == browser.tabs.len())
                     .build();
             }
-            Button::icon(IconName::Plus, BROWSER_NEW_TAB)
+            Button::icon(phosphor::PLUS, BROWSER_NEW_TAB)
                 .variant(Variant::Ghost)
                 .size(Size::Sm)
                 .build();

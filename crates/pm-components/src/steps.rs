@@ -5,6 +5,7 @@ use crate::theme;
 use pm_harness::{
     Diff, Kind as ToolKind, Merge, Permission, PlanStep, Progress, ToolState, Verdict, Worktree,
 };
+use rustle::phosphor;
 use rustle::{Alignment, column_arranged, row_arranged};
 use rustle::{Arrangement, CursorIcon, FlowOptions, Modifier};
 
@@ -16,7 +17,7 @@ use crate::diff_syntax::DiffColours;
 use crate::events::Interactive;
 use crate::file_icon::{file_icon, file_language};
 use crate::focus::FocusId;
-use crate::icons::{IconName, spinner};
+use crate::icons::spinner;
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::sample::{DiffLine, Kind, Step, ToolUse};
 use crate::size::Size;
@@ -106,9 +107,9 @@ fn step_line(
             if id.is_some() {
                 glyph(
                     if open {
-                        IconName::ChevronDown
+                        phosphor::CARET_DOWN
                     } else {
-                        IconName::ChevronRight
+                        phosphor::CARET_RIGHT
                     },
                     3.5,
                     Role::Subtle,
@@ -155,7 +156,7 @@ fn clipped_mono(content: &str, chip: bool) {
 fn tool_mark(tool: &ToolUse) {
     match tool.state {
         ToolState::Running => spinner(3.5, Role::Muted),
-        ToolState::Failed => glyph(IconName::Close, 3.5, Role::Danger),
+        ToolState::Failed => glyph(phosphor::X, 3.5, Role::Danger),
         ToolState::Done => match tool.kind {
             ToolKind::Read | ToolKind::Edit => {
                 let path = tool
@@ -165,9 +166,9 @@ fn tool_mark(tool: &ToolUse) {
                     .unwrap_or_default();
                 file_icon(path, 4.0);
             }
-            ToolKind::Search => glyph(IconName::Search, 4.0, Role::Subtle),
-            ToolKind::Execute => glyph(IconName::Terminal, 4.0, Role::Subtle),
-            ToolKind::Fetch | ToolKind::Other => glyph(IconName::Check, 4.0, Role::Subtle),
+            ToolKind::Search => glyph(phosphor::MAGNIFYING_GLASS, 4.0, Role::Subtle),
+            ToolKind::Execute => glyph(phosphor::TERMINAL, 4.0, Role::Subtle),
+            ToolKind::Fetch | ToolKind::Other => glyph(phosphor::CHECK, 4.0, Role::Subtle),
         },
     }
 }
@@ -320,7 +321,7 @@ fn agent_mark(state: ToolState) {
                     .size(theme::sp(1.5), theme::sp(1.5))
                     .background_rounded(theme::color(Role::Subtle), Radius::Full.px()),
             ),
-            ToolState::Failed => glyph(IconName::Close, 3.5, Role::Danger),
+            ToolState::Failed => glyph(phosphor::X, 3.5, Role::Danger),
         },
     );
 }
@@ -345,7 +346,7 @@ fn worktree_chip(worktree: &Worktree) {
         Arrangement::SpacedBy(sp(1)),
         Alignment::Center,
         || {
-            glyph(IconName::GitFork, 3.0, role);
+            glyph(phosphor::GIT_FORK, 3.0, role);
             rustle::basic_text(
                 Modifier::new(),
                 words,
@@ -485,7 +486,7 @@ pub fn subagents(
                 Arrangement::SpacedBy(sp(2.5)),
                 Alignment::Center,
                 || {
-                    glyph(IconName::GitFork, 4.0, Role::Muted);
+                    glyph(phosphor::GIT_FORK, 4.0, Role::Muted);
                     line(title, 13, 1.4, Role::Text);
                 },
             );
@@ -578,7 +579,7 @@ fn agent_row(
                     );
                     if tool.stoppable().is_some() {
                         Button::icon(
-                            IconName::Stop,
+                            phosphor::STOP,
                             FocusId(SUBAGENT_STOP_BASE + (message * 1000 + position) as u64),
                         )
                         .size(Size::Xs)
@@ -587,9 +588,9 @@ fn agent_row(
                     }
                     glyph(
                         if open {
-                            IconName::ChevronDown
+                            phosphor::CARET_DOWN
                         } else {
-                            IconName::ChevronRight
+                            phosphor::CARET_RIGHT
                         },
                         3.5,
                         Role::Subtle,
@@ -625,7 +626,7 @@ fn plan_mark(progress: Progress) {
                 .background_rounded(theme::color(Role::Success), Radius::Full.px()),
             Arrangement::Center,
             Alignment::Center,
-            || glyph(IconName::Check, 3.0, Role::OnSuccess),
+            || glyph(phosphor::CHECK, 3.0, Role::OnSuccess),
         ),
         Progress::Doing => spinner(4.0, Role::Muted),
         Progress::Pending => rustle::spacer(
@@ -670,7 +671,7 @@ pub fn plan(items: &[PlanStep]) {
                 Alignment::Center,
                 || {
                     glyph(
-                        IconName::CheckCircle,
+                        phosphor::CHECK_CIRCLE,
                         4.5,
                         if finished { Role::Success } else { Role::Muted },
                     );
@@ -786,7 +787,7 @@ pub fn steps(
                                 Alignment::Start,
                                 || {
                                     step_line(
-                                        || glyph(IconName::Sparkles, 3.5, Role::Subtle),
+                                        || glyph(phosphor::SPARKLE, 3.5, Role::Subtle),
                                         &words,
                                         None,
                                         || {},

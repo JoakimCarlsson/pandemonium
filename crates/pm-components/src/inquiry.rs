@@ -6,6 +6,7 @@ use crate::theme::sp;
 use pm_harness::Alternative;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
+use rustle::{Icon, phosphor};
 
 use crate::Button;
 use crate::button::Variant;
@@ -14,7 +15,6 @@ use crate::events::Interactive;
 use crate::exhibit::{MOCKUP_OFFER_BASE, MOCKUP_VIEWPORT, Offer, Preview, wanted_document};
 use crate::figures::Figures;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::input::{self, Input};
 use crate::parts::line;
 use crate::size::Size;
@@ -180,7 +180,7 @@ pub(crate) fn marks_in(room: f32) -> Marks {
 
 /// Emits a small mark on a tile in `tone`, saying `tip` when hovered: `icon`, then `words` when the heading has room to spell marks out as `form` says, and nothing at all when marks are hidden.
 #[track_caller]
-fn mark(icon: IconName, words: &str, tone: Role, form: Marks, tip: &str) {
+fn mark(icon: Icon, words: &str, tone: Role, form: Marks, tip: &str) {
     if form != Marks::Hidden {
         mark_node(icon, (form == Marks::Words).then_some(words), tone, tip);
     }
@@ -188,7 +188,7 @@ fn mark(icon: IconName, words: &str, tone: Role, form: Marks, tip: &str) {
 
 /// Emits a small mark on a tile that shows `icon` in `tone`, followed by `words` when it has any, saying `tip` when hovered.
 #[track_caller]
-fn mark_node(icon: IconName, words: Option<&str>, tone: Role, tip: &str) {
+fn mark_node(icon: Icon, words: Option<&str>, tone: Role, tip: &str) {
     crate::tooltip::with_tooltip(tip, || {
         row_arranged(
             Modifier::new()
@@ -257,7 +257,7 @@ fn tile(
                     key(index + 1);
                     if suggested {
                         mark(
-                            IconName::Sparkles,
+                            phosphor::SPARKLE,
                             "Recommended",
                             Role::Accent,
                             form,
@@ -265,11 +265,11 @@ fn tile(
                         );
                     }
                     if picked {
-                        mark(IconName::Check, "Selected", Role::Accent, form, "Selected");
+                        mark(phosphor::CHECK, "Selected", Role::Accent, form, "Selected");
                     }
                     rustle::spacer(rustle::Modifier::new().weight(1.0));
                     if alternative.mockup.is_some() && form != Marks::Hidden {
-                        Button::icon(IconName::Maximize, FocusId(MOCKUP_OPEN_BASE + index as u64))
+                        Button::icon(phosphor::ARROWS_OUT_SIMPLE, FocusId(MOCKUP_OPEN_BASE + index as u64))
                             .disabled(outdated)
                             .tooltip(if outdated {
                                 "Update the browser to open mockups · it cannot open pages sealed from the network"
@@ -429,14 +429,14 @@ pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
                     );
                     Button::icon(
                         if draft.folded {
-                            IconName::ChevronRight
+                            phosphor::CARET_RIGHT
                         } else {
-                            IconName::ChevronDown
+                            phosphor::CARET_DOWN
                         },
                         FOLD,
                     )
                     .build();
-                    Button::icon(IconName::Close, CLOSE).build();
+                    Button::icon(phosphor::X, CLOSE).build();
                 },
             );
             if draft.folded {

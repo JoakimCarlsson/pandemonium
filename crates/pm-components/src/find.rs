@@ -2,6 +2,7 @@
 
 use crate::events::reduce;
 use crate::theme;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use std::ops::Range;
 
@@ -13,7 +14,6 @@ use rustle::{BoxAlignment, CursorIcon, Modifier};
 use crate::button::{Button, Variant};
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::input::Input;
 use crate::size::Size;
 use crate::state::WorkspaceState;
@@ -384,9 +384,9 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
         .and_then(|matches| document.selected_match(matches));
     let (said, tone) = tally(&found, selected, query.text.is_empty());
     let toggle = if finding.replacing {
-        IconName::ChevronDown
+        phosphor::CARET_DOWN
     } else {
-        IconName::ChevronRight
+        phosphor::CARET_RIGHT
     };
     let read_only = document.field.is_read_only();
     column_arranged(
@@ -428,9 +428,9 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
                             .max_lines(1),
                         rustle::TextOverflow::Ellipsis,
                     );
-                    Button::icon(IconName::ArrowUp, FIND_PREVIOUS).build();
-                    Button::icon(IconName::ArrowDown, FIND_NEXT).build();
-                    Button::icon(IconName::Close, FIND_CLOSE).build();
+                    Button::icon(phosphor::ARROW_UP, FIND_PREVIOUS).build();
+                    Button::icon(phosphor::ARROW_DOWN, FIND_NEXT).build();
+                    Button::icon(phosphor::X, FIND_CLOSE).build();
                 },
             );
             if finding.replacing {

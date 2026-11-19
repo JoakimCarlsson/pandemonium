@@ -3,6 +3,7 @@
 use crate::events::reduce;
 use crate::theme;
 use crate::theme::sp;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use std::ops::Range;
@@ -19,7 +20,6 @@ use crate::debug::{Dot, Gutter, breakpoint_mark};
 use crate::events::Interactive;
 use crate::file_icon::file_icon;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::marked::{CaretLook, CaretShape, Mark, Paint, marked_field_line};
 use crate::open_files::{Contents, EDITOR_FIELD, EDITOR_SAVE, FILE_TAB_BASE, STRIP, Viewer};
 use crate::parts::{glyph, line};
@@ -306,7 +306,7 @@ fn run_cell(file: usize, index: usize, gutter: &Gutter, height: f32) {
     };
     row_arranged(cell, Arrangement::Center, Alignment::Center, move || {
         if runs {
-            glyph(IconName::Play, 3.5, Role::Success);
+            glyph(phosphor::PLAY, 3.5, Role::Success);
         }
     });
 }
@@ -349,7 +349,7 @@ fn breakpoint_only(file: usize, index: usize, gutter: &Gutter, height: f32) {
             (Some(Dot::Plain), _) => dot(Role::Danger),
             (Some(Dot::Conditional), _) => dot(Role::Warning),
             (Some(Dot::Unplaced), _) => dot(Role::Subtle),
-            (None, true) => glyph(IconName::ArrowRight, 3.5, Role::Warning),
+            (None, true) => glyph(phosphor::ARROW_RIGHT, 3.5, Role::Warning),
             (None, false) => {}
         },
     );
@@ -728,7 +728,7 @@ fn bulb_button(height: f32) {
             }),
         Arrangement::Center,
         Alignment::Center,
-        || glyph(IconName::Lightbulb, 3.5, Role::Warning),
+        || glyph(phosphor::LIGHTBULB, 3.5, Role::Warning),
     );
 }
 

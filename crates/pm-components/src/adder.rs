@@ -5,13 +5,14 @@ use crate::theme;
 use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
+use rustle::{Icon, phosphor};
 
 use crate::Input;
 use crate::Modal;
 use crate::events::Interactive;
 use crate::focus::FocusId;
 use crate::folder_picker::Purpose;
-use crate::icons::{IconName, spinner};
+use crate::icons::spinner;
 use crate::input;
 use crate::parts::{glyph, line};
 use crate::theme::{Radius, Role, sp};
@@ -137,7 +138,7 @@ pub(crate) enum Status {
 /// One row as it is drawn.
 struct Row {
     /// The glyph at its left.
-    icon: IconName,
+    icon: Icon,
     /// The name.
     name: String,
     /// What is said under it.
@@ -264,15 +265,15 @@ impl Adder {
     }
 
     /// The rows of the first choices, on the machine the project is added on.
-    fn choices(&self) -> [(IconName, &'static str, String); 2] {
+    fn choices(&self) -> [(Icon, &'static str, String); 2] {
         let browse = match &self.machine {
             Some(machine) => format!("Choose a folder on {}", machine.name),
             None => "Choose a folder on this computer".to_owned(),
         };
         [
-            (IconName::FolderOpen, "Browse", browse),
+            (phosphor::FOLDER_OPEN, "Browse", browse),
             (
-                IconName::GitFork,
+                phosphor::GIT_FORK,
                 "Clone from GitHub",
                 "Search projects available to your GitHub account".to_owned(),
             ),
@@ -296,9 +297,9 @@ impl Adder {
                 .into_iter()
                 .map(|found| Row {
                     icon: match found.kind {
-                        Kind::Owner(_) => IconName::CircleUser,
-                        Kind::Repository => IconName::GitFork,
-                        Kind::Folder => IconName::Folder,
+                        Kind::Owner(_) => phosphor::USER_CIRCLE,
+                        Kind::Repository => phosphor::GIT_FORK,
+                        Kind::Folder => phosphor::FOLDER,
                     },
                     name: found.name,
                     detail: found.detail,
@@ -432,7 +433,7 @@ fn entry(row_of: &Row, id: FocusId, selected: bool) {
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         || {
-            glyph(row_of.icon, 4.0, Role::Muted);
+            glyph(row_of.icon.clone(), 4.0, Role::Muted);
             column_arranged(
                 Modifier::new().weight(1.0),
                 Arrangement::Start,

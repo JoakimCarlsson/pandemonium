@@ -5,6 +5,7 @@ use crate::theme;
 use crate::theme::sp;
 use pm_protocol::{McpServer, ToolListing};
 use rustle::TextFieldState;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
 
@@ -12,7 +13,6 @@ use crate::agent_list::AgentEntry;
 use crate::button::Variant;
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::input::Input;
 use crate::menu::Menu;
 use crate::parts::{glyph, line, wrap};
@@ -1010,9 +1010,9 @@ pub(crate) fn search_box(state: &WorkspaceState, section: Section) {
 #[track_caller]
 fn heading(title: &str, count: usize, open: bool, toggle: FocusId) {
     let chevron = if open {
-        IconName::ChevronDown
+        phosphor::CARET_DOWN
     } else {
-        IconName::ChevronRight
+        phosphor::CARET_RIGHT
     };
     row_arranged(
         Modifier::new()
@@ -1309,7 +1309,7 @@ fn installed_row(shown: InstalledRow) {
                 if let Some(more) = shown.place.and_then(|place| SERVER_MORES.id(place)) {
                     let operations = crate::events::operations();
                     let index = shown.place.unwrap_or_default();
-                    Button::icon(IconName::More, more)
+                    Button::icon(phosphor::DOTS_THREE, more)
                         .on_click(move || operations.open_settings_menu(index))
                         .size(Size::Sm)
                         .build();

@@ -1,11 +1,11 @@
-//! Icons: the app's named icons, drawn from the Phosphor paths rustle
-//! embeds and tinted with a tone like text, and artwork that arrives while
-//! the app runs, rasterised into a coverage mask.
+//! Icons: rustle's Phosphor drawings ([`Icon`], such as `phosphor::X` or
+//! `phosphor::fill::X` for a selected state), tinted with a tone like text,
+//! and artwork that arrives while the app runs, rasterised into a coverage
+//! mask.
 //!
-//! Every [`IconName`] is a Phosphor drawing: the regular weight, or the
-//! filled weight (rustle's `icons-fill` feature) for the variants that show
-//! a selected state. The panels on the right are Phosphor's left sidebar
-//! drawn mirrored. Only artwork that arrives at run time, such as an
+//! The panel drawings Phosphor lacks are made from its own:
+//! [`panel_right`] and [`panel_right_filled`] are its left sidebar drawn
+//! mirrored, [`panel_bottom`] its browser window drawn upside down. Only artwork that arrives at run time, such as an
 //! extension's icon or a file icon ([`Artwork::arrived`]), goes through
 //! resvg. The spinner and the turning icon turn on rustle's infinite
 //! animation, on the composition's frame clock.
@@ -14,245 +14,26 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex, PoisonError};
 
-use rustle::{ImageData, Modifier, Path, PathCommand, phosphor};
+use rustle::{Icon, ImageData, Modifier, Path, PathCommand, phosphor};
 
 use crate::theme::{self, Tone, sp};
 
-/// One of the app's icons, at whatever size it is asked for.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum IconName {
-    /// A branching line: version control.
-    Git,
-    /// A branching line with filled endpoints: selected version control.
-    GitFilled,
-    /// An arrow pointing left: back.
-    ArrowLeft,
-    /// An arrow pointing right: forward.
-    ArrowRight,
-    /// An arrow pointing up.
-    ArrowUp,
-    /// An arrow pointing down.
-    ArrowDown,
-    /// A small chevron pointing down: expanded, or a menu.
-    ChevronDown,
-    /// A small chevron pointing right: collapsed, or deeper.
-    ChevronRight,
-    /// A magnifying glass: search.
-    Search,
-    /// A filled magnifying glass: selected search.
-    SearchFilled,
-    /// A gear: settings.
-    Settings,
-    /// Horizontal sliders: view options.
-    Split,
-    /// A cross: remove or dismiss.
-    Close,
-    /// A push pin: keep in place.
-    Pin,
-    /// A plus: add.
-    Plus,
-    /// A minus: take away.
-    Minus,
-    /// A tick: done.
-    Check,
-    /// A tick in a circle: finished and healthy.
-    CheckCircle,
-    /// A timer: work in progress.
-    Progress,
-    /// A spark: an agent.
-    Sparkles,
-    /// Two sheets: copy.
-    Copy,
-    /// A window with a panel along its left side.
-    PanelLeft,
-    /// A window with its left panel filled to show it is open.
-    PanelLeftFilled,
-    /// A window with a panel along its right side.
-    PanelRight,
-    /// A window with its right panel filled to show it is open.
-    PanelRightFilled,
-    /// A window with a panel along its bottom.
-    PanelBottom,
-    /// A window with its bottom panel filled to show it is open.
-    PanelBottomFilled,
-    /// A square cut down the middle: panes.
-    SquareSplit,
-    /// A triangle pointing right: run.
-    Play,
-    /// Three dots: more actions.
-    More,
-    /// An at sign: mention.
-    At,
-    /// A sheet of paper: a file.
-    File,
-    /// Angle brackets: code.
-    FileCode,
-    /// A closed folder.
-    Folder,
-    /// A filled folder: selected files.
-    FolderFilled,
-    /// An open folder.
-    FolderOpen,
-    /// Two branches with a change between them: a diff to review.
-    GitCompare,
-    /// A line forking in two.
-    GitFork,
-    /// A clock with a counter-clockwise arrow: history.
-    History,
-    /// Two arrows chasing each other: refresh.
-    Refresh,
-    /// A cursor inside a dashed box: pick an element on a page.
-    Pick,
-    /// A globe: the web.
-    Globe,
-    /// An arrow turning back on itself: undo.
-    Undo,
-    /// A speech bubble: a chat message.
-    Message,
-    /// A person in a circle: an account.
-    CircleUser,
-    /// A plug: a connection.
-    Plug,
-    /// A lightning bolt: quick.
-    Zap,
-    /// The command key: commands.
-    SquareSlash,
-    /// A prompt in a window: the terminal.
-    Terminal,
-    /// A file with a plus: new file.
-    FilePlus,
-    /// A folder with a plus: new folder.
-    FolderPlus,
-    /// A bin: delete.
-    Trash,
-    /// A pencil: edit.
-    Pencil,
-    /// Arrows pressing together vertically: collapse.
-    Collapse,
-    /// Arrows pointing out: enlarge.
-    Maximize,
-    /// Arrows pointing in: shrink.
-    Minimize,
-    /// An open ring: loading.
-    Loading,
-    /// A square: stop what is running.
-    Stop,
-    /// A dot on a line: a commit.
-    GitCommit,
-    /// A cloud with an arrow down: fetch.
-    GitFetch,
-    /// An arrow down onto a line: pull.
-    GitPull,
-    /// An arrow up off a line: push.
-    GitPush,
-    /// Rings around a dot: the current place.
-    Target,
-    /// A beetle: debugging.
-    Bug,
-    /// A triangle against a bar: run the paused program on.
-    Continue,
-    /// Two bars: pause the running program.
-    Pause,
-    /// An arrow down onto a line: step into a call.
-    StepInto,
-    /// An arrow up off a line: step out of a call.
-    StepOut,
-    /// An arc over a dot: step over a line.
-    StepOver,
-    /// A bulb: the language server offers changes here.
-    Lightbulb,
-    /// A camera: a screenshot.
-    Camera,
-    /// The corners of a frame: an area of a page.
-    Scan,
-    /// A closed padlock: locked.
-    Lock,
-    /// An open padlock: not locked.
-    LockOpen,
+/// A window with a panel along its right side: Phosphor's regular sidebar
+/// drawn mirrored.
+pub fn panel_right() -> Icon {
+    MIRRORED_SIDEBAR.clone()
 }
 
-impl IconName {
-    /// The Phosphor outline this icon is drawn with.
-    ///
-    /// Port `name.svg()` to `name.path()`.
-    pub fn path(self) -> Path {
-        match self {
-            Self::Git => phosphor::GIT_BRANCH,
-            Self::GitFilled => phosphor::fill::GIT_BRANCH,
-            Self::ArrowLeft => phosphor::ARROW_LEFT,
-            Self::ArrowRight => phosphor::ARROW_RIGHT,
-            Self::ArrowUp => phosphor::ARROW_UP,
-            Self::ArrowDown => phosphor::ARROW_DOWN,
-            Self::ChevronDown => phosphor::CARET_DOWN,
-            Self::ChevronRight => phosphor::CARET_RIGHT,
-            Self::Search => phosphor::MAGNIFYING_GLASS,
-            Self::SearchFilled => phosphor::fill::MAGNIFYING_GLASS,
-            Self::Settings => phosphor::GEAR,
-            Self::Split => phosphor::SLIDERS_HORIZONTAL,
-            Self::Close => phosphor::X,
-            Self::Pin => phosphor::PUSH_PIN,
-            Self::Plus => phosphor::PLUS,
-            Self::Minus => phosphor::MINUS,
-            Self::Check => phosphor::CHECK,
-            Self::CheckCircle => phosphor::CHECK_CIRCLE,
-            Self::Progress => phosphor::TIMER,
-            Self::Sparkles => phosphor::SPARKLE,
-            Self::Copy => phosphor::COPY,
-            Self::PanelLeft => phosphor::SIDEBAR_SIMPLE,
-            Self::PanelLeftFilled => phosphor::fill::SIDEBAR_SIMPLE,
-            Self::PanelRight => MIRRORED_SIDEBAR.clone(),
-            Self::PanelRightFilled => MIRRORED_SIDEBAR_FILLED.clone(),
-            Self::PanelBottom => UPENDED_BROWSER.clone(),
-            Self::PanelBottomFilled => phosphor::fill::SQUARE_HALF_BOTTOM,
-            Self::SquareSplit => phosphor::SQUARE_SPLIT_HORIZONTAL,
-            Self::Play => phosphor::PLAY,
-            Self::More => phosphor::DOTS_THREE,
-            Self::At => phosphor::AT,
-            Self::File => phosphor::FILE,
-            Self::FileCode => phosphor::CODE,
-            Self::Folder => phosphor::FOLDER,
-            Self::FolderFilled => phosphor::fill::FOLDER,
-            Self::FolderOpen => phosphor::FOLDER_OPEN,
-            Self::GitCompare => phosphor::GIT_DIFF,
-            Self::GitFork => phosphor::GIT_FORK,
-            Self::History => phosphor::CLOCK_COUNTER_CLOCKWISE,
-            Self::Refresh => phosphor::ARROWS_CLOCKWISE,
-            Self::Pick => phosphor::SELECTION,
-            Self::Globe => phosphor::GLOBE,
-            Self::Undo => phosphor::ARROW_COUNTER_CLOCKWISE,
-            Self::Message => phosphor::CHAT_CIRCLE,
-            Self::CircleUser => phosphor::USER_CIRCLE,
-            Self::Plug => phosphor::PLUG,
-            Self::Zap => phosphor::LIGHTNING,
-            Self::SquareSlash => phosphor::COMMAND,
-            Self::Terminal => phosphor::TERMINAL,
-            Self::FilePlus => phosphor::FILE_PLUS,
-            Self::FolderPlus => phosphor::FOLDER_PLUS,
-            Self::Trash => phosphor::TRASH,
-            Self::Pencil => phosphor::PENCIL_SIMPLE,
-            Self::Collapse => phosphor::ARROWS_IN_LINE_VERTICAL,
-            Self::Maximize => phosphor::ARROWS_OUT_SIMPLE,
-            Self::Minimize => phosphor::ARROWS_IN_SIMPLE,
-            Self::Loading => phosphor::CIRCLE_DASHED,
-            Self::Stop => phosphor::STOP,
-            Self::GitCommit => phosphor::GIT_COMMIT,
-            Self::GitFetch => phosphor::CLOUD_ARROW_DOWN,
-            Self::GitPull => phosphor::ARROW_LINE_DOWN,
-            Self::GitPush => phosphor::ARROW_LINE_UP,
-            Self::Target => phosphor::TARGET,
-            Self::Bug => phosphor::BUG,
-            Self::Continue => phosphor::SKIP_FORWARD,
-            Self::Pause => phosphor::PAUSE,
-            Self::StepInto => phosphor::ARROW_LINE_DOWN,
-            Self::StepOut => phosphor::ARROW_LINE_UP,
-            Self::StepOver => phosphor::ARROW_ARC_RIGHT,
-            Self::Lightbulb => phosphor::LIGHTBULB,
-            Self::Camera => phosphor::CAMERA,
-            Self::Scan => phosphor::FRAME_CORNERS,
-            Self::Lock => phosphor::LOCK_SIMPLE,
-            Self::LockOpen => phosphor::LOCK_SIMPLE_OPEN,
-        }
-    }
+/// A window with its right panel filled to show it is open: Phosphor's
+/// filled sidebar drawn mirrored.
+pub fn panel_right_filled() -> Icon {
+    MIRRORED_SIDEBAR_FILLED.clone()
+}
+
+/// A window with a panel along its bottom: Phosphor's browser window drawn
+/// upside down.
+pub fn panel_bottom() -> Icon {
+    UPENDED_BROWSER.clone()
 }
 
 /// Phosphor's regular sidebar mirrored left to right, made once.
@@ -383,17 +164,17 @@ pub fn set_pixel_scale(scale: f32) {
     PIXEL_SCALE.with(|held| held.set(scale.max(0.5)));
 }
 
-/// Emits `name` in a square `steps` of the spacing scale on a side, tinted
-/// with `tone`: `glyph(name, steps, tone)`, or a box sized `size(steps)` with `.icon(name)`.
+/// Emits `icon` in a square `steps` of the spacing scale on a side, tinted
+/// with `tone`: `glyph(icon, steps, tone)`, or a box sized `size(steps)` with `.icon(icon)`.
 #[track_caller]
-pub fn icon(name: IconName, steps: f32, tone: impl Into<Tone>) {
-    icon_with(Modifier::new(), name, sp(steps), tone);
+pub fn icon(icon: Icon, steps: f32, tone: impl Into<Tone>) {
+    icon_with(Modifier::new(), icon, sp(steps), tone);
 }
 
-/// Emits `name` in a square `pixels` logical pixels on a side, tinted with `tone`, with `modifier` around it.
+/// Emits `icon` in a square `pixels` logical pixels on a side, tinted with `tone`, with `modifier` around it.
 #[track_caller]
-pub fn icon_with(modifier: Modifier, name: IconName, pixels: f32, tone: impl Into<Tone>) {
-    path_with(modifier, name.path(), pixels, tone);
+pub fn icon_with(modifier: Modifier, icon: Icon, pixels: f32, tone: impl Into<Tone>) {
+    path_with(modifier, icon, pixels, tone);
 }
 
 /// Emits the vector outline `path`, such as `phosphor::X`, in a square
@@ -443,10 +224,10 @@ pub fn spinner(steps: f32, tone: impl Into<Tone>) {
     rustle::dashed_spinner(sp(steps), theme::color(tone), move || turned.get());
 }
 
-/// Emits `name` turning once a second, `steps` of the spacing scale across,
+/// Emits `icon` turning once a second, `steps` of the spacing scale across,
 /// in `tone`, for an icon other than the loading ring, which is [`spinner`].
 #[track_caller]
-pub fn spinning_icon(name: IconName, steps: f32, tone: impl Into<Tone>) {
+pub fn spinning_icon(icon: Icon, steps: f32, tone: impl Into<Tone>) {
     let turned = turning();
-    icon_with(Modifier::new().rotate(turned.get()), name, sp(steps), tone);
+    icon_with(Modifier::new().rotate(turned.get()), icon, sp(steps), tone);
 }

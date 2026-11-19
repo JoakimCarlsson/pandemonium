@@ -3,6 +3,7 @@
 use crate::events::reduce;
 use crate::theme;
 use crate::theme::sp;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use std::path::Path;
@@ -12,7 +13,6 @@ use rustle::{CursorIcon, Modifier};
 
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::theme::Role;
 
 use crate::button::Variant;
@@ -767,9 +767,9 @@ fn set_row(set: &ToolSet, place: usize, open: bool, product: Option<Product>, wi
         None => format!("{}/{}", set.enabled_count(withheld), set.tools.len()),
     };
     let chevron = if open {
-        IconName::ChevronDown
+        phosphor::CARET_DOWN
     } else {
-        IconName::ChevronRight
+        phosphor::CARET_RIGHT
     };
     let about = match &set.error {
         Some(reason) => format!(

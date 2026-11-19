@@ -3,12 +3,12 @@
 use crate::events::Interactive;
 use crate::events::reduce;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::theme;
 use crate::theme::sp;
 use crate::theme::{Radius, Role};
 use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
+use rustle::{Icon, phosphor};
 
 use crate::Button;
 use crate::parts::{clipped, glyph};
@@ -34,7 +34,7 @@ pub struct TabChip {
     /// The target of the button that closes it.
     close: FocusId,
     /// The glyph before the words.
-    icon: IconName,
+    icon: Icon,
     /// Whether it is the tab being shown.
     selected: bool,
     /// Whose tab it is.
@@ -58,7 +58,7 @@ impl TabChip {
             label: label.into(),
             select,
             close,
-            icon: IconName::Globe,
+            icon: phosphor::GLOBE,
             selected: false,
             variant: TabVariant::Page,
             size: Size::Sm,
@@ -144,14 +144,14 @@ impl TabChip {
                 Alignment::Center,
                 move || {
                     match variant {
-                        TabVariant::Agent => glyph(IconName::Sparkles, 3.5, Role::Accent),
+                        TabVariant::Agent => glyph(phosphor::SPARKLE, 3.5, Role::Accent),
                         TabVariant::Page => glyph(icon, 3.5, tone),
                     }
                     clipped(label, 12, tone);
                     if locked {
-                        glyph(IconName::Lock, 3.0, Role::Warning);
+                        glyph(phosphor::LOCK_SIMPLE, 3.0, Role::Warning);
                     }
-                    Button::icon(IconName::Close, close)
+                    Button::icon(phosphor::X, close)
                         .variant(crate::button::Variant::Ghost)
                         .size(Size::Xs)
                         .build();

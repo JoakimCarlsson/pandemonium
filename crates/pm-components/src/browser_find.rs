@@ -3,11 +3,11 @@
 use crate::events::reduce;
 use crate::theme;
 use rustle::TextFieldState;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{BoxAlignment, Modifier};
 
 use crate::events::Interactive;
-use crate::icons::IconName;
 use crate::theme::{Radius, Role, sp};
 
 use crate::browser::{
@@ -193,9 +193,9 @@ pub fn find_bar(search: &PageSearch, page: f32, beside: f32) {
                     line(said, 11, 1.4, tone);
                 },
             );
-            Button::icon(IconName::ArrowUp, BROWSER_FIND_PREVIOUS).build();
-            Button::icon(IconName::ArrowDown, BROWSER_FIND_NEXT).build();
-            Button::icon(IconName::Close, BROWSER_FIND_CLOSE).build();
+            Button::icon(phosphor::ARROW_UP, BROWSER_FIND_PREVIOUS).build();
+            Button::icon(phosphor::ARROW_DOWN, BROWSER_FIND_NEXT).build();
+            Button::icon(phosphor::X, BROWSER_FIND_CLOSE).build();
         },
     );
 }

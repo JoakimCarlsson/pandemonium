@@ -1,10 +1,10 @@
 //! The small notice in a conversation that its turn moved to a backup model, because the model of a slot kept failing.
 
-use crate::icons::IconName;
 use crate::theme;
 use crate::theme::Role;
 use crate::theme::sp;
 use rustle::Modifier;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, row_arranged};
 
 use crate::parts::{clipped, glyph};
@@ -43,7 +43,7 @@ pub fn fallback_notice(from: &str, to: &str, reason: &str) {
         Arrangement::SpacedBy(sp(1.5)),
         Alignment::Center,
         move || {
-            glyph(IconName::Zap, 3.5, Role::Warning);
+            glyph(phosphor::LIGHTNING, 3.5, Role::Warning);
             clipped(words, 12, Role::Muted);
         },
     );

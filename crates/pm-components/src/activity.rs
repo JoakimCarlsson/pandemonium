@@ -4,6 +4,7 @@ use crate::events::reduce;
 use crate::theme;
 use crate::theme::sp;
 use pm_harness::Progress;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
@@ -12,7 +13,7 @@ use crate::Tally;
 use crate::button::Variant;
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::{IconName, spinner};
+use crate::icons::spinner;
 use crate::parts::{clipped, line};
 use crate::popups::{Placement, anchored};
 use crate::sample::{Session, Step};
@@ -216,7 +217,7 @@ fn chips(
                     .filter(|item| item.progress == Progress::Done)
                     .count();
                 chip(format!("{done}/{} tasks", items.len()), PLAN_CHIP)
-                    .with_icon(IconName::CheckCircle)
+                    .with_icon(phosphor::CHECK_CIRCLE)
                     .selected(state.activity == Some(Activity::Plan))
                     .build();
             }

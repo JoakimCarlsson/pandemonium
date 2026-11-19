@@ -4,6 +4,7 @@ use crate::events::reduce;
 use crate::theme;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
+use rustle::{Icon, phosphor};
 
 use crate::Button;
 use crate::Markdown;
@@ -15,7 +16,6 @@ use crate::exhibit::{
     EXHIBIT_COPY_BASE, EXHIBIT_OPEN_BASE, ExhibitCard, PREVIEW_OFFER_BASE, exhibit_button,
 };
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::inquiry::{answered, inquiry};
 use crate::parts::{clipped, glyph, line};
 use crate::queued::queued;
@@ -79,7 +79,7 @@ fn chat_line(content: impl Into<String>, pixels: u32, tone: Role) {
 
 /// Emits a button that shows under a message while the pointer is over it or it has focus, showing `icon`, saying what it does with `tooltip` and answering to `id`, switched off while `disabled`.
 #[track_caller]
-fn message_action(icon: IconName, tooltip: &str, id: u64, disabled: bool) {
+fn message_action(icon: Icon, tooltip: &str, id: u64, disabled: bool) {
     Button::icon(icon, FocusId(id))
         .disabled(disabled)
         .tone(Role::Subtle)
@@ -158,20 +158,20 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
                     || {
                         if message.checkpoint {
                             message_action(
-                                IconName::GitCompare,
+                                phosphor::GIT_DIFF,
                                 "Show what this turn changed",
                                 TURN_CHANGES_BASE + index as u64,
                                 false,
                             );
                             message_action(
-                                IconName::History,
+                                phosphor::CLOCK_COUNTER_CLOCKWISE,
                                 "Restore files to before this turn",
                                 RESTORE_BASE + index as u64,
                                 working,
                             );
                         }
                         message_action(
-                            IconName::Undo,
+                            phosphor::ARROW_COUNTER_CLOCKWISE,
                             "Rewind conversation to before this message · edit and resend",
                             REWIND_BASE + index as u64,
                             working,
@@ -188,7 +188,7 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
 fn side_note(side: &Side, content: &str, index: usize, width: f32) {
     let (icon, heading, asked) = match side {
         Side::Aside { question, failed } => (
-            IconName::Message,
+            phosphor::CHAT_CIRCLE,
             if *failed {
                 "Asked on the side · no answer"
             } else {
@@ -197,11 +197,11 @@ fn side_note(side: &Side, content: &str, index: usize, width: f32) {
             Some(question.as_str()).filter(|question| !question.is_empty()),
         ),
         Side::HandedOff => (
-            IconName::ArrowRight,
+            phosphor::ARROW_RIGHT,
             "Handed over to a new conversation, which starts with",
             None,
         ),
-        Side::Fallback { .. } => (IconName::Zap, "Switched to a backup model", None),
+        Side::Fallback { .. } => (phosphor::LIGHTNING, "Switched to a backup model", None),
     };
     let inner = width - 34.0;
     column_arranged(
@@ -302,9 +302,9 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                     || {
                         glyph(
                             if open {
-                                IconName::ChevronDown
+                                phosphor::CARET_DOWN
                             } else {
-                                IconName::ChevronRight
+                                phosphor::CARET_RIGHT
                             },
                             3.5,
                             Role::Subtle,
@@ -445,11 +445,11 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                     Alignment::Center,
                     || {
                         if copy {
-                            message_action(IconName::Copy, "Copy", COPY_BASE + index as u64, false);
+                            message_action(phosphor::COPY, "Copy", COPY_BASE + index as u64, false);
                         }
                         if fork {
                             message_action(
-                                IconName::GitFork,
+                                phosphor::GIT_FORK,
                                 "Branch from this reply · new session · shared current files",
                                 FORK_BASE + index as u64,
                                 writing,
@@ -466,7 +466,7 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                     Arrangement::SpacedBy(sp(2)),
                     Alignment::Center,
                     || {
-                        glyph(IconName::Progress, 3.5, Role::Subtle);
+                        glyph(phosphor::TIMER, 3.5, Role::Subtle);
                         chat_line(duration, 12, Role::Subtle);
                     },
                 );
@@ -515,7 +515,7 @@ fn header(state: &WorkspaceState, session: &Session) {
                     Arrangement::SpacedBy(sp(1)),
                     Alignment::Center,
                     || {
-                        glyph(IconName::GitFork, 3.0, Role::Muted);
+                        glyph(phosphor::GIT_FORK, 3.0, Role::Muted);
                         rustle::basic_text(
                             Modifier::new(),
                             &session.branch,

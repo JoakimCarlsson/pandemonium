@@ -5,9 +5,9 @@
 use crate::theme;
 use crate::theme::sp;
 use rustle::Modifier;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, row_arranged};
 
-use crate::icons::IconName;
 use crate::theme::Role;
 
 use crate::parts::{clipped, glyph};
@@ -128,7 +128,7 @@ pub fn notice(state: &WorkspaceState, session: &Session) {
         Arrangement::SpacedBy(sp(1.5)),
         Alignment::Center,
         move || {
-            glyph(IconName::GitFork, 3.5, Role::Warning);
+            glyph(phosphor::GIT_FORK, 3.5, Role::Warning);
             clipped(words, 12, Role::Muted);
         },
     );

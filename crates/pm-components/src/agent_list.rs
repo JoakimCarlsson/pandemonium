@@ -1,7 +1,7 @@
 //! The agents a workspace can be started with: the ones the app offers, one for each provider of the harness.
 
-use crate::icons::IconName;
 use crate::state::{Outgoing, WorkspaceState};
+use rustle::{Icon, phosphor};
 
 /// One agent the app ships, as the windows list it.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -32,25 +32,25 @@ impl AgentEntry {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AgentLook {
     /// The glyph on its chip.
-    pub icon: IconName,
+    pub icon: Icon,
     /// What it is called.
     pub name: String,
 }
 
-/// The glyphs of the providers that have one of their own, by provider id; every other agent is drawn with [`IconName::Terminal`].
-const PROVIDER_ICONS: [(&str, IconName); 6] = [
-    ("claude", IconName::Sparkles),
-    ("copilot", IconName::Git),
-    ("openrouter", IconName::Globe),
-    ("openai", IconName::Zap),
-    ("azure", IconName::Zap),
-    ("gemini", IconName::Lightbulb),
+/// The glyphs of the providers that have one of their own, by provider id; every other agent is drawn with [`phosphor::TERMINAL`].
+static PROVIDER_ICONS: [(&str, Icon); 6] = [
+    ("claude", phosphor::SPARKLE),
+    ("copilot", phosphor::GIT_BRANCH),
+    ("openrouter", phosphor::GLOBE),
+    ("openai", phosphor::LIGHTNING),
+    ("azure", phosphor::LIGHTNING),
+    ("gemini", phosphor::LIGHTBULB),
 ];
 
 /// The glyph an agent is drawn with: a plug for a model server the reader declared, the one of its provider, or a terminal when the provider has none of its own.
-pub fn agent_icon(agent: &AgentEntry) -> IconName {
+pub fn agent_icon(agent: &AgentEntry) -> Icon {
     if agent.server {
-        return IconName::Plug;
+        return phosphor::PLUG;
     }
     pm_harness::agent(&agent.id)
         .and_then(|offered| {
@@ -58,7 +58,7 @@ pub fn agent_icon(agent: &AgentEntry) -> IconName {
                 .iter()
                 .find(|(provider, _)| *provider == offered.provider)
         })
-        .map_or(IconName::Terminal, |(_, icon)| *icon)
+        .map_or(phosphor::TERMINAL, |(_, icon)| icon.clone())
 }
 
 /// Rebuilds what is kept per agent for a new list: each agent keeps what it had, found by where `origin` says it was among the `before` agents, and a new agent starts with nothing.
@@ -218,7 +218,7 @@ impl WorkspaceState {
                 name: agent.name.clone(),
             },
             None => AgentLook {
-                icon: IconName::Terminal,
+                icon: phosphor::TERMINAL,
                 name: "Agent".to_owned(),
             },
         }

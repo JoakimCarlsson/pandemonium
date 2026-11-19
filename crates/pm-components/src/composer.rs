@@ -3,6 +3,7 @@
 use crate::events::reduce;
 use crate::theme;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
+use rustle::{Icon, phosphor};
 use std::cell::Cell;
 
 use pm_harness::Setting;
@@ -12,7 +13,6 @@ use crate::Popover;
 use crate::choices::{LIST_ROW_HEIGHT, LIST_ROWS, PRESSABLE_LIST_ROWS};
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::parts::{line, spacer};
 use crate::plan::proposal;
 use crate::popover::{anchored, anchored_end, heading};
@@ -635,7 +635,7 @@ fn attachment_row(state: &WorkspaceState) {
                         Alignment::Center,
                         || {
                             attached_file(state, path, THUMBNAIL);
-                            Button::icon(IconName::Close, FocusId(ATTACHED_BASE + index as u64))
+                            Button::icon(phosphor::X, FocusId(ATTACHED_BASE + index as u64))
                                 .build();
                         },
                     );
@@ -672,7 +672,7 @@ pub fn sent_files(state: &WorkspaceState, files: &[String]) {
 
 /// Emits the round button at the end of the strip, answering to `id` with `icon`, switched off while `disabled`.
 #[track_caller]
-fn round_button(icon: IconName, id: FocusId, disabled: bool) {
+fn round_button(icon: Icon, id: FocusId, disabled: bool) {
     Button::icon(icon, id)
         .variant(button::Variant::Default)
         .size(Size::Md)
@@ -688,22 +688,22 @@ fn round_button(icon: IconName, id: FocusId, disabled: bool) {
 #[track_caller]
 fn send_buttons(working: bool, empty: bool) {
     match (working, empty) {
-        (true, true) => round_button(IconName::Stop, STOP, false),
+        (true, true) => round_button(phosphor::STOP, STOP, false),
         (true, false) => {
             Button::new("Send now", SEND_NOW)
                 .variant(button::Variant::Ghost)
                 .size(Size::Sm)
-                .with_icon(IconName::Zap)
+                .with_icon(phosphor::LIGHTNING)
                 .build();
-            round_button(IconName::ArrowUp, SEND, false);
+            round_button(phosphor::ARROW_UP, SEND, false);
         }
-        (false, _) => round_button(IconName::ArrowUp, SEND, empty),
+        (false, _) => round_button(phosphor::ARROW_UP, SEND, empty),
     }
 }
 
 /// Emits a button in the prompt box's strip that names a setting's current value, `label`, with `icon`, answering to `id`, and opens its menu; shown pressed while `open`.
 #[track_caller]
-fn chip(label: &str, icon: Option<IconName>, id: FocusId, open: bool) {
+fn chip(label: &str, icon: Option<Icon>, id: FocusId, open: bool) {
     let chip = Button::new(label, id)
         .variant(button::Variant::Ghost)
         .size(Size::Xs)
@@ -777,10 +777,10 @@ fn strip(state: &WorkspaceState, session: Option<&Session>, rows: u32, above: f3
         Alignment::Center,
         || {
             let operations = crate::events::operations();
-            Button::icon(IconName::Plus, ATTACH)
+            Button::icon(phosphor::PLUS, ATTACH)
                 .on_click(move || operations.attach())
                 .build();
-            Button::icon(IconName::At, MENTION).build();
+            Button::icon(phosphor::AT, MENTION).build();
             Button::new("/", SLASH_BUTTON)
                 .size(Size::Sm)
                 .variant(button::Variant::Ghost)
@@ -788,7 +788,7 @@ fn strip(state: &WorkspaceState, session: Option<&Session>, rows: u32, above: f3
                 .build();
             for (position, index) in WorkspaceState::chips(settings).into_iter().enumerate() {
                 let setting = &settings[index];
-                let icon = (setting.category == "mode").then_some(IconName::Zap);
+                let icon = (setting.category == "mode").then_some(phosphor::LIGHTNING);
                 let open = state.picker == Some(Picker::Setting(index));
                 let words = setting
                     .current_name()
@@ -805,14 +805,14 @@ fn strip(state: &WorkspaceState, session: Option<&Session>, rows: u32, above: f3
                 let account = state.account().unwrap_or("Account");
                 let open = state.picker == Some(Picker::Account);
                 anchored(
-                    || chip(account, Some(IconName::CircleUser), ACCOUNT, open),
+                    || chip(account, Some(phosphor::USER_CIRCLE), ACCOUNT, open),
                     open.then_some(|| account_menu(state)),
                 );
             }
             if let Some(goal) = session.and_then(|session| session.goal.as_ref()) {
                 let open = state.picker == Some(Picker::Goal);
                 anchored_end(
-                    || chip(&goal_label(goal), Some(IconName::Target), GOAL_CHIP, open),
+                    || chip(&goal_label(goal), Some(phosphor::TARGET), GOAL_CHIP, open),
                     open.then_some(|| goal_menu(goal)),
                 );
             }
@@ -866,7 +866,7 @@ fn place(state: &WorkspaceState, session: Option<&Session>) {
             }
             let open = state.picker == Some(Picker::Location);
             anchored(
-                || chip(&words, Some(IconName::GitFork), LOCATION, open),
+                || chip(&words, Some(phosphor::GIT_FORK), LOCATION, open),
                 open.then_some(|| location_menu(state)),
             );
         },

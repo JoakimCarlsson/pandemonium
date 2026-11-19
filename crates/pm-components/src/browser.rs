@@ -4,6 +4,7 @@ use crate::events::reduce;
 use crate::theme;
 use crate::theme::sp;
 use rustle::TextFieldState;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
@@ -11,7 +12,7 @@ use std::ops::{Deref, DerefMut};
 
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
+use crate::icons::{panel_right, panel_right_filled};
 use crate::theme::Role;
 
 use crate::browser_address::address_of;
@@ -714,9 +715,9 @@ fn toolbar(browser: &Browser) {
         Arrangement::SpacedBy(sp(1)),
         Alignment::Center,
         || {
-            Button::icon(IconName::ArrowLeft, BROWSER_BACK).build();
-            Button::icon(IconName::ArrowRight, BROWSER_FORWARD).build();
-            Button::icon(IconName::Refresh, BROWSER_RELOAD).build();
+            Button::icon(phosphor::ARROW_LEFT, BROWSER_BACK).build();
+            Button::icon(phosphor::ARROW_RIGHT, BROWSER_FORWARD).build();
+            Button::icon(phosphor::ARROWS_CLOCKWISE, BROWSER_RELOAD).build();
             column_arranged(
                 Modifier::new().weight(1.0),
                 Arrangement::Start,
@@ -735,7 +736,7 @@ fn toolbar(browser: &Browser) {
                     .size(Size::Sm)
                     .build();
             }
-            Button::icon(IconName::Pick, BROWSER_PICK)
+            Button::icon(phosphor::SELECTION, BROWSER_PICK)
                 .variant(if browser.picking {
                     Variant::Secondary
                 } else {
@@ -743,7 +744,7 @@ fn toolbar(browser: &Browser) {
                 })
                 .build();
             let operations = crate::events::operations();
-            Button::icon(IconName::Camera, BROWSER_CAPTURE)
+            Button::icon(phosphor::CAMERA, BROWSER_CAPTURE)
                 .on_click(move || operations.open_browser_capture_menu())
                 .variant(if browser.picking_area {
                     Variant::Secondary
@@ -753,9 +754,9 @@ fn toolbar(browser: &Browser) {
                 .build();
             Button::icon(
                 if browser.locked {
-                    IconName::Lock
+                    phosphor::LOCK_SIMPLE
                 } else {
-                    IconName::LockOpen
+                    phosphor::LOCK_SIMPLE_OPEN
                 },
                 BROWSER_LOCK,
             )
@@ -775,9 +776,9 @@ fn toolbar(browser: &Browser) {
             .build();
             Button::icon(
                 if browser.tools {
-                    IconName::PanelRightFilled
+                    panel_right_filled()
                 } else {
-                    IconName::PanelRight
+                    panel_right()
                 },
                 BROWSER_TOOLS,
             )

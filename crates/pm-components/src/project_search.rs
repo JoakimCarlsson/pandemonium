@@ -3,6 +3,7 @@
 use crate::events::reduce;
 use crate::theme;
 use crate::theme::sp;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use std::collections::HashSet;
@@ -10,7 +11,6 @@ use std::ops::Range;
 
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::theme::Role;
 use pm_editor::Query;
 use pm_protocol::Location;
@@ -381,9 +381,9 @@ fn group_row(place: usize, group: &Group, folded: bool) {
     let name = group.path.rsplit('/').next().unwrap_or(&group.path);
     let folder = group.path.strip_suffix(name).unwrap_or_default();
     let chevron = if folded {
-        IconName::ChevronRight
+        phosphor::CARET_RIGHT
     } else {
-        IconName::ChevronDown
+        phosphor::CARET_DOWN
     };
     let id = FocusId(SEARCH_GROUP_BASE + place as u64);
     let modifier = Modifier::new()
@@ -474,7 +474,7 @@ pub fn panel(state: &WorkspaceState) {
                                 .modifier(Modifier::new().weight(1.0))
                                 .build();
                             if !search.query.text().is_empty() {
-                                crate::button::Button::icon(IconName::Close, PROJECT_SEARCH_CLEAR)
+                                crate::button::Button::icon(phosphor::X, PROJECT_SEARCH_CLEAR)
                                     .variant(crate::button::Variant::Ghost)
                                     .size(Size::Sm)
                                     .build();
@@ -498,7 +498,7 @@ pub fn panel(state: &WorkspaceState) {
                             );
                             if search.total() > 0 {
                                 crate::button::Button::icon(
-                                    IconName::FileCode,
+                                    phosphor::CODE,
                                     PROJECT_SEARCH_EXCERPTS,
                                 )
                                 .variant(crate::button::Variant::Ghost)

@@ -4,13 +4,13 @@ use crate::theme;
 use crate::theme::sp;
 use pm_field::Edit;
 use rustle::Modifier;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::button::Variant;
 use crate::excerpts::{
     Block, EXCERPTS_FOLD_ALL, EXCERPTS_UNDO_ALL, ExcerptFile, Source, file_list, restore_button,
 };
-use crate::icons::IconName;
 use crate::open_files::Contents;
 use crate::parts::{glyph, line, spacer};
 use crate::sample::{Change, DiffLine, Kind};
@@ -132,7 +132,7 @@ impl<'a> Changes<'a> {
             Alignment::Center,
             move || match mode {
                 Mode::Timeline => {
-                    glyph(IconName::History, 3.5, Role::Muted);
+                    glyph(phosphor::CLOCK_COUNTER_CLOCKWISE, 3.5, Role::Muted);
                     line(
                         format!("Saved {when}, against the file as it is now"),
                         12,
@@ -149,7 +149,7 @@ impl<'a> Changes<'a> {
                     spacer();
                     if undoes {
                         Button::new("Undo turn", EXCERPTS_UNDO_ALL)
-                            .with_icon(IconName::Undo)
+                            .with_icon(phosphor::ARROW_COUNTER_CLOCKWISE)
                             .variant(Variant::Ghost)
                             .size(Size::Sm)
                             .tooltip("Take everything this turn changed back out of the files")

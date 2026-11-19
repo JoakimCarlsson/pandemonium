@@ -2,6 +2,7 @@
 
 use crate::theme;
 use crate::theme::sp;
+use rustle::phosphor;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
 use std::path::Path;
@@ -9,7 +10,6 @@ use std::path::Path;
 use crate::Button;
 use crate::button::Variant;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::parts::{glyph, line, paragraph};
 use crate::size::Size;
 use crate::state::{Outgoing, Page, WorkspaceState};
@@ -210,7 +210,7 @@ fn group(request: &TrustRequest, kind: Input, width: f32) {
                 Alignment::Center,
                 || {
                     if kind == Input::Hook {
-                        glyph(IconName::Terminal, 3.5, Role::Warning);
+                        glyph(phosphor::TERMINAL, 3.5, Role::Warning);
                         rustle::basic_text(
                             Modifier::new(),
                             format!("{title} · run commands"),
@@ -309,7 +309,7 @@ pub fn card(request: &TrustRequest, width: f32) {
                 Arrangement::SpacedBy(sp(1.5)),
                 Alignment::Center,
                 || {
-                    glyph(IconName::Lock, 3.5, Role::Muted);
+                    glyph(phosphor::LOCK_SIMPLE, 3.5, Role::Muted);
                     rustle::basic_text(
                         Modifier::new(),
                         "Project trust",

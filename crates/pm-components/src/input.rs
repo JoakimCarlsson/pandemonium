@@ -10,6 +10,7 @@
 
 use crate::events::reduce;
 use crate::theme;
+use rustle::{Icon, phosphor};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -24,7 +25,6 @@ use rustle::{CursorIcon, LOCAL_TEXT_SELECTION_COLORS, PointerButton, PointerPhas
 use crate::events;
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::icons::IconName;
 use crate::marked;
 use crate::parts::glyph;
 use crate::size::Size;
@@ -85,7 +85,7 @@ pub struct Input<'a> {
     /// How big it is.
     size: Size,
     /// The glyph before the line, if any.
-    leading: Option<IconName>,
+    leading: Option<Icon>,
     /// Whether it is switched off.
     disabled: bool,
     /// Whether what it holds is not acceptable.
@@ -126,11 +126,11 @@ impl<'a> Input<'a> {
     pub fn search(field: &'a TextFieldState, id: FocusId) -> Self {
         Self::new(field, id)
             .variant(Variant::Bordered)
-            .leading_icon(IconName::Search)
+            .leading_icon(phosphor::MAGNIFYING_GLASS)
     }
 
     /// The input with `icon` before its line.
-    pub fn leading_icon(mut self, icon: IconName) -> Self {
+    pub fn leading_icon(mut self, icon: Icon) -> Self {
         self.leading = Some(icon);
         self
     }
