@@ -39,9 +39,9 @@ One crate per layer, each depending only on the layers below it.
   `LOCAL_SCROLLBAR_STYLE` the scrollbar look, and one composition local the
   tokens rustle has no slot for (every role, syntax colours, font stacks).
   Text is set in rustle `TextStyle`s (`theme::text_style`, `code_style`)
-  through `select::styled_text`, which is rustle's text composables made
-  part of the selectable text they are composed in (`select.rs` holds the
-  conversation's selection). Boxes are plain rustle modifiers with theme
+  with rustle's text composables; the conversation is selectable through
+  rustle's `selection_container`, and the file tree, diff, conversation and
+  code view are rustle lazy lists. Boxes are plain rustle modifiers with theme
   values (`theme::sp`, `theme::color`, `Radius::px`); hover, press and focus
   looks are rustle's `interaction_background` and interactive drawing with
   the theme's `InteractionTones`; buttons, cards, badges and surfaces are
