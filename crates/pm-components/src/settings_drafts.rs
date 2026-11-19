@@ -10,7 +10,6 @@ use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::focus::FocusId;
-use crate::select::styled_text;
 use crate::theme::{Radius, Role};
 
 use crate::button::Variant;
@@ -328,13 +327,14 @@ pub(crate) fn prompt_node(state: &WorkspaceState, room: f32) {
                 Arrangement::Start,
                 Alignment::Center,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         "System prompt",
                         theme::text_style(15, 1.4)
                             .font_weight(rustle::FontWeight::MEDIUM)
                             .color(theme::color(Role::Text))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                 },
             );

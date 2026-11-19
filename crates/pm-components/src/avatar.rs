@@ -4,7 +4,6 @@ use crate::theme;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, row_arranged};
 
-use crate::select::styled_text;
 use crate::theme::{Radius, Tone};
 
 use crate::Project;
@@ -76,12 +75,13 @@ impl Avatar {
             Arrangement::Center,
             Alignment::Center,
             move || {
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     initial,
                     theme::text_style(font, 1.2)
                         .font_weight(rustle::FontWeight::SEMI_BOLD)
                         .color(theme::color(Tone::White)),
+                    rustle::TextOverflow::Ellipsis,
                 );
             },
         );

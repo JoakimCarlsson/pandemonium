@@ -11,7 +11,6 @@ use crate::focus::FocusId;
 use crate::icons::IconName;
 use crate::icons::icon;
 use crate::marked::{CaretLook, Mark, marked_line};
-use crate::select::styled_text;
 use crate::theme::{Radius, Role, Tone};
 
 use crate::button::Variant;
@@ -45,27 +44,6 @@ const CODE_PIXELS: f32 = 12.0;
 
 /// How wide a character of code is as a share of how tall the type is, on the wide side so that a line wraps before it would be cut.
 const CODE_CHARACTER: f32 = 0.6;
-
-/// How tall the header of a file is, in logical pixels.
-const HEADER: f32 = 40.0;
-
-/// The space above each file and the rules around it, in logical pixels.
-const SECTION_CHROME: f32 = 16.0 + 2.0;
-
-/// How tall what is above and below the diff in its column is at most: the strip of tabs and the summary, in logical pixels.
-const CHROME: f32 = 88.0;
-
-/// How far beyond the view, above and below, rows are still built, so that scrolling shows no gaps, in logical pixels.
-const OVERSCAN: f32 = 100.0;
-
-/// About how tall a note is before its lines of text, in logical pixels.
-const NOTE_CHROME: f32 = 16.0 + 2.0 + 33.0 + 20.0;
-
-/// How tall a line of text of a note is, in logical pixels.
-const NOTE_LINE: f32 = 20.0;
-
-/// About how tall the box for writing a note is, in logical pixels.
-const NOTE_BOX: f32 = 160.0;
 
 /// The first of the numbers of lines, which no other button or row has; each is named by the file, the side and the line.
 const GUTTER_BASE: u64 = 10_000_000_000;
@@ -240,95 +218,6 @@ fn pieces(shown: &str, columns: usize) -> Vec<std::ops::Range<usize>> {
     ranges
 }
 
-/// How many lines the rows made of the runs of removed and added lines, whose lines each take the numbers of lines in `removed` and `added`, come to when they stand side by side.
-fn paired(removed: &[usize], added: &[usize]) -> usize {
-    (0..removed.len().max(added.len()))
-        .map(|at| {
-            let side = |run: &[usize]| run.get(at).copied().unwrap_or(1);
-            side(removed).max(side(added))
-        })
-        .sum()
-}
-
-/// How many lines of `columns` characters the rows of `change` come to, counted without building them.
-fn row_lines(change: &Change, columns: usize) -> usize {
-    if !change.loaded {
-        return change.expected_rows();
-    }
-    let (mut total, mut removed, mut added) = (0, Vec::new(), Vec::new());
-    for line in &change.diff {
-        match line.kind {
-            Kind::Remove => removed.push(lines_of(&line.text, columns)),
-            Kind::Add => added.push(lines_of(&line.text, columns)),
-            Kind::Hunk | Kind::Context => {
-                total += paired(&removed, &added);
-                removed.clear();
-                added.clear();
-                total += if line.kind == Kind::Hunk {
-                    1
-                } else {
-                    lines_of(&line.text, columns)
-                };
-            }
-        }
-    }
-    total + paired(&removed, &added)
-}
-
-/// How many lines of `columns` characters `row` takes.
-fn row_height(row: &Row, columns: usize) -> usize {
-    match row {
-        Row::Hunk(_) => 1,
-        Row::Pair(old, new) => [old, new]
-            .into_iter()
-            .flatten()
-            .map(|entry| lines_of(&entry.line.text, columns))
-            .max()
-            .unwrap_or(1),
-    }
-}
-
-/// About how tall the notes of `session` on the file at `index` are, in logical pixels, for a column `column` wide; the box for writing one counts as well.
-fn notes_height(state: &WorkspaceState, session: &Session, index: usize, column: f32) -> f32 {
-    let path = &session.changes[index].path;
-    let kept: f32 = session
-        .comments
-        .iter()
-        .filter(|comment| &comment.path == path)
-        .map(|comment| NOTE_CHROME + wrap(&comment.text, 13, column).len() as f32 * NOTE_LINE)
-        .sum();
-    let open = state
-        .comment_target
-        .is_some_and(|target| target.change == index && !target.dragging);
-    kept + if open { NOTE_BOX } else { 0.0 }
-}
-
-/// About how tall the file at `index` is with its header, its rows and its notes, in logical pixels, folded away or not.
-pub(crate) fn section_height(
-    state: &WorkspaceState,
-    session: &Session,
-    index: usize,
-    width: f32,
-) -> f32 {
-    let change = &session.changes[index];
-    if state.closed_diffs.contains(&change.path) {
-        return (SECTION_CHROME + HEADER) * pixels();
-    }
-    let column = ((width - 34.0) / 2.0 - 46.0).max(80.0);
-    (SECTION_CHROME
-        + HEADER
-        + row_lines(change, columns(width)) as f32 * ROW
-        + notes_height(state, session, index, column))
-        * pixels()
-}
-
-/// How far down the diff the file at `index` starts, in logical pixels, for the files folded away in `state` and a view `width` wide.
-pub fn offset_of(state: &WorkspaceState, session: &Session, index: usize, width: f32) -> f32 {
-    (0..index)
-        .map(|before| section_height(state, session, before, width))
-        .sum::<f32>()
-}
-
 /// The type the code of a diff is set in: 12 pixels tall, a line height of 1.4 times that, in the code font, in `tone`.
 fn code_type(tone: impl Into<Tone>) -> rustle::TextStyle {
     theme::mono_style(12, 1.4).color(theme::color(tone))
@@ -428,7 +317,12 @@ fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<FocusId>) {
                 Arrangement::Start,
                 Alignment::Center,
                 move || {
-                    styled_text(Modifier::new(), shown_number, code_type(tone));
+                    rustle::basic_text(
+                        Modifier::new(),
+                        shown_number,
+                        code_type(tone),
+                        rustle::TextOverflow::Ellipsis,
+                    );
                 },
             );
         },
@@ -548,13 +442,27 @@ fn hunk_row(header: &str) {
         Arrangement::Start,
         Alignment::Center,
         || {
-            styled_text(
+            rustle::basic_text(
                 Modifier::new().weight(1.0),
                 header,
                 code_type(Role::Subtle).max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
         },
     );
+}
+
+/// How many lines of `columns` characters `row` takes.
+fn row_height(row: &Row, columns: usize) -> usize {
+    match row {
+        Row::Hunk(_) => 1,
+        Row::Pair(old, new) => [old, new]
+            .into_iter()
+            .flatten()
+            .map(|entry| lines_of(&entry.line.text, columns))
+            .max()
+            .unwrap_or(1),
+    }
 }
 
 /// Emits a diff row of the change at `change`, its code coloured as `colours` says.
@@ -713,13 +621,14 @@ fn comment_box(state: &WorkspaceState, target: CommentTarget) {
     let ready = !state.comment_text.text().trim().is_empty();
     under(target.range, || {
         card(true, Arrangement::SpacedBy(sp(2.5)), || {
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 format!("Comment on {about}"),
                 theme::text_style(13, 1.4)
                     .font_weight(rustle::FontWeight::MEDIUM)
                     .color(theme::color(Role::Text))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
             Input::new(&state.comment_text, COMMENT_FIELD)
                 .placeholder("Tell the agent what to change")
@@ -753,14 +662,6 @@ fn viewed_button(viewed: bool, id: FocusId) {
         .tone(if viewed { Role::Success } else { Role::Subtle })
         .selected(viewed)
         .build();
-}
-
-/// Something shown under a row of a diff: the form for a comment, or a note kept.
-enum Block<'a> {
-    /// The form for a comment on the target.
-    Form(CommentTarget),
-    /// The note at this position among the session's notes.
-    Note(usize, &'a Comment),
 }
 
 /// How wide, in steps, the chevron and the file icon of a file header are.
@@ -815,12 +716,24 @@ fn heading_parts(name: &str, directory: &str, open: bool, room: f32) {
                 Alignment::Start,
                 || file_icon(name, HEADER_MARKS[1]),
             );
-            styled_text(Modifier::new(), name, name_kind);
+            rustle::basic_text(
+                Modifier::new(),
+                name,
+                name_kind,
+                rustle::TextOverflow::Ellipsis,
+            );
             column_arranged(
                 Modifier::new().clip(),
                 Arrangement::Start,
                 Alignment::Start,
-                || styled_text(Modifier::new(), directory, directory_kind),
+                || {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        directory,
+                        directory_kind,
+                        rustle::TextOverflow::Ellipsis,
+                    )
+                },
             );
         },
     );
@@ -886,143 +799,272 @@ fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
     );
 }
 
-/// Emits one changed file: its header, and, unless it is folded away, its lines with the notes on them.
-#[track_caller]
-fn file(
-    state: &WorkspaceState,
-    session: &Session,
-    index: usize,
-    width: f32,
-    top: f32,
-    window: (f32, f32),
-) {
-    let height = section_height(state, session, index, width);
-    if top + height < window.0 || top > window.1 {
-        rustle::spacer(Modifier::new().height(theme::sp(height / (4.0 * pixels()))));
-        return;
+/// One item of the diff's lazy list: a part of a changed file, named by the file's index among the session's changes.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum Item {
+    /// The header of the file.
+    Header(usize),
+    /// The line that says the file's diff is being read.
+    Reading(usize),
+    /// The form for a comment on the whole file.
+    FileForm(usize),
+    /// The note on the whole file at this position among the session's notes.
+    FileNote(usize, usize),
+    /// The row of the file at this position among its rows.
+    Row(usize, usize),
+    /// The form for a comment on the lines that end at the row at this position.
+    Form(usize, usize),
+    /// The note on lines of the file at this position among the session's notes.
+    Note(usize, usize),
+}
+
+impl Item {
+    /// The index of the file the item is part of.
+    fn file(self) -> usize {
+        match self {
+            Self::Header(file)
+            | Self::Reading(file)
+            | Self::FileForm(file)
+            | Self::FileNote(file, _)
+            | Self::Row(file, _)
+            | Self::Form(file, _)
+            | Self::Note(file, _) => file,
+        }
     }
-    let change = &session.changes[index];
-    let open = !state.closed_diffs.contains(&change.path);
-    let column_width = ((width - 34.0) / 2.0 - 46.0).max(80.0);
-    let mine: Vec<(usize, &Comment)> = session
+}
+
+/// The notes of `session` on the file `change`, each with its position among the session's notes.
+fn notes_on<'a>(session: &'a Session, change: &Change) -> Vec<(usize, &'a Comment)> {
+    session
         .comments
         .iter()
         .enumerate()
         .filter(|(_, comment)| comment.path == change.path)
-        .collect();
-    let target = state.comment_target.filter(|target| target.change == index);
+        .collect()
+}
+
+/// The rows of each file of `session` that is shown unfolded with its diff read; none for the others.
+fn shown_rows<'a>(state: &WorkspaceState, session: &'a Session) -> Vec<Vec<Row<'a>>> {
+    session
+        .changes
+        .iter()
+        .map(|change| {
+            if change.loaded && !state.closed_diffs.contains(&change.path) {
+                rows(change)
+            } else {
+                Vec::new()
+            }
+        })
+        .collect()
+}
+
+/// Appends the items of the file at `index` of `session`, whose shown rows are `rows`: its header and, unless it is folded away, the line saying it is being read or its notes, forms and rows.
+fn file_items(
+    state: &WorkspaceState,
+    session: &Session,
+    index: usize,
+    rows: &[Row],
+    items: &mut Vec<Item>,
+) {
+    items.push(Item::Header(index));
+    let change = &session.changes[index];
+    if state.closed_diffs.contains(&change.path) {
+        return;
+    }
+    if !change.loaded {
+        items.push(Item::Reading(index));
+        return;
+    }
+    let mine = notes_on(session, change);
+    let target = state
+        .comment_target
+        .filter(|target| target.change == index && !target.dragging);
+    if target.is_some_and(|target| target.range.is_none()) {
+        items.push(Item::FileForm(index));
+    }
+    for (nth, _) in mine.iter().filter(|(_, comment)| comment.range.is_none()) {
+        items.push(Item::FileNote(index, *nth));
+    }
+    for (position, row_of) in rows.iter().enumerate() {
+        items.push(Item::Row(index, position));
+        let Row::Pair(old, new) = row_of else {
+            continue;
+        };
+        for (side_new, entry) in [(false, old), (true, new)] {
+            let Some(number) = entry
+                .as_ref()
+                .and_then(|entry| if side_new { entry.new } else { entry.old })
+            else {
+                continue;
+            };
+            let ends_here = |range: Option<Range>| {
+                range.is_some_and(|range| range.new == side_new && range.end == number)
+            };
+            if target.is_some_and(|target| ends_here(target.range)) {
+                items.push(Item::Form(index, position));
+            }
+            for (nth, _) in mine.iter().filter(|(_, comment)| ends_here(comment.range)) {
+                items.push(Item::Note(index, *nth));
+            }
+        }
+    }
+}
+
+/// The items of the diff of `session`, file after file, whose shown rows are `rows`.
+fn items(state: &WorkspaceState, session: &Session, rows: &[Vec<Row>]) -> Vec<Item> {
+    let mut items = Vec::new();
+    for (index, rows) in rows.iter().enumerate() {
+        file_items(state, session, index, rows, &mut items);
+    }
+    items
+}
+
+/// The index, in the diff's lazy list, of the header of the file at `index` of `session`, as `state` shows it.
+pub fn header_item(state: &WorkspaceState, session: &Session, index: usize) -> usize {
+    let rows = shown_rows(state, session);
+    items(state, session, &rows[..index.min(rows.len())]).len()
+}
+
+/// The index of the file of each item in the diff's lazy list of `session`, as `state` shows it.
+pub(crate) fn item_files(state: &WorkspaceState, session: &Session) -> Vec<usize> {
+    items(state, session, &shown_rows(state, session))
+        .into_iter()
+        .map(Item::file)
+        .collect()
+}
+
+/// What the items of the diff are drawn from while the diff composes.
+struct Shown<'a> {
+    /// The workspace.
+    state: &'a WorkspaceState,
+    /// The session whose diff it is.
+    session: &'a Session,
+    /// The items of the list.
+    items: Vec<Item>,
+    /// The shown rows of each file.
+    rows: Vec<Vec<Row<'a>>>,
+    /// The colours of the code of each file whose rows were drawn, worked out once per composition.
+    colours: std::cell::RefCell<std::collections::HashMap<usize, DiffColours>>,
+    /// How many characters of code one side of a row holds on a line.
+    columns: usize,
+    /// How wide the view is, in logical pixels.
+    width: f32,
+    /// How wide a column of code is, in logical pixels, which a note on lines is set in.
+    column_width: f32,
+}
+
+impl Shown<'_> {
+    /// Whether the item at `at` is the last of its file.
+    fn last_of_file(&self, at: usize) -> bool {
+        self.items
+            .get(at + 1)
+            .is_none_or(|next| next.file() != self.items[at].file())
+    }
+
+    /// Emits the item at `at` in the frame of its file.
+    #[track_caller]
+    fn item(&self, at: usize) {
+        let item = self.items[at];
+        framed(
+            matches!(item, Item::Header(_)),
+            self.last_of_file(at),
+            || self.content(item),
+        );
+    }
+
+    /// Emits what `item` shows.
+    #[track_caller]
+    fn content(&self, item: Item) {
+        let index = item.file();
+        let change = &self.session.changes[index];
+        let comment = |nth: usize| &self.session.comments[nth];
+        let target = self
+            .state
+            .comment_target
+            .filter(|target| target.change == index);
+        match item {
+            Item::Header(_) => file_header(
+                change,
+                index,
+                !self.state.closed_diffs.contains(&change.path),
+                notes_on(self.session, change).len(),
+            ),
+            Item::Reading(_) => row_arranged(
+                Modifier::new()
+                    .height(theme::sp(change.expected_rows() as f32 * ROW / 4.0))
+                    .padding_xy(theme::sp(3), 0.0)
+                    .padding_xy(0.0, theme::sp(2)),
+                Arrangement::Start,
+                Alignment::Start,
+                || line("Reading the diff…", 12, 1.4, Role::Subtle),
+            ),
+            Item::FileForm(_) | Item::Form(..) => {
+                if let Some(target) = target {
+                    comment_box(self.state, target);
+                }
+            }
+            Item::FileNote(_, nth) => comment_card(nth, comment(nth), self.width),
+            Item::Note(_, nth) => comment_card(nth, comment(nth), self.column_width),
+            Item::Row(_, position) => {
+                let mut cache = self.colours.borrow_mut();
+                let colours = cache.entry(index).or_insert_with(|| {
+                    let colours =
+                        DiffColours::of(&change.diff, file_language(&change.path).as_deref());
+                    if self.state.window.git.word_diff {
+                        colours.with_words(&change.diff, &change.words)
+                    } else {
+                        colours
+                    }
+                });
+                diff_row(
+                    &self.rows[index][position],
+                    colours,
+                    index,
+                    target.and_then(|target| target.range),
+                    self.columns,
+                );
+            }
+        }
+    }
+}
+
+/// Emits `content` as a part of a file's frame, a rounded rule around the whole file a step and a half in from the sides: its top with the space above the file when `first`, its bottom when `last`, and its sides between.
+#[track_caller]
+fn framed(first: bool, last: bool, content: impl FnOnce()) {
+    let colour = theme::color(Role::Border);
+    let radius = Radius::Lg.px();
+    let reach = radius * 2.0 + 2.0;
+    let edge = |at: bool| if at { 1.0 } else { 0.0 };
     column_arranged(
-        Modifier::new()
-            .fill_max_width()
-            .padding_xy(theme::sp(4), 0.0)
-            .padding_each(0.0, theme::sp(4), 0.0, 0.0)
-            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
-            .padding(1.0)
-            .clip(),
+        Modifier::new().fill_max_width().padding_each(
+            theme::sp(4),
+            if first { theme::sp(4) } else { 0.0 },
+            theme::sp(4),
+            0.0,
+        ),
         Arrangement::Start,
         Alignment::Start,
         || {
-            file_header(change, index, open, mine.len());
-            if !open {
-                return;
-            }
-            if !change.loaded {
-                row_arranged(
-                    Modifier::new()
-                        .height(theme::sp(change.expected_rows() as f32 * ROW / 4.0))
-                        .padding_xy(theme::sp(3), 0.0)
-                        .padding_xy(0.0, theme::sp(2)),
-                    Arrangement::Start,
-                    Alignment::Start,
-                    || line("Reading the diff…", 12, 1.4, Role::Subtle),
-                );
-                return;
-            }
-            if let Some(target) = target.filter(|target| target.range.is_none() && !target.dragging)
-            {
-                rustle::key("file form", || comment_box(state, target));
-            }
-            for (at, comment) in mine.iter().filter(|(_, comment)| comment.range.is_none()) {
-                rustle::key(("file note", *at), || comment_card(*at, comment, width));
-            }
-            let selected = target.and_then(|target| target.range);
-            let mut colours = DiffColours::of(&change.diff, file_language(&change.path).as_deref());
-            if state.window.git.word_diff {
-                colours = colours.with_words(&change.diff, &change.words);
-            }
-            let scale = pixels();
-            let columns = columns(width);
-            let mut at = top + (SECTION_CHROME + HEADER) * scale;
-            let mut skipped = 0;
-            for (position, row_of) in rows(change).iter().enumerate() {
-                let mut blocks: Vec<(Block, f32)> = Vec::new();
-                if let Row::Pair(old, new) = row_of {
-                    for (side_new, entry) in [(false, old), (true, new)] {
-                        let number = entry
-                            .as_ref()
-                            .and_then(|entry| if side_new { entry.new } else { entry.old });
-                        let Some(number) = number else {
-                            continue;
-                        };
-                        let ends_here = |range: Option<Range>| {
-                            range.is_some_and(|range| range.new == side_new && range.end == number)
-                        };
-                        if let Some(target) =
-                            target.filter(|target| !target.dragging && ends_here(target.range))
-                        {
-                            blocks.push((Block::Form(target), NOTE_BOX));
-                        }
-                        for (nth, comment) in
-                            mine.iter().filter(|(_, comment)| ends_here(comment.range))
-                        {
-                            blocks.push((
-                                Block::Note(*nth, comment),
-                                NOTE_CHROME
-                                    + wrap(&comment.text, 13, column_width).len() as f32
-                                        * NOTE_LINE,
-                            ));
-                        }
-                    }
-                }
-                let lines = row_height(row_of, columns);
-                let near = at + lines as f32 * ROW * scale >= window.0 && at <= window.1;
-                if blocks.is_empty() && !near {
-                    skipped += lines;
-                    at += lines as f32 * ROW * scale;
-                    continue;
-                }
-                skip(&mut skipped);
-                rustle::key(("row", position), || {
-                    diff_row(row_of, &colours, index, selected, columns);
-                });
-                at += lines as f32 * ROW * scale;
-                for (block, tall) in blocks {
-                    match block {
-                        Block::Form(target) => {
-                            rustle::key(("form", position), || comment_box(state, target));
-                        }
-                        Block::Note(nth, comment) => {
-                            rustle::key(("note", nth), || {
-                                comment_card(nth, comment, column_width);
-                            });
-                        }
-                    }
-                    at += tall * scale;
-                }
-            }
-            skip(&mut skipped);
+            column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .draw_with_content(move |canvas| {
+                        canvas.draw_content();
+                        let (width, height) = (canvas.width(), canvas.height());
+                        let top = if first { 0.0 } else { -reach };
+                        let bottom = if last { height } else { height + reach };
+                        canvas.push_clip(0.0, 0.0, width, height);
+                        canvas.stroke_rect(0.0, top, width, bottom - top, radius, 1.0, colour);
+                        canvas.pop_clip();
+                    })
+                    .padding_each(1.0, edge(first), 1.0, edge(last))
+                    .clip(),
+                Arrangement::Start,
+                Alignment::Start,
+                content,
+            );
         },
     );
-}
-
-/// Emits a blank as tall as the `rows` lines left out since the last row built, which are taken as counted.
-#[track_caller]
-fn skip(rows: &mut usize) {
-    let blank = std::mem::take(rows);
-    if blank == 0 {
-        return;
-    }
-    rustle::spacer(Modifier::new().height(theme::sp(blank as f32 * ROW / 4.0)));
 }
 
 /// Emits the strip above the files: how many changed, how many are read, and the button that sends the notes to the agent.
@@ -1140,41 +1182,39 @@ impl rustle::Layout for SummaryLayout {
     }
 }
 
-/// Emits the diff of `session` in a view `width` by `height` logical pixels: a summary strip, then each changed file, of which only those in or near the view are built.
+/// Emits the diff of `session` in a view `width` logical pixels wide: a summary strip, then a lazy list of the parts of each changed file, of which only those in or near the view are composed.
 #[track_caller]
-pub fn diff(state: &WorkspaceState, session: &Session, width: f32, height: f32) {
-    let heights: Vec<f32> = (0..session.changes.len())
-        .map(|index| section_height(state, session, index, width))
-        .collect();
-    let total: f32 = heights.iter().sum();
-    let view = (height - CHROME * pixels()).max(0.0);
-    let scrolled = state.diff_scroll.offset();
-    let window = (
-        scrolled.min(total - view) - OVERSCAN * pixels(),
-        scrolled.min(total) + view + OVERSCAN * pixels(),
-    );
+pub fn diff(state: &WorkspaceState, session: &Session, width: f32) {
+    let rows = shown_rows(state, session);
+    let shown = Shown {
+        state,
+        session,
+        items: items(state, session, &rows),
+        rows,
+        colours: std::cell::RefCell::default(),
+        columns: columns(width),
+        width,
+        column_width: ((width - 34.0) / 2.0 - 46.0).max(80.0),
+    };
     column_arranged(
         Modifier::new().weight(1.0),
         Arrangement::Start,
         Alignment::Start,
         || {
             summary(session);
-            column_arranged(
+            rustle::lazy_list_with(
                 state
                     .diff_bounds
                     .track(Modifier::new().fill_max_width().weight(1.0))
-                    .vertical_scroll(&state.diff_scroll)
-                    .fill_max_width()
-                    .padding_each(0.0, 0.0, 0.0, theme::sp(4)),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    let mut top = 0.0;
-                    for (index, tall) in heights.iter().enumerate() {
-                        rustle::key(index, || file(state, session, index, width, top, window));
-                        top += tall;
-                    }
+                    .fill_max_width(),
+                &state.diff_list,
+                rustle::LazyContent::new().padding_each(0.0, theme::sp(4)),
+                shown.items.len(),
+                |at| {
+                    let item = shown.items[at];
+                    (session.changes[item.file()].path.as_str(), item)
                 },
+                |at| shown.item(at),
             );
         },
     );

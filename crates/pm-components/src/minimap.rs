@@ -51,10 +51,10 @@ struct Geometry {
 }
 
 impl Geometry {
-    /// The geometry of `document` scrolled `scroll` logical pixels in a view `view` tall, rows `row` tall, holding `columns` characters when lines wrap, with the minimap `height` tall.
+    /// The geometry of `document` scrolled so row `top` is at the top of a view `view` tall, rows `row` tall, holding `columns` characters when lines wrap, with the minimap `height` tall.
     fn of(
         document: &Document,
-        scroll: f32,
+        top: f32,
         view: f32,
         row: f32,
         columns: Option<usize>,
@@ -63,7 +63,7 @@ impl Geometry {
         let lines = document.rows();
         let rows = document.wrapped_rows(columns).max(1) as f32;
         let view_rows = (view / row).max(1.0);
-        let first = scroll.max(0.0) / row;
+        let first = top.max(0.0);
         let content = lines as f32 * ROW;
         let share = (first / (rows - view_rows).max(1.0)).clamp(0.0, 1.0);
         Self {
@@ -75,20 +75,20 @@ impl Geometry {
         }
     }
 
-    /// The top and the height of the mark over the stretch in view, for a view scrolled `scroll` with rows `row` tall, on a minimap `height` tall.
-    fn slider(&self, scroll: f32, row: f32, height: f32) -> (f32, f32) {
-        let first = scroll.max(0.0) / row;
+    /// The top and the height of the mark over the stretch in view, for a view scrolled so row `top` is at its top, on a minimap `height` tall.
+    fn slider(&self, top: f32, height: f32) -> (f32, f32) {
+        let first = top.max(0.0);
         let size =
             (self.view_rows * self.per_row * ROW).clamp(LEAST_SLIDER, height.max(LEAST_SLIDER));
         let top = first * self.per_row * ROW - self.offset;
         (top.clamp(0.0, (height - size).max(0.0)), size)
     }
 
-    /// How far to scroll, in logical pixels, to centre the view on the point `y` logical pixels down the minimap, rows `row` tall.
-    fn scroll_to(&self, y: f32, row: f32) -> f32 {
+    /// The row to scroll to the top of the view to centre it on the point `y` logical pixels down the minimap.
+    fn scroll_to(&self, y: f32) -> f32 {
         let line = (y + self.offset) / ROW;
         let centre = line / self.per_row.max(f32::EPSILON);
-        ((centre - self.view_rows / 2.0) * row).clamp(0.0, (self.rows - 1.0) * row)
+        (centre - self.view_rows / 2.0).clamp(0.0, (self.rows - 1.0).max(0.0))
     }
 }
 
@@ -152,17 +152,17 @@ fn row_of(document: &Document, index: usize, spans: &[(std::ops::Range<usize>, K
     );
 }
 
-/// Emits the minimap of `document`, scrolled `scroll` logical pixels in a view `view` tall whose rows are `row` tall and hold `columns` characters when lines wrap, drawn `height` logical pixels tall.
+/// Emits the minimap of `document`, scrolled so row `top` is at the top of a view `view` tall whose rows are `row` tall and hold `columns` characters when lines wrap, drawn `height` logical pixels tall.
 #[track_caller]
 pub(crate) fn minimap(
     document: &Document,
-    scroll: f32,
+    top: f32,
     view: f32,
     row: f32,
     columns: Option<usize>,
     height: f32,
 ) {
-    let geometry = Geometry::of(document, scroll, view, row, columns, height);
+    let geometry = Geometry::of(document, top, view, row, columns, height);
     let first = (geometry.offset / ROW).floor() as usize;
     let count = (height / ROW).ceil() as usize + 1;
     let shown = document.shown_lines(first, count);
@@ -171,7 +171,7 @@ pub(crate) fn minimap(
         .zip(shown.last())
         .map_or((0, 0), |(low, high)| (*low, high + 1));
     let spans = document.minimap_highlights(low..high);
-    let (top, size) = geometry.slider(scroll, row, height);
+    let (slider_top, size) = geometry.slider(top, height);
     let own = Modifier::new()
         .width(WIDTH)
         .fill_max_height()
@@ -198,7 +198,7 @@ pub(crate) fn minimap(
         );
         rustle::spacer(
             Modifier::new()
-                .offset(0.0, top)
+                .offset(0.0, slider_top)
                 .width(WIDTH)
                 .height(size)
                 .background(theme::color(Tone::Role(Role::Muted, 0.2))),
@@ -220,11 +220,10 @@ impl WorkspaceState {
         let crate::open_files::Contents::Text(document) = &viewer.contents else {
             return self;
         };
-        let (view, room) = (viewer.scroll.viewport_length(), viewer.scroll.max_offset());
-        let geometry = Geometry::of(document, viewer.scroll.offset(), view, row, columns, height);
-        viewer
-            .scroll
-            .jump_to(geometry.scroll_to(y, row).clamp(0.0, room));
+        let view = viewer.scroll.scroll().viewport_length();
+        let top = viewer.top_row(columns, row);
+        let geometry = Geometry::of(document, top, view, row, columns, height);
+        viewer.scroll_to_row(geometry.scroll_to(y), columns, row);
         self
     }
 }

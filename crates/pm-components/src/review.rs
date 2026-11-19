@@ -11,7 +11,6 @@ use std::rc::Rc;
 use crate::events::Interactive;
 use crate::focus::FocusId;
 use crate::icons::{IconName, spinner};
-use crate::select::styled_text;
 use crate::theme::{Radius, Role, Tone};
 
 use crate::branch_menu::branch_menu;
@@ -27,9 +26,7 @@ use crate::size::Size;
 use crate::state::{
     COMMIT, COMMIT_MESSAGE, OPEN_DIFF, REVIEW_CHANGES, REVIEW_FILES, ReviewTab, WorkspaceState,
 };
-use crate::tree_actions::{
-    TREE_COLLAPSE, TREE_NEW_FILE, TREE_NEW_FOLDER, TREE_REFRESH, TREE_SPACE,
-};
+use crate::tree_actions::{TREE_COLLAPSE, TREE_NEW_FILE, TREE_NEW_FOLDER, TREE_REFRESH};
 use crate::{Button, Input, Tile, input};
 use crate::{change_list, file_tree};
 
@@ -75,90 +72,9 @@ fn scrolling_list(state: &WorkspaceState, content: impl FnOnce()) {
     );
 }
 
-/// Emits a scrolling list like [`scrolling_list`] whose last child, the blank `filler` emits,
-/// takes the room the rows leave in the list's view, and at least [`FILLER_LEAST`] steps when
-/// they leave less.
-#[track_caller]
-fn filled_list(state: &WorkspaceState, content: impl FnOnce(), filler: impl FnOnce()) {
-    rustle::layout(
-        Modifier::new()
-            .fill_max_width()
-            .weight(1.0)
-            .vertical_scroll(&state.tree_scroll)
-            .fill_max_width()
-            .padding_xy(0.0, theme::sp(1)),
-        FilledColumn {
-            least: sp(FILLER_LEAST),
-        },
-        || {
-            content();
-            filler();
-        },
-    );
-}
-
-/// How tall, in steps, the blank under the files is at the least.
-pub(crate) const FILLER_LEAST: f32 = 32.0;
-
-/// A column whose last child fills what the others leave of the column's least height, and is
-/// never shorter than `least`: the rows of a list, then a blank under them that is still there,
-/// `least` tall, when the rows overflow the view.
-pub(crate) struct FilledColumn {
-    /// How tall the last child is at the least, in logical pixels.
-    pub(crate) least: f32,
-}
-
-impl rustle::Layout for FilledColumn {
-    /// Measures every child but the last one under the other at its own height, then the last
-    /// one as wide as the column and as tall as what is left of the least height, or `least`.
-    fn measure(
-        &self,
-        children: &mut rustle::Children,
-        constraints: rustle::Constraints,
-    ) -> rustle::LayoutResult {
-        let count = children.len();
-        let mut positions = Vec::with_capacity(count);
-        let mut used = 0.0;
-        let mut widest: f32 = 0.0;
-        for index in 0..count.saturating_sub(1) {
-            let size = children.measure(
-                index,
-                rustle::Constraints {
-                    min_width: 0.0,
-                    max_width: constraints.max_width,
-                    min_height: 0.0,
-                    max_height: f32::INFINITY,
-                },
-            );
-            positions.push(rustle::Offset::new(0.0, used));
-            used += size.height;
-            widest = widest.max(size.width);
-        }
-        if count > 0 {
-            let height = (constraints.min_height - used).max(self.least);
-            let size = children.measure(
-                count - 1,
-                rustle::Constraints {
-                    min_width: 0.0,
-                    max_width: constraints.max_width,
-                    min_height: height,
-                    max_height: height,
-                },
-            );
-            positions.push(rustle::Offset::new(0.0, used));
-            used += size.height;
-            widest = widest.max(size.width);
-        }
-        rustle::LayoutResult {
-            size: constraints.constrain(rustle::Size::new(widest, used)),
-            positions,
-        }
-    }
-}
-
 /// Emits a line telling the list has nothing to show.
 #[track_caller]
-fn nothing(message: &str) {
+pub(crate) fn nothing(message: &str) {
     row_arranged(
         Modifier::new()
             .padding_xy(theme::sp(4), 0.0)
@@ -216,68 +132,26 @@ fn files_header(state: &WorkspaceState) {
 /// Emits `words` as the name of a list, taking the room left in its row.
 #[track_caller]
 fn label_with_grow(words: &str) {
-    styled_text(
+    rustle::basic_text(
         Modifier::new().weight(1.0),
         words,
         theme::text_style(13, 1.4)
             .color(theme::color(Role::Subtle))
             .max_lines(1),
+        rustle::TextOverflow::Ellipsis,
     );
 }
 
 /// Emits every file of the project, as a tree, under the buttons that act on it.
 #[track_caller]
-fn files(state: &WorkspaceState, height: f32) {
-    let landing_at_root = state
-        .git
-        .tree_drag
-        .as_ref()
-        .is_some_and(|drag| drag.into.as_deref() == Some(""));
+fn files(state: &WorkspaceState) {
     column_arranged(
         Modifier::new().fill_max_width().weight(1.0),
         Arrangement::Start,
         Alignment::Start,
         || {
             files_header(state);
-            filled_list(
-                state,
-                || {
-                    file_tree::rows(
-                        state,
-                        (height - 136.0 * crate::theme::step_scale()).max(0.0),
-                    );
-                    if state.files.is_empty() && state.tree_folders.is_empty() {
-                        nothing(if state.files_loading() {
-                            "Loading files…"
-                        } else {
-                            "No files yet."
-                        });
-                    }
-                },
-                || {
-                    let space = Modifier::new().fill_max_width();
-                    let space = if landing_at_root {
-                        space.background_rounded(
-                            theme::color(Tone::from(Role::Accent).alpha(0.24)),
-                            Radius::Sm.px(),
-                        )
-                    } else {
-                        space
-                    };
-                    let operations = crate::events::operations();
-                    let pressed = reduce(TREE_SPACE);
-                    rustle::spacer(crate::bounds::placed(
-                        TREE_SPACE,
-                        space.control_menu(
-                            TREE_SPACE,
-                            move |_| pressed(),
-                            move || {
-                                operations.open_tree_menu(crate::tree_actions::TreeTarget::root())
-                            },
-                        ),
-                    ));
-                },
-            );
+            file_tree::list(state);
         },
     );
 }
@@ -309,13 +183,14 @@ fn primary_face(primary: &Primary) {
             } else {
                 glyph(icon, 3.5, tone);
             }
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 words,
                 theme::text_style(13, 1.4)
                     .font_weight(rustle::FontWeight::MEDIUM)
                     .color(theme::color(tone))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
             if let Primary::Sync { ahead, behind } = primary {
                 for (count, arrow) in [(*behind, IconName::ArrowDown), (*ahead, IconName::ArrowUp)]
@@ -724,7 +599,7 @@ fn branch_button(state: &WorkspaceState, session: &Session, working: bool) {
 
 /// Emits the review panel for `session`. A chat has no branch, worktree or diff, so its panel leaves out source control: it lists the files of its scratch folder, or searches them.
 #[track_caller]
-pub fn review(state: &WorkspaceState, session: &Session, height: f32) {
+pub fn review(state: &WorkspaceState, session: &Session) {
     let versioned = !session.is_chat();
     let shown = match state.review_tab {
         ReviewTab::Changes if !versioned => ReviewTab::Files,
@@ -789,7 +664,7 @@ pub fn review(state: &WorkspaceState, session: &Session, height: f32) {
                     }
                     match shown {
                         ReviewTab::Changes => changes(state, session),
-                        ReviewTab::Files => files(state, height),
+                        ReviewTab::Files => files(state),
                         ReviewTab::Search => crate::project_search::panel(state),
                     }
                 },

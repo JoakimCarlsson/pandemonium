@@ -10,11 +10,10 @@ use rustle::Modifier;
 
 use crate::Button;
 use crate::button::Variant;
-use crate::excerpts::{Block, ExcerptFile, Source, plain_block};
+use crate::excerpts::{Block, Drawing, ExcerptFile, Source, block_gap};
 use crate::focus::FocusId;
 use crate::open_files::Contents;
 use crate::parts::{line, spacer};
-use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::theme::{Radius, Role, Tone};
@@ -51,9 +50,6 @@ const MOST_LINES: usize = 12;
 
 /// How wide the room must be for the two sides of a conflict to stand beside each other, in logical pixels.
 const BESIDE: f32 = 760.0;
-
-/// How far beyond the view, above and below, rows are still built, in logical pixels.
-const OVERSCAN: f32 = 200.0;
 
 /// The marker that starts the lines of our side.
 const OURS_MARK: &str = "<<<<<<<";
@@ -235,8 +231,6 @@ pub enum Layout {
 pub struct Conflict<'a> {
     /// The state the file and the sides are drawn from.
     state: &'a WorkspaceState,
-    /// How tall the room for the resolver is, in logical pixels.
-    height: f32,
     /// How the two sides of a conflict lie.
     layout: Layout,
     /// How big it is.
@@ -258,11 +252,10 @@ struct Card<'a> {
 }
 
 impl<'a> Conflict<'a> {
-    /// The resolver of the file `state` holds the excerpts of, in a room `width` wide and `height` tall, its two sides beside each other when the room allows.
-    pub fn new(state: &'a WorkspaceState, width: f32, height: f32) -> Self {
+    /// The resolver of the file `state` holds the excerpts of, in a room `width` wide, its two sides beside each other when the room allows.
+    pub fn new(state: &'a WorkspaceState, width: f32) -> Self {
         Self {
             state,
-            height,
             layout: if width >= BESIDE {
                 Layout::SideBySide
             } else {
@@ -356,12 +349,13 @@ impl<'a> Conflict<'a> {
                 || {
                     for content in text_of.lines().take(MOST_LINES) {
                         Self::line_row(row, 2.0, || {
-                            styled_text(
+                            rustle::basic_text(
                                 Modifier::new().weight(1.0),
                                 crate::diff_syntax::shown(content),
                                 theme::code_style(font, 1.4)
                                     .color(theme::color(Role::Text))
                                     .max_lines(1),
+                                rustle::TextOverflow::Ellipsis,
                             );
                         });
                     }
@@ -432,7 +426,7 @@ impl<'a> Conflict<'a> {
                     Arrangement::Start,
                     Alignment::Center,
                     || {
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new().weight(1.0),
                             format!(
                                 "Conflict {} of {} · line {}",
@@ -444,6 +438,7 @@ impl<'a> Conflict<'a> {
                                 .font_weight(rustle::FontWeight::MEDIUM)
                                 .color(theme::color(Role::Text))
                                 .max_lines(1),
+                            rustle::TextOverflow::Ellipsis,
                         );
                     },
                 );
@@ -498,13 +493,14 @@ impl<'a> Conflict<'a> {
             Arrangement::SpacedBy(sp(3)),
             Alignment::Center,
             || {
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     name,
                     theme::text_style(13, 1.4)
                         .font_weight(rustle::FontWeight::MEDIUM)
                         .color(theme::color(Role::Text))
                         .max_lines(1),
+                    rustle::TextOverflow::Ellipsis,
                 );
                 line(
                     said,
@@ -554,30 +550,10 @@ impl<'a> Conflict<'a> {
             });
         let regions = text_now.map(regions_in).unwrap_or_default();
         let row = state.editor.row_height();
-        let (low, high) = (
-            excerpts.scroll.offset() - OVERSCAN,
-            excerpts.scroll.offset() + (self.height - STRIP).max(0.0) + OVERSCAN,
-        );
-        let (mut before, mut after, mut top) = (0.0_f32, 0.0_f32, 0.0_f32);
-        let mut built = Vec::new();
-        for (place, region) in regions.iter().enumerate() {
-            let size = self.card_height(region, row);
-            let (start, end) = (top, top + size);
-            top = end;
-            if end < low {
-                before += size;
-            } else if start > high {
-                after += size;
-            } else {
-                built.push(Card {
-                    region,
-                    place,
-                    count: regions.len(),
-                });
-            }
-        }
-        let doc_top = top + LABEL;
         let whole = Block::whole();
+        let drawing = Drawing::new(state, None);
+        let lines = index.map_or(0, |index| drawing.row_count(index, &whole) + 1);
+        let count = regions.len() + 1 + lines;
         let (arrangement, alignment) = self
             .arranged
             .unwrap_or((Arrangement::Start, Alignment::Start));
@@ -596,60 +572,71 @@ impl<'a> Conflict<'a> {
                     Arrangement::Start,
                     Alignment::Start,
                     || {
-                        column_arranged(
-                            Modifier::new()
-                                .fill_max_width()
-                                .weight(1.0)
-                                .vertical_scroll(&excerpts.scroll)
-                                .fill_max_width(),
-                            Arrangement::Start,
-                            Alignment::Start,
-                            || {
-                                rustle::spacer(Modifier::new().height(before));
-                                for card in &built {
-                                    rustle::key(card.place, || {
-                                        column_arranged(
-                                            Modifier::new().fill_max_width().padding(theme::sp(3)),
-                                            Arrangement::Start,
-                                            Alignment::Start,
-                                            || {
-                                                self.card(card, row);
-                                            },
-                                        );
-                                    });
-                                }
-                                rustle::spacer(Modifier::new().height(after));
-                                row_arranged(
-                                    Modifier::new()
-                                        .fill_max_width()
-                                        .height(LABEL)
-                                        .background(theme::color(Role::Surface))
-                                        .draw_behind(theme::edge(
-                                            theme::Side::Bottom,
-                                            1.0,
-                                            theme::color(Role::Border),
-                                        ))
-                                        .padding_each(0.0, 0.0, 0.0, 1.0)
-                                        .padding_xy(theme::sp(3), 0.0),
-                                    Arrangement::Start,
-                                    Alignment::Center,
-                                    || {
-                                        styled_text(
-                                            Modifier::new(),
-                                            "Result",
-                                            theme::text_style(12, 1.4)
-                                                .font_weight(rustle::FontWeight::MEDIUM)
-                                                .color(theme::color(Role::Text))
-                                                .max_lines(1),
-                                        );
+                        rustle::lazy_list_keyed(
+                            Modifier::new().fill_max_width().weight(1.0),
+                            &excerpts.scroll,
+                            count,
+                            |item| item,
+                            |item| {
+                                let after = item.saturating_sub(regions.len());
+                                match regions.get(item) {
+                                    Some(region) => column_arranged(
+                                        Modifier::new().fill_max_width().padding(theme::sp(3)),
+                                        Arrangement::Start,
+                                        Alignment::Start,
+                                        || {
+                                            self.card(
+                                                &Card {
+                                                    region,
+                                                    place: item,
+                                                    count: regions.len(),
+                                                },
+                                                row,
+                                            );
+                                        },
+                                    ),
+                                    None if after == 0 => Self::result_label(),
+                                    None => match index {
+                                        Some(index) if after < lines => {
+                                            drawing.row(index, (usize::MAX, 0), &whole, after - 1);
+                                        }
+                                        _ => block_gap(),
                                     },
-                                );
-                                if let Some(index) = index {
-                                    plain_block(state, index, &whole, doc_top, (low, high));
                                 }
                             },
                         );
                     },
+                );
+            },
+        );
+    }
+
+    /// Emits the label over the result, the file edited in place.
+    #[track_caller]
+    fn result_label() {
+        row_arranged(
+            Modifier::new()
+                .fill_max_width()
+                .height(LABEL)
+                .background(theme::color(Role::Surface))
+                .draw_behind(theme::edge(
+                    theme::Side::Bottom,
+                    1.0,
+                    theme::color(Role::Border),
+                ))
+                .padding_each(0.0, 0.0, 0.0, 1.0)
+                .padding_xy(theme::sp(3), 0.0),
+            Arrangement::Start,
+            Alignment::Center,
+            || {
+                rustle::basic_text(
+                    Modifier::new(),
+                    "Result",
+                    theme::text_style(12, 1.4)
+                        .font_weight(rustle::FontWeight::MEDIUM)
+                        .color(theme::color(Role::Text))
+                        .max_lines(1),
+                    rustle::TextOverflow::Ellipsis,
                 );
             },
         );

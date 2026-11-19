@@ -6,7 +6,8 @@
 //! provides the colour scheme, type scale and shapes rustle's `theme` carries,
 //! and one composition local for the app's own tokens (every colour role,
 //! syntax colours, font stacks); text is set in rustle `TextStyle`s through the
-//! selection-aware [`select::styled_text`]; [`icons`] maps icon names onto
+//! rustle text composables (`rustle::basic_text`), which take part in the
+//! selection of a `rustle::selection_container` around them; [`icons`] maps icon names onto
 //! rustle's Phosphor set; and what the user does reaches the app through the
 //! handler of [`events`], named by focus ids. A builder is made with `new`,
 //! given a variant for how it looks and a size for how big it is, and emitted
@@ -122,7 +123,6 @@ pub mod review;
 pub mod sample;
 pub mod sash;
 pub mod scroll_marks;
-pub mod select;
 mod session_attention;
 pub mod settings;
 pub mod settings_agents;

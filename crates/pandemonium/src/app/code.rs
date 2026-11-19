@@ -8,7 +8,7 @@ use pm_components::arrange::{
     SESSION_MENU_RENAME,
 };
 use pm_components::assist::{
-    HOVER_CARD, HOVER_LINK_BASE, HOVER_LINK_END, HOVER_TEXT, list_height, signature_height,
+    HOVER_CARD, HOVER_LINK_BASE, HOVER_LINK_END, list_height, signature_height,
 };
 use pm_components::color_picker::{COLOR_BOX, COLOR_HEX, color_format_of};
 use pm_components::extensions::EXTENSIONS;
@@ -288,13 +288,15 @@ impl App {
 
     /// Copies the text selected in the card about a place when the keys that copy are pressed, and says whether they were.
     pub(super) fn card_key(&mut self, event: &KeyEvent) -> bool {
-        let selected = self
-            .text_selection
-            .is_some_and(|held| held.id == HOVER_TEXT && !held.is_empty());
-        if !selected || keys::clip(event) != Some(keys::Clip::Copy) {
+        if keys::clip(event) != Some(keys::Clip::Copy) {
             return false;
         }
-        self.copy_selection();
+        let Some(text) = self.model.read(Screen::hover_selection).selected_text() else {
+            return false;
+        };
+        if let Some(clipboard) = self.clipboard() {
+            clipboard.set_text(text);
+        }
         true
     }
 
@@ -1279,10 +1281,12 @@ impl App {
         let on_card = over.is_some_and(|id| {
             id == HOVER_CARD || (HOVER_LINK_BASE..HOVER_LINK_END).contains(&id.0)
         });
-        let selecting = self.text_gesture.is_held()
+        let selecting = self.pressed_on == Some(HOVER_CARD)
             && self
-                .text_selection
-                .is_some_and(|held| held.id == HOVER_TEXT);
+                .model
+                .read(Screen::hover_selection)
+                .selection()
+                .is_some();
         if on_card || selecting {
             self.hover_rest = None;
             self.hover_leaving = None;

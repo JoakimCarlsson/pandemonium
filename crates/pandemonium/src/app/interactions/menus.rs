@@ -117,22 +117,23 @@ fn a_popover_toggles_on_its_chip() {
     assert!(rig.state(|state| state.picker.is_some()));
 }
 
-/// The secondary button over the conversation opens the message's menu,
-/// which selects all of its text and copies it.
+/// The secondary button over the conversation opens the message's menu, which selects all of
+/// the conversation's text composed (the messages near what is shown, as a selection container
+/// around a lazy list holds) and copies it.
 #[test]
 fn the_message_menu_selects_and_copies() {
     let mut rig = Rig::shot(Shot::Workspace);
+    let shown = rig
+        .area(pm_pages::Screen::conversation_area)
+        .expect("the conversation is drawn");
+    rig.move_to((shown.origin.x + 100.0, shown.origin.y + 100.0));
+    rig.wheel(-10_000.0);
     let area = rig.region(CHAT_TEXT).expect("the conversation is drawn");
     let at = (area.origin.x + 40.0, area.origin.y + 10.0);
     rig.right_click(at);
     assert!(rig.state(|state| state.message_menu.is_some()));
     rig.click_on(MESSAGE_MENU_SELECT_ALL);
-    assert!(
-        rig.app
-            .borrow_mut()
-            .text_selection
-            .is_some_and(|held| !held.is_empty())
-    );
+    assert!(rig.app.borrow().text_selection().is_some());
     rig.right_click(at);
     rig.click_on(MESSAGE_MENU_COPY);
     let copied = rig.clipboard.text.borrow().clone().unwrap_or_default();

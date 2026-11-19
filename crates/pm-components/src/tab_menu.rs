@@ -241,7 +241,7 @@ impl WorkspaceState {
             shown.and_then(|path| self.git.viewers.iter().position(|held| held.path == path));
     }
 
-    /// Shows the file at `path` among the project's files: the panel on its files, the folders down to it open and the file picked.
+    /// Shows the file at `path` among the project's files: the panel on its files, the folders down to it open, the file picked and scrolled into view.
     fn reveal_in_project(&mut self, path: &str) {
         self.show_review_tab(ReviewTab::Files);
         let mut folder = String::new();
@@ -258,10 +258,12 @@ impl WorkspaceState {
             self.open_tree.insert(folder.clone());
         }
         self.reread_files();
-        self.select_tree(crate::tree_actions::TreeTarget {
+        let target = crate::tree_actions::TreeTarget {
             path: path.to_owned(),
             folder: false,
-        });
+        };
+        self.keep_tree_row_in_view(&target);
+        self.select_tree(target);
     }
 }
 

@@ -7,7 +7,6 @@ use rustle::Modifier;
 use rustle::{Alignment, Arrangement, row_arranged};
 
 use crate::focus::FocusId;
-use crate::select::styled_text;
 use crate::theme::Role;
 
 use crate::Button;
@@ -86,12 +85,13 @@ pub(crate) fn offer(state: &WorkspaceState, viewer: &Viewer) {
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         move || {
-            styled_text(
+            rustle::basic_text(
                 Modifier::new().weight(1.0).clip(),
                 words,
                 theme::text_style(12, 1.4)
                     .color(theme::color(Role::Muted))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
             if idle {
                 Button::new(if retry { "Try again" } else { "Install" }, OFFER_INSTALL)

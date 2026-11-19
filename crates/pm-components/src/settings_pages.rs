@@ -7,7 +7,6 @@ use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::focus::FocusId;
 use crate::parts::line;
-use crate::select::styled_text;
 use crate::settings::{SETTINGS_PICK_FILTER, SETTINGS_PICK_FIRST, Section};
 use crate::settings_catalog::{self, LISTS, OPEN_LIST, RESET, Setting};
 use crate::settings_ids::{IdRange, LIST_ADDS, LIST_FIELDS, LIST_LINES, LIST_REMOVES, PICKS};
@@ -385,13 +384,14 @@ pub(crate) fn group(title: &str, rows: impl FnOnce()) {
                 Arrangement::Start,
                 Alignment::Center,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         title,
                         theme::text_style(12, 1.4)
                             .font_weight(rustle::FontWeight::MEDIUM)
                             .color(theme::color(Role::Muted))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                 },
             );

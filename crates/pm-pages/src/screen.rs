@@ -143,11 +143,29 @@ impl Screen {
         }
     }
 
-    /// Where the selectable text was placed in the latest frame, and what of it is selected.
-    pub fn selectables(&self) -> pm_components::select::Selectables {
+    /// The selection of the conversation's text.
+    pub fn chat_selection(&self) -> rustle::SelectionState {
         match self {
-            Self::Workspace(state) => state.selectables.clone(),
+            Self::Workspace(state) => state.chat_selection.clone(),
         }
+    }
+
+    /// The selection of the text of the card about a place in the file shown.
+    pub fn hover_selection(&self) -> rustle::SelectionState {
+        match self {
+            Self::Workspace(state) => state.hover_selection.clone(),
+        }
+    }
+
+    /// The message of the open session whose area is under the window point `at`, if any.
+    pub fn message_at(&self, at: (f32, f32)) -> Option<usize> {
+        self.places().shown().into_iter().find_map(|(id, rect)| {
+            let inside = at.0 >= rect.origin.x
+                && at.1 >= rect.origin.y
+                && at.0 < rect.origin.x + rect.size.width
+                && at.1 < rect.origin.y + rect.size.height;
+            pm_components::message_menu::message_of_area(id).filter(|_| inside)
+        })
     }
 
     /// Where the areas the app asks about by name were drawn in the latest frame.
@@ -495,13 +513,6 @@ impl Screen {
         }
     }
 
-    /// The screen after the diff was drawn `width` logical pixels wide.
-    pub fn measured_diff(self, width: f32) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.measured_diff(width)),
-        }
-    }
-
     /// Whether the reader scrolled what the screen follows since it last looked.
     pub fn scrolls_moved(&self) -> bool {
         let Self::Workspace(state) = self;
@@ -537,16 +548,6 @@ impl Screen {
     pub fn code_area(&self) -> Option<rustle::Rect> {
         let Self::Workspace(state) = self;
         state.code_bounds.get()
-    }
-
-    /// The width the diff was last drawn at, in logical pixels, when it differs from the width the screen last took it to be.
-    pub fn diff_resized(&self) -> Option<f32> {
-        let Self::Workspace(state) = self;
-        state
-            .diff_bounds
-            .last()
-            .map(|bounds| bounds.size.width)
-            .filter(|width| (width - state.diff_width).abs() > 0.5)
     }
 
     /// Which changed file's row `id` is, while the workspace is showing.

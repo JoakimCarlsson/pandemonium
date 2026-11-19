@@ -109,7 +109,7 @@ fn subagent_panel(state: &WorkspaceState, session: &Session) {
         reply,
         &|position| page.is_some_and(|open| held.contains(&(open, reply, position))),
         &root.to_string_lossy(),
-        Some((&state.subagents_scroll, &state.chat_back)),
+        Some((&state.subagents_scroll, state.chat_list.scroll())),
     );
 }
 

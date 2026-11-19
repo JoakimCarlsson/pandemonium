@@ -12,7 +12,6 @@ use crate::git_controls::{GROUP_TRACKED, GROUP_UNTRACKED, OPEN_ARROW_BASE};
 use crate::icons::IconName;
 use crate::parts::glyph;
 use crate::sample::{Change, Session};
-use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{FILE_BASE, FOLDER_BASE, FOLDER_STAGE_BASE, STAGE_BASE, WorkspaceState};
 use crate::theme::{Radius, Role, Tone};
@@ -111,10 +110,11 @@ fn heading(changes: &[Change], group: Group, repository: Option<&str>) {
         Arrangement::SpaceBetween,
         Alignment::Center,
         || {
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 format!("{} ({})", group.label(), files.len()),
                 theme::text_style(11, 1.4).color(theme::color(Role::Subtle)),
+                rustle::TextOverflow::Ellipsis,
             );
             if let Some(id) = group.id() {
                 Checkbox::new(staged == files.len(), id)
@@ -309,26 +309,29 @@ fn file_row(state: &WorkspaceState, change: &Change, index: usize, name: &str, d
                 Some(_) => glyph(IconName::Git, 3.5, Role::Muted),
                 None => file_icon(name, 3.5),
             }
-            styled_text(
+            rustle::basic_text(
                 Modifier::new().weight(1.0),
                 name,
                 theme::text_style(13, 1.4)
                     .color(theme::color(Role::Text))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
             if let Some(moved) = change.moved.as_ref() {
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     commit_count(moved),
                     theme::text_style(11, 1.4)
                         .color(theme::color(Role::Subtle))
                         .max_lines(1),
+                    rustle::TextOverflow::Ellipsis,
                 );
             }
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 letter,
                 theme::mono_style(11, 1.4).color(theme::color(tone)),
+                rustle::TextOverflow::Ellipsis,
             );
             if change.moved.is_none() {
                 Button::icon(
@@ -410,23 +413,25 @@ fn folder_row(
             if stops(changes, None).contains(&folder.path.as_str()) {
                 glyph(IconName::Git, 3.5, Role::Muted);
             }
-            styled_text(
+            rustle::basic_text(
                 Modifier::new().weight(1.0),
                 &folder.name,
                 theme::text_style(13, 1.4)
                     .color(theme::color(Role::Text))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
             if let Some(standing) = standings
                 .iter()
                 .find(|standing| standing.path == folder.path)
             {
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     standing_label(standing),
                     theme::mono_style(11, 1.4)
                         .color(theme::color(Role::Subtle))
                         .max_lines(1),
+                    rustle::TextOverflow::Ellipsis,
                 );
             }
             Tally::new(added, removed).size(11).build();

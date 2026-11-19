@@ -364,7 +364,6 @@ impl Rig {
     /// Hands `input` of the main window, or of `aside`'s, to its interface
     /// through `feed`, then to the app, and lets the loop come to rest.
     fn send(&mut self, aside: Option<Aside>, input: Input, feed: impl FnOnce(&mut Embedded)) {
-        self.app.borrow().select_text();
         self.app.borrow_mut().note_typing();
         if let Some(ui) = self
             .screens

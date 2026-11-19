@@ -394,18 +394,25 @@ impl WorkspaceState {
         true
     }
 
-    /// Opens a field in the tree for the name `naming` calls for, unfolding the folder a new entry goes in.
+    /// Opens a field in the tree for the name `naming` calls for, unfolding the folder a new entry goes in, and scrolls the field into view.
     fn ask_name(&mut self, naming: Naming) {
         self.git.menu = None;
         self.git.prompt = None;
-        let current = match &naming {
-            Naming::Rename(target) => name_of(&target.path).to_owned(),
+        let (current, shown) = match &naming {
+            Naming::Rename(target) => (name_of(&target.path).to_owned(), target.clone()),
             Naming::New { directory, .. } => {
                 self.open_tree.insert(directory.clone());
-                String::new()
+                (
+                    String::new(),
+                    TreeTarget {
+                        path: directory.clone(),
+                        folder: true,
+                    },
+                )
             }
         };
         self.git.naming = Some((naming, rustle::TextFieldState::new(current)));
+        self.keep_tree_row_in_view(&shown);
     }
 
     /// Whether the tree is asking for a name.

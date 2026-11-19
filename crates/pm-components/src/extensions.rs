@@ -2,7 +2,6 @@
 
 use crate::focus::FocusId;
 use crate::icons::{Artwork, IconName, artwork_with};
-use crate::select::styled_text;
 use crate::theme::{self, family_from_colours, set_extension_families};
 use crate::theme::{Radius, Role, sp};
 use pm_protocol::{ExtensionAssets, ExtensionCommand, ExtensionInfo};
@@ -419,10 +418,11 @@ fn heading() {
         Arrangement::SpaceBetween,
         Alignment::Center,
         || {
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 "Extensions",
                 line_type(14, Role::Text).font_weight(rustle::FontWeight::MEDIUM),
+                rustle::TextOverflow::Ellipsis,
             );
             Button::new("Install Extension…", INSTALL_EXTENSION)
                 .variant(Variant::Ghost)
@@ -506,25 +506,28 @@ pub(crate) fn row(extension: &ExtensionInfo, action: FocusId) {
                         Arrangement::SpacedBy(sp(2)),
                         Alignment::Center,
                         || {
-                            styled_text(
+                            rustle::basic_text(
                                 Modifier::new(),
                                 &extension.name,
                                 line_type(14, Role::Text).font_weight(rustle::FontWeight::MEDIUM),
+                                rustle::TextOverflow::Ellipsis,
                             );
                             if !extension.version.is_empty() {
-                                styled_text(
+                                rustle::basic_text(
                                     Modifier::new(),
                                     &extension.version,
                                     line_type(12, Role::Subtle)
                                         .font_family(theme::mono())
                                         .ligatures(theme::code_ligatures()),
+                                    rustle::TextOverflow::Ellipsis,
                                 );
                             }
                             if extension.local {
-                                styled_text(
+                                rustle::basic_text(
                                     Modifier::new(),
                                     "your own",
                                     line_type(12, Role::Subtle),
+                                    rustle::TextOverflow::Ellipsis,
                                 );
                             }
                         },
@@ -616,10 +619,11 @@ fn preview_card(preview: &Preview) {
         Arrangement::SpacedBy(sp(3)),
         Alignment::Start,
         || {
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 title,
                 line_type(14, Role::Text).font_weight(rustle::FontWeight::MEDIUM),
+                rustle::TextOverflow::Ellipsis,
             );
             if !extension.description.is_empty() {
                 line(extension.description.clone(), 12, 1.4, Role::Muted);

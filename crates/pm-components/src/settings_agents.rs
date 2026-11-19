@@ -9,7 +9,6 @@ use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::focus::FocusId;
 use crate::icons::IconName;
-use crate::select::styled_text;
 use crate::theme::{Radius, Role};
 
 use crate::button::Variant;
@@ -353,13 +352,14 @@ fn titled(title: &str, under: &str, tone: Role, badges: impl FnOnce()) {
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Center,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         title,
                         theme::text_style(13, 1.4)
                             .font_weight(rustle::FontWeight::MEDIUM)
                             .color(theme::color(tone))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                     badges();
                 },

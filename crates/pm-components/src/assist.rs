@@ -11,7 +11,6 @@ use crate::focus::FocusId;
 use crate::icons::IconName;
 use crate::marked::{CaretLook, Mark, Paint, marked_line};
 use crate::popups::at_window;
-use crate::select::{selectable, selectable_scope, styled_text};
 use crate::theme::{Radius, Role, Tone, sp};
 
 use crate::color_picker::{
@@ -36,9 +35,6 @@ pub const COMPLETION_BODY: FocusId = FocusId(7_200_000);
 
 /// The card about a place, which keeps the pointer resting on it from counting as leaving the place.
 pub const HOVER_CARD: FocusId = FocusId(7_199_999);
-
-/// The text of the card about a place, which the pointer selects as one.
-pub const HOVER_TEXT: FocusId = FocusId(7_199_998);
 
 /// The first of the links of the card about a place; each stretch of prose has a hundred after its own base, the stretches following one another.
 pub const HOVER_LINK_BASE: u64 = 7_190_000;
@@ -177,18 +173,20 @@ fn completion_row(place: usize, item: &pm_protocol::Completion, picked: bool) {
                 Arrangement::Center,
                 Alignment::Center,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         letter,
                         theme::code_style(11, 1.2).color(theme::color(tone)),
+                        rustle::TextOverflow::Ellipsis,
                     )
                 },
             );
             clipped_box(|| {
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     item.label.clone(),
                     theme::code_style(12, 1.4).color(theme::color(Role::Text)),
+                    rustle::TextOverflow::Ellipsis,
                 )
             });
             if let Some(detail) = &item.detail {
@@ -198,12 +196,13 @@ fn completion_row(place: usize, item: &pm_protocol::Completion, picked: bool) {
                     Arrangement::Start,
                     Alignment::Start,
                     || {
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new(),
                             short,
                             theme::mono_style(11, 1.4)
                                 .color(theme::color(Role::Subtle))
                                 .max_lines(1),
+                            rustle::TextOverflow::Ellipsis,
                         )
                     },
                 );
@@ -418,11 +417,12 @@ fn rule() {
     );
 }
 
-/// Emits the card `card`, scrolled as `scrolled` says, of what the language server finds wrong at the place and what it says about it, its code coloured as the file's language `language` when no fence names another, with lines `row` logical pixels tall, in a window `height` logical pixels tall: below the place's line, or above it when there is more room there, and scrolling when it is taller than that room.
+/// Emits the card `card`, its text selected as `selection` holds and scrolled as `scrolled` says, of what the language server finds wrong at the place and what it says about it, its code coloured as the file's language `language` when no fence names another, with lines `row` logical pixels tall, in a window `height` logical pixels tall: below the place's line, or above it when there is more room there, and scrolling when it is taller than that room.
 #[track_caller]
 fn hover_card(
     row_height: f32,
     card: &HoverCard,
+    selection: &rustle::SelectionState,
     scrolled: &rustle::ScrollState,
     language: Option<&str>,
     height: f32,
@@ -442,7 +442,7 @@ fn hover_card(
             Modifier::new(),
             Arrangement::Start,
             || {
-                column_arranged(
+                rustle::selection_container_with(
                     Modifier::new()
                         .fill_max_width()
                         .height_in(0.0, room)
@@ -450,9 +450,15 @@ fn hover_card(
                         .fill_max_width()
                         .padding_xy(theme::sp(3), 0.0)
                         .padding_xy(0.0, theme::sp(2.5)),
-                    Arrangement::SpacedBy(sp(2)),
-                    Alignment::Start,
-                    || selectable_scope(HOVER_TEXT, || card_parts(card, language)),
+                    selection,
+                    || {
+                        column_arranged(
+                            Modifier::new().fill_max_width(),
+                            Arrangement::SpacedBy(sp(2)),
+                            Alignment::Start,
+                            || card_parts(card, language),
+                        )
+                    },
                 );
             },
         );
@@ -487,18 +493,16 @@ fn card_parts(card: &HoverCard, language: Option<&str>) {
             Arrangement::Start,
             Alignment::Start,
             || {
-                selectable(
+                rustle::text_styled(
                     Modifier::new(),
-                    HOVER_TEXT,
                     format!("{source}{first}"),
                     theme::text_style(12, 1.5)
                         .color(theme::color(severity_role(diagnostic.severity)))
                         .max_lines(1),
                 );
                 for rest in lines.take(4) {
-                    selectable(
+                    rustle::text_styled(
                         Modifier::new(),
-                        HOVER_TEXT,
                         rest,
                         theme::text_style(12, 1.5)
                             .color(theme::color(Role::Muted))
@@ -552,6 +556,7 @@ pub fn assist(state: &WorkspaceState, height: f32) {
         hover_card(
             state.editor.row_height(),
             card,
+            &state.hover_selection,
             &viewer.hover_scroll,
             document.language.as_deref(),
             height,
@@ -684,7 +689,14 @@ fn cell(content: impl Into<String>, pixels: u32, tone: Role, code: bool) {
     let kind = theme::text_style(pixels, 1.4).color(theme::color(tone));
     let kind = if code { theme::in_mono(kind) } else { kind };
     let content = content.into();
-    clipped_box(move || styled_text(Modifier::new(), content, kind));
+    clipped_box(move || {
+        rustle::basic_text(
+            Modifier::new(),
+            content,
+            kind,
+            rustle::TextOverflow::Ellipsis,
+        )
+    });
 }
 
 /// Emits a line of the list over the file that keeps its own width, `content` in `pixels` and `tone`.
@@ -1093,12 +1105,13 @@ fn color_box(picking: &ColorPicking) {
                     Arrangement::Start,
                     Alignment::Center,
                     || {
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new(),
                             &format.label,
                             theme::mono_style(13, 1.4)
                                 .color(theme::color(Role::Text))
                                 .max_lines(1),
+                            rustle::TextOverflow::Ellipsis,
                         )
                     },
                 );

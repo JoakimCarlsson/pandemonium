@@ -153,12 +153,12 @@ mod tests {
     #[test]
     fn switching_sessions_preserves_scrollback() {
         let mut state = WorkspaceState::sample().after(FocusId(SESSION_BASE));
-        state.chat_back.jump_to(200.0);
+        state.chat_list.scroll().jump_to(200.0);
         state.follow_scrolls();
         state = state
             .after(FocusId(SESSION_BASE + 1))
             .after(FocusId(SESSION_BASE));
-        assert_eq!(state.chat_back.offset(), 200.0);
+        assert_eq!(state.chat_list.scroll().offset(), 200.0);
     }
 
     /// Saved acknowledgements survive replay and a subsequent response becomes unread.

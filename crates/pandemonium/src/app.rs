@@ -21,7 +21,6 @@ use pm_components::minimap::MINIMAP;
 use pm_components::open_files::{EDITOR_FIELD, STRIP};
 use pm_components::panes::split_row_of;
 use pm_components::sash::Grows;
-use pm_components::select::{TextPoint, TextSelection};
 use pm_components::settings::SETTINGS_CLOSE;
 use pm_components::state::{COMMENT_CANCEL, COMMENT_FIELD};
 use pm_components::theme::{Appearance, ThemeFamily};
@@ -233,8 +232,6 @@ pub struct App {
     terminal_gesture: Gesture<(usize, usize)>,
     /// The part of a line the wheel has scrolled the shell that was not enough to move it.
     terminal_scroll_rest: f32,
-    /// The stretch of the conversation's text that is selected, if any.
-    text_selection: Option<TextSelection>,
     /// The word of the file shown the pointer rests on, by where it starts, and since when.
     hover_rest: Option<(usize, Instant)>,
     /// When the pointer left both the card about a word and the word, while the card is still showing.
@@ -255,9 +252,6 @@ pub struct App {
     web: browser::Web,
     /// Whether the address of the browser is to take the keyboard once it is drawn.
     focus_browser_address: bool,
-    /// What the press held on selectable text took, so dragging selects the
-    /// same amount.
-    text_gesture: Gesture<TextPoint>,
     /// The file, version, caret, other end of the selection and number of problems the language server was last asked about for the marker beside the caret's line.
     bulb_asked: Option<editing::BulbKey>,
     /// The same, waiting to settle before the language server is asked, and since when.
@@ -419,10 +413,8 @@ impl App {
             focus_terminal: false,
             terminal_gesture: Gesture::default(),
             terminal_scroll_rest: 0.0,
-            text_selection: None,
             web: browser::Web::default(),
             focus_browser_address: false,
-            text_gesture: Gesture::default(),
             hover_rest: None,
             hover_leaving: None,
             hover_entered: false,
@@ -997,7 +989,6 @@ impl App {
                 self.editor_pointer_moved(x, y);
                 self.terminal_drag((x, y));
                 self.reach_terminal_link();
-                self.text_drag((x, y));
                 self.drag_text_moved(x, y);
                 if let Some(id) = self.dragging
                     && let Some(offset) = self.code_lines().offset_in(id, x, y)
@@ -1014,7 +1005,6 @@ impl App {
                 if self.terminal_gesture.release() {
                     self.copy_terminal_selection();
                 }
-                self.text_release();
                 if self.claimed.click.is_some() {
                     return;
                 }

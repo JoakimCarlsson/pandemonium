@@ -4,7 +4,6 @@ use crate::theme;
 use crate::theme::sp;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
@@ -12,21 +11,20 @@ use rustle::Modifier;
 
 use crate::Input;
 use crate::change_list::mark_color;
+use crate::events::Interactive;
 use crate::file_icon::{file_icon, folder_icon};
 use crate::focus::FocusId;
 use crate::icons::IconName;
 use crate::icons::icon as icon_of;
-use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{TREE_BASE, WorkspaceState};
-use crate::theme::step_scale;
 use crate::theme::{Radius, Role, Tone};
 use crate::tile::Tile;
-use crate::tree::{Entry, folders};
+use crate::tree::{Entry, Folder, folders};
 
 mod cache;
 
-use crate::tree_actions::{ENTRY_FIELD, Naming, TREE_FILE_BASE, TreeTarget};
+use crate::tree_actions::{ENTRY_FIELD, Naming, TREE_FILE_BASE, TREE_SPACE, TreeTarget};
 use cache::tree;
 
 /// How far, in steps, each level of the tree indents its rows.
@@ -217,20 +215,22 @@ fn entry_row(
                 None => rustle::spacer(Modifier::new().size(theme::sp(3.5), theme::sp(3.5))),
             }
             icon();
-            styled_text(
+            rustle::basic_text(
                 Modifier::new().weight(1.0),
                 name,
                 theme::text_style(13, 1.4)
                     .color(theme::color(tone))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
             if let Some(letter) = letter {
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     letter,
                     theme::mono_style(11, 1.4)
                         .color(theme::color(tone))
                         .max_lines(1),
+                    rustle::TextOverflow::Ellipsis,
                 );
             }
         });
@@ -272,25 +272,26 @@ pub fn drag_ghost(state: &WorkspaceState) {
             } else {
                 file_icon(name, 4.0);
             }
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 &words,
                 theme::text_style(13, 1.4)
                     .color(theme::color(Role::Text))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
         },
     );
 }
 
-/// Emits the field a name is typed into where its row will be, `depth` levels down, with what is wrong with the name under it; returns how many lines it emitted, none while nothing is being named.
+/// Emits the field a name is typed into where its row will be, `depth` levels down, with what is wrong with the name under it; nothing while nothing is being named.
 #[track_caller]
-fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) -> usize {
+fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) {
     let Some((_, field)) = state.git.naming.as_ref() else {
-        return 0;
+        return;
     };
     let problem = state.naming_problem();
-    rustle::key(ENTRY_FIELD.0, || {
+    rustle::column_with(Modifier::new().fill_max_width(), || {
         row_arranged(
             Modifier::new()
                 .fill_max_width()
@@ -313,28 +314,28 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) -> usize {
                     .build();
             },
         );
+        let Some(problem) = problem else {
+            return;
+        };
+        column_arranged(
+            Modifier::new()
+                .padding_each(theme::sp(3.0 + depth as f32 * INDENT + 8.0), 0.0, 0.0, 0.0)
+                .padding_each(0.0, 0.0, theme::sp(3), 0.0)
+                .padding_each(0.0, 0.0, 0.0, theme::sp(1)),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                rustle::basic_text(
+                    Modifier::new(),
+                    problem,
+                    theme::text_style(12, 1.4)
+                        .color(theme::color(Role::Danger))
+                        .max_lines(1),
+                    rustle::TextOverflow::Ellipsis,
+                )
+            },
+        );
     });
-    let Some(problem) = problem else {
-        return 1;
-    };
-    column_arranged(
-        Modifier::new()
-            .padding_each(theme::sp(3.0 + depth as f32 * INDENT + 8.0), 0.0, 0.0, 0.0)
-            .padding_each(0.0, 0.0, theme::sp(3), 0.0)
-            .padding_each(0.0, 0.0, 0.0, theme::sp(1)),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            styled_text(
-                Modifier::new(),
-                problem,
-                theme::text_style(12, 1.4)
-                    .color(theme::color(Role::Danger))
-                    .max_lines(1),
-            )
-        },
-    );
-    2
 }
 
 /// What is being named in the tree, if it is a new entry in `directory`: whether it is a folder.
@@ -363,248 +364,376 @@ fn picked(picked: &[TreeTarget], path: &str, folder: bool) -> bool {
         .any(|target| target.path == path && target.folder == folder)
 }
 
-/// The rows of the tree being emitted: only those near the viewport and the one the app
-/// keeps focus on are drawn, and runs of the others become one spacer each.
-struct Rows {
-    /// The row indices drawn, with a small margin around the viewport.
-    visible: std::ops::Range<usize>,
-    /// The next row's position in the expanded tree.
-    index: usize,
-    /// The fixed row height at the current density.
-    height: f32,
-    /// Offscreen entries awaiting a single spacer.
-    skipped: Vec<FocusId>,
-    /// How many rows, name lines and spacers have been emitted so far.
-    emitted: usize,
-    /// Every row in tree order, whether drawn or not, for Tab to walk into rows not drawn.
-    walk: Rc<RefCell<TreeWalk>>,
+/// One item of the lazy list of the project's files.
+enum Item<'a> {
+    /// The field a name is typed into, for a folder or a file, `depth` levels down.
+    Field {
+        /// Whether a folder is being named.
+        folder: bool,
+        /// How many levels down the field sits.
+        depth: usize,
+    },
+    /// The row of the file `name`, at `index` of the project's files, `depth` levels down.
+    File {
+        /// What the file is called.
+        name: &'a str,
+        /// Its place among the project's files.
+        index: usize,
+        /// How many levels down the row sits.
+        depth: usize,
+    },
+    /// The row of `folder`, `depth` levels down.
+    Folder {
+        /// The folder.
+        folder: &'a Folder,
+        /// How many levels down the row sits.
+        depth: usize,
+    },
+    /// The line saying there are no files.
+    Nothing,
+    /// The space under the rows that files are dropped on and whose menu acts on the root.
+    Space,
 }
 
-/// The rows of the tree as Tab walks them: every row in tree order, which of them were
-/// drawn, and how to bring one into view.
-#[derive(Default)]
-struct TreeWalk {
-    /// Every row, in tree order.
-    order: Vec<FocusId>,
-    /// The rows drawn.
-    built: HashSet<FocusId>,
-}
-
-impl Rows {
-    /// Adds the row answering to `id`, emitting it with `build` only when it can be seen
-    /// or the app keeps focus on it, so a focused row stays composed while scrolled away,
-    /// as a lazy list keeps its focused item.
-    #[track_caller]
-    fn push(&mut self, id: FocusId, build: impl FnOnce()) {
-        self.walk.borrow_mut().order.push(id);
-        if self.visible.contains(&self.index) || crate::focus::is_held(id) {
-            self.flush();
-            self.walk.borrow_mut().built.insert(id);
-            rustle::key(id.0, build);
-            self.emitted += 1;
-        } else {
-            self.skipped.push(id);
-        }
-        self.index += 1;
-    }
-
-    /// Emits the consecutive offscreen rows held as one spacer of their total height.
-    #[track_caller]
-    fn flush(&mut self) {
-        if !self.skipped.is_empty() {
-            rustle::spacer(
-                Modifier::new()
-                    .height(std::mem::take(&mut self.skipped).len() as f32 * self.height),
-            );
-            self.emitted += 1;
+impl Item<'_> {
+    /// The control the item answers to, if it is one focus can be on.
+    fn id(&self) -> Option<FocusId> {
+        match self {
+            Item::Field { .. } => Some(ENTRY_FIELD),
+            Item::File { index, .. } => Some(FocusId(TREE_FILE_BASE + *index as u64)),
+            Item::Folder { folder, .. } => Some(FocusId(TREE_BASE + folder.position as u64)),
+            Item::Nothing => None,
+            Item::Space => Some(TREE_SPACE),
         }
     }
+
+    /// The key the list knows the item by.
+    fn key(&self) -> u64 {
+        self.id().map_or(u64::MAX, |id| id.0)
+    }
+
+    /// The row of the tree the item is, if it is one.
+    fn row(&self) -> Option<FocusId> {
+        match self {
+            Item::File { .. } | Item::Folder { .. } => self.id(),
+            _ => None,
+        }
+    }
 }
 
-/// The key handler of the tree: Tab from the last row drawn, or Shift+Tab from the first,
-/// scrolls the next row in tree order into view and asks for focus on it, as a lazy list
-/// brings the item focus moves to into view; otherwise Tab is left to walk the rows drawn.
-fn walks_into_hidden_rows(
-    walk: Rc<RefCell<TreeWalk>>,
-    scroll: rustle::ScrollState,
-    height: f32,
-    viewport: f32,
-) -> Modifier {
+/// Every item of the list of the project's files in `state`, from the top down: the rows of
+/// the open folders, the field a name is typed into where its row goes, the line saying there
+/// are none, and the space under them.
+fn items<'a>(state: &'a WorkspaceState, entries: &'a [Entry]) -> Vec<Item<'a>> {
+    /// Adds the items of `entries`, `depth` levels down, and of what their open folders hold.
+    fn collect<'a>(
+        state: &'a WorkspaceState,
+        entries: &'a [Entry],
+        depth: usize,
+        items: &mut Vec<Item<'a>>,
+    ) {
+        for entry in entries {
+            match entry {
+                Entry::File { name, index } => {
+                    let path = state.files.get(*index).map_or("", String::as_str);
+                    items.push(if renaming(state, path) {
+                        Item::Field {
+                            folder: false,
+                            depth,
+                        }
+                    } else {
+                        Item::File {
+                            name,
+                            index: *index,
+                            depth,
+                        }
+                    });
+                }
+                Entry::Folder(folder) => {
+                    items.push(if renaming(state, &folder.path) {
+                        Item::Field {
+                            folder: true,
+                            depth,
+                        }
+                    } else {
+                        Item::Folder { folder, depth }
+                    });
+                    if state.open_tree.contains(&folder.path) {
+                        if let Some(is_folder) = new_in(state, &folder.path) {
+                            items.push(Item::Field {
+                                folder: is_folder,
+                                depth: depth + 1,
+                            });
+                        }
+                        collect(state, &folder.entries, depth + 1, items);
+                    }
+                }
+            }
+        }
+    }
+    let mut items = Vec::new();
+    if let Some(is_folder) = new_in(state, "") {
+        items.push(Item::Field {
+            folder: is_folder,
+            depth: 0,
+        });
+    }
+    collect(state, entries, 0, &mut items);
+    if state.files.is_empty() && state.tree_folders.is_empty() {
+        items.push(Item::Nothing);
+    }
+    items.push(Item::Space);
+    items
+}
+
+/// Scrolls `list` the least that brings item `index` wholly into view, as of its latest
+/// layout: to the item's top when it is above the view, to its bottom when below, and not at
+/// all when it is in view already.
+fn keep_in_view(list: &rustle::LazyListState, index: usize) {
+    let info = list.layout_info();
+    let seen = info
+        .visible_items_info
+        .iter()
+        .find(|item| item.index == index);
+    match seen {
+        Some(item)
+            if item.offset >= info.viewport_start_offset
+                && item.offset + item.size <= info.viewport_end_offset => {}
+        Some(item) if item.offset < info.viewport_start_offset => {
+            list.scroll_to_item(index, rustle::ItemAlign::Start)
+        }
+        Some(_) => list.scroll_to_item(index, rustle::ItemAlign::End),
+        None if info
+            .visible_items_info
+            .first()
+            .is_some_and(|first| index < first.index) =>
+        {
+            list.scroll_to_item(index, rustle::ItemAlign::Start)
+        }
+        None => list.scroll_to_item(index, rustle::ItemAlign::End),
+    }
+}
+
+impl WorkspaceState {
+    /// Scrolls the list of the project's files the least that shows the row of `target`, or
+    /// the field a name is typed into when `target` is being renamed or `target` is the folder
+    /// a new entry is named in.
+    pub(crate) fn keep_tree_row_in_view(&self, target: &TreeTarget) {
+        let entries = tree(&self.files, &self.tree_folders);
+        let items = items(self, &entries);
+        let naming_here =
+            renaming(self, &target.path) || (target.folder && new_in(self, &target.path).is_some());
+        let found = items.iter().position(|item| match item {
+            Item::Field { .. } => naming_here,
+            Item::File { index, .. } if !naming_here && !target.folder => self
+                .files
+                .get(*index)
+                .is_some_and(|path| *path == target.path),
+            Item::Folder { folder, .. } if !naming_here && target.folder => {
+                folder.path == target.path
+            }
+            _ => false,
+        });
+        if let Some(at) = found {
+            keep_in_view(&self.files_list, at);
+        }
+    }
+}
+
+/// The key handler of the tree: Tab or Shift+Tab from a row moves to the next or previous row
+/// in tree order, scrolling it wholly into view and asking for focus on it, as a lazy list
+/// brings the item focus moves to into view; past the first or last row Tab is left alone.
+fn walks_rows(rows: Rc<Vec<(FocusId, usize)>>, list: rustle::LazyListState) -> Modifier {
     let keys = crate::focus::keys();
     Modifier::new().on_key_event(move |event| {
         if !event.pressed || event.key != rustle::Key::Tab {
             return false;
         }
-        let walk = walk.borrow();
         let Some(at) = keys
             .held
-            .and_then(|held| walk.order.iter().position(|id| *id == held))
+            .and_then(|held| rows.iter().position(|(id, _)| *id == held))
         else {
             return false;
         };
         let next = if event.modifiers.shift {
             at.checked_sub(1)
         } else {
-            Some(at + 1).filter(|next| *next < walk.order.len())
+            Some(at + 1).filter(|next| *next < rows.len())
         };
-        let Some(next) = next.filter(|next| !walk.built.contains(&walk.order[*next])) else {
+        let Some((id, index)) = next.map(|next| rows[next]) else {
             return false;
         };
-        let top = next as f32 * height;
-        let offset = scroll.offset();
-        if top < offset {
-            scroll.jump_to(top);
-        } else if top + height > offset + viewport {
-            scroll.jump_to(top + height - viewport);
-        }
-        (keys.request)(walk.order[next]);
+        keep_in_view(&list, index);
+        (keys.request)(id);
         true
     })
 }
 
-/// Emits the entries in open folders, drawing only the rows inside `rows`' viewport.
+/// Keeps the item being composed composed while focus is on `id`, even scrolled out of view,
+/// as a focused item of a lazy list pins itself.
 #[track_caller]
-fn rows_of(
+fn pin_while_held(id: FocusId) {
+    let held = crate::focus::is_held(id);
+    let container = rustle::LOCAL_PINNABLE_CONTAINER.current();
+    rustle::disposable_effect(held, move || {
+        let handle = container.filter(|_| held).map(|container| container.pin());
+        move || drop(handle)
+    });
+}
+
+/// Emits the space under the rows: as tall as what the rows leave of the view, and
+/// [`SPACE_LEAST`] steps at the least, lit while what the pointer holds would land in the root.
+#[track_caller]
+fn space(state: &WorkspaceState, index: usize) {
+    let info = state.files_list.layout_info();
+    let least = sp(SPACE_LEAST);
+    let height = info
+        .visible_items_info
+        .iter()
+        .find(|item| item.index == index)
+        .map_or(least, |item| {
+            (info.viewport_end_offset - item.offset - sp(1)).max(least)
+        });
+    let landing = state
+        .git
+        .tree_drag
+        .as_ref()
+        .is_some_and(|drag| drag.into.as_deref() == Some(""));
+    let mut around = Modifier::new().fill_max_width().height(height);
+    if landing {
+        around = around.background_rounded(
+            theme::color(Tone::from(Role::Accent).alpha(0.24)),
+            Radius::Sm.px(),
+        );
+    }
+    let operations = crate::events::operations();
+    let pressed = crate::events::reduce(TREE_SPACE);
+    rustle::spacer(crate::bounds::placed(
+        TREE_SPACE,
+        around.control_menu(
+            TREE_SPACE,
+            move |_| pressed(),
+            move || operations.open_tree_menu(TreeTarget::root()),
+        ),
+    ));
+}
+
+/// How tall, in steps, the space under the files is at the least.
+pub(crate) const SPACE_LEAST: f32 = 32.0;
+
+/// Emits the row of the file `name` at `index` of the project's files, `depth` levels down.
+#[track_caller]
+fn file_row(
     state: &WorkspaceState,
     marks: &HashMap<&str, &'static str>,
     chosen: &[TreeTarget],
-    entries: &[Entry],
+    name: &str,
+    index: usize,
     depth: usize,
-    rows: &mut Rows,
 ) {
-    for entry in entries {
-        match entry {
-            Entry::File { name, index } => {
-                let path = state.files.get(*index).map_or("", String::as_str);
-                if renaming(state, path) {
-                    rows.emitted += name_lines(state, false, depth);
-                    continue;
-                }
-                let id = FocusId(TREE_FILE_BASE + *index as u64);
-                rows.push(id, || {
-                    let changed = match marks.get(path) {
-                        Some(letter) => Changed::file(letter),
-                        None if state.tree_ignored.contains(path) => Changed::ignored(),
-                        None => Changed::none(),
-                    };
-                    entry_row(
-                        || file_icon(name, 4.0),
-                        name,
-                        depth,
-                        None,
-                        id,
-                        TreeTarget {
-                            path: path.to_owned(),
-                            folder: false,
-                        },
-                        &look(state, chosen, path, false, changed),
-                    );
-                });
-            }
-            Entry::Folder(folder) => {
-                let open = state.open_tree.contains(&folder.path);
-                if renaming(state, &folder.path) {
-                    rows.emitted += name_lines(state, true, depth);
-                } else {
-                    let id = FocusId(TREE_BASE + folder.position as u64);
-                    rows.push(id, || {
-                        let changed = if folder.files.iter().any(|index| {
-                            state
-                                .files
-                                .get(*index)
-                                .is_some_and(|path| marks.contains_key(path.as_str()))
-                        }) {
-                            Changed::folder()
-                        } else if state.tree_ignored.contains(&folder.path) {
-                            Changed::ignored()
-                        } else {
-                            Changed::none()
-                        };
-                        entry_row(
-                            || folder_icon(open, 4.0),
-                            &folder.name,
-                            depth,
-                            Some(open),
-                            id,
-                            TreeTarget {
-                                path: folder.path.clone(),
-                                folder: true,
-                            },
-                            &look(state, chosen, &folder.path, true, changed),
-                        );
-                    });
-                }
-                if open {
-                    if let Some(is_folder) = new_in(state, &folder.path) {
-                        rows.emitted += name_lines(state, is_folder, depth + 1);
-                    }
-                    rows_of(state, marks, chosen, &folder.entries, depth + 1, rows);
-                }
-            }
-        }
-    }
+    let path = state.files.get(index).map_or("", String::as_str);
+    let changed = match marks.get(path) {
+        Some(letter) => Changed::file(letter),
+        None if state.tree_ignored.contains(path) => Changed::ignored(),
+        None => Changed::none(),
+    };
+    entry_row(
+        || file_icon(name, 4.0),
+        name,
+        depth,
+        None,
+        FocusId(TREE_FILE_BASE + index as u64),
+        TreeTarget {
+            path: path.to_owned(),
+            folder: false,
+        },
+        &look(state, chosen, path, false, changed),
+    );
 }
 
-/// Counts entries in expanded folders without building row descriptions.
-fn row_count(entries: &[Entry], open: &HashSet<String>) -> usize {
-    entries
-        .iter()
-        .map(|entry| {
-            1 + match entry {
-                Entry::Folder(folder) if open.contains(&folder.path) => {
-                    row_count(&folder.entries, open)
-                }
-                _ => 0,
-            }
-        })
-        .sum()
-}
-
-/// Emits the rows of the files of the project the open session works in, with the field a name is typed in where it goes, drawing only those that fall within `viewport` logical pixels of the list's scroll offset.
+/// Emits the row of `folder`, `depth` levels down.
 #[track_caller]
-pub fn rows(state: &WorkspaceState, viewport: f32) {
-    emit_rows(state, viewport);
-}
-
-/// Emits what [`rows`] emits and returns how many rows, name lines and spacers that was.
-#[track_caller]
-fn emit_rows(state: &WorkspaceState, viewport: f32) -> usize {
-    let entries = tree(&state.files, &state.tree_folders);
-    let height = 24.0 * step_scale();
-    let count = row_count(&entries, &state.open_tree);
-    let room = (count as f32 * height + 128.0 * step_scale() - viewport).max(0.0);
-    let offset = state.tree_scroll.offset().clamp(0.0, room);
-    let first = (offset / height).floor() as usize;
-    let visible = if state.git.naming.is_some() {
-        0..usize::MAX
+fn folder_row(
+    state: &WorkspaceState,
+    marks: &HashMap<&str, &'static str>,
+    chosen: &[TreeTarget],
+    folder: &Folder,
+    depth: usize,
+) {
+    let open = state.open_tree.contains(&folder.path);
+    let changed = if folder.files.iter().any(|index| {
+        state
+            .files
+            .get(*index)
+            .is_some_and(|path| marks.contains_key(path.as_str()))
+    }) {
+        Changed::folder()
+    } else if state.tree_ignored.contains(&folder.path) {
+        Changed::ignored()
     } else {
-        first.saturating_sub(2)..((offset + viewport.max(0.0)) / height).ceil() as usize + 2
+        Changed::none()
     };
-    let walk: Rc<RefCell<TreeWalk>> = Rc::default();
-    let mut rows = Rows {
-        visible,
-        index: 0,
-        height,
-        skipped: Vec::new(),
-        emitted: 0,
-        walk: Rc::clone(&walk),
-    };
-    let keys = walks_into_hidden_rows(walk, state.tree_scroll.clone(), height, viewport);
-    rustle::column_with(Modifier::new().fill_max_width().chain(keys), || {
-        if let Some(is_folder) = new_in(state, "") {
-            rows.emitted += name_lines(state, is_folder, 0);
-        }
-        rows_of(
-            state,
-            &marks(state),
-            &state.tree_picked(),
-            &entries,
-            0,
-            &mut rows,
-        );
-        rows.flush();
-    });
-    rows.emitted
+    entry_row(
+        || folder_icon(open, 4.0),
+        &folder.name,
+        depth,
+        Some(open),
+        FocusId(TREE_BASE + folder.position as u64),
+        TreeTarget {
+            path: folder.path.clone(),
+            folder: true,
+        },
+        &look(state, chosen, &folder.path, true, changed),
+    );
+}
+
+/// Emits the project's files of the open session as a lazy list filling what is left of its
+/// column: the rows of the open folders, the field a name is typed in where it goes, and the
+/// space under them, composing only the items in view and the one focus is on.
+#[track_caller]
+pub fn list(state: &WorkspaceState) {
+    let entries = tree(&state.files, &state.tree_folders);
+    let items = items(state, &entries);
+    let rows: Rc<Vec<(FocusId, usize)>> = Rc::new(
+        items
+            .iter()
+            .enumerate()
+            .filter_map(|(index, item)| item.row().map(|id| (id, index)))
+            .collect(),
+    );
+    let marks = marks(state);
+    let chosen = state.tree_picked();
+    let keys = walks_rows(rows, state.files_list.clone());
+    rustle::lazy_list_with(
+        Modifier::new().fill_max_width().weight(1.0).chain(keys),
+        &state.files_list,
+        rustle::LazyContent::new().padding(sp(1)),
+        items.len(),
+        |index| items[index].key(),
+        |index| {
+            let item = &items[index];
+            if let Some(id) = item.id() {
+                pin_while_held(id);
+            }
+            match item {
+                Item::Field { folder, depth } => {
+                    name_lines(state, *folder, *depth);
+                }
+                Item::File { name, index, depth } => {
+                    file_row(state, &marks, &chosen, name, *index, *depth)
+                }
+                Item::Folder { folder, depth } => {
+                    folder_row(state, &marks, &chosen, folder, *depth)
+                }
+                Item::Nothing => crate::review::nothing(if state.files_loading() {
+                    "Loading files…"
+                } else {
+                    "No files yet."
+                }),
+                Item::Space => space(state, index),
+            }
+        },
+    );
 }
 
 #[cfg(test)]

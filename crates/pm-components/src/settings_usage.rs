@@ -7,7 +7,6 @@ use rustle::Modifier;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
 
 use crate::focus::FocusId;
-use crate::select::styled_text;
 use crate::theme::{Radius, Role, Tone};
 
 use crate::BarRow;
@@ -344,13 +343,14 @@ fn headline(title: &str, value: String, more: String, width: f32) {
         Alignment::Start,
         || {
             line(title, 12, 1.4, Role::Muted);
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 value,
                 theme::text_style(18, 1.3)
                     .font_weight(rustle::FontWeight::MEDIUM)
                     .color(theme::color(Role::Text))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
             line(more, 12, 1.4, Role::Muted);
         },
@@ -538,13 +538,14 @@ fn chart(report: &UsageReport, room: f32) {
 /// Emits the title of the chart, set medium, taking the room its row leaves and cut short at its edge.
 #[track_caller]
 fn label_grown(title: &str) {
-    styled_text(
+    rustle::basic_text(
         Modifier::new().weight(1.0),
         title,
         theme::text_style(15, 1.4)
             .font_weight(rustle::FontWeight::MEDIUM)
             .color(theme::color(Role::Text))
             .max_lines(1),
+        rustle::TextOverflow::Ellipsis,
     );
 }
 

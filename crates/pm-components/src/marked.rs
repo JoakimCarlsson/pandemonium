@@ -2,8 +2,8 @@
 //! underlines for problems and links, selections, carets, indent guides and
 //! drop points, named by the theme's roles, resolved to colours and drawn by
 //! [`rustle::marked_text`] when a line is emitted. A line of the code text
-//! tells its [`TextLines`] where it was drawn, and a line of the selectable
-//! conversation is recorded where the app looks up points and selections.
+//! tells its [`TextLines`] where it was drawn, and a line inside a
+//! [`rustle::selection_container`] takes part in its selection.
 
 use std::cell::RefCell;
 use std::ops::Range;
@@ -173,8 +173,8 @@ fn resolved(mark: &Mark, theme: &Theme) -> TextMark {
 }
 
 /// Emits a marked line, told to the lines holder as the piece of a field
-/// starting at a byte of its text when `piece` names them, and recorded as a
-/// piece of the selectable text the line is composed in, if any.
+/// starting at a byte of its text when `piece` names them; inside a
+/// [`rustle::selection_container`] it takes part in the selection.
 #[track_caller]
 fn marked(
     modifier: Modifier,
@@ -188,13 +188,9 @@ fn marked(
     let caret_visible = marks.iter().any(|mark| mark.paint == Paint::Caret) && caret_lit(look);
     let marks: Vec<TextMark> = marks.iter().map(|mark| resolved(mark, &theme)).collect();
     let shaped: Rc<RefCell<Option<Rc<TextLayout>>>> = Rc::default();
-    let (stored, placed, scoped) = (shaped.clone(), shaped.clone(), shaped);
+    let (stored, placed) = (shaped.clone(), shaped);
     let modifier = match piece {
         Some((lines, owner, start)) => lines.line(modifier, owner, start, placed),
-        None => modifier,
-    };
-    let modifier = match crate::select::scope() {
-        Some(id) => crate::select::piece(modifier, id, Rc::from(content), scoped),
         None => modifier,
     };
     rustle::marked_text(

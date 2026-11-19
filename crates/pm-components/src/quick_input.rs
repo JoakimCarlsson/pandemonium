@@ -16,7 +16,6 @@ use crate::listing::{
     Quick, line_named, matched_characters, task_title,
 };
 use crate::parts::{glyph, line};
-use crate::select::styled_text;
 use crate::size::Size;
 use crate::theme::{Radius, Role};
 
@@ -371,14 +370,20 @@ fn marked(modifier: Modifier, name: &str, query: &str) {
             let kind = theme::text_style(13, 1.4);
             for (run, lit) in runs {
                 if lit {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         run,
                         kind.font_weight(rustle::FontWeight::SEMI_BOLD)
                             .color(theme::color(Role::Accent)),
+                        rustle::TextOverflow::Ellipsis,
                     );
                 } else {
-                    styled_text(Modifier::new(), run, kind.color(theme::color(Role::Text)));
+                    rustle::basic_text(
+                        Modifier::new(),
+                        run,
+                        kind.color(theme::color(Role::Text)),
+                        rustle::TextOverflow::Ellipsis,
+                    );
                 }
             }
         },

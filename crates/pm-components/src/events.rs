@@ -563,9 +563,10 @@ pub trait Interactive: Sized {
         on_click: impl Fn() + 'static,
         on_context: impl Fn() + 'static,
     ) -> Self;
-    /// Registers the area as one box of the selectable text `id`, such as one message of a
-    /// conversation, so the app can tell which box a point is in.
-    fn selectable_area(self, id: FocusId) -> Self;
+    /// Marks the area as message `index` of the conversation: tests find it by the tag of
+    /// [`CHAT_TEXT`](crate::state::CHAT_TEXT), and the app finds the message under a point
+    /// among the places of [`message_area_id`](crate::message_menu::message_area_id).
+    fn message_area(self, index: usize) -> Self;
 }
 
 /// Names the control `id`, a focus target activated with Enter or Space while it holds the
@@ -634,8 +635,11 @@ impl Interactive for Modifier {
         ))
     }
 
-    fn selectable_area(self, id: FocusId) -> Self {
-        crate::select::selectable_area(self, id)
+    fn message_area(self, index: usize) -> Self {
+        crate::bounds::placed(
+            crate::message_menu::message_area_id(index),
+            self.test_tag(crate::state::CHAT_TEXT.tag()),
+        )
     }
 }
 

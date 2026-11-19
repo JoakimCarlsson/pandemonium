@@ -1,14 +1,14 @@
-//! Regression coverage for virtual tree geometry, focus order and variable-height naming.
+//! Regression coverage for the lazy list of the project's files: what it composes, where its
+//! rows land, the field a name is typed into, and Tab walking rows not composed.
 
-use crate::events::reduce;
-use crate::theme;
 use std::cell::Cell;
 use std::rc::Rc;
 
+use rustle::{Embedded, Key, KeyEvent, Modifiers};
+
 use super::*;
-use crate::events::Interactive;
 use crate::focus::FocusKeys;
-use crate::tagged::{Laid, Tagged, lay_out};
+use crate::tagged::{Tagged, interface, tagged_in};
 use crate::theme::set_scales;
 
 /// Makes a large flat tree whose file indices also follow display order.
@@ -22,109 +22,89 @@ fn sample(count: usize) -> WorkspaceState {
     state
 }
 
-/// Emits every row as a reference for the virtual list, and returns how many pieces that was.
-fn full_rows(state: &WorkspaceState) -> usize {
-    let mut rows = Rows {
-        visible: 0..usize::MAX,
-        index: 0,
-        height: 24.0 * step_scale(),
-        skipped: Vec::new(),
-        emitted: 0,
-        walk: Rc::default(),
-    };
-    rows_of(
-        state,
-        &marks(state),
-        &state.tree_picked(),
-        &tree(&state.files, &state.tree_folders),
-        0,
-        &mut rows,
-    );
-    rows.emitted
+/// Lays out and recomposes `ui` a few times, as frames do, so the list learns its heights.
+fn settle(ui: &mut Embedded) {
+    for _ in 0..6 {
+        ui.invalidate();
+        ui.update();
+    }
 }
 
-/// Emits the review panel's padded scroller around the rows `content` emits, with its blank area below the files.
-fn list(state: &WorkspaceState, content: impl FnOnce()) {
-    rustle::layout(
-        Modifier::new()
-            .fill_max_size()
-            .vertical_scroll(&state.tree_scroll)
-            .fill_max_width()
-            .padding_xy(0.0, theme::sp(1)),
-        crate::review::FilledColumn {
-            least: crate::theme::sp(crate::review::FILLER_LEAST),
-        },
-        || {
-            content();
-            rustle::spacer(Modifier::new().fill_max_width().control(
-                crate::tree_actions::TREE_SPACE,
-                reduce(crate::tree_actions::TREE_SPACE),
-            ));
-        },
-    );
-}
-
-/// Lays out just the tree, drawn virtually when `virtualized` and in full otherwise, to inspect its scroll range, visible geometry and keyboard order; returns what was laid out and how many pieces the rows were.
-fn paint(state: &WorkspaceState, virtualized: bool, viewport: f32) -> (Laid, usize) {
+/// Lays out the list of `state`'s files, `height` logical pixels tall, and returns its
+/// controls by tag.
+fn paint(state: &WorkspaceState, height: f32) -> Vec<Tagged> {
     let held = state.clone();
-    let emitted = Rc::new(Cell::new(0));
-    let counted = emitted.clone();
-    let report = lay_out(380.0, viewport + 8.0 * step_scale(), None, move || {
-        list(&held, || {
-            counted.set(if virtualized {
-                emit_rows(&held, viewport)
-            } else {
-                full_rows(&held)
-            });
-        });
+    let mut ui = interface(380.0, height, None, move || {
+        rustle::column_with(Modifier::new().fill_max_size(), || list(&held))
     });
-    (report, emitted.get())
+    settle(&mut ui);
+    tagged_in(&ui, 0.0, 0.0)
 }
 
-/// The controls of `laid` that can be seen, by their place.
-fn seen(laid: &Laid) -> Vec<(FocusId, rustle::Rect)> {
-    laid.nodes
-        .iter()
-        .filter(|node| node.visible.size.width > 0.0 && node.visible.size.height > 0.0)
-        .map(|node: &Tagged| (node.id, node.visible))
+/// The rows of `laid` that can be seen, with the top of each.
+fn rows_seen(laid: &[Tagged]) -> Vec<(FocusId, f32)> {
+    laid.iter()
+        .filter(|node| node.id.0 >= TREE_FILE_BASE && node.visible.size.height > 0.0)
+        .map(|node| (node.id, node.bounds.origin.y))
         .collect()
 }
 
-/// Every row of `state`'s tree in tree order, as the tree drawn in full lays them out.
-fn every_row(state: &WorkspaceState) -> Vec<FocusId> {
-    let (full, _) = paint(state, false, 240.0);
-    full.ids()
-        .into_iter()
-        .filter(|id| *id != crate::tree_actions::TREE_SPACE)
-        .collect()
-}
-
-/// Virtual rows draw exactly the visible geometry of the full tree at both scroll limits,
-/// and only the rows near the viewport.
+/// The list composes only the rows near its view, each a row's height under the one before,
+/// wherever it is scrolled to, at every density.
 #[test]
-fn virtual_tree_preserves_geometry() {
+fn the_list_composes_only_rows_in_view_at_their_places() {
     for scale in [1.0, 0.8] {
         set_scales(scale, 1.0);
-        let state = sample(200);
-        for offset in [0.0, 113.0, 2400.0, 100_000.0] {
-            state.tree_scroll.jump_to(offset);
-            let (virtualized, emitted) = paint(&state, true, 240.0);
-            let virtual_length = state.tree_scroll.content_length().round();
+        let height = 24.0 * scale;
+        for first in [0, 5, 100, 150] {
+            let state = sample(200);
+            state.files_list.scroll_to_item_offset(first, 0.0);
+            let laid = paint(&state, 240.0);
+            let composed = laid
+                .iter()
+                .filter(|node| node.id.0 >= TREE_FILE_BASE)
+                .count();
             assert!(
-                emitted <= (240.0 / (24.0 * scale)).ceil() as usize + 7,
-                "only viewport rows should be drawn: {emitted}, scale={scale}, offset={offset}, naming={:?}",
-                state.git.naming
+                composed <= (240.0 / height).ceil() as usize + 4,
+                "only rows near the view are composed: {composed}, scale={scale}, first={first}"
             );
-            let (full, _) = paint(&state, false, 240.0);
-            assert_eq!(
-                seen(&virtualized),
-                seen(&full),
-                "offset={offset}, scale={scale}"
-            );
-            assert_eq!(virtual_length, state.tree_scroll.content_length().round());
+            let seen = rows_seen(&laid);
+            let top = seen.first().expect("a row is seen");
+            assert_eq!(top.0, FocusId(TREE_FILE_BASE + first as u64));
+            for pair in seen.windows(2) {
+                assert_eq!(pair[1].0.0, pair[0].0.0 + 1, "rows follow in order");
+                assert!(
+                    (pair[1].1 - pair[0].1 - height).abs() < 1.0,
+                    "rows are a row's height apart: {pair:?}, scale={scale}"
+                );
+            }
         }
     }
     set_scales(1.0, 1.0);
+}
+
+/// The space under the rows fills what a short list leaves of the view, and keeps its least
+/// height under a long one.
+#[test]
+fn the_space_under_the_rows_fills_the_view() {
+    let laid = paint(&sample(3), 400.0);
+    let space = laid
+        .iter()
+        .find(|node| node.id == TREE_SPACE)
+        .expect("the space is laid out");
+    let bottom = space.bounds.origin.y + space.bounds.size.height;
+    assert!(
+        (bottom - (400.0 - sp(1))).abs() < 1.0,
+        "the space reaches the bottom of the view: {bottom}"
+    );
+    let state = sample(200);
+    state.files_list.scroll_to_end();
+    let laid = paint(&state, 240.0);
+    let space = laid
+        .iter()
+        .find(|node| node.id == TREE_SPACE)
+        .expect("the space is laid out at the end");
+    assert!((space.bounds.size.height - sp(SPACE_LEAST)).abs() < 1.0);
 }
 
 /// Expanding folders and changing the server's file list does not leave stale rows or indices.
@@ -156,26 +136,25 @@ fn folder_expansion_and_file_changes() {
     );
 }
 
-/// A reproducible CPU comparison of constructing, laying out and painting a large expanded tree.
+/// A reproducible CPU measure of composing, laying out and painting a large expanded tree.
 #[test]
 #[ignore = "manual CPU benchmark: cargo test -p pm-components benchmark_large_tree -- --ignored --nocapture"]
 fn benchmark_large_tree() {
     let state = sample(10_000);
-    state.tree_scroll.jump_to(120_000.0);
-    for virtualized in [false, true] {
-        std::hint::black_box(paint(&state, virtualized, 600.0));
-        let started = std::time::Instant::now();
-        for _ in 0..20 {
-            std::hint::black_box(paint(&state, virtualized, 600.0));
-        }
-        eprintln!(
-            "tree build+layout+paint virtualized={virtualized}: {:.2} ms/frame",
-            started.elapsed().as_secs_f64() * 50.0
-        );
+    state.files_list.scroll_to_item_offset(5_000, 0.0);
+    std::hint::black_box(paint(&state, 600.0));
+    let started = std::time::Instant::now();
+    for _ in 0..20 {
+        std::hint::black_box(paint(&state, 600.0));
     }
+    eprintln!(
+        "tree build+layout+paint: {:.2} ms/frame",
+        started.elapsed().as_secs_f64() * 50.0
+    );
 }
 
-/// Inline validation messages use the complete list so variable heights cannot leave gaps.
+/// The field a new name is typed into, with what is wrong with the name under it, is taller
+/// than a row, and the rows after it start under it.
 #[test]
 fn naming_keeps_variable_height_rows() {
     let mut state = sample(200);
@@ -187,19 +166,30 @@ fn naming_keeps_variable_height_rows() {
         rustle::TextFieldState::new("file-00000.rs"),
     ));
     assert!(state.naming_problem().is_some());
-    assert_eq!(paint(&state, true, 240.0).1, 202);
+    let laid = paint(&state, 240.0);
+    let field = laid
+        .iter()
+        .find(|node| node.id == ENTRY_FIELD)
+        .expect("the field is laid out");
+    let first = rows_seen(&laid);
+    let first = first.first().expect("a row is seen");
+    assert_eq!(first.0, FocusId(TREE_FILE_BASE));
+    assert!(
+        first.1 > field.bounds.origin.y + field.bounds.size.height + 10.0,
+        "the problem line sits between the field and the first row: {first:?}, {:?}",
+        field.bounds
+    );
 }
 
-/// Tab and Shift+Tab walk every row of a long tree in tree order, those not drawn included:
-/// a row past the ones drawn is scrolled into view and takes focus, and the row holding
-/// focus stays drawn while it is scrolled away.
+/// Tab and Shift+Tab walk every row of a long tree in tree order, those not composed
+/// included: a row past the ones in view is scrolled into view and takes focus, and the row
+/// holding focus stays composed while it is scrolled away.
 #[test]
 fn tab_walks_every_row_scrolling_hidden_ones_in() {
-    use rustle::{Embedded, Key, KeyEvent, Modifiers};
-
     let state = sample(60);
-    state.tree_scroll.jump_to(0.0);
-    let rows = every_row(&state);
+    let rows: Vec<FocusId> = (0..60)
+        .map(|index| FocusId(TREE_FILE_BASE + index))
+        .collect();
     let held: Rc<Cell<Option<FocusId>>> = Rc::new(Cell::new(rows.first().copied()));
     let (shown, keeps, asks) = (Rc::clone(&held), Rc::clone(&held), Rc::clone(&held));
     let tree = state.clone();
@@ -219,20 +209,12 @@ fn tab_walks_every_row_scrolling_hidden_ones_in() {
                 request: Rc::new(move |id| asks.set(Some(id))),
             };
             crate::focus::provide(keys, || {
-                list(&tree, || {
-                    emit_rows(&tree, 240.0);
-                });
+                rustle::column_with(Modifier::new().fill_max_size(), || list(&tree))
             });
         },
         || {},
     );
-    ui.resize((380, (240.0 + 8.0 * step_scale()) as u32), 1.0);
-    let settle = |ui: &mut Embedded| {
-        for _ in 0..3 {
-            ui.invalidate();
-            ui.update();
-        }
-    };
+    ui.resize((380, 240), 1.0);
     settle(&mut ui);
     let mut walked = vec![held.get().expect("the first row holds focus")];
     for _ in 1..rows.len() {
@@ -242,10 +224,10 @@ fn tab_walks_every_row_scrolling_hidden_ones_in() {
     }
     assert_eq!(walked, rows);
     assert!(
-        state.tree_scroll.offset() > 0.0,
+        state.files_list.scroll().offset() > 0.0,
         "the last rows were scrolled in"
     );
-    state.tree_scroll.jump_to(0.0);
+    state.files_list.scroll_to_item_offset(0, 0.0);
     settle(&mut ui);
     assert_eq!(
         held.get(),

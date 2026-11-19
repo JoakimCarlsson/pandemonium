@@ -122,9 +122,9 @@ impl WorkspaceState {
             return None;
         }
         let row = self.editor.row_height().max(1.0);
-        let scroll = self.shown_viewer()?.scroll.offset();
+        let top = self.shown_viewer()?.top_row(self.wrap_columns(), row);
         let height = self.code_height.unwrap_or(VIEW_HEIGHT);
-        let first = (scroll / row).floor().max(0.0) as usize;
+        let first = top.floor().max(0.0) as usize;
         let count = (height / row).ceil() as usize + 1;
         let (lines, _) = document.wrapped_lines(first, count, self.wrap_columns());
         let margin = self.editor.semantic_range_margin;

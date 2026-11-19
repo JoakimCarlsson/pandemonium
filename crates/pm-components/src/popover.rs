@@ -4,7 +4,6 @@ use crate::events::Interactive;
 use crate::events::reduce;
 use crate::focus::FocusId;
 use crate::icons::IconName;
-use crate::select::styled_text;
 use crate::theme;
 use crate::theme::sp;
 use crate::theme::{Radius, Role};
@@ -287,10 +286,11 @@ pub fn key_hint(key: &str, does: &str) {
                 Arrangement::Start,
                 Alignment::Start,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         key,
                         theme::mono_style(11, 1.6).color(theme::color(Role::Muted)),
+                        rustle::TextOverflow::Ellipsis,
                     )
                 },
             );

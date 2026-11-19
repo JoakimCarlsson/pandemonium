@@ -12,7 +12,6 @@ use pm_components::focus;
 use pm_components::theme::Appearance;
 use pm_components::theme::Tokens;
 use pm_field::Edit;
-use pm_pages::Screen;
 use rustle::Modifiers;
 use rustle::{CursorIcon, Host, ShadowLayer, WindowHandle, WindowOptions, WindowShadow};
 use winit::application::ApplicationHandler;
@@ -89,7 +88,7 @@ impl Shared {
 
     /// What `read` makes of the screen.
     #[cfg(test)]
-    pub(super) fn reads<T>(&self, read: impl FnOnce(&Screen) -> T) -> T {
+    pub(super) fn reads<T>(&self, read: impl FnOnce(&pm_pages::Screen) -> T) -> T {
         self.model.read(read)
     }
 
@@ -397,14 +396,6 @@ impl App {
         }
     }
 
-    /// Hands the stretch of selectable text the app keeps selected to the screen's
-    /// selectable text, which highlights it when it is next painted.
-    pub(super) fn select_text(&self) {
-        self.model
-            .read(Screen::selectables)
-            .select(self.text_selection);
-    }
-
     /// Composes again when anything asked for it since the last time, and
     /// runs what follows a composed frame.
     pub(super) fn flush(&mut self) {
@@ -413,7 +404,6 @@ impl App {
             || self.shell.take_deferred()
         {
             let started = self.timings.start();
-            self.select_text();
             self.shell.invalidate();
             self.shell.wake();
             self.focus.settle(asides::is_aside);
@@ -434,7 +424,6 @@ impl App {
         let size = Self::opening_size(event_loop);
         let shared = self.shell.shared.clone();
         self.shell.set_size(None, window_frame::with_band(size));
-        self.select_text();
         let Some(proxy) = self.shell.proxy.clone() else {
             fail_to_start("no event loop to open a window in");
         };
@@ -497,13 +486,6 @@ impl App {
             self.naming = naming;
         });
         self.tell_ime_area(&*window);
-        if let Some(width) = model.read(Screen::diff_resized) {
-            self.model
-                .update(|state| *state = std::mem::take(state).measured_diff(width));
-        }
-        if pm_components::chat::history_pending() {
-            self.model.update(|_| {});
-        }
         let cursor = match self.sash_drag {
             Some((.., pm_components::sash::Grows::Up)) => Some(CursorIcon::RowResize),
             Some(_) => Some(CursorIcon::ColResize),
@@ -838,7 +820,6 @@ impl ApplicationHandler for Running {
 
     /// Lets the interface run what woke the loop, then the app's work.
     fn proxy_wake_up(&mut self, _: &dyn ActiveEventLoop) {
-        self.0.borrow().select_text();
         let host = self.host();
         if let Some(host) = host.borrow_mut().as_mut() {
             host.wake();
@@ -851,7 +832,6 @@ impl ApplicationHandler for Running {
     fn window_event(&mut self, event_loop: &dyn ActiveEventLoop, id: WindowId, event: WindowEvent) {
         let (aside, main) = {
             let app = self.0.borrow();
-            app.select_text();
             (app.aside_of_window(id), app.is_main_window(id))
         };
         let closing = matches!(event, WindowEvent::CloseRequested);

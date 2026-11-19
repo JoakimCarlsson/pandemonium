@@ -18,6 +18,24 @@ pub const MESSAGE_MENU_COPY_MARKDOWN: FocusId = FocusId(208);
 /// Selects the text of the whole conversation.
 pub const MESSAGE_MENU_SELECT_ALL: FocusId = FocusId(209);
 
+/// The first of the names of the messages of the conversation, by which the app finds the
+/// message under a point; the rest follow it.
+pub const MESSAGE_AREA_BASE: u64 = 9_800_000_000_000;
+
+/// How many messages [`MESSAGE_AREA_BASE`] leaves room for.
+const MESSAGE_AREAS: u64 = 100_000_000_000;
+
+/// The name of the area of message `index` of the conversation.
+pub fn message_area_id(index: usize) -> FocusId {
+    FocusId(MESSAGE_AREA_BASE + index as u64)
+}
+
+/// The message whose area is named `id`, if it names one.
+pub fn message_of_area(id: FocusId) -> Option<usize> {
+    let index = id.0.checked_sub(MESSAGE_AREA_BASE)?;
+    (index < MESSAGE_AREAS).then_some(index as usize)
+}
+
 /// The menu open over a message of the open session, and where.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MessageMenu {

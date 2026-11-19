@@ -17,7 +17,7 @@ pub struct ClosedTab {
     pub head: bool,
     /// The caret in the text, as a byte offset, when it held text.
     pub caret: Option<usize>,
-    /// How far down it was scrolled, in logical pixels.
+    /// How far down it was scrolled, in logical pixels of rows that do not wrap.
     pub scroll: f32,
 }
 
@@ -38,7 +38,8 @@ impl WorkspaceState {
             path: viewer.path.clone(),
             head: viewer.head,
             caret,
-            scroll: viewer.scroll.offset(),
+            scroll: viewer.top_row(self.wrap_columns(), self.editor.row_height())
+                * self.editor.row_height(),
         });
         let surplus = self.closed_tabs.len().saturating_sub(REMEMBERED);
         self.closed_tabs.drain(..surplus);
@@ -90,6 +91,7 @@ impl WorkspaceState {
             return self;
         };
         let closed = self.closed_tabs.remove(at);
+        let (columns, row) = (self.wrap_columns(), self.editor.row_height());
         self.open_viewer(closed.path.clone(), closed.head);
         if let Some(viewer) = self
             .git
@@ -99,7 +101,7 @@ impl WorkspaceState {
         {
             viewer.preview = false;
             if matches!(viewer.contents, Contents::Loading) {
-                viewer.scroll.jump_to(closed.scroll);
+                viewer.scroll_to_row(closed.scroll / row.max(1.0), columns, row);
                 viewer.left = closed.caret.map(|caret| Left {
                     unsaved: None,
                     caret,

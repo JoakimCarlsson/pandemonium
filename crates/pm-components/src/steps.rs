@@ -19,7 +19,6 @@ use crate::focus::FocusId;
 use crate::icons::{IconName, spinner};
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::sample::{DiffLine, Kind, Step, ToolUse};
-use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{CHOICE_BASE, STEP_BASE, SUBAGENT_STOP_BASE};
 use crate::theme::{Radius, Role, sp};
@@ -140,7 +139,12 @@ fn clipped_mono(content: &str, chip: bool) {
                 holder
             };
             row_arranged(holder, Arrangement::Start, Alignment::Start, || {
-                styled_text(Modifier::new(), content, code)
+                rustle::basic_text(
+                    Modifier::new(),
+                    content,
+                    code,
+                    rustle::TextOverflow::Ellipsis,
+                )
             });
         },
     );
@@ -208,10 +212,11 @@ fn tool_detail(tool: &ToolUse) {
                 Arrangement::Start,
                 Alignment::Start,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         printed.replace('\t', "    "),
                         theme::mono_style(12, 1.6).color(theme::color(Role::Muted)),
+                        rustle::TextOverflow::Ellipsis,
                     );
                 },
             );
@@ -341,10 +346,11 @@ fn worktree_chip(worktree: &Worktree) {
         Alignment::Center,
         || {
             glyph(IconName::GitFork, 3.0, role);
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 words,
                 theme::text_style(12, 1.4).color(theme::color(role)),
+                rustle::TextOverflow::Ellipsis,
             );
         },
     );
@@ -372,19 +378,20 @@ fn quiet_text(words: String) {
             .padding_xy(theme::sp(1.5), 0.0),
         Arrangement::Start,
         Alignment::Start,
-        || styled_text(Modifier::new(), words, kind),
+        || rustle::basic_text(Modifier::new(), words, kind, rustle::TextOverflow::Ellipsis),
     );
 }
 
 /// Emits what a subagent has cost so far, `micros` millionths of a US dollar, as a muted amount cut short when the row runs out of room.
 #[track_caller]
 fn cost_label(micros: u64) {
-    styled_text(
+    rustle::basic_text(
         Modifier::new().clip(),
         crate::spend::dollars(micros),
         theme::text_style(12, 1.4)
             .color(theme::color(Role::Subtle))
             .max_lines(1),
+        rustle::TextOverflow::Ellipsis,
     );
 }
 
@@ -704,7 +711,12 @@ pub fn plan(items: &[PlanStep]) {
                                     Alignment::Center,
                                     || plan_mark(item.progress),
                                 );
-                                styled_text(Modifier::new().weight(1.0).clip(), &item.text, kind);
+                                rustle::basic_text(
+                                    Modifier::new().weight(1.0).clip(),
+                                    &item.text,
+                                    kind,
+                                    rustle::TextOverflow::Ellipsis,
+                                );
                             },
                         );
                     }
@@ -833,7 +845,12 @@ pub fn question(ask: &Permission, width: f32) {
                 Alignment::Start,
                 || {
                     for piece in rustle::wrap_at_spaces(&ask.title, &title, width - CARD_INSET) {
-                        styled_text(Modifier::new(), &ask.title[piece.start..piece.end], title);
+                        rustle::basic_text(
+                            Modifier::new(),
+                            &ask.title[piece.start..piece.end],
+                            title,
+                            rustle::TextOverflow::Ellipsis,
+                        );
                     }
                 },
             );
@@ -851,7 +868,12 @@ pub fn question(ask: &Permission, width: f32) {
                     Alignment::Start,
                     || {
                         for piece in rustle::wrap_at_spaces(&shown, &kind, room) {
-                            styled_text(Modifier::new(), &shown[piece.start..piece.end], kind);
+                            rustle::basic_text(
+                                Modifier::new(),
+                                &shown[piece.start..piece.end],
+                                kind,
+                                rustle::TextOverflow::Ellipsis,
+                            );
                         }
                     },
                 );

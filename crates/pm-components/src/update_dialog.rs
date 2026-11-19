@@ -3,7 +3,6 @@
 use crate::button::Variant;
 use crate::focus::FocusId;
 use crate::parts::{line, spacer, wrap};
-use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::theme;
@@ -198,13 +197,14 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
                 Arrangement::SpacedBy(sp(3)),
                 Alignment::Start,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         name,
                         theme::text_style(22, 1.3)
                             .font_weight(rustle::FontWeight::MEDIUM)
                             .color(theme::color(Role::Text))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                     line(format!("This is {RUNNING}{date}."), 13, 1.4, Role::Muted);
                     if let Some(notes) = body {

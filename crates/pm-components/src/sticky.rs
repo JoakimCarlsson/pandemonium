@@ -4,7 +4,6 @@ use crate::events::Interactive;
 use crate::events::reduce;
 use crate::focus::FocusId;
 use crate::marked::{CaretLook, Mark, Paint, marked_line};
-use crate::select::styled_text;
 use crate::theme;
 use crate::theme::Role;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
@@ -70,10 +69,11 @@ fn kept_line(document: &Document, index: usize, place: usize, settings: &EditorS
                 Alignment::Center,
                 move || {
                     if numbers {
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new(),
                             (index + 1).to_string(),
                             kind.color(theme::color(Role::Subtle)),
+                            rustle::TextOverflow::Ellipsis,
                         );
                     }
                 },
@@ -99,18 +99,18 @@ fn kept_line(document: &Document, index: usize, place: usize, settings: &EditorS
     );
 }
 
-/// Emits the lines that open the blocks around the first line in view of `document`, scrolled `scroll` logical pixels with lines holding `columns` characters when they wrap, as a box over the top of the view of the layer it is placed in; nothing when there are none or `settings` do not want them.
+/// Emits the lines that open the blocks around the first line in view of `document`, scrolled so row `top` is at the top of its view, with lines holding `columns` characters when they wrap, as a box over the top of the view of the layer it is placed in; nothing when there are none or `settings` do not want them.
 #[track_caller]
 pub(crate) fn sticky(
     document: &Document,
-    scroll: f32,
+    top: f32,
     columns: Option<usize>,
     settings: &EditorSettings,
 ) {
     if !settings.sticky_scroll {
         return;
     }
-    let row = (scroll.max(0.0) / settings.row_height()).floor() as usize;
+    let row = top.max(0.0).floor() as usize;
     let lines = document.sticky_lines(row, columns, MOST);
     if lines.is_empty() {
         return;
@@ -147,10 +147,10 @@ impl WorkspaceState {
         let Some(viewer) = self.git.viewers.get_mut(index) else {
             return self;
         };
+        let first = viewer.top_row(columns, row).max(0.0).floor() as usize;
         let crate::open_files::Contents::Text(document) = &mut viewer.contents else {
             return self;
         };
-        let first = (viewer.scroll.offset().max(0.0) / row).floor() as usize;
         let Some(line) = document
             .sticky_lines(first, columns, MOST)
             .get(above)
@@ -162,7 +162,7 @@ impl WorkspaceState {
         let shown = document
             .wrapped_row_of_line(line, columns)
             .saturating_sub(above);
-        viewer.scroll.jump_to(shown as f32 * row);
+        viewer.scroll_to_row(shown as f32, columns, row);
         self
     }
 }

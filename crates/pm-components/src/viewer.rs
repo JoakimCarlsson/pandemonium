@@ -24,7 +24,6 @@ use crate::marked::{CaretLook, CaretShape, Mark, Paint, marked_field_line};
 use crate::open_files::{Contents, EDITOR_FIELD, EDITOR_SAVE, FILE_TAB_BASE, STRIP, Viewer};
 use crate::parts::{glyph, line};
 use crate::preview::Rendering;
-use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::tasks::run_mark;
@@ -34,15 +33,6 @@ use pm_editor::{Document, EditorSettings, Hint, Lens, LineChange, Swatch};
 
 /// How wide a view of a file must be, in logical pixels, for a minimap to be drawn beside it.
 const MINIMAP_ROOM: f32 = 420.0;
-
-/// How far beyond the view, above and below, lines are still built, in logical pixels.
-const OVERSCAN: f32 = 100.0;
-
-/// Emits a box as tall as `lines` lines `row` logical pixels tall, standing in for those left out.
-#[track_caller]
-fn blank(lines: usize, row: f32) {
-    rustle::spacer(Modifier::new().height(lines as f32 * row));
-}
 
 /// The part of `range` that falls on the line at `line`, as offsets into the line, or nothing when none of it does.
 fn clipped(range: &Option<Range<usize>>, line: &Range<usize>) -> Option<Range<usize>> {
@@ -534,11 +524,12 @@ pub(crate) fn file_line(
                             bulb_button(height);
                         }
                         if settings.line_numbers {
-                            styled_text(
+                            rustle::basic_text(
                                 Modifier::new(),
                                 number.to_string(),
                                 theme::code_style(font, 1.4)
                                     .color(theme::color(worst.map_or(number_tone, severity_role))),
+                                rustle::TextOverflow::Ellipsis,
                             );
                         }
                     },
@@ -587,7 +578,7 @@ pub(crate) fn file_line(
                                 fold_chip(index);
                             }
                             if let Some(said) = blamed.clone() {
-                                styled_text(
+                                rustle::basic_text(
                                     Modifier::new()
                                         .padding_each(theme::sp(8), 0.0, 0.0, 0.0)
                                         .weight(1.0),
@@ -595,6 +586,7 @@ pub(crate) fn file_line(
                                     theme::text_style(font, 1.4)
                                         .color(theme::color(Role::Subtle))
                                         .max_lines(1),
+                                    rustle::TextOverflow::Ellipsis,
                                 );
                             }
                         },
@@ -783,10 +775,11 @@ fn hint_chip(hint: &Hint, font: u32) {
         Arrangement::Start,
         Alignment::Center,
         || {
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 &hint.label,
                 theme::mono_style((font - 1).max(8), 1.2).color(theme::color(tone)),
+                rustle::TextOverflow::Ellipsis,
             );
         },
     );
@@ -819,10 +812,11 @@ fn run_lens_chip(index: usize, label: &str, font: u32, first: bool) {
         Arrangement::Start,
         Alignment::Center,
         || {
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 label,
                 theme::text_style((font - 1).max(8), 1.2).color(theme::color(Role::Muted)),
+                rustle::TextOverflow::Ellipsis,
             );
         },
     );
@@ -849,10 +843,11 @@ fn lens_chip(lens: &Lens, font: u32, first: bool) {
         Arrangement::Start,
         Alignment::Center,
         || {
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 &lens.title,
                 theme::text_style((font - 1).max(8), 1.2).color(theme::color(Role::Subtle)),
+                rustle::TextOverflow::Ellipsis,
             );
         },
     );
@@ -956,89 +951,172 @@ struct Look<'a> {
     bulb: Option<usize>,
 }
 
-/// Emits the lines of `document` that are in or near a view `height` tall scrolled `scroll` down, drawn as `look` says, with a blank for those above and below.
+/// Emits the line at `index` of `document` as an item of the list of its lines, drawn as `look` says, with the brackets `pair` paired at the caret behind a box.
 #[track_caller]
-fn visible(document: &Document, scroll: f32, height: f32, look: &Look) {
+fn shown_line(document: &Document, index: usize, pair: &[Range<usize>], look: &Look) {
     let Look {
         found,
         blamed,
         settings,
         columns,
         owner,
-        drawn: placed,
+        drawn,
         file,
         gutter,
         bulb,
     } = *look;
-    let row = settings.row_height();
-    let total = document.wrapped_rows(columns);
-    let first = (((scroll - OVERSCAN) / row).floor().max(0.0) as usize).min(total);
-    let last = ((((scroll + height + OVERSCAN) / row).ceil()) as usize).min(total);
-    let (shown, starts) = document.wrapped_lines(first, last - first, columns);
+    let spans = document
+        .highlights(index..index + 1)
+        .pop()
+        .unwrap_or_default();
+    let mut standing = if settings.indent_guides {
+        guides(document, index..index + 1).pop().unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    if settings.wrap_guide {
+        standing.push(settings.preferred_line_length);
+    }
+    let mut marks = line_marks(document, index, spans, pair, found, settings);
+    marks.extend(
+        standing
+            .into_iter()
+            .map(|column| Mark::new(column..column, Role::Border, Paint::Guide)),
+    );
+    let segments = document.line_segments(index, columns);
+    let cell_height = document_row(settings, &segments);
+    file_line(
+        document,
+        index,
+        marks,
+        segments,
+        Beside {
+            blamed: blamed(index),
+            breakpoint: || breakpoint_cell(file, index, gutter, cell_height),
+            bulb: bulb == Some(index),
+            paused: gutter.paused == Some(index),
+        },
+        settings,
+        (owner, drawn),
+    );
+}
+
+/// Emits the line under the last one shown of a file that was cut short, saying the rest is not shown.
+#[track_caller]
+fn truncated_note() {
+    column_arranged(
+        Modifier::new()
+            .padding_xy(theme::sp(4), 0.0)
+            .padding_xy(0.0, theme::sp(2)),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            line("The rest of the file is not shown.", 12, 1.4, Role::Subtle);
+        },
+    );
+}
+
+/// The space above the first line of a file and below its last, in logical pixels.
+fn line_padding() -> f32 {
+    theme::sp(2)
+}
+
+/// Emits the lines of `document` that show as a lazy list with `modifier`, scrolled by `scroll` in a view `height` tall, each drawn as `look` says, followed by a note when the file was cut short.
+#[track_caller]
+fn lines(
+    document: &Document,
+    scroll: &rustle::LazyListState,
+    modifier: Modifier,
+    look: &Look,
+    height: f32,
+) {
+    let settings = look.settings;
+    let shown = document.shown_lines(0, document.rows());
     let pair: Vec<Range<usize>> = document
         .syntax
         .as_ref()
         .and_then(|syntax| syntax.bracket_pair(document.field.text(), document.field.caret()))
         .map(|(open, close)| vec![open, close])
         .unwrap_or_default();
-    blank(starts, row);
-    let mut drawn = starts;
-    for run in runs(&shown) {
-        let painted = document.highlights(run.clone());
-        let mut standing = if settings.indent_guides {
-            guides(document, run.clone())
-        } else {
-            vec![Vec::new(); run.len()]
-        };
-        if settings.wrap_guide {
-            for columns in &mut standing {
-                columns.push(settings.preferred_line_length);
-            }
-        }
-        for ((index, spans), guides_at) in run.zip(painted).zip(standing) {
-            let mut marks = line_marks(document, index, spans, &pair, found, settings);
-            marks.extend(
-                guides_at
-                    .into_iter()
-                    .map(|column| Mark::new(column..column, Role::Border, Paint::Guide)),
-            );
-            let segments = document.line_segments(index, columns);
-            drawn += segments.len();
-            let cell_height = document_row(settings, &segments);
-            rustle::key(index, || {
-                file_line(
-                    document,
-                    index,
-                    marks,
-                    segments,
-                    Beside {
-                        blamed: blamed(index),
-                        breakpoint: || breakpoint_cell(file, index, gutter, cell_height),
-                        bulb: bulb == Some(index),
-                        paused: gutter.paused == Some(index),
-                    },
-                    settings,
-                    (owner, placed),
-                );
-            });
-        }
+    let beyond = if settings.scroll_beyond_last_line {
+        (height - settings.row_height() * 2.0).max(0.0)
+    } else {
+        0.0
+    };
+    rustle::lazy_list_with(
+        modifier,
+        scroll,
+        rustle::LazyContent::new().padding_each(line_padding(), line_padding() + beyond),
+        shown.len() + usize::from(document.truncated),
+        |item| shown.get(item).copied().unwrap_or(usize::MAX),
+        |item| match shown.get(item) {
+            Some(&index) => shown_line(document, index, &pair, look),
+            None => truncated_note(),
+        },
+    );
+}
+
+/// Scrolls the list `scroll` of the lines of `document` so that `target`, a row counted from its first, is at the top of its view, when lines hold `columns` characters as they wrap and rows are `row` logical pixels tall; a row before the first scrolls to the very top.
+pub(crate) fn scroll_document_to_row(
+    scroll: &rustle::LazyListState,
+    document: &Document,
+    target: f32,
+    columns: Option<usize>,
+    row: f32,
+) {
+    if target <= 0.0 {
+        scroll.scroll_to_item_offset(0, -line_padding());
+        return;
     }
-    blank(total.saturating_sub(drawn), row);
-    if settings.scroll_beyond_last_line {
-        rustle::spacer(Modifier::new().height((height - row * 2.0).max(0.0)));
+    let whole = target.floor() as usize;
+    let (shown, start) = document.wrapped_lines(whole, 1, columns);
+    match shown.first() {
+        Some(&line) => {
+            scroll.scroll_to_item_offset(document.row_of_line(line), (target - start as f32) * row)
+        }
+        None => scroll.scroll_to_end(),
     }
 }
 
-/// The lines `shown`, in order, as runs of lines that follow one another.
-fn runs(shown: &[usize]) -> Vec<Range<usize>> {
-    let mut found: Vec<Range<usize>> = Vec::new();
-    for index in shown {
-        match found.last_mut() {
-            Some(run) if run.end == *index => run.end += 1,
-            _ => found.push(*index..*index + 1),
+impl Viewer {
+    /// The row of the file at the top of its view, counting the part of it scrolled out, when its lines hold `columns` characters as they wrap and rows are `row` logical pixels tall; for a file not shown as text, how far it is scrolled in rows.
+    pub fn top_row(&self, columns: Option<usize>, row: f32) -> f32 {
+        let row = row.max(1.0);
+        let Contents::Text(document) = &self.contents else {
+            return self.scroll.scroll().offset() / row;
+        };
+        if shows_rendering(self) {
+            return self.scroll.scroll().offset() / row;
+        }
+        let Some(item) = self.scroll.first_visible_item() else {
+            return 0.0;
+        };
+        match document.shown_lines(item, 1).first() {
+            Some(&line) => {
+                document.wrapped_row_of_line(line, columns) as f32
+                    + self.scroll.first_visible_item_scroll_offset() / row
+            }
+            None => document.wrapped_rows(columns) as f32,
         }
     }
-    found
+
+    /// Scrolls the file so that `target`, a row counted from its first, is at the top of its view, when its lines hold `columns` characters as they wrap and rows are `row` logical pixels tall; a row before the first scrolls to the very top. A file not read yet takes `target` as a line; one shown rendered scrolls `target` rows of pixels.
+    pub fn scroll_to_row(&self, target: f32, columns: Option<usize>, row: f32) {
+        let whole = target.max(0.0).floor() as usize;
+        let within = (target.max(0.0) - whole as f32) * row;
+        let document = match &self.contents {
+            Contents::Text(document) if !shows_rendering(self) => document,
+            Contents::Loading => {
+                self.scroll.scroll_to_item_offset(whole, within);
+                return;
+            }
+            _ => {
+                self.scroll.scroll().jump_to(target.max(0.0) * row);
+                return;
+            }
+        };
+        scroll_document_to_row(&self.scroll, document, target, columns, row);
+    }
 }
 
 /// The items of the outline that hold the caret of `document`, outermost first, as `fn main › impl Thing`.
@@ -1135,7 +1213,7 @@ fn strip(viewer: &Viewer, live: bool) {
                     rustle::stack_with(Modifier::new().weight_with(sp(4), false).clip(), || {
                         file_icon(&viewer.path, 4.0)
                     });
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new().weight_with(
                             rustle::layout_text(&viewer.path, &path_kind, None)
                                 .size()
@@ -1144,6 +1222,7 @@ fn strip(viewer: &Viewer, live: bool) {
                         ),
                         &viewer.path,
                         path_kind,
+                        rustle::TextOverflow::Ellipsis,
                     );
                     if viewer.head {
                         line("HEAD", 11, 1.4, Role::Muted);
@@ -1155,7 +1234,7 @@ fn strip(viewer: &Viewer, live: bool) {
                         line("Read only", 11, 1.4, Role::Muted);
                     }
                     if let Some(crumbs) = crumbs {
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new().weight_with(
                                 rustle::layout_text(&crumbs, &crumbs_kind, None)
                                     .size()
@@ -1164,6 +1243,7 @@ fn strip(viewer: &Viewer, live: bool) {
                             ),
                             crumbs,
                             crumbs_kind,
+                            rustle::TextOverflow::Ellipsis,
                         );
                     }
                 },
@@ -1235,73 +1315,50 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
         Contents::Text(document) if source => Some(document),
         _ => None,
     };
+    let settings = pm_editor::EditorSettings {
+        git_gutter: state.shows_gutter(),
+        cursor_shape: shown_text.map_or(state.editor.cursor_shape, |document| {
+            modal_shape(state, document, live)
+        }),
+        ..state.editor.clone()
+    };
+    let gutter = state.gutter_of(index);
+    let blamed = |line: usize| state.blame_of_line(line).filter(|_| live);
+    let look = Look {
+        found: &found,
+        blamed: &blamed,
+        settings: &settings,
+        columns: state.wrap_columns(),
+        owner,
+        drawn: &state.code_lines,
+        file: index,
+        gutter: &gutter,
+        bulb: state.lightbulb_line().filter(|_| live),
+    };
+    let pressed = Modifier::new()
+        .cursor(CursorIcon::Text)
+        .chain(if owner == crate::open_files::EDITOR_FIELD {
+            Modifier::new()
+        } else {
+            crate::focus::focus_target(owner)
+        })
+        .pressable_menu(owner, reduce(owner), {
+            let operations = crate::events::operations();
+            move || {
+                if live {
+                    operations.open_field_menu(owner);
+                } else {
+                    operations.open_tab_menu(index);
+                }
+            }
+        });
     let body = || match &viewer.contents {
         _ if !source => {
             crate::preview::rendered(viewer, &state.figures, (width, height));
         }
         Contents::Loading => note("Reading the file."),
         Contents::Message(message) => note(message),
-        Contents::Picture(_) => {}
-        Contents::Text(document) => {
-            column_arranged(
-                Modifier::new()
-                    .fill_max_width()
-                    .height_in(theme::sp(lines_height / 4.0), f32::INFINITY)
-                    .cursor(CursorIcon::Text)
-                    .chain(if owner == crate::open_files::EDITOR_FIELD {
-                        Modifier::new()
-                    } else {
-                        crate::focus::focus_target(owner)
-                    })
-                    .pressable_menu(owner, reduce(owner), {
-                        let operations = crate::events::operations();
-                        move || {
-                            if live {
-                                operations.open_field_menu(owner);
-                            } else {
-                                operations.open_tab_menu(index);
-                            }
-                        }
-                    })
-                    .padding_xy(0.0, theme::sp(2)),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    visible(
-                        document,
-                        viewer.scroll.offset(),
-                        lines_height,
-                        &Look {
-                            found: &found,
-                            blamed: &|line| state.blame_of_line(line).filter(|_| live),
-                            settings: &pm_editor::EditorSettings {
-                                git_gutter: state.shows_gutter(),
-                                cursor_shape: modal_shape(state, document, live),
-                                ..state.editor.clone()
-                            },
-                            columns: state.wrap_columns(),
-                            owner,
-                            drawn: &state.code_lines,
-                            file: index,
-                            gutter: &state.gutter_of(index),
-                            bulb: state.lightbulb_line().filter(|_| live),
-                        },
-                    );
-                    if document.truncated {
-                        column_arranged(
-                            Modifier::new()
-                                .padding_xy(theme::sp(4), 0.0)
-                                .padding_xy(0.0, theme::sp(2)),
-                            Arrangement::Start,
-                            Alignment::Start,
-                            || {
-                                line("The rest of the file is not shown.", 12, 1.4, Role::Subtle);
-                            },
-                        );
-                    }
-                },
-            );
-        }
+        Contents::Picture(_) | Contents::Text(_) => {}
     };
     column_arranged(
         Modifier::new()
@@ -1328,12 +1385,22 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
                             } else {
                                 area
                             };
-                            column_arranged(
-                                area.vertical_scroll(&viewer.scroll).fill_max_width(),
-                                Arrangement::Start,
-                                Alignment::Start,
-                                body,
-                            );
+                            match shown_text {
+                                Some(document) => lines(
+                                    document,
+                                    &viewer.scroll,
+                                    area.chain(pressed.clone()),
+                                    &look,
+                                    lines_height,
+                                ),
+                                None => column_arranged(
+                                    area.vertical_scroll(viewer.scroll.scroll())
+                                        .fill_max_width(),
+                                    Arrangement::Start,
+                                    Alignment::Start,
+                                    body,
+                                ),
+                            }
                             if let Some(document) = shown_text {
                                 crate::scroll_marks::scroll_marks(
                                     document,
@@ -1342,7 +1409,7 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
                                 );
                                 crate::sticky::sticky(
                                     document,
-                                    viewer.scroll.offset(),
+                                    viewer.top_row(state.wrap_columns(), state.editor.row_height()),
                                     state.wrap_columns(),
                                     &state.editor,
                                 );
@@ -1362,7 +1429,7 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
                     {
                         crate::minimap::minimap(
                             document,
-                            viewer.scroll.offset(),
+                            viewer.top_row(state.wrap_columns(), state.editor.row_height()),
                             lines_height,
                             state.editor.row_height(),
                             state.wrap_columns(),
@@ -1428,23 +1495,26 @@ fn vim_bar(status: &crate::vim::VimStatus) {
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         || {
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 status.mode,
                 kind.color(theme::color(Role::Text)),
+                rustle::TextOverflow::Ellipsis,
             );
             if let Some(pending) = &status.pending {
-                styled_text(
+                rustle::basic_text(
                     Modifier::new().weight(1.0),
                     pending,
                     kind.color(theme::color(Role::Muted)).max_lines(1),
+                    rustle::TextOverflow::Ellipsis,
                 );
             }
             if let Some(register) = status.recording {
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     format!("recording @{register}"),
                     kind.color(theme::color(Role::Danger)),
+                    rustle::TextOverflow::Ellipsis,
                 );
             }
         },

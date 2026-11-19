@@ -13,7 +13,6 @@ use rustle::{Arrangement, CursorIcon, FlowOptions, Modifier};
 use crate::events::Interactive;
 use crate::focus::FocusId;
 use crate::preview::linked_path;
-use crate::select::styled_text;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::theme::{Role, sp};
 
@@ -276,12 +275,13 @@ pub(crate) fn images_node(
                         drawn(modifier, drawing, across, down);
                     }
                     _ if image.alt.is_empty() => {}
-                    _ => styled_text(
+                    _ => rustle::basic_text(
                         modifier,
                         &image.alt,
                         theme::text_style(pixels.saturating_sub(1), 1.4)
                             .color(theme::color(Role::Subtle))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     ),
                 }
             }

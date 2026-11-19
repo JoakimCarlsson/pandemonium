@@ -750,11 +750,16 @@ impl WorkspaceState {
             self.tab = crate::state::Tab::File;
             if let Some(viewer) = self.git.viewers.get_mut(index) {
                 viewer.hidden = false;
+                let scroll = viewer.scroll.clone();
                 match document_of(viewer) {
                     Some(document) => {
-                        let scroll =
-                            crate::open_files::jump(document, location.span.start, row, columns);
-                        viewer.scroll.jump_to(scroll);
+                        crate::open_files::jump(
+                            document,
+                            location.span.start,
+                            &scroll,
+                            row,
+                            columns,
+                        );
                     }
                     None => viewer.jump = Some(location.span.start),
                 }
@@ -776,12 +781,13 @@ impl WorkspaceState {
             return self;
         };
         let mut document = Document::new(&text, true, false);
-        let scroll = crate::open_files::jump(&mut document, location.span.start, row, columns);
+        let scroll = rustle::LazyListState::default();
+        crate::open_files::jump(&mut document, location.span.start, &scroll, row, columns);
         let viewer = crate::open_files::Viewer {
             path: location.path.clone(),
             head: false,
             contents: Contents::Text(Box::new(document)),
-            scroll: rustle::ScrollState::new(scroll),
+            scroll,
             hover_scroll: rustle::ScrollState::default(),
             preview: true,
             left: None,

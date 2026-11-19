@@ -9,7 +9,6 @@ use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with
 
 use crate::focus::FocusId;
 use crate::icons::IconName;
-use crate::select::styled_text;
 use crate::theme::{Radius, Role};
 
 use crate::agent_list::AgentEntry;
@@ -502,12 +501,13 @@ fn found_node(form: &ModelServerForm, room: f32) {
                             Alignment::Center,
                             || {
                                 Checkbox::new(listed.contains(model), pick).build();
-                                styled_text(
+                                rustle::basic_text(
                                     Modifier::new(),
                                     model.clone(),
                                     theme::mono_style(12, 1.4)
                                         .color(theme::color(Role::Text))
                                         .max_lines(1),
+                                    rustle::TextOverflow::Ellipsis,
                                 );
                             },
                         );
@@ -656,13 +656,14 @@ fn server_row(index: usize, server: &ModelServer) {
                         Arrangement::SpacedBy(sp(2)),
                         Alignment::Center,
                         || {
-                            styled_text(
+                            rustle::basic_text(
                                 Modifier::new(),
                                 name,
                                 theme::text_style(13, 1.4)
                                     .font_weight(rustle::FontWeight::MEDIUM)
                                     .color(theme::color(Role::Text))
                                     .max_lines(1),
+                                rustle::TextOverflow::Ellipsis,
                             );
                             if let Some(said) = key_badge(server) {
                                 Badge::new(said).build();
@@ -671,12 +672,13 @@ fn server_row(index: usize, server: &ModelServer) {
                     );
                     line(detail_of(server), 12, 1.4, Role::Muted);
                     if !server.models.is_empty() {
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new().fill_max_width(),
                             server.models.join(", "),
                             theme::text_style(11, 1.4)
                                 .color(theme::color(Role::Subtle))
                                 .max_lines(1),
+                            rustle::TextOverflow::Ellipsis,
                         );
                     }
                 },

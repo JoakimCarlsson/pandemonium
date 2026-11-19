@@ -14,7 +14,6 @@ use crate::folder_picker::Purpose;
 use crate::icons::{IconName, spinner};
 use crate::input;
 use crate::parts::{glyph, line};
-use crate::select::styled_text;
 use crate::theme::{Radius, Role, sp};
 
 use crate::state::{Outgoing, WorkspaceState};
@@ -439,20 +438,22 @@ fn entry(row_of: &Row, id: FocusId, selected: bool) {
                 Arrangement::Start,
                 Alignment::Start,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         row_of.name.clone(),
                         theme::text_style(13, 1.4)
                             .color(theme::color(Role::Text))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                     if !row_of.detail.is_empty() {
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new(),
                             row_of.detail.clone(),
                             theme::text_style(12, 1.4)
                                 .color(theme::color(Role::Subtle))
                                 .max_lines(1),
+                            rustle::TextOverflow::Ellipsis,
                         );
                     }
                 },

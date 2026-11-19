@@ -14,7 +14,6 @@ use crate::focus::FocusId;
 use crate::icons::IconName;
 use crate::input::Input;
 use crate::parts::{clipped, glyph, line, wrap};
-use crate::select::styled_text;
 use crate::settings_ids::PICKS;
 use crate::size::Size;
 use crate::theme::{Radius, Role};
@@ -78,36 +77,63 @@ pub fn choices_width(names: &[&str]) -> f32 {
         .sum::<f32>()
 }
 
-/// Emits the choices `names` side by side, `picked` marked, each answering to the name `id_of` gives its place; a choice given no name is left out.
+/// Emits the choices `names` side by side as rustle's single-choice segmented buttons, `picked`
+/// marked, each answering to the name `id_of` gives its place; a choice given no name is left out.
 #[track_caller]
 pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> Option<FocusId>) {
-    let modifier = Modifier::new()
-        .height(theme::sp(8))
-        .border(1.0, theme::color(Role::Border), Radius::Md.px())
-        .padding(1.0)
-        .padding_xy(theme::sp(0.5), 0.0);
-    row_arranged(
-        modifier,
-        Arrangement::SpacedBy(sp(0.5)),
-        Alignment::Center,
-        || {
-            for (option, name) in names.iter().enumerate() {
-                let Some(id) = id_of(option) else {
-                    continue;
-                };
+    let shown: Vec<(usize, &str, FocusId)> = names
+        .iter()
+        .enumerate()
+        .filter_map(|(option, name)| id_of(option).map(|id| (option, *name, id)))
+        .collect();
+    let count = shown.len();
+    let colors = choice_colors();
+    let base = rustle::Shape::rounded(Radius::Md.px());
+    let border_width = rustle::SegmentedButtonDefaults::BORDER_WIDTH;
+    rustle::single_choice_segmented_button_row(
+        Modifier::new().height(theme::sp(8)),
+        border_width,
+        move || {
+            for (index, (option, name, id)) in shown.into_iter().enumerate() {
                 let on = option == picked;
-                Tile::new(id)
-                    .selected(on)
-                    .height(6.5)
-                    .radius(Radius::Sm)
-                    .inner(Modifier::new().padding_xy(theme::sp(2.5), 0.0))
-                    .arrangement(Arrangement::Center)
-                    .build_with(|| {
-                        line(*name, 12, 1.4, if on { Role::Text } else { Role::Muted });
-                    });
+                rustle::key(option, || {
+                    rustle::segmented_button(
+                        on,
+                        || {},
+                        rustle::SegmentedButtonDefaults::item_shape(index, count, base),
+                        Modifier::new()
+                            .cursor(CursorIcon::Pointer)
+                            .control(id, reduce(id)),
+                        true,
+                        colors,
+                        rustle::SegmentedButtonDefaults::border_stroke(
+                            colors.border_color(true, on),
+                            border_width,
+                        ),
+                        (theme::sp(2.5), 0.0),
+                        || {},
+                        || line(name, 12, 1.4, if on { Role::Text } else { Role::Muted }),
+                    );
+                });
             }
         },
     );
+}
+
+/// The colours of the choices: the selected surface behind the one picked, nothing behind the
+/// others, the text colour on the one picked and the muted one on the others, and the border
+/// colour around every one.
+fn choice_colors() -> rustle::SegmentedButtonColors {
+    let border = theme::color(Role::Border);
+    rustle::SegmentedButtonColors {
+        active_container_color: theme::color(Role::SurfaceSelected),
+        active_content_color: theme::color(Role::Text),
+        active_border_color: border,
+        inactive_container_color: rustle::Color::TRANSPARENT,
+        inactive_content_color: theme::color(Role::Muted),
+        inactive_border_color: border,
+        ..rustle::SegmentedButtonDefaults::colors()
+    }
 }
 
 /// How wide a number with its buttons is, in logical pixels.
@@ -137,12 +163,13 @@ pub fn number(shown: String, smaller: FocusId, bigger: FocusId) {
                 Arrangement::Center,
                 Alignment::Start,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         shown,
                         theme::mono_style(12, 1.4)
                             .color(theme::color(Role::Text))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                 },
             );
@@ -290,12 +317,13 @@ pub fn list(
                             Arrangement::Start,
                             Alignment::Center,
                             || {
-                                styled_text(
+                                rustle::basic_text(
                                     Modifier::new(),
                                     text.as_str(),
                                     theme::mono_style(12, 1.4)
                                         .color(theme::color(Role::Text))
                                         .max_lines(1),
+                                    rustle::TextOverflow::Ellipsis,
                                 );
                             },
                         );

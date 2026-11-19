@@ -10,7 +10,6 @@ use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::focus::FocusId;
 use crate::icons::IconName;
-use crate::select::styled_text;
 use crate::theme::{Radius, Role, Tone};
 
 use crate::Button;
@@ -188,9 +187,12 @@ fn clamped(content: &str, tone: Role, width: f32) {
                 match (cut && at + 1 == shown, words.is_empty()) {
                     (true, _) => line(format!("{words}\u{2026}"), TEXT_PIXELS, TEXT_LEADING, tone),
                     (false, true) => rustle::spacer(Modifier::new().height(theme::sp(3))),
-                    (false, false) => {
-                        styled_text(Modifier::new(), words, kind.color(theme::color(tone)))
-                    }
+                    (false, false) => rustle::basic_text(
+                        Modifier::new(),
+                        words,
+                        kind.color(theme::color(tone)),
+                        rustle::TextOverflow::Ellipsis,
+                    ),
                 }
             }
         },

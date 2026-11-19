@@ -9,7 +9,6 @@ use std::rc::Rc;
 use crate::Surface;
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::select::styled_text;
 use crate::theme::{Radius, Role, sp};
 
 /// How far a menu opened from a control hangs from it, in logical pixels.
@@ -203,29 +202,18 @@ fn picked(id: FocusId, on_pick: Option<Pick>) -> impl Fn() + 'static {
     }
 }
 
-/// Emits one entry, `height` style units tall when it is a row: a hairline reaching the menu's
-/// edges with a step of room above and below it, or a row with the label and its shortcut,
-/// whose click runs `on_pick`, or hands the press to the workspace's reducer without one.
+/// Emits one entry, `height` style units tall when it is a row: rustle's horizontal divider
+/// across the menu inside its padding with a step of room above and below it, or a row with
+/// the label and its shortcut, whose click runs `on_pick`, or hands the press to the
+/// workspace's reducer without one.
 #[track_caller]
 fn menu_row(entry: Entry, height: f32, on_pick: Option<Pick>) {
     match entry {
         Entry::Separator => {
-            let color = crate::theme::role(Role::Border);
-            rustle::spacer(
-                Modifier::new()
-                    .fill_max_width()
-                    .height(sp(0.25) + 2.0 * sp(1))
-                    .draw_behind(move |canvas| {
-                        let width = canvas.width();
-                        let height = canvas.height();
-                        canvas.rect(
-                            -sp(1),
-                            (height - sp(0.25)) / 2.0,
-                            width + 2.0 * sp(1),
-                            sp(0.25),
-                            color,
-                        );
-                    }),
+            rustle::horizontal_divider(
+                Modifier::new().padding_xy(0.0, sp(1)),
+                sp(0.25),
+                crate::theme::role(Role::Border),
             );
         }
         Entry::Item {
@@ -254,16 +242,18 @@ fn menu_row(entry: Entry, height: f32, on_pick: Option<Pick>) {
                 Arrangement::SpacedBy(sp(4)),
                 Alignment::Center,
                 move || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new().weight(1.0),
                         words,
                         theme::text_style(13, 1.4).color(theme::color(Role::Text)),
+                        rustle::TextOverflow::Ellipsis,
                     );
                     if let Some(shortcut) = shortcut {
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new(),
                             shortcut,
                             theme::text_style(12, 1.4).color(theme::color(Role::Subtle)),
+                            rustle::TextOverflow::Ellipsis,
                         );
                     }
                 },

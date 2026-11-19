@@ -121,9 +121,9 @@ impl WorkspaceState {
         let row = self.editor.row_height();
         let rows = ((height / row.max(1.0)).floor() as usize).max(1);
         let view = ModalView {
-            top: self
-                .shown_viewer()
-                .map_or(0, |viewer| (viewer.scroll.offset() / row.max(1.0)) as usize),
+            top: self.shown_viewer().map_or(0, |viewer| {
+                viewer.top_row(self.wrap_columns(), row).max(0.0) as usize
+            }),
             rows,
             margin: self.editor.vertical_scroll_margin,
             wrap: self.editor.preferred_line_length,
@@ -192,27 +192,28 @@ impl WorkspaceState {
         let line = document.line_of(document.field.caret());
         let at = document.wrapped_row_of_line(line, columns) as f32;
         let rows = rows as f32;
-        viewer.scroll.jump_to(
+        viewer.scroll_to_row(
             match placement {
-                Placement::Top => at * row,
-                Placement::Center => (at - (rows / 2.0).floor()) * row,
-                Placement::Bottom => (at - (rows - 1.0)) * row,
+                Placement::Top => at,
+                Placement::Center => at - (rows / 2.0).floor(),
+                Placement::Bottom => at - (rows - 1.0),
             }
             .max(0.0),
+            columns,
+            row,
         );
     }
 
     /// Scrolls the view by `lines`, down when positive.
     fn vim_scrolled_by(&mut self, lines: isize) {
-        let row = self.editor.row_height();
+        let (row, columns) = (self.editor.row_height(), self.wrap_columns());
         if let Some(viewer) = self
             .git
             .shown
             .and_then(|index| self.git.viewers.get_mut(index))
         {
-            viewer
-                .scroll
-                .jump_to((viewer.scroll.offset() + lines as f32 * row).max(0.0));
+            let top = viewer.top_row(columns, row);
+            viewer.scroll_to_row((top + lines as f32).max(0.0), columns, row);
         }
     }
 }

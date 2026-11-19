@@ -13,7 +13,6 @@ use rustle::{CursorIcon, Modifier};
 use crate::events::Interactive;
 use crate::focus::FocusId;
 use crate::icons::IconName;
-use crate::select::styled_text;
 use crate::theme::Role;
 
 use crate::button::Variant;
@@ -623,13 +622,14 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
                     Arrangement::SpacedBy(sp(2)),
                     Alignment::Center,
                     || {
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new(),
                             item.name.clone(),
                             theme::text_style(13, 1.4)
                                 .font_weight(rustle::FontWeight::MEDIUM)
                                 .color(theme::color(name_tone))
                                 .max_lines(1),
+                            rustle::TextOverflow::Ellipsis,
                         );
                         Badge::new(item.scope.label()).tone(Role::Subtle).build();
                         if !item.tool.is_empty() {
@@ -643,12 +643,13 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
                 if !description.is_empty() {
                     line(description, 12, 1.4, Role::Muted);
                 }
-                styled_text(
+                rustle::basic_text(
                     Modifier::new().fill_max_width(),
                     detail,
                     theme::text_style(11, 1.4)
                         .color(theme::color(Role::Subtle))
                         .max_lines(1),
+                    rustle::TextOverflow::Ellipsis,
                 );
             },
         );
@@ -802,13 +803,14 @@ fn set_row(set: &ToolSet, place: usize, open: bool, product: Option<Product>, wi
                             Arrangement::SpacedBy(sp(2)),
                             Alignment::Center,
                             || {
-                                styled_text(
+                                rustle::basic_text(
                                     Modifier::new(),
                                     set.name.clone(),
                                     theme::text_style(13, 1.4)
                                         .font_weight(rustle::FontWeight::MEDIUM)
                                         .color(theme::color(name_tone))
                                         .max_lines(1),
+                                    rustle::TextOverflow::Ellipsis,
                                 );
                                 Badge::new(count).build();
                             },
@@ -848,12 +850,13 @@ fn tool_row(
                 Arrangement::SpacedBy(sp(1)),
                 Alignment::Start,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         tool.name.clone(),
                         theme::mono_style(12, 1.4)
                             .color(theme::color(name_tone))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                     if let Some(first) = tool.description.lines().next() {
                         line(first.to_owned(), 12, 1.4, Role::Muted);

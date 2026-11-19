@@ -9,7 +9,6 @@ use crate::button::Variant;
 use crate::composer::composer;
 use crate::focus::FocusId;
 use crate::icons::IconName;
-use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{AGENT_BASE, Page, REVIEW, WorkspaceState};
 use crate::theme::{Role, sp};
@@ -70,12 +69,13 @@ pub fn welcome(state: &WorkspaceState, above: f32) {
                     Arrangement::SpacedBy(sp(7)),
                     Alignment::Center,
                     || {
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new(),
                             heading(state),
                             theme::text_style(28, 1.25)
                                 .font_weight(rustle::FontWeight::SEMI_BOLD)
                                 .color(theme::color(Role::Text)),
+                            rustle::TextOverflow::Ellipsis,
                         );
                         flow_row_with(
                             Modifier::new().fill_max_width(),

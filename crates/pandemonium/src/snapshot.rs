@@ -13,12 +13,11 @@ use pm_components::git_menus::MenuKind;
 use pm_components::git_prompts::Prompt;
 use pm_components::open_files::EDITOR_FIELD;
 use pm_components::panes::{Item, SPLIT_RIGHT, Side};
-use pm_components::select::{TextPoint, TextSelection};
 use pm_components::settings::{SETTINGS_ADD, SETTINGS_FIND, Section};
 use pm_components::settings_catalog::{OPEN_LIST, Setting as SettingsCatalogue};
 use pm_components::settings_machines::{MACHINE_ADD, MACHINE_ADDRESS, MACHINE_NAME};
 use pm_components::state::{
-    CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE, RESTORE_BASE,
+    COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE, RESTORE_BASE,
     REVIEW_FILES, STAGE_BASE, SUBAGENTS_CHIP, TAB_CHAT,
 };
 use pm_components::state::{LOCATION, SETTINGS};
@@ -32,6 +31,7 @@ use pm_harness::{
     ToolState, TrustRequest, Verdict, Worktree,
 };
 use pm_pages::{ADD_PROJECT, HISTORY, PROMPT, SEND, Screen, TAB_DIFF, TERMINAL, WorkspaceState};
+use rustle::SelectionPoint;
 
 use crate::scene;
 
@@ -101,6 +101,10 @@ pub const SETTINGS_SHOTS: [(&str, Section); 29] = [
     ("tools", Section::Tools),
     ("servers", Section::Servers),
 ];
+
+/// The two ends of a selection a snapshot shows, each as words of a text and how many
+/// characters into them it falls.
+type SelectedWords = ((&'static str, usize), (&'static str, usize));
 
 /// Which screen a snapshot shows.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2141,7 +2145,7 @@ fn diff_compact() -> WorkspaceState {
         .collect::<Vec<_>>()
         .join("\n");
     state.sessions[0].changes[0] = pm_components::sample::Change::new("src/long.rs", &source);
-    scrolled(state, |held| &held.diff_scroll, 40_000.0, 200_000.0)
+    diff_scrolled_to_row(state, 0, 2497, 3.0)
 }
 
 /// The workspace on the diff with a comment kept on some lines and a box open to write another on a file.
@@ -2160,7 +2164,21 @@ fn commenting() -> WorkspaceState {
         .comment_drag_begun(gutter_id(1, false, 18))
         .comment_drag_extended(gutter_id(1, false, 19))
         .comment_drag_ended();
-    scrolled(state, |held| &held.diff_scroll, 560.0, 5000.0)
+    diff_scrolled_to_row(state, 1, 1, 5.0)
+}
+
+/// `state` with the diff's list asked to bring the row at `row` of the file at `file`, counted from its hunk's header, to its top and scroll `past` logical pixels further, as a state holder places a lazy list by item before it is drawn.
+fn diff_scrolled_to_row(
+    state: WorkspaceState,
+    file: usize,
+    row: usize,
+    past: f32,
+) -> WorkspaceState {
+    let header = pm_components::diff::header_item(&state, &state.sessions[0], file);
+    state
+        .diff_list
+        .scroll_to_item_offset(header + 1 + row, past);
+    state
 }
 
 /// The commits of a graph with a branch that forks off and is merged back.
@@ -2463,7 +2481,7 @@ fn large_files(scrolled: bool) -> WorkspaceState {
         .chain((0..100).map(|index| format!("src/module-{index:03}")))
         .collect();
     if scrolled {
-        state.tree_scroll.jump_to(120_000.0);
+        state.files_list.scroll_to_item_offset(4_999, 20.0);
     }
     state
 }
@@ -2726,13 +2744,11 @@ impl Shot {
         }
     }
 
-    /// The stretch of selectable text this snapshot shows selected, if any.
-    fn selection(self) -> Option<TextSelection> {
-        matches!(self, Self::Selecting | Self::MessageMenu).then_some(TextSelection {
-            id: CHAT_TEXT,
-            anchor: TextPoint { piece: 27, byte: 3 },
-            head: TextPoint { piece: 38, byte: 2 },
-        })
+    /// The stretch of the conversation's text this snapshot shows selected, if any: each end
+    /// as words of a text and how many characters into them it falls.
+    fn selection(self) -> Option<SelectedWords> {
+        matches!(self, Self::Selecting | Self::MessageMenu)
+            .then_some((("session.restore(target)?;", 3), ("Checkpoints", 2)))
     }
 
     /// The screen this snapshot is of.
@@ -2957,7 +2973,7 @@ impl Shot {
             Self::Folded => Screen::Workspace(
                 code().lines_edited(pm_components::line_edits::LineEdit::Fold),
             ),
-            Self::Sticky => Screen::Workspace(scrolled(code(), viewer_scroll, 360.0, 10_000.0)),
+            Self::Sticky => Screen::Workspace(code_scrolled(code(), 360.0)),
             Self::Cursors => {
                 let state = code();
                 let at = state
@@ -3773,7 +3789,7 @@ impl Shot {
             Self::Kept => Screen::Workspace(kept()),
             Self::LongLine => Screen::Workspace(long_line()),
             Self::Restored => Screen::Workspace(restored()),
-            Self::RestoredTop => Screen::Workspace(scrolled(restored(), |held| &held.chat_back, 2000.0, 2000.0)),
+            Self::RestoredTop => Screen::Workspace(scrolled(restored(), |held| held.chat_list.scroll(), 2000.0, 2000.0)),
             Self::Restoring => Screen::Workspace(kept().after(FocusId(RESTORE_BASE))),
             Self::TurnChanges => Screen::Workspace(turn_changes()),
             Self::Picking => Screen::Workspace(welcome().after(FocusId(4200))),
@@ -3839,7 +3855,7 @@ impl Shot {
                         pm_components::elements::message(&elements)
                     );
                 }
-                state.chat_back.jump_to(1.0e6);
+                state.chat_list.scroll().jump_to(1.0e6);
                 Screen::Workspace(state)
             }
             Self::Captures => Screen::Workspace(held_captures()),
@@ -3871,7 +3887,7 @@ impl Shot {
                         pm_components::captures::message(&captures)
                     );
                 }
-                state.chat_back.jump_to(1.0e6);
+                state.chat_list.scroll().jump_to(1.0e6);
                 Screen::Workspace(state)
             }
             Self::ElementScrolled => {
@@ -5018,7 +5034,7 @@ fn kept() -> WorkspaceState {
             saved: None,
         },
     );
-    scrolled(state, |held| &held.chat_back, 400.0, 400.0)
+    scrolled(state, |held| held.chat_list.scroll(), 400.0, 400.0)
 }
 
 /// A file a turn changed, at `path`, marked with `letter`, with the lines `diff`.
@@ -5548,7 +5564,7 @@ pub fn write(
     } else {
         focused
     };
-    let mut screen = shot.screen();
+    let screen = shot.screen();
     let Screen::Workspace(held) = &screen;
     let looks = &held.window.appearance;
     scene::set_fonts(&looks.interface_font, &looks.code_font);
@@ -5559,9 +5575,6 @@ pub fn write(
         focused,
         content(screen.clone(), window, target),
     );
-    if let Some(measured) = screen.diff_resized() {
-        screen = screen.measured_diff(measured);
-    }
     let frame = Frame {
         clock_ms: elapsed_ms,
         pointer: pointer.map(|(x, y)| (x + band, y + band)),
@@ -5573,8 +5586,36 @@ pub fn write(
         preedit: preedit.map(str::to_owned),
         ..Frame::new(target.0, target.1)
     };
-    screen.selectables().select(shot.selection());
-    write_png(path, &frame, content(screen, window, target)).map_err(|error| error.to_string())
+    let selection = shot.selection().map(|ends| (screen.chat_selection(), ends));
+    let drawn = content(screen, window, target);
+    let selected = move || {
+        drawn();
+        if let Some((held, ends)) = selection.clone() {
+            rustle::side_effect(move || select_words(&held, ends));
+        }
+    };
+    write_png(path, &frame, selected).map_err(|error| error.to_string())
+}
+
+/// Selects in `held` from one of `ends` to the other, each words of a text and how many
+/// characters into them it falls, once the texts holding them have been placed.
+fn select_words(held: &rustle::SelectionState, ends: SelectedWords) {
+    let texts = held.texts();
+    if let (Some(anchor), Some(focus)) = (point_at(&texts, ends.0), point_at(&texts, ends.1)) {
+        held.select(anchor, focus);
+    }
+}
+
+/// The place in `texts`, the texts of a selection container in document order, `offset`
+/// characters into the first text holding `words`, or `None` when none holds them.
+fn point_at(texts: &[String], (words, offset): (&str, usize)) -> Option<SelectionPoint> {
+    texts.iter().enumerate().find_map(|(block, text)| {
+        let start = text.find(words)?;
+        Some(SelectionPoint {
+            block,
+            offset: text[..start].chars().count() + offset,
+        })
+    })
 }
 
 /// What a snapshot draws of `screen`: the window beside the main one `window`
@@ -5883,9 +5924,16 @@ fn scrolled(
     state
 }
 
-/// How far the file shown in `state` is scrolled.
-fn viewer_scroll(state: &WorkspaceState) -> &rustle::ScrollState {
-    &state.shown_viewer().expect("a file is shown").scroll
+/// `state` with the file shown scrolled `by` logical pixels down from its
+/// top, the space of 8 above its first line counted, as the reader scrolling
+/// it would before it is drawn.
+fn code_scrolled(state: WorkspaceState, by: f32) -> WorkspaceState {
+    let (columns, row) = (state.wrap_columns(), state.editor.row_height());
+    state
+        .shown_viewer()
+        .expect("a file is shown")
+        .scroll_to_row((by - 8.0) / row, columns, row);
+    state
 }
 
 /// How far the page of the settings of `state` that lists servers is scrolled.

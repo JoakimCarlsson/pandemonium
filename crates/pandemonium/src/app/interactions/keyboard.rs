@@ -132,7 +132,7 @@ fn select_all_marks_every_changed_file() {
     );
     let marked = rig.state(|state| state.git.marked.len());
     assert!(marked > 1, "{marked}");
-    assert!(rig.app.borrow_mut().text_selection.is_none());
+    assert!(rig.app.borrow().text_selection().is_none());
 }
 
 /// With modal editing on, keys move the caret of the file shown instead of

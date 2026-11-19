@@ -2,7 +2,6 @@
 
 use crate::focus::FocusId;
 use crate::icons::IconName;
-use crate::select::styled_text;
 use crate::theme;
 use crate::theme::sp;
 use crate::theme::{Radius, Role};
@@ -119,12 +118,13 @@ pub fn proposal(ask: &Permission) -> bool {
                 Arrangement::Start,
                 Alignment::Center,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new().weight(1.0),
                         "The agent proposed a plan",
                         theme::text_style(14, 1.4)
                             .color(theme::color(Role::Text))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                     Button::new("Open plan", OPEN_PLAN)
                         .variant(Variant::Ghost)

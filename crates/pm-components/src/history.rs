@@ -7,7 +7,6 @@ use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::focus::FocusId;
 use crate::icons::IconName;
-use crate::select::styled_text;
 use crate::theme::{Radius, Role};
 
 use crate::age::{self, Span};
@@ -86,13 +85,14 @@ fn heading() {
         Arrangement::Start,
         Alignment::Center,
         || {
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 "History",
                 theme::text_style(14, 1.4)
                     .font_weight(rustle::FontWeight::MEDIUM)
                     .color(theme::color(Role::Text))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
         },
     );
@@ -185,13 +185,14 @@ fn group(state: &WorkspaceState, span: Span, rows: &[usize], now: u64) {
                 Arrangement::Start,
                 Alignment::Center,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         span.title(),
                         theme::text_style(14, 1.4)
                             .font_weight(rustle::FontWeight::MEDIUM)
                             .color(theme::color(Role::Text))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                 },
             );
@@ -226,21 +227,23 @@ fn row_of(state: &WorkspaceState, index: usize) {
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Center,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new().width_in(0.0, 560.0),
                         &session.title,
                         theme::text_style(14, 1.4)
                             .color(theme::color(Role::Text))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                     glyph(IconName::ChevronRight, 4.0, Role::Subtle);
                     glyph(agent.icon, 4.0, Role::Muted);
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         agent.name,
                         theme::text_style(14, 1.4)
                             .color(theme::color(Role::Muted))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                 },
             );

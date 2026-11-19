@@ -119,6 +119,9 @@ pub struct View {
     /// How far down the review panel's list was scrolled, in logical pixels.
     #[serde(default)]
     tree_scroll: f32,
+    /// The row of the project's files at the top of their list.
+    #[serde(default)]
+    files_first_row: usize,
     /// How far down the diff was scrolled, in logical pixels.
     #[serde(default)]
     diff_scroll: f32,
@@ -372,7 +375,8 @@ impl View {
                         path: viewer.path.clone(),
                         head: viewer.head,
                         preview: viewer.preview,
-                        scroll: viewer.scroll.offset(),
+                        scroll: viewer.top_row(state.wrap_columns(), state.editor.row_height())
+                            * state.editor.row_height(),
                         caret: document.map_or(0, |document| document.field.caret()),
                         unsaved: document
                             .filter(|document| document.is_dirty())
@@ -413,7 +417,8 @@ impl View {
             open_tree: sorted(&state.open_tree),
             closed_folders: sorted(&state.closed_folders),
             tree_scroll: state.tree_scroll.offset(),
-            diff_scroll: state.diff_scroll.offset(),
+            files_first_row: state.files_list.first_visible_item().unwrap_or(0),
+            diff_scroll: state.diff_list.scroll().offset(),
             changes_open: state.git.changes_open,
             graph_open: state.git.graph_open,
             graph_all: state.git.graph_all,
@@ -562,6 +567,9 @@ impl View {
         state.review_tab = self.review_tab();
         state.sidebar_scroll = self.scroll;
         state.tree_scroll.jump_to(self.tree_scroll);
+        state
+            .files_list
+            .scroll_to_item_offset(self.files_first_row, 0.0);
         state.scroll_diff_to(self.diff_scroll);
         state.refresh_files();
         if let Some(saved) = &self.panes {
@@ -592,6 +600,7 @@ impl View {
                 viewer.preview = false;
             }
         }
+        let (columns, row) = (opened.wrap_columns(), opened.editor.row_height());
         for file in &self.files {
             if let Some(viewer) = opened
                 .git
@@ -600,7 +609,7 @@ impl View {
                 .find(|viewer| viewer.path == file.path && viewer.head == file.head)
             {
                 viewer.preview = file.preview;
-                viewer.scroll.jump_to(file.scroll);
+                viewer.scroll_to_row(file.scroll / row.max(1.0), columns, row);
                 viewer.left = Some(Left {
                     unsaved: file.unsaved.clone(),
                     caret: file.caret,

@@ -2,7 +2,6 @@
 
 use crate::focus::FocusId;
 use crate::icons::{IconName, icon_with};
-use crate::select::styled_text;
 use crate::theme;
 use crate::theme::{Radius, Role, sp};
 use pm_harness::{Exhibit, ExhibitKind};
@@ -266,12 +265,13 @@ fn caption(words: &str, tone: Role, modifier: Modifier) {
         Alignment::Center,
         || {
             glyph(IconName::Globe, 3.5, tone);
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 words,
                 theme::text_style(12, 1.4)
                     .color(theme::color(tone))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
         },
     );
@@ -537,12 +537,13 @@ impl<'a> ExhibitCard<'a> {
             || {
                 glyph(icon, 3.5, Role::Subtle);
                 clipped(title, 13, Role::Text);
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     kind,
                     theme::text_style(12, 1.4)
                         .color(theme::color(Role::Subtle))
                         .max_lines(1),
+                    rustle::TextOverflow::Ellipsis,
                 );
                 if let Some(id) = self.copy {
                     Button::icon(IconName::Copy, id)

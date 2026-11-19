@@ -20,7 +20,6 @@ use crate::focus::FocusId;
 use crate::icons::IconName;
 use crate::icons::icon;
 use crate::parts::spacer;
-use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::theme::Role;
@@ -454,20 +453,22 @@ impl FolderPicker {
             Arrangement::SpacedBy(sp(2)),
             Alignment::Center,
             || {
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     self.title(),
                     theme::text_style(13, 1.4)
                         .color(theme::color(Role::Text))
                         .max_lines(1),
+                    rustle::TextOverflow::Ellipsis,
                 );
                 if let Some(machine) = self.machine.as_ref() {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         format!("on {}", machine.name),
                         theme::text_style(13, 1.4)
                             .color(theme::color(Role::Subtle))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                 }
             },
@@ -527,7 +528,14 @@ impl FolderPicker {
                             Tile::new(FocusId(CRUMB_BASE + index as u64))
                                 .height(7.0)
                                 .inner(Modifier::new().padding_xy(theme::sp(1.5), 0.0))
-                                .build_with(|| styled_text(Modifier::new(), name.clone(), kind));
+                                .build_with(|| {
+                                    rustle::basic_text(
+                                        Modifier::new(),
+                                        name.clone(),
+                                        kind,
+                                        rustle::TextOverflow::Ellipsis,
+                                    )
+                                });
                         }
                     },
                 );
@@ -617,12 +625,13 @@ fn places() {
                 Arrangement::Start,
                 Alignment::Center,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         "Places",
                         theme::text_style(12, 1.4)
                             .color(theme::color(Role::Subtle))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                 },
             );
@@ -634,12 +643,13 @@ fn places() {
                     .inner(Modifier::new().padding_xy(theme::sp(2), 0.0))
                     .build_with(|| {
                         icon(*glyph, 4.0, Role::Muted);
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new(),
                             *name,
                             theme::text_style(13, 1.4)
                                 .color(theme::color(Role::Text))
                                 .max_lines(1),
+                            rustle::TextOverflow::Ellipsis,
                         );
                     });
             }
@@ -657,12 +667,13 @@ fn folder_row(name: &str, selected: bool, index: usize) {
         .inner(Modifier::new().padding_xy(theme::sp(2.5), 0.0))
         .build_with(|| {
             icon(IconName::Folder, 4.0, Role::Accent);
-            styled_text(
+            rustle::basic_text(
                 Modifier::new().weight(1.0),
                 name,
                 theme::text_style(13, 1.4)
                     .color(theme::color(Role::Text))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
         });
 }

@@ -5,7 +5,7 @@ use crate::theme::sp;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
-use crate::theme::{Radius, Role, Tone};
+use crate::theme::{Role, Tone};
 
 use crate::parts::line;
 
@@ -88,7 +88,7 @@ impl BarRow {
         self
     }
 
-    /// Emits the row: the name and the figure on one line, the detail under them, and the bar on its track.
+    /// Emits the row: the name and the figure on one line, the detail under them, and the bar on its track as rustle's linear progress indicator.
     #[track_caller]
     pub fn build(self) {
         let filled = self.filled();
@@ -125,24 +125,12 @@ impl BarRow {
                 if let Some(detail) = detail {
                     line(detail, 12, 1.4, Role::Muted);
                 }
-                row_arranged(
-                    Modifier::new()
-                        .width(width)
-                        .height(BAR_HEIGHT)
-                        .background_rounded(theme::color(Role::SurfaceHover), Radius::Sm.px())
-                        .clip(),
-                    Arrangement::Start,
-                    Alignment::Start,
-                    || {
-                        if filled > 0.0 {
-                            rustle::spacer(
-                                Modifier::new()
-                                    .width(filled)
-                                    .height(BAR_HEIGHT)
-                                    .background_rounded(theme::color(tone), Radius::Sm.px()),
-                            );
-                        }
-                    },
+                let share = filled / width.max(f32::EPSILON);
+                rustle::linear_progress_indicator_with(
+                    move || share,
+                    Modifier::new().width(width).height(BAR_HEIGHT),
+                    theme::color(tone),
+                    theme::color(Role::SurfaceHover),
                 );
             },
         );

@@ -1,7 +1,6 @@
 //! The code a sign-in waits for the reader to enter on a web page: the dialog that shows it while the sign-in runs, and what its buttons do.
 
 use crate::focus::FocusId;
-use crate::select::styled_text;
 use crate::theme;
 use crate::theme::Role;
 use crate::theme::sp;
@@ -116,13 +115,14 @@ pub fn code_dialog(state: &WorkspaceState) {
                 Arrangement::SpacedBy(sp(2)),
                 Alignment::Start,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         title,
                         theme::text_style(15, 1.4)
                             .font_weight(rustle::FontWeight::MEDIUM)
                             .color(theme::color(Role::Text))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                     for words in wrap(&words, 13, WIDTH - 40.0) {
                         line(words, 13, 1.5, Role::Muted);
@@ -132,13 +132,14 @@ pub fn code_dialog(state: &WorkspaceState) {
                         Arrangement::Start,
                         Alignment::Center,
                         || {
-                            styled_text(
+                            rustle::basic_text(
                                 Modifier::new(),
                                 code,
                                 theme::text_style(24, 1.6)
                                     .font_weight(rustle::FontWeight::MEDIUM)
                                     .color(theme::color(Role::Text))
                                     .max_lines(1),
+                                rustle::TextOverflow::Ellipsis,
                             );
                         },
                     );

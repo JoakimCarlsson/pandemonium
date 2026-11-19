@@ -18,7 +18,6 @@ use crate::focus::FocusId;
 use crate::icons::IconName;
 use crate::parts::{glyph, line, spacer};
 use crate::sample::Session;
-use crate::select::styled_text;
 use crate::state::{
     BOTTOM_PROBLEMS, BOTTOM_TERMINAL, MAXIMIZE_TERMINAL, NEW_TERMINAL, TERMINAL, TERMINAL_BODY,
     TERMINAL_CLOSE_BASE, TERMINAL_TAB_BASE, WorkspaceState,
@@ -495,10 +494,11 @@ fn line_of(
 /// Emits `composing`, text an input method has not committed yet, underlined in the default colours, `font` logical pixels tall.
 #[track_caller]
 fn composing_node(composing: &str, font: f32) {
-    styled_text(
+    rustle::basic_text(
         Modifier::new(),
         composing,
         cell_type(font).color(theme::color(Role::Text)).underline(),
+        rustle::TextOverflow::Ellipsis,
     );
 }
 
@@ -559,10 +559,20 @@ fn run_node(look: Run, content: String, drawn: Look) {
             rustle::Size::new(1.0, line),
         ));
         let (modifier, ink) = cursor_cell(modifier, ink, drawn.cursor);
-        styled_text(modifier, content, kind.color(theme::color(ink)));
+        rustle::basic_text(
+            modifier,
+            content,
+            kind.color(theme::color(ink)),
+            rustle::TextOverflow::Ellipsis,
+        );
         return;
     }
-    styled_text(modifier, content, kind.color(theme::color(ink)));
+    rustle::basic_text(
+        modifier,
+        content,
+        kind.color(theme::color(ink)),
+        rustle::TextOverflow::Ellipsis,
+    );
 }
 
 /// Fills a block cursor's cell in `idle`, or in `focused` while the window holds the keyboard.

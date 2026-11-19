@@ -9,7 +9,6 @@ use rustle::{CursorIcon, Modifier};
 
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::select::styled_text;
 use crate::theme::{Radius, Role};
 
 use crate::input::Input;
@@ -151,7 +150,7 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: Option<FocusId>) {
                 } else {
                     format!("{} …", shown(&so_far.join(" ")))
                 };
-                styled_text(Modifier::new(), said, code);
+                rustle::basic_text(Modifier::new(), said, code, rustle::TextOverflow::Ellipsis);
             } else if keys.is_empty() {
                 line("Not bound", 12, 1.4, Role::Subtle);
             } else {
@@ -159,7 +158,12 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: Option<FocusId>) {
                     if place > 0 {
                         line("or", 11, 1.4, Role::Subtle);
                     }
-                    styled_text(Modifier::new(), shown(binding), code);
+                    rustle::basic_text(
+                        Modifier::new(),
+                        shown(binding),
+                        code,
+                        rustle::TextOverflow::Ellipsis,
+                    );
                 }
             }
         },
@@ -262,13 +266,14 @@ pub(crate) fn rows(state: &WorkspaceState, room: f32) {
 /// Emits the heading `group` over a bordered box holding the row of each of `members`, ruled between them.
 #[track_caller]
 fn section(group: &str, members: &[Found]) {
-    styled_text(
+    rustle::basic_text(
         Modifier::new(),
         group,
         theme::text_style(13, 1.4)
             .font_weight(rustle::FontWeight::MEDIUM)
             .color(theme::color(Role::Text))
             .max_lines(1),
+        rustle::TextOverflow::Ellipsis,
     );
     let last = members.len().saturating_sub(1);
     column_arranged(

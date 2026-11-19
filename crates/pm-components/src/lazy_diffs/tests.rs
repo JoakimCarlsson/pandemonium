@@ -1,16 +1,16 @@
-//! Tests of keeping an opened file at the top of the diff while the diffs of the files above it arrive.
+//! Tests of asking for the diffs of the files near the view and of anchoring the diff's list to an opened file while the diffs of the files above it arrive.
 
 use crate::focus::FocusId;
 
-use crate::diff::offset_of;
+use crate::diff::header_item;
 use crate::sample::Change;
-use crate::state::{DIFF_FOLD_BASE, Page, WorkspaceState};
+use crate::state::{DIFF_FOLD_BASE, Outgoing, Page, WorkspaceState};
 
 /// How many files the session under test has changed, none of whose diffs have been read.
-const FILES: usize = 6;
+const FILES: usize = 30;
 
-/// The file opened in each test, far enough down that every file above it is still estimated.
-const OPENED: usize = FILES - 1;
+/// The file opened in the tests that open one, far enough down that every file above it is still estimated.
+const OPENED: usize = 5;
 
 /// The path of the changed file at `index`.
 fn path(index: usize) -> String {
@@ -28,7 +28,7 @@ fn listed_workspace() -> WorkspaceState {
     state
 }
 
-/// The diffs of the files above the opened one as the server sends them: each adds far more lines than the listing estimated.
+/// The diffs of the files above the opened one as the server sends them: each adds sixty lines.
 fn diffs_above() -> (Vec<String>, Vec<pm_git::FileDiff>) {
     let lines: String = (0..60).map(|line| format!("+line {line}\n")).collect();
     let paths: Vec<String> = (0..OPENED).map(path).collect();
@@ -43,73 +43,60 @@ fn diffs_above() -> (Vec<String>, Vec<pm_git::FileDiff>) {
     (paths, files)
 }
 
-/// Where the opened file starts in the diff of `state`.
-fn opened_offset(state: &WorkspaceState) -> f32 {
-    offset_of(state, &state.sessions[0], OPENED, state.diff_width)
+/// Where the header of the opened file is in the diff's list of `state`.
+fn opened_item(state: &WorkspaceState) -> usize {
+    header_item(state, &state.sessions[0], OPENED)
 }
 
-/// Opening a file whose predecessors are estimated, then reading their longer diffs, leaves the diff scrolled to the opened file's header.
+/// A file listed without its diff is a header and a line saying it is being read; a read one is a header, its hunk header and its rows; a folded one is its header alone.
 #[test]
-fn opened_file_stays_at_top_when_diffs_above_arrive() {
+fn header_items_follow_what_the_files_above_show() {
     let mut state = listed_workspace();
-    state.open_change(OPENED);
-    let estimated = state.diff_scroll.offset();
-    assert_eq!(estimated, opened_offset(&state));
+    assert_eq!(opened_item(&state), OPENED * 2);
     let (asked, files) = diffs_above();
-    let state = state.with_diffs(0, &asked, files);
-    assert!(state.diff_scroll.offset() > estimated);
-    assert_eq!(state.diff_scroll.offset(), opened_offset(&state));
+    state = state.with_diffs(0, &asked, files);
+    assert_eq!(opened_item(&state), OPENED * 62);
+    state = state.after(FocusId(DIFF_FOLD_BASE));
+    assert_eq!(opened_item(&state), (OPENED - 1) * 62 + 1);
 }
 
-/// Folding and unfolding a file above the opened one keeps the opened file's header at the top.
+/// Opening a file anchors the list to it, the anchor holds while diffs above arrive and the files fold, and a scroll by hand lets it go.
 #[test]
-fn folding_above_keeps_opened_file_at_top() {
+fn the_anchor_holds_until_the_diff_is_scrolled() {
     let mut state = listed_workspace();
     state.open_change(OPENED);
+    assert_eq!(state.diff_anchor, Some((0, path(OPENED))));
     let (asked, files) = diffs_above();
     state = state.with_diffs(0, &asked, files);
     state = state.after(FocusId(DIFF_FOLD_BASE));
-    assert!(state.closed_diffs.contains(&path(0)));
-    assert_eq!(state.diff_scroll.offset(), opened_offset(&state));
-    state = state.after(FocusId(DIFF_FOLD_BASE));
-    assert!(!state.closed_diffs.contains(&path(0)));
-    assert_eq!(state.diff_scroll.offset(), opened_offset(&state));
-}
-
-/// Once the diff is scrolled by hand, diffs that arrive afterwards leave it where it was.
-#[test]
-fn diffs_after_a_scroll_leave_the_view_alone() {
-    let mut state = listed_workspace();
-    state.open_change(OPENED);
-    state.diff_scroll.jump_to(state.diff_scroll.offset() - 40.0);
+    assert_eq!(state.diff_anchor, Some((0, path(OPENED))));
+    state.diff_list.scroll().jump_to(40.0);
     assert!(state.follow_scrolls());
-    let scrolled = state.diff_scroll.offset();
-    let (asked, files) = diffs_above();
-    let state = state.with_diffs(0, &asked, files);
-    assert_eq!(state.diff_scroll.offset(), scrolled);
-    assert_ne!(state.diff_scroll.offset(), opened_offset(&state));
+    assert_eq!(state.diff_anchor, None);
 }
 
-/// Drawing the diff narrower than it was taken to be wraps the long lines above the opened file onto more rows, and the diff follows the opened file's header down.
+/// Before the list has been laid out, the files at the top are asked for on their own, then those after them, each once while the answer is on its way.
 #[test]
-fn narrower_diff_keeps_opened_file_at_top() {
+fn the_files_at_the_top_are_asked_first() {
     let mut state = listed_workspace();
-    let long: String = (0..20)
-        .map(|line| format!("+{}\n", "word ".repeat(40 + line)))
-        .collect();
-    let asked: Vec<String> = (0..OPENED).map(path).collect();
-    let files = asked
-        .iter()
-        .map(|path| pm_git::FileDiff {
-            path: path.clone(),
-            diff: format!("@@ -0,0 +1,20 @@\n{long}"),
-            words: Vec::new(),
+    state.tab = crate::state::Tab::Diff;
+    state.diffs_wanted();
+    let asked: Vec<Vec<String>> = state
+        .take_outbox()
+        .into_iter()
+        .filter_map(|outgoing| match outgoing {
+            Outgoing::Diffs { paths, .. } => Some(paths),
+            _ => None,
         })
         .collect();
-    state = state.with_diffs(0, &asked, files);
-    state.open_change(OPENED);
-    let (wide, narrow) = (state.diff_scroll.offset(), state.diff_width / 2.0);
-    let state = state.measured_diff(narrow);
-    assert!(state.diff_scroll.offset() > wide);
-    assert_eq!(state.diff_scroll.offset(), opened_offset(&state));
+    assert_eq!(asked.len(), 2);
+    assert_eq!(asked[0], (0..12).map(path).collect::<Vec<_>>());
+    assert_eq!(asked[1], (12..28).map(path).collect::<Vec<_>>());
+    state.diffs_wanted();
+    assert!(
+        !state
+            .take_outbox()
+            .into_iter()
+            .any(|outgoing| matches!(outgoing, Outgoing::Diffs { .. }))
+    );
 }

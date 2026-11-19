@@ -17,7 +17,6 @@ use crate::focus::FocusId;
 use crate::icons::IconName;
 use crate::input::{self, Input};
 use crate::parts::line;
-use crate::select::styled_text;
 use crate::size::Size;
 use crate::theme::{Radius, Role};
 
@@ -32,10 +31,11 @@ fn wrapped(content: &str, pixels: u32, tone: Role, width: f32) {
         Alignment::Start,
         || {
             for part in lines {
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     &content[part.start..part.end],
                     kind.color(theme::color(tone)),
+                    rustle::TextOverflow::Ellipsis,
                 );
             }
         },

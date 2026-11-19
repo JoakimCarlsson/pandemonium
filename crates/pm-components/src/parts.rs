@@ -2,7 +2,6 @@
 
 use crate::icons::IconName;
 use crate::icons::icon;
-use crate::select::styled_text;
 use crate::theme;
 use crate::theme::Tone;
 use rustle::Modifier;
@@ -15,12 +14,13 @@ const CHARACTER_WIDTH: f32 = 0.53;
 /// in `tone`, ended with an ellipsis when the box it sits in is too narrow for it.
 #[track_caller]
 pub fn line(content: impl Into<String>, pixels: u32, ratio: f32, tone: impl Into<Tone>) {
-    styled_text(
+    rustle::basic_text(
         Modifier::new(),
         content,
         theme::text_style(pixels, ratio)
             .color(theme::color(tone))
             .max_lines(1),
+        rustle::TextOverflow::Ellipsis,
     );
 }
 
@@ -33,12 +33,13 @@ pub fn glyph(name: IconName, steps: f32, tone: impl Into<Tone>) {
 /// Emits a box that takes the room left in its row and cuts a line of `content` short at its edge.
 #[track_caller]
 pub fn clipped(content: impl Into<String>, pixels: u32, tone: impl Into<Tone>) {
-    styled_text(
+    rustle::basic_text(
         Modifier::new().weight(1.0),
         content,
         theme::text_style(pixels, 1.4)
             .color(theme::color(tone))
             .max_lines(1),
+        rustle::TextOverflow::Ellipsis,
     );
 }
 
@@ -65,10 +66,11 @@ pub fn paragraph(content: &str, pixels: u32, ratio: f32, tone: impl Into<Tone>, 
                 if part.end == part.start {
                     rustle::spacer(Modifier::new().height(theme::sp(3)));
                 } else {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         &content[part.start..part.end],
                         kind.color(theme::color(tone)),
+                        rustle::TextOverflow::Ellipsis,
                     );
                 }
             }

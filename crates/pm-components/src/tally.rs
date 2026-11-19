@@ -1,6 +1,5 @@
 //! The tally: how many lines were added and how many removed.
 
-use crate::select::styled_text;
 use crate::theme;
 use crate::theme::Role;
 use crate::theme::sp;
@@ -56,15 +55,17 @@ impl Tally {
             Arrangement::SpacedBy(sp(1.5)),
             Alignment::Center,
             move || {
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     format!("+{added}"),
                     kind.color(theme::color(Role::Success)),
+                    rustle::TextOverflow::Ellipsis,
                 );
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     format!("−{removed}"),
                     kind.color(theme::color(Role::Danger)),
+                    rustle::TextOverflow::Ellipsis,
                 );
             },
         );

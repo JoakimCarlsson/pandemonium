@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 use crate::events::Interactive;
 use crate::focus::FocusId;
 use crate::icons::IconName;
-use crate::select::styled_text;
 use crate::theme::{Radius, Role};
 use rustle::Modifier;
 
@@ -378,14 +377,20 @@ fn detail(name: &str, value: &str, mono: bool) {
         Arrangement::SpacedBy(sp(3)),
         Alignment::Start,
         || {
-            styled_text(
+            rustle::basic_text(
                 Modifier::new().width(108.0),
                 name,
                 theme::text_style(12, 1.4)
                     .color(theme::color(Role::Muted))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
-            styled_text(Modifier::new().weight(1.0), value, kind);
+            rustle::basic_text(
+                Modifier::new().weight(1.0),
+                value,
+                kind,
+                rustle::TextOverflow::Ellipsis,
+            );
         },
     );
 }
@@ -426,13 +431,14 @@ pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) {
                 Arrangement::SpacedBy(sp(3)),
                 Alignment::Start,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         "Not secure: certificate not trusted",
                         theme::text_style(18, 1.3)
                             .font_weight(rustle::FontWeight::SEMI_BOLD)
                             .color(theme::color(Role::Danger))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                     paragraph(
                         &format!(

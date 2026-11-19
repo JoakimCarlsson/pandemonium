@@ -11,7 +11,6 @@ use crate::button::Variant;
 use crate::focus::FocusId;
 use crate::icons::IconName;
 use crate::parts::{glyph, line, paragraph};
-use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{Outgoing, Page, WorkspaceState};
 use crate::theme::{Radius, Role};
@@ -132,15 +131,21 @@ fn item(skipped: &Skipped, root: &Path, filed: bool, width: f32) {
             Arrangement::SpacedBy(sp(2)),
             Alignment::Center,
             move || {
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     named,
                     theme::text_style(12, 1.5)
                         .color(theme::color(Role::Text))
                         .max_lines(1),
+                    rustle::TextOverflow::Ellipsis,
                 );
                 if let Some(file) = beside {
-                    styled_text(Modifier::new().weight(1.0), file, file_type);
+                    rustle::basic_text(
+                        Modifier::new().weight(1.0),
+                        file,
+                        file_type,
+                        rustle::TextOverflow::Ellipsis,
+                    );
                 }
             },
         );
@@ -153,10 +158,20 @@ fn item(skipped: &Skipped, root: &Path, filed: bool, width: f32) {
         Alignment::Start,
         move || {
             for piece in rustle::wrap_at_spaces(&named, &mono, width) {
-                styled_text(Modifier::new(), &named[piece.start..piece.end], mono);
+                rustle::basic_text(
+                    Modifier::new(),
+                    &named[piece.start..piece.end],
+                    mono,
+                    rustle::TextOverflow::Ellipsis,
+                );
             }
             if let Some(file) = beside {
-                styled_text(Modifier::new(), file, file_type);
+                rustle::basic_text(
+                    Modifier::new(),
+                    file,
+                    file_type,
+                    rustle::TextOverflow::Ellipsis,
+                );
             }
         },
     );
@@ -196,29 +211,32 @@ fn group(request: &TrustRequest, kind: Input, width: f32) {
                 || {
                     if kind == Input::Hook {
                         glyph(IconName::Terminal, 3.5, Role::Warning);
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new(),
                             format!("{title} · run commands"),
                             theme::text_style(12, 1.4)
                                 .color(theme::color(Role::Warning))
                                 .max_lines(1),
+                            rustle::TextOverflow::Ellipsis,
                         );
                     } else {
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new(),
                             title,
                             theme::text_style(12, 1.4)
                                 .color(theme::color(Role::Muted))
                                 .max_lines(1),
+                            rustle::TextOverflow::Ellipsis,
                         );
                     }
                     if let Some(file) = file {
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new().weight(1.0),
                             file,
                             theme::mono_style(11, 1.4)
                                 .color(theme::color(Role::Subtle))
                                 .max_lines(1),
+                            rustle::TextOverflow::Ellipsis,
                         );
                     }
                 },
@@ -292,19 +310,21 @@ pub fn card(request: &TrustRequest, width: f32) {
                 Alignment::Center,
                 || {
                     glyph(IconName::Lock, 3.5, Role::Muted);
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         "Project trust",
                         theme::text_style(12, 1.4)
                             .color(theme::color(Role::Muted))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new().weight(1.0),
                         request.root.display().to_string(),
                         theme::mono_style(11, 1.4)
                             .color(theme::color(Role::Subtle))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                 },
             );
@@ -314,7 +334,12 @@ pub fn card(request: &TrustRequest, width: f32) {
                 Alignment::Start,
                 || {
                     for piece in rustle::wrap_at_spaces(&title, &title_type, inner) {
-                        styled_text(Modifier::new(), &title[piece.start..piece.end], title_type);
+                        rustle::basic_text(
+                            Modifier::new(),
+                            &title[piece.start..piece.end],
+                            title_type,
+                            rustle::TextOverflow::Ellipsis,
+                        );
                     }
                 },
             );

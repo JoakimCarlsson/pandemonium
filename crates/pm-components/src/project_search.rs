@@ -11,7 +11,6 @@ use std::ops::Range;
 use crate::events::Interactive;
 use crate::focus::FocusId;
 use crate::icons::IconName;
-use crate::select::styled_text;
 use crate::theme::Role;
 use pm_editor::Query;
 use pm_protocol::Location;
@@ -344,29 +343,33 @@ fn hit_row(index: usize, location: &Location, matcher: &Query) {
                 Arrangement::Start,
                 Alignment::Center,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         before,
                         code.color(theme::color(Role::Muted)),
+                        rustle::TextOverflow::Ellipsis,
                     );
                     if !found.is_empty() {
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new().background(theme::color(Role::SurfaceActive)),
                             found,
                             code.color(theme::color(Role::Text)).max_lines(1),
+                            rustle::TextOverflow::Ellipsis,
                         );
                     }
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new().weight(1.0),
                         after,
                         code.color(theme::color(Role::Muted)).max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                 },
             );
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 (location.span.start.line + 1).to_string(),
                 theme::mono_style(11, 1.4).color(theme::color(Role::Subtle)),
+                rustle::TextOverflow::Ellipsis,
             );
         },
     );
@@ -399,12 +402,13 @@ fn group_row(place: usize, group: &Group, folded: bool) {
             glyph(chevron, 3.5, Role::Muted);
             file_icon(name, 4.0);
             line(name, 13, 1.4, Role::Text);
-            styled_text(
+            rustle::basic_text(
                 Modifier::new().weight(1.0),
                 folder,
                 theme::text_style(12, 1.4)
                     .color(theme::color(Role::Subtle))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
             line(group.hits.len().to_string(), 11, 1.4, Role::Muted);
         },
@@ -484,12 +488,13 @@ pub fn panel(state: &WorkspaceState) {
                         Arrangement::SpacedBy(sp(1)),
                         Alignment::Center,
                         || {
-                            styled_text(
+                            rustle::basic_text(
                                 Modifier::new().weight(1.0),
                                 said.as_str(),
                                 theme::text_style(12, 1.4)
                                     .color(theme::color(tone))
                                     .max_lines(1),
+                                rustle::TextOverflow::Ellipsis,
                             );
                             if search.total() > 0 {
                                 crate::button::Button::icon(

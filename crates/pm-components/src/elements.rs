@@ -10,7 +10,6 @@ use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with
 use crate::events::Interactive;
 use crate::focus::FocusId;
 use crate::icons::IconName;
-use crate::select::styled_text;
 use crate::theme::{Radius, Role, Tone, sp};
 
 use crate::button::Variant;
@@ -362,10 +361,11 @@ pub(crate) fn words(content: &str, mono: bool, tone: Role, width: f32) {
         Alignment::Start,
         || {
             for piece in lines {
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     &content[piece.start..piece.end],
                     kind.color(theme::color(tone)),
+                    rustle::TextOverflow::Ellipsis,
                 );
             }
         },

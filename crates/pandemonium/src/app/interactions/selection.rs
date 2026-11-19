@@ -26,11 +26,7 @@ fn conversation(rig: &Rig) -> Rect {
 
 /// The text of the conversation selected.
 fn selected(rig: &Rig) -> String {
-    rig.app
-        .borrow()
-        .text_selection
-        .map(|selection| rig.app.borrow().selected_text(&selection))
-        .unwrap_or_default()
+    rig.app.borrow().selected_text()
 }
 
 /// The workspace with its conversation scrolled to the start.
@@ -95,7 +91,7 @@ fn select_all_and_let_go() {
         "{all}"
     );
     rig.click_on(TAB_DIFF);
-    assert!(rig.app.borrow_mut().text_selection.is_none());
+    assert!(rig.app.borrow().text_selection().is_none());
 }
 
 /// Files let go over the conversation from another application are
@@ -109,4 +105,19 @@ fn files_dropped_attach_to_the_prompt() {
     rig.move_to((at.0 + 1.0, at.1));
     let attached = rig.state(|state| state.attachments.clone());
     assert_eq!(attached, vec![path.to_string_lossy().into_owned()]);
+}
+
+/// Dragging from one message of the conversation's list to another selects across both, and
+/// what lies between them, as one document.
+#[test]
+fn dragging_selects_across_messages() {
+    let mut rig = at_start();
+    let from = words_at(&rig, "Sessions lose their place");
+    let to = words_at(&rig, "Checkpoints are in.");
+    rig.drag(from, (to.0 + 60.0, to.1), 8);
+    let picked = selected(&rig);
+    assert!(
+        picked.starts_with("Sessions lose their place") && picked.contains("\nCheckpoi"),
+        "{picked:?}"
+    );
 }

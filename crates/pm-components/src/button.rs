@@ -12,7 +12,6 @@ use crate::events::{Interactive, OnClick};
 use crate::focus::FocusId;
 use crate::icons::icon;
 use crate::icons::{IconName, spinner, spinning_icon};
-use crate::select::styled_text;
 use crate::theme::{Radius, Role, Tone};
 use rustle::{BorderStroke, Color, CursorIcon, Modifier, Shape};
 
@@ -434,14 +433,29 @@ impl Button {
                                 Alignment::Start,
                                 || {
                                     for part in &lines {
-                                        styled_text(Modifier::new(), part, kind);
+                                        rustle::basic_text(
+                                            Modifier::new(),
+                                            part,
+                                            kind,
+                                            rustle::TextOverflow::Ellipsis,
+                                        );
                                     }
                                 },
                             );
                         } else if spread {
-                            styled_text(Modifier::new().weight(1.0), words, kind.max_lines(1));
+                            rustle::basic_text(
+                                Modifier::new().weight(1.0),
+                                words,
+                                kind.max_lines(1),
+                                rustle::TextOverflow::Ellipsis,
+                            );
                         } else {
-                            styled_text(Modifier::new(), words, kind);
+                            rustle::basic_text(
+                                Modifier::new(),
+                                words,
+                                kind,
+                                rustle::TextOverflow::Ellipsis,
+                            );
                         }
                     }
                     if let Some(name) = trailing {

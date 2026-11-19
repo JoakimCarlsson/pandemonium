@@ -1752,9 +1752,6 @@ pub enum Tab {
     Update,
 }
 
-/// How wide the diff is taken to be, in logical pixels, until it has been drawn and its width measured.
-pub(crate) const DIFF_WIDTH: f32 = 900.0;
-
 /// What the review panel lists.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReviewTab {
@@ -1835,21 +1832,21 @@ pub struct WorkspaceState {
     pub comment_target: Option<CommentTarget>,
     /// The comment being written.
     pub comment_text: TextFieldState,
-    /// How far down the diff is scrolled, in logical pixels.
-    pub diff_scroll: rustle::ScrollState,
+    /// The diff's lazy list of the parts of each changed file, which holds how far down it is scrolled.
+    pub diff_list: rustle::LazyListState,
     /// How far down the diff was scrolled when the state last moved it or looked at it,
     /// so a scroll by the reader, which leaves the two apart, can be told from its own.
     pub diff_seen: f32,
     /// Where the diff's scrolling area is drawn, while it is shown.
     pub diff_bounds: crate::bounds::Bounds,
-    /// How wide the diff was last drawn, in logical pixels, which decides how its lines wrap and so how tall each file is.
-    pub diff_width: f32,
-    /// The file, by session and path, whose header the diff is kept scrolled to while the heights of the files above it settle, until the diff is scrolled by hand.
+    /// The file, by session and path, whose header the diff's list is asked to bring to its top, until the list has done so or the diff is scrolled by hand.
     pub(crate) diff_anchor: Option<(usize, String)>,
     /// The files, by session and path, whose diffs were asked of the server and have not come.
     pub(crate) asking_diffs: std::collections::HashSet<(usize, String)>,
-    /// How far down the review panel's list is scrolled, in logical pixels.
+    /// How far down the review panel's list of changes or search results is scrolled, in logical pixels.
     pub tree_scroll: rustle::ScrollState,
+    /// The lazy list of the project's files in the review panel: how far down it is scrolled and how tall its rows turned out.
+    pub files_list: rustle::LazyListState,
     /// The project whose folder the review panel was last asked to read while no session was open.
     pub homed: Option<usize>,
     /// Whether the plan the agent proposed is open in a panel in place of the review.
@@ -1972,17 +1969,20 @@ pub struct WorkspaceState {
     pub pane_drag: Option<crate::panes::PaneDrag>,
     /// Where the menu of panes opened, while it is open.
     pub pane_menu: Option<(f32, f32)>,
-    /// How far the conversation is scrolled back from its end, in logical pixels.
-    pub chat_back: rustle::ScrollState,
+    /// The list of the conversation's messages, laid out from its end, so the offset of its
+    /// scroll is how far the conversation is scrolled back from its end, in logical pixels.
+    pub chat_list: rustle::LazyListState,
     /// Where the conversation's scrolling area is drawn, while it is shown.
     pub chat_bounds: crate::bounds::Bounds,
     /// Where the scrolling area of the file shown is drawn, while it is shown.
     pub code_bounds: crate::bounds::Bounds,
     /// Where the lines of code text were drawn in the latest frame.
     pub code_lines: crate::text_lines::TextLines,
-    /// Where the selectable text of the screen was placed in the latest frame, and the
-    /// stretch of it selected.
-    pub selectables: crate::select::Selectables,
+    /// The selection of the conversation's text, held by its selection container.
+    pub chat_selection: rustle::SelectionState,
+    /// The selection of the text of the card about a place in the file shown, held by its
+    /// selection container.
+    pub hover_selection: rustle::SelectionState,
     /// Where the areas the app asks about by name were drawn in the latest frame.
     pub places: crate::bounds::Places,
     /// The menu open over the prompt box, if one is.
@@ -2156,13 +2156,13 @@ impl WorkspaceState {
             closed_diffs: std::collections::HashSet::new(),
             comment_target: None,
             comment_text: TextFieldState::default(),
-            diff_scroll: rustle::ScrollState::default(),
+            diff_list: rustle::LazyListState::default(),
             diff_seen: 0.0,
             diff_bounds: crate::bounds::Bounds::default(),
-            diff_width: DIFF_WIDTH,
             diff_anchor: None,
             asking_diffs: std::collections::HashSet::new(),
             tree_scroll: rustle::ScrollState::default(),
+            files_list: rustle::LazyListState::default(),
             homed: None,
             plan_open: false,
             plan_scroll: rustle::ScrollState::default(),
@@ -2218,11 +2218,12 @@ impl WorkspaceState {
             prompt_stash: std::collections::HashMap::new(),
             pane_drag: None,
             pane_menu: None,
-            chat_back: rustle::ScrollState::default(),
+            chat_list: rustle::LazyListState::default(),
             chat_bounds: crate::bounds::Bounds::default(),
             code_bounds: crate::bounds::Bounds::default(),
             code_lines: crate::text_lines::TextLines::default(),
-            selectables: crate::select::Selectables::default(),
+            chat_selection: rustle::SelectionState::new(),
+            hover_selection: rustle::SelectionState::new(),
             places: crate::bounds::Places::default(),
             picker: None,
             agent_settings: vec![Vec::new(); builtin.len()],
@@ -3022,7 +3023,9 @@ impl WorkspaceState {
             self.file = None;
             self.comment_target = None;
             self.fresh_git();
-            self.chat_back.jump_to(self.sessions[index].chat_back);
+            self.chat_list
+                .scroll()
+                .jump_to(self.sessions[index].chat_back);
             self.rescope_browser();
         } else if let Some(index) = position(AGENT_BASE, self.agent_slots()) {
             self.agent = index;
@@ -3515,7 +3518,7 @@ impl WorkspaceState {
     fn take_prompt(&mut self) -> Vec<String> {
         let files = self.prompt_files();
         self.prompt = prompt_field("");
-        self.chat_back.jump_to(0.0);
+        self.chat_list.scroll().jump_to(0.0);
         if let Some(index) = self.open_index() {
             self.sessions[index].chat_back = 0.0;
         }
@@ -3743,6 +3746,7 @@ impl WorkspaceState {
     pub(crate) fn show_review_tab(&mut self, tab: ReviewTab) {
         self.review_tab = tab;
         self.tree_scroll.jump_to(0.0);
+        self.files_list.scroll().jump_to(0.0);
     }
 
     /// Opens the diff scrolled to the change at `index`, unfolded, and keeps it scrolled there while the files above it settle.
@@ -3825,30 +3829,31 @@ impl WorkspaceState {
     /// Scrolls the diff `offset` logical pixels down from its top, as the state's
     /// own move rather than the reader's.
     pub fn scroll_diff_to(&mut self, offset: f32) {
-        self.diff_scroll.jump_to(offset);
-        self.diff_seen = self.diff_scroll.offset();
+        self.diff_list.scroll().jump_to(offset);
+        self.diff_seen = self.diff_list.scroll().offset();
     }
 
     /// Whether the reader scrolled the diff or the conversation since the state
     /// last looked, so [`follow_scrolls`](Self::follow_scrolls) has something to catch up with.
     pub fn scrolls_moved(&self) -> bool {
-        self.diff_scroll.offset() != self.diff_seen
-            || self
-                .open_index()
-                .is_some_and(|index| self.sessions[index].chat_back != self.chat_back.offset())
+        self.diff_list.scroll().offset() != self.diff_seen
+            || self.open_index().is_some_and(|index| {
+                self.sessions[index].chat_back != self.chat_list.scroll().offset()
+            })
     }
 
     /// Every scrolling area the state holds the scroll of.
     fn scroll_states(&self) -> Vec<&rustle::ScrollState> {
         let mut states = vec![
-            &self.diff_scroll,
+            self.diff_list.scroll(),
             &self.tree_scroll,
+            self.files_list.scroll(),
             &self.plan_scroll,
             &self.subagents_scroll,
             &self.overview_scroll,
             &self.problems_scroll,
             &self.history_scroll,
-            &self.chat_back,
+            self.chat_list.scroll(),
             &self.menu_scroll,
             &self.update_scroll,
             &self.debug.stack_scroll,
@@ -3859,10 +3864,14 @@ impl WorkspaceState {
             &self.settings_servers.scroll,
             &self.extensions_page.scroll,
         ];
-        states.extend(self.excerpts.iter().map(|excerpts| &excerpts.scroll));
+        states.extend(
+            self.excerpts
+                .iter()
+                .map(|excerpts| excerpts.scroll.scroll()),
+        );
         states.extend(self.folder_picker.iter().map(|picker| &picker.scroll));
         for viewer in &self.git.viewers {
-            states.push(&viewer.scroll);
+            states.push(viewer.scroll.scroll());
             states.push(&viewer.hover_scroll);
         }
         states
@@ -3878,7 +3887,11 @@ impl WorkspaceState {
 
     /// Whether the conversation is shown at its end, give or take a pixel.
     pub fn conversation_at_end(&self) -> bool {
-        self.chat_back.offset().min(self.chat_back.max_offset()) <= 1.0
+        self.chat_list
+            .scroll()
+            .offset()
+            .min(self.chat_list.scroll().max_offset())
+            <= 1.0
     }
 
     /// Catches up with what the reader scrolled since the state last looked:
@@ -3888,22 +3901,15 @@ impl WorkspaceState {
     /// that came into view can be asked for.
     pub fn follow_scrolls(&mut self) -> bool {
         if let Some(index) = self.open_index() {
-            self.sessions[index].chat_back = self.chat_back.offset();
+            self.sessions[index].chat_back = self.chat_list.scroll().offset();
         }
-        let offset = self.diff_scroll.offset();
+        let offset = self.diff_list.scroll().offset();
         if offset == self.diff_seen {
             return false;
         }
         self.diff_seen = offset;
         self.diff_anchor = None;
         true
-    }
-
-    /// The state after the diff was drawn `width` logical pixels wide, kept scrolled to the file it is anchored to now that its lines wrap at that width.
-    pub fn measured_diff(mut self, width: f32) -> Self {
-        self.diff_width = width;
-        self.pin_diff();
-        self
     }
 
     /// Commits the staged changes of the review folder under the message typed, or, with none staged, the changes of its tracked files, and pushes afterwards when `push` is set.

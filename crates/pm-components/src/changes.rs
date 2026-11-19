@@ -35,7 +35,7 @@ pub enum Mode {
     Revision,
 }
 
-/// The view of the changes being shown, being described: what it is of, how big it is and how tall the room for it is.
+/// The view of the changes being shown, being described: what it is of and how big it is.
 ///
 /// Build it with [`Changes::new`], change it with the methods that follow, and
 /// emit it with [`Changes::build`].
@@ -43,8 +43,6 @@ pub enum Mode {
 pub struct Changes<'a> {
     /// The state the files are drawn from.
     state: &'a WorkspaceState,
-    /// How tall the room for the view is, in logical pixels.
-    height: f32,
     /// What it is of.
     mode: Mode,
     /// How big it is.
@@ -56,15 +54,14 @@ pub struct Changes<'a> {
 }
 
 impl<'a> Changes<'a> {
-    /// The view of the excerpts `state` holds, in `height` logical pixels of room, of what they are of.
-    pub fn new(state: &'a WorkspaceState, height: f32) -> Self {
+    /// The view of the excerpts `state` holds, of what they are of.
+    pub fn new(state: &'a WorkspaceState) -> Self {
         let mode = match state.excerpts.as_ref().map(|excerpts| &excerpts.source) {
             Some(Source::Timeline { .. }) => Mode::Timeline,
             _ => Mode::Revision,
         };
         Self {
             state,
-            height,
             mode,
             size: Size::default(),
             modifier: Modifier::new(),
@@ -180,7 +177,7 @@ impl<'a> Changes<'a> {
             alignment,
             || {
                 self.strip();
-                file_list(self.state, (self.height - STRIP).max(0.0), self.size);
+                file_list(self.state, self.size);
             },
         );
     }

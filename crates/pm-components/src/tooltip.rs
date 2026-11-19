@@ -7,7 +7,6 @@ use rustle::{
     column_arranged, tooltip_area,
 };
 
-use crate::select::styled_text;
 use crate::theme::{Radius, Role};
 
 /// How far a tooltip's box stays above the box it is about, in logical pixels.
@@ -77,10 +76,11 @@ pub fn with_tooltip_in(modifier: Modifier, words: impl Into<String>, content: im
                 Alignment::Start,
                 || {
                     for line in words.lines() {
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new(),
                             line.to_owned(),
                             kind.color(theme::color(Role::Text)),
+                            rustle::TextOverflow::Ellipsis,
                         );
                     }
                 },

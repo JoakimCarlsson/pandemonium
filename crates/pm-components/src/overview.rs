@@ -12,7 +12,6 @@ use crate::focus::FocusId;
 use crate::icons::IconName;
 use crate::parts::{clipped, glyph, line, spacer};
 use crate::sample::{Session, Status};
-use crate::select::styled_text;
 use crate::sidebar::status_icon;
 use crate::size::Size;
 use crate::state::{NEW_IN_BASE, SESSION_BASE, WorkspaceState};
@@ -104,13 +103,14 @@ fn heading(state: &WorkspaceState, project: usize) {
         || {
             if let Some(held) = state.projects.get(project) {
                 Avatar::of(held).build();
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     &held.name,
                     theme::text_style(14, 1.4)
                         .font_weight(rustle::FontWeight::MEDIUM)
                         .color(theme::color(Role::Text))
                         .max_lines(1),
+                    rustle::TextOverflow::Ellipsis,
                 );
                 clipped(&held.path, 12, Role::Subtle);
             }
@@ -191,12 +191,13 @@ fn session_row(state: &WorkspaceState, index: usize) {
             Arrangement::Start,
             Alignment::Start,
             || {
-                styled_text(
+                rustle::basic_text(
                     Modifier::new().weight(1.0),
                     &session.branch,
                     theme::text_style(12, 1.4)
                         .color(theme::color(Role::Muted))
                         .max_lines(1),
+                    rustle::TextOverflow::Ellipsis,
                 );
             },
         );
@@ -217,19 +218,21 @@ fn tally(session: &Session) {
         Arrangement::SpacedBy(sp(1.5)),
         Alignment::Center,
         || {
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 format!("+{}", session.added()),
                 theme::mono_style(12, 1.4)
                     .color(theme::color(Role::Success))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 format!("−{}", session.removed()),
                 theme::mono_style(12, 1.4)
                     .color(theme::color(Role::Danger))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
         },
     );
@@ -273,12 +276,13 @@ fn repository(state: &WorkspaceState) {
     group("Repository", || {
         card_row(Modifier::new(), || {
             glyph(IconName::GitFork, 4.0, Role::Muted);
-            styled_text(
+            rustle::basic_text(
                 Modifier::new().weight(1.0),
                 &home.branch,
                 theme::text_style(13, 1.4)
                     .color(theme::color(Role::Text))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
             line(standing, 13, 1.4, Role::Muted);
         });
@@ -316,12 +320,13 @@ fn commits(state: &WorkspaceState) {
         for commit in state.git.history.iter().take(COMMITS_SHOWN) {
             card_row(Modifier::new(), || {
                 glyph(IconName::GitCommit, 4.0, Role::Subtle);
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     commit.id.chars().take(SHORT_ID).collect::<String>(),
                     theme::mono_style(12, 1.4)
                         .color(theme::color(Role::Subtle))
                         .max_lines(1),
+                    rustle::TextOverflow::Ellipsis,
                 );
                 clipped(&commit.summary, 13, Role::Text);
             });

@@ -19,7 +19,6 @@ use crate::git_controls::{
 };
 use crate::icons::IconName;
 use crate::parts::{glyph, line};
-use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::theme::{Radius, Role, Tone};
@@ -207,27 +206,30 @@ fn commit_row(commit: &Commit, columns: usize, position: usize) {
         Alignment::Center,
         || {
             cell(&commit.lanes, columns);
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 commit.id.clone(),
                 theme::mono_style(11, 1.4).color(theme::color(Role::Muted)),
+                rustle::TextOverflow::Ellipsis,
             );
             for name in commit.refs.iter().take(SHOWN_REFS) {
                 reference_badge(name, color);
             }
             if commit.refs.len() > SHOWN_REFS {
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     format!("+{}", commit.refs.len() - SHOWN_REFS),
                     theme::text_style(11, 1.4).color(theme::color(Role::Subtle)),
+                    rustle::TextOverflow::Ellipsis,
                 );
             }
-            styled_text(
+            rustle::basic_text(
                 Modifier::new().weight(1.0),
                 &commit.summary,
                 theme::text_style(12, 1.4)
                     .color(theme::color(Role::Text))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
         },
     );

@@ -15,7 +15,6 @@ use crate::events::Interactive;
 use crate::focus::FocusId;
 use crate::icons::IconName;
 use crate::input::Input;
-use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::theme::{Radius, Role, sp};
@@ -357,7 +356,7 @@ pub(crate) fn switch(label: &str, id: FocusId, on: bool) {
     let kind =
         theme::mono_style(11, 1.2).color(theme::color(if on { Role::Text } else { Role::Subtle }));
     row_arranged(own, Arrangement::Center, Alignment::Center, || {
-        styled_text(Modifier::new(), label, kind);
+        rustle::basic_text(Modifier::new(), label, kind, rustle::TextOverflow::Ellipsis);
     });
 }
 
@@ -421,12 +420,13 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
                     switch("ab", FIND_WORD, finding.word);
                     switch(".*", FIND_REGEX, finding.regex);
                     switch("sel", FIND_IN_SELECTION, finding.scoped);
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new().width(84.0).padding_xy(theme::sp(1), 0.0),
                         said,
                         theme::text_style(11, 1.4)
                             .color(theme::color(tone))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                     Button::icon(IconName::ArrowUp, FIND_PREVIOUS).build();
                     Button::icon(IconName::ArrowDown, FIND_NEXT).build();

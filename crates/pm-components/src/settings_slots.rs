@@ -2,7 +2,6 @@
 
 use crate::focus::FocusId;
 use crate::icons::IconName;
-use crate::select::styled_text;
 use crate::theme;
 use crate::theme::sp;
 use crate::theme::{Radius, Role};
@@ -966,12 +965,13 @@ fn backup_chip(place: usize, backup: &str, ids: [Option<FocusId>; 3], first: boo
         Alignment::Center,
         || {
             line(format!("{}", place + 1), 11, 1.4, Role::Subtle);
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 backup,
                 theme::mono_style(12, 1.4)
                     .color(theme::color(Role::Text))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
             backup_button(IconName::ArrowUp, ids[0], first);
             backup_button(IconName::ArrowDown, ids[1], last);
@@ -1191,13 +1191,14 @@ pub(crate) fn slot_row(state: &WorkspaceState, row: usize, slot: &SlotRow, room:
                         Arrangement::SpacedBy(sp(2)),
                         Alignment::Center,
                         || {
-                            styled_text(
+                            rustle::basic_text(
                                 Modifier::new(),
                                 format!("@{}", slot.name),
                                 theme::text_style(13, 1.4)
                                     .font_weight(rustle::FontWeight::MEDIUM)
                                     .color(theme::color(Role::Text))
                                     .max_lines(1),
+                                rustle::TextOverflow::Ellipsis,
                             );
                             source_badge(slot);
                         },
@@ -1257,20 +1258,22 @@ fn preset_row(row: usize, preset: &PresetInfo) {
                 Arrangement::SpacedBy(sp(0.5)),
                 Alignment::Start,
                 || {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         preset.name.clone(),
                         theme::text_style(13, 1.4)
                             .font_weight(rustle::FontWeight::MEDIUM)
                             .color(theme::color(Role::Text))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         preset_summary(preset),
                         theme::text_style(12, 1.4)
                             .color(theme::color(Role::Muted))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                 },
             );

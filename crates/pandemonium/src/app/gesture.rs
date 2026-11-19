@@ -1,11 +1,10 @@
 //! The places the pointer selects text, each as a [`Surface`] for the one
-//! press-and-drag gesture: the code editor's text, the conversation's text,
-//! and the shell. Text fields select with rustle's own gestures.
+//! press-and-drag gesture: the code editor's text and the shell. Text fields,
+//! the conversation and the card about a place select with rustle's own
+//! gestures.
 
 use crate::model::Model;
 use pm_components::focus::FocusId;
-use pm_components::select::Selectables;
-use pm_components::select::{TextPoint, TextSelection};
 use pm_field::{Edit, Reach, Surface};
 
 use super::App;
@@ -41,39 +40,6 @@ impl Surface for CodeText<'_> {
     /// Selects the field from the byte `anchor` to the byte `head`.
     fn select(&mut self, anchor: usize, head: usize) {
         self.app.edit_field(self.id, Edit::Select(anchor, head));
-    }
-}
-
-/// The conversation's selectable text `id`, by place in its drawn lines.
-pub(super) struct ChatText<'a> {
-    /// Where the selectable text was placed.
-    pub(super) selectables: &'a Selectables,
-    /// The selection the app holds.
-    pub(super) selection: &'a mut Option<TextSelection>,
-    /// The text.
-    pub(super) id: FocusId,
-}
-
-impl Surface for ChatText<'_> {
-    type Pos = TextPoint;
-
-    /// The word or paragraph around the place `at`.
-    fn reach_around(&self, reach: Reach, at: TextPoint) -> (TextPoint, TextPoint) {
-        self.selectables.unit_around(self.id, at, reach)
-    }
-
-    /// Starts an empty selection at `at`.
-    fn place(&mut self, at: TextPoint) {
-        self.select(at, at);
-    }
-
-    /// Selects from the place `anchor` to the place `head`.
-    fn select(&mut self, anchor: TextPoint, head: TextPoint) {
-        *self.selection = Some(TextSelection {
-            id: self.id,
-            anchor,
-            head,
-        });
     }
 }
 

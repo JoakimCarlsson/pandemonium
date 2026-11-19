@@ -9,7 +9,6 @@ use rustle::{CursorIcon, Modifier};
 
 use crate::events::Interactive;
 use crate::focus::FocusId;
-use crate::select::styled_text;
 use crate::theme::Role;
 
 use crate::button::Variant;
@@ -409,13 +408,14 @@ fn choice_rows(choices: &[(String, String, bool)]) {
 /// Emits a line of `words` set as a title, `pixels` tall, in the text colour and medium weight.
 #[track_caller]
 fn title_line(words: impl Into<String>, pixels: u32) {
-    styled_text(
+    rustle::basic_text(
         Modifier::new(),
         words,
         theme::text_style(pixels, 1.4)
             .font_weight(rustle::FontWeight::MEDIUM)
             .color(theme::color(Role::Text))
             .max_lines(1),
+        rustle::TextOverflow::Ellipsis,
     );
 }
 

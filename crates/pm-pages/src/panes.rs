@@ -4,7 +4,6 @@ use pm_components::events::Interactive;
 use pm_components::events::reduce;
 use pm_components::focus::FocusId;
 use pm_components::icons::IconName;
-use pm_components::select::styled_text;
 use pm_components::theme;
 use pm_components::theme::sp;
 use pm_components::theme::{Radius, Role, Side};
@@ -135,7 +134,12 @@ fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) {
         Alignment::Center,
         || {
             file_icon(&viewer.path, 3.5);
-            styled_text(Modifier::new(), label_text, kind);
+            rustle::basic_text(
+                Modifier::new(),
+                label_text,
+                kind,
+                rustle::TextOverflow::Ellipsis,
+            );
             if viewer.is_dirty() {
                 rustle::spacer(
                     Modifier::new()
@@ -361,10 +365,10 @@ fn item_view(state: &WorkspaceState, item: &Item, area: Area, tall: f32) {
         (Item::Page, _, _) => starting_page(state, area.height),
         (Item::Diff, _, _) => {
             if let Some(session) = state.review_session() {
-                diff::diff(state, session, width, tall);
+                diff::diff(state, session, width);
             }
         }
-        (Item::Excerpts, _, _) => excerpts_item(state, width, tall),
+        (Item::Excerpts, _, _) => excerpts_item(state, width),
         (Item::Browser, _, _) => {
             browser::browser_view(state, width, area.height - pm_components::panes::TABS);
         }
@@ -381,15 +385,13 @@ fn item_view(state: &WorkspaceState, item: &Item, area: Area, tall: f32) {
     }
 }
 
-/// Emits the excerpts shown in a pane `width` by `height` logical pixels: the resolver for a file in conflict, the view of changes for what a change set or a timeline holds, and the lines around the hits for a search.
+/// Emits the excerpts shown in a pane `width` logical pixels wide: the resolver for a file in conflict, the view of changes for what a change set or a timeline holds, and the lines around the hits for a search.
 #[track_caller]
-fn excerpts_item(state: &WorkspaceState, width: f32, height: f32) {
+fn excerpts_item(state: &WorkspaceState, width: f32) {
     match state.excerpts.as_ref().map(|excerpts| &excerpts.source) {
-        Some(Source::Conflict(_)) => Conflict::new(state, width, height).build(),
-        Some(Source::Timeline { .. } | Source::Revision { .. }) => {
-            Changes::new(state, height).build()
-        }
-        _ => excerpts::excerpts_view(state, height),
+        Some(Source::Conflict(_)) => Conflict::new(state, width).build(),
+        Some(Source::Timeline { .. } | Source::Revision { .. }) => Changes::new(state).build(),
+        _ => excerpts::excerpts_view(state),
     }
 }
 

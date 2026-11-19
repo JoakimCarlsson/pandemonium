@@ -209,11 +209,23 @@ thread_local! {
 pub fn provide(tokens: Tokens, content: impl FnOnce()) {
     LAST_TOKENS.with(|last| *last.borrow_mut() = Some(tokens.clone()));
     let scheme = color_scheme(&tokens.theme, tokens.appearance);
+    let selection = selection_colors(&tokens.theme);
     LOCAL_TOKENS.provide(tokens, || {
         rustle::LOCAL_SCROLLBAR_STYLE.provide(scrollbar(), || {
-            rustle::theme(scheme, typography(), shapes(), content);
+            rustle::theme(scheme, typography(), shapes(), || {
+                rustle::LOCAL_TEXT_SELECTION_COLORS.provide(selection, content);
+            });
         });
     });
+}
+
+/// The colours of selected text in `theme`, as a design system provides Compose's
+/// `LocalTextSelectionColors`: the focus colour, translucent behind the text.
+fn selection_colors(theme: &Theme) -> rustle::TextSelectionColors {
+    rustle::TextSelectionColors {
+        handle_color: color_in(theme, Role::Focused),
+        background_color: color_in(theme, Tone::from(Role::Focused).alpha(0.45)),
+    }
 }
 
 /// The rustle colour scheme of `theme` in `appearance`: the roles laid on the

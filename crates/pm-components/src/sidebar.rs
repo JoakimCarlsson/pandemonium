@@ -7,7 +7,6 @@ use std::rc::Rc;
 
 use crate::focus::FocusId;
 use crate::icons::{IconName, spinner};
-use crate::select::styled_text;
 use crate::theme::{Radius, Role, sp};
 
 use crate::Avatar;
@@ -221,12 +220,13 @@ fn submodule_row(project: &Project, relative: &str, position: usize, starting: b
                 || {
                     line(name, 13, 1.4, Role::Text);
                     if !folder.is_empty() {
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new().weight(1.0),
                             format!("{folder}/"),
                             theme::text_style(12, 1.4)
                                 .color(theme::color(Role::Subtle))
                                 .max_lines(1),
+                            rustle::TextOverflow::Ellipsis,
                         );
                     }
                 },

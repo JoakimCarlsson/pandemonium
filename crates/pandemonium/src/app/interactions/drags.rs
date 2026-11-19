@@ -153,7 +153,9 @@ fn the_minimap_scrolls_the_file() {
     let scrolled = |rig: &Rig| {
         rig.read(|screen| {
             let Screen::Workspace(state) = screen;
-            state.shown_viewer().map(|viewer| viewer.scroll.offset())
+            state
+                .shown_viewer()
+                .map(|viewer| viewer.scroll.scroll().offset())
         })
     };
     let before = scrolled(&rig);

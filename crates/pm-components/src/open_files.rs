@@ -47,8 +47,8 @@ pub struct Viewer {
     pub head: bool,
     /// What it holds.
     pub contents: Contents,
-    /// How far down it is scrolled, in logical pixels.
-    pub scroll: rustle::ScrollState,
+    /// The list of its lines, which says how far down it is scrolled; a file shown rendered scrolls by the list's scroll state.
+    pub scroll: rustle::LazyListState,
     /// How far down the card about a place in it is scrolled, in logical pixels.
     pub hover_scroll: rustle::ScrollState,
     /// Whether it is only being looked at: its tab is given up to the next file looked at, until the file is changed.
@@ -94,15 +94,17 @@ impl Left {
     }
 }
 
-/// Puts the caret of `document` at `position` and returns how far down to scroll for its line to show a little below the top, rows `row` logical pixels tall holding `columns` characters when lines wrap.
+/// Puts the caret of `document` at `position` and scrolls its list of lines `scroll` for its line to show a little below the top, rows `row` logical pixels tall holding `columns` characters when lines wrap.
 pub(crate) fn jump(
     document: &mut Document,
     position: pm_protocol::Position,
+    scroll: &rustle::LazyListState,
     row: f32,
     columns: Option<usize>,
-) -> f32 {
+) {
     let line = document.jump(position);
-    (document.wrapped_row_of_line(line, columns) as f32 * row - row * 6.0).max(0.0)
+    let target = document.wrapped_row_of_line(line, columns) as f32 - 6.0;
+    crate::viewer::scroll_document_to_row(scroll, document, target, columns, row);
 }
 
 impl Viewer {
@@ -201,7 +203,7 @@ impl WorkspaceState {
                     path: path.clone(),
                     head,
                     contents: Contents::Loading,
-                    scroll: rustle::ScrollState::default(),
+                    scroll: rustle::LazyListState::default(),
                     hover_scroll: rustle::ScrollState::default(),
                     preview: true,
                     left: None,
@@ -269,7 +271,7 @@ impl WorkspaceState {
             path: path.to_owned(),
             head: false,
             contents: Contents::Loading,
-            scroll: rustle::ScrollState::default(),
+            scroll: rustle::LazyListState::default(),
             hover_scroll: rustle::ScrollState::default(),
             preview: false,
             left: None,
@@ -423,9 +425,7 @@ impl WorkspaceState {
                         left.put_back(&mut document);
                     }
                     if let Some(position) = viewer.jump.take() {
-                        viewer
-                            .scroll
-                            .jump_to(jump(&mut document, position, row, columns));
+                        jump(&mut document, position, &viewer.scroll, row, columns);
                     }
                     Contents::Text(Box::new(document))
                 }
@@ -498,7 +498,7 @@ impl WorkspaceState {
             return;
         };
         viewer.source = source;
-        viewer.scroll.jump_to(0.0);
+        viewer.scroll.scroll().jump_to(0.0);
         let draw = viewer.draw_request(session);
         self.outbox.extend(draw);
         self.ask_shown_figures();
@@ -557,15 +557,15 @@ impl WorkspaceState {
         let Contents::Text(document) = &viewer.contents else {
             return self;
         };
-        let line = document.caret_row(columns);
-        let (top, bottom) = (line as f32 * row, (line + 1) as f32 * row);
-        let view = (height - STRIP).max(row);
-        let room = (view / row / 2.0).floor().max(0.0) as usize;
-        let margin = self.editor.vertical_scroll_margin.min(room) as f32 * row;
-        if top - margin < viewer.scroll.offset() {
-            viewer.scroll.jump_to((top - margin).max(0.0));
-        } else if bottom + margin > viewer.scroll.offset() + view {
-            viewer.scroll.jump_to(bottom + margin - view);
+        let caret = document.caret_row(columns) as f32;
+        let view = (height - STRIP).max(row) / row;
+        let room = (view / 2.0).floor().max(0.0) as usize;
+        let margin = self.editor.vertical_scroll_margin.min(room) as f32;
+        let top = viewer.top_row(columns, row);
+        if caret - margin < top {
+            viewer.scroll_to_row(caret - margin, columns, row);
+        } else if caret + 1.0 + margin > top + view {
+            viewer.scroll_to_row(caret + 1.0 + margin - view, columns, row);
         }
         self
     }

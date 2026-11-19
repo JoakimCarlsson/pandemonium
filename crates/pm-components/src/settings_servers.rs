@@ -16,7 +16,6 @@ use crate::icons::IconName;
 use crate::input::Input;
 use crate::menu::Menu;
 use crate::parts::{glyph, line, wrap};
-use crate::select::styled_text;
 use crate::settings::{
     SETTINGS_ADD, SETTINGS_CANCEL, SETTINGS_DOCS, SETTINGS_ENV, SETTINGS_MENU_COPY,
     SETTINGS_MENU_EDIT, SETTINGS_MENU_REMOVE, SETTINGS_MENU_TOGGLE, SETTINGS_MENU_WEBSITE,
@@ -623,13 +622,14 @@ pub(crate) fn page_title(section: Section) {
             if let Some(parent) = section.parent() {
                 line(parent.title(), 12, 1.4, Role::Muted);
             }
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 section.title(),
                 theme::text_style(22, 1.3)
                     .font_weight(rustle::FontWeight::MEDIUM)
                     .color(theme::color(Role::Text))
                     .max_lines(1),
+                rustle::TextOverflow::Ellipsis,
             );
         },
     );
@@ -711,7 +711,12 @@ fn section_content(state: &WorkspaceState, section: Section, room: f32) {
         Section::Agents => {
             about();
             crate::settings_pages::page_rows(state, section, room);
-            styled_text(Modifier::new(), "Explore", title_type(15, Role::Text));
+            rustle::basic_text(
+                Modifier::new(),
+                "Explore",
+                title_type(15, Role::Text),
+                rustle::TextOverflow::Ellipsis,
+            );
             for part in [
                 Section::AgentServers,
                 Section::McpServers,
@@ -869,10 +874,11 @@ pub(crate) fn card(section: Section, count: String) {
                         Arrangement::SpaceBetween,
                         Alignment::Center,
                         || {
-                            styled_text(
+                            rustle::basic_text(
                                 Modifier::new(),
                                 section.title(),
                                 title_type(14, Role::Text),
+                                rustle::TextOverflow::Ellipsis,
                             );
                             line(count, 12, 1.4, Role::Muted);
                         },
@@ -1017,7 +1023,12 @@ fn heading(title: &str, count: usize, open: bool, toggle: FocusId) {
         Alignment::Center,
         || {
             glyph(chevron, 4.0, Role::Muted);
-            styled_text(Modifier::new(), title, title_type(15, Role::Text));
+            rustle::basic_text(
+                Modifier::new(),
+                title,
+                title_type(15, Role::Text),
+                rustle::TextOverflow::Ellipsis,
+            );
             Badge::new(count.to_string()).build();
         },
     );
@@ -1031,7 +1042,12 @@ pub(crate) fn heading_only(title: &str, count: usize) {
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
         || {
-            styled_text(Modifier::new(), title, title_type(15, Role::Text));
+            rustle::basic_text(
+                Modifier::new(),
+                title,
+                title_type(15, Role::Text),
+                rustle::TextOverflow::Ellipsis,
+            );
             Badge::new(count.to_string()).build();
         },
     );
@@ -1195,13 +1211,19 @@ fn offer(index: usize, title: &str, description: &str, how: &str, action: &str, 
             Arrangement::SpacedBy(sp(1)),
             Alignment::Start,
             || {
-                styled_text(Modifier::new(), title, title_type(13, Role::Text));
-                styled_text(
+                rustle::basic_text(
+                    Modifier::new(),
+                    title,
+                    title_type(13, Role::Text),
+                    rustle::TextOverflow::Ellipsis,
+                );
+                rustle::basic_text(
                     Modifier::new(),
                     description,
                     theme::text_style(12, 1.4)
                         .color(theme::color(Role::Muted))
                         .max_lines(1),
+                    rustle::TextOverflow::Ellipsis,
                 );
             },
         );
@@ -1211,12 +1233,13 @@ fn offer(index: usize, title: &str, description: &str, how: &str, action: &str, 
             Alignment::Center,
             || {
                 if !how.is_empty() {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         how,
                         theme::mono_style(11, 1.5)
                             .color(theme::color(Role::Subtle))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                 }
                 if let Some(button) = button {
@@ -1242,10 +1265,11 @@ fn installed_row(shown: InstalledRow) {
                     Arrangement::SpacedBy(sp(2)),
                     Alignment::Center,
                     || {
-                        styled_text(
+                        rustle::basic_text(
                             Modifier::new(),
                             shown.title.as_str(),
                             title_type(13, if dim { Role::Muted } else { Role::Text }),
+                            rustle::TextOverflow::Ellipsis,
                         );
                         for (words, tone) in &shown.badges {
                             Badge::new(*words).tone(*tone).build();
@@ -1253,20 +1277,22 @@ fn installed_row(shown: InstalledRow) {
                     },
                 );
                 if !shown.description.is_empty() {
-                    styled_text(
+                    rustle::basic_text(
                         Modifier::new(),
                         shown.description.as_str(),
                         theme::text_style(12, 1.4)
                             .color(theme::color(Role::Muted))
                             .max_lines(1),
+                        rustle::TextOverflow::Ellipsis,
                     );
                 }
-                styled_text(
+                rustle::basic_text(
                     Modifier::new(),
                     shown.detail.as_str(),
                     theme::text_style(11, 1.4)
                         .color(theme::color(Role::Subtle))
                         .max_lines(1),
+                    rustle::TextOverflow::Ellipsis,
                 );
             },
         );

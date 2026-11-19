@@ -14,8 +14,8 @@ const GRIP: f32 = 14.0;
 fn back(rig: &Rig) -> (f32, f32) {
     rig.read(|screen| {
         let Screen::Workspace(state) = screen;
-        let room = state.chat_back.max_offset();
-        (state.chat_back.offset().min(room), room)
+        let room = state.chat_list.scroll().max_offset();
+        (state.chat_list.scroll().offset().min(room), room)
     })
 }
 
@@ -42,7 +42,25 @@ fn prompt_offset(rig: &Rig) -> f32 {
     })
 }
 
-/// The wheel over the conversation scrolls it, and not past either end.
+/// Whether the conversation shows its oldest entry and is scrolled exactly as far back as it
+/// can go, the room it has measured once that entry is laid out.
+fn at_start(rig: &Rig) -> bool {
+    rig.read(|screen| {
+        let Screen::Workspace(state) = screen;
+        let info = state.chat_list.layout_info();
+        let oldest = info.total_items_count.checked_sub(1);
+        let scroll = state.chat_list.scroll();
+        scroll.offset() == scroll.max_offset()
+            && info
+                .visible_items_info
+                .iter()
+                .any(|item| Some(item.index) == oldest)
+    })
+}
+
+/// The wheel over the conversation scrolls it, and not past either end. The room to scroll
+/// back is estimated until the oldest entries are measured, as a lazy list's is, so the start
+/// is checked against the room measured once it is reached.
 #[test]
 fn the_wheel_scrolls_the_conversation() {
     let mut rig = Rig::shot(Shot::Workspace);
@@ -54,7 +72,10 @@ fn the_wheel_scrolls_the_conversation() {
     rig.wheel(-100.0);
     assert_eq!(back(&rig).0, 100.0);
     rig.wheel(-10_000.0);
-    assert_eq!(back(&rig).0, room);
+    assert!(at_start(&rig));
+    let start = back(&rig).0;
+    rig.wheel(-100.0);
+    assert_eq!(back(&rig).0, start);
     rig.wheel(10_000.0);
     assert_eq!(back(&rig).0, 0.0);
 }
@@ -83,7 +104,7 @@ fn dragging_the_scrollbar_scrolls() {
     rig.drag((x, bottom), (x, bottom - 120.0), 6);
     let (offset, room) = back(&rig);
     assert!(offset > 50.0, "{offset} of {room}");
-    assert_eq!(rig.app.borrow().text_selection, None);
+    assert_eq!(rig.app.borrow().text_selection(), None);
 }
 
 /// At its end the conversation keeps to its end when it has less room to show it.

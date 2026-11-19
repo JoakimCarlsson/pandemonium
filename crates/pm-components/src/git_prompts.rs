@@ -1,7 +1,6 @@
 //! The questions the source control panel asks before it does something that cannot be taken back, and the lists it asks a choice from.
 
 use crate::focus::FocusId;
-use crate::select::styled_text;
 use crate::theme;
 use crate::theme::Role;
 use crate::theme::sp;
@@ -344,7 +343,12 @@ pub(crate) fn question_of(
                 Alignment::Start,
                 || {
                     for title in wrap(&title, 15, WIDTH - 40.0) {
-                        styled_text(Modifier::new(), title, title_type());
+                        rustle::basic_text(
+                            Modifier::new(),
+                            title,
+                            title_type(),
+                            rustle::TextOverflow::Ellipsis,
+                        );
                     }
                     for words in wrap(words, 13, WIDTH - 40.0) {
                         line(words, 13, 1.5, Role::Muted);
@@ -372,7 +376,12 @@ fn naming_box(
                 Arrangement::SpacedBy(sp(3)),
                 Alignment::Start,
                 || {
-                    styled_text(Modifier::new(), title, title_type());
+                    rustle::basic_text(
+                        Modifier::new(),
+                        title,
+                        title_type(),
+                        rustle::TextOverflow::Ellipsis,
+                    );
                     Input::new(field, id)
                         .modifier(Modifier::new().fill_max_width())
                         .placeholder(placeholder)
@@ -407,7 +416,14 @@ fn stash_list(state: &WorkspaceState, action: StashAction) {
                         ),
                         Arrangement::Start,
                         Alignment::Start,
-                        || styled_text(Modifier::new(), action.title(), title_type()),
+                        || {
+                            rustle::basic_text(
+                                Modifier::new(),
+                                action.title(),
+                                title_type(),
+                                rustle::TextOverflow::Ellipsis,
+                            )
+                        },
                     );
                     if state.git.stashes.is_empty() {
                         column_arranged(

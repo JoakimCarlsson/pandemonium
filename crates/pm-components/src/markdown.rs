@@ -18,7 +18,6 @@ use crate::figures::{
 use crate::focus::FocusId;
 use crate::icons::IconName;
 use crate::parts::{glyph, line};
-use crate::select::styled_text;
 use crate::theme::{Radius, Role};
 
 /// The line height of running text, as a share of its size.
@@ -463,7 +462,12 @@ impl Layout<'_> {
                     Arrangement::Start,
                     Alignment::Start,
                     move || {
-                        styled_text(Modifier::new(), content, kind);
+                        rustle::basic_text(
+                            Modifier::new(),
+                            content,
+                            kind,
+                            rustle::TextOverflow::Ellipsis,
+                        );
                     },
                 );
             }
@@ -728,5 +732,5 @@ fn run(modifier: Modifier, content: String, inline: Inline, pixels: u32, strong:
             .padding_xy(CODE_PAD, 0.0),
         false => modifier,
     };
-    styled_text(modifier, content, kind);
+    rustle::basic_text(modifier, content, kind, rustle::TextOverflow::Ellipsis);
 }

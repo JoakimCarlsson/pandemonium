@@ -18,7 +18,6 @@ use crate::plan::proposal;
 use crate::popover::{anchored, anchored_end, heading};
 use crate::popups::Placement;
 use crate::sample::Session;
-use crate::select::styled_text;
 use crate::size::Size;
 use crate::state::{
     ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, ATTACH, ATTACHED_BASE, BRANCH_BASE, EFFORT_BASE,
@@ -501,12 +500,13 @@ fn mention_list(state: &WorkspaceState) {
                             Arrangement::Start,
                             Alignment::Center,
                             || {
-                                styled_text(
+                                rustle::basic_text(
                                     Modifier::new().weight(1.0),
                                     path.as_str(),
                                     theme::mono_style(13, 1.4)
                                         .color(theme::color(Role::Text))
                                         .max_lines(1),
+                                    rustle::TextOverflow::Ellipsis,
                                 );
                             },
                         );
@@ -562,17 +562,19 @@ fn slash_list(state: &WorkspaceState) {
                             Arrangement::SpacedBy(sp(3)),
                             Alignment::Center,
                             || {
-                                styled_text(
+                                rustle::basic_text(
                                     Modifier::new(),
                                     format!("/{}", command.name),
                                     theme::mono_style(13, 1.4).color(theme::color(Role::Text)),
+                                    rustle::TextOverflow::Ellipsis,
                                 );
-                                styled_text(
+                                rustle::basic_text(
                                     Modifier::new().weight(1.0),
                                     &command.description,
                                     theme::text_style(12, 1.4)
                                         .color(theme::color(Role::Subtle))
                                         .max_lines(1),
+                                    rustle::TextOverflow::Ellipsis,
                                 );
                             },
                         );
@@ -737,15 +739,17 @@ fn sign_in_again(state: &WorkspaceState, session: &Session, reason: &str, accoun
         Arrangement::SpacedBy(sp(3)),
         Alignment::Start,
         || {
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 words,
                 theme::text_style(14.0, 1.5).color(theme::color(Role::Text)),
+                rustle::TextOverflow::Ellipsis,
             );
-            styled_text(
+            rustle::basic_text(
                 Modifier::new(),
                 reason,
                 theme::text_style(12.0, 1.5).color(theme::color(Role::Muted)),
+                rustle::TextOverflow::Ellipsis,
             );
             Button::new("Sign in", crate::state::SESSION_SIGN_IN)
                 .modifier(Modifier::new().fill_max_width())
