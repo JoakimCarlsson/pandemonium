@@ -1,20 +1,21 @@
 //! Views laid out with no window, and their controls found by the tags their
-//! [`FocusId`]s give them, as a Compose test finds nodes with `onNodeWithTag`.
+//! [`Target`]s give them, as a Compose test finds nodes with `onNodeWithTag`.
 //!
 //! Every control named with [`Interactive::control`](crate::events::Interactive::control),
 //! [`Interactive::pressable`](crate::events::Interactive::pressable) or their variants carries the
-//! [`test_tag`](rustle::Modifier::test_tag) of its id ([`FocusId::tag`]). Tests and
+//! [`test_tag`](rustle::Modifier::test_tag) of its id ([`Target::tag`]). Tests and
 //! snapshots lay views out with [`lay_out`] and ask the [`Laid`] where a control went.
 
+use crate::target::Target;
 use rustle::{Embedded, Offset, PixelRounding, Rect};
 
-use crate::focus::{self, FocusId, FocusKeys};
+use crate::focus::{self, FocusKeys};
 
-/// A control or area laid out, found by the tag its [`FocusId`] gave it.
+/// A control or area laid out, found by the tag its [`Target`] gave it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tagged {
     /// What names it.
-    pub id: FocusId,
+    pub id: Target,
     /// Where it was laid out, whether or not it can be seen: Compose's `boundsInRoot`.
     pub bounds: Rect,
     /// The part of it that can be seen; empty when it is scrolled or clipped away.
@@ -33,7 +34,7 @@ impl Tagged {
     }
 }
 
-/// The controls and areas `ui` laid out last that are named by a [`FocusId`], in paint
+/// The controls and areas `ui` laid out last that are named by a [`Target`], in paint
 /// order, moved `dx` right and `dy` down.
 pub fn tagged_in(ui: &Embedded, dx: f32, dy: f32) -> Vec<Tagged> {
     let moved = |rect: Rect| {
@@ -45,9 +46,9 @@ pub fn tagged_in(ui: &Embedded, dx: f32, dy: f32) -> Vec<Tagged> {
     ui.tagged_nodes()
         .iter()
         .filter_map(|node| {
-            let id = node.tag.strip_prefix("control-")?.parse().ok()?;
+            let id = Target::from_tag(&node.tag)?;
             Some(Tagged {
-                id: FocusId(id),
+                id,
                 bounds: moved(node.bounds),
                 visible: moved(node.visible),
                 focusable: node.focusable,
@@ -56,14 +57,16 @@ pub fn tagged_in(ui: &Embedded, dx: f32, dy: f32) -> Vec<Tagged> {
         .collect()
 }
 
-/// The ids of `nodes` that are focus targets, in the order Tab walks them.
-pub fn focus_order(nodes: &[Tagged]) -> Vec<FocusId> {
-    let mut order: Vec<(usize, FocusId)> = nodes
+/// The ids of `nodes` that are focus targets, in the order Tab walks them: one id for each
+/// focus target, the first named on it, and each id once.
+pub fn focus_order(nodes: &[Tagged]) -> Vec<Target> {
+    let mut order: Vec<(usize, Target)> = nodes
         .iter()
         .filter_map(|node| Some((node.focusable?, node.id)))
         .collect();
     order.sort_by_key(|(index, _)| *index);
-    let mut ids: Vec<FocusId> = Vec::new();
+    order.dedup_by_key(|(index, _)| *index);
+    let mut ids: Vec<Target> = Vec::new();
     for (_, id) in order {
         if !ids.contains(&id) {
             ids.push(id);
@@ -81,27 +84,27 @@ pub struct Laid {
 
 impl Laid {
     /// The first control or area named `id`.
-    pub fn node(&self, id: FocusId) -> Option<Tagged> {
+    pub fn node(&self, id: Target) -> Option<Tagged> {
         self.nodes.iter().copied().find(|node| node.id == id)
     }
 
     /// The part of what `id` names that can be seen, if it was laid out.
-    pub fn region(&self, id: FocusId) -> Option<Rect> {
+    pub fn region(&self, id: Target) -> Option<Rect> {
         self.node(id).map(|node| node.visible)
     }
 
     /// Whether something named `id` was laid out.
-    pub fn drawn(&self, id: FocusId) -> bool {
+    pub fn drawn(&self, id: Target) -> bool {
         self.node(id).is_some()
     }
 
     /// The ids laid out, in paint order.
-    pub fn ids(&self) -> Vec<FocusId> {
+    pub fn ids(&self) -> Vec<Target> {
         self.nodes.iter().map(|node| node.id).collect()
     }
 
     /// The controls in the order Tab walks them.
-    pub fn focus_order(&self) -> Vec<FocusId> {
+    pub fn focus_order(&self) -> Vec<Target> {
         focus_order(&self.nodes)
     }
 }
@@ -111,7 +114,7 @@ impl Laid {
 pub fn interface(
     width: f32,
     height: f32,
-    focused: Option<FocusId>,
+    focused: Option<Target>,
     content: impl Fn() + 'static,
 ) -> Embedded {
     rustle_wgpu::set_legible_text(false);
@@ -138,7 +141,7 @@ pub fn interface(
 pub fn lay_out(
     width: f32,
     height: f32,
-    focused: Option<FocusId>,
+    focused: Option<Target>,
     content: impl Fn() + 'static,
 ) -> Laid {
     let ui = interface(width, height, focused, content);

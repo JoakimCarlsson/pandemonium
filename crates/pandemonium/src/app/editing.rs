@@ -1,8 +1,9 @@
 //! What the window does for the file shown between its frames: asking after the changes the language server offers once the caret rests, carrying selected text to another place by the pointer, and moving the caret along the screen in right-to-left text.
 
+use pm_components::areas::EditorEvent;
+use pm_components::target::Target;
 use std::time::Instant;
 
-use pm_components::open_files::EDITOR_FIELD;
 use pm_components::text_lines::Step;
 use pm_editor::LightbulbShown;
 use pm_field::{Edit, Motion};
@@ -33,7 +34,7 @@ pub(super) struct TextDrag {
 impl App {
     /// Asks the language server whether it offers changes at the caret of the file shown once the caret has rested there long enough, and says when to look again while it has yet to.
     pub(super) fn editor_bulb_due(&mut self) -> Option<Instant> {
-        let here = if self.focus.current() == Some(EDITOR_FIELD) {
+        let here = if self.focus.current() == Some(Target::Editor(EditorEvent::EditorField)) {
             self.model.read(|screen| match screen {
                 Screen::Workspace(state) => {
                     if state.editor.lightbulb == LightbulbShown::Off {
@@ -120,7 +121,10 @@ impl App {
         }
         drag.moving = true;
         self.text_drag = Some(drag);
-        let Some(offset) = self.code_lines().offset_in(EDITOR_FIELD, x, y) else {
+        let Some(offset) =
+            self.code_lines()
+                .offset_in(Target::Editor(EditorEvent::EditorField), x, y)
+        else {
             return;
         };
         self.model.update(|screen| {
@@ -151,7 +155,10 @@ impl App {
                 let Screen::Workspace(state) = screen;
                 state.editor_drag_cancelled();
             });
-            self.edit_field(EDITOR_FIELD, Edit::Select(drag.byte, drag.byte));
+            self.edit_field(
+                Target::Editor(EditorEvent::EditorField),
+                Edit::Select(drag.byte, drag.byte),
+            );
         }
         true
     }
@@ -185,31 +192,49 @@ impl App {
             return false;
         }
         let Some((caret, selected, several)) = self.model.read(|screen| {
-            screen.field(EDITOR_FIELD).map(|field| {
-                (
-                    field.to_shown(field.caret()),
-                    field.selection().is_some(),
-                    field.has_others(),
-                )
-            })
+            screen
+                .field(Target::Editor(EditorEvent::EditorField))
+                .map(|field| {
+                    (
+                        field.to_shown(field.caret()),
+                        field.selection().is_some(),
+                        field.has_others(),
+                    )
+                })
         }) else {
             return false;
         };
         if several || (selected && !extend) {
             return false;
         }
-        match self.code_lines().visual_step(EDITOR_FIELD, caret, right) {
+        match self
+            .code_lines()
+            .visual_step(Target::Editor(EditorEvent::EditorField), caret, right)
+        {
             None => false,
             Some(Step::To(target)) => {
-                self.edit_field(EDITOR_FIELD, Edit::Place(target, extend));
+                self.edit_field(
+                    Target::Editor(EditorEvent::EditorField),
+                    Edit::Place(target, extend),
+                );
                 true
             }
             Some(Step::Edge) => {
-                if let Some(edge) = self.code_lines().line_edge(EDITOR_FIELD, caret, right) {
-                    self.edit_field(EDITOR_FIELD, Edit::Place(edge, extend));
+                if let Some(edge) = self.code_lines().line_edge(
+                    Target::Editor(EditorEvent::EditorField),
+                    caret,
+                    right,
+                ) {
+                    self.edit_field(
+                        Target::Editor(EditorEvent::EditorField),
+                        Edit::Place(edge, extend),
+                    );
                 }
                 let motion = if right { Motion::Right } else { Motion::Left };
-                self.edit_field(EDITOR_FIELD, Edit::Move(motion, extend));
+                self.edit_field(
+                    Target::Editor(EditorEvent::EditorField),
+                    Edit::Move(motion, extend),
+                );
                 true
             }
         }

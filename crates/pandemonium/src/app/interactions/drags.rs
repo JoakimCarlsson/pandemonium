@@ -2,18 +2,18 @@
 //! between panes, rows of the project's files into folders, and the
 //! minimap of the file shown.
 
-use pm_components::focus::FocusId;
-use pm_components::minimap::MINIMAP;
-use pm_components::sash::{REVIEW_SASH, SIDEBAR_SASH};
-use pm_components::state::PROJECT_BASE;
+use pm_components::areas::{DiffEvent, EditorEvent, SidebarEvent, WindowEvent};
+use pm_components::target::Target;
+
 use pm_pages::Screen;
+use rustle::PointerButton;
 
 use crate::app::headless::Rig;
 use crate::snapshot::Shot;
 
 /// The first region drawn whose name `pick` accepts, from the end of the
 /// list when `last`.
-fn region_where(rig: &Rig, last: bool, pick: impl Fn(&Screen, FocusId) -> bool) -> FocusId {
+fn region_where(rig: &Rig, last: bool, pick: impl Fn(&Screen, Target) -> bool) -> Target {
     let tagged = rig.tagged();
     let mut ids = tagged.iter().map(|node| node.id);
     let found = if last {
@@ -30,13 +30,13 @@ fn region_where(rig: &Rig, last: bool, pick: impl Fn(&Screen, FocusId) -> bool) 
 fn the_sidebar_handle_resizes_it() {
     let mut rig = Rig::shot(Shot::Workspace);
     let before = rig.state(|state| state.sidebar_width);
-    let from = rig.center(SIDEBAR_SASH);
+    let from = rig.center(Target::Window(WindowEvent::SidebarSash));
     let to = (from.0 + 60.0, from.1);
     rig.move_to(from);
-    rig.button_in(None, winit::event::MouseButton::Left, true, from);
+    rig.button_in(None, PointerButton::Primary, true, from);
     rig.move_to(to);
     assert_eq!(rig.cursor(), rustle::CursorIcon::ColResize);
-    rig.button_in(None, winit::event::MouseButton::Left, false, to);
+    rig.button_in(None, PointerButton::Primary, false, to);
     assert_eq!(rig.state(|state| state.sidebar_width), before + 60.0);
     rig.move_to((to.0 + 100.0, to.1));
     assert_eq!(rig.state(|state| state.sidebar_width), before + 60.0);
@@ -47,11 +47,11 @@ fn the_sidebar_handle_resizes_it() {
 #[test]
 fn a_drag_moves_what_its_room_changed_and_keeps_the_rest() {
     let mut rig = Rig::shot(Shot::Workspace);
-    let pane = FocusId(pm_components::panes::PANE_BASE);
-    let review = pm_components::state::REVIEW_FILES;
+    let pane = Target::Window(WindowEvent::Pane(0));
+    let review = Target::Diff(DiffEvent::ReviewFiles);
     let (pane_before, review_before) = (rig.region(pane), rig.region(review));
     assert!(pane_before.is_some() && review_before.is_some());
-    let from = rig.center(SIDEBAR_SASH);
+    let from = rig.center(Target::Window(WindowEvent::SidebarSash));
     rig.drag(from, (from.0 + 40.0, from.1), 4);
     let (pane_after, review_after) = (rig.region(pane), rig.region(review));
     assert_eq!(
@@ -66,7 +66,7 @@ fn a_drag_moves_what_its_room_changed_and_keeps_the_rest() {
 fn the_review_handle_resizes_it() {
     let mut rig = Rig::shot(Shot::Workspace);
     let before = rig.state(|state| state.review_width);
-    let from = rig.center(REVIEW_SASH);
+    let from = rig.center(Target::Window(WindowEvent::ReviewSash));
     rig.drag(from, (from.0 - 40.0, from.1), 4);
     assert_eq!(rig.state(|state| state.review_width), before + 40.0);
 }
@@ -86,8 +86,8 @@ fn projects_reorder_by_dragging() {
         })
     };
     let before = names(&rig);
-    let from = rig.center(FocusId(PROJECT_BASE));
-    let below = rig.center(FocusId(PROJECT_BASE + 2));
+    let from = rig.center(Target::Sidebar(SidebarEvent::Project(0)));
+    let below = rig.center(Target::Sidebar(SidebarEvent::Project(2)));
     rig.drag(from, (from.0, below.1 + 10.0), 8);
     let after = names(&rig);
     assert_ne!(before, after);
@@ -109,7 +109,7 @@ fn a_short_move_of_a_project_is_no_drag() {
         })
     };
     let before = names(&rig);
-    let from = rig.center(FocusId(PROJECT_BASE));
+    let from = rig.center(Target::Sidebar(SidebarEvent::Project(0)));
     rig.drag(from, (from.0 + 3.0, from.1 + 4.0), 4);
     assert_eq!(names(&rig), before);
     assert!(rig.state(|state| state.project_drag.is_none()));
@@ -122,7 +122,7 @@ fn tabs_move_between_panes() {
     let before = rig.state(|state| format!("{:?}", state.panes));
     let tab = region_where(&rig, false, |screen, id| screen.pane_tab_of(id).is_some());
     let other = region_where(&rig, true, |_, id| {
-        pm_components::panes::pane_of(id).is_some()
+        matches!(id, Target::Window(WindowEvent::Pane(_)))
     });
     let from = rig.center(tab);
     let to = rig.center(other);
@@ -146,13 +146,13 @@ fn files_drag_into_folders() {
     let from = rig.center(file);
     let to = rig.center(folder);
     rig.move_to(from);
-    rig.button_in(None, winit::event::MouseButton::Left, true, from);
+    rig.button_in(None, PointerButton::Primary, true, from);
     rig.move_to((from.0, from.1 - 20.0));
     rig.move_to(to);
     assert!(rig.read(Screen::tree_dragging));
     rig.key(rustle::Key::Escape);
     assert!(!rig.read(Screen::tree_dragging));
-    rig.button_in(None, winit::event::MouseButton::Left, false, to);
+    rig.button_in(None, PointerButton::Primary, false, to);
     let _ = rig.app.borrow_mut().work.asked();
     rig.drag(from, to, 8);
     let asked = rig.app.borrow_mut().work.asked();
@@ -204,7 +204,9 @@ fn files_from_outside_land_in_the_folder_under_them() {
 #[test]
 fn the_minimap_scrolls_the_file() {
     let mut rig = Rig::shot(Shot::Code);
-    let map = rig.region(MINIMAP).expect("the minimap is drawn");
+    let map = rig
+        .region(Target::Editor(EditorEvent::Minimap))
+        .expect("the minimap is drawn");
     let scrolled = |rig: &Rig| {
         rig.read(|screen| {
             let Screen::Workspace(state) = screen;
@@ -227,10 +229,10 @@ fn the_minimap_scrolls_the_file() {
 #[test]
 fn the_gutter_marks_lines_for_a_comment() {
     let mut rig = Rig::shot(Shot::Diff);
-    let mut gutters: Vec<(FocusId, f32, f32)> = rig
+    let mut gutters: Vec<(Target, f32, f32)> = rig
         .tagged()
         .iter()
-        .filter(|node| pm_components::diff::gutter_of(node.id).is_some())
+        .filter(|node| matches!(node.id, Target::Diff(DiffEvent::Gutter { .. })))
         .map(|node| {
             (
                 node.id,

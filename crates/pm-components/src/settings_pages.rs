@@ -1,19 +1,20 @@
 //! The rows of settings on each page of the settings window, the page of what a search found, and what pressing a row's control or writing in its box does.
 
+use crate::areas::SettingsEvent;
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
 use rustle::Modifier;
 use rustle::TextFieldState;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
-use crate::focus::FocusId;
 use crate::parts::line;
-use crate::settings::{SETTINGS_PICK_FILTER, SETTINGS_PICK_FIRST, Section};
+use crate::settings::Section;
 use crate::settings_catalog::{self, LISTS, OPEN_LIST, RESET, Setting};
-use crate::settings_ids::{IdRange, LIST_ADDS, LIST_FIELDS, LIST_LINES, LIST_REMOVES, PICKS};
 use crate::settings_row::{
     NUMBER_WIDTH, PICKER_WIDTH, RESET_WIDTH, SWITCH_WIDTH, SettingRow, choices, choices_width,
     list, number, picker, picker_list, picker_shown, switch, text_box,
 };
+use crate::settings_rows::{LIST_ADDS, LIST_FIELDS, LIST_LINES, LIST_REMOVES, PICKS, Rows};
 use crate::settings_values::Control;
 use crate::state::WorkspaceState;
 use crate::theme::Role;
@@ -39,35 +40,35 @@ const _: () = assert!(
 );
 
 /// The box a line of `setting`'s list is typed in, when it is written as a list.
-fn list_field_id(setting: Setting) -> Option<FocusId> {
+fn list_field_id(setting: Setting) -> Option<Target> {
     LIST_FIELDS.id(setting.list_place()?)
 }
 
 /// The button adding what is typed in `setting`'s box to its list, when it is written as a list.
-fn list_add_id(setting: Setting) -> Option<FocusId> {
+fn list_add_id(setting: Setting) -> Option<Target> {
     LIST_ADDS.id(setting.list_place()?)
 }
 
 /// The button removing the line at `line` of `setting`'s list, when it is written as a list and its buttons have room for the line.
-fn list_remove_id(setting: Setting, line: usize) -> Option<FocusId> {
+fn list_remove_id(setting: Setting, line: usize) -> Option<Target> {
     LIST_REMOVES.cell(setting.list_place()?, line, LIST_LINES)
 }
 
 /// The setting written as a list whose control in `range` is `id`, when it is one.
-fn list_of(range: IdRange, id: FocusId) -> Option<Setting> {
+fn list_of(range: Rows, id: Target) -> Option<Setting> {
     LISTS.get(range.index_of(id)?).copied()
 }
 
 /// The setting written as a list, and the line of it, that the remove button `id` removes.
-fn list_line_of(id: FocusId) -> Option<(Setting, usize)> {
+fn list_line_of(id: Target) -> Option<(Setting, usize)> {
     let (list, line) = LIST_REMOVES.cell_of(id, LIST_LINES)?;
     Some((*LISTS.get(list)?, line))
 }
 
 /// What Enter in the box `id` presses, when `id` is the box of a list or the one narrowing the open list of choices.
-pub(crate) fn list_submit_of(id: FocusId) -> Option<FocusId> {
-    if id == SETTINGS_PICK_FILTER {
-        return Some(SETTINGS_PICK_FIRST);
+pub(crate) fn list_submit_of(id: Target) -> Option<Target> {
+    if id == Target::Settings(SettingsEvent::SettingsPickFilter) {
+        return Some(Target::Settings(SettingsEvent::SettingsPickFirst));
     }
     list_add_id(list_of(LIST_FIELDS, id)?)
 }
@@ -82,7 +83,7 @@ fn picker_options(setting: Setting, state: &WorkspaceState) -> Vec<String> {
 
 impl WorkspaceState {
     /// Carries out pressing the control `id` of a setting, or a choice of the open list, and says whether it was one.
-    pub(crate) fn setting_pressed(&mut self, id: FocusId) -> bool {
+    pub(crate) fn setting_pressed(&mut self, id: Target) -> bool {
         if let Some(listed) = list_of(LIST_ADDS, id) {
             self.add_line(listed);
             return true;
@@ -91,7 +92,7 @@ impl WorkspaceState {
             self.remove_line(listed, place);
             return true;
         }
-        if id == SETTINGS_PICK_FIRST {
+        if id == Target::Settings(SettingsEvent::SettingsPickFirst) {
             self.pick_row(0);
             return true;
         }
@@ -184,7 +185,7 @@ impl WorkspaceState {
     }
 
     /// Puts to work what the reader wrote in the box `id` of a setting written as text.
-    pub(crate) fn setting_typed(&mut self, id: FocusId) {
+    pub(crate) fn setting_typed(&mut self, id: Target) {
         let Some(setting) = Setting::text_of(id) else {
             return;
         };
@@ -199,8 +200,8 @@ impl WorkspaceState {
     }
 
     /// The box `id` of a setting written as text, or of a list, or the box narrowing the open list, once it has been written in.
-    pub(crate) fn setting_field(&self, id: FocusId) -> Option<&TextFieldState> {
-        if id == SETTINGS_PICK_FILTER {
+    pub(crate) fn setting_field(&self, id: Target) -> Option<&TextFieldState> {
+        if id == Target::Settings(SettingsEvent::SettingsPickFilter) {
             return Some(&self.settings_page.filter);
         }
         if let Some(listed) = list_of(LIST_FIELDS, id) {
@@ -211,8 +212,8 @@ impl WorkspaceState {
 }
 
 /// Whether `id` names a box of the settings written as text or as a list, or the one narrowing the open list.
-pub(crate) fn is_setting_field(id: FocusId) -> bool {
-    id == SETTINGS_PICK_FILTER
+pub(crate) fn is_setting_field(id: Target) -> bool {
+    id == Target::Settings(SettingsEvent::SettingsPickFilter)
         || list_of(LIST_FIELDS, id).is_some()
         || Setting::text_of(id).is_some()
 }
@@ -277,7 +278,11 @@ pub(crate) fn setting_row(state: &WorkspaceState, setting: Setting, room: f32) {
                     let shown = names.get(picked).copied().unwrap_or_default();
                     row.control(move || picker(shown, width, opener, open), Some(width))
                         .below(open.then_some(move || {
-                            picker_list(&options, Some(picked), (filter, SETTINGS_PICK_FILTER))
+                            picker_list(
+                                &options,
+                                Some(picked),
+                                (filter, Target::Settings(SettingsEvent::SettingsPickFilter)),
+                            )
                         }))
                 }
                 None => row,
@@ -311,7 +316,11 @@ pub(crate) fn setting_row(state: &WorkspaceState, setting: Setting, room: f32) {
                 let picked = setting.picked(state);
                 row.control(move || picker(&shown, width, opener, open), Some(width))
                     .below(open.then_some(move || {
-                        picker_list(&options, picked, (filter, SETTINGS_PICK_FILTER))
+                        picker_list(
+                            &options,
+                            picked,
+                            (filter, Target::Settings(SettingsEvent::SettingsPickFilter)),
+                        )
                     }))
             }
             None => row,
@@ -324,30 +333,17 @@ pub(crate) fn setting_row(state: &WorkspaceState, setting: Setting, room: f32) {
 #[track_caller]
 pub(crate) fn ruled<T>(items: Vec<T>, emit: impl Fn(T)) {
     let last = items.len().saturating_sub(1);
-    column_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            for (place, item) in items.into_iter().enumerate() {
-                let modifier = Modifier::new().fill_max_width();
-                let modifier = if place < last {
-                    modifier
-                        .draw_behind(theme::edge(
-                            theme::Side::Bottom,
-                            1.0,
-                            theme::color(Role::Border),
-                        ))
-                        .padding_each(0.0, 0.0, 0.0, 1.0)
-                } else {
-                    modifier
-                };
-                column_arranged(modifier, Arrangement::Start, Alignment::Start, || {
-                    emit(item)
-                });
-            }
-        },
-    );
+    kit::column(Modifier::new().fill_max_width(), 0, || {
+        for (place, item) in items.into_iter().enumerate() {
+            let modifier = Modifier::new().fill_max_width();
+            let modifier = if place < last {
+                modifier.ruled(theme::Side::Bottom)
+            } else {
+                modifier
+            };
+            kit::column(modifier, 0, || emit(item));
+        }
+    });
 }
 
 /// Emits the rows of the settings on the page `section` that show in `state`, `room` logical pixels across.
@@ -364,35 +360,20 @@ pub(crate) fn page_rows(state: &WorkspaceState, section: Section, room: f32) {
 /// Emits `title` over the rows `rows` emits of a group of settings, as the pages that hold several groups set it.
 #[track_caller]
 pub(crate) fn group(title: &str, rows: impl FnOnce()) {
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_width()
             .padding_each(0.0, theme::sp(2), 0.0, 0.0),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         || {
-            row_arranged(
+            kit::row(
                 Modifier::new()
                     .fill_max_width()
-                    .draw_behind(theme::edge(
-                        theme::Side::Bottom,
-                        1.0,
-                        theme::color(Role::Border),
-                    ))
-                    .padding_each(0.0, 0.0, 0.0, 1.0)
+                    .ruled(theme::Side::Bottom)
                     .padding_each(0.0, 0.0, 0.0, theme::sp(1)),
-                Arrangement::Start,
-                Alignment::Center,
+                0,
                 || {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        title,
-                        theme::text_style(12, 1.4)
-                            .font_weight(rustle::FontWeight::MEDIUM)
-                            .color(theme::color(Role::Muted))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
-                    );
+                    kit::text(Modifier::new(), title, kit::strong(12, Role::Muted));
                 },
             );
             rows();

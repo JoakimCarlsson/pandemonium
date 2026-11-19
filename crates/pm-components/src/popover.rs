@@ -1,13 +1,14 @@
 //! The popover: a raised surface that floats over a screen, with a heading and rows of choices.
 
 use crate::events::Interactive;
-use crate::events::reduce;
-use crate::focus::FocusId;
+use crate::events::{Event, send};
+use crate::kit;
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
+use crate::theme::Indicated;
 use crate::theme::{Radius, Role};
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use crate::parts::{glyph, line};
@@ -33,7 +34,7 @@ enum Entry {
         /// Whether it is the current choice.
         current: bool,
         /// What the row answers to.
-        id: FocusId,
+        id: Target,
     },
 }
 
@@ -92,7 +93,7 @@ impl Popover {
     }
 
     /// The popover with a row of `name` over `description`, ticked while `current`, answering to `id`.
-    pub fn row(mut self, name: &str, description: &str, current: bool, id: FocusId) -> Self {
+    pub fn row(mut self, name: &str, description: &str, current: bool, id: Target) -> Self {
         self.entries.push(Entry::Row {
             name: name.to_owned(),
             description: description.to_owned(),
@@ -142,7 +143,7 @@ impl Popover {
                             description,
                             current,
                             id,
-                        } => rustle::key(id.0, || row(&name, &description, current, id)),
+                        } => rustle::key(id, || row(&name, &description, current, id)),
                     }
                 }
                 content();
@@ -158,23 +159,9 @@ impl Popover {
     /// Emits the popover answering to `id`, so that pressing it does not count as pressing outside.
     /// Placed over its trigger by [`anchored`] or [`anchored_end`].
     #[track_caller]
-    pub fn build_target(self, id: FocusId) {
-        self.modifier(Modifier::new().control(id, reduce(id)))
+    pub fn build_target(self, id: Target) {
+        self.modifier(Modifier::new().control(id, send(Event::pressing(id))))
             .build();
-    }
-
-    /// Emits the popover answering to `id`, so that pressing it does not count as pressing outside;
-    /// placed above its button, left edges together, by [`anchored`].
-    #[track_caller]
-    pub fn over_button(self, id: FocusId) {
-        self.build_target(id);
-    }
-
-    /// Emits the popover answering to `id`, so that pressing it does not count as pressing outside;
-    /// placed above its button, right edges together, by [`anchored_end`].
-    #[track_caller]
-    pub fn over_button_end(self, id: FocusId) {
-        self.build_target(id);
     }
 
     /// Emits the popover across the width of the box it hangs over; placed just above that box by [`anchored`].
@@ -214,7 +201,7 @@ pub fn anchored_end(button: impl FnOnce(), popover: Option<impl FnOnce()>) {
 
 /// Emits one row of a popover: a name over what choosing it means, with a tick on the one that is current.
 #[track_caller]
-pub fn row(name: &str, description: &str, current: bool, id: FocusId) {
+pub fn row(name: &str, description: &str, current: bool, id: Target) {
     let looks = if current {
         theme::InteractionTones::new().idle(Role::SurfaceSelected)
     } else {
@@ -223,33 +210,22 @@ pub fn row(name: &str, description: &str, current: bool, id: FocusId) {
     .radius(Radius::Lg);
     let modifier = Modifier::new()
         .fill_max_width()
-        .interaction_focused(crate::focus::is_held(id))
-        .interaction_background((looks).colors())
+        .indicated(looks, theme::Focused::Held(crate::focus::is_held(id)))
         .cursor(CursorIcon::Pointer)
-        .control(id, reduce(id))
+        .control(id, send(Event::pressing(id)))
         .padding_xy(theme::sp(2.5), 0.0)
         .padding_xy(0.0, theme::sp(1.5));
-    row_arranged(
-        modifier,
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Center,
-        || {
-            column_arranged(
-                Modifier::new().weight(1.0),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    line(name, 13, 1.4, Role::Text);
-                    if !description.is_empty() {
-                        line(description, 12, 1.4, Role::Subtle);
-                    }
-                },
-            );
-            if current {
-                glyph(phosphor::CHECK, 4.0, Role::Text);
+    kit::row(modifier, 3, || {
+        kit::column(Modifier::new().weight(1.0), 0, || {
+            line(name, 13, 1.4, Role::Text);
+            if !description.is_empty() {
+                line(description, 12, 1.4, Role::Subtle);
             }
-        },
-    );
+        });
+        if current {
+            glyph(phosphor::CHECK, 4.0, Role::Text);
+        }
+    });
 }
 
 /// Emits the small heading line of a popover, with `hint` at its right: a key to press, and what it does.
@@ -274,27 +250,20 @@ pub fn heading(title: &str, hint: Option<(&str, &str)>) {
 /// Emits a key to press, in a small chip, and what it does.
 #[track_caller]
 pub fn key_hint(key: &str, does: &str) {
-    row_arranged(
-        Modifier::new(),
-        Arrangement::SpacedBy(sp(1.5)),
-        Alignment::Center,
-        || {
-            row_arranged(
-                Modifier::new()
-                    .background_rounded(theme::color(Role::SurfaceHover), Radius::Md.px())
-                    .padding_xy(theme::sp(1.5), 0.0),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        key,
-                        theme::mono_style(11, 1.6).color(theme::color(Role::Muted)),
-                        rustle::TextOverflow::Ellipsis,
-                    )
-                },
-            );
-            line(does, 12, 1.4, Role::Subtle);
-        },
-    );
+    kit::row(Modifier::new(), 1.5, || {
+        kit::row_top(
+            Modifier::new()
+                .background_rounded(theme::color(Role::SurfaceHover), Radius::Md.px())
+                .padding_xy(theme::sp(1.5), 0.0),
+            0,
+            || {
+                kit::text(
+                    Modifier::new(),
+                    key,
+                    theme::mono_style(11, 1.6).color(theme::color(Role::Muted)),
+                )
+            },
+        );
+        line(does, 12, 1.4, Role::Subtle);
+    });
 }

@@ -76,11 +76,6 @@ impl Srgba {
         )
     }
 
-    /// Whether the colour would draw nothing.
-    pub fn is_transparent(&self) -> bool {
-        self.a <= f32::EPSILON
-    }
-
     /// The channels as `[red, green, blue, alpha]`, the order the shaders take them.
     pub const fn to_array(self) -> [f32; 4] {
         [self.r, self.g, self.b, self.a]

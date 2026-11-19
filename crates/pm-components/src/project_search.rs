@@ -1,16 +1,17 @@
 //! Searching the text of every file of the project from the review panel: the box the search is typed in, the ways of matching and the hits, grouped by file.
 
-use crate::events::reduce;
+use crate::areas::SearchEvent;
+use crate::events::{Event, send};
+use crate::kit;
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
+use crate::theme::Indicated;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use std::collections::HashSet;
 use std::ops::Range;
 
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::theme::Role;
 use pm_editor::Query;
 use pm_protocol::Location;
@@ -23,36 +24,6 @@ use crate::input::Input;
 use crate::parts::{glyph, line};
 use crate::size::Size;
 use crate::state::{Outgoing, ReviewTab, WorkspaceState};
-
-/// The field the text looked for in the project is typed in.
-pub const PROJECT_SEARCH_FIELD: FocusId = FocusId(7_406_000);
-
-/// Searches again for what is typed.
-pub const PROJECT_SEARCH_GO: FocusId = FocusId(7_406_001);
-
-/// Switches matching case on and off.
-pub const PROJECT_SEARCH_CASE: FocusId = FocusId(7_406_002);
-
-/// Switches reading the text as a regular expression on and off.
-pub const PROJECT_SEARCH_REGEX: FocusId = FocusId(7_406_003);
-
-/// Empties the box and the hits.
-pub const PROJECT_SEARCH_CLEAR: FocusId = FocusId(7_406_004);
-
-/// Shows the search in the review panel.
-pub const REVIEW_SEARCH: FocusId = FocusId(7_406_005);
-
-/// Opens the hits as excerpts in the editor.
-pub const PROJECT_SEARCH_EXCERPTS: FocusId = FocusId(7_406_006);
-
-/// The first of the rows that fold a file's hits, each following it by the position of the file in the list.
-pub const SEARCH_GROUP_BASE: u64 = 7_407_000;
-
-/// The first of the rows that open a hit, each following it by the position of the hit among all of them.
-pub const SEARCH_HIT_BASE: u64 = 7_408_000;
-
-/// One past the last row that opens a hit.
-const SEARCH_HIT_END: u64 = 7_409_000;
 
 /// How many characters of a line are kept before the match, so that the match shows in a narrow panel.
 const LEAD: usize = 24;
@@ -137,9 +108,19 @@ impl ProjectSearch {
 }
 
 /// Whether `id` is a field, button or row of the search.
-pub fn is_search_part(id: FocusId) -> bool {
-    (PROJECT_SEARCH_FIELD.0..=PROJECT_SEARCH_EXCERPTS.0).contains(&id.0)
-        || (SEARCH_GROUP_BASE..SEARCH_HIT_END).contains(&id.0)
+pub fn is_search_part(id: Target) -> bool {
+    matches!(
+        id,
+        Target::Search(SearchEvent::ProjectSearchField)
+            | Target::Search(SearchEvent::ProjectSearchGo)
+            | Target::Search(SearchEvent::ProjectSearchCase)
+            | Target::Search(SearchEvent::ProjectSearchRegex)
+            | Target::Search(SearchEvent::ProjectSearchClear)
+            | Target::Search(SearchEvent::ReviewSearch)
+            | Target::Search(SearchEvent::ProjectSearchExcerpts)
+            | Target::Search(SearchEvent::SearchGroup(_))
+            | Target::Search(SearchEvent::SearchHit(_))
+    )
 }
 
 /// The hits of `locations` gathered by file, files and hits in the order they came.
@@ -243,30 +224,29 @@ impl WorkspaceState {
     }
 
     /// Carries out what pressing the part `id` of the search does.
-    pub(crate) fn project_search_pressed(mut self, id: FocusId) -> Self {
+    pub(crate) fn project_search_pressed(mut self, id: Target) -> Self {
         match id {
-            REVIEW_SEARCH => return self.project_search_opened(),
-            PROJECT_SEARCH_EXCERPTS => return self.excerpts_opened(),
-            PROJECT_SEARCH_GO => {
+            Target::Search(SearchEvent::ReviewSearch) => return self.project_search_opened(),
+            Target::Search(SearchEvent::ProjectSearchExcerpts) => return self.excerpts_opened(),
+            Target::Search(SearchEvent::ProjectSearchGo) => {
                 self.project_search.asked = None;
                 return self.project_searched();
             }
-            PROJECT_SEARCH_CASE => {
+            Target::Search(SearchEvent::ProjectSearchCase) => {
                 self.project_search.case ^= true;
                 return self.project_searched();
             }
-            PROJECT_SEARCH_REGEX => {
+            Target::Search(SearchEvent::ProjectSearchRegex) => {
                 self.project_search.regex ^= true;
                 return self.project_searched();
             }
-            PROJECT_SEARCH_CLEAR => {
+            Target::Search(SearchEvent::ProjectSearchClear) => {
                 self.project_search.query = TextFieldState::new("");
                 return self.project_searched();
             }
             _ => {}
         }
-        if (SEARCH_GROUP_BASE..SEARCH_HIT_BASE).contains(&id.0) {
-            let place = (id.0 - SEARCH_GROUP_BASE) as usize;
+        if let Target::Search(SearchEvent::SearchGroup(place)) = id {
             if let Some(path) = self
                 .project_search
                 .groups
@@ -278,10 +258,10 @@ impl WorkspaceState {
             }
             return self;
         }
-        let Some(offset) = id.0.checked_sub(SEARCH_HIT_BASE) else {
+        let Target::Search(SearchEvent::SearchHit(offset)) = id else {
             return self;
         };
-        let location = self.project_search.hit(offset as usize).cloned();
+        let location = self.project_search.hit(offset).cloned();
         match (self.review_index(), location) {
             (Some(session), Some(location)) => self.go_to_location(session, location),
             _ => self,
@@ -322,57 +302,45 @@ fn windowed(line: &str, found: Option<Range<usize>>) -> (String, String, String)
 fn hit_row(index: usize, location: &Location, matcher: &Query) {
     let text = location.line.as_deref().unwrap_or_default();
     let (before, found, after) = windowed(text, matcher.first_in(text));
-    let id = FocusId(SEARCH_HIT_BASE + index as u64);
+    let id = Target::Search(SearchEvent::SearchHit(index));
     let modifier = Modifier::new()
         .fill_max_width()
         .height(theme::sp(6))
-        .interaction_focused(crate::focus::is_held(id))
-        .interaction_background((theme::InteractionTones::new().hover(Role::SurfaceHover)).colors())
+        .indicated(
+            theme::InteractionTones::new().hover(Role::SurfaceHover),
+            theme::Focused::Held(crate::focus::is_held(id)),
+        )
         .cursor(CursorIcon::Pointer)
-        .control(id, reduce(id))
+        .control(id, send(Event::pressing(id)))
         .padding_each(theme::sp(9), 0.0, 0.0, 0.0)
         .padding_each(0.0, 0.0, theme::sp(3), 0.0);
     let code = theme::mono_style(12, 1.4);
-    row_arranged(
-        modifier,
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
-        || {
-            row_arranged(
-                Modifier::new().weight(1.0).clip(),
-                Arrangement::Start,
-                Alignment::Center,
-                || {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        before,
-                        code.color(theme::color(Role::Muted)),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                    if !found.is_empty() {
-                        rustle::basic_text(
-                            Modifier::new().background(theme::color(Role::SurfaceActive)),
-                            found,
-                            code.color(theme::color(Role::Text)).max_lines(1),
-                            rustle::TextOverflow::Ellipsis,
-                        );
-                    }
-                    rustle::basic_text(
-                        Modifier::new().weight(1.0),
-                        after,
-                        code.color(theme::color(Role::Muted)).max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                },
-            );
-            rustle::basic_text(
+    kit::row(modifier, 2, || {
+        kit::row(Modifier::new().weight(1.0).clip(), 0, || {
+            kit::text(
                 Modifier::new(),
-                (location.span.start.line + 1).to_string(),
-                theme::mono_style(11, 1.4).color(theme::color(Role::Subtle)),
-                rustle::TextOverflow::Ellipsis,
+                before,
+                code.color(theme::color(Role::Muted)),
             );
-        },
-    );
+            if !found.is_empty() {
+                kit::text(
+                    Modifier::new().background(theme::color(Role::SurfaceActive)),
+                    found,
+                    code.color(theme::color(Role::Text)).max_lines(1),
+                );
+            }
+            kit::text(
+                Modifier::new().weight(1.0),
+                after,
+                code.color(theme::color(Role::Muted)).max_lines(1),
+            );
+        });
+        kit::text(
+            Modifier::new(),
+            (location.span.start.line + 1).to_string(),
+            theme::mono_style(11, 1.4).color(theme::color(Role::Subtle)),
+        );
+    });
 }
 
 /// Emits the row that names a file and folds its hits.
@@ -385,34 +353,28 @@ fn group_row(place: usize, group: &Group, folded: bool) {
     } else {
         phosphor::CARET_DOWN
     };
-    let id = FocusId(SEARCH_GROUP_BASE + place as u64);
+    let id = Target::Search(SearchEvent::SearchGroup(place));
     let modifier = Modifier::new()
         .fill_max_width()
         .height(theme::sp(6))
-        .interaction_focused(crate::focus::is_held(id))
-        .interaction_background((theme::InteractionTones::new().hover(Role::SurfaceHover)).colors())
+        .indicated(
+            theme::InteractionTones::new().hover(Role::SurfaceHover),
+            theme::Focused::Held(crate::focus::is_held(id)),
+        )
         .cursor(CursorIcon::Pointer)
-        .control(id, reduce(id))
+        .control(id, send(Event::pressing(id)))
         .padding_xy(theme::sp(3), 0.0);
-    row_arranged(
-        modifier,
-        Arrangement::SpacedBy(sp(1.5)),
-        Alignment::Center,
-        || {
-            glyph(chevron, 3.5, Role::Muted);
-            file_icon(name, 4.0);
-            line(name, 13, 1.4, Role::Text);
-            rustle::basic_text(
-                Modifier::new().weight(1.0),
-                folder,
-                theme::text_style(12, 1.4)
-                    .color(theme::color(Role::Subtle))
-                    .max_lines(1),
-                rustle::TextOverflow::Ellipsis,
-            );
-            line(group.hits.len().to_string(), 11, 1.4, Role::Muted);
-        },
-    );
+    kit::row(modifier, 1.5, || {
+        glyph(chevron, 3.5, Role::Muted);
+        file_icon(name, 4.0);
+        line(name, 13, 1.4, Role::Text);
+        kit::text(
+            Modifier::new().weight(1.0),
+            folder,
+            kit::line(12, Role::Subtle),
+        );
+        line(group.hits.len().to_string(), 11, 1.4, Role::Muted);
+    });
 }
 
 /// What the search says under its box: how much it found, that it is looking, or why it cannot.
@@ -449,91 +411,81 @@ pub fn panel(state: &WorkspaceState) {
     let search = &state.project_search;
     let (said, tone) = tally(search, state.review_index().is_some());
     let matcher = search.matcher();
-    column_arranged(
-        Modifier::new().weight(1.0),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            column_arranged(
-                Modifier::new()
-                    .fill_max_width()
-                    .padding_xy(theme::sp(3), 0.0)
-                    .padding_xy(0.0, theme::sp(2)),
-                Arrangement::SpacedBy(sp(1.5)),
-                Alignment::Start,
-                || {
-                    row_arranged(
-                        Modifier::new().fill_max_width(),
-                        Arrangement::SpacedBy(sp(1)),
-                        Alignment::Center,
-                        || {
-                            Input::new(&search.query, PROJECT_SEARCH_FIELD)
-                                .size(Size::Sm)
-                                .placeholder("Search")
-                                .invalid(search.problem.is_some())
-                                .modifier(Modifier::new().weight(1.0))
-                                .build();
-                            if !search.query.text().is_empty() {
-                                crate::button::Button::icon(phosphor::X, PROJECT_SEARCH_CLEAR)
-                                    .variant(crate::button::Variant::Ghost)
-                                    .size(Size::Sm)
-                                    .build();
-                            }
-                            switch("Aa", PROJECT_SEARCH_CASE, search.case);
-                            switch(".*", PROJECT_SEARCH_REGEX, search.regex);
-                        },
-                    );
-                    row_arranged(
-                        Modifier::new().fill_max_width(),
-                        Arrangement::SpacedBy(sp(1)),
-                        Alignment::Center,
-                        || {
-                            rustle::basic_text(
-                                Modifier::new().weight(1.0),
-                                said.as_str(),
-                                theme::text_style(12, 1.4)
-                                    .color(theme::color(tone))
-                                    .max_lines(1),
-                                rustle::TextOverflow::Ellipsis,
-                            );
-                            if search.total() > 0 {
-                                crate::button::Button::icon(
-                                    phosphor::CODE,
-                                    PROJECT_SEARCH_EXCERPTS,
-                                )
-                                .variant(crate::button::Variant::Ghost)
-                                .size(Size::Sm)
-                                .tooltip("Open Results in Editor")
-                                .build();
-                            }
-                        },
-                    );
-                },
-            );
-            column_arranged(
-                Modifier::new()
-                    .fill_max_width()
-                    .weight(1.0)
-                    .clip()
-                    .vertical_scroll(&state.tree_scroll)
-                    .fill_max_width()
-                    .padding_xy(0.0, theme::sp(1)),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    let mut index = 0;
-                    for (place, group) in search.groups.iter().enumerate() {
-                        let folded = search.folded.contains(&group.path);
-                        group_row(place, group, folded);
-                        for location in &group.hits {
-                            if !folded {
-                                hit_row(index, location, &matcher);
-                            }
-                            index += 1;
-                        }
+    kit::column(Modifier::new().weight(1.0), 0, || {
+        kit::column(
+            Modifier::new()
+                .fill_max_width()
+                .padding_xy(theme::sp(3), 0.0)
+                .padding_xy(0.0, theme::sp(2)),
+            1.5,
+            || {
+                kit::row(Modifier::new().fill_max_width(), 1, || {
+                    Input::new(
+                        &search.query,
+                        Target::Search(SearchEvent::ProjectSearchField),
+                    )
+                    .size(Size::Sm)
+                    .placeholder("Search")
+                    .invalid(search.problem.is_some())
+                    .modifier(Modifier::new().weight(1.0))
+                    .build();
+                    if !search.query.text().is_empty() {
+                        crate::button::Button::icon(
+                            phosphor::X,
+                            Target::Search(SearchEvent::ProjectSearchClear),
+                        )
+                        .build();
                     }
-                },
-            );
-        },
-    );
+                    switch(
+                        "Aa",
+                        Target::Search(SearchEvent::ProjectSearchCase),
+                        search.case,
+                    );
+                    switch(
+                        ".*",
+                        Target::Search(SearchEvent::ProjectSearchRegex),
+                        search.regex,
+                    );
+                });
+                kit::row(Modifier::new().fill_max_width(), 1, || {
+                    kit::text(
+                        Modifier::new().weight(1.0),
+                        said.as_str(),
+                        kit::line(12, tone),
+                    );
+                    if search.total() > 0 {
+                        crate::button::Button::icon(
+                            phosphor::CODE,
+                            Target::Search(SearchEvent::ProjectSearchExcerpts),
+                        )
+                        .tooltip("Open Results in Editor")
+                        .build();
+                    }
+                });
+            },
+        );
+        kit::column(
+            Modifier::new()
+                .fill_max_width()
+                .weight(1.0)
+                .clip()
+                .vertical_scroll(&state.tree_scroll)
+                .fill_max_width()
+                .padding_xy(0.0, theme::sp(1)),
+            0,
+            || {
+                let mut index = 0;
+                for (place, group) in search.groups.iter().enumerate() {
+                    let folded = search.folded.contains(&group.path);
+                    group_row(place, group, folded);
+                    for location in &group.hits {
+                        if !folded {
+                            hit_row(index, location, &matcher);
+                        }
+                        index += 1;
+                    }
+                }
+            },
+        );
+    });
 }

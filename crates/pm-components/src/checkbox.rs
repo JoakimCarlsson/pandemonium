@@ -3,12 +3,12 @@
 //! not answer the pointer: the control around it, named by its id, does.
 
 use crate::events::OnClick;
+use crate::target::Target;
 use rustle::{
     CheckboxColors, CheckboxDefaults, CursorIcon, Modifier, SwitchColors, ToggleableState,
 };
 
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::theme;
 use crate::theme::Role;
 
@@ -33,7 +33,7 @@ pub struct Checkbox {
     /// Whether it is dashed, standing for some of what it covers being ticked.
     mixed: bool,
     /// The name it answers to.
-    id: FocusId,
+    id: Target,
     /// How it looks.
     variant: Variant,
     /// What the caller puts around its box.
@@ -45,7 +45,7 @@ pub struct Checkbox {
 
 impl Checkbox {
     /// A check box answering to `id`, ticked while `checked`.
-    pub fn new(checked: bool, id: FocusId) -> Self {
+    pub fn new(checked: bool, id: Target) -> Self {
         Self {
             checked,
             mixed: false,
@@ -111,7 +111,7 @@ impl Checkbox {
             self.modifier
                 .size(side, side)
                 .cursor(CursorIcon::Pointer)
-                .control(self.id, OnClick::or_reduce(self.on_click, self.id).lambda()),
+                .control(self.id, OnClick::or_send(self.on_click, self.id).lambda()),
             state,
             None,
             true,
@@ -134,7 +134,7 @@ impl Checkbox {
             self.modifier
                 .size(theme::sp(9), theme::sp(5))
                 .cursor(CursorIcon::Pointer)
-                .control(self.id, OnClick::or_reduce(self.on_click, self.id).lambda()),
+                .control(self.id, OnClick::or_send(self.on_click, self.id).lambda()),
             self.checked,
             None,
             true,
@@ -146,13 +146,17 @@ impl Checkbox {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::areas::ChatEvent;
     use crate::tagged::lay_out;
 
     /// The square is four steps on a side and the switch nine by five, each named by its id
     /// and reached by Tab, drawn by rustle's check box and switch.
     #[test]
     fn boxes_and_switches_keep_their_size_and_name() {
-        let (square, switch) = (FocusId(901), FocusId(902));
+        let (square, switch) = (
+            Target::Chat(ChatEvent::Choice(901)),
+            Target::Chat(ChatEvent::Choice(902)),
+        );
         let laid = lay_out(200.0, 100.0, None, move || {
             rustle::column(|| {
                 Checkbox::new(false, square).mixed(true).build();

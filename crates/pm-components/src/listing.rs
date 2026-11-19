@@ -1,21 +1,14 @@
 //! The list that hangs over the file shown to pick from: the places a search from the caret found, the changes the language server offers there, the commits that changed the file, or what the problems are; and the quick input over the command center, whose first character says what it lists: the files of the project, `>` the commands of the window, `#` the symbols of the project, `@` the items of the file's outline and `%` the lines of the project holding what is typed.
 
-use crate::focus::FocusId;
+use crate::areas::SidebarEvent;
+
+use crate::events::Event;
 use pm_editor::Action;
 use pm_field::Edit;
 use pm_protocol::{CodeAction, ExtensionCommand, Location, Seek, Task};
 use rustle::TextFieldState;
 
 use crate::state::{Outgoing, WorkspaceState};
-
-/// The list itself, which keeps a press on it from counting as outside.
-pub const LISTING_BODY: FocusId = FocusId(7_400_000);
-
-/// The first of the rows of the list; the rest follow it.
-pub const LISTING_ROW_BASE: u64 = 7_400_001;
-
-/// One past the last row of the list.
-pub const LISTING_ROW_END: u64 = 7_401_000;
 
 /// How many rows the list shows at once.
 pub const LISTING_SHOWN: usize = 12;
@@ -680,19 +673,6 @@ impl Listing {
     }
 }
 
-/// The field the names of an outline are narrowed by.
-pub const LISTING_FILTER: FocusId = FocusId(7_401_950);
-
-/// Takes the row picked in the list.
-pub const LISTING_TAKE: FocusId = FocusId(7_401_951);
-
-/// The row of the list that `id` names.
-pub fn listing_row_of(id: FocusId) -> Option<usize> {
-    (LISTING_ROW_BASE..LISTING_ROW_END)
-        .contains(&id.0)
-        .then(|| (id.0 - LISTING_ROW_BASE) as usize)
-}
-
 impl WorkspaceState {
     /// The list of commands open over the window with its tasks as the workspace holds them now, keeping what is typed.
     pub(crate) fn commands_renewed(&mut self) {
@@ -1215,10 +1195,10 @@ impl WorkspaceState {
             },
             Items::Sessions { sessions, .. } => match sessions.get(index) {
                 Some((Destination::Session(session), ..)) => {
-                    self.after(FocusId(crate::state::SESSION_BASE + *session as u64))
+                    self.handle(Event::Sidebar(SidebarEvent::Session(*session)))
                 }
                 Some((Destination::Project(project), ..)) => {
-                    self.after(FocusId(crate::state::NEW_IN_BASE + *project as u64))
+                    self.handle(Event::Sidebar(SidebarEvent::NewIn(*project)))
                 }
                 None => self,
             },

@@ -1,21 +1,20 @@
 //! The minimap: a map of the whole file drawn small beside it, each line a row of coloured blocks where the text is, with the stretch the view shows marked; pressing or dragging on it scrolls the file.
 
-use crate::events::reduce;
+use crate::areas::EditorEvent;
+use crate::kit::{self, Frame};
+
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
 use pm_treesitter::Kind;
-use rustle::{Alignment, Arrangement, column_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::marked::{CaretLook, Mark, Paint, marked_line};
 use crate::state::WorkspaceState;
 use crate::theme::{Role, Tone};
 use crate::viewer::kind_role;
 use pm_editor::Document;
-
-/// The name of the minimap, which presses and drags on it are about.
-pub const MINIMAP: FocusId = FocusId(8_500_000);
 
 /// How wide the minimap is, in logical pixels.
 pub const WIDTH: f32 = 84.0;
@@ -175,21 +174,18 @@ pub(crate) fn minimap(
     let own = Modifier::new()
         .width(WIDTH)
         .fill_max_height()
-        .draw_behind(theme::edge(
-            theme::Side::Left,
-            1.0,
-            theme::color(Role::Border),
-        ))
-        .padding_each(1.0, 0.0, 0.0, 0.0)
+        .ruled(theme::Side::Left)
         .clip()
         .cursor(CursorIcon::Pointer)
-        .control(MINIMAP, reduce(MINIMAP))
+        .control(
+            Target::Editor(EditorEvent::Minimap),
+            send(Event::Editor(EditorEvent::Minimap)),
+        )
         .chain(crate::events::minimap_drag());
     rustle::stack_with(own, || {
-        column_arranged(
+        kit::column(
             Modifier::new().offset(0.0, first as f32 * ROW - geometry.offset),
-            Arrangement::Start,
-            Alignment::Start,
+            0,
             || {
                 for index in &shown {
                     row_of(document, *index, &spans[index - low]);

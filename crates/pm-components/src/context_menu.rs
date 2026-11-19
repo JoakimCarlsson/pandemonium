@@ -1,33 +1,15 @@
 //! The menu that opens over a text field: its rows and the field it acts on.
 
+use crate::areas::MenuEvent;
+use crate::target::Target;
 use rustle::TextFieldState;
 
 use crate::Menu;
-use crate::focus::FocusId;
-
-/// Takes back the last change to the field the menu was opened on.
-pub const MENU_UNDO: FocusId = FocusId(200);
-
-/// Makes again the change that was taken back.
-pub const MENU_REDO: FocusId = FocusId(201);
-
-/// Copies the selection and deletes it.
-pub const MENU_CUT: FocusId = FocusId(202);
-
-/// Copies the selection.
-pub const MENU_COPY: FocusId = FocusId(203);
-
-/// Inserts what the clipboard holds.
-pub const MENU_PASTE: FocusId = FocusId(204);
-
-/// Selects the whole line.
-pub const MENU_SELECT_ALL: FocusId = FocusId(205);
-
-/// The first of the rows of the menu over the file shown that act on code; each command's row follows it by the command's place.
-const EDITOR_MENU_BASE: u64 = 7_402_000;
 
 /// What a row of the menu over the file shown does, besides cutting, copying and pasting.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(
+    Clone, Copy, Debug, serde::Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize,
+)]
 pub enum EditorCommand {
     /// Goes to where the thing at the caret is defined.
     Definition,
@@ -68,35 +50,9 @@ pub enum EditorCommand {
 }
 
 impl EditorCommand {
-    /// Every command, in the order of their rows' names.
-    const ALL: [Self; 18] = [
-        Self::Definition,
-        Self::Declaration,
-        Self::TypeDefinition,
-        Self::Implementation,
-        Self::References,
-        Self::IncomingCalls,
-        Self::OutgoingCalls,
-        Self::Supertypes,
-        Self::Subtypes,
-        Self::Rename,
-        Self::Format,
-        Self::FormatSelection,
-        Self::CodeActions,
-        Self::CopyTrimmed,
-        Self::Reveal,
-        Self::OpenTerminal,
-        Self::Permalink,
-        Self::FileHistory,
-    ];
-
     /// The name of the command's row.
-    pub fn id(self) -> FocusId {
-        let place = Self::ALL
-            .iter()
-            .position(|held| *held == self)
-            .unwrap_or_default();
-        FocusId(EDITOR_MENU_BASE + place as u64)
+    pub fn id(self) -> Target {
+        Target::Menu(MenuEvent::EditorMenu(self))
     }
 
     /// The action of the keymap that does the same, when there is one.
@@ -119,9 +75,11 @@ impl EditorCommand {
     }
 
     /// The command whose row `id` names.
-    pub fn of(id: FocusId) -> Option<Self> {
-        let place = id.0.checked_sub(EDITOR_MENU_BASE)?;
-        Self::ALL.get(usize::try_from(place).ok()?).copied()
+    pub fn of(id: Target) -> Option<Self> {
+        match id {
+            Target::Menu(MenuEvent::EditorMenu(command)) => Some(command),
+            _ => None,
+        }
     }
 }
 
@@ -129,20 +87,20 @@ impl EditorCommand {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ContextMenu {
     /// The field it acts on.
-    pub field: FocusId,
+    pub field: Target,
     /// Where it opened, in logical pixels.
     pub at: (f32, f32),
 }
 
 /// Whether `id` names a row of the menu.
-pub fn is_menu_item(id: FocusId) -> bool {
+pub fn is_menu_item(id: Target) -> bool {
     [
-        MENU_UNDO,
-        MENU_REDO,
-        MENU_CUT,
-        MENU_COPY,
-        MENU_PASTE,
-        MENU_SELECT_ALL,
+        Target::Menu(MenuEvent::MenuUndo),
+        Target::Menu(MenuEvent::MenuRedo),
+        Target::Menu(MenuEvent::MenuCut),
+        Target::Menu(MenuEvent::MenuCopy),
+        Target::Menu(MenuEvent::MenuPaste),
+        Target::Menu(MenuEvent::MenuSelectAll),
     ]
     .contains(&id)
         || EditorCommand::of(id).is_some()
@@ -259,10 +217,15 @@ pub fn editor_menu(
     .item(
         "Cut",
         Some("Ctrl+X"),
-        MENU_CUT,
+        Target::Menu(MenuEvent::MenuCut),
         !(editable && field.can_copy()),
     )
-    .item("Copy", Some("Ctrl+C"), MENU_COPY, !field.can_copy());
+    .item(
+        "Copy",
+        Some("Ctrl+C"),
+        Target::Menu(MenuEvent::MenuCopy),
+        !field.can_copy(),
+    );
     let menu = command(
         menu,
         "Copy and Trim",
@@ -270,7 +233,12 @@ pub fn editor_menu(
         EditorCommand::CopyTrimmed,
         field.can_copy(),
     )
-    .item("Paste", Some("Ctrl+V"), MENU_PASTE, !editable)
+    .item(
+        "Paste",
+        Some("Ctrl+V"),
+        Target::Menu(MenuEvent::MenuPaste),
+        !editable,
+    )
     .separator();
     let menu = command(
         menu,
@@ -305,7 +273,7 @@ pub fn editor_menu(
 
 /// What picking a row of a field's menu does: the app carries the row out on the field
 /// the menu is open over.
-fn picked_in_field() -> impl Fn(FocusId) + 'static {
+fn picked_in_field() -> impl Fn(Target) + 'static {
     let operations = crate::events::operations();
     move |row| operations.field_menu_picked(row)
 }
@@ -318,17 +286,42 @@ pub fn field_menu(field: &TextFieldState, open: ContextMenu, secure: bool) {
     let copies = !secure && !field.selection().collapsed();
     Menu::new(open.at.0, open.at.1)
         .on_pick(picked_in_field())
-        .item("Undo", Some("Ctrl+Z"), MENU_UNDO, !undo.can_undo())
-        .item("Redo", Some("Ctrl+Shift+Z"), MENU_REDO, !undo.can_redo())
+        .item(
+            "Undo",
+            Some("Ctrl+Z"),
+            Target::Menu(MenuEvent::MenuUndo),
+            !undo.can_undo(),
+        )
+        .item(
+            "Redo",
+            Some("Ctrl+Shift+Z"),
+            Target::Menu(MenuEvent::MenuRedo),
+            !undo.can_redo(),
+        )
         .separator()
-        .item("Cut", Some("Ctrl+X"), MENU_CUT, !copies)
-        .item("Copy", Some("Ctrl+C"), MENU_COPY, !copies)
-        .item("Paste", Some("Ctrl+V"), MENU_PASTE, false)
+        .item(
+            "Cut",
+            Some("Ctrl+X"),
+            Target::Menu(MenuEvent::MenuCut),
+            !copies,
+        )
+        .item(
+            "Copy",
+            Some("Ctrl+C"),
+            Target::Menu(MenuEvent::MenuCopy),
+            !copies,
+        )
+        .item(
+            "Paste",
+            Some("Ctrl+V"),
+            Target::Menu(MenuEvent::MenuPaste),
+            false,
+        )
         .separator()
         .item(
             "Select all",
             Some("Ctrl+A"),
-            MENU_SELECT_ALL,
+            Target::Menu(MenuEvent::MenuSelectAll),
             field.text().is_empty(),
         )
         .build();

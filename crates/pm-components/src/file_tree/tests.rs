@@ -1,6 +1,8 @@
 //! Regression coverage for the lazy list of the project's files: what it composes, where its
 //! rows land, the field a name is typed into, and Tab walking rows not composed.
 
+use crate::areas::TreeEvent;
+use crate::target::Target;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -42,9 +44,12 @@ fn paint(state: &WorkspaceState, height: f32) -> Vec<Tagged> {
 }
 
 /// The rows of `laid` that can be seen, with the top of each.
-fn rows_seen(laid: &[Tagged]) -> Vec<(FocusId, f32)> {
+fn rows_seen(laid: &[Tagged]) -> Vec<(Target, f32)> {
     laid.iter()
-        .filter(|node| node.id.0 >= TREE_FILE_BASE && node.visible.size.height > 0.0)
+        .filter(|node| {
+            matches!(node.id, Target::Tree(TreeEvent::TreeFile(_)))
+                && node.visible.size.height > 0.0
+        })
         .map(|node| (node.id, node.bounds.origin.y))
         .collect()
 }
@@ -62,7 +67,7 @@ fn the_list_composes_only_rows_in_view_at_their_places() {
             let laid = paint(&state, 240.0);
             let composed = laid
                 .iter()
-                .filter(|node| node.id.0 >= TREE_FILE_BASE)
+                .filter(|node| matches!(node.id, Target::Tree(TreeEvent::TreeFile(_))))
                 .count();
             assert!(
                 composed <= (240.0 / height).ceil() as usize + 4,
@@ -70,9 +75,15 @@ fn the_list_composes_only_rows_in_view_at_their_places() {
             );
             let seen = rows_seen(&laid);
             let top = seen.first().expect("a row is seen");
-            assert_eq!(top.0, FocusId(TREE_FILE_BASE + first as u64));
+            assert_eq!(top.0, Target::Tree(TreeEvent::TreeFile(first)));
             for pair in seen.windows(2) {
-                assert_eq!(pair[1].0.0, pair[0].0.0 + 1, "rows follow in order");
+                assert!(
+                    matches!(
+                        (pair[0].0, pair[1].0),
+                        (Target::Tree(TreeEvent::TreeFile(above)), Target::Tree(TreeEvent::TreeFile(below))) if below == above + 1
+                    ),
+                    "rows follow in order"
+                );
                 assert!(
                     (pair[1].1 - pair[0].1 - height).abs() < 1.0,
                     "rows are a row's height apart: {pair:?}, scale={scale}"
@@ -90,7 +101,7 @@ fn the_space_under_the_rows_fills_the_view() {
     let laid = paint(&sample(3), 400.0);
     let space = laid
         .iter()
-        .find(|node| node.id == TREE_SPACE)
+        .find(|node| node.id == Target::Tree(TreeEvent::TreeSpace))
         .expect("the space is laid out");
     let bottom = space.bounds.origin.y + space.bounds.size.height;
     assert!(
@@ -102,7 +113,7 @@ fn the_space_under_the_rows_fills_the_view() {
     let laid = paint(&state, 240.0);
     let space = laid
         .iter()
-        .find(|node| node.id == TREE_SPACE)
+        .find(|node| node.id == Target::Tree(TreeEvent::TreeSpace))
         .expect("the space is laid out at the end");
     assert!((space.bounds.size.height - sp(SPACE_LEAST)).abs() < 1.0);
 }
@@ -169,11 +180,11 @@ fn naming_keeps_variable_height_rows() {
     let laid = paint(&state, 240.0);
     let field = laid
         .iter()
-        .find(|node| node.id == ENTRY_FIELD)
+        .find(|node| node.id == Target::Tree(TreeEvent::EntryField))
         .expect("the field is laid out");
     let first = rows_seen(&laid);
     let first = first.first().expect("a row is seen");
-    assert_eq!(first.0, FocusId(TREE_FILE_BASE));
+    assert_eq!(first.0, Target::Tree(TreeEvent::TreeFile(0)));
     assert!(
         first.1 > field.bounds.origin.y + field.bounds.size.height + 10.0,
         "the problem line sits between the field and the first row: {first:?}, {:?}",
@@ -187,10 +198,10 @@ fn naming_keeps_variable_height_rows() {
 #[test]
 fn tab_walks_every_row_scrolling_hidden_ones_in() {
     let state = sample(60);
-    let rows: Vec<FocusId> = (0..60)
-        .map(|index| FocusId(TREE_FILE_BASE + index))
+    let rows: Vec<Target> = (0..60)
+        .map(|index| Target::Tree(TreeEvent::TreeFile(index)))
         .collect();
-    let held: Rc<Cell<Option<FocusId>>> = Rc::new(Cell::new(rows.first().copied()));
+    let held: Rc<Cell<Option<Target>>> = Rc::new(Cell::new(rows.first().copied()));
     let (shown, keeps, asks) = (Rc::clone(&held), Rc::clone(&held), Rc::clone(&held));
     let tree = state.clone();
     let mut ui = Embedded::without_renderer(

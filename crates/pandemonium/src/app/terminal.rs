@@ -1,11 +1,13 @@
 //! The terminal dock in the window: sizing it to the shell, typing into it, marking text and scrolling back.
 
+use pm_components::areas::{ComposerEvent, TerminalEvent};
+use pm_components::target::Target;
 use pm_components::terminal::{cell_at, cell_size, fitting};
 use pm_components::terminal_keys;
 use pm_components::terminal_menu::{TERMINAL_MENU_HEIGHT, TerminalCommand};
 use pm_editor::{Action, Pressed};
 use pm_field::Reach;
-use pm_pages::{PROMPT, TERMINAL_BODY};
+
 use rustle::Rect;
 use rustle::{Key, KeyEvent};
 
@@ -33,7 +35,7 @@ impl App {
 
     /// Where the window of the shell showing was drawn, if it was.
     fn terminal_region(&self) -> Option<Rect> {
-        self.place(TERMINAL_BODY)
+        self.place(Target::Terminal(TerminalEvent::TerminalBody))
     }
 
     /// The cell of the shell's window that the point `at` is over, and the room it has.
@@ -76,7 +78,7 @@ impl App {
 
     /// Types the text an input method committed into the shell, when it holds the keyboard.
     pub(super) fn commit_to_terminal(&mut self, text: &str) -> bool {
-        if self.focus.current() != Some(TERMINAL_BODY) {
+        if self.focus.current() != Some(Target::Terminal(TerminalEvent::TerminalBody)) {
             return false;
         }
         self.type_into_terminal(text.as_bytes().to_vec());
@@ -85,7 +87,7 @@ impl App {
 
     /// Acts on a key when the shell holds the keyboard, and says whether it did.
     pub(super) fn terminal_key(&mut self, event: &KeyEvent) -> bool {
-        if self.focus.current() != Some(TERMINAL_BODY) {
+        if self.focus.current() != Some(Target::Terminal(TerminalEvent::TerminalBody)) {
             return false;
         }
         let Some((application, bracketed)) = self.model.read(|screen| screen.terminal_modes())
@@ -155,9 +157,10 @@ impl App {
         self.model
             .update(|screen| *screen = std::mem::take(screen).terminal_command(command));
         if command == TerminalCommand::AddToChat {
-            self.focus.focus(PROMPT);
+            self.focus.focus(Target::Composer(ComposerEvent::Prompt));
         } else {
-            self.focus.focus(TERMINAL_BODY);
+            self.focus
+                .focus(Target::Terminal(TerminalEvent::TerminalBody));
         }
         self.deliver();
     }
@@ -211,7 +214,8 @@ impl App {
     /// The cell of the shell's window under the pointer, when the pointer is over the window.
     fn terminal_cell_under_pointer(&mut self) -> Option<(usize, usize)> {
         let at = self.pointer.position?;
-        (self.under_pointer() == Some(TERMINAL_BODY)).then_some(())?;
+        (self.under_pointer() == Some(Target::Terminal(TerminalEvent::TerminalBody)))
+            .then_some(())?;
         self.terminal_region()
             .is_some_and(|body| contains(body, at))
             .then(|| self.terminal_cell(at))

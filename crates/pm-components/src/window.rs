@@ -1,10 +1,12 @@
 //! The frame of a window beside the main one: the title bar that closes it over what it holds, with the border the window draws itself when it has no frame from the desktop.
 
+use crate::kit::{self, Frame};
 use crate::theme;
-use rustle::{Alignment, Arrangement, column_arranged};
 use std::cell::Cell;
 
-use rustle::Modifier;
+use rustle::{Modifier, Shadow};
+
+use crate::theme::ShadowLayers;
 
 use crate::TitleBar;
 use crate::theme::{Radius, Role, color};
@@ -18,11 +20,11 @@ pub const FRAME_RADIUS: f32 = 10.0;
 
 /// The layers of the shadow a floating window casts: a wide soft one that falls away below it and a tight one that keeps its edge defined.
 ///
-/// Each layer is `(x, y, blur, spread, alpha)`: its offset, how far it blurs, how far it grows past the window and how dark it is.
-pub const WINDOW_SHADOW: &[(f32, f32, f32, f32, f32)] = &[
-    (0.0, 8.0, 22.0, 0.0, 0.5),
-    (0.0, 2.0, 8.0, 0.0, 0.32),
-    (0.0, 0.0, 2.0, 0.0, 0.28),
+/// Each layer is a CSS box shadow of its offset, how far it blurs, how far it grows past the window and how dark it is.
+pub const WINDOW_SHADOW: &[Shadow] = &[
+    crate::theme::box_shadow(0.0, 8.0, 22.0, 0.0, 0.5),
+    crate::theme::box_shadow(0.0, 2.0, 8.0, 0.0, 0.32),
+    crate::theme::box_shadow(0.0, 0.0, 2.0, 0.0, 0.28),
 ];
 
 thread_local! {
@@ -146,26 +148,12 @@ pub fn shadowed(frame: impl FnOnce()) {
     let own = own
         .clip_rounded(FRAME_RADIUS)
         .border(1.0, color(Role::Border), FRAME_RADIUS);
-    column_arranged(own, Arrangement::Start, Alignment::Start, frame);
+    kit::column(own, 0, frame);
 }
 
 /// `modifier` with [`WINDOW_SHADOW`] drawn behind its box, its corners rounded by [`FRAME_RADIUS`].
 fn cast_shadow(modifier: Modifier) -> Modifier {
-    modifier.draw_behind(|canvas| {
-        let (width, height) = (canvas.width(), canvas.height());
-        for (x, y, blur, spread, alpha) in WINDOW_SHADOW {
-            let shade = rustle::Color::rgba(0, 0, 0, (alpha * 255.0).round() as u8);
-            canvas.shadow(
-                x - spread,
-                y - spread,
-                width + 2.0 * spread,
-                height + 2.0 * spread,
-                (FRAME_RADIUS + spread).max(0.0),
-                blur * crate::theme::SHADOW_SOFTNESS,
-                shade,
-            );
-        }
-    })
+    modifier.shadow_layers(WINDOW_SHADOW, FRAME_RADIUS)
 }
 
 /// A window's frame being described: what its body holds, and what is laid over the body.
@@ -223,8 +211,7 @@ impl<'a> Window<'a> {
             .fill_max_size()
             .background(theme::color(Role::Surface));
         let own = if FRAMELESS {
-            own.border(1.0, theme::color(Role::Border), Radius::None.px())
-                .padding(1.0)
+            own.outlined(Radius::None)
         } else {
             own
         };
@@ -233,27 +220,17 @@ impl<'a> Window<'a> {
             over,
             modifier,
         } = self;
-        column_arranged(
-            modifier.chain(own),
-            Arrangement::Start,
-            Alignment::Start,
-            move || {
-                TitleBar::closing().build();
-                column_arranged(
-                    Modifier::new().weight(1.0).fill_max_width(),
-                    Arrangement::Start,
-                    Alignment::Start,
-                    move || {
-                        for child in body {
-                            child();
-                        }
-                    },
-                );
-                for content in over {
-                    content();
+        kit::column(modifier.chain(own), 0, move || {
+            TitleBar::closing().build();
+            kit::column(Modifier::new().weight(1.0).fill_max_width(), 0, move || {
+                for child in body {
+                    child();
                 }
-            },
-        );
+            });
+            for content in over {
+                content();
+            }
+        });
     }
 }
 

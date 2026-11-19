@@ -7,8 +7,8 @@
 //! [`panel_right`] is its sidebar with the panel on the right,
 //! [`panel_bottom`] its browser window with the band along the bottom. Both
 //! drawings are symmetric across the other axis, so half a turn mirrors them.
-//! The spinner and the turning icon turn on rustle's infinite animation, on
-//! the composition's frame clock.
+//! The spinner and the turning icon turn on an angle of rustle's infinite
+//! transition, on the composition's frame clock.
 
 use rustle::{Icon, Modifier, Path, SvgPainter, phosphor};
 
@@ -78,11 +78,21 @@ pub fn artwork_with(modifier: Modifier, art: &SvgPainter, pixels: f32, tone: imp
 /// How long a spinner takes to turn once.
 const TURN: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// The angle, in degrees, of something turning once a [`TURN`], on the
-/// composition's frame clock.
+/// The angle, in degrees, of something turning once a [`TURN`] at an even
+/// pace: an angle of rustle's infinite transition, on the composition's frame clock.
 #[track_caller]
 fn turning() -> rustle::State<f32> {
-    rustle::infinite_float_repeating(0.0, 360.0, TURN, rustle::Easing::Linear)
+    rustle::remember_infinite_transition().animate_float(
+        0.0,
+        360.0,
+        rustle::infinite_repeatable(
+            rustle::AnimationSpec::Tween {
+                duration: TURN,
+                easing: rustle::Easing::Linear,
+            },
+            rustle::RepeatMode::Restart,
+        ),
+    )
 }
 
 /// Emits a spinner `steps` of the spacing scale across in `tone`: rustle's

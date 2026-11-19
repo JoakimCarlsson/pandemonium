@@ -1,22 +1,12 @@
 //! What the app asks of the window around it, behind a trait so the same
-//! logic runs against a native window, and against a stand-in that records
-//! what was asked when no window is open.
+//! logic runs against a window rustle opened, and against a stand-in that
+//! records what was asked when no window is open.
 
-use std::sync::Arc;
-
-use rustle::{ResizeEdge, WindowHandle};
-use winit::dpi::{LogicalPosition, LogicalSize};
-use winit::window::{ImeRequest, ImeRequestData, UserAttentionType, Window};
+use rustle::{ResizeEdge, WindowHandle, WindowPlacement};
 
 /// A window of the app, as its logic sees it: how large it is, whether it
 /// floats, and what the app asks of it.
 pub(crate) trait Port {
-    /// The window's native window, when it has one.
-    fn native(&self) -> Option<Arc<dyn Window>>;
-
-    /// How many physical pixels a logical pixel is.
-    fn scale(&self) -> f32;
-
     /// How wide and tall the window's surface is, in logical pixels.
     fn logical_size(&self) -> (f32, f32);
 
@@ -47,81 +37,67 @@ pub(crate) trait Port {
 
     /// Lets the pointer resize the window by its edge or corner `edge`.
     fn drag_resize(&self, edge: ResizeEdge);
-
-    /// Tells the input method that the caret is at `area`, as x, y, width and
-    /// height in logical pixels of the window's surface.
-    fn set_ime_area(&self, area: (f32, f32, f32, f32));
 }
 
-/// A native window opened by rustle, with the handle rustle controls it by.
+/// A window rustle opened, controlled through its handle.
 pub(crate) struct NativePort {
-    /// The window.
-    window: Arc<dyn Window>,
-    /// The handle rustle moves and resizes it by.
+    /// The handle rustle controls the window by.
     handle: WindowHandle,
 }
 
 impl NativePort {
-    /// The port of `window`, which rustle controls by `handle`.
-    pub(crate) fn new(window: Arc<dyn Window>, handle: WindowHandle) -> Self {
-        Self { window, handle }
+    /// The port of the window rustle controls by `handle`.
+    pub(crate) fn new(handle: WindowHandle) -> Self {
+        Self { handle }
+    }
+
+    /// Whether the window is open, so the platform can be asked about it.
+    pub(crate) fn is_open(&self) -> bool {
+        self.handle.size().is_some()
     }
 }
 
 impl Port for NativePort {
-    /// The window itself.
-    fn native(&self) -> Option<Arc<dyn Window>> {
-        Some(Arc::clone(&self.window))
-    }
-
-    /// The window's scale factor.
-    fn scale(&self) -> f32 {
-        self.window.scale_factor() as f32
-    }
-
-    /// The window's surface in logical pixels.
+    /// The window's content in logical pixels, or nothing while it is not open.
     fn logical_size(&self) -> (f32, f32) {
-        let size = self
-            .window
-            .surface_size()
-            .to_logical::<f32>(self.window.scale_factor());
-        (size.width, size.height)
+        self.handle
+            .size()
+            .map_or((0.0, 0.0), |size| (size.width, size.height))
     }
 
     /// Whether the window is maximized.
     fn is_maximized(&self) -> bool {
-        self.window.is_maximized()
+        self.handle.placement() == WindowPlacement::Maximized
     }
 
     /// Whether the window is neither maximized nor full screen.
     fn floats(&self) -> bool {
-        !self.window.is_maximized() && self.window.fullscreen().is_none()
+        self.handle.placement() == WindowPlacement::Floating
     }
 
     /// Whether the window has the keyboard.
     fn has_focus(&self) -> bool {
-        self.window.has_focus()
+        self.handle.is_focused()
     }
 
     /// Maximizes or restores the window.
     fn set_maximized(&self, maximized: bool) {
-        self.window.set_maximized(maximized);
+        self.handle.set_maximized(maximized);
     }
 
     /// Minimizes or brings back the window.
     fn set_minimized(&self, minimized: bool) {
-        self.window.set_minimized(minimized);
+        self.handle.set_minimized(minimized);
     }
 
-    /// Brings the window forward.
+    /// Brings the window in front of the others.
     fn focus_window(&self) {
-        self.window.focus_window();
+        self.handle.to_front();
     }
 
-    /// Asks for the reader's attention, informationally.
+    /// Asks for the reader's attention, without insisting.
     fn request_attention(&self) {
-        self.window
-            .request_user_attention(Some(UserAttentionType::Informational));
+        self.handle.request_user_attention(false);
     }
 
     /// Hands the window to the desktop to move.
@@ -132,14 +108,5 @@ impl Port for NativePort {
     /// Hands the window to the desktop to resize.
     fn drag_resize(&self, edge: ResizeEdge) {
         self.handle.drag_resize_window(edge);
-    }
-
-    /// Updates the input method's caret area.
-    fn set_ime_area(&self, area: (f32, f32, f32, f32)) {
-        let data = ImeRequestData::default().with_cursor_area(
-            LogicalPosition::new(area.0, area.1).into(),
-            LogicalSize::new(area.2, area.3).into(),
-        );
-        let _ = self.window.request_ime_update(ImeRequest::Update(data));
     }
 }

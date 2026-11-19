@@ -1,14 +1,16 @@
 //! The list of branches under the branch of the repository the panel works on: to check one out, or to make a new one.
 
-use crate::events::reduce;
+use crate::areas::GitEvent;
+use crate::kit::{self, Frame};
+
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
 use rustle::Modifier;
-use rustle::{Alignment, Arrangement, column_arranged};
 
 use crate::Input;
 use crate::events::Interactive;
-use crate::focus::FocusId;
-use crate::git_controls::{BRANCH_BODY, BRANCH_CREATE, BRANCH_FILTER, BRANCH_PICK_BASE};
+
 use crate::parts::line;
 use crate::popover::{Popover, row};
 use crate::size::Size;
@@ -24,7 +26,7 @@ const WIDTH: f32 = 340.0;
 /// Emits the list of branches of the repository the panel works on, hanging under the row it belongs to.
 ///
 /// It is a popup placed against the panel it is declared in, kept inside the window, and answers
-/// to [`BRANCH_BODY`]; a press elsewhere asks the app to close it.
+/// to [`GitEvent::BranchBody`](crate::areas::GitEvent::BranchBody); a press elsewhere asks the app to close it.
 #[track_caller]
 pub fn branch_menu(state: &WorkspaceState) {
     let git = &state.git;
@@ -36,19 +38,21 @@ pub fn branch_menu(state: &WorkspaceState) {
     crate::popups::in_box_at((sp(3), TOP), true, || {
         Popover::new()
             .width(WIDTH)
-            .modifier(Modifier::new().control(BRANCH_BODY, reduce(BRANCH_BODY)))
+            .modifier(Modifier::new().control(
+                Target::Git(GitEvent::BranchBody),
+                send(Event::Git(GitEvent::BranchBody)),
+            ))
             .build_with(|| {
-                column_arranged(
+                kit::column(
                     Modifier::new()
                         .fill_max_width()
                         .padding_each(0.0, theme::sp(1), 0.0, 0.0)
                         .padding_each(theme::sp(1), 0.0, 0.0, 0.0)
                         .padding_each(0.0, 0.0, theme::sp(1), 0.0)
                         .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
-                    Arrangement::Start,
-                    Alignment::Start,
+                    0,
                     || {
-                        Input::new(&git.filter, BRANCH_FILTER)
+                        Input::new(&git.filter, Target::Git(GitEvent::BranchFilter))
                             .placeholder("Search branches, or name a new one")
                             .size(Size::Sm)
                             .modifier(Modifier::new().fill_max_width())
@@ -60,41 +64,34 @@ pub fn branch_menu(state: &WorkspaceState) {
                         name,
                         "",
                         name.as_str() == current,
-                        FocusId(BRANCH_PICK_BASE + position as u64),
+                        Target::Git(GitEvent::BranchPick(position)),
                     );
                 }
                 if matching.is_empty() && typed.is_empty() {
-                    column_arranged(
+                    kit::column(
                         Modifier::new()
                             .padding_xy(theme::sp(2.5), 0.0)
                             .padding_xy(0.0, theme::sp(1.5)),
-                        Arrangement::Start,
-                        Alignment::Start,
+                        0,
                         || {
                             line("No branches.", 13, 1.4, Role::Subtle);
                         },
                     );
                 }
                 if !typed.is_empty() && !git.exists() {
-                    column_arranged(
+                    kit::column(
                         Modifier::new()
                             .fill_max_width()
                             .padding_each(0.0, theme::sp(1), 0.0, 0.0)
-                            .draw_behind(theme::edge(
-                                theme::Side::Top,
-                                1.0,
-                                theme::color(Role::Border),
-                            ))
-                            .padding_each(0.0, 1.0, 0.0, 0.0)
+                            .ruled(theme::Side::Top)
                             .padding_each(0.0, theme::sp(1), 0.0, 0.0),
-                        Arrangement::Start,
-                        Alignment::Start,
+                        0,
                         || {
                             row(
                                 &format!("Create branch “{typed}”"),
                                 "From the commit this session is at",
                                 false,
-                                BRANCH_CREATE,
+                                Target::Git(GitEvent::BranchCreate),
                             );
                         },
                     );

@@ -1,19 +1,21 @@
 //! The app as the views' [`Operations`]: what the controls' lambdas ask of it and what
 //! the views report of the pointer, called by the interface while it handles the event.
 //!
-//! The interface runs these while the app is free, because the event loop
-//! hands an event to the interface before it borrows the app for its own
-//! handling of it (see [`Running`](super::Running)). What an operation finds is
-//! kept in [`Claims`] for the rest of the app's handling of the same event,
-//! which clears them when it is done.
+//! The interface runs these while the app is free, because rustle's event loop
+//! hands an event to the interface, whose roots hand the app its own part of it
+//! once the controls have handled it (see [`run`](super::run)). What an
+//! operation finds is kept in [`Claims`] for the rest of the app's handling of
+//! the same event, which clears them when it is done. Every operation wakes
+//! the loop, so the app is caught up with what it did once the event is handled.
 
+use pm_components::areas::EditorEvent;
+use pm_components::target::Target;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 
 use pm_components::browser_menu::BrowserCommand;
 use pm_components::events::{Change, Operations};
-use pm_components::focus::FocusId;
 use pm_components::git_menus::MenuKind;
 use pm_components::terminal_menu::TerminalCommand;
 use pm_components::tree_actions::TreeTarget;
@@ -26,11 +28,11 @@ use super::asides::Aside;
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct Claims {
     /// The control the primary button went down on.
-    pub(super) press: Option<FocusId>,
+    pub(super) press: Option<Target>,
     /// Whether a control's lambda opened a menu for the secondary button.
     pub(super) context: bool,
     /// The control the primary button went down and came up on.
-    pub(super) click: Option<FocusId>,
+    pub(super) click: Option<Target>,
     /// Whether an operation changed the app, so a frame is due even for an
     /// event the app's own logic does not act on.
     pub(super) acted: bool,
@@ -63,17 +65,21 @@ impl Controller {
         });
     }
 
-    /// Runs `act` on the app, in the window the views are in.
+    /// Runs `act` on the app, in the window the views are in, and wakes rustle's loop
+    /// for the app the first time an operation acts during an event.
     ///
     /// # Panics
     ///
     /// When the app is already borrowed, which means the interface handled an
-    /// event while the app was busy, against the order [`Running`](super::Running) keeps.
+    /// event while the app was busy, against the order [`run`](super::run) keeps.
     fn with(&self, act: impl FnOnce(&mut App)) {
         let Some(app) = self.app.upgrade() else {
             return;
         };
         let mut app = app.borrow_mut();
+        if !app.claimed.acted {
+            (app.loop_wake)();
+        }
         app.claimed.acted = true;
         match self.aside {
             Some(aside) => app.in_aside(aside, act),
@@ -92,7 +98,7 @@ impl Operations for Controller {
     /// pressed so the app's handling of the press does not look for another.
     fn pressed(
         &self,
-        id: FocusId,
+        id: Target,
         area: rustle::Rect,
         clicks: u32,
         configuration: rustle::ViewConfiguration,
@@ -109,7 +115,7 @@ impl Operations for Controller {
     /// Lets the click count when the press began on the control and dragged nothing, and
     /// keeps the control clicked, whether it counts or not, so the app's handling of the
     /// release does not look for another.
-    fn click_lands(&self, id: FocusId, area: rustle::Rect) -> bool {
+    fn click_lands(&self, id: Target, area: rustle::Rect) -> bool {
         let mut lands = false;
         self.with(|app| {
             app.claimed.click = Some(id);
@@ -123,13 +129,45 @@ impl Operations for Controller {
     /// focus in the window sees it.
     fn key(&self, event: &rustle::KeyEvent) -> bool {
         let mut taken = false;
-        self.with(|app| taken = app.key_event(event));
+        self.with(|app| {
+            app.key_heard(event.pressed);
+            taken = app.key_event(event);
+        });
         taken
+    }
+
+    /// Shows what the input method is composing in the field or shell holding the
+    /// keyboard, which the area `id` of the window hands on.
+    fn composing(&self, _id: Target, text: String) {
+        self.with(|app| {
+            app.input_method_heard();
+            app.compose(text);
+        });
+    }
+
+    /// Hands what the input method committed, which the area `id` of the window hands on,
+    /// to the shell, the web page or the code editor holding the keyboard.
+    fn committed(&self, _id: Target, text: String) {
+        self.with(|app| {
+            app.input_method_heard();
+            app.commit(&text);
+        });
+    }
+
+    /// Where the input method's candidates go for the area `id`: at the code editor's
+    /// caret while it has the keyboard, and where the area says otherwise.
+    fn caret_area(&self, id: Target) -> Option<rustle::Rect> {
+        if id != Target::Editor(EditorEvent::EditorField) {
+            return None;
+        }
+        let app = self.app.upgrade()?;
+        let app = app.try_borrow().ok()?;
+        app.editor_caret_area()
     }
 
     /// Follows the pointer coming over the control `id` or leaving it, which is
     /// how the app knows what the pointer is over.
-    fn hovered(&self, id: FocusId, over: bool) {
+    fn hovered(&self, id: Target, over: bool) {
         let Some(app) = self.app.upgrade() else {
             return;
         };
@@ -149,7 +187,7 @@ impl Operations for Controller {
     }
 
     /// Makes the panel whose handle `id` is dragged as big as the drag says.
-    fn sash_dragged(&self, id: FocusId, by: (f32, f32)) {
+    fn sash_dragged(&self, id: Target, by: (f32, f32)) {
         self.with(|app| app.sash_dragged(id, by));
     }
 
@@ -169,7 +207,7 @@ impl Operations for Controller {
     }
 
     /// Whether the control can be carried elsewhere in the window.
-    fn carries(&self, id: FocusId) -> bool {
+    fn carries(&self, id: Target) -> bool {
         let Some(app) = self.app.upgrade() else {
             return false;
         };
@@ -180,7 +218,7 @@ impl Operations for Controller {
     }
 
     /// Starts carrying the control.
-    fn carry_started(&self, id: FocusId, at: (f32, f32)) {
+    fn carry_started(&self, id: Target, at: (f32, f32)) {
         self.with(|app| app.carry_started(id, at));
     }
 
@@ -195,7 +233,7 @@ impl Operations for Controller {
     }
 
     /// Starts or stretches the lines selected for a comment.
-    fn comment_dragged(&self, id: FocusId) {
+    fn comment_dragged(&self, id: Target) {
         self.with(|app| app.comment_dragged(id));
     }
 
@@ -270,12 +308,12 @@ impl Operations for Controller {
     }
 
     /// Carries out a row of a field's menu.
-    fn field_menu_picked(&self, row: FocusId) {
+    fn field_menu_picked(&self, row: Target) {
         self.with(|app| app.menu_action(row));
     }
 
     /// Carries out a row of the menu over the conversation's text.
-    fn message_menu_picked(&self, row: FocusId) {
+    fn message_menu_picked(&self, row: Target) {
         self.with(|app| app.message_menu_action(row));
     }
 
@@ -310,7 +348,7 @@ impl Operations for Controller {
     }
 
     /// Opens a menu of the changes.
-    fn open_git_menu(&self, kind: MenuKind, trigger: Option<FocusId>) {
+    fn open_git_menu(&self, kind: MenuKind, trigger: Option<Target>) {
         self.with_menu(|app| app.open_git_menu(kind, trigger));
     }
 
@@ -345,7 +383,7 @@ impl Operations for Controller {
     }
 
     /// Opens the menu of a field.
-    fn open_field_menu(&self, field: FocusId) {
+    fn open_field_menu(&self, field: Target) {
         self.with_menu(|app| app.open_menu(field));
     }
 

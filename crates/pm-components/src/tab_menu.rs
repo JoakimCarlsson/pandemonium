@@ -1,19 +1,19 @@
 //! The menu on the tab of an open file: closing it and the tabs around it, making it read only, its paths and permalink, showing it in the file manager and in the project's files, pinning it, and a shell beside it.
 
-use crate::focus::FocusId;
+use crate::areas::MenuEvent;
+use crate::target::Target;
 
 use crate::Menu;
 use crate::open_files::{Contents, Viewer};
 use crate::state::{Outgoing, ReviewTab, WorkspaceState};
 
-/// The first of the rows of the menu on a tab; each command's row follows it by the command's place.
-const TAB_MENU_BASE: u64 = 7_403_000;
-
 /// How tall the menu on a tab is, in logical pixels, to keep it inside the window.
 pub const TAB_MENU_HEIGHT: f32 = 15.0 * 26.0 + 7.0 * 9.0 + 10.0;
 
 /// What a row of the menu on a tab does.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(
+    Clone, Copy, Debug, serde::Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize,
+)]
 pub enum TabCommand {
     /// Closes the tab.
     Close,
@@ -48,38 +48,17 @@ pub enum TabCommand {
 }
 
 impl TabCommand {
-    /// Every command, in the order of their rows' names.
-    const ALL: [Self; 15] = [
-        Self::Close,
-        Self::CloseOthers,
-        Self::CloseLeft,
-        Self::CloseRight,
-        Self::CloseClean,
-        Self::CloseAll,
-        Self::ToggleReadOnly,
-        Self::CopyPath,
-        Self::CopyRelativePath,
-        Self::OpenPermalink,
-        Self::CopyPermalink,
-        Self::Reveal,
-        Self::TogglePin,
-        Self::RevealInProject,
-        Self::OpenInTerminal,
-    ];
-
     /// The name of the command's row.
-    pub fn id(self) -> FocusId {
-        let place = Self::ALL
-            .iter()
-            .position(|held| *held == self)
-            .unwrap_or_default();
-        FocusId(TAB_MENU_BASE + place as u64)
+    pub fn id(self) -> Target {
+        Target::Menu(MenuEvent::TabMenu(self))
     }
 
     /// The command whose row `id` names.
-    pub fn of(id: FocusId) -> Option<Self> {
-        let place = id.0.checked_sub(TAB_MENU_BASE)?;
-        Self::ALL.get(usize::try_from(place).ok()?).copied()
+    pub fn of(id: Target) -> Option<Self> {
+        match id {
+            Target::Menu(MenuEvent::TabMenu(command)) => Some(command),
+            _ => None,
+        }
     }
 }
 
@@ -107,7 +86,7 @@ impl WorkspaceState {
     }
 
     /// Whether `id` is a row of the menu on a tab while it is open.
-    pub fn is_tab_menu_row(&self, id: FocusId) -> bool {
+    pub fn is_tab_menu_row(&self, id: Target) -> bool {
         self.tab_menu.is_some() && TabCommand::of(id).is_some()
     }
 

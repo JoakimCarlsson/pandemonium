@@ -1,10 +1,11 @@
 //! The pages of the settings window that list what agents are given in a project: an overview, the skills, instructions, agent definitions and hooks found in the folders the agent reads, and the tools it may call, each with a switch that leaves it out of new sessions.
 
-use crate::events::reduce;
+use crate::events::{Event, send};
+use crate::kit;
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, row_arranged};
 
 use std::path::Path;
 
@@ -12,21 +13,19 @@ use pm_protocol::library::{Item, Kind, Product, Scope, Source, ToolSet, location
 use rustle::{CursorIcon, Modifier};
 
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::theme::Role;
 
+use crate::Badge;
 use crate::button::Variant;
 use crate::parts::{glyph, line};
 use crate::settings::Section;
 use crate::settings_drafts::{draft_node, draftable, new_button};
-use crate::settings_ids::{ITEM_OPENS, ITEM_SWITCHES, SET_FOLDS, SET_SWITCHES, TOOL_SWITCHES};
 use crate::settings_row::switch;
+use crate::settings_rows::{ITEM_OPENS, ITEM_SWITCHES, SET_FOLDS, SET_SWITCHES, TOOL_SWITCHES};
 use crate::settings_servers::{
     boxed, card, flat_row, heading_only, note, paragraph, search_box, wrapped_note,
 };
-use crate::size::Size;
 use crate::state::{Outgoing, Page, WorkspaceState};
-use crate::{Badge, Button};
 
 /// What the pages hold: what was read for which project and agent, and which sets of tools are unfolded.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -272,7 +271,7 @@ impl WorkspaceState {
     }
 
     /// The state after `action`, which may name a switch, a button or a heading of the pages, was pressed; whether it named one.
-    pub(crate) fn library_pressed(&mut self, action: FocusId) -> bool {
+    pub(crate) fn library_pressed(&mut self, action: Target) -> bool {
         if let Some(index) = ITEM_SWITCHES.index_of(action) {
             self.toggle_item(index);
         } else if let Some(index) = ITEM_OPENS.index_of(action) {
@@ -454,12 +453,7 @@ fn context(state: &WorkspaceState, room: f32) {
             format!("Read for {read_for}; the app does not know how to read this agent's files.")
         }
     };
-    column_arranged(
-        Modifier::new(),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Start,
-        || wrapped_note(&said, room),
-    );
+    kit::column(Modifier::new(), 2, || wrapped_note(&said, room));
 }
 
 /// Emits what the page of `section`, one of the pages of what agents are given, holds under its
@@ -612,64 +606,40 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
     };
     let name_tone = if on { Role::Text } else { Role::Muted };
     flat_row(|| {
-        column_arranged(
-            Modifier::new().weight(1.0).clip(),
-            Arrangement::SpacedBy(sp(1)),
-            Alignment::Start,
-            || {
-                row_arranged(
+        kit::column(Modifier::new().weight(1.0).clip(), 1, || {
+            kit::row(Modifier::new(), 2, || {
+                kit::text(
                     Modifier::new(),
-                    Arrangement::SpacedBy(sp(2)),
-                    Alignment::Center,
-                    || {
-                        rustle::basic_text(
-                            Modifier::new(),
-                            item.name.clone(),
-                            theme::text_style(13, 1.4)
-                                .font_weight(rustle::FontWeight::MEDIUM)
-                                .color(theme::color(name_tone))
-                                .max_lines(1),
-                            rustle::TextOverflow::Ellipsis,
-                        );
-                        Badge::new(item.scope.label()).tone(Role::Subtle).build();
-                        if !item.tool.is_empty() {
-                            Badge::new(&item.tool).tone(Role::Subtle).build();
-                        }
-                        if !on {
-                            Badge::new("Off").tone(Role::Subtle).build();
-                        }
-                    },
+                    item.name.clone(),
+                    kit::strong(13, name_tone),
                 );
-                if !description.is_empty() {
-                    line(description, 12, 1.4, Role::Muted);
+                Badge::new(item.scope.label()).tone(Role::Subtle).build();
+                if !item.tool.is_empty() {
+                    Badge::new(&item.tool).tone(Role::Subtle).build();
                 }
-                rustle::basic_text(
-                    Modifier::new().fill_max_width(),
-                    detail,
-                    theme::text_style(11, 1.4)
-                        .color(theme::color(Role::Subtle))
-                        .max_lines(1),
-                    rustle::TextOverflow::Ellipsis,
-                );
-            },
-        );
-        row_arranged(
-            Modifier::new(),
-            Arrangement::SpacedBy(sp(2)),
-            Alignment::Center,
-            || {
-                if item.kind.switchable(library.product) {
-                    switch(on, ITEM_SWITCHES.id(index));
+                if !on {
+                    Badge::new("Off").tone(Role::Subtle).build();
                 }
-                if let Some(open) = ITEM_OPENS.id(index) {
-                    Button::new("Open", open)
-                        .variant(Variant::Outline)
-                        .size(Size::Sm)
-                        .disabled(!openable(state, item))
-                        .build();
-                }
-            },
-        );
+            });
+            if !description.is_empty() {
+                line(description, 12, 1.4, Role::Muted);
+            }
+            kit::text(
+                Modifier::new().fill_max_width(),
+                detail,
+                kit::line(11, Role::Subtle),
+            );
+        });
+        kit::row(Modifier::new(), 2, || {
+            if item.kind.switchable(library.product) {
+                switch(on, ITEM_SWITCHES.id(index));
+            }
+            if let Some(open) = ITEM_OPENS.id(index) {
+                kit::small_button("Open", open, Variant::Outline)
+                    .disabled(!openable(state, item))
+                    .build();
+            }
+        });
     });
 }
 
@@ -782,44 +752,25 @@ fn set_row(set: &ToolSet, place: usize, open: bool, product: Option<Product>, wi
     let heading = match SET_FOLDS.id(place) {
         Some(fold) => heading
             .cursor(CursorIcon::Pointer)
-            .control(fold, reduce(fold)),
+            .control(fold, send(Event::pressing(fold))),
         None => heading,
     };
     let name_tone = if on { Role::Text } else { Role::Muted };
     flat_row(|| {
-        row_arranged(
-            heading,
-            Arrangement::SpacedBy(sp(2)),
-            Alignment::Center,
-            || {
-                glyph(chevron, 4.0, Role::Muted);
-                column_arranged(
-                    Modifier::new().weight(1.0).clip(),
-                    Arrangement::SpacedBy(sp(1)),
-                    Alignment::Start,
-                    || {
-                        row_arranged(
-                            Modifier::new(),
-                            Arrangement::SpacedBy(sp(2)),
-                            Alignment::Center,
-                            || {
-                                rustle::basic_text(
-                                    Modifier::new(),
-                                    set.name.clone(),
-                                    theme::text_style(13, 1.4)
-                                        .font_weight(rustle::FontWeight::MEDIUM)
-                                        .color(theme::color(name_tone))
-                                        .max_lines(1),
-                                    rustle::TextOverflow::Ellipsis,
-                                );
-                                Badge::new(count).build();
-                            },
-                        );
-                        line(about, 12, 1.4, Role::Muted);
-                    },
-                );
-            },
-        );
+        kit::row(heading, 2, || {
+            glyph(chevron, 4.0, Role::Muted);
+            kit::column(Modifier::new().weight(1.0).clip(), 1, || {
+                kit::row(Modifier::new(), 2, || {
+                    kit::text(
+                        Modifier::new(),
+                        set.name.clone(),
+                        kit::strong(13, name_tone),
+                    );
+                    Badge::new(count).build();
+                });
+                line(about, 12, 1.4, Role::Muted);
+            });
+        });
         if set.switchable(product) {
             switch(on, SET_SWITCHES.id(place));
         }
@@ -831,38 +782,25 @@ fn set_row(set: &ToolSet, place: usize, open: bool, product: Option<Product>, wi
 fn tool_row(
     set: &ToolSet,
     tool: &pm_protocol::library::ToolEntry,
-    id: Option<FocusId>,
+    id: Option<Target>,
     product: Option<Product>,
     withheld: &[String],
 ) {
     let on = set.tool_enabled(&tool.name, withheld);
     let name_tone = if on { Role::Text } else { Role::Muted };
-    row_arranged(
+    kit::row(
         Modifier::new()
             .padding_each(theme::sp(10), 0.0, 0.0, 0.0)
             .padding_each(0.0, 0.0, theme::sp(3), 0.0)
             .padding_xy(0.0, theme::sp(3)),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Center,
+        3,
         || {
-            column_arranged(
-                Modifier::new().weight(1.0).clip(),
-                Arrangement::SpacedBy(sp(1)),
-                Alignment::Start,
-                || {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        tool.name.clone(),
-                        theme::mono_style(12, 1.4)
-                            .color(theme::color(name_tone))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                    if let Some(first) = tool.description.lines().next() {
-                        line(first.to_owned(), 12, 1.4, Role::Muted);
-                    }
-                },
-            );
+            kit::column(Modifier::new().weight(1.0).clip(), 1, || {
+                kit::text(Modifier::new(), tool.name.clone(), kit::code(12, name_tone));
+                if let Some(first) = tool.description.lines().next() {
+                    line(first.to_owned(), 12, 1.4, Role::Muted);
+                }
+            });
             if set.per_tool(product) {
                 switch(on, id);
             }

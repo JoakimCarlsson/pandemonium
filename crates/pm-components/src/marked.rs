@@ -5,13 +5,13 @@
 //! tells its [`TextLines`] where it was drawn, and a line inside a
 //! [`rustle::selection_container`] takes part in its selection.
 
+use crate::target::Target;
 use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 
 use rustle::{MarkPaint, MarkedTextOptions, Modifier, TextLayout, TextMark};
 
-use crate::focus::FocusId;
 use crate::text_lines::TextLines;
 use crate::theme::{self, Role, Theme, Tone};
 
@@ -133,7 +133,7 @@ pub fn marked_line(
 pub fn marked_field_line(
     modifier: Modifier,
     lines: &TextLines,
-    (owner, start): (FocusId, usize),
+    (owner, start): (Target, usize),
     content: &str,
     kind: rustle::TextStyle,
     marks: Vec<Mark>,
@@ -182,7 +182,7 @@ fn marked(
     kind: rustle::TextStyle,
     marks: Vec<Mark>,
     look: CaretLook,
-    piece: Option<(&TextLines, FocusId, usize)>,
+    piece: Option<(&TextLines, Target, usize)>,
 ) {
     let theme = theme::theme();
     let caret_visible = marks.iter().any(|mark| mark.paint == Paint::Caret) && caret_lit(look);

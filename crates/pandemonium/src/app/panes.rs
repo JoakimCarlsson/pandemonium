@@ -1,14 +1,15 @@
 //! Dragging a tab of a pane to another pane, or to the edge of one to split it.
 
-use pm_components::focus::FocusId;
-use pm_components::panes::{Area, Item, Side, pane_of};
+use pm_components::areas::WindowEvent;
+use pm_components::panes::{Area, Item, Side};
+use pm_components::target::Target;
 
 use super::App;
 
 impl App {
     /// Whether the control `id` can be carried elsewhere in the window: a project's header,
     /// a pane's tab, or a row of the project's files other than their root.
-    pub(super) fn carries(&self, id: FocusId) -> bool {
+    pub(super) fn carries(&self, id: Target) -> bool {
         self.model.read(|screen| {
             screen.header_of(id).is_some()
                 || screen.pane_tab_of(id).is_some()
@@ -20,7 +21,7 @@ impl App {
 
     /// Starts carrying the control `id`, at `at` in the window: a project's header, a pane's
     /// tab or a row of the project's files, which then follows the pointer.
-    pub(super) fn carry_started(&mut self, id: FocusId, at: (f32, f32)) {
+    pub(super) fn carry_started(&mut self, id: Target, at: (f32, f32)) {
         self.project_press = self.model.read(|screen| screen.header_of(id));
         self.project_dragging = false;
         self.pane_press = self.model.read(|screen| screen.pane_tab_of(id));
@@ -60,7 +61,9 @@ impl App {
     /// The pane under `at`, by position, and the edge of it `at` is over.
     fn pane_under(&self, at: (f32, f32)) -> Option<(usize, Side)> {
         self.hovered.iter().find_map(|id| {
-            let index = pane_of(*id)?;
+            let Target::Window(WindowEvent::Pane(index)) = *id else {
+                return None;
+            };
             let rect = self.place(*id)?;
             let area = Area {
                 x: rect.origin.x,

@@ -1,23 +1,23 @@
 //! The changes of a commit or of a branch, and a file set against one of the states it was saved in, as one scrollable view of every file: each folded away from its header, and, in the folder, edited in place.
 
+use crate::areas::SearchEvent;
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use pm_field::Edit;
 use rustle::Modifier;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, column_arranged};
 
+use crate::Tally;
 use crate::button::Variant;
-use crate::excerpts::{
-    Block, EXCERPTS_FOLD_ALL, EXCERPTS_UNDO_ALL, ExcerptFile, Source, file_list, restore_button,
-};
+use crate::excerpts::{Block, ExcerptFile, Source, file_list, restore_button};
 use crate::open_files::Contents;
 use crate::parts::{glyph, line, spacer};
 use crate::sample::{Change, DiffLine, Kind};
 use crate::size::Size;
 use crate::state::{Tab, WorkspaceState};
 use crate::theme::Role;
-use crate::{Button, Tally};
 
 /// How tall the strip above the files is, in logical pixels.
 const STRIP: f32 = 40.0;
@@ -117,19 +117,13 @@ impl<'a> Changes<'a> {
         let undoes =
             matches!(&excerpts.source, Source::Revision { turn: Some(_), .. }) && count > 0;
         let mode = self.mode;
-        row_arranged(
+        kit::row(
             Modifier::new()
                 .fill_max_width()
                 .height(STRIP)
-                .draw_behind(theme::edge(
-                    theme::Side::Bottom,
-                    1.0,
-                    theme::color(Role::Border),
-                ))
-                .padding_each(0.0, 0.0, 0.0, 1.0)
+                .ruled(theme::Side::Bottom)
                 .padding_xy(theme::sp(4), 0.0),
-            Arrangement::SpacedBy(sp(3)),
-            Alignment::Center,
+            3,
             move || match mode {
                 Mode::Timeline => {
                     glyph(phosphor::CLOCK_COUNTER_CLOCKWISE, 3.5, Role::Muted);
@@ -148,17 +142,21 @@ impl<'a> Changes<'a> {
                     Tally::new(added, removed).size(12).build();
                     spacer();
                     if undoes {
-                        Button::new("Undo turn", EXCERPTS_UNDO_ALL)
-                            .with_icon(phosphor::ARROW_COUNTER_CLOCKWISE)
-                            .variant(Variant::Ghost)
-                            .size(Size::Sm)
-                            .tooltip("Take everything this turn changed back out of the files")
-                            .build();
-                    }
-                    Button::new("Fold all", EXCERPTS_FOLD_ALL)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
+                        kit::small_button(
+                            "Undo turn",
+                            Target::Search(SearchEvent::ExcerptsUndoAll),
+                            Variant::Ghost,
+                        )
+                        .with_icon(phosphor::ARROW_COUNTER_CLOCKWISE)
+                        .tooltip("Take everything this turn changed back out of the files")
                         .build();
+                    }
+                    kit::small_button(
+                        "Fold all",
+                        Target::Search(SearchEvent::ExcerptsFoldAll),
+                        Variant::Ghost,
+                    )
+                    .build();
                 }
             },
         );

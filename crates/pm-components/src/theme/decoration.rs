@@ -1,11 +1,8 @@
-//! The drawing values the theme gives boxes that rustle has no modifier for:
-//! a line along one side and the app's soft shadows, each a closure for
-//! [`Modifier::draw_behind`](rustle::Modifier::draw_behind), as Compose draws
-//! them in `drawBehind`.
+//! The drawing values the theme gives boxes: a line along one side, a closure
+//! for [`Modifier::draw_behind`], and the app's soft shadows as rustle
+//! [`Shadow`] layers cast with [`Modifier::drop_shadow_with`].
 
-use rustle::{Canvas, Color};
-
-use super::Radius;
+use rustle::{Canvas, Color, Modifier, Offset, Shadow};
 
 /// One side of a box.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -52,34 +49,38 @@ pub fn edge(side: Side, width: f32, color: Color) -> impl Fn(&mut Canvas) + 'sta
 /// than a Gaussian of half the blur as its deviation.
 pub const SHADOW_SOFTNESS: f32 = 1.3;
 
-/// One layer of a shadow as `(x, y, blur, spread, alpha)` in black, as a CSS box shadow says it.
-pub type ShadowLayer = (f32, f32, f32, f32, f32);
+/// The black shadow a CSS box shadow of `x`, `y`, `blur`, `spread` and `alpha`
+/// casts, as a rustle [`Shadow`] blurred over [`SHADOW_SOFTNESS`] times its blur.
+pub const fn box_shadow(x: f32, y: f32, blur: f32, spread: f32, alpha: f32) -> Shadow {
+    Shadow::new(blur * SHADOW_SOFTNESS)
+        .with_offset(Offset::new(x, y))
+        .with_spread(spread)
+        .with_alpha(alpha)
+}
 
 /// The two layers of the short shadow under a compact surface.
-pub const MEDIUM_SHADOW: [ShadowLayer; 2] =
-    [(0.0, 4.0, 6.0, -1.0, 0.1), (0.0, 2.0, 4.0, -2.0, 0.1)];
+pub const MEDIUM_SHADOW: [Shadow; 2] = [
+    box_shadow(0.0, 4.0, 6.0, -1.0, 0.1),
+    box_shadow(0.0, 2.0, 4.0, -2.0, 0.1),
+];
 
 /// The tall, soft shadow under a floating surface.
-pub const FLOATING_SHADOW: [ShadowLayer; 1] = [(0.0, 12.0, 40.0, 0.0, 0.35)];
+pub const FLOATING_SHADOW: [Shadow; 1] = [box_shadow(0.0, 12.0, 40.0, 0.0, 0.35)];
 
-/// Draws `layers` of shadow behind an area with corners rounded by `radius`,
-/// each rustle's Gaussian shadow blurred over [`SHADOW_SOFTNESS`] times its blur.
-pub fn shadows(layers: &'static [ShadowLayer], radius: Radius) -> impl Fn(&mut Canvas) + 'static {
-    let corner = radius.px();
-    move |canvas| {
-        let (width, height) = (canvas.width(), canvas.height());
-        for (x, y, blur, spread, alpha) in layers {
-            let shade = Color::rgba(0, 0, 0, (alpha * 255.0).round() as u8);
-            canvas.shadow(
-                x - spread,
-                y - spread,
-                width + 2.0 * spread,
-                height + 2.0 * spread,
-                (corner + spread).max(0.0),
-                blur * SHADOW_SOFTNESS,
-                shade,
-            );
-        }
+/// Casting a shadow of several layers behind a box.
+pub trait ShadowLayers {
+    /// This modifier with every one of `layers` cast behind the area, its
+    /// corners rounded by `corner` logical pixels, the first layer lowest: one
+    /// [`Modifier::drop_shadow_with`] per layer.
+    fn shadow_layers(self, layers: &[Shadow], corner: f32) -> Self;
+}
+
+impl ShadowLayers for Modifier {
+    /// Chains one [`Modifier::drop_shadow_with`] per layer of `layers`, with `corner` as their corner radius.
+    fn shadow_layers(self, layers: &[Shadow], corner: f32) -> Self {
+        layers.iter().fold(self, |modifier, layer| {
+            modifier.drop_shadow_with(corner, *layer)
+        })
     }
 }
 

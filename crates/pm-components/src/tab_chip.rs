@@ -1,12 +1,12 @@
 //! The tab chip: one tab of a strip inside a pane, with its glyph, its words, marks for what it is and a button that closes it.
 
 use crate::events::Interactive;
-use crate::events::reduce;
-use crate::focus::FocusId;
+use crate::events::{Event, send};
+use crate::kit;
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
+use crate::theme::Indicated;
 use crate::theme::{Radius, Role};
-use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
 use rustle::{Icon, phosphor};
 
@@ -30,9 +30,9 @@ pub struct TabChip {
     /// The words on the tab.
     label: String,
     /// The target that selects the tab.
-    select: FocusId,
+    select: Target,
     /// The target of the button that closes it.
-    close: FocusId,
+    close: Target,
     /// The glyph before the words.
     icon: Icon,
     /// Whether it is the tab being shown.
@@ -53,7 +53,7 @@ pub struct TabChip {
 
 impl TabChip {
     /// A tab saying `label`, selected by `select` and closed by `close`.
-    pub fn new(label: impl Into<String>, select: FocusId, close: FocusId) -> Self {
+    pub fn new(label: impl Into<String>, select: Target, close: Target) -> Self {
         Self {
             label: label.into(),
             select,
@@ -129,34 +129,28 @@ impl TabChip {
         let own = Modifier::new()
             .width(self.width)
             .height(height)
-            .interaction_focused(crate::focus::is_held(self.select))
-            .interaction_background((looks).colors())
+            .indicated(
+                looks,
+                theme::Focused::Held(crate::focus::is_held(self.select)),
+            )
             .cursor(CursorIcon::Pointer)
-            .control(self.select, reduce(self.select))
+            .control(self.select, send(Event::pressing(self.select)))
             .padding_xy(theme::sp(2), 0.0);
         let (variant, icon, label, locked, close) =
             (self.variant, self.icon, self.label, self.locked, self.close);
         let hint = self.hint;
         let row = move || {
-            row_arranged(
-                self.modifier.chain(own),
-                Arrangement::SpacedBy(sp(1)),
-                Alignment::Center,
-                move || {
-                    match variant {
-                        TabVariant::Agent => glyph(phosphor::SPARKLE, 3.5, Role::Accent),
-                        TabVariant::Page => glyph(icon, 3.5, tone),
-                    }
-                    clipped(label, 12, tone);
-                    if locked {
-                        glyph(phosphor::LOCK_SIMPLE, 3.0, Role::Warning);
-                    }
-                    Button::icon(phosphor::X, close)
-                        .variant(crate::button::Variant::Ghost)
-                        .size(Size::Xs)
-                        .build();
-                },
-            );
+            kit::row(self.modifier.chain(own), 1, move || {
+                match variant {
+                    TabVariant::Agent => glyph(phosphor::SPARKLE, 3.5, Role::Accent),
+                    TabVariant::Page => glyph(icon, 3.5, tone),
+                }
+                clipped(label, 12, tone);
+                if locked {
+                    glyph(phosphor::LOCK_SIMPLE, 3.0, Role::Warning);
+                }
+                Button::icon(phosphor::X, close).size(Size::Xs).build();
+            });
         };
         match hint {
             Some(hint) => crate::tooltip::with_tooltip(hint, row),

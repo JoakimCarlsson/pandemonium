@@ -2,15 +2,17 @@
 //! rustle surface in the variant's shape, border and content colour, its fills by
 //! interaction state from rustle's interaction support.
 
+use crate::kit;
+use crate::target::Target;
 use crate::theme;
+use crate::theme::Indicated;
 use crate::theme::sp;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{Icon, phosphor};
 use std::fmt;
 use std::rc::Rc;
 
 use crate::events::{Interactive, OnClick};
-use crate::focus::FocusId;
 use crate::icons::icon;
 use crate::icons::{spinner, spinning_icon};
 use crate::theme::{Radius, Role, Tone};
@@ -80,7 +82,7 @@ pub struct Button {
     /// How big it is.
     size: Size,
     /// The name it answers to.
-    id: FocusId,
+    id: Target,
     /// Whether it is switched off.
     disabled: bool,
     /// Whether its corners are fully round.
@@ -114,7 +116,7 @@ pub struct Button {
 
 impl Button {
     /// A button saying `label`, answering to `id`.
-    pub fn new(label: impl Into<String>, id: FocusId) -> Self {
+    pub fn new(label: impl Into<String>, id: Target) -> Self {
         Self {
             label: Some(label.into()),
             icon: None,
@@ -148,7 +150,7 @@ impl Button {
     }
 
     /// A button showing only `icon`, answering to `id`.
-    pub fn icon(icon: Icon, id: FocusId) -> Self {
+    pub fn icon(icon: Icon, id: Target) -> Self {
         Self {
             label: None,
             icon: Some(icon),
@@ -349,15 +351,16 @@ impl Button {
         } else {
             own.height(theme::sp(height))
         };
-        own = own
-            .interaction_focused(crate::focus::is_held(self.id))
-            .interaction_background(self.looks(radius).colors());
+        own = own.indicated(
+            self.looks(radius),
+            theme::Focused::Held(crate::focus::is_held(self.id)),
+        );
         own = if self.disabled {
             own.cursor(CursorIcon::NotAllowed)
         } else {
             own.cursor(CursorIcon::Pointer).control(
                 self.id,
-                OnClick::or_reduce(self.on_click.clone(), self.id).lambda(),
+                OnClick::or_send(self.on_click.clone(), self.id).lambda(),
             )
         };
         let border = match (self.variant, self.selected) {
@@ -371,9 +374,10 @@ impl Button {
         if border.is_some() {
             inside = inside.padding(1.0);
         }
-        inside = inside
-            .interaction_focused(crate::focus::is_held(self.id))
-            .draw_over_interactive(theme::focus_ring(2.0, radius));
+        inside = inside.indicated(
+            theme::FocusRing { width: 2.0, radius },
+            theme::Focused::Held(crate::focus::is_held(self.id)),
+        );
         inside = match (self.inner, self.label.is_some(), several) {
             (Some(inner), _, _) => inside.chain(inner),
             (None, true, true) => inside
@@ -428,35 +432,15 @@ impl Button {
                     }
                     if let Some(words) = words {
                         if lines.len() > 1 {
-                            column_arranged(
-                                Modifier::new(),
-                                Arrangement::Start,
-                                Alignment::Start,
-                                || {
-                                    for part in &lines {
-                                        rustle::basic_text(
-                                            Modifier::new(),
-                                            part,
-                                            kind,
-                                            rustle::TextOverflow::Ellipsis,
-                                        );
-                                    }
-                                },
-                            );
+                            kit::column(Modifier::new(), 0, || {
+                                for part in &lines {
+                                    kit::text(Modifier::new(), part, kind);
+                                }
+                            });
                         } else if spread {
-                            rustle::basic_text(
-                                Modifier::new().weight(1.0),
-                                words,
-                                kind.max_lines(1),
-                                rustle::TextOverflow::Ellipsis,
-                            );
+                            kit::text(Modifier::new().weight(1.0), words, kind.max_lines(1));
                         } else {
-                            rustle::basic_text(
-                                Modifier::new(),
-                                words,
-                                kind,
-                                rustle::TextOverflow::Ellipsis,
-                            );
+                            kit::text(Modifier::new(), words, kind);
                         }
                     }
                     if let Some(name) = trailing {
@@ -546,6 +530,7 @@ impl Button {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::areas::ChatEvent;
     use crate::tagged::lay_out;
 
     /// A button drawn on a rustle surface keeps its measure: the height of its size, a fixed
@@ -553,8 +538,12 @@ mod tests {
     /// only an icon; each is named by its id in paint order.
     #[test]
     fn buttons_keep_their_measure_on_a_surface() {
-        let (plain, fixed, filling, square) =
-            (FocusId(911), FocusId(912), FocusId(913), FocusId(914));
+        let (plain, fixed, filling, square) = (
+            Target::Chat(ChatEvent::Choice(911)),
+            Target::Chat(ChatEvent::Choice(912)),
+            Target::Chat(ChatEvent::Choice(913)),
+            Target::Chat(ChatEvent::Choice(914)),
+        );
         let laid = lay_out(400.0, 200.0, None, move || {
             rustle::column(|| {
                 Button::new("Plain", plain).build();

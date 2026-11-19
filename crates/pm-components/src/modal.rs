@@ -1,10 +1,10 @@
 //! The modal: rustle's dialog, a panel centred over a darkened window, which pressing outside closes.
 
-use crate::events::reduce;
+use crate::events::{Event, send};
+use crate::target::Target;
 use rustle::{DialogProperties, Modifier};
 
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::{Surface, surface};
 
 /// How far above the rest of the window the modal is drawn.
@@ -24,9 +24,9 @@ const PROPERTIES: DialogProperties = DialogProperties {
 /// belongs last in the root of a screen.
 pub struct Modal<'a> {
     /// What a press on the dimmed window outside the panel hands to the workspace.
-    outside: FocusId,
+    outside: Target,
     /// What the panel answers to.
-    inside: FocusId,
+    inside: Target,
     /// How wide the panel is, in logical pixels, when fixed.
     width: Option<f32>,
     /// What the panel holds, emitted in order.
@@ -37,7 +37,7 @@ pub struct Modal<'a> {
 
 impl<'a> Modal<'a> {
     /// A modal whose dimmed window answers to `outside` and whose panel answers to `inside`.
-    pub fn new(outside: FocusId, inside: FocusId) -> Self {
+    pub fn new(outside: Target, inside: Target) -> Self {
         Self {
             outside,
             inside,
@@ -82,9 +82,9 @@ impl<'a> Modal<'a> {
         if let Some(width) = self.width {
             panel = panel.width(width);
         }
-        let panel = panel.control(self.inside, reduce(self.inside));
+        let panel = panel.control(self.inside, send(Event::pressing(self.inside)));
         let parts = self.parts;
-        let outside = reduce(self.outside);
+        let outside = send(Event::pressing(self.outside));
         rustle::stack_with(layer, move || {
             rustle::dialog_with(outside, PROPERTIES, move || {
                 Surface::new()

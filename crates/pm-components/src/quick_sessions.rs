@@ -1,14 +1,10 @@
 //! The sessions the quick input lists: those waiting for the reader first while nothing is typed, the sessions and projects whose names match what is typed, and the chats whose conversations hold it, as the servers found them, with a preview of the message that matched; and turning what is typed into the prompt of a new session.
 
-use crate::focus::FocusId;
 use pm_protocol::{ChatField, ChatHit};
 
 use crate::listing::{Destination, Items};
 use crate::sample::{Session, Status};
 use crate::state::{Outgoing, WorkspaceState};
-
-/// Pressed with Control or Command and Enter in the quick input: starts a new session whose prompt is what is typed.
-pub const LISTING_PROMPT: FocusId = FocusId(7_401_952);
 
 /// What the list says before the rest of what is said beside a session waiting for the reader, when it waits.
 fn waiting_label(session: &Session) -> Option<&'static str> {

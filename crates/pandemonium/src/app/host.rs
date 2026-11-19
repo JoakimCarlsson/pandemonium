@@ -1,37 +1,64 @@
-//! The windows on rustle: the event loop's handler, which hands every event
-//! to the interface and then to the app's own logic, the root composable
-//! the main window and the windows beside it show, and what the app does
-//! after the interface composed a frame.
+//! The windows on rustle: the root composable the main window and the windows
+//! beside it show, which rustle's own event loop runs ([`run`]); the app's part
+//! of what happens in them, heard by each window's root (the pointer, through
+//! [`on_pointer_event`](rustle::Modifier::on_pointer_event), and the window's
+//! focus, size, scale and modifier keys and the desktop's appearance, through
+//! [`LOCAL_WINDOW_INFO`], [`LOCAL_DENSITY`](rustle::LOCAL_DENSITY) and
+//! [`is_system_in_dark_theme`](rustle::is_system_in_dark_theme)); and the effects
+//! that wake the app for the work that waits on time and close the main window
+//! when the app quits.
 
+use pm_components::areas::{BrowserEvent, ComposerEvent, EditorEvent, TerminalEvent, TreeEvent};
+use pm_components::target::Target;
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
+use std::time::{Duration, Instant};
 
-use super::pointer::{Button, PointerEvent};
 use pm_components::events::{self, Operations};
 use pm_components::focus;
-use pm_components::theme::Appearance;
 use pm_components::theme::Tokens;
-use pm_field::Edit;
-use rustle::Modifiers;
-use rustle::{CursorIcon, Host, ShadowLayer, WindowHandle, WindowOptions, WindowShadow};
-use winit::application::ApplicationHandler;
-use winit::dpi::{LogicalPosition, LogicalSize};
-use winit::event::{ElementState, Ime, MouseButton, MouseScrollDelta, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
-use winit::window::{
-    ImeCapabilities, ImeEnableRequest, ImeRequest, ImeRequestData, Window, WindowId,
+use pm_pages::Screen;
+use rustle::pointer::PointerEvent as Heard;
+use rustle::{
+    CursorIcon, LOCAL_WINDOW_INFO, Modifier, Modifiers, Offset, PointerButton, PointerEventPass,
+    PointerEventType, ShadowLayer, WindowHandle, WindowOptions, WindowShadow,
 };
 
 use super::asides::{self, Aside};
 use super::controller::{Claims, Controller};
 use super::focus::KeptFocus;
+use super::pointer::{Button, PointerEvent};
 use super::port::{NativePort, Port};
-use super::{App, WHEEL_LINE, appearance, fail_to_start, frame as window_frame};
+use super::{App, frame as window_frame};
 use crate::model::Model;
-use crate::{keys, scene};
+use crate::scene;
 
 /// The operations of the main window's views and of each window's beside it.
 type WindowOperations = [Rc<dyn Operations>; 3];
+
+/// What the app waits for while it is idle, as it last said, which the effects of the main
+/// window's root follow, one per concern, each keyed on its own part.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub(super) struct Idle {
+    /// When the card about the word of code the pointer rests on is due to show or go.
+    pub(super) hover: Option<Instant>,
+    /// When the language server is due to be asked where the thing at the caret is used.
+    pub(super) highlight: Option<Instant>,
+    /// When the language server is due to be asked for the marker beside the caret's line.
+    pub(super) bulb: Option<Instant>,
+    /// When the file shown is due to be saved by itself.
+    pub(super) autosave: Option<Instant>,
+    /// When the chords recorded on the keymap page are due to be kept.
+    pub(super) recording: Option<Instant>,
+    /// When the app is due to look for a newer release again.
+    pub(super) release: Option<Instant>,
+    /// How often the agents' work is to be looked at while it is under way.
+    pub(super) polling: Option<Duration>,
+    /// Whether the browser's pages are being pumped.
+    pub(super) pumping: bool,
+    /// Whether the app quits, closing the main window.
+    pub(super) quit: bool,
+}
 
 /// What the root composable reads that the app changes outside rustle's own state.
 #[derive(Clone)]
@@ -46,24 +73,37 @@ pub(super) struct Shared {
     cursor: Rc<Cell<Option<CursorIcon>>>,
     /// The handles of the windows beside the main one, once composed.
     handles: Rc<RefCell<[Option<WindowHandle>; 2]>>,
-    /// The windows beside the main one their close button asked to close.
-    closed: Rc<RefCell<Vec<Aside>>>,
     /// What the views of the main window and of each window beside it hand
     /// what the user does to them to, once the app is shared with them.
     operations: Rc<RefCell<Option<WindowOperations>>>,
     /// The control the app keeps keyboard focus on, which the views follow.
     focus: KeptFocus,
+    /// The control focus was kept on when the windows were last composed.
+    framed_focus: Rc<Cell<Option<Target>>>,
+    /// The app, once it is shared with the windows.
+    app: Rc<RefCell<Weak<RefCell<App>>>>,
+    /// How often the app asked for every window to be composed again, which the
+    /// roots read so each such ask composes them again.
+    composed: rustle::State<u64>,
+    /// What the app waits for while it is idle, as it last said.
+    idle: rustle::State<Idle>,
 }
 
 impl Shared {
     /// Hands what the user does to the views of every window to `app`.
     pub(super) fn attach(&self, app: &Rc<RefCell<App>>) {
         self.focus.attach(app);
+        *self.app.borrow_mut() = Rc::downgrade(app);
         *self.operations.borrow_mut() = Some([
             Controller::operations(app, None),
             Controller::operations(app, Some(Aside::Settings)),
             Controller::operations(app, Some(Aside::Picker)),
         ]);
+    }
+
+    /// The app, while it runs and once it is shared with the windows.
+    fn app(&self) -> Weak<RefCell<App>> {
+        self.app.borrow().clone()
     }
 
     /// Composes `content` under the operations of the main window's views, or of
@@ -74,16 +114,12 @@ impl Shared {
             .borrow()
             .as_ref()
             .map(|operations| Rc::clone(&operations[aside.map_or(0, |aside| slot(aside) + 1)]));
-        focus::provide(self.focus.keys(), || match operations {
+        let keys = self.focus.keys();
+        self.framed_focus.set(keys.held);
+        focus::provide(keys, || match operations {
             Some(operations) => events::provide(operations, content),
             None => content(),
         });
-    }
-
-    /// How large the main window is, or `aside`'s, as the desktop last said, in logical pixels.
-    #[cfg(test)]
-    pub(super) fn size_of(&self, aside: Option<Aside>) -> (f32, f32) {
-        self.sizes.borrow()[aside.map_or(0, |aside| slot(aside) + 1)]
     }
 
     /// What `read` makes of the screen.
@@ -97,27 +133,19 @@ impl Shared {
     pub(super) fn cursor(&self) -> Option<CursorIcon> {
         self.cursor.get()
     }
+
+    /// Whether the app last said it quits.
+    #[cfg(test)]
+    pub(super) fn quits(&self) -> bool {
+        self.idle.get().quit
+    }
 }
 
-/// The rustle side of the app: the host that owns the windows, and what its root reads.
+/// The rustle side of the app: what the root of every window reads.
 pub(super) struct Shell {
-    /// The interface and its windows, once the platform could make surfaces,
-    /// shared so it can handle an event while the app is free for the
-    /// handlers the event runs.
-    pub(super) host: Rc<RefCell<Option<Host>>>,
-    /// Whether the windows were asked to compose while they were busy with
-    /// an event, so they compose once it is handled.
-    deferred: Rc<Cell<bool>>,
-    /// The event loop's proxy, which wakes it for the host and for the app's work,
-    /// when the app runs in one.
-    proxy: Option<EventLoopProxy>,
     /// What the root reads.
     pub(super) shared: Shared,
-    /// The interface laid out with no window, when the app runs headless.
-    #[cfg(test)]
-    pub(super) headless: Rc<RefCell<Option<super::headless::Screens>>>,
-    /// The stand-ins of the windows laid out with no window, readable while the
-    /// interfaces are busy with an event.
+    /// The stand-ins of the windows laid out with no window, when the app runs headless.
     #[cfg(test)]
     pub(super) headless_ports: Rc<RefCell<Option<[Rc<super::headless::StandIn>; 3]>>>,
 }
@@ -140,93 +168,32 @@ pub(super) fn window_key(aside: Option<Aside>) -> scene::WindowKey {
 }
 
 impl Shell {
-    /// A shell for `model`, its event loop woken through `proxy` when there is one, with no window yet.
-    pub(super) fn new(model: Model, focus: KeptFocus, proxy: Option<EventLoopProxy>) -> Self {
+    /// A shell for `model` and the focus kept in `focus`, with no window yet.
+    pub(super) fn new(model: Model, focus: KeptFocus) -> Self {
         Self {
-            host: Rc::new(RefCell::new(None)),
-            deferred: Rc::new(Cell::new(false)),
-            proxy,
             shared: Shared {
                 model,
                 sizes: Rc::new(RefCell::new([(0.0, 0.0); 3])),
                 tokens: Rc::new(RefCell::new(Tokens::default())),
                 cursor: Rc::new(Cell::new(None)),
                 handles: Rc::new(RefCell::new([None, None])),
-                closed: Rc::new(RefCell::new(Vec::new())),
                 operations: Rc::new(RefCell::new(None)),
                 focus,
+                framed_focus: Rc::new(Cell::new(None)),
+                app: Rc::new(RefCell::new(Weak::new())),
+                composed: rustle::mutable_state(0),
+                idle: rustle::mutable_state(Idle::default()),
             },
-            #[cfg(test)]
-            headless: Rc::new(RefCell::new(None)),
             #[cfg(test)]
             headless_ports: Rc::new(RefCell::new(None)),
         }
     }
 
-    /// Composes everything again at the next wake-up, or once the windows
-    /// have handled the event they are busy with, moving the screen's revision
-    /// on so no region keeps what it emitted.
+    /// Composes every window again, moving the screen's revision on so no
+    /// region keeps what it emitted.
     pub(super) fn invalidate(&mut self) {
         self.shared.model.revise();
-        match self.host.try_borrow_mut() {
-            Ok(mut host) => {
-                if let Some(host) = host.as_mut() {
-                    host.invalidate();
-                }
-            }
-            Err(_) => self.deferred.set(true),
-        }
-        #[cfg(test)]
-        match self.headless.try_borrow_mut() {
-            Ok(mut screens) => {
-                if let Some(screens) = screens.as_mut() {
-                    screens.invalidate();
-                }
-            }
-            Err(_) => self.deferred.set(true),
-        }
-    }
-
-    /// Composes and lays out what changed now, in the windows or headless,
-    /// or once the windows have handled the event they are busy with.
-    pub(super) fn wake(&mut self) {
-        match self.host.try_borrow_mut() {
-            Ok(mut host) => {
-                if let Some(host) = host.as_mut() {
-                    host.wake();
-                }
-            }
-            Err(_) => self.deferred.set(true),
-        }
-        #[cfg(test)]
-        match self.headless.try_borrow_mut() {
-            Ok(mut screens) => {
-                if let Some(screens) = screens.as_mut() {
-                    screens.wake(&self.shared);
-                }
-            }
-            Err(_) => self.deferred.set(true),
-        }
-    }
-
-    /// Where the headless interface of the main window, or of `aside`'s, wants an
-    /// input method's candidates, in that window's logical pixels: the caret of
-    /// what has rustle's focus. Windows tell their input method themselves, so
-    /// they are not asked.
-    pub(super) fn ime_area(&self, aside: Option<Aside>) -> Option<rustle::Rect> {
-        #[cfg(test)]
-        if let Ok(screens) = self.headless.try_borrow()
-            && let Some(screens) = screens.as_ref()
-        {
-            return screens.ime_area(aside);
-        }
-        let _ = aside;
-        None
-    }
-
-    /// Whether the windows were asked to compose while they were busy, clearing it.
-    pub(super) fn take_deferred(&self) -> bool {
-        self.deferred.replace(false)
+        self.shared.composed.update(|composed| *composed += 1);
     }
 
     /// The handle of `aside`'s window, while it is composed.
@@ -238,17 +205,11 @@ impl Shell {
     pub(super) fn port_of(&self, aside: Aside) -> Option<Rc<dyn Port>> {
         #[cfg(test)]
         if let Some(ports) = self.headless_ports.borrow().as_ref() {
-            let open = match self.headless.try_borrow() {
-                Ok(screens) => screens
-                    .as_ref()
-                    .is_some_and(|screens| screens.port_of(aside).is_some()),
-                Err(_) => self.shared.model.read(|screen| aside.is_open(screen)),
-            };
+            let open = self.shared.model.read(|screen| aside.is_open(screen));
             return open.then(|| Rc::clone(&ports[slot(aside) + 1]) as Rc<dyn Port>);
         }
-        let handle = self.handle_of(aside)?;
-        let window = handle.native()?;
-        Some(Rc::new(NativePort::new(window, handle)))
+        let port = NativePort::new(self.handle_of(aside)?);
+        port.is_open().then(|| Rc::new(port) as Rc<dyn Port>)
     }
 
     /// Sets the theme every window is drawn in.
@@ -273,27 +234,67 @@ impl Shell {
         }
     }
 
-    /// Takes the windows beside the main one their close buttons asked to close.
-    pub(super) fn take_closed(&self) -> Vec<Aside> {
-        std::mem::take(&mut *self.shared.closed.borrow_mut())
+    /// Says what the app waits for while it is idle, which the root's effects follow; they
+    /// are composed again only when that changed.
+    pub(super) fn set_idle(&self, idle: Idle) {
+        if self.shared.idle.get() != idle {
+            self.shared.idle.set(idle);
+        }
     }
 }
 
-/// Emits every window for what `shared` holds: the main window's root and, while
-/// what they show is open, the settings window and the folder picker's.
+/// Runs the app in rustle's event loop until its main window closes: the main window
+/// opens as `options` says, its root and the windows beside it composed from `app`, then
+/// the app captures the view it leaves and waits for that to be written.
+pub fn run(app: App) {
+    let options = app.main_options();
+    let app = Rc::new(RefCell::new(app));
+    let shared = app.borrow().shell.shared.clone();
+    shared.attach(&app);
+    let close = Rc::downgrade(&app);
+    rustle::set_close_handler(move || {
+        close
+            .upgrade()
+            .and_then(|app| {
+                app.try_borrow_mut()
+                    .ok()
+                    .map(|mut app| app.main_close_requested())
+            })
+            .unwrap_or(false)
+    });
+    rustle::run_with(options, move || root(&shared));
+    let mut app = app.borrow_mut();
+    app.persist_view();
+    app.view_writer.flush();
+    app.browser_shutdown();
+}
+
+/// Runs `act` on the app behind `app`, while it runs and is not busy.
+fn with_app(app: &Weak<RefCell<App>>, act: impl FnOnce(&mut App)) {
+    if let Some(app) = app.upgrade()
+        && let Ok(mut app) = app.try_borrow_mut()
+    {
+        act(&mut app);
+    }
+}
+
+/// Emits every window for what `shared` holds: the handlers that wake the app, the main
+/// window's root and, while what they show is open, the settings window and the folder
+/// picker's, whose close button closes what they show.
 fn root(shared: &Shared) {
+    wake_handlers(shared);
     main_view(shared);
     for aside in Aside::ALL {
         if !shared.model.read(|screen| aside.is_open(screen)) {
             continue;
         }
         let handles = Rc::clone(&shared.handles);
-        let closed = Rc::clone(&shared.closed);
+        let app = shared.app();
         let shared = shared.clone();
         rustle::key(slot(aside), || {
             rustle::window(
                 aside.options(),
-                move || closed.borrow_mut().push(aside),
+                move || with_app(&app, |app| app.aside_close_requested(aside)),
                 move || {
                     handles.borrow_mut()[slot(aside)] = Some(rustle::current_window());
                     aside_view(&shared, aside);
@@ -303,28 +304,174 @@ fn root(shared: &Shared) {
     }
 }
 
-/// Emits what the main window shows for what `shared` holds.
-pub(super) fn main_view(shared: &Shared) {
-    let tokens = shared.tokens.borrow().clone();
-    let size = shared.sizes.borrow()[0];
-    let cursor = shared.cursor.get();
-    let revision = shared.model.revision();
-    shared.under_operations(None, || {
-        pm_components::revision::provide(revision, || {
-            shared
-                .model
-                .read(|screen| scene::main_root(screen, size.0, size.1, tokens, cursor));
+/// What rustle's loop runs for the app outside composition: its external handler, which
+/// the agents' work and the servers' connections wake through `external_waker` and which
+/// drains what they brought in, and the frame observer, which wakes it once a frame was
+/// drawn so the app follows the frame.
+fn wake_handlers(shared: &Shared) {
+    let app = shared.app();
+    rustle::disposable_effect((), move || {
+        let woken = app.clone();
+        rustle::set_external_handler(move || with_app(&woken, App::on_wake));
+        let drawn = app.clone();
+        let wake = rustle::external_waker();
+        rustle::set_frame_observer(move |timing| {
+            with_app(&drawn, |app| app.frame_drawn(timing));
+            wake();
+        });
+        || {}
+    });
+}
+
+/// The app's idle work as effects of the main window's root: what follows each change of
+/// the screen, and the view saved once typing pauses, keyed on the screen's generation; a delay for each thing that waits on time, keyed on
+/// when it is due; the agents' work looked at and the browser's pages pumped at their
+/// intervals while that work is under way; the main window closed once the app quits; and
+/// the view saved when the root leaves the composition.
+fn idle_effects(shared: &Shared) {
+    let app = shared.app();
+    let generation = shared.model.generation();
+    let changed = app.clone();
+    rustle::disposable_effect(generation, move || {
+        with_app(&changed, App::screen_changed);
+        || {}
+    });
+    let saving = app.clone();
+    rustle::launched_effect(generation, move |scope| async move {
+        let mut wait = None;
+        with_app(&saving, |app| wait = app.view_save_wait());
+        let Some(wait) = wait else {
+            return;
+        };
+        scope.delay(wait).await;
+        with_app(&saving, |app| {
+            app.view_save_deadline();
+            app.flush();
+        });
+    });
+    let leaving = app.clone();
+    rustle::disposable_effect((), move || {
+        move || {
+            with_app(&leaving, |app| {
+                app.persist_view();
+                app.view_writer.flush();
+            });
+        }
+    });
+    let idle = shared.idle.clone();
+    rustle::restartable((), move || {
+        let Idle {
+            hover,
+            highlight,
+            bulb,
+            autosave,
+            recording,
+            release,
+            polling,
+            pumping,
+            quit,
+        } = idle.get();
+        after(hover, &app, |app| {
+            app.editor_hover_due();
+        });
+        after(highlight, &app, |app| {
+            app.editor_highlight_due();
+        });
+        after(bulb, &app, |app| {
+            app.editor_bulb_due();
+        });
+        after(autosave, &app, |app| {
+            app.editor_autosave_due();
+        });
+        after(recording, &app, |app| {
+            app.recording_due();
+        });
+        after(release, &app, |app| {
+            app.release_due();
+        });
+        every(polling, &app, App::on_wake);
+        every(
+            pumping.then_some(super::browser::PUMP),
+            &app,
+            App::pump_browser,
+        );
+        rustle::disposable_effect(quit, move || {
+            if quit {
+                WindowHandle::MAIN.close();
+            }
+            || {}
         });
     });
 }
 
-/// Emits what the window of `aside` shows for what `shared` holds.
+/// A task, keyed on `at`, that waits until `at` with a delay and then runs `act` on `app`,
+/// and lets the app follow what that did.
+#[track_caller]
+fn after(at: Option<Instant>, app: &Weak<RefCell<App>>, act: fn(&mut App)) {
+    let app = app.clone();
+    rustle::launched_effect(at, move |scope| async move {
+        let Some(at) = at else {
+            return;
+        };
+        scope
+            .delay(at.saturating_duration_since(Instant::now()))
+            .await;
+        with_app(&app, |app| {
+            act(app);
+            app.flush();
+        });
+    });
+}
+
+/// A task, keyed on `interval`, that runs `act` on `app` each `interval` with a delay
+/// while there is one.
+#[track_caller]
+fn every(interval: Option<Duration>, app: &Weak<RefCell<App>>, act: fn(&mut App)) {
+    let app = app.clone();
+    rustle::launched_effect(interval, move |scope| async move {
+        let Some(interval) = interval else {
+            return;
+        };
+        loop {
+            scope.delay(interval).await;
+            with_app(&app, act);
+        }
+    });
+}
+
+/// Emits what the main window shows for what `shared` holds, under the root that hands the
+/// app the window's pointer and what it reads of the window.
+pub(super) fn main_view(shared: &Shared) {
+    idle_effects(shared);
+    watch_window(shared, None);
+    let tokens = shared.tokens.borrow().clone();
+    let size = shared.sizes.borrow()[0];
+    let cursor = shared.cursor.get();
+    let revision = shared.model.revision();
+    let _ = shared.composed.get();
+    shared.under_operations(None, || {
+        rustle::stack_with(pointer_listener(shared, None), || {
+            pm_components::revision::provide(revision, || {
+                shared
+                    .model
+                    .read(|screen| scene::main_root(screen, size.0, size.1, tokens, cursor));
+            });
+        });
+    });
+}
+
+/// Emits what the window of `aside` shows for what `shared` holds, under the root that
+/// hands the app the window's pointer and what it reads of the window.
 pub(super) fn aside_view(shared: &Shared, aside: Aside) {
+    watch_window(shared, Some(aside));
     let tokens = shared.tokens.borrow().clone();
     let (width, height) = aside_size(shared, aside);
+    let _ = shared.composed.get();
     shared.under_operations(Some(aside), || {
-        shared.model.read(|screen| {
-            scene::aside_root(screen, window_key(Some(aside)), width, height, tokens);
+        rustle::stack_with(pointer_listener(shared, Some(aside)), || {
+            shared.model.read(|screen| {
+                scene::aside_root(screen, window_key(Some(aside)), width, height, tokens);
+            });
         });
     });
 }
@@ -338,17 +485,129 @@ pub(super) fn aside_size(shared: &Shared, aside: Aside) -> (f32, f32) {
     }
 }
 
-/// Lets the platform's input methods compose text into `window`, telling
-/// them the caret's area as it moves.
-pub(super) fn enable_ime(window: &dyn Window) {
-    let data = ImeRequestData::default().with_cursor_area(
-        LogicalPosition::new(0.0, 0.0).into(),
-        LogicalSize::new(0.0, 0.0).into(),
-    );
-    let capabilities = ImeCapabilities::new().with_cursor_area();
-    if let Some(request) = ImeEnableRequest::new(capabilities, data) {
-        let _ = window.request_ime_update(ImeRequest::Enable(request));
+/// Hands the app what the window it is composed in, the main one or `aside`'s, says of
+/// itself, each in an effect keyed on what it says: whether it has the keyboard, how large
+/// it is, how many physical pixels a logical one is, the modifier keys held and, for the
+/// main window, whether the desktop is dark. The window's information is read in a block
+/// of its own, so a change of it composes only that block again.
+fn watch_window(shared: &Shared, aside: Option<Aside>) {
+    let app = shared.app();
+    let dark = rustle::is_system_in_dark_theme();
+    let density = rustle::LOCAL_DENSITY.current().density;
+    rustle::restartable((aside, dark, density), move || {
+        let info = LOCAL_WINDOW_INFO.current();
+        let focused = info.is_window_focused();
+        let size = info.container_size();
+        let held = info.keyboard_modifiers();
+        let told = app.clone();
+        rustle::disposable_effect(focused, move || {
+            with_app(&told, |app| app.window_focused(aside, focused));
+            || {}
+        });
+        let told = app.clone();
+        rustle::disposable_effect((size.width.to_bits(), size.height.to_bits()), move || {
+            if size.width > 0.0 && size.height > 0.0 {
+                with_app(&told, |app| {
+                    app.window_resized(aside, (size.width, size.height));
+                });
+            }
+            || {}
+        });
+        let told = app.clone();
+        rustle::disposable_effect(density.to_bits(), move || {
+            with_app(&told, |app| app.scale_changed(aside, density));
+            || {}
+        });
+        let told = app.clone();
+        rustle::disposable_effect(modifier_keys(held), move || {
+            with_app(&told, |app| app.modifiers_changed(aside, held));
+            || {}
+        });
+        if aside.is_none() {
+            let told = app.clone();
+            rustle::disposable_effect(dark, move || {
+                with_app(&told, |app| app.system_theme_changed(dark));
+                || {}
+            });
+        }
+    });
+}
+
+/// Which of the modifier keys `modifiers` holds, as a value effects can be keyed on.
+fn modifier_keys(modifiers: Modifiers) -> (bool, bool, bool, bool) {
+    (
+        modifiers.shift,
+        modifiers.ctrl,
+        modifiers.alt,
+        modifiers.meta,
+    )
+}
+
+/// A pointer event as the app takes it once the interface has seen it, positions in
+/// logical pixels of the window.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Pointing {
+    /// The pointer moved to this place.
+    Moved((f32, f32)),
+    /// The pointer left the window.
+    Left,
+    /// The wheel or a trackpad scrolled across and down by this much, the way the content moves.
+    Wheel(f32, f32),
+    /// A button went down, or up when not `pressed`.
+    Button(PointerButton, bool),
+}
+
+impl Pointing {
+    /// What the app takes of `event`, or nothing for an event it does not act on.
+    fn of(event: &Heard) -> Option<Self> {
+        let change = event.changes.first()?;
+        let at = (change.position.x, change.position.y);
+        Some(match event.event_type {
+            PointerEventType::Move => Self::Moved(at),
+            PointerEventType::Exit => Self::Left,
+            PointerEventType::Scroll => Self::Wheel(-change.scroll_delta.x, -change.scroll_delta.y),
+            PointerEventType::Press => Self::Button(event.button?, true),
+            PointerEventType::Release => Self::Button(event.button?, false),
+            _ => return None,
+        })
     }
+}
+
+/// The modifier with which the root of the main window, or of `aside`'s, hands the app
+/// every pointer event the window gets, whether something in the window consumed it or
+/// not: in the initial pass the app notes what the keyboard holds before the interface
+/// handles the event, and in the final pass, once the controls have, it carries out its
+/// own part of it.
+#[track_caller]
+fn pointer_listener(shared: &Shared, aside: Option<Aside>) -> Modifier {
+    let app = shared.app();
+    rustle::remember(move || listening(&app, aside)).get()
+}
+
+/// The modifier [`pointer_listener`] remembers, which hands every pointer event of the
+/// window of `aside`, or of the main one, to `app`.
+fn listening(app: &Weak<RefCell<App>>, aside: Option<Aside>) -> Modifier {
+    let mut modifier = Modifier::new().fill_max_size();
+    for event_type in [
+        PointerEventType::Press,
+        PointerEventType::Release,
+        PointerEventType::Move,
+        PointerEventType::Exit,
+        PointerEventType::Scroll,
+    ] {
+        let noted = app.clone();
+        modifier = modifier.on_pointer_event(event_type, PointerEventPass::Initial, move |_| {
+            with_app(&noted, App::note_typing);
+        });
+        let heard = app.clone();
+        modifier = modifier.on_pointer_event(event_type, PointerEventPass::Final, move |event| {
+            let held = event.keyboard_modifiers;
+            if let Some(pointing) = Pointing::of(event) {
+                with_app(&heard, |app| app.pointer_heard(aside, pointing, held));
+            }
+        });
+    }
+    modifier
 }
 
 /// The shadow the main window casts around its frame while it floats.
@@ -358,33 +617,39 @@ fn window_shadow() -> WindowShadow {
         radius: pm_components::FRAME_RADIUS,
         layers: pm_components::WINDOW_SHADOW
             .iter()
-            .map(|(x, y, blur, spread, alpha)| {
+            .map(|shadow| {
                 ShadowLayer::new(
-                    *x,
-                    *y,
-                    blur * pm_components::theme::SHADOW_SOFTNESS,
-                    *spread,
-                    *alpha,
+                    shadow.offset.x,
+                    shadow.offset.y,
+                    shadow.radius,
+                    shadow.spread,
+                    shadow.alpha,
                 )
             })
             .collect(),
     }
 }
 
-/// Whether the event loop runs on Wayland, where the desktop shows a window's shadow beside it.
-fn on_wayland(event_loop: &dyn ActiveEventLoop) -> bool {
-    use winit::raw_window_handle::{HasDisplayHandle, RawDisplayHandle};
-
-    event_loop
-        .owned_display_handle()
-        .display_handle()
-        .is_ok_and(|handle| matches!(handle.as_raw(), RawDisplayHandle::Wayland(_)))
+/// Whether the desktop the event loop will run on shows a window's shadow beside it, as
+/// Wayland does: the platform rustle's loop picks, where a Wayland display is named.
+fn on_wayland() -> bool {
+    cfg!(target_os = "linux")
+        && ["WAYLAND_DISPLAY", "WAYLAND_SOCKET"]
+            .iter()
+            .any(|name| std::env::var_os(name).is_some_and(|value| !value.is_empty()))
 }
 
 impl App {
-    /// The options the main window opens with, its frame `size` logical pixels across.
-    fn main_options(size: (f32, f32)) -> WindowOptions {
-        let (width, height) = window_frame::with_band(size);
+    /// Readies the app for rustle's loop and the options its main window opens with: the
+    /// renderer's settings, where the frame's shadow goes, and the frame's size, as large
+    /// as it was when the window was last closed or the opening size until it fits the
+    /// screen.
+    fn main_options(&self) -> WindowOptions {
+        pm_components::set_shadow_outside(on_wayland());
+        rustle_wgpu::set_legible_text(false);
+        rustle_wgpu::set_frame_latency(frame_latency());
+        rustle::set_pixel_rounding(rustle::PixelRounding::Logical);
+        let (width, height) = window_frame::with_band(self.opening_frame);
         WindowOptions {
             title: "Pandemonium".to_owned(),
             size: (width, height),
@@ -401,66 +666,171 @@ impl App {
         }
     }
 
-    /// Composes again when anything asked for it since the last time, the screen
-    /// changed or focus is kept on another control than when the windows were last
-    /// composed, and runs what follows a composed frame. A change of the screen alone
-    /// is composed through the screen's own state, without invalidating everything, so
-    /// a change that only resized panels leaves the screen's revision and the regions
-    /// whose room did not change keep what they emitted.
-    pub(super) fn flush(&mut self) {
-        let focus = self.focus.current();
-        let forced = std::mem::take(&mut self.recompose)
-            | self.shell.take_deferred()
-            | (focus != self.composed_focus);
-        if forced || self.dirty.replace(false) {
-            let started = self.timings.start();
-            if forced {
-                self.shell.invalidate();
-            }
-            self.composed_focus = focus;
-            self.shell.wake();
-            self.focus.settle(asides::is_aside);
-            let painted = self.timings.start();
-            self.timings.frame(started, painted, true);
+    /// Takes in the main window once rustle opened it, the first time the app is woken
+    /// after that: whether the desktop shows the frame's shadow beside the window, the
+    /// window fitted to its screen when no size was kept, and the fonts the renderer found.
+    fn window_opened(&mut self) {
+        let port = NativePort::new(WindowHandle::MAIN);
+        if self.opened || !port.is_open() {
+            return;
         }
-        self.after_compose();
-    }
-
-    /// Opens the main window on rustle once the platform can make surfaces.
-    fn open(&mut self, event_loop: &dyn ActiveEventLoop) {
-        pm_components::set_shadow_outside(on_wayland(event_loop));
-        rustle_wgpu::set_legible_text(false);
-        rustle_wgpu::set_frame_latency(frame_latency());
-        rustle::set_pixel_rounding(rustle::PixelRounding::Logical);
-        rustle::set_close_handler(|| false);
-        let size = Self::opening_size(event_loop);
-        let shared = self.shell.shared.clone();
-        self.shell.set_size(None, window_frame::with_band(size));
-        let Some(proxy) = self.shell.proxy.clone() else {
-            fail_to_start("no event loop to open a window in");
-        };
-        let mut host = Host::new(move || root(&shared), Self::main_options(size), proxy);
-        host.can_create_surfaces(event_loop);
-        if let Some(error) = host.error() {
-            fail_to_start(&format!("could not open a window: {error}"));
-        }
-        let Some(window) = host.window().cloned() else {
-            fail_to_start("could not open a window");
-        };
+        self.opened = true;
         crate::startup::mark("window-created");
-        *self.shell.host.borrow_mut() = Some(host);
-        self.system_appearance = appearance(window.theme());
-        enable_ime(&*window);
-        let port: Rc<dyn Port> = Rc::new(NativePort::new(window, WindowHandle::MAIN));
-        self.shell.set_size(None, port.logical_size());
-        self.window = Some(port);
-        self.apply_appearance();
+        if pm_components::title_bar::FRAMELESS && port.floats() {
+            let outside = WindowHandle::MAIN.shadow_band(pm_components::SHADOW_MARGIN) == 0.0;
+            if outside != pm_components::shadow_outside() {
+                let frame = window_frame::without_band(port.logical_size());
+                pm_components::set_shadow_outside(outside);
+                let (width, height) = window_frame::with_band(frame);
+                WindowHandle::MAIN.set_size(rustle::Size::new(width, height));
+            }
+        }
+        if self.fit_to_screen
+            && let Some(screen) = WindowHandle::MAIN.screen_size()
+        {
+            let (width, height) =
+                window_frame::with_band(window_frame::without_band((screen.width, screen.height)));
+            WindowHandle::MAIN.set_size(rustle::Size::new(width, height));
+        }
         let (all, mono) = pm_components::theme::font_families();
         self.model
             .update(|screen| *screen = std::mem::take(screen).with_fonts(all, mono));
         self.recompose = true;
-        self.flush();
         crate::startup::mark("renderer-ready");
+    }
+
+    /// What rustle's external handler runs whenever the loop is woken for the app: drains
+    /// what woke it. The agents' work and the servers' answers are taken in and what the
+    /// reader asked of them delivered; the app catches up with an event the interface
+    /// finished handling, and with a frame drawn; then it follows what that changed.
+    pub(super) fn on_wake(&mut self) {
+        self.window_opened();
+        self.work.discover();
+        self.work.poll(&self.model);
+        if self.model.read(Screen::has_outbox) {
+            self.deliver();
+        }
+        if std::mem::take(&mut self.event_pending) {
+            self.after_interface(None, |_| {});
+        } else if std::mem::take(&mut self.claimed).acted {
+            self.recompose = true;
+        }
+        if std::mem::take(&mut self.frame_pending)
+            && self.shell.shared.framed_focus.get() == self.focus.current()
+        {
+            self.focus.settle(asides::is_aside);
+            self.browsing = self.browser_tick();
+        }
+        self.flush();
+    }
+
+    /// How long until the view is due to be saved, once typing paused, if a save waits.
+    fn view_save_wait(&self) -> Option<Duration> {
+        self.view_save_due
+            .map(|due| due.saturating_duration_since(Instant::now()))
+    }
+
+    /// Pumps the browser's pages, as their effect does at its interval while they are shown.
+    fn pump_browser(&mut self) {
+        self.browsing = self.browser_tick();
+        self.flush();
+    }
+
+    /// What follows each change of the screen, as the root's effect keyed on the screen's
+    /// generation runs it: the rename box's focus, the settings the screen asked for, what
+    /// the reader asked of the agents and the folders, the settings written and the view's
+    /// save put off until typing pauses, the place recorded, the field the reader left, the
+    /// windows beside the main one followed and the browser's work looked at.
+    pub(super) fn screen_changed(&mut self) {
+        self.settle_rename_focus();
+        if self.model.read(Screen::editor_settings_wanted) {
+            let settings = self.saved_editor.clone();
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).with_editor_settings(settings));
+        }
+        if self.model.read(Screen::window_settings_wanted) {
+            let settings = self.saved_window.clone();
+            let (all, mono) = pm_components::theme::font_families();
+            self.model.update(|screen| {
+                *screen = std::mem::take(screen)
+                    .with_window_settings(settings)
+                    .with_fonts(all, mono);
+            });
+            self.work.show_release(&self.model);
+        }
+        if self.model.read(Screen::has_outbox) {
+            self.deliver();
+        }
+        self.defer_view_save();
+        self.persist_window();
+        self.persist_editor();
+        if self.model.read(Screen::place_unrecorded) {
+            self.model
+                .update(|screen| *screen = std::mem::take(screen).with_place_recorded());
+        }
+        self.tell_field_left();
+        self.sync_asides();
+        self.browsing = self.browser_tick();
+        self.flush();
+    }
+
+    /// Says what the app waits for while it is idle, for the root's effects: each thing that
+    /// waits on time (and what of it is due now is done), how often the agents' work is to
+    /// be looked at, whether the browser's pages are pumped, and whether the app quits.
+    fn publish_idle(&mut self) {
+        let waiting = self.model.read(|screen| screen.waiting()) || self.work.busy();
+        let polling = if self.work.hearing() {
+            Some(Duration::from_millis(2))
+        } else if waiting {
+            Some(Duration::from_millis(50))
+        } else {
+            None
+        };
+        let idle = Idle {
+            hover: self.editor_hover_due(),
+            highlight: self.editor_highlight_due(),
+            bulb: self.editor_bulb_due(),
+            autosave: self.editor_autosave_due(),
+            recording: self.recording_due(),
+            release: self.release_due(),
+            polling,
+            pumping: self.browsing,
+            quit: self.closing || self.model.read(Screen::quitting),
+        };
+        self.shell.set_idle(idle);
+    }
+
+    /// Notes a frame rustle drew taking `timing`, so the app is caught up with it when it
+    /// is next woken.
+    pub(super) fn frame_drawn(&mut self, timing: rustle::FrameTiming) {
+        self.frame_composed();
+        self.timings.frame(timing);
+    }
+
+    /// Notes that the windows were composed and laid out, so the app is caught up with
+    /// the frame when it is next woken: rustle's focus taken in once the frame shows the
+    /// control focus is kept on.
+    pub(super) fn frame_composed(&mut self) {
+        self.frame_pending = true;
+    }
+
+    /// Composes every window again when anything asked for it since the last time or
+    /// focus is kept on another control than when they were last composed, and runs
+    /// what follows a composed frame with what was laid out last. A change of the screen
+    /// alone is composed through the screen's own state, without composing everything,
+    /// so a change that only resized panels leaves the screen's revision and the regions
+    /// whose room did not change keep what they emitted.
+    pub(super) fn flush(&mut self) {
+        let focus = self.focus.current();
+        let forced = std::mem::take(&mut self.recompose) | (focus != self.composed_focus);
+        if forced || self.dirty.replace(false) {
+            if forced {
+                self.shell.invalidate();
+            }
+            self.composed_focus = focus;
+        }
+        self.after_compose();
+        self.publish_idle();
     }
 
     /// What the app does after the interface composed and laid out a frame:
@@ -471,33 +841,34 @@ impl App {
         self.fit_terminal();
         let reaching = self.reaching() || self.reaching_terminal_link();
         let browser_cursor = self.browser_cursor();
-        let Some(window) = self.window.clone() else {
+        if self.window.is_none() {
             return;
-        };
+        }
         let model = self.model.clone();
         model.read(|state| {
             if std::mem::take(&mut self.focus_terminal) {
-                self.focus.focus(pm_pages::TERMINAL_BODY);
+                self.focus
+                    .focus(Target::Terminal(TerminalEvent::TerminalBody));
             }
             if std::mem::take(&mut self.focus_browser_address) {
-                self.focus.focus(pm_components::browser::BROWSER_ADDRESS);
+                self.focus
+                    .focus(Target::Browser(BrowserEvent::BrowserAddress));
             }
             if std::mem::take(&mut self.focus_filter) {
-                self.focus.focus(pm_components::listing::LISTING_FILTER);
+                self.focus.focus(Target::Editor(EditorEvent::ListingFilter));
             }
             Self::give_back_focus(&mut self.refocus, &self.focus, self.work.resuming());
             let starting = state.is_starting();
             if starting && !self.autofocused {
-                self.focus.focus(pm_pages::PROMPT);
+                self.focus.focus(Target::Composer(ComposerEvent::Prompt));
             }
             self.autofocused = starting;
             let naming = state.is_naming();
             if naming && !self.naming {
-                self.focus.focus(pm_components::tree_actions::ENTRY_FIELD);
+                self.focus.focus(Target::Tree(TreeEvent::EntryField));
             }
             self.naming = naming;
         });
-        self.tell_ime_area(&*window);
         let cursor = match self.sash_drag {
             Some((.., pm_components::sash::Grows::Up)) => Some(CursorIcon::RowResize),
             Some(_) => Some(CursorIcon::ColResize),
@@ -518,80 +889,35 @@ impl App {
         }
     }
 
-    /// Tells `window` where its input method's candidates go: at the caret of
-    /// the code editor, found where its lines were drawn, while it has the
-    /// keyboard; otherwise at the caret the interface reports, which a window
-    /// rustle drives places itself.
-    fn tell_ime_area(&mut self, window: &dyn Port) {
-        let editor = self
+    /// Where the input method's candidates go for the code editor while it has the
+    /// keyboard: at its caret, found where its lines were drawn, in the main window's
+    /// logical pixels.
+    pub(super) fn editor_caret_area(&self) -> Option<rustle::Rect> {
+        let id = self
             .focus
             .current()
-            .filter(|id| *id == pm_components::open_files::EDITOR_FIELD)
-            .and_then(|id| {
-                let caret = self
-                    .model
-                    .read(|screen| screen.field(id).map(|field| field.to_shown(field.caret())))?;
-                let rect = self.code_lines().caret_rect(id, caret)?;
-                let band = pm_components::shadow_margin();
-                Some(rustle::Rect::new(
-                    rustle::Offset::new(rect.origin.x + band, rect.origin.y + band),
-                    rect.size,
-                ))
-            });
-        let rect = match editor {
-            Some(rect) => rect,
-            None if window.native().is_some() => return,
-            None => match self.shell.ime_area(self.on_aside) {
-                Some(rect) => rect,
-                None => return,
-            },
-        };
-        let area = (
-            rect.origin.x,
-            rect.origin.y,
-            rect.size.width,
-            rect.size.height,
-        );
-        if self.ime_area != Some(area) {
-            self.ime_area = Some(area);
-            window.set_ime_area(area);
-        }
+            .filter(|id| *id == Target::Editor(EditorEvent::EditorField))?;
+        let caret = self
+            .model
+            .read(|screen| screen.field(id).map(|field| field.to_shown(field.caret())))?;
+        let rect = self.code_lines().caret_rect(id, caret)?;
+        let band = pm_components::shadow_margin();
+        Some(rustle::Rect::new(
+            Offset::new(rect.origin.x + band, rect.origin.y + band),
+            rect.size,
+        ))
     }
 
-    /// Which window beside the main one `id` is, if it is one.
-    fn aside_of_window(&self, id: WindowId) -> Option<Aside> {
-        Aside::ALL.into_iter().find(|aside| {
-            self.shell
-                .handle_of(*aside)
-                .and_then(|handle| handle.native())
-                .is_some_and(|window| window.id() == id)
-        })
-    }
-
-    /// Whether `id` names the main window.
-    fn is_main_window(&self, id: WindowId) -> bool {
-        self.window
-            .as_ref()
-            .is_some_and(|window| window.native().is_some_and(|native| native.id() == id))
-    }
-
-    /// Carries out `input` of the main window, or of `aside`'s, once the
-    /// interface has seen it: the app's own logic against the window it
-    /// happened in, the files the interface took, and a frame composed again
-    /// for what changed.
-    pub(super) fn after_interface(&mut self, aside: Option<Aside>, input: Input) {
+    /// Carries out `act`, the app's part of an event of the main window, or of `aside`'s,
+    /// once the interface has seen it, against the window it happened in; then catches the
+    /// screen up with what the interface did to it (the text typed, the scrolls) and runs
+    /// what follows a frame, composing again when the keyboard moved.
+    pub(super) fn after_interface(&mut self, aside: Option<Aside>, act: impl FnOnce(&mut Self)) {
         self.follow_typing();
         let focus = self.focus_before_event;
         match aside {
-            Some(aside) => self.aside_input(aside, input),
-            None => {
-                if matches!(input, Input::Focused(true))
-                    && self.focus.current().is_some_and(super::asides::is_aside)
-                {
-                    self.focus.clear();
-                }
-                self.handle_input(input);
-            }
+            Some(aside) => self.in_aside(aside, act),
+            None => act(self),
         }
         self.claimed = Claims::default();
         self.follow_scrolls();
@@ -601,30 +927,99 @@ impl App {
         self.flush();
     }
 
-    /// Carries out `input` of the window standing as the main one: the pointer, the keyboard and the window itself.
-    pub(super) fn handle_input(&mut self, input: Input) {
-        let Some(window) = self.window.clone() else {
+    /// Carries out an event of a window that the interface does not handle itself, such as
+    /// the window taking the keyboard or being resized: noted, carried out by `act` and
+    /// caught up with as [`after_interface`](Self::after_interface) does.
+    fn window_event(&mut self, aside: Option<Aside>, act: impl FnOnce(&mut Self)) {
+        self.note_typing();
+        self.after_interface(aside, act);
+    }
+
+    /// The window of `aside`, or the main one, took the keyboard (`focused`) or lost it:
+    /// taking it leaves any field of another window.
+    fn window_focused(&mut self, aside: Option<Aside>, focused: bool) {
+        self.window_event(None, |app| {
+            if !focused {
+                return;
+            }
+            let held = app.focus.current();
+            let elsewhere = match aside {
+                None => held.is_some_and(asides::is_aside),
+                Some(aside) => held.is_some_and(|id| !aside.owns(id)),
+            };
+            if elsewhere {
+                app.focus.clear();
+            }
+        });
+    }
+
+    /// The window of `aside`, or the main one, is now `size` logical pixels across: the
+    /// windows are laid out for it, and the main window's size kept for the next launch.
+    fn window_resized(&mut self, aside: Option<Aside>, size: (f32, f32)) {
+        self.window_event(None, |app| {
+            app.shell.set_size(aside, size);
+            if aside.is_none()
+                && app.keeps_to_disk
+                && let Some(window) = app.window.clone()
+            {
+                Self::remember_size(&*window, size);
+            }
+        });
+    }
+
+    /// The window of `aside`, or the main one, now has `scale` physical pixels to a logical one.
+    fn scale_changed(&mut self, aside: Option<Aside>, scale: f32) {
+        if aside.is_none() {
+            self.scale = scale;
+        }
+    }
+
+    /// The modifier keys `modifiers` are now held, as the window of `aside`, or the main
+    /// one, says.
+    fn modifiers_changed(&mut self, aside: Option<Aside>, modifiers: Modifiers) {
+        if modifiers == self.modifiers {
             return;
-        };
+        }
+        self.window_event(aside, |app| app.hold_modifiers(modifiers));
+    }
+
+    /// Holds `modifiers`, and follows what they change: the editor's and the shell's links
+    /// that reach somewhere while a modifier is held.
+    fn hold_modifiers(&mut self, modifiers: Modifiers) {
+        self.modifiers = modifiers;
+        self.editor_modifiers_changed();
+        self.reach_terminal_link();
+    }
+
+    /// The desktop is now dark, or light when not `dark`: the windows are drawn as it
+    /// asks unless their own settings say otherwise.
+    fn system_theme_changed(&mut self, dark: bool) {
+        self.window_event(None, |app| {
+            app.system_appearance = super::appearance(dark);
+            app.apply_appearance();
+        });
+    }
+
+    /// Carries out `pointing`, a pointer event of the window of `aside`, or of the main one,
+    /// with `held` modifier keys, once the interface has handled it.
+    fn pointer_heard(&mut self, aside: Option<Aside>, pointing: Pointing, held: Modifiers) {
+        if held != self.modifiers {
+            self.hold_modifiers(held);
+        }
+        self.after_interface(aside, |app| app.pointing(pointing));
+    }
+
+    /// Carries out `pointing` against the window standing as the main one: the pointer
+    /// folded in, the browser told, the wheel scrolling what the interface does not, and
+    /// the buttons that go back and forward stepping through history.
+    fn pointing(&mut self, pointing: Pointing) {
         let band = if self.on_aside.is_none() {
             pm_components::shadow_margin()
         } else {
             0.0
         };
-        match input {
-            Input::Close => self.closing = self.close_window(),
-            Input::Focused(_) => {}
-            Input::Theme(appearance) => {
-                self.system_appearance = appearance;
-                self.apply_appearance();
-            }
-            Input::Resized(logical) => {
-                self.shell.set_size(self.on_aside, logical);
-                if self.on_aside.is_none() && self.keeps_to_disk {
-                    Self::remember_size(&*window);
-                }
-            }
-            Input::Moved(position) => {
+        match pointing {
+            Pointing::Moved(position) => {
                 let received = self.timings.start();
                 let at = (position.0 - band, position.1 - band);
                 self.pointer(PointerEvent::Moved(at.0, at.1));
@@ -633,28 +1028,22 @@ impl App {
                     self.timings.pointer(received);
                 }
             }
-            Input::Left => self.pointer(PointerEvent::Left),
-            Input::Wheel(across, down) => {
+            Pointing::Left => self.pointer(PointerEvent::Left),
+            Pointing::Wheel(across, down) => {
                 if self.browser_wheel(across, down) {
                     return;
                 }
                 self.scroll(-down);
             }
-            Input::Button(button, pressed, position) => {
-                let at = (position.0 - band, position.1 - band);
-                if self.pointer.position != Some(at) {
-                    self.pointer(PointerEvent::Moved(at.0, at.1));
-                }
+            Pointing::Button(button, pressed) => {
                 self.refocus = None;
                 let button = match button {
-                    MouseButton::Left => Button::Left,
-                    MouseButton::Right => Button::Right,
-                    MouseButton::Back | MouseButton::Forward => {
-                        if pressed
-                            && !(self.on_aside.is_none()
-                                && self.browser_history(button == MouseButton::Back))
-                        {
-                            self.step_through_history(button == MouseButton::Back);
+                    PointerButton::Primary => Button::Left,
+                    PointerButton::Secondary => Button::Right,
+                    PointerButton::Back | PointerButton::Forward => {
+                        let back = button == PointerButton::Back;
+                        if pressed && !(self.on_aside.is_none() && self.browser_history(back)) {
+                            self.step_through_history(back);
                         }
                         return;
                     }
@@ -667,227 +1056,60 @@ impl App {
                     PointerEvent::Released(button)
                 });
             }
-            Input::Preedit(composing) => {
-                if self.on_aside.is_none() {
-                    self.timings.keyboard();
-                }
-                self.compose(composing);
-            }
-            Input::Commit(committed) => {
-                if self.on_aside.is_none() {
-                    self.timings.keyboard();
-                }
-                if self.commit_to_terminal(&committed) || self.commit_to_browser(&committed) {
-                } else if let Some(id) = self.focus.current()
-                    && id == pm_components::open_files::EDITOR_FIELD
-                {
-                    self.edit_field(id, Edit::Paste(committed));
-                }
-            }
-            Input::Modifiers(modifiers) => {
-                self.modifiers = modifiers;
-                self.editor_modifiers_changed();
-                self.reach_terminal_link();
-            }
-            Input::Key(pressed) => {
-                self.refocus = None;
-                if pressed && self.on_aside.is_none() {
-                    self.timings.keyboard();
-                }
-            }
         }
     }
 
-    /// What the app does each time the event loop comes to rest: its waiting
-    /// work, the windows beside the main one opened and closed as the state
-    /// says, and a frame composed for what changed. Says how the loop is to
-    /// wait and whether the app is to quit.
-    pub(super) fn come_to_rest(&mut self) -> (ControlFlow, bool) {
-        let rest = self.rest();
-        self.tell_field_left();
-        for aside in self.shell.take_closed() {
-            self.model
-                .update(|state| *state = aside.closed(std::mem::take(state)));
+    /// Notes a key of the window, before the interface handles it: what the keyboard
+    /// holds, so the screen is caught up with what the key typed once the interface has
+    /// handled it, which the app does when it is next woken. `pressed` says whether the key
+    /// went down.
+    pub(super) fn key_heard(&mut self, pressed: bool) {
+        if !self.event_pending {
+            self.note_typing();
+            self.event_pending = true;
+            (self.loop_wake)();
         }
-        self.sync_asides();
-        self.flush();
-        rest
+        self.refocus = None;
+        if pressed && self.on_aside.is_none() {
+            self.timings.keyboard();
+        }
+    }
+
+    /// Notes what an input method did in the window, while the interface hands it to the
+    /// area holding the keyboard, so the app catches up with it when it is next woken.
+    pub(super) fn input_method_heard(&mut self) {
+        if !self.event_pending {
+            self.note_typing();
+            self.event_pending = true;
+            (self.loop_wake)();
+        }
+        if self.on_aside.is_none() {
+            self.timings.keyboard();
+        }
+    }
+
+    /// The desktop or the window's close button asks the main window to close: says
+    /// whether it closes now, which it does once the app quits or nothing is left to ask first.
+    pub(super) fn main_close_requested(&mut self) -> bool {
+        if self.shell.shared.idle.get().quit {
+            return true;
+        }
+        self.window_event(None, |app| app.closing = app.close_window());
+        self.closing
+    }
+
+    /// The desktop or the window's close button asks the window of `aside` to close, which
+    /// closes what it shows.
+    pub(super) fn aside_close_requested(&mut self, aside: Aside) {
+        self.window_event(None, |app| {
+            app.model
+                .update(|state| *state = aside.closed(std::mem::take(state)));
+        });
     }
 
     /// The tokens for the theme and appearance the window is drawn in.
     pub(super) fn tokens(&self) -> Tokens {
         Tokens::new(&self.family, self.appearance)
-    }
-}
-
-/// An event of a window, as the app's logic takes it once the interface has
-/// seen it: positions and sizes in logical pixels of the window's surface.
-#[derive(Clone, Debug, PartialEq)]
-pub(super) enum Input {
-    /// The desktop asked the window to close.
-    Close,
-    /// The window took the keyboard, or lost it.
-    Focused(bool),
-    /// The desktop changed between light and dark.
-    Theme(Appearance),
-    /// The window's surface is now this wide and tall.
-    Resized((f32, f32)),
-    /// The pointer moved to this place.
-    Moved((f32, f32)),
-    /// The pointer left the window.
-    Left,
-    /// The wheel or a trackpad scrolled across and down by this much.
-    Wheel(f32, f32),
-    /// A button went down, or up when not `pressed`, at this place.
-    Button(MouseButton, bool, (f32, f32)),
-    /// The input method is composing this, or ended composing when it is empty.
-    Preedit(String),
-    /// The input method produced this text.
-    Commit(String),
-    /// These modifier keys are now held.
-    Modifiers(Modifiers),
-    /// A key went down, or up when not `pressed`; the root's key handler acts on it.
-    Key(bool),
-}
-
-/// The app's input for `event` of the window `port`, with `modifiers` held,
-/// or nothing for an event the app does not act on.
-fn input_of(event: &WindowEvent, port: &dyn Port) -> Option<Input> {
-    let scale = port.scale();
-    let logical = |x: f64, y: f64| (x as f32 / scale, y as f32 / scale);
-    Some(match event {
-        WindowEvent::CloseRequested => Input::Close,
-        WindowEvent::Focused(focused) => Input::Focused(*focused),
-        WindowEvent::ThemeChanged(theme) => Input::Theme(appearance(Some(*theme))),
-        WindowEvent::SurfaceResized(size) => {
-            let size = size.to_logical::<f32>(f64::from(scale));
-            Input::Resized((size.width, size.height))
-        }
-        WindowEvent::ScaleFactorChanged { .. } => Input::Resized(port.logical_size()),
-        WindowEvent::PointerMoved { position, .. } => Input::Moved(logical(position.x, position.y)),
-        WindowEvent::PointerLeft { .. } => Input::Left,
-        WindowEvent::MouseWheel { delta, .. } => {
-            let (across, down) = match delta {
-                MouseScrollDelta::LineDelta(across, down) => {
-                    (across * WHEEL_LINE, down * WHEEL_LINE)
-                }
-                MouseScrollDelta::PixelDelta(moved) => logical(moved.x, moved.y),
-                _ => (0.0, 0.0),
-            };
-            Input::Wheel(across, down)
-        }
-        WindowEvent::PointerButton {
-            state,
-            button,
-            position,
-            ..
-        } => Input::Button(
-            button.clone().mouse_button()?,
-            *state == ElementState::Pressed,
-            logical(position.x, position.y),
-        ),
-        WindowEvent::Ime(Ime::Preedit(composing, _)) => Input::Preedit(composing.clone()),
-        WindowEvent::Ime(Ime::Disabled) => Input::Preedit(String::new()),
-        WindowEvent::Ime(Ime::Commit(committed)) => Input::Commit(committed.clone()),
-        WindowEvent::ModifiersChanged(changed) => {
-            Input::Modifiers(keys::modifiers(changed.state()))
-        }
-        WindowEvent::KeyboardInput { event, .. } => {
-            Input::Key(event.state == winit::event::ElementState::Pressed)
-        }
-        _ => return None,
-    })
-}
-
-/// The app as the event loop drives it, shared with the handlers its
-/// interface runs.
-pub struct Running(Rc<RefCell<App>>);
-
-impl Running {
-    /// The event loop's handler for `app`.
-    pub fn new(app: App) -> Self {
-        let app = Rc::new(RefCell::new(app));
-        app.borrow().shell.shared.attach(&app);
-        Self(app)
-    }
-
-    /// The interface of every window, held apart from the app so the
-    /// handlers an event runs can reach the app.
-    fn host(&self) -> Rc<RefCell<Option<Host>>> {
-        Rc::clone(&self.0.borrow().shell.host)
-    }
-}
-
-impl ApplicationHandler for Running {
-    /// Opens the main window on rustle once the platform is ready.
-    fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
-        let host = self.host();
-        if let Some(host) = host.borrow_mut().as_mut() {
-            host.can_create_surfaces(event_loop);
-            return;
-        }
-        self.0.borrow_mut().open(event_loop);
-    }
-
-    /// Lets the interface run what woke the loop, then the app's work.
-    fn proxy_wake_up(&mut self, _: &dyn ActiveEventLoop) {
-        let host = self.host();
-        if let Some(host) = host.borrow_mut().as_mut() {
-            host.wake();
-        }
-        self.0.borrow_mut().after_compose();
-    }
-
-    /// Hands each event of a window to the interface, then to the app's
-    /// own logic, against the window it happened in.
-    fn window_event(&mut self, event_loop: &dyn ActiveEventLoop, id: WindowId, event: WindowEvent) {
-        let (aside, main) = {
-            let app = self.0.borrow();
-            (app.aside_of_window(id), app.is_main_window(id))
-        };
-        let closing = matches!(event, WindowEvent::CloseRequested);
-        self.0.borrow_mut().note_typing();
-        let host = self.host();
-        if !closing && let Some(host) = host.borrow_mut().as_mut() {
-            host.window_event(event_loop, id, event.clone());
-        }
-        let mut app = self.0.borrow_mut();
-        let port = match aside {
-            Some(aside) => app.shell.port_of(aside),
-            None => app.window.clone(),
-        };
-        let input = port.and_then(|port| input_of(&event, &*port));
-        if (aside.is_some() || main)
-            && let Some(input) = input
-        {
-            app.after_interface(aside, input);
-        } else if std::mem::take(&mut app.claimed).acted || app.shell.take_deferred() {
-            app.recompose = true;
-            app.flush();
-        }
-    }
-
-    /// Does the app's waiting work and decides when the loop wakes next.
-    fn about_to_wait(&mut self, event_loop: &dyn ActiveEventLoop) {
-        let host = self.host();
-        if let Some(host) = host.borrow_mut().as_mut() {
-            host.about_to_wait(event_loop);
-        }
-        let (flow, exit) = self.0.borrow_mut().come_to_rest();
-        event_loop.set_control_flow(flow);
-        if exit {
-            event_loop.exit();
-        }
-    }
-}
-
-impl Drop for Running {
-    /// Captures the final draft and waits for its ordered background write before the app leaves.
-    fn drop(&mut self) {
-        let mut app = self.0.borrow_mut();
-        app.persist_view();
-        app.view_writer.flush();
-        app.browser_shutdown();
     }
 }
 

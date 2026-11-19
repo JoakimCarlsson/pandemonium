@@ -1,5 +1,7 @@
 //! What the screen does for writing code: the file shown edited as its language says, what its language server answers, and the languages installed on this machine.
 
+use pm_components::areas::SidebarEvent;
+use pm_components::target::Target;
 use pm_protocol::{Completion, Diagnostic, ExtensionInfo, Hover, Position};
 
 use crate::screen::Screen;
@@ -213,12 +215,12 @@ impl Screen {
     }
 
     /// The screen with the menu of the session shown pressed on its row `row`.
-    pub fn session_command(self, row: pm_components::focus::FocusId) -> Self {
+    pub fn session_command(self, row: pm_components::target::Target) -> Self {
         self.in_workspace(|state| state.session_command(row))
     }
 
     /// The control answering what the agent of the session shown asks with an answer of `verdict`, when it asks.
-    pub fn answer_of(&self, verdict: pm_harness::Verdict) -> Option<pm_components::focus::FocusId> {
+    pub fn answer_of(&self, verdict: pm_harness::Verdict) -> Option<pm_components::target::Target> {
         match self {
             Self::Workspace(state) => state.answer_of(verdict),
         }
@@ -265,13 +267,11 @@ impl Screen {
     }
 
     /// The button that starts a new session in the project shown, when there is a project.
-    pub fn new_session_button(&self) -> Option<pm_components::focus::FocusId> {
+    pub fn new_session_button(&self) -> Option<pm_components::target::Target> {
         match self {
-            Self::Workspace(state) if !state.projects.is_empty() => {
-                Some(pm_components::focus::FocusId(
-                    pm_components::state::NEW_IN_BASE + state.current_project() as u64,
-                ))
-            }
+            Self::Workspace(state) if !state.projects.is_empty() => Some(Target::Sidebar(
+                SidebarEvent::NewIn(state.current_project()),
+            )),
             _ => None,
         }
     }
@@ -604,7 +604,7 @@ impl Screen {
     }
 
     /// The position among the open files of the file whose lines in the excerpts the element `id` holds.
-    pub fn excerpt_owner_of(&self, id: pm_components::focus::FocusId) -> Option<usize> {
+    pub fn excerpt_owner_of(&self, id: pm_components::target::Target) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.excerpt_owner_of(id),
         }
@@ -663,7 +663,7 @@ impl Screen {
     }
 
     /// The screen with the way of matching `which` names switched.
-    pub fn find_toggled(self, which: pm_components::focus::FocusId) -> Self {
+    pub fn find_toggled(self, which: pm_components::target::Target) -> Self {
         self.in_workspace(|state| state.find_toggled(which))
     }
 

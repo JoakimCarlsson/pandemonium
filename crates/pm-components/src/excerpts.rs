@@ -1,9 +1,13 @@
 //! Lines of files shown as one document, one under another, each edited in place in the file it comes from: the lines around the hits of a search, the lines a set of changes touched, or a file set against one of the states it was saved in.
 
-use crate::events::reduce;
+use crate::areas::EditorEvent;
+use crate::areas::SearchEvent;
+use crate::button::Variant;
+use crate::kit::{self, Frame};
+
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{Icon, phosphor};
 
 use std::cell::RefCell;
@@ -12,14 +16,13 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::marked::{Mark, Paint};
 use crate::theme::{Role, Tone};
 use pm_protocol::Location;
 use rustle::{CursorIcon, Modifier};
 
 use crate::file_icon::file_icon;
-use crate::open_files::{Contents, EDITOR_FIELD, Viewer};
+use crate::open_files::{Contents, Viewer};
 use crate::parts::glyph;
 use crate::sample::DiffLine;
 use crate::size::Size;
@@ -28,36 +31,6 @@ use crate::viewer::{
     BREAKPOINT_CELL, Beside, breakpoint_cell, document_row, file_line, line_marks,
 };
 use crate::{Button, Tally};
-
-/// The tab of the excerpts in a pane's strip.
-pub const TAB_EXCERPTS: FocusId = FocusId(7_410_000);
-
-/// Closes the excerpts.
-pub const EXCERPTS_CLOSE: FocusId = FocusId(7_410_001);
-
-/// Puts the file shown back as it was in the state it is set against.
-pub const EXCERPTS_RESTORE: FocusId = FocusId(7_410_003);
-
-/// Folds every file of the excerpts away, or opens them all when they are all folded.
-pub const EXCERPTS_FOLD_ALL: FocusId = FocusId(7_410_004);
-
-/// The first of the headers that open a file, each following it by the position of the file in the excerpts.
-pub const EXCERPTS_FILE_BASE: u64 = 7_411_000;
-
-/// The first of the boxes holding the lines of a file that is not the one being edited, each following it by the position of the file among the open files; a press on one makes that file the one edited.
-pub const EXCERPT_OWNER_BASE: u64 = 7_412_000;
-
-/// One past the last box holding lines of a file that is not the one being edited.
-const EXCERPT_OWNER_END: u64 = 7_413_000;
-
-/// Takes everything the turn shown changed back out of the files.
-pub const EXCERPTS_UNDO_ALL: FocusId = FocusId(7_410_005);
-
-/// The first of the buttons taking what the turn shown changed back out of one file, each following it by the position of the file in the excerpts.
-pub const EXCERPT_UNDO_BASE: u64 = 7_413_000;
-
-/// One past the last button taking a turn's changes back out of one file.
-const EXCERPT_UNDO_END: u64 = 7_414_000;
 
 /// How many lines are shown on each side of a hit.
 const CONTEXT: usize = 2;
@@ -230,19 +203,19 @@ fn blocks_of(lines: &[usize]) -> Vec<Block> {
     blocks
 }
 
-/// Whether `id` is the box of lines of a file that is not the one being edited.
-pub fn is_excerpt_owner(id: FocusId) -> bool {
-    (EXCERPT_OWNER_BASE..EXCERPT_OWNER_END).contains(&id.0)
-}
-
 /// Whether `id` is something of the excerpts the state handles when it is pressed.
-pub fn is_excerpt_part(id: FocusId) -> bool {
-    id == TAB_EXCERPTS
-        || id == EXCERPTS_CLOSE
-        || id == EXCERPTS_RESTORE
-        || id == EXCERPTS_FOLD_ALL
-        || id == EXCERPTS_UNDO_ALL
-        || (EXCERPTS_FILE_BASE..EXCERPT_UNDO_END).contains(&id.0)
+pub fn is_excerpt_part(id: Target) -> bool {
+    id == Target::Search(SearchEvent::TabExcerpts)
+        || id == Target::Search(SearchEvent::ExcerptsClose)
+        || id == Target::Search(SearchEvent::ExcerptsRestore)
+        || id == Target::Search(SearchEvent::ExcerptsFoldAll)
+        || id == Target::Search(SearchEvent::ExcerptsUndoAll)
+        || matches!(
+            id,
+            Target::Search(SearchEvent::ExcerptsFile(_))
+                | Target::Search(SearchEvent::ExcerptOwner(_))
+                | Target::Search(SearchEvent::ExcerptUndo(_))
+        )
         || crate::conflict::is_conflict_part(id)
 }
 
@@ -332,11 +305,6 @@ impl WorkspaceState {
         self
     }
 
-    /// Whether the excerpts are open.
-    pub fn excerpts_open(&self) -> bool {
-        self.excerpts.is_some()
-    }
-
     /// The state after the file at `index` among the open files was made the one edited, which is what a press on its lines does.
     pub fn excerpt_file_shown(mut self, index: usize) -> Self {
         if index < self.git.viewers.len() {
@@ -346,10 +314,13 @@ impl WorkspaceState {
     }
 
     /// The position among the open files of the file whose box of lines `id` is.
-    pub fn excerpt_owner_of(&self, id: FocusId) -> Option<usize> {
-        is_excerpt_owner(id)
-            .then(|| (id.0 - EXCERPT_OWNER_BASE) as usize)
-            .filter(|index| *index < self.git.viewers.len())
+    pub fn excerpt_owner_of(&self, id: Target) -> Option<usize> {
+        match id {
+            Target::Search(SearchEvent::ExcerptOwner(index)) if index < self.git.viewers.len() => {
+                Some(index)
+            }
+            _ => None,
+        }
     }
 
     /// Folds the file at `place` among the excerpts away, or opens it when it is folded.
@@ -374,39 +345,38 @@ impl WorkspaceState {
     }
 
     /// Carries out what pressing `id` of the excerpts does.
-    pub(crate) fn excerpts_pressed(mut self, id: FocusId) -> Self {
+    pub(crate) fn excerpts_pressed(mut self, id: Target) -> Self {
         if crate::conflict::is_conflict_part(id) {
             return self.conflict_pressed(id);
         }
-        if id == TAB_EXCERPTS {
+        if id == Target::Search(SearchEvent::TabExcerpts) {
             self.tab = Tab::Excerpts;
             return self;
         }
-        if id == EXCERPTS_CLOSE {
+        if id == Target::Search(SearchEvent::ExcerptsClose) {
             return self.excerpts_closed();
         }
-        if id == EXCERPTS_RESTORE {
+        if id == Target::Search(SearchEvent::ExcerptsRestore) {
             return self.timeline_restored();
         }
-        if id == EXCERPTS_FOLD_ALL {
+        if id == Target::Search(SearchEvent::ExcerptsFoldAll) {
             self.excerpts_folded();
             return self;
         }
-        if id == EXCERPTS_UNDO_ALL {
+        if id == Target::Search(SearchEvent::ExcerptsUndoAll) {
             self.turn_undone(None);
             return self;
         }
-        if (EXCERPT_UNDO_BASE..EXCERPT_UNDO_END).contains(&id.0) {
-            self.turn_undone(Some((id.0 - EXCERPT_UNDO_BASE) as usize));
+        if let Target::Search(SearchEvent::ExcerptUndo(turn)) = id {
+            self.turn_undone(Some(turn));
             return self;
         }
         if let Some(index) = self.excerpt_owner_of(id) {
             return self.excerpt_file_shown(index);
         }
-        if !(EXCERPTS_FILE_BASE..EXCERPT_OWNER_BASE).contains(&id.0) {
+        let Target::Search(SearchEvent::ExcerptsFile(place)) = id else {
             return self;
-        }
-        let place = (id.0 - EXCERPTS_FILE_BASE) as usize;
+        };
         if self.excerpts.as_ref().is_some_and(Excerpts::folds) {
             self.excerpt_file_folded(place);
             return self;
@@ -520,32 +490,25 @@ fn header(
 ) {
     let name = name_of(&file.path);
     let folder = file.path.strip_suffix(name).unwrap_or_default();
-    row_arranged(
+    kit::row(
         Modifier::new()
             .fill_max_width()
             .height(header_height(size))
             .background(theme::color(Role::Surface))
-            .draw_behind(theme::edge(
-                theme::Side::Bottom,
-                1.0,
-                theme::color(Role::Border),
-            ))
-            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .ruled(theme::Side::Bottom)
             .padding_xy(theme::sp(3), 0.0),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
+        2,
         || {
-            row_arranged(
+            kit::row(
                 Modifier::new()
                     .weight(1.0)
                     .clip()
                     .cursor(CursorIcon::Pointer)
                     .control(
-                        FocusId(EXCERPTS_FILE_BASE + position as u64),
-                        reduce(FocusId(EXCERPTS_FILE_BASE + position as u64)),
+                        Target::Search(SearchEvent::ExcerptsFile(position)),
+                        send(Event::Search(SearchEvent::ExcerptsFile(position))),
                     ),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Center,
+                2,
                 || {
                     if excerpts.folds() {
                         glyph(
@@ -559,22 +522,11 @@ fn header(
                         );
                     }
                     file_icon(name, 4.0);
-                    rustle::basic_text(
-                        Modifier::new(),
-                        name,
-                        theme::text_style(13, 1.4)
-                            .font_weight(rustle::FontWeight::MEDIUM)
-                            .color(theme::color(Role::Text))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                    rustle::basic_text(
+                    kit::text(Modifier::new(), name, kit::strong(13, Role::Text));
+                    kit::text(
                         Modifier::new().weight(1.0).clip(),
                         folder,
-                        theme::text_style(12, 1.4)
-                            .color(theme::color(Role::Subtle))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
+                        kit::line(12, Role::Subtle),
                     );
                 },
             );
@@ -584,33 +536,28 @@ fn header(
             match &excerpts.source {
                 Source::Search { .. } => {
                     let hits: usize = file.blocks.iter().map(|block| block.hits.len()).sum();
-                    rustle::basic_text(
+                    kit::text(
                         Modifier::new(),
                         hits.to_string(),
-                        theme::text_style(11, 1.4)
-                            .color(theme::color(Role::Muted))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
+                        kit::line(11, Role::Muted),
                     );
                 }
                 _ => {
                     if let Some(mark) = file.mark {
-                        rustle::basic_text(
+                        kit::text(
                             Modifier::new(),
                             mark,
                             theme::text_style(11, 1.4)
                                 .color(theme::color(mark_tone(mark)))
                                 .max_lines(1),
-                            rustle::TextOverflow::Ellipsis,
                         );
                     }
                     Tally::new(file.tally.0, file.tally.1).size(11).build();
                     if matches!(excerpts.source, Source::Revision { turn: Some(_), .. }) {
                         Button::icon(
                             phosphor::ARROW_COUNTER_CLOCKWISE,
-                            FocusId(EXCERPT_UNDO_BASE + position as u64),
+                            Target::Search(SearchEvent::ExcerptUndo(position)),
                         )
-                        .size(Size::Sm)
                         .tooltip("Take what this turn changed back out of this file")
                         .build();
                     }
@@ -632,16 +579,19 @@ fn mark_tone(mark: &str) -> Role {
 /// Emits the button of the header of a timeline that puts the file back as it was in the state.
 #[track_caller]
 pub(crate) fn restore_button() {
-    Button::new("Restore this version", EXCERPTS_RESTORE)
-        .with_icon(phosphor::CLOCK_COUNTER_CLOCKWISE)
-        .size(Size::Sm)
-        .build();
+    kit::small_button(
+        "Restore this version",
+        Target::Search(SearchEvent::ExcerptsRestore),
+        Variant::Default,
+    )
+    .with_icon(phosphor::CLOCK_COUNTER_CLOCKWISE)
+    .build();
 }
 
 /// What the lines of one open file are drawn with, worked out once for every line of it in view.
 struct Context {
     /// The field whose caret and selection the lines hold.
-    owner: FocusId,
+    owner: Target,
     /// The places find found in the file, and the one chosen.
     found: (Vec<Range<usize>>, Option<usize>),
     /// The brackets paired at the caret.
@@ -686,25 +636,23 @@ fn removed_row(content: &str, settings: &pm_editor::EditorSettings) {
     };
     let kind = theme::code_style(settings.font_size, 1.4).color(theme::color(Role::Muted));
     let shown = crate::diff_syntax::shown(content);
-    row_arranged(
+    kit::row(
         Modifier::new()
             .fill_max_width()
             .height(height)
             .background(theme::color(Tone::from(Role::Danger).alpha(0.12)))
             .clip(),
-        Arrangement::Start,
-        Alignment::Center,
+        0,
         move || {
             rustle::spacer(Modifier::new().width(BREAKPOINT_CELL + 3.0));
             rustle::spacer(numbers.padding_each(0.0, 0.0, theme::sp(3), 0.0));
-            rustle::basic_text(
+            kit::text(
                 Modifier::new()
                     .weight(1.0)
                     .clip()
                     .padding_xy(theme::sp(2), 0.0),
                 shown,
                 kind,
-                rustle::TextOverflow::Ellipsis,
             );
         },
     );
@@ -765,9 +713,9 @@ impl<'a> Drawing<'a> {
         };
         let made = Rc::new(Context {
             owner: if live {
-                EDITOR_FIELD
+                Target::Editor(EditorEvent::EditorField)
             } else {
-                FocusId(EXCERPT_OWNER_BASE + index as u64)
+                Target::Search(SearchEvent::ExcerptOwner(index))
             },
             found: if live {
                 state.find_marks()
@@ -810,13 +758,12 @@ impl<'a> Drawing<'a> {
         };
         let context = self.context(index);
         let owner = context.owner;
-        column_arranged(
+        kit::column(
             Modifier::new()
                 .fill_max_width()
                 .cursor(CursorIcon::Text)
-                .control(owner, reduce(owner)),
-            Arrangement::Start,
-            Alignment::Start,
+                .control(owner, send(Event::pressing(owner))),
+            0,
             || match row {
                 Row::Removed(text) => removed_row(text, &self.settings),
                 Row::Line(line) => self.line(document, index, block, *line, &context),
@@ -880,12 +827,11 @@ impl<'a> Drawing<'a> {
             );
         };
         if hit && self.matcher.is_none() {
-            column_arranged(
+            kit::column(
                 Modifier::new()
                     .fill_max_width()
                     .background(theme::color(Tone::from(Role::Success).alpha(0.12))),
-                Arrangement::Start,
-                Alignment::Start,
+                0,
                 shown,
             );
         } else {
@@ -992,15 +938,10 @@ pub(crate) fn file_list(state: &WorkspaceState, size: Size) {
         }
         Entry::Diff(place) => {
             let file = &excerpts.files[place];
-            column_arranged(
-                Modifier::new().fill_max_width(),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    diff_rows(file);
-                    block_gap();
-                },
-            );
+            kit::column(Modifier::new().fill_max_width(), 0, || {
+                diff_rows(file);
+                block_gap();
+            });
         }
         Entry::Row(place, step, at) => {
             let file = &excerpts.files[place];
@@ -1022,13 +963,12 @@ pub(crate) fn file_list(state: &WorkspaceState, size: Size) {
             gone_block(&excerpts.files[place].blocks[step], &drawing.settings);
         }
     };
-    column_arranged(
+    kit::column(
         Modifier::new()
             .weight(1.0)
             .clip()
             .background(theme::color(Role::Background)),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         || {
             rustle::lazy_list_keyed(
                 Modifier::new().fill_max_width().weight(1.0),
@@ -1054,17 +994,12 @@ pub(crate) const fn header_height(size: Size) -> f32 {
 /// Emits the lines a change took out of a file that is gone, drawn as taken out, with the space under them.
 #[track_caller]
 fn gone_block(block: &Block, settings: &pm_editor::EditorSettings) {
-    column_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            for text in block.removed.iter().flat_map(|(_, lines)| lines.iter()) {
-                removed_row(text, settings);
-            }
-            block_gap();
-        },
-    );
+    kit::column(Modifier::new().fill_max_width(), 0, || {
+        for text in block.removed.iter().flat_map(|(_, lines)| lines.iter()) {
+            removed_row(text, settings);
+        }
+        block_gap();
+    });
 }
 
 /// Emits the excerpts of a search.

@@ -1,15 +1,15 @@
 //! The languages page of the settings window: how the language picked is indented, formatted and read by its server, then every language installed and every one that can be installed, each with the button that installs or removes it.
 
+use crate::target::Target;
 use pm_protocol::ExtensionInfo;
 
-use crate::focus::FocusId;
 use crate::theme::Role;
 
 use crate::extensions::{group, pickable, row};
 use crate::parts::line;
 use crate::settings::Section;
-use crate::settings_ids::LANGUAGE_ROWS;
 use crate::settings_pages::page_rows;
+use crate::settings_rows::LANGUAGE_ROWS;
 use crate::state::WorkspaceState;
 
 impl WorkspaceState {
@@ -21,7 +21,7 @@ impl WorkspaceState {
     }
 
     /// Carries out pressing `id` on the languages page, installing or removing a language, and says whether it was something of it.
-    pub(crate) fn languages_pressed(&mut self, id: FocusId) -> bool {
+    pub(crate) fn languages_pressed(&mut self, id: Target) -> bool {
         let Some(place) = LANGUAGE_ROWS.index_of(id) else {
             return false;
         };
@@ -65,13 +65,13 @@ pub(crate) fn body(state: &WorkspaceState, room: f32) {
 /// Emits the group titled `title` holding a row for each of `members`, a language with the
 /// control that installs or removes it; nothing when there are none.
 #[track_caller]
-fn listed(title: &str, members: &[(&ExtensionInfo, FocusId)]) {
+fn listed(title: &str, members: &[(&ExtensionInfo, Target)]) {
     if members.is_empty() {
         return;
     }
     group(title, || {
         for &(extension, action) in members {
-            rustle::key(action.0, || row(extension, action));
+            rustle::key(action, || row(extension, action));
         }
     });
 }

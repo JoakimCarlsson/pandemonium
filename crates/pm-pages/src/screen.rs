@@ -1,10 +1,11 @@
 //! The workspace screen and the actions and auxiliary windows it exposes.
 
+use pm_components::areas::{ChatEvent, DialogEvent, EditorEvent, GitEvent};
 use pm_components::events::Change;
-use pm_components::focus::FocusId;
+use pm_components::events::Event;
 use pm_components::state::Asked;
-use pm_field::Edit;
-use pm_harness::Event;
+use pm_components::target::Target;
+use pm_harness::Event as HarnessEvent;
 use rustle::TextFieldState;
 
 use crate::workspace::{Outgoing, WorkspaceState, workspace};
@@ -89,55 +90,27 @@ impl Screen {
         }
     }
 
-    /// The screen after `action` was pressed.
-    pub fn after(self, action: FocusId) -> Self {
+    /// The screen after `event`, as the workspace's reducer takes it.
+    pub fn handle(self, event: Event) -> Self {
         match self {
-            Self::Workspace(state) => Self::Workspace(state.after(action)),
+            Self::Workspace(state) => Self::Workspace(state.handle(event)),
         }
     }
 
     /// Whether the field `id` saves what was written in it when the reader leaves it.
-    pub fn saves_on_leaving(id: FocusId) -> bool {
+    pub fn saves_on_leaving(id: Target) -> bool {
         WorkspaceState::saves_on_leaving(id)
     }
 
-    /// The screen after the reader left the field named `id`.
-    pub fn field_left(self, id: FocusId) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.field_left(id)),
-        }
-    }
-
-    /// The screen after `edit` is made to the code editor's field, which `id` names.
-    pub fn edited(self, id: FocusId, edit: Edit) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.edited(id, edit)),
-        }
-    }
-
-    /// The screen after the reader changed the text of the field named `id` through its text field.
-    pub fn field_typed(self, id: FocusId) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.field_typed(id)),
-        }
-    }
-
-    /// The screen after the reader typed `text` into the text field `id` over its selection.
-    pub fn typed(self, id: FocusId, text: &str) -> Self {
-        match self {
-            Self::Workspace(state) => Self::Workspace(state.typed(id, text)),
-        }
-    }
-
     /// The code editor's field, which `id` names, while a text file is shown.
-    pub fn field(&self, id: FocusId) -> Option<&pm_field::Field> {
+    pub fn field(&self, id: Target) -> Option<&pm_field::Field> {
         match self {
             Self::Workspace(state) => state.field(id),
         }
     }
 
     /// The state of the text field `id` names, if it names one other than the code editor's.
-    pub fn text_field(&self, id: FocusId) -> Option<&TextFieldState> {
+    pub fn text_field(&self, id: Target) -> Option<&TextFieldState> {
         match self {
             Self::Workspace(state) => state.text_field(id),
         }
@@ -164,7 +137,10 @@ impl Screen {
                 && at.1 >= rect.origin.y
                 && at.0 < rect.origin.x + rect.size.width
                 && at.1 < rect.origin.y + rect.size.height;
-            pm_components::message_menu::message_of_area(id).filter(|_| inside)
+            match id {
+                Target::Chat(ChatEvent::MessageArea(index)) if inside => Some(index),
+                _ => None,
+            }
         })
     }
 
@@ -183,32 +159,32 @@ impl Screen {
     }
 
     /// Whether `id` names a text field of either screen.
-    pub fn is_field(id: FocusId) -> bool {
+    pub fn is_field(id: Target) -> bool {
         WorkspaceState::is_field(id)
     }
 
     /// Whether `id` names a text field other than the code editor's: one a rustle text field edits.
-    pub fn is_text_field(id: FocusId) -> bool {
-        WorkspaceState::is_field(id) && id != pm_components::open_files::EDITOR_FIELD
+    pub fn is_text_field(id: Target) -> bool {
+        WorkspaceState::is_field(id) && id != Target::Editor(EditorEvent::EditorField)
     }
 
     /// Whether the field `id` holds several lines, so Enter can break a line in it.
-    pub fn is_multiline(id: FocusId) -> bool {
+    pub fn is_multiline(id: Target) -> bool {
         WorkspaceState::is_multiline(id)
     }
 
     /// Whether the field `id` hides what it holds and keeps it off the clipboard.
-    pub fn is_secure(id: FocusId) -> bool {
+    pub fn is_secure(id: Target) -> bool {
         WorkspaceState::is_secure(id)
     }
 
     /// What pressing Enter inside the field `id` presses.
-    pub fn submit_of(id: FocusId) -> FocusId {
+    pub fn submit_of(id: Target) -> Target {
         WorkspaceState::submit_of(id)
     }
 
     /// What pressing Control or Command with Enter inside the field `id` presses, when it presses something of its own.
-    pub fn hurried_submit_of(id: FocusId) -> Option<FocusId> {
+    pub fn hurried_submit_of(id: Target) -> Option<Target> {
         WorkspaceState::hurried_submit_of(id)
     }
 
@@ -237,7 +213,7 @@ impl Screen {
     }
 
     /// What pressing Enter presses while the panel for adding a project is open.
-    pub fn adder_enter(&self) -> Option<FocusId> {
+    pub fn adder_enter(&self) -> Option<Target> {
         match self {
             Self::Workspace(state) => state.adder_enter(),
         }
@@ -261,7 +237,7 @@ impl Screen {
     }
 
     /// What pressing Enter presses while the folder picker is open.
-    pub fn folder_picker_enter(&self) -> Option<FocusId> {
+    pub fn folder_picker_enter(&self) -> Option<Target> {
         self.folder_picker().map(FolderPicker::enter)
     }
 
@@ -291,7 +267,7 @@ impl Screen {
     }
 
     /// The screen with a menu open over the field `field` at `at`.
-    pub fn with_menu(self, field: FocusId, at: (f32, f32)) -> Self {
+    pub fn with_menu(self, field: Target, at: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_menu(field, at)),
         }
@@ -305,14 +281,14 @@ impl Screen {
     }
 
     /// Which project's header `id` is, while the workspace is showing.
-    pub fn header_of(&self, id: FocusId) -> Option<usize> {
+    pub fn header_of(&self, id: Target) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.header_of(id),
         }
     }
 
     /// The project the element `id` belongs to, while the workspace is showing.
-    pub fn project_at(&self, id: FocusId) -> Option<usize> {
+    pub fn project_at(&self, id: Target) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.project_at(id),
         }
@@ -340,7 +316,7 @@ impl Screen {
     }
 
     /// The tab of a pane `id` is, while the workspace is showing.
-    pub fn pane_tab_of(&self, id: FocusId) -> Option<pm_components::panes::Item> {
+    pub fn pane_tab_of(&self, id: Target) -> Option<pm_components::panes::Item> {
         match self {
             Self::Workspace(state) => state.pane_tab_of(id),
         }
@@ -551,14 +527,14 @@ impl Screen {
     }
 
     /// Which changed file's row `id` is, while the workspace is showing.
-    pub fn change_row_of(&self, id: FocusId) -> Option<usize> {
+    pub fn change_row_of(&self, id: Target) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.change_row_of(id),
         }
     }
 
     /// The file or folder of the project's files row `id` is, while the workspace is showing.
-    pub fn tree_row_of(&self, id: FocusId) -> Option<TreeTarget> {
+    pub fn tree_row_of(&self, id: Target) -> Option<TreeTarget> {
         match self {
             Self::Workspace(state) => state.tree_row_of(id),
         }
@@ -588,7 +564,7 @@ impl Screen {
     }
 
     /// The screen after a file's tab or row was pressed twice in quick succession, which keeps the file open.
-    pub fn with_file_kept(self, id: FocusId) -> Self {
+    pub fn with_file_kept(self, id: Target) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_file_kept(id)),
         }
@@ -614,7 +590,7 @@ impl Screen {
     }
 
     /// Which folder of the changed files' tree row `id` is, while the workspace is showing.
-    pub fn change_folder_row_of(&self, id: FocusId) -> Option<usize> {
+    pub fn change_folder_row_of(&self, id: Target) -> Option<usize> {
         match self {
             Self::Workspace(state) => state.change_folder_row_of(id),
         }
@@ -792,7 +768,7 @@ impl Screen {
     }
 
     /// Whether `id` names a row of the menu of the source control panel that is open.
-    pub fn is_menu_row(&self, id: FocusId) -> bool {
+    pub fn is_menu_row(&self, id: Target) -> bool {
         matches!(self, Self::Workspace(state) if state.is_menu_row(id))
     }
 
@@ -837,14 +813,14 @@ impl Screen {
     }
 
     /// How big the panel the handle `id` resizes is now, in a window `window` logical pixels wide and tall, and which way the handle is pulled to grow it.
-    pub fn sash(&self, id: FocusId, window: (f32, f32)) -> Option<(f32, Grows)> {
+    pub fn sash(&self, id: Target, window: (f32, f32)) -> Option<(f32, Grows)> {
         match self {
             Self::Workspace(state) => state.sash(id, window),
         }
     }
 
     /// The screen with the panel the handle `id` resizes made `size` logical pixels big, within what that panel allows in a window `window` logical pixels wide and tall.
-    pub fn with_sash_size(self, id: FocusId, size: f32, window: (f32, f32)) -> Self {
+    pub fn with_sash_size(self, id: Target, size: f32, window: (f32, f32)) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.with_sash_size(id, size, window)),
         }
@@ -954,8 +930,8 @@ impl Screen {
     }
 
     /// Whether pressing Enter in the field `id` puts a line break in it rather than pressing its button.
-    pub fn enter_breaks_line(id: FocusId) -> bool {
-        id == pm_components::state::COMMIT_MESSAGE || id == pm_components::open_files::EDITOR_FIELD
+    pub fn enter_breaks_line(id: Target) -> bool {
+        id == Target::Git(GitEvent::CommitMessage) || id == Target::Editor(EditorEvent::EditorField)
     }
 
     /// Whether the menu on changed files, the question of whether to discard or the list of branches is open.
@@ -964,14 +940,14 @@ impl Screen {
     }
 
     /// The screen after the pointer went down on the line number `id` of the diff.
-    pub fn comment_drag_begun(self, id: FocusId) -> Self {
+    pub fn comment_drag_begun(self, id: Target) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.comment_drag_begun(id)),
         }
     }
 
     /// The screen after the pointer, held down, moved over the line number `id` of the diff.
-    pub fn comment_drag_extended(self, id: FocusId) -> Self {
+    pub fn comment_drag_extended(self, id: Target) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.comment_drag_extended(id)),
         }
@@ -1248,7 +1224,7 @@ impl Screen {
     }
 
     /// The box to give keyboard focus after `id` was pressed, when that is the prompt.
-    pub fn refocus(id: FocusId) -> Option<FocusId> {
+    pub fn refocus(id: Target) -> Option<Target> {
         WorkspaceState::refocus(id)
     }
 
@@ -1272,14 +1248,14 @@ impl Screen {
     }
 
     /// The screen after the agent of the session at `session` did `event`.
-    pub fn heard(self, session: usize, event: Event) -> Self {
+    pub fn heard(self, session: usize, event: HarnessEvent) -> Self {
         match self {
             Self::Workspace(state) => Self::Workspace(state.heard(session, event)),
         }
     }
 
     /// Takes in what the agent of the session at `session` did, as `event`, without building the screen anew.
-    pub fn hear_in_place(&mut self, session: usize, event: Event) {
+    pub fn hear_in_place(&mut self, session: usize, event: HarnessEvent) {
         match self {
             Self::Workspace(state) => state.hear_in_place(session, event),
         }
@@ -1293,7 +1269,7 @@ impl Screen {
     }
 
     /// What the key for the number `digit` presses while the agent's questions are open.
-    pub fn inquiry_hotkey(&self, digit: usize) -> Option<FocusId> {
+    pub fn inquiry_hotkey(&self, digit: usize) -> Option<Target> {
         match self {
             Self::Workspace(state) => state.inquiry_hotkey(digit),
         }
@@ -1455,7 +1431,7 @@ pub fn picker_screen(state: &Screen, width: f32, height: f32) {
         .over(move || {
             if let Some(menu) = state
                 .menu()
-                .filter(|menu| menu.field == pm_components::folder_picker::PICKER_FIELD)
+                .filter(|menu| menu.field == Target::Dialog(DialogEvent::PickerField))
                 && let Some(field) = state.text_field(menu.field)
             {
                 field_menu(field, menu, false);
@@ -1483,6 +1459,7 @@ pub fn settings_window(state: &Screen, width: f32, height: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pm_components::areas::SidebarEvent;
 
     /// A fresh installation opens the workspace without waiting for agent setup.
     #[test]
@@ -1498,12 +1475,12 @@ mod tests {
     fn first_launch_can_add_projects_and_open_settings() {
         assert!(
             Screen::default()
-                .after(crate::workspace::ADD_PROJECT)
+                .handle(Event::Sidebar(SidebarEvent::AddProject))
                 .adder_open()
         );
         assert!(
             Screen::default()
-                .after(pm_components::state::SETTINGS)
+                .handle(Event::Sidebar(SidebarEvent::Settings))
                 .settings_open()
         );
     }

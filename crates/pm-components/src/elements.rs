@@ -2,28 +2,25 @@
 //! message is sent, a popover lists everything about it, and in the message it is written out in
 //! sections.
 
-use crate::events::reduce;
+use crate::areas::ComposerEvent;
+use crate::kit::{self, Frame};
+
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
 use rustle::Modifier;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
+use rustle::{FlowOptions, flow_row_with};
 
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::theme::{Radius, Role, Tone, sp};
 
 use crate::button::Variant;
 use crate::parts::line;
 use crate::popover::anchored;
 use crate::size::Size;
-use crate::state::{MENU_BODY, Picker, WorkspaceState};
+use crate::state::{Picker, WorkspaceState};
 use crate::{Button, Popover};
-
-/// The first of the chips that open an element's popover; the rest follow it.
-pub const ELEMENT_BASE: u64 = 7_430_000;
-
-/// The first of the buttons that take an element off the prompt; the rest follow it.
-pub const ELEMENT_REMOVE_BASE: u64 = 7_431_000;
 
 /// How many elements the prompt holds at most.
 pub const MOST_ELEMENTS: usize = 20;
@@ -207,15 +204,12 @@ pub fn split(text: &str) -> (&str, Vec<String>) {
 pub fn sent_chips(labels: &[String]) {
     flow_row_with(Modifier::new(), FlowOptions::new(sp(2), sp(2)), || {
         for label in labels {
-            row_arranged(
+            kit::row(
                 Modifier::new()
-                    .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
-                    .border(1.0, theme::color(Role::Border), Radius::Lg.px())
-                    .padding(1.0)
+                    .panel(Radius::Lg)
                     .padding_xy(theme::sp(2), 0.0)
                     .padding_xy(0.0, theme::sp(1)),
-                Arrangement::SpacedBy(sp(1.5)),
-                Alignment::Center,
+                1.5,
                 || {
                     crate::parts::glyph(
                         crate::captures::Capture::icon_of_label(label),
@@ -332,14 +326,12 @@ fn css_color(value: &str) -> Option<Tone> {
 /// Emits a card of the popover: a small title over what `body` emits.
 #[track_caller]
 pub(crate) fn section(title: &str, body: impl FnOnce()) {
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_width()
-            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
-            .padding(1.0)
+            .outlined(Radius::Lg)
             .padding(theme::sp(2.5)),
-        Arrangement::SpacedBy(sp(1.5)),
-        Alignment::Start,
+        1.5,
         || {
             line(title, 11, 1.4, Role::Subtle);
             body();
@@ -355,21 +347,15 @@ pub(crate) fn words(content: &str, mono: bool, tone: Role, width: f32) {
     let kind = theme::text_style(12, 1.5);
     let kind = if mono { theme::in_mono(kind) } else { kind };
     let lines = rustle::wrap_at_spaces(&content, &kind, width);
-    column_arranged(
-        Modifier::new(),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            for piece in lines {
-                rustle::basic_text(
-                    Modifier::new(),
-                    &content[piece.start..piece.end],
-                    kind.color(theme::color(tone)),
-                    rustle::TextOverflow::Ellipsis,
-                );
-            }
-        },
-    );
+    kit::column(Modifier::new(), 0, || {
+        for piece in lines {
+            kit::text(
+                Modifier::new(),
+                &content[piece.start..piece.end],
+                kind.color(theme::color(tone)),
+            );
+        }
+    });
 }
 
 /// Emits a row of a list: a name at the left and a value at the right, with a swatch of the colour
@@ -382,55 +368,34 @@ fn pair(name: &str, value: &str) {
     } else {
         VALUE_TEXT + 18.0
     };
-    row_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Start,
-        || {
-            column_arranged(
-                Modifier::new().width(NAME_WIDTH),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    words(name, false, Role::Muted, NAME_WIDTH);
-                },
-            );
-            row_arranged(
-                Modifier::new().weight(1.0),
-                Arrangement::SpacedBy(sp(1.5)),
-                Alignment::Start,
-                || {
-                    if let Some(tone) = swatch {
-                        rustle::spacer(
-                            Modifier::new()
-                                .width(12.0)
-                                .height(12.0)
-                                .background_rounded(theme::color(tone), Radius::Sm.px())
-                                .border(1.0, theme::color(Role::Border), Radius::Sm.px())
-                                .padding(1.0)
-                                .padding_each(0.0, theme::sp(0.5), 0.0, 0.0),
-                        );
-                    }
-                    words(value, false, Role::Text, room);
-                },
-            );
-        },
-    );
+    kit::row_top(Modifier::new().fill_max_width(), 3, || {
+        kit::column(Modifier::new().width(NAME_WIDTH), 0, || {
+            words(name, false, Role::Muted, NAME_WIDTH);
+        });
+        kit::row_top(Modifier::new().weight(1.0), 1.5, || {
+            if let Some(tone) = swatch {
+                rustle::spacer(
+                    Modifier::new()
+                        .width(12.0)
+                        .height(12.0)
+                        .background_rounded(theme::color(tone), Radius::Sm.px())
+                        .outlined(Radius::Sm)
+                        .padding_each(0.0, theme::sp(0.5), 0.0, 0.0),
+                );
+            }
+            words(value, false, Role::Text, room);
+        });
+    });
 }
 
 /// Emits a list of rows, one for each name and value of `rows`.
 #[track_caller]
 fn pairs(rows: &[(String, String)]) {
-    column_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(sp(1.5)),
-        Alignment::Start,
-        || {
-            for (name, value) in rows {
-                pair(name, value);
-            }
-        },
-    );
+    kit::column(Modifier::new().fill_max_width(), 1.5, || {
+        for (name, value) in rows {
+            pair(name, value);
+        }
+    });
 }
 
 /// Emits the popover of `element`: everything the prompt knows about it, in cards that scroll by
@@ -446,27 +411,24 @@ fn popover(element: &Element, state: &WorkspaceState) {
     Popover::new()
         .width(WIDTH)
         .inner(Modifier::new().padding_each(6.0, -1.0, 6.0, 6.0))
-        .modifier(Modifier::new().control(MENU_BODY, reduce(MENU_BODY)))
+        .modifier(Modifier::new().control(
+            Target::Composer(ComposerEvent::MenuBody),
+            send(Event::Composer(ComposerEvent::MenuBody)),
+        ))
         .build_with(|| {
-            column_arranged(
+            kit::column(
                 Modifier::new()
                     .fill_max_width()
                     .height_in(0.0, sp(HEIGHT / 4.0))
                     .vertical_scroll(&state.menu_scroll)
                     .fill_max_width(),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Start,
+                2,
                 || {
                     section("ELEMENT", || {
-                        column_arranged(
-                            Modifier::new(),
-                            Arrangement::SpacedBy(sp(1)),
-                            Alignment::Start,
-                            || {
-                                words(&element.opening_tag(), true, Role::Text, CARD_TEXT);
-                                words(&element.size(), false, Role::Muted, CARD_TEXT);
-                            },
-                        );
+                        kit::column(Modifier::new(), 1, || {
+                            words(&element.opening_tag(), true, Role::Text, CARD_TEXT);
+                            words(&element.size(), false, Role::Muted, CARD_TEXT);
+                        });
                     });
                     section("PATH", || {
                         words(&element.selector, true, Role::Text, CARD_TEXT);
@@ -507,22 +469,21 @@ pub fn chips(state: &WorkspaceState) {
         || {
             for (index, element) in state.elements.iter().enumerate() {
                 let open = state.picker == Some(Picker::Element(index));
-                rustle::key(ELEMENT_BASE + index as u64, || {
+                rustle::key(Target::Composer(ComposerEvent::Element(index)), || {
                     anchored(
                         || {
-                            row_arranged(
+                            kit::row(
                                 Modifier::new()
                                     .background_rounded(
                                         theme::color(Role::SurfaceHover),
                                         Radius::Lg.px(),
                                     )
                                     .padding_each(0.0, 0.0, theme::sp(1), 0.0),
-                                Arrangement::SpacedBy(sp(0.5)),
-                                Alignment::Center,
+                                0.5,
                                 || {
                                     Button::new(
                                         element.label(),
-                                        FocusId(ELEMENT_BASE + index as u64),
+                                        Target::Composer(ComposerEvent::Element(index)),
                                     )
                                     .variant(Variant::Ghost)
                                     .size(Size::Xs)
@@ -531,7 +492,7 @@ pub fn chips(state: &WorkspaceState) {
                                     .build();
                                     Button::icon(
                                         phosphor::X,
-                                        FocusId(ELEMENT_REMOVE_BASE + index as u64),
+                                        Target::Composer(ComposerEvent::ElementRemove(index)),
                                     )
                                     .build();
                                 },

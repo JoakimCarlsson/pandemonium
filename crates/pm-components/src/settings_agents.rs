@@ -1,46 +1,29 @@
 //! The page of the agents and their accounts: a card for each agent with how it signs in, its switch, and its accounts or its API key.
 
+use crate::areas::SettingsEvent;
+use crate::kit;
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use pm_harness::SignIn;
 use rustle::Modifier;
 use rustle::TextFieldState;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{Icon, phosphor};
 
-use crate::focus::FocusId;
 use crate::theme::{Radius, Role};
 
+use crate::Badge;
 use crate::button::Variant;
 use crate::input::Input;
 use crate::parts::{glyph, line};
-use crate::settings_ids::{
-    ACCOUNT_ADDS, ACCOUNT_COLUMNS, ACCOUNT_CONTROLS, ACCOUNT_REMOVES, AGENT_SWITCHES, DEFAULT_USES,
-    KEY_REMOVES, KEY_SETS, SIGN_INS, SINGLES,
-};
 use crate::settings_row::switch;
+use crate::settings_rows::{
+    ACCOUNT_ADDS, ACCOUNT_COLUMNS, ACCOUNT_CONTROLS, ACCOUNT_REMOVES, AGENT_SWITCHES, DEFAULT_USES,
+    KEY_REMOVES, KEY_SETS, SIGN_INS,
+};
 use crate::settings_servers::{boxed, flat_row, paragraph};
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
-use crate::{Badge, Button};
-
-/// The box an API key is typed into.
-pub const KEY_FIELD: FocusId = SINGLES.at(90);
-
-/// Keeps the API key typed.
-pub const KEY_SAVE: FocusId = SINGLES.at(91);
-
-/// Puts the box for an API key away.
-pub const KEY_CANCEL: FocusId = SINGLES.at(92);
-
-/// The box a new name for an added account is typed into.
-pub const NAME_FIELD: FocusId = SINGLES.at(80);
-
-/// Keeps the name typed for an added account.
-pub const NAME_SAVE: FocusId = SINGLES.at(81);
-
-/// Puts the box for an account's name away.
-pub const NAME_CANCEL: FocusId = SINGLES.at(82);
 
 /// What one of the buttons of an added account does, by its column in [`ACCOUNT_CONTROLS`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -68,20 +51,20 @@ impl AccountControl {
     ];
 
     /// The name of this button of the login at `login` in the list of logins, or nothing when the page has no room for that many.
-    pub fn id(self, login: usize) -> Option<FocusId> {
+    pub fn id(self, login: usize) -> Option<Target> {
         let column = Self::ALL.iter().position(|held| *held == self)?;
         ACCOUNT_CONTROLS.cell(login, column, ACCOUNT_COLUMNS)
     }
 
     /// The login, by its place in the list of logins, and the button that `id` names, when it names one.
-    fn of(id: FocusId) -> Option<(usize, Self)> {
+    fn of(id: Target) -> Option<(usize, Self)> {
         let (login, column) = ACCOUNT_CONTROLS.cell_of(id, ACCOUNT_COLUMNS)?;
         Some((login, *Self::ALL.get(column)?))
     }
 }
 
 /// The button opening the box for the API key of the agent at `agent`, or nothing when the page has no room for that many agents.
-pub fn key_set_id(agent: usize) -> Option<FocusId> {
+pub fn key_set_id(agent: usize) -> Option<Target> {
     KEY_SETS.id(agent)
 }
 
@@ -113,14 +96,14 @@ pub struct NameForm {
 
 impl WorkspaceState {
     /// Carries out `action` if it presses a part of the agents page, and says whether it did.
-    pub(crate) fn agents_pressed(&mut self, action: FocusId) -> bool {
-        if action == KEY_SAVE {
+    pub(crate) fn agents_pressed(&mut self, action: Target) -> bool {
+        if action == Target::Settings(SettingsEvent::KeySave) {
             self.save_key();
-        } else if action == KEY_CANCEL {
+        } else if action == Target::Settings(SettingsEvent::KeyCancel) {
             self.settings_servers.key_form = None;
-        } else if action == NAME_SAVE {
+        } else if action == Target::Settings(SettingsEvent::NameSave) {
             self.save_name();
-        } else if action == NAME_CANCEL {
+        } else if action == Target::Settings(SettingsEvent::NameCancel) {
             self.settings_servers.name_form = None;
         } else if let Some(agent) = KEY_SETS.index_of(action) {
             self.open_key_form(agent, None);
@@ -293,8 +276,8 @@ impl WorkspaceState {
     }
 
     /// The box `id`, the one for an API key or the one for an account's name, while it is open.
-    pub(crate) fn key_field(&self, id: FocusId) -> Option<&TextFieldState> {
-        if id == NAME_FIELD {
+    pub(crate) fn key_field(&self, id: Target) -> Option<&TextFieldState> {
+        if id == Target::Settings(SettingsEvent::NameField) {
             return self
                 .settings_servers
                 .name_form
@@ -342,75 +325,32 @@ fn emblem(icon: Icon, dim: bool) {
 /// Emits a name `title` in `tone` followed by `badges`, over a quieter line `under` when it says something.
 #[track_caller]
 fn titled(title: &str, under: &str, tone: Role, badges: impl FnOnce()) {
-    column_arranged(
-        Modifier::new().weight(1.0).clip(),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Start,
-        || {
-            row_arranged(
-                Modifier::new(),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Center,
-                || {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        title,
-                        theme::text_style(13, 1.4)
-                            .font_weight(rustle::FontWeight::MEDIUM)
-                            .color(theme::color(tone))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                    badges();
-                },
-            );
-            if !under.is_empty() {
-                line(under, 12, 1.4, Role::Muted);
-            }
-        },
-    );
+    kit::column(Modifier::new().weight(1.0).clip(), 1, || {
+        kit::row(Modifier::new(), 2, || {
+            kit::text(Modifier::new(), title, kit::strong(13, tone));
+            badges();
+        });
+        if !under.is_empty() {
+            line(under, 12, 1.4, Role::Muted);
+        }
+    });
 }
 
 /// Emits the buttons `buttons` emits at the end of a row, side by side.
 #[track_caller]
 fn actions(buttons: impl FnOnce()) {
-    row_arranged(
-        Modifier::new(),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
-        buttons,
-    );
-}
-
-/// Emits a small button of a row saying `label` in the look of `variant`, answering to `id`.
-#[track_caller]
-fn small(label: &str, id: FocusId, variant: Variant) {
-    Button::new(label, id)
-        .variant(variant)
-        .size(Size::Sm)
-        .build();
-}
-
-/// Emits a small button showing only `icon`, saying what it does with `tooltip`, answering to `id`.
-#[track_caller]
-fn icon_button(icon: Icon, tooltip: &str, id: FocusId) {
-    Button::icon(icon, id)
-        .variant(Variant::Ghost)
-        .size(Size::Sm)
-        .tooltip(tooltip)
-        .build();
+    kit::row(Modifier::new(), 2, buttons);
 }
 
 /// Emits a row of a boxed list, as the list's own rows are, set in from the left by `inset` steps and holding what `content` emits.
 #[track_caller]
 fn inset_row(inset: u32, content: impl FnOnce()) {
-    row_arranged(
+    kit::row(
         Modifier::new()
             .padding_each(theme::sp(inset), 0.0, 0.0, 0.0)
             .padding_each(0.0, 0.0, theme::sp(3), 0.0)
             .padding_xy(0.0, theme::sp(3)),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Center,
+        3,
         content,
     );
 }
@@ -434,24 +374,19 @@ fn header(
     let look = state.agent_look(index);
     let under = how_it_signs_in(sign_in, keyed, credentials);
     flat_row(|| {
-        row_arranged(
-            Modifier::new().weight(1.0),
-            Arrangement::SpacedBy(sp(3)),
-            Alignment::Center,
-            || {
-                emblem(look.icon, !shown);
-                titled(
-                    name,
-                    &under,
-                    if shown { Role::Text } else { Role::Muted },
-                    || {
-                        if !shown {
-                            Badge::new("Hidden").tone(Role::Subtle).build();
-                        }
-                    },
-                );
-            },
-        );
+        kit::row(Modifier::new().weight(1.0), 3, || {
+            emblem(look.icon, !shown);
+            titled(
+                name,
+                &under,
+                if shown { Role::Text } else { Role::Muted },
+                || {
+                    if !shown {
+                        Badge::new("Hidden").tone(Role::Subtle).build();
+                    }
+                },
+            );
+        });
         switch(shown, AGENT_SWITCHES.id(index));
     });
 }
@@ -480,31 +415,27 @@ fn status_of(said: Option<&Option<String>>, signing: Signing) -> (String, bool) 
 
 /// Emits the buttons every account has, by the names given for them: use it when it is not in use, sign it in, and set or forget its key.
 #[track_caller]
-fn account_buttons(
-    signing: Signing,
-    in_use: bool,
-    status: (&str, bool),
-    ids: [Option<FocusId>; 4],
-) {
+fn account_buttons(signing: Signing, in_use: bool, status: (&str, bool), ids: [Option<Target>; 4]) {
     let [use_id, sign_in, set_key, remove_key] = ids;
     let (said, signed_in) = status;
     let keyed_now = said.starts_with("API key");
     if signing.keyed {
         if let Some(remove) = remove_key.filter(|_| said == pm_harness::SAVED_KEY) {
-            small("Remove key", remove, Variant::Ghost);
+            kit::small_button("Remove key", remove, Variant::Ghost).build();
         }
         if let Some(set) = set_key {
-            small(
+            kit::small_button(
                 if keyed_now { "Replace key" } else { "Add key" },
                 set,
                 Variant::Ghost,
-            );
+            )
+            .build();
         }
     }
     if signing.signs_in
         && let Some(sign_in) = sign_in
     {
-        small(
+        kit::small_button(
             if signed_in && !keyed_now {
                 "Sign in again"
             } else {
@@ -512,36 +443,31 @@ fn account_buttons(
             },
             sign_in,
             Variant::Ghost,
-        );
+        )
+        .build();
     }
     if let Some(use_id) = use_id.filter(|_| !in_use) {
-        small("Use", use_id, Variant::Outline);
+        kit::small_button("Use", use_id, Variant::Outline).build();
     }
 }
 
 /// Emits the box `id` an account's name or API key is typed into, holding `field` and showing `placeholder` while empty, with its buttons `save` and `cancel`, in place of the account's row.
 #[track_caller]
-fn form_row(
-    field: &TextFieldState,
-    id: FocusId,
-    placeholder: &str,
-    save: FocusId,
-    cancel: FocusId,
-) {
+fn form_row(field: &TextFieldState, id: Target, placeholder: &str, save: Target, cancel: Target) {
     let mut input = Input::new(field, id)
         .variant(crate::input::Variant::Bordered)
         .size(Size::Sm)
         .placeholder(placeholder)
         .modifier(Modifier::new().weight(1.0));
-    if id == KEY_FIELD {
+    if id == Target::Settings(SettingsEvent::KeyField) {
         input = input.leading_icon(phosphor::LOCK_SIMPLE).secure(true);
     }
-    rustle::key(id.0, || {
+    rustle::key(id, || {
         inner_row(|| {
             input.build();
             actions(|| {
-                small("Cancel", cancel, Variant::Ghost);
-                small("Save", save, Variant::Default);
+                kit::small_button("Cancel", cancel, Variant::Ghost).build();
+                kit::small_button("Save", save, Variant::Default).build();
             });
         });
     });
@@ -572,10 +498,10 @@ fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing
     match key_form_for(state, index, None) {
         Some(form) => form_row(
             &form.key,
-            KEY_FIELD,
+            Target::Settings(SettingsEvent::KeyField),
             "Paste an API key",
-            KEY_SAVE,
-            KEY_CANCEL,
+            Target::Settings(SettingsEvent::KeySave),
+            Target::Settings(SettingsEvent::KeyCancel),
         ),
         None => inner_row(|| {
             titled(
@@ -612,10 +538,10 @@ fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing
         if let Some(form) = key_form_for(state, index, Some(login)) {
             form_row(
                 &form.key,
-                KEY_FIELD,
+                Target::Settings(SettingsEvent::KeyField),
                 "Paste an API key",
-                KEY_SAVE,
-                KEY_CANCEL,
+                Target::Settings(SettingsEvent::KeySave),
+                Target::Settings(SettingsEvent::KeyCancel),
             );
             continue;
         }
@@ -627,10 +553,10 @@ fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing
         {
             form_row(
                 &form.name,
-                NAME_FIELD,
+                Target::Settings(SettingsEvent::NameField),
                 "Account name",
-                NAME_SAVE,
-                NAME_CANCEL,
+                Target::Settings(SettingsEvent::NameSave),
+                Target::Settings(SettingsEvent::NameCancel),
             );
             continue;
         }
@@ -669,10 +595,10 @@ fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing
                         ],
                     );
                     if let Some(rename) = AccountControl::Rename.id(position) {
-                        icon_button(phosphor::PENCIL_SIMPLE, "Rename", rename);
+                        crate::queued::icon_button(phosphor::PENCIL_SIMPLE, "Rename", rename);
                     }
                     if let Some(remove) = ACCOUNT_REMOVES.id(position) {
-                        icon_button(phosphor::TRASH, "Remove account", remove);
+                        crate::queued::icon_button(phosphor::TRASH, "Remove account", remove);
                     }
                 });
             });
@@ -680,9 +606,7 @@ fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing
     }
     inset_row(ADD_INSET, || {
         if let Some(add) = ACCOUNT_ADDS.id(index) {
-            Button::new("Add account", add)
-                .variant(Variant::Ghost)
-                .size(Size::Sm)
+            kit::small_button("Add account", add, Variant::Ghost)
                 .with_icon(phosphor::PLUS)
                 .build();
         }
@@ -737,16 +661,17 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
 }
 
 /// Whether `id` names the box for an API key or the one for an account's name.
-pub(crate) fn is_key_field(id: FocusId) -> bool {
-    id == KEY_FIELD || id == NAME_FIELD
+pub(crate) fn is_key_field(id: Target) -> bool {
+    id == Target::Settings(SettingsEvent::KeyField)
+        || id == Target::Settings(SettingsEvent::NameField)
 }
 
 /// The button the box `id` is kept with when Enter is pressed in it.
-pub(crate) fn key_submit(id: FocusId) -> FocusId {
-    if id == NAME_FIELD {
-        NAME_SAVE
+pub(crate) fn key_submit(id: Target) -> Target {
+    if id == Target::Settings(SettingsEvent::NameField) {
+        Target::Settings(SettingsEvent::NameSave)
     } else {
-        KEY_SAVE
+        Target::Settings(SettingsEvent::KeySave)
     }
 }
 
@@ -754,6 +679,7 @@ pub(crate) fn key_submit(id: FocusId) -> FocusId {
 /// Tests for the agents page.
 mod tests {
     use super::*;
+    use crate::areas::ComposerEvent;
 
     /// The position of the agent kept under `id`.
     fn position(state: &WorkspaceState, id: &str) -> usize {
@@ -765,31 +691,35 @@ mod tests {
     fn a_typed_key_is_sent_to_the_server() {
         let mut state = WorkspaceState::new(&[]);
         let openrouter = position(&state, "openrouter");
-        assert!(state.agents_pressed(KEY_SETS.at(openrouter as u64)));
+        assert!(state.agents_pressed(KEY_SETS.at(openrouter)));
         assert!(
             state
-                .key_field(KEY_FIELD)
+                .key_field(Target::Settings(SettingsEvent::KeyField))
                 .is_some_and(|field| field.text().is_empty())
         );
-        state = state.typed(KEY_FIELD, " sk-or-1 ");
-        assert!(state.agents_pressed(KEY_SAVE));
-        assert!(state.key_field(KEY_FIELD).is_none());
+        state = state.typed(Target::Settings(SettingsEvent::KeyField), " sk-or-1 ");
+        assert!(state.agents_pressed(Target::Settings(SettingsEvent::KeySave)));
+        assert!(
+            state
+                .key_field(Target::Settings(SettingsEvent::KeyField))
+                .is_none()
+        );
         let sent = state.take_outbox();
         assert!(sent.iter().any(|outgoing| matches!(
             outgoing,
             Outgoing::SaveKey { agent, key: Some(key), .. } if *agent == openrouter && key == "sk-or-1"
         )));
-        state.agents_pressed(KEY_SETS.at(openrouter as u64));
-        state.agents_pressed(KEY_SAVE);
+        state.agents_pressed(KEY_SETS.at(openrouter));
+        state.agents_pressed(Target::Settings(SettingsEvent::KeySave));
         assert!(state.take_outbox().is_empty());
-        state.agents_pressed(KEY_REMOVES.at(openrouter as u64));
+        state.agents_pressed(KEY_REMOVES.at(openrouter));
         assert!(
             state
                 .take_outbox()
                 .iter()
                 .any(|outgoing| matches!(outgoing, Outgoing::SaveKey { key: None, .. }))
         );
-        assert!(!state.agents_pressed(FocusId(1)));
+        assert!(!state.agents_pressed(Target::Composer(ComposerEvent::Prompt)));
     }
 
     /// A cloud provider that reads the cloud's own credentials says so instead of passing for a local server, one that also takes a key names both, and a local server keeps its words.
@@ -821,7 +751,7 @@ mod tests {
     fn the_default_account_signs_in_from_its_row() {
         let mut state = WorkspaceState::new(&[]);
         let claude = position(&state, "claude-code");
-        state.agents_pressed(SIGN_INS.at(claude as u64));
+        state.agents_pressed(SIGN_INS.at(claude));
         assert!(state.take_outbox().iter().any(|outgoing| matches!(
             outgoing,
             Outgoing::SignIn { agent, login: None } if *agent == claude
@@ -843,14 +773,14 @@ mod tests {
         assert!(state.agents_pressed(DEFAULT_USES.id(claude).unwrap()));
         assert!(state.in_use.is_empty());
         assert!(state.agents_pressed(AccountControl::Rename.id(0).unwrap()));
-        state = state.typed(NAME_FIELD, " Acme");
-        assert!(state.agents_pressed(NAME_SAVE));
+        state = state.typed(Target::Settings(SettingsEvent::NameField), " Acme");
+        assert!(state.agents_pressed(Target::Settings(SettingsEvent::NameSave)));
         assert_eq!(state.logins[0].2, "Account 2 Acme");
         state.take_outbox();
         assert!(state.agents_pressed(AccountControl::SignIn.id(0).unwrap()));
         assert!(state.agents_pressed(AccountControl::SetKey.id(0).unwrap()));
-        state = state.typed(KEY_FIELD, "sk-2");
-        assert!(state.agents_pressed(KEY_SAVE));
+        state = state.typed(Target::Settings(SettingsEvent::KeyField), "sk-2");
+        assert!(state.agents_pressed(Target::Settings(SettingsEvent::KeySave)));
         let sent = state.take_outbox();
         assert!(sent.iter().any(|outgoing| matches!(
             outgoing,

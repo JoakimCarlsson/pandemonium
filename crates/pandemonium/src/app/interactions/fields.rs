@@ -1,7 +1,9 @@
 //! Text fields: the caret placed by a press, typing, selecting by keys and
 //! by dragging, undo, the clipboard and an input method composing.
 
-use pm_pages::{PROMPT, Screen};
+use pm_components::areas::{ComposerEvent, SettingsEvent};
+use pm_components::target::Target;
+use pm_pages::Screen;
 use rustle::{Key, Modifiers};
 
 use crate::keys::Clip;
@@ -27,14 +29,18 @@ const SHIFT: Modifiers = Modifiers {
 
 /// The text of the prompt.
 fn prompt(rig: &Rig) -> String {
-    rig.read(|screen| screen.text_field(PROMPT).map(rustle::TextFieldState::text))
-        .unwrap_or_default()
+    rig.read(|screen| {
+        screen
+            .text_field(Target::Composer(ComposerEvent::Prompt))
+            .map(rustle::TextFieldState::text)
+    })
+    .unwrap_or_default()
 }
 
 /// The workspace with the prompt pressed, so it has the keyboard, and emptied.
 fn typing() -> Rig {
     let mut rig = Rig::shot(Shot::Workspace);
-    rig.click_on(PROMPT);
+    rig.click_on(Target::Composer(ComposerEvent::Prompt));
     rig.chord(CONTROL, Key::Character("a".into()));
     rig.key(Key::Backspace);
     rig
@@ -44,9 +50,9 @@ fn typing() -> Rig {
 #[test]
 fn a_press_focuses_the_field_and_escape_lets_go() {
     let mut rig = Rig::shot(Shot::Workspace);
-    assert_ne!(rig.focused(), Some(PROMPT));
-    rig.click_on(PROMPT);
-    assert_eq!(rig.focused(), Some(PROMPT));
+    assert_ne!(rig.focused(), Some(Target::Composer(ComposerEvent::Prompt)));
+    rig.click_on(Target::Composer(ComposerEvent::Prompt));
+    assert_eq!(rig.focused(), Some(Target::Composer(ComposerEvent::Prompt)));
     rig.key(Key::Escape);
     assert_eq!(rig.focused(), None);
 }
@@ -163,7 +169,7 @@ fn dragging_selects_text() {
     rig.drag((start.0 + 0.5, start.1), (end.0 + 0.5, end.1), 4);
     let selected = rig.read(|screen| {
         screen
-            .text_field(PROMPT)
+            .text_field(Target::Composer(ComposerEvent::Prompt))
             .map(rustle::TextFieldState::selected_text)
             .unwrap_or_default()
     });
@@ -182,7 +188,7 @@ fn a_double_press_selects_a_word() {
     rig.click(at);
     let selected = rig.read(|screen| {
         screen
-            .text_field(PROMPT)
+            .text_field(Target::Composer(ComposerEvent::Prompt))
             .map(rustle::TextFieldState::selected_text)
             .unwrap_or_default()
     });
@@ -194,18 +200,10 @@ fn a_double_press_selects_a_word() {
 fn the_input_method_follows_the_caret() {
     let mut rig = typing();
     rig.type_text("x");
-    let first = rig
-        .window()
-        .ime_area
-        .get()
-        .expect("the caret area was given");
+    let first = rig.ime_area().expect("the caret area was given");
     rig.type_text("xxxx");
-    let later = rig
-        .window()
-        .ime_area
-        .get()
-        .expect("the caret area was given");
-    assert!(later.0 > first.0, "{first:?} then {later:?}");
+    let later = rig.ime_area().expect("the caret area was given");
+    assert!(later.origin.x > first.origin.x, "{first:?} then {later:?}");
 }
 
 /// Up moves the caret of the wrapped prompt to the line drawn above, and Home
@@ -213,16 +211,18 @@ fn the_input_method_follows_the_caret() {
 #[test]
 fn arrows_and_home_follow_the_lines_as_drawn() {
     let mut rig = Rig::shot(Shot::Wrapped);
-    rig.click_on(PROMPT);
+    rig.click_on(Target::Composer(ComposerEvent::Prompt));
     rig.chord(CONTROL, Key::End);
     rig.key(Key::ArrowUp);
     rig.key(Key::Home);
     let rest = rig
         .read(|screen| {
-            screen.text_field(PROMPT).map(|field| {
-                let value = field.value();
-                value.text.chars().skip(value.cursor).collect::<String>()
-            })
+            screen
+                .text_field(Target::Composer(ComposerEvent::Prompt))
+                .map(|field| {
+                    let value = field.value();
+                    value.text.chars().skip(value.cursor).collect::<String>()
+                })
         })
         .unwrap_or_default();
     assert!(rest.starts_with("stores the offset."), "{rest:?}");
@@ -233,13 +233,15 @@ fn arrows_and_home_follow_the_lines_as_drawn() {
 #[test]
 fn a_key_box_keeps_its_text_off_the_clipboard() {
     let rig = Rig::shot(Shot::Workspace);
-    let key = pm_components::settings_agents::KEY_FIELD;
+    let key = Target::Settings(SettingsEvent::KeyField);
     assert!(Screen::is_secure(key) && Screen::is_text_field(key));
     let field = rustle::TextFieldState::new("secret");
     field.select_all();
     rig.app.borrow_mut().clip_text(key, &field, Clip::Copy);
     assert_eq!(rig.clipboard.text.borrow().as_deref(), None);
-    rig.app.borrow_mut().clip_text(PROMPT, &field, Clip::Copy);
+    rig.app
+        .borrow_mut()
+        .clip_text(Target::Composer(ComposerEvent::Prompt), &field, Clip::Copy);
     assert_eq!(rig.clipboard.text.borrow().as_deref(), Some("secret"));
     rig.app.borrow_mut().clip_text(key, &field, Clip::Cut);
     assert_eq!(field.text(), "secret");

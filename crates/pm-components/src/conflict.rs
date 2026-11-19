@@ -1,8 +1,10 @@
 //! The resolver of a file that a merge, a rebase or a cherry-pick stopped on: each place where the two sides disagree with both sides shown and a choice to take ours, theirs or both, and under them the result, which is the file itself, edited by hand, until the file is marked resolved and staged.
 
+use crate::areas::SearchEvent;
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, column_arranged};
 use std::ops::Range;
 
 use pm_field::Edit;
@@ -11,27 +13,11 @@ use rustle::Modifier;
 use crate::Button;
 use crate::button::Variant;
 use crate::excerpts::{Block, Drawing, ExcerptFile, Source, block_gap};
-use crate::focus::FocusId;
 use crate::open_files::Contents;
 use crate::parts::{line, spacer};
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::theme::{Radius, Role, Tone};
-
-/// Takes everything of the file from our side.
-pub const CONFLICT_OURS_ALL: FocusId = FocusId(7_414_001);
-
-/// Takes everything of the file from their side.
-pub const CONFLICT_THEIRS_ALL: FocusId = FocusId(7_414_002);
-
-/// Writes the result and stages the file.
-pub const CONFLICT_CONCLUDE: FocusId = FocusId(7_414_003);
-
-/// The first of the buttons that settle one conflict, three for each in the order of the file: ours, theirs and both.
-pub const CONFLICT_CHOICE_BASE: u64 = 7_414_100;
-
-/// One past the last of the buttons that settle one conflict.
-const CONFLICT_CHOICE_END: u64 = 7_419_000;
 
 /// How tall the strip above the conflicts is, in logical pixels.
 const STRIP: f32 = 44.0;
@@ -64,7 +50,9 @@ const PART_MARK: &str = "=======";
 const THEIRS_MARK: &str = ">>>>>>>";
 
 /// Which of the sides a conflict is settled with.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(
+    Clone, Copy, Debug, serde::Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize,
+)]
 pub enum Choice {
     /// Our side only.
     Ours,
@@ -210,8 +198,14 @@ pub struct Resolver {
 }
 
 /// Whether `id` is something of the resolver the state handles when it is pressed.
-pub fn is_conflict_part(id: FocusId) -> bool {
-    (CONFLICT_OURS_ALL.0..CONFLICT_CHOICE_END).contains(&id.0)
+pub fn is_conflict_part(id: Target) -> bool {
+    matches!(
+        id,
+        Target::Search(SearchEvent::ConflictOursAll)
+            | Target::Search(SearchEvent::ConflictTheirsAll)
+            | Target::Search(SearchEvent::ConflictConclude)
+            | Target::Search(SearchEvent::ConflictChoice { .. })
+    )
 }
 
 /// How the two sides of a conflict lie.
@@ -313,13 +307,12 @@ impl<'a> Conflict<'a> {
     /// Emits a row `height` pixels tall, padded `pad` steps at each end, holding `content` centred across it.
     #[track_caller]
     fn line_row(height: f32, pad: f32, content: impl FnOnce()) {
-        row_arranged(
+        kit::row(
             Modifier::new()
                 .fill_max_width()
                 .height(height)
                 .padding_xy(theme::sp(pad), 0.0),
-            Arrangement::Start,
-            Alignment::Center,
+            0,
             content,
         );
     }
@@ -340,22 +333,20 @@ impl<'a> Conflict<'a> {
                 Modifier::new().fill_max_width(),
             )
         };
-        column_arranged(own.clip(), Arrangement::Start, Alignment::Start, || {
+        kit::column(own.clip(), 0, || {
             Self::line_row(LABEL, 2.0, || line(name, 11, 1.4, Role::Muted));
-            column_arranged(
+            kit::column(
                 tinted.background(theme::color(Tone::from(tint).alpha(0.12))),
-                Arrangement::Start,
-                Alignment::Start,
+                0,
                 || {
                     for content in text_of.lines().take(MOST_LINES) {
                         Self::line_row(row, 2.0, || {
-                            rustle::basic_text(
+                            kit::text(
                                 Modifier::new().weight(1.0),
                                 crate::diff_syntax::shown(content),
                                 theme::code_style(font, 1.4)
                                     .color(theme::color(Role::Text))
                                     .max_lines(1),
-                                rustle::TextOverflow::Ellipsis,
                             );
                         });
                     }
@@ -379,19 +370,13 @@ impl<'a> Conflict<'a> {
         };
         let own = Modifier::new().fill_max_width();
         match self.layout {
-            Layout::SideBySide => row_arranged(
+            Layout::SideBySide => kit::row_top(
                 own.height_intrinsic(rustle::IntrinsicSize::Max)
                     .padding_xy(theme::sp(3), 0.0),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Start,
+                2,
                 both,
             ),
-            Layout::Stacked => column_arranged(
-                own.padding_xy(theme::sp(3), 0.0),
-                Arrangement::Start,
-                Alignment::Start,
-                both,
-            ),
+            Layout::Stacked => kit::column(own.padding_xy(theme::sp(3), 0.0), 0, both),
         }
     }
 
@@ -401,32 +386,24 @@ impl<'a> Conflict<'a> {
         let region = card.region;
         let ours = format!("Ours · {}", name_or(&region.ours_name, "HEAD"));
         let theirs = format!("Theirs · {}", name_or(&region.theirs_name, "incoming"));
-        column_arranged(
+        kit::column(
             Modifier::new()
                 .fill_max_width()
                 .height(self.card_height(region, row) - SPACE)
-                .border(1.0, theme::color(Role::Border), Radius::Lg.px())
-                .padding(1.0)
+                .outlined(Radius::Lg)
                 .clip(),
-            Arrangement::Start,
-            Alignment::Start,
+            0,
             || {
-                row_arranged(
+                kit::row(
                     Modifier::new()
                         .fill_max_width()
                         .height(LABEL)
                         .background(theme::color(Role::Surface))
-                        .draw_behind(theme::edge(
-                            theme::Side::Bottom,
-                            1.0,
-                            theme::color(Role::Border),
-                        ))
-                        .padding_each(0.0, 0.0, 0.0, 1.0)
+                        .ruled(theme::Side::Bottom)
                         .padding_xy(theme::sp(3), 0.0),
-                    Arrangement::Start,
-                    Alignment::Center,
+                    0,
                     || {
-                        rustle::basic_text(
+                        kit::text(
                             Modifier::new().weight(1.0),
                             format!(
                                 "Conflict {} of {} · line {}",
@@ -434,26 +411,24 @@ impl<'a> Conflict<'a> {
                                 card.count,
                                 region.line + 1
                             ),
-                            theme::text_style(12, 1.4)
-                                .font_weight(rustle::FontWeight::MEDIUM)
-                                .color(theme::color(Role::Text))
-                                .max_lines(1),
-                            rustle::TextOverflow::Ellipsis,
+                            kit::strong(12, Role::Text),
                         );
                     },
                 );
                 self.sides(region, &ours, &theirs, row);
-                row_arranged(
+                kit::row(
                     Modifier::new()
                         .height(BUTTONS)
                         .padding_xy(theme::sp(3), 0.0),
-                    Arrangement::SpacedBy(sp(2)),
-                    Alignment::Center,
+                    2,
                     || {
-                        for (step, choice) in Choice::ALL.into_iter().enumerate() {
+                        for choice in Choice::ALL {
                             Button::new(
                                 choice.label(),
-                                FocusId(CONFLICT_CHOICE_BASE + card.place as u64 * 3 + step as u64),
+                                Target::Search(SearchEvent::ConflictChoice {
+                                    place: card.place,
+                                    choice,
+                                }),
                             )
                             .variant(if choice == Choice::Both {
                                 Variant::Ghost
@@ -479,29 +454,15 @@ impl<'a> Conflict<'a> {
             (true, 1) => "1 conflict left".to_owned(),
             (true, left) => format!("{left} conflicts left"),
         };
-        row_arranged(
+        kit::row(
             Modifier::new()
                 .fill_max_width()
                 .height(STRIP)
-                .draw_behind(theme::edge(
-                    theme::Side::Bottom,
-                    1.0,
-                    theme::color(Role::Border),
-                ))
-                .padding_each(0.0, 0.0, 0.0, 1.0)
+                .ruled(theme::Side::Bottom)
                 .padding_xy(theme::sp(4), 0.0),
-            Arrangement::SpacedBy(sp(3)),
-            Alignment::Center,
+            3,
             || {
-                rustle::basic_text(
-                    Modifier::new(),
-                    name,
-                    theme::text_style(13, 1.4)
-                        .font_weight(rustle::FontWeight::MEDIUM)
-                        .color(theme::color(Role::Text))
-                        .max_lines(1),
-                    rustle::TextOverflow::Ellipsis,
-                );
+                kit::text(Modifier::new(), name, kit::strong(13, Role::Text));
                 line(
                     said,
                     12,
@@ -513,20 +474,29 @@ impl<'a> Conflict<'a> {
                     },
                 );
                 spacer();
-                Button::new("Take all ours", CONFLICT_OURS_ALL)
-                    .variant(Variant::Ghost)
-                    .size(self.size)
-                    .disabled(resolver.ours.is_none())
-                    .build();
-                Button::new("Take all theirs", CONFLICT_THEIRS_ALL)
-                    .variant(Variant::Ghost)
-                    .size(self.size)
-                    .disabled(resolver.theirs.is_none())
-                    .build();
-                Button::new("Mark as resolved", CONFLICT_CONCLUDE)
-                    .size(self.size)
-                    .disabled(!loaded || left > 0)
-                    .build();
+                Button::new(
+                    "Take all ours",
+                    Target::Search(SearchEvent::ConflictOursAll),
+                )
+                .variant(Variant::Ghost)
+                .size(self.size)
+                .disabled(resolver.ours.is_none())
+                .build();
+                Button::new(
+                    "Take all theirs",
+                    Target::Search(SearchEvent::ConflictTheirsAll),
+                )
+                .variant(Variant::Ghost)
+                .size(self.size)
+                .disabled(resolver.theirs.is_none())
+                .build();
+                Button::new(
+                    "Mark as resolved",
+                    Target::Search(SearchEvent::ConflictConclude),
+                )
+                .size(self.size)
+                .disabled(!loaded || left > 0)
+                .build();
             },
         );
     }
@@ -563,14 +533,13 @@ impl<'a> Conflict<'a> {
             alignment,
             || {
                 self.strip(resolver, regions.len(), text_now.is_some());
-                column_arranged(
+                kit::column(
                     Modifier::new()
                         .fill_max_width()
                         .weight(1.0)
                         .clip()
                         .background(theme::color(Role::Background)),
-                    Arrangement::Start,
-                    Alignment::Start,
+                    0,
                     || {
                         rustle::lazy_list_keyed(
                             Modifier::new().fill_max_width().weight(1.0),
@@ -580,10 +549,9 @@ impl<'a> Conflict<'a> {
                             |item| {
                                 let after = item.saturating_sub(regions.len());
                                 match regions.get(item) {
-                                    Some(region) => column_arranged(
+                                    Some(region) => kit::column(
                                         Modifier::new().fill_max_width().padding(theme::sp(3)),
-                                        Arrangement::Start,
-                                        Alignment::Start,
+                                        0,
                                         || {
                                             self.card(
                                                 &Card {
@@ -614,30 +582,16 @@ impl<'a> Conflict<'a> {
     /// Emits the label over the result, the file edited in place.
     #[track_caller]
     fn result_label() {
-        row_arranged(
+        kit::row(
             Modifier::new()
                 .fill_max_width()
                 .height(LABEL)
                 .background(theme::color(Role::Surface))
-                .draw_behind(theme::edge(
-                    theme::Side::Bottom,
-                    1.0,
-                    theme::color(Role::Border),
-                ))
-                .padding_each(0.0, 0.0, 0.0, 1.0)
+                .ruled(theme::Side::Bottom)
                 .padding_xy(theme::sp(3), 0.0),
-            Arrangement::Start,
-            Alignment::Center,
+            0,
             || {
-                rustle::basic_text(
-                    Modifier::new(),
-                    "Result",
-                    theme::text_style(12, 1.4)
-                        .font_weight(rustle::FontWeight::MEDIUM)
-                        .color(theme::color(Role::Text))
-                        .max_lines(1),
-                    rustle::TextOverflow::Ellipsis,
-                );
+                kit::text(Modifier::new(), "Result", kit::strong(12, Role::Text));
             },
         );
     }
@@ -769,17 +723,15 @@ impl WorkspaceState {
     }
 
     /// Carries out what pressing `id` of the resolver does.
-    pub(crate) fn conflict_pressed(mut self, id: FocusId) -> Self {
+    pub(crate) fn conflict_pressed(mut self, id: Target) -> Self {
         match id {
-            CONFLICT_OURS_ALL => self.conflict_side_taken(true),
-            CONFLICT_THEIRS_ALL => self.conflict_side_taken(false),
-            CONFLICT_CONCLUDE => return self.conflict_concluded(),
-            id => {
-                if let Some(offset) = id.0.checked_sub(CONFLICT_CHOICE_BASE) {
-                    let choice = Choice::ALL[(offset % 3) as usize];
-                    self.conflict_settled((offset / 3) as usize, choice);
-                }
+            Target::Search(SearchEvent::ConflictOursAll) => self.conflict_side_taken(true),
+            Target::Search(SearchEvent::ConflictTheirsAll) => self.conflict_side_taken(false),
+            Target::Search(SearchEvent::ConflictConclude) => return self.conflict_concluded(),
+            Target::Search(SearchEvent::ConflictChoice { place, choice }) => {
+                self.conflict_settled(place, choice)
             }
+            _ => {}
         }
         self
     }

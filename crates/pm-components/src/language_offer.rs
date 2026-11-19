@@ -1,25 +1,17 @@
 //! The offer, at the top of a file, to install the language it is written in when the server's machine has not got it.
 
+use crate::areas::EditorEvent;
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use pm_protocol::ExtensionInfo;
 use rustle::Modifier;
-use rustle::{Alignment, Arrangement, row_arranged};
 
-use crate::focus::FocusId;
 use crate::theme::Role;
 
-use crate::Button;
 use crate::button::Variant;
 use crate::open_files::{Contents, Viewer};
-use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
-
-/// Installs the language the offer is for.
-pub const OFFER_INSTALL: FocusId = FocusId(7101);
-
-/// Turns the offer down for the language it is for, for good.
-pub const OFFER_DECLINE: FocusId = FocusId(7102);
 
 /// Whether `extension` is a language written in the file `path`, by the whole name or the ending of the name.
 fn reads(extension: &ExtensionInfo, path: &str) -> bool {
@@ -71,37 +63,32 @@ pub(crate) fn offer(state: &WorkspaceState, viewer: &Viewer) {
     };
     let idle = extension.busy.is_none();
     let retry = extension.problem.is_some();
-    row_arranged(
+    kit::row(
         Modifier::new()
             .background(theme::color(Role::Surface))
-            .draw_behind(theme::edge(
-                theme::Side::Bottom,
-                1.0,
-                theme::color(Role::Border),
-            ))
-            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .ruled(theme::Side::Bottom)
             .padding_xy(theme::sp(4), 0.0)
             .padding_xy(0.0, theme::sp(1)),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Center,
+        3,
         move || {
-            rustle::basic_text(
+            kit::text(
                 Modifier::new().weight(1.0).clip(),
                 words,
-                theme::text_style(12, 1.4)
-                    .color(theme::color(Role::Muted))
-                    .max_lines(1),
-                rustle::TextOverflow::Ellipsis,
+                kit::line(12, Role::Muted),
             );
             if idle {
-                Button::new(if retry { "Try again" } else { "Install" }, OFFER_INSTALL)
-                    .variant(Variant::Secondary)
-                    .size(Size::Sm)
-                    .build();
-                Button::new("Not now", OFFER_DECLINE)
-                    .variant(Variant::Ghost)
-                    .size(Size::Sm)
-                    .build();
+                kit::small_button(
+                    if retry { "Try again" } else { "Install" },
+                    Target::Editor(EditorEvent::OfferInstall),
+                    Variant::Secondary,
+                )
+                .build();
+                kit::small_button(
+                    "Not now",
+                    Target::Editor(EditorEvent::OfferDecline),
+                    Variant::Ghost,
+                )
+                .build();
             }
         },
     );
@@ -115,15 +102,15 @@ impl WorkspaceState {
     }
 
     /// Handles a press on the offer's buttons; false when `action` is not one of them.
-    pub(crate) fn offer_pressed(&mut self, action: FocusId) -> bool {
+    pub(crate) fn offer_pressed(&mut self, action: Target) -> bool {
         match action {
-            OFFER_INSTALL => {
+            Target::Editor(EditorEvent::OfferInstall) => {
                 if let Some(id) = self.offered_language() {
                     self.outbox
                         .push(Outgoing::InstallExtensions { ids: vec![id] });
                 }
             }
-            OFFER_DECLINE => {
+            Target::Editor(EditorEvent::OfferDecline) => {
                 if let Some(id) = self.offered_language() {
                     self.window.general.declined_languages.push(id);
                 }

@@ -51,12 +51,12 @@ use rustle::{CompositionLocal, FontFamily};
 pub use builtin::{default_family, families, family_named, shipped_families};
 pub use color::Tone;
 pub use decoration::{
-    FLOATING_SHADOW, MEDIUM_SHADOW, SHADOW_SOFTNESS, ShadowLayer, Side, edge, shadows,
+    FLOATING_SHADOW, MEDIUM_SHADOW, SHADOW_SOFTNESS, ShadowLayers, Side, box_shadow, edge,
 };
 pub use extension::{family_from_colours, set_extension_families};
 pub use family::{Appearance, ThemeFamily};
 pub use fonts::Fonts;
-pub use interaction::{InteractionTones, focus_ring, outline_by_focus};
+pub use interaction::{FocusOutline, FocusRing, Focused, Indicated, InteractionTones};
 pub use oklch::{Oklab, Oklch};
 pub use role::{Role, Roles};
 pub use scheme::Theme;

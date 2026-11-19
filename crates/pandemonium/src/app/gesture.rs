@@ -4,7 +4,7 @@
 //! gestures.
 
 use crate::model::Model;
-use pm_components::focus::FocusId;
+use pm_components::target::Target;
 use pm_field::{Edit, Reach, Surface};
 
 use super::App;
@@ -14,7 +14,7 @@ pub(super) struct CodeText<'a> {
     /// The app that holds the field.
     pub(super) app: &'a mut App,
     /// The field.
-    pub(super) id: FocusId,
+    pub(super) id: Target,
 }
 
 impl Surface for CodeText<'_> {

@@ -1,28 +1,28 @@
 //! What the workspace remembers: the page on screen, the panels that are open and what was typed.
 
-use crate::focus::FocusId;
+use crate::areas::SidebarEvent;
+use crate::areas::{
+    BrowserEvent, ChatEvent, ComposerEvent, DebugEvent, DialogEvent, DiffEvent, EditorEvent,
+    GitEvent, MenuEvent, SearchEvent, SettingsEvent, TerminalEvent, TreeEvent, WindowEvent,
+};
+
+use crate::events::{Event, FieldEvent};
+use crate::target::Target;
 use pm_field::Edit;
-use pm_harness::{Event, Setting, Slash};
+use pm_harness::{Event as HarnessEvent, Setting, Slash};
 use rustle::TextFieldState;
 
-use crate::adder::{ADDER_FIELD, ADDER_ROW_BASE, ADDER_SUBMIT, Adder, is_adder};
-use crate::arrange::{
-    PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectDrag, ProjectMenu, SessionMenu,
-    is_session_menu_item,
-};
+use crate::adder::{Adder, is_adder};
+use crate::arrange::{ProjectDrag, ProjectMenu, SessionMenu, is_session_menu_item};
 use crate::context_menu::ContextMenu;
-use crate::draft::{NEXT, OTHER};
-use crate::folder_picker::{FolderPicker, PICKER_FIELD, PICKER_SUBMIT, is_picker};
-use crate::git_controls::{BRANCH_FILTER, BRANCH_SUBMIT, GitControls, OPEN_ARROW_BASE};
-use crate::git_prompts::{PROMPT_CONFIRM, RENAME_FIELD, STASH_FIELD};
-use crate::message_menu::{
-    MESSAGE_MENU_COPY, MESSAGE_MENU_COPY_MARKDOWN, MESSAGE_MENU_COPY_REPLY,
-    MESSAGE_MENU_SELECT_ALL, MessageMenu,
-};
-use crate::open_files::EDITOR_FIELD;
+
+use crate::folder_picker::{FolderPicker, is_picker};
+use crate::git_controls::GitControls;
+
+use crate::message_menu::MessageMenu;
 use crate::project::Project;
 use crate::sample::{Change, Comment, Message, Range, Session, Status, projects, sessions};
-use crate::tree_actions::{ENTRY_FIELD, TreeTarget};
+use crate::tree_actions::TreeTarget;
 
 /// A prompt holding `text`, which may run to several lines.
 pub fn prompt_field(text: &str) -> TextFieldState {
@@ -34,297 +34,14 @@ pub fn commit_field() -> TextFieldState {
     TextFieldState::new("")
 }
 
-/// Lists every session.
-pub const HISTORY: FocusId = FocusId(301);
-
-/// Adds a project.
-pub const ADD_PROJECT: FocusId = FocusId(303);
-
-/// Opens the settings.
-pub const SETTINGS: FocusId = FocusId(304);
-
-/// Shows the conversation of the open session.
-pub const TAB_CHAT: FocusId = FocusId(310);
-
-/// Shows the diff of the open session.
-pub const TAB_DIFF: FocusId = FocusId(311);
-
-/// Shows or hides the terminal.
-pub const TERMINAL: FocusId = FocusId(312);
-
-/// Shows or hides the review panel.
-pub const REVIEW: FocusId = FocusId(313);
-
-/// Opens the plan the agent proposed in the panel beside the conversation.
-pub const OPEN_PLAN: FocusId = FocusId(328);
-
-/// Closes the panel showing the plan.
-pub const CLOSE_PLAN: FocusId = FocusId(329);
-
-/// Turns the proposed plan down and gives the prompt the keyboard, to say what to change.
-pub const REVISE: FocusId = FocusId(330);
-
-/// Shows the changed files in the review panel.
-pub const REVIEW_CHANGES: FocusId = FocusId(7001);
-
-/// Shows every file of the project in the review panel.
-pub const REVIEW_FILES: FocusId = FocusId(7002);
-
-/// The box the comment on a file or on lines is written in.
-pub const COMMENT_FIELD: FocusId = FocusId(7003);
-
-/// Keeps the comment that was written.
-pub const COMMENT_ADD: FocusId = FocusId(7006);
-
-/// Drops the comment that was being written.
-pub const COMMENT_CANCEL: FocusId = FocusId(7007);
-
-/// Hands the comments to the agent as the next message.
-pub const SEND_COMMENTS: FocusId = FocusId(7008);
-
-/// The first of the buttons that start a comment on a whole file; the rest follow it.
-pub const COMMENT_FILE_BASE: u64 = 7900;
-
-/// The first of the buttons that take a comment back; the rest follow it.
-pub const COMMENT_REMOVE_BASE: u64 = 8100;
-
-/// The first of the rows folding a folder of the changed files; the rest follow it.
-pub const FOLDER_BASE: u64 = 150_000;
-
-/// The first of the check boxes staging a folder of the changed files; the rest follow it.
-pub const FOLDER_STAGE_BASE: u64 = 170_000;
-
-/// The first of the headers folding a file of the diff; the rest follow it.
-pub const DIFF_FOLD_BASE: u64 = 7500;
-
-/// The first of the rows folding a folder of the project's files; the rest follow it.
-pub const TREE_BASE: u64 = 2_000_000;
-
-/// Opens the diff from the summary of changes.
-pub const OPEN_DIFF: FocusId = FocusId(314);
-
-/// Hands the prompt to the agent.
-pub const SEND: FocusId = FocusId(315);
-
-/// Stages every change, or none when all are staged.
-pub const STAGE_ALL: FocusId = FocusId(316);
-
-/// Commits the staged changes.
-pub const COMMIT: FocusId = FocusId(317);
-
-/// Stops the turn the agent is on.
-pub const STOP: FocusId = FocusId(322);
-
-/// Stops the turn the agent is on and hands it the prompt in its place.
-pub const SEND_NOW: FocusId = FocusId(327);
-
-/// Signs in again as the open session's account.
-pub const SESSION_SIGN_IN: FocusId = FocusId(331);
-
-/// The first of the buttons handing a queued prompt to the agent at once; the rest follow it.
-pub const HURRY_BASE: u64 = 4_902_000_000_000;
-
-/// The first of the buttons removing a waiting prompt; the rest follow it.
-pub const REMOVE_QUEUED_BASE: u64 = 4_900_000_000_000;
-
-/// The text of the conversation's messages, which the pointer selects as
-/// one: each message is a selectable box of it, in the order of the messages.
-pub const CHAT_TEXT: FocusId = FocusId(353);
-
-/// The prompt field.
-pub const PROMPT: FocusId = FocusId(320);
-
-/// The commit message field.
-pub const COMMIT_MESSAGE: FocusId = FocusId(321);
-
-/// The field on the history page that narrows the sessions it lists.
-pub const HISTORY_SEARCH: FocusId = FocusId(326);
-
-/// The first of the chips choosing an agent; the rest follow it.
-pub const AGENT_BASE: u64 = 4000;
-
-/// The first of the rows folding a project; the rest follow it.
-pub const PROJECT_BASE: u64 = 1000;
-
-/// The first of the rows starting work in a project; the rest follow it.
-pub const NEW_IN_BASE: u64 = 1100;
-
-/// The first of the rows starting work in a submodule of a project, numbered across the projects as [`crate::sidebar::submodule_rows`] lists them; the rest follow it.
-pub const NEW_IN_SUBMODULE_BASE: u64 = 1300;
-
-/// The first of the rows opening a session; the rest follow it.
-pub const SESSION_BASE: u64 = 2000;
-
-/// The first of the rows picking a changed file; the rest follow it.
-pub const FILE_BASE: u64 = 3000;
-
-/// The first of the check boxes staging a file; the rest follow it.
-pub const STAGE_BASE: u64 = 3200;
-
-/// The first of the check boxes marking a file viewed; the rest follow it.
-pub const VIEWED_BASE: u64 = 3400;
-
-/// The first of the buttons opening a setting's menu; the rest follow it.
-pub const SETTING_BASE: u64 = 4200;
-
-/// The first of the rows of the open setting's menu; the rest follow it.
-pub const PICK_BASE: u64 = 4300;
-
-/// The first of the rows of the commands offered behind a slash; the rest follow it.
-pub const SLASH_BASE: u64 = 4400;
-
-/// The first of the buttons choosing the effort; the rest follow it.
-pub const EFFORT_BASE: u64 = 4500;
-
-/// Opens the menu of where new work is done.
-pub const LOCATION: FocusId = FocusId(4250);
-
-/// The first of the rows choosing where new work is done; the rest follow it.
-pub const PLACE_BASE: u64 = 4260;
-
-/// The first of the rows choosing the branch new work is made from; the rest follow it.
-pub const BRANCH_BASE: u64 = 4600;
-
-/// Opens the agent's plan above the prompt box.
-pub const PLAN_CHIP: FocusId = FocusId(4270);
-
-/// Opens the questions waiting for an answer above the prompt box.
-pub const APPROVALS_CHIP: FocusId = FocusId(4271);
-
-/// Opens the subagents the agent started above the prompt box.
-pub const SUBAGENTS_CHIP: FocusId = FocusId(4272);
-
-/// Opens the commands the agent left running above the prompt box.
-pub const SHELLS_CHIP: FocusId = FocusId(4273);
-
-/// The body of the terminal dock, which takes the keyboard while it has focus.
-pub const TERMINAL_BODY: FocusId = FocusId(323);
-
-/// Starts another shell in the terminal dock.
-pub const NEW_TERMINAL: FocusId = FocusId(324);
-
-/// Makes the terminal dock taller, or gives it its height back.
-pub const MAXIMIZE_TERMINAL: FocusId = FocusId(325);
-
-/// The dock's tab listing what is wrong with the files of the project.
-pub const BOTTOM_PROBLEMS: FocusId = FocusId(20_200_000);
-
-/// The count of errors and warnings above a file, which shows the dock's tab of problems.
-pub const BOTTOM_PROBLEMS_COUNT: FocusId = FocusId(20_200_003);
-
-/// The button in the title bar that shows and hides the sidebar of projects and sessions.
-pub const SIDEBAR_TOGGLE: FocusId = FocusId(20_200_004);
-
-/// The dock's tab showing the shells.
-pub const BOTTOM_TERMINAL: FocusId = FocusId(20_200_001);
-
 /// A folder of a machine, which the problems of the dock are about: the machine the folder is on, when it is not this one, and the folder.
 pub type ProblemsKey = (Option<String>, String);
-
-/// The first of the rows of the dock's list of problems; the rest follow it.
-pub const PROBLEM_ROW_BASE: u64 = 20_201_000;
-
-/// The first of the tabs showing one of the dock's shells; the rest follow it.
-pub const TERMINAL_TAB_BASE: u64 = 5000;
-
-/// The first of the buttons ending one of the dock's shells; the rest follow it.
-pub const TERMINAL_CLOSE_BASE: u64 = 5100;
-
-/// The first of the buttons copying a reply; the rest follow it.
-pub const COPY_BASE: u64 = 300_000;
-
-/// The first of the buttons taking the conversation back to before one of the reader's messages to write it again; the rest follow it.
-pub const REWIND_BASE: u64 = 1_000_000_000_000;
-
-/// The first of the buttons offering to put the files back as they were before one of the reader's messages; the rest follow it.
-pub const RESTORE_BASE: u64 = 2_000_000_000_000;
-
-/// The first of the buttons starting a session that branches off the conversation after one of the agent's replies; the rest follow it.
-pub const FORK_BASE: u64 = 3_000_000_000_000;
-
-/// The first of the buttons showing what the agent changed during the turn one of the reader's messages started; the rest follow it.
-pub const TURN_CHANGES_BASE: u64 = 8_000_000_000_000;
-
-/// The first of the links in the agent's replies; each reply has [`LINKS_PER_REPLY`] after its own base and each piece of it [`LINKS_PER_PIECE`].
-pub const LINK_BASE: u64 = 4_000_000_000_000;
-
-/// How many links one reply has room for, its pieces following one another.
-pub const LINKS_PER_REPLY: u64 = 100_000;
-
-/// How many links one piece of a reply has room for.
-pub const LINKS_PER_PIECE: u64 = 1000;
-
-/// Puts the files back as they were before the message whose offer is open.
-pub const RESTORE_FILES: FocusId = FocusId(4273);
-
-/// Closes the offer to put the files back, leaving them as they are.
-pub const KEEP_FILES: FocusId = FocusId(4274);
-
-/// The box the values of the open menu are narrowed with, when it has many.
-pub const MENU_FILTER: FocusId = FocusId(33_000_000);
-
-/// Chooses the first value the box of the open menu leaves, as Enter in the box does.
-pub const MENU_FILTER_PICK: FocusId = FocusId(33_000_001);
-
-/// The first of the values of the open menu, by their place among all its values; the rest follow it, with room for [`MENU_PICK_ROOM`].
-pub const MENU_PICK_BASE: u64 = 33_000_100;
 
 /// How many values of the open menu can be chosen.
 pub const MENU_PICK_ROOM: usize = 100_000;
 
-/// Switches the agent persona on or off.
-pub const AGENT_TOGGLE: FocusId = FocusId(4290);
-
-/// The button that attaches files to the prompt.
-pub const ATTACH: FocusId = FocusId(318);
-
-/// The first of the buttons that remove an attached file; the rest follow it.
-pub const ATTACHED_BASE: u64 = 4800;
-
-/// The button that starts mentioning a file in the prompt.
-pub const MENTION: FocusId = FocusId(4281);
-
-/// Puts a slash in the prompt, which lists the commands the agent offers.
-/// The body of an open menu, which is not a button but keeps a click on it from counting as outside.
-pub const MENU_BODY: FocusId = FocusId(4299);
-
-/// The chip naming the account the agent is signed in as.
-pub const ACCOUNT: FocusId = FocusId(4291);
-
-/// The first of the rows choosing the account; the rest follow it.
-pub const ACCOUNT_BASE: u64 = 4700;
-
-/// The chip showing the goal the agent works toward, which opens what can be done with it.
-pub const GOAL_CHIP: FocusId = FocusId(4292);
-
-/// The row of the model menu that switches the conversation in and out of orchestrator mode, in which the agent leads and hands work to subagents by category.
-pub const ORCHESTRATE: FocusId = FocusId(4293);
-
-/// The first of the rows of the goal's menu, pausing, resuming and clearing it, in that order.
-pub const GOAL_BASE: u64 = 4760;
-
-/// What the rows of the goal's menu send to the agent, in the order they follow [`GOAL_BASE`].
+/// What the rows of the goal's menu send to the agent, in the order of [`ComposerEvent::GoalRow`].
 pub const GOAL_COMMANDS: [&str; 3] = ["/goal pause", "/goal resume", "/goal clear"];
-
-pub const SLASH_BUTTON: FocusId = FocusId(4280);
-
-/// The first of the lines folding the steps of a reply; the rest follow it.
-pub const TURN_BASE: u64 = 100_000;
-
-/// The first of the lines opening a step's detail; the rest follow it, a thousand to a reply.
-pub const STEP_BASE: u64 = 200_000;
-
-/// The first of the buttons stopping one subagent; the rest follow it, a thousand to a reply, each numbered as the line of its subagent is from [`STEP_BASE`].
-pub const SUBAGENT_STOP_BASE: u64 = 7_000_000_000_000;
-
-/// How many buttons stopping a subagent there is room for after [`SUBAGENT_STOP_BASE`].
-pub const SUBAGENT_STOP_ROOM: u64 = 1_000_000_000;
-
-/// The first of the summaries folding a part of a reply; the rest follow it, a thousand to a reply.
-pub const DETAILS_BASE: u64 = 400_000;
-
-/// The first of the buttons answering the agent's question; the rest follow it.
-pub const CHOICE_BASE: u64 = 3600;
 
 /// Something the window has to do or tell an agent, taken off the state by whoever runs the agents.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1785,7 +1502,7 @@ pub type Discovered = (Vec<Vec<Setting>>, Vec<Vec<Slash>>);
 pub struct Asked {
     /// The box to give keyboard focus: the prompt or a field the press calls for, or the box
     /// of a menu it opened that is narrowed with one.
-    pub focus: Option<FocusId>,
+    pub focus: Option<Target>,
     /// Whether the press showed a shell that takes the keyboard.
     pub keyboard_to_shell: bool,
     /// Whether the caret of the file shown is to be shown again, after a press on the find
@@ -2387,16 +2104,42 @@ impl WorkspaceState {
         }
     }
 
+    /// The state after `event`, the reducer of what the reader did: a press of a control,
+    /// or typing in, editing or leaving a field.
+    pub fn handle(self, event: Event) -> Self {
+        match event {
+            Event::Sidebar(event) => self.sidebar_event(event),
+            Event::Chat(event) => self.chat_event(event),
+            Event::Composer(event) => self.composer_event(event),
+            Event::Diff(event) => self.diff_event(event),
+            Event::Tree(event) => self.tree_event(event),
+            Event::Editor(event) => self.editor_event(event),
+            Event::Search(event) => self.search_event(event),
+            Event::Git(event) => self.git_event(event),
+            Event::Terminal(event) => self.terminal_event(event),
+            Event::Debug(event) => self.debug_event(event),
+            Event::Browser(event) => self.browser_event(event),
+            Event::Settings(event) => self.settings_event(event),
+            Event::Menu(event) => self.menu_event(event),
+            Event::Dialog(event) => self.dialog_event(event),
+            Event::Window(event) => self.window_event(event),
+            Event::Field(FieldEvent::Changed(field)) => self.field_typed(field),
+            Event::Field(FieldEvent::Typed { field, text }) => self.typed(field, &text),
+            Event::Field(FieldEvent::Left(field)) => self.field_left(field),
+            Event::Field(FieldEvent::Edited { field, edit }) => self.edited(field, edit),
+        }
+    }
+
     /// The state after `action` was pressed, with what the press asks of the app kept in
     /// [`asked`](Self::asked): the box to give keyboard focus, whether a shell takes the
     /// keyboard and whether the caret of the file shown is to be shown.
-    pub fn after(self, action: FocusId) -> Self {
+    pub(crate) fn pressed(self, action: Target) -> Self {
         let mut state = self.after_press(action);
         state.asked = Some(Asked {
             focus: Self::refocus(action).or_else(|| state.menu_filter_focus(action)),
             keyboard_to_shell: Self::takes_keyboard(action),
             caret: crate::find::is_find_part(action)
-                || crate::listing::listing_row_of(action).is_some(),
+                || matches!(action, Target::Editor(EditorEvent::ListingRow(_))),
         });
         state
     }
@@ -2407,7 +2150,7 @@ impl WorkspaceState {
     }
 
     /// The state after `action` was pressed, before what the press asks of the app is noted.
-    fn after_press(mut self, action: FocusId) -> Self {
+    fn after_press(mut self, action: Target) -> Self {
         if !Self::keeps_picker(action) {
             self.picker = None;
         }
@@ -2423,62 +2166,60 @@ impl WorkspaceState {
         if !self.settings_menu_row(action) {
             self.settings_servers.menu = None;
         }
-        if let Some(place) = action
-            .0
-            .checked_sub(crate::assist::COMPLETION_ROW_BASE)
-            .filter(|_| action.0 < crate::assist::COMPLETION_ROW_END)
-        {
-            return self.completion_taken(Some(place as usize));
+        if let Target::Editor(EditorEvent::CompletionRow(place)) = action {
+            return self.completion_taken(Some(place));
         }
-        if action == crate::assist::COMPLETION_BODY || action == crate::assist::HOVER_CARD {
+        if action == Target::Editor(EditorEvent::CompletionBody)
+            || action == Target::Editor(EditorEvent::HoverCard)
+        {
             return self;
         }
-        if let Some((file, line)) = crate::debug::breakpoint_of(action) {
+        if let Target::Editor(EditorEvent::Breakpoint { file, line }) = action {
             self.toggle_breakpoint(file, line);
             return self;
         }
-        if let Some(index) = crate::tasks::run_lens_of(action) {
+        if let Target::Editor(EditorEvent::RunLens(index)) = action {
             self.run_lens_pressed(index);
             return self;
         }
-        if let Some((file, line)) = crate::tasks::run_of(action) {
+        if let Target::Editor(EditorEvent::Run { file, line }) = action {
             self.runnable_run(file, line);
             return self;
         }
-        if action == crate::lightbulb::LIGHTBULB {
+        if action == Target::Editor(EditorEvent::Lightbulb) {
             return self;
         }
-        if let Some(line) = crate::viewer::fold_of(action) {
+        if let Target::Editor(EditorEvent::CodeFold(line)) = action {
             if let Some(document) = self.shown_text() {
                 document.unfold_line(line);
             }
             return self;
         }
-        if let Some(row) = crate::listing::listing_row_of(action) {
+        if let Target::Editor(EditorEvent::ListingRow(row)) = action {
             return self.listing_taken(Some(row));
         }
-        if action == crate::quick_sessions::LISTING_PROMPT {
+        if action == Target::Editor(EditorEvent::ListingPrompt) {
             return self.listing_prompted();
         }
-        if action == crate::listing::LISTING_TAKE {
+        if action == Target::Editor(EditorEvent::ListingTake) {
             return self.listing_taken(None);
         }
-        if action == crate::listing::LISTING_FILTER
-            || action == crate::listing::LISTING_BODY
-            || action == crate::navigate::RENAME_BOX
-            || action == crate::navigate::RENAME_SYMBOL
-            || action == crate::color_picker::COLOR_BOX
-            || action == crate::color_picker::COLOR_HEX
+        if action == Target::Editor(EditorEvent::ListingFilter)
+            || action == Target::Editor(EditorEvent::ListingBody)
+            || action == Target::Editor(EditorEvent::RenameBox)
+            || action == Target::Editor(EditorEvent::RenameSymbol)
+            || action == Target::Editor(EditorEvent::ColorBox)
+            || action == Target::Editor(EditorEvent::ColorHex)
         {
             return self;
         }
-        if action == crate::color_picker::COLOR_HEX_SUBMIT {
+        if action == Target::Editor(EditorEvent::ColorHexSubmit) {
             return self.color_format_taken(None);
         }
-        if let Some(row) = crate::color_picker::color_format_of(action) {
+        if let Target::Editor(EditorEvent::ColorFormat(row)) = action {
             return self.color_format_taken(Some(row));
         }
-        if action == crate::navigate::RENAME_SYMBOL_SUBMIT {
+        if action == Target::Editor(EditorEvent::RenameSymbolSubmit) {
             return self.rename_submitted();
         }
         if let Some(command) =
@@ -2502,10 +2243,12 @@ impl WorkspaceState {
         if crate::project_search::is_search_part(action) {
             return self.project_search_pressed(action);
         }
-        if action == crate::line_edits::GO_TO_LINE_SUBMIT {
+        if action == Target::Editor(EditorEvent::GoToLineSubmit) {
             return self.go_to_line_submitted();
         }
-        if action == crate::line_edits::GO_TO_LINE || action == crate::line_edits::GO_TO_LINE_BOX {
+        if action == Target::Editor(EditorEvent::GoToLine)
+            || action == Target::Editor(EditorEvent::GoToLineBox)
+        {
             return self;
         }
         if let Some(address) = self
@@ -2531,68 +2274,78 @@ impl WorkspaceState {
             self.split_focused(side);
             return self;
         }
-        if let Some(pane) = crate::panes::pane_of(action) {
+        if let Target::Window(WindowEvent::Pane(pane)) = action {
             self.focus_pane(pane);
             return self;
         }
         let restoring = self.restoring.take();
         match action {
-            RESTORE_FILES => self.restore(restoring),
+            Target::Chat(ChatEvent::RestoreFiles) => self.restore(restoring),
             row if is_session_menu_item(row) => return self.session_menu_pressed(row),
-            MESSAGE_MENU_COPY
-            | MESSAGE_MENU_COPY_REPLY
-            | MESSAGE_MENU_COPY_MARKDOWN
-            | MESSAGE_MENU_SELECT_ALL => return self.message_menu_pressed(action),
-            PROJECT_MENU_NEW | PROJECT_MENU_REMOVE => return self.project_menu_pressed(action),
-            ADD_PROJECT => return self.with_adder(),
-            SETTINGS => return self.with_settings(),
-            crate::title_bar::UPDATE => self.open_release(),
-            crate::title_bar::LANGUAGE_UPDATE => return self.with_extensions_page(),
+            Target::Menu(MenuEvent::MessageMenuCopy)
+            | Target::Menu(MenuEvent::MessageMenuCopyReply)
+            | Target::Menu(MenuEvent::MessageMenuCopyMarkdown)
+            | Target::Menu(MenuEvent::MessageMenuSelectAll) => {
+                return self.message_menu_pressed(action);
+            }
+            Target::Menu(MenuEvent::ProjectMenuNew)
+            | Target::Menu(MenuEvent::ProjectMenuRemove) => {
+                return self.project_menu_pressed(action);
+            }
+            Target::Sidebar(SidebarEvent::AddProject) => return self.with_adder(),
+            Target::Sidebar(SidebarEvent::Settings) => return self.with_settings(),
+            Target::Window(WindowEvent::Update) => self.open_release(),
+            Target::Window(WindowEvent::LanguageUpdate) => return self.with_extensions_page(),
             update if self.press_update(update) => {}
             trust if self.trust_pressed(trust) => {}
             action if crate::settings::is_settings(action) => {
                 return self.settings_pressed(action);
             }
-            action if is_adder(action) && action.0 < ADDER_ROW_BASE => {
+            action
+                if is_adder(action)
+                    && !matches!(action, Target::Dialog(DialogEvent::AdderRow(_))) =>
+            {
                 return self.adder_pressed(action);
             }
             action if is_picker(action) => return self.folder_picker_pressed(action),
-            HISTORY => self.page = Page::History,
-            crate::chats::NEW_CHAT => self.start_chat(),
-            crate::extensions::EXTENSIONS => return self.with_extensions_page(),
+            Target::Sidebar(SidebarEvent::History) => self.page = Page::History,
+            Target::Sidebar(SidebarEvent::NewChat) => self.start_chat(),
+            Target::Settings(SettingsEvent::Extensions) => return self.with_extensions_page(),
             action if crate::extensions::is_extensions(action) => {
                 return self.extensions_pressed(action);
             }
-            TAB_CHAT => self.tab = Tab::Chat,
-            TAB_DIFF => self.tab = Tab::Diff,
-            TERMINAL | NEW_TERMINAL | MAXIMIZE_TERMINAL => {
+            Target::Chat(ChatEvent::TabChat) => self.tab = Tab::Chat,
+            Target::Diff(DiffEvent::TabDiff) => self.tab = Tab::Diff,
+            Target::Terminal(TerminalEvent::Terminal)
+            | Target::Terminal(TerminalEvent::NewTerminal)
+            | Target::Terminal(TerminalEvent::MaximizeTerminal) => {
                 self.press_terminal(action);
             }
-            REVIEW => self.review = !self.review,
-            SIDEBAR_TOGGLE => self.sidebar_open = !self.sidebar_open,
-            REVIEW_CHANGES => self.show_review_tab(ReviewTab::Changes),
-            REVIEW_FILES => self.show_review_tab(ReviewTab::Files),
-            COMMENT_ADD => self.add_comment(),
-            COMMENT_CANCEL => self.comment_target = None,
-            SEND_COMMENTS => self.send_comments(),
-            OPEN_PLAN => self.plan_open = true,
-            CLOSE_PLAN => self.plan_open = false,
-            REVISE => self.reject(),
-            OPEN_DIFF => self.tab = Tab::Diff,
-            SESSION_SIGN_IN => {
+            Target::Diff(DiffEvent::Review) => self.review = !self.review,
+            Target::Sidebar(SidebarEvent::SidebarToggle) => self.sidebar_open = !self.sidebar_open,
+            Target::Diff(DiffEvent::ReviewChanges) => self.show_review_tab(ReviewTab::Changes),
+            Target::Diff(DiffEvent::ReviewFiles) => self.show_review_tab(ReviewTab::Files),
+            Target::Diff(DiffEvent::CommentAdd) => self.add_comment(),
+            Target::Diff(DiffEvent::CommentCancel) => self.comment_target = None,
+            Target::Diff(DiffEvent::SendComments) => self.send_comments(),
+            Target::Chat(ChatEvent::OpenPlan) => self.plan_open = true,
+            Target::Chat(ChatEvent::ClosePlan) => self.plan_open = false,
+            Target::Chat(ChatEvent::Revise) => self.reject(),
+            Target::Diff(DiffEvent::OpenDiff) => self.tab = Tab::Diff,
+            Target::Chat(ChatEvent::SessionSignIn) => {
                 if let Page::Session(session) = self.page {
                     self.outbox.push(Outgoing::SignInSession { session });
                 }
             }
-            crate::queued::QUEUED_CANCEL => self.cancel_queued_edit(),
-            SEND => self.send(false),
-            SEND_NOW => self.send(true),
-            STOP => self.stop(),
-            STAGE_ALL => self.stage_all(),
-            COMMIT => self.primary_pressed(),
-            FocusId(id) => {
+            Target::Chat(ChatEvent::QueuedCancel) => self.cancel_queued_edit(),
+            Target::Composer(ComposerEvent::Send) => self.send(false),
+            Target::Composer(ComposerEvent::SendNow) => self.send(true),
+            Target::Composer(ComposerEvent::Stop) => self.stop(),
+            Target::Git(GitEvent::StageAll) => self.stage_all(),
+            Target::Git(GitEvent::Commit) => self.primary_pressed(),
+            _ => {
                 if !self.press_git(action) {
-                    self.after_numbered(id);
+                    self.after_listed(action);
                 }
             }
         }
@@ -2603,19 +2356,19 @@ impl WorkspaceState {
     }
 
     /// Whether the field `id` saves what was written in it when the reader leaves it: the boxes of a category on the models page.
-    pub fn saves_on_leaving(id: FocusId) -> bool {
+    pub fn saves_on_leaving(id: Target) -> bool {
         crate::settings_slots::saves_on_leaving(id)
     }
 
     /// The state after the reader left the field named `id`, with what was written in it saved when it is one that saves on leaving.
-    pub fn field_left(mut self, id: FocusId) -> Self {
+    pub(crate) fn field_left(mut self, id: Target) -> Self {
         self.slot_field_left(id);
         self
     }
 
     /// The state after `edit` is made to the code editor's field, which `id` names.
-    pub fn edited(mut self, id: FocusId, edit: Edit) -> Self {
-        if id == EDITOR_FIELD {
+    pub(crate) fn edited(mut self, id: Target, edit: Edit) -> Self {
+        if id == Target::Editor(EditorEvent::EditorField) {
             self.file_edited(edit);
             self.refresh_files();
         }
@@ -2624,28 +2377,28 @@ impl WorkspaceState {
 
     /// The state after the reader changed the text of the field named `id`
     /// through its text field: what follows from what it now holds.
-    pub fn field_typed(mut self, id: FocusId) -> Self {
+    pub(crate) fn field_typed(mut self, id: Target) -> Self {
         match id {
-            PROMPT => self.reset_slash(),
-            crate::navigate::RENAME_SYMBOL => {
+            Target::Composer(ComposerEvent::Prompt) => self.reset_slash(),
+            Target::Editor(EditorEvent::RenameSymbol) => {
                 if let Some(renaming) = self.renaming.as_mut() {
                     renaming.problem = None;
                 }
             }
-            crate::color_picker::COLOR_HEX => self.color_hex_typed(),
-            crate::find::FIND_FIELD => return self.find_typed(),
-            crate::project_search::PROJECT_SEARCH_FIELD => return self.project_search_typed(),
-            crate::listing::LISTING_FILTER => return self.listing_filtered(),
-            crate::browser::BROWSER_FIND_FIELD => self.browser_find_typed(),
-            ADDER_FIELD => self.adder_typed(),
-            PICKER_FIELD => self.folder_picker_typed(),
-            HISTORY_SEARCH => self.history_scroll.jump_to(0.0),
-            crate::extensions::EXTENSIONS_SEARCH => self.extensions_typed(),
-            MENU_FILTER => self.menu_scroll.jump_to(0.0),
+            Target::Editor(EditorEvent::ColorHex) => self.color_hex_typed(),
+            Target::Editor(EditorEvent::FindField) => return self.find_typed(),
+            Target::Search(SearchEvent::ProjectSearchField) => return self.project_search_typed(),
+            Target::Editor(EditorEvent::ListingFilter) => return self.listing_filtered(),
+            Target::Browser(BrowserEvent::BrowserFindField) => self.browser_find_typed(),
+            Target::Dialog(DialogEvent::AdderField) => self.adder_typed(),
+            Target::Dialog(DialogEvent::PickerField) => self.folder_picker_typed(),
+            Target::Sidebar(SidebarEvent::HistorySearch) => self.history_scroll.jump_to(0.0),
+            Target::Settings(SettingsEvent::ExtensionsSearch) => self.extensions_typed(),
+            Target::Composer(ComposerEvent::MenuFilter) => self.menu_scroll.jump_to(0.0),
             id if crate::settings_drafts::is_draft_field(id) => self.draft_typed(),
             id if crate::settings_pages::is_setting_field(id) => self.setting_typed(id),
             id if crate::settings_slots::is_slot_field(id) => self.slot_typed(id),
-            crate::settings::SETTINGS_FIND => {
+            Target::Settings(SettingsEvent::SettingsFind) => {
                 self.settings_servers.scroll.jump_to(0.0);
                 self.settings_page.picker = None;
             }
@@ -2657,7 +2410,7 @@ impl WorkspaceState {
 
     /// The state after the reader typed `text` into the text field `id` over its
     /// selection, as its text field takes typing, and what follows from that.
-    pub fn typed(self, id: FocusId, text: &str) -> Self {
+    pub(crate) fn typed(self, id: Target, text: &str) -> Self {
         let Some(field) = self.text_field(id) else {
             return self;
         };
@@ -2670,51 +2423,59 @@ impl WorkspaceState {
     }
 
     /// The code editor's field, which `id` names, while a text file is shown.
-    pub fn field(&self, id: FocusId) -> Option<&pm_field::Field> {
-        (id == EDITOR_FIELD)
+    pub fn field(&self, id: Target) -> Option<&pm_field::Field> {
+        (id == Target::Editor(EditorEvent::EditorField))
             .then(|| self.shown_document().map(|document| &document.field))
             .flatten()
     }
 
     /// The state of the text field `id` names, if it names one other than the code editor's.
-    pub fn text_field(&self, id: FocusId) -> Option<&TextFieldState> {
+    pub fn text_field(&self, id: Target) -> Option<&TextFieldState> {
         match id {
-            PROMPT => Some(&self.prompt),
-            COMMIT_MESSAGE => Some(&self.message),
-            COMMENT_FIELD => Some(&self.comment_text),
-            BRANCH_FILTER => Some(&self.git.filter),
-            STASH_FIELD => Some(&self.git.stash_message),
-            crate::branch_tasks::BRANCH_TASK_FIELD => {
+            Target::Composer(ComposerEvent::Prompt) => Some(&self.prompt),
+            Target::Git(GitEvent::CommitMessage) => Some(&self.message),
+            Target::Diff(DiffEvent::CommentField) => Some(&self.comment_text),
+            Target::Git(GitEvent::BranchFilter) => Some(&self.git.filter),
+            Target::Git(GitEvent::StashField) => Some(&self.git.stash_message),
+            Target::Git(GitEvent::BranchTaskField) => {
                 self.git.branching.as_ref().map(|open| &open.field)
             }
-            RENAME_FIELD => Some(&self.git.rename),
-            ENTRY_FIELD => self.git.naming.as_ref().map(|(_, field)| field),
-            crate::navigate::RENAME_SYMBOL => {
+            Target::Git(GitEvent::RenameField) => Some(&self.git.rename),
+            Target::Tree(TreeEvent::EntryField) => self.git.naming.as_ref().map(|(_, field)| field),
+            Target::Editor(EditorEvent::RenameSymbol) => {
                 self.renaming.as_ref().map(|renaming| &renaming.field)
             }
-            crate::color_picker::COLOR_HEX => {
+            Target::Editor(EditorEvent::ColorHex) => {
                 self.color_picking.as_ref().map(|picking| &picking.hex)
             }
-            crate::line_edits::GO_TO_LINE => self.going_to.as_ref().map(|going| &going.field),
-            crate::browser::BROWSER_ADDRESS => {
+            Target::Editor(EditorEvent::GoToLine) => {
+                self.going_to.as_ref().map(|going| &going.field)
+            }
+            Target::Browser(BrowserEvent::BrowserAddress) => {
                 self.browser.as_ref().map(|browser| &browser.address)
             }
-            crate::browser::BROWSER_FIND_FIELD => self
+            Target::Browser(BrowserEvent::BrowserFindField) => self
                 .browser
                 .as_ref()
                 .and_then(|browser| browser.search.as_ref())
                 .map(|search| &search.query),
-            crate::find::FIND_FIELD => self.finding.as_ref().map(|finding| &finding.query),
-            crate::project_search::PROJECT_SEARCH_FIELD => Some(&self.project_search.query),
-            crate::listing::LISTING_FILTER => self.listing_filter(),
-            crate::debug::DEBUG_CONSOLE_FIELD => Some(&self.debug.console),
-            crate::debug::DEBUG_WATCH_FIELD => Some(&self.debug.watch),
-            crate::find::REPLACE_FIELD => self.finding.as_ref().map(|finding| &finding.replacement),
-            HISTORY_SEARCH => Some(&self.history_search),
-            crate::extensions::EXTENSIONS_SEARCH => Some(&self.extensions_page.search),
-            MENU_FILTER => Some(&self.menu_filter),
-            ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
-            PICKER_FIELD => self.folder_picker.as_ref().map(|open| &open.field),
+            Target::Editor(EditorEvent::FindField) => {
+                self.finding.as_ref().map(|finding| &finding.query)
+            }
+            Target::Search(SearchEvent::ProjectSearchField) => Some(&self.project_search.query),
+            Target::Editor(EditorEvent::ListingFilter) => self.listing_filter(),
+            Target::Debug(DebugEvent::DebugConsoleField) => Some(&self.debug.console),
+            Target::Debug(DebugEvent::DebugWatchField) => Some(&self.debug.watch),
+            Target::Editor(EditorEvent::ReplaceField) => {
+                self.finding.as_ref().map(|finding| &finding.replacement)
+            }
+            Target::Sidebar(SidebarEvent::HistorySearch) => Some(&self.history_search),
+            Target::Settings(SettingsEvent::ExtensionsSearch) => Some(&self.extensions_page.search),
+            Target::Composer(ComposerEvent::MenuFilter) => Some(&self.menu_filter),
+            Target::Dialog(DialogEvent::AdderField) => self.adder.as_ref().map(|open| &open.field),
+            Target::Dialog(DialogEvent::PickerField) => {
+                self.folder_picker.as_ref().map(|open| &open.field)
+            }
             id if crate::settings_servers::is_form_field(id) => self.server_form_field(id),
             id if crate::settings_drafts::is_draft_field(id) => self.draft_field(id),
             id if crate::settings_agents::is_key_field(id) => self.key_field(id),
@@ -2722,53 +2483,57 @@ impl WorkspaceState {
             id if crate::settings_machines::is_machine_field(id) => self.machine_field(id),
             id if crate::settings_models::is_model_field(id) => self.model_field(id),
             id if crate::settings_slots::is_slot_field(id) => self.slot_field(id),
-            crate::settings::SETTINGS_FIND => Some(&self.settings_page.find),
-            crate::settings::SETTINGS_KEYMAP_FIND => Some(&self.settings_page.keymap_find),
-            OTHER => self.other_field(),
+            Target::Settings(SettingsEvent::SettingsFind) => Some(&self.settings_page.find),
+            Target::Settings(SettingsEvent::SettingsKeymapFind) => {
+                Some(&self.settings_page.keymap_find)
+            }
+            Target::Chat(ChatEvent::Other) => self.other_field(),
             _ => None,
         }
     }
 
     /// Whether the field `id` hides what it holds behind dots and keeps it off the clipboard: a key or a token.
-    pub fn is_secure(id: FocusId) -> bool {
-        id == crate::settings_agents::KEY_FIELD
-            || id == crate::settings_models::MODEL_KEY
-            || id == crate::settings_machines::MACHINE_TOKEN
+    pub fn is_secure(id: Target) -> bool {
+        id == Target::Settings(SettingsEvent::KeyField)
+            || id == Target::Settings(SettingsEvent::ModelKey)
+            || id == Target::Settings(SettingsEvent::MachineToken)
     }
 
     /// Whether the field `id` holds several lines, so Enter can break a line in it.
-    pub fn is_multiline(id: FocusId) -> bool {
-        id == PROMPT || id == COMMIT_MESSAGE || crate::settings_slots::is_prompt_field(id)
+    pub fn is_multiline(id: Target) -> bool {
+        id == Target::Composer(ComposerEvent::Prompt)
+            || id == Target::Git(GitEvent::CommitMessage)
+            || crate::settings_slots::is_prompt_field(id)
     }
 
     /// Whether `id` names a text field.
-    pub fn is_field(id: FocusId) -> bool {
-        id == PROMPT
-            || id == COMMIT_MESSAGE
-            || id == COMMENT_FIELD
-            || id == BRANCH_FILTER
-            || id == STASH_FIELD
-            || id == crate::branch_tasks::BRANCH_TASK_FIELD
-            || id == RENAME_FIELD
-            || id == ENTRY_FIELD
-            || id == EDITOR_FIELD
-            || id == crate::navigate::RENAME_SYMBOL
-            || id == crate::color_picker::COLOR_HEX
-            || id == crate::line_edits::GO_TO_LINE
-            || id == crate::browser::BROWSER_ADDRESS
-            || id == crate::browser::BROWSER_FIND_FIELD
-            || id == crate::find::FIND_FIELD
-            || id == crate::project_search::PROJECT_SEARCH_FIELD
-            || id == crate::listing::LISTING_FILTER
-            || id == crate::debug::DEBUG_CONSOLE_FIELD
-            || id == crate::debug::DEBUG_WATCH_FIELD
-            || id == crate::find::REPLACE_FIELD
-            || id == HISTORY_SEARCH
-            || id == crate::extensions::EXTENSIONS_SEARCH
-            || id == MENU_FILTER
-            || id == OTHER
-            || id == ADDER_FIELD
-            || id == PICKER_FIELD
+    pub fn is_field(id: Target) -> bool {
+        id == Target::Composer(ComposerEvent::Prompt)
+            || id == Target::Git(GitEvent::CommitMessage)
+            || id == Target::Diff(DiffEvent::CommentField)
+            || id == Target::Git(GitEvent::BranchFilter)
+            || id == Target::Git(GitEvent::StashField)
+            || id == Target::Git(GitEvent::BranchTaskField)
+            || id == Target::Git(GitEvent::RenameField)
+            || id == Target::Tree(TreeEvent::EntryField)
+            || id == Target::Editor(EditorEvent::EditorField)
+            || id == Target::Editor(EditorEvent::RenameSymbol)
+            || id == Target::Editor(EditorEvent::ColorHex)
+            || id == Target::Editor(EditorEvent::GoToLine)
+            || id == Target::Browser(BrowserEvent::BrowserAddress)
+            || id == Target::Browser(BrowserEvent::BrowserFindField)
+            || id == Target::Editor(EditorEvent::FindField)
+            || id == Target::Search(SearchEvent::ProjectSearchField)
+            || id == Target::Editor(EditorEvent::ListingFilter)
+            || id == Target::Debug(DebugEvent::DebugConsoleField)
+            || id == Target::Debug(DebugEvent::DebugWatchField)
+            || id == Target::Editor(EditorEvent::ReplaceField)
+            || id == Target::Sidebar(SidebarEvent::HistorySearch)
+            || id == Target::Settings(SettingsEvent::ExtensionsSearch)
+            || id == Target::Composer(ComposerEvent::MenuFilter)
+            || id == Target::Chat(ChatEvent::Other)
+            || id == Target::Dialog(DialogEvent::AdderField)
+            || id == Target::Dialog(DialogEvent::PickerField)
             || crate::settings_servers::is_form_field(id)
             || crate::settings_drafts::is_draft_field(id)
             || crate::settings_agents::is_key_field(id)
@@ -2776,73 +2541,97 @@ impl WorkspaceState {
             || crate::settings_machines::is_machine_field(id)
             || crate::settings_models::is_model_field(id)
             || crate::settings_slots::is_slot_field(id)
-            || id == crate::settings::SETTINGS_FIND
-            || id == crate::settings::SETTINGS_KEYMAP_FIND
+            || id == Target::Settings(SettingsEvent::SettingsFind)
+            || id == Target::Settings(SettingsEvent::SettingsKeymapFind)
     }
 
     /// What pressing the field `id` hands in when Enter is pressed in it.
-    pub fn submit_of(id: FocusId) -> FocusId {
+    pub fn submit_of(id: Target) -> Target {
         match id {
-            COMMIT_MESSAGE => COMMIT,
-            COMMENT_FIELD => COMMENT_ADD,
-            BRANCH_FILTER => BRANCH_SUBMIT,
-            STASH_FIELD | RENAME_FIELD | crate::branch_tasks::BRANCH_TASK_FIELD => PROMPT_CONFIRM,
-            ENTRY_FIELD => crate::tree_actions::TREE_NAME_SUBMIT,
-            EDITOR_FIELD => crate::open_files::EDITOR_SAVE,
-            crate::navigate::RENAME_SYMBOL => crate::navigate::RENAME_SYMBOL_SUBMIT,
-            crate::color_picker::COLOR_HEX => crate::color_picker::COLOR_HEX_SUBMIT,
-            crate::line_edits::GO_TO_LINE => crate::line_edits::GO_TO_LINE_SUBMIT,
-            crate::browser::BROWSER_ADDRESS => crate::browser::BROWSER_GO,
-            crate::browser::BROWSER_FIND_FIELD => crate::browser::BROWSER_FIND_NEXT,
-            crate::find::FIND_FIELD => crate::find::FIND_NEXT,
-            crate::project_search::PROJECT_SEARCH_FIELD => crate::project_search::PROJECT_SEARCH_GO,
-            crate::listing::LISTING_FILTER => crate::listing::LISTING_TAKE,
-            crate::debug::DEBUG_CONSOLE_FIELD => crate::debug::DEBUG_CONSOLE_SUBMIT,
-            crate::debug::DEBUG_WATCH_FIELD => crate::debug::DEBUG_WATCH_ADD,
-            crate::find::REPLACE_FIELD => crate::find::REPLACE_ONE,
-            HISTORY_SEARCH => HISTORY,
-            MENU_FILTER => MENU_FILTER_PICK,
-            ADDER_FIELD => ADDER_SUBMIT,
-            PICKER_FIELD => PICKER_SUBMIT,
-            crate::settings::SETTINGS_SEARCH => crate::settings::SETTINGS_SEARCH_GO,
-            id if crate::settings_servers::is_form_field(id) => crate::settings::SETTINGS_SAVE,
+            Target::Git(GitEvent::CommitMessage) => Target::Git(GitEvent::Commit),
+            Target::Diff(DiffEvent::CommentField) => Target::Diff(DiffEvent::CommentAdd),
+            Target::Git(GitEvent::BranchFilter) => Target::Git(GitEvent::BranchSubmit),
+            Target::Git(GitEvent::StashField)
+            | Target::Git(GitEvent::RenameField)
+            | Target::Git(GitEvent::BranchTaskField) => Target::Git(GitEvent::PromptConfirm),
+            Target::Tree(TreeEvent::EntryField) => Target::Tree(TreeEvent::TreeNameSubmit),
+            Target::Editor(EditorEvent::EditorField) => Target::Editor(EditorEvent::EditorSave),
+            Target::Editor(EditorEvent::RenameSymbol) => {
+                Target::Editor(EditorEvent::RenameSymbolSubmit)
+            }
+            Target::Editor(EditorEvent::ColorHex) => Target::Editor(EditorEvent::ColorHexSubmit),
+            Target::Editor(EditorEvent::GoToLine) => Target::Editor(EditorEvent::GoToLineSubmit),
+            Target::Browser(BrowserEvent::BrowserAddress) => {
+                Target::Browser(BrowserEvent::BrowserGo)
+            }
+            Target::Browser(BrowserEvent::BrowserFindField) => {
+                Target::Browser(BrowserEvent::BrowserFindNext)
+            }
+            Target::Editor(EditorEvent::FindField) => Target::Editor(EditorEvent::FindNext),
+            Target::Search(SearchEvent::ProjectSearchField) => {
+                Target::Search(SearchEvent::ProjectSearchGo)
+            }
+            Target::Editor(EditorEvent::ListingFilter) => Target::Editor(EditorEvent::ListingTake),
+            Target::Debug(DebugEvent::DebugConsoleField) => {
+                Target::Debug(DebugEvent::DebugConsoleSubmit)
+            }
+            Target::Debug(DebugEvent::DebugWatchField) => Target::Debug(DebugEvent::DebugWatchAdd),
+            Target::Editor(EditorEvent::ReplaceField) => Target::Editor(EditorEvent::ReplaceOne),
+            Target::Sidebar(SidebarEvent::HistorySearch) => Target::Sidebar(SidebarEvent::History),
+            Target::Composer(ComposerEvent::MenuFilter) => {
+                Target::Composer(ComposerEvent::MenuFilterPick)
+            }
+            Target::Dialog(DialogEvent::AdderField) => Target::Dialog(DialogEvent::AdderSubmit),
+            Target::Dialog(DialogEvent::PickerField) => Target::Dialog(DialogEvent::PickerSubmit),
+            Target::Settings(SettingsEvent::SettingsSearch) => {
+                Target::Settings(SettingsEvent::SettingsSearchGo)
+            }
+            id if crate::settings_servers::is_form_field(id) => {
+                Target::Settings(SettingsEvent::SettingsSave)
+            }
             id if crate::settings_drafts::is_draft_field(id) => {
-                crate::settings_drafts::DRAFT_CREATE
+                Target::Settings(SettingsEvent::DraftCreate)
             }
             id if crate::settings_agents::is_key_field(id) => {
                 crate::settings_agents::key_submit(id)
             }
             id if crate::settings_machines::is_machine_field(id) => {
-                crate::settings_machines::MACHINE_SAVE
+                Target::Settings(SettingsEvent::MachineSave)
             }
-            id if crate::settings_models::is_model_field(id) => crate::settings_models::MODEL_SAVE,
+            id if crate::settings_models::is_model_field(id) => {
+                Target::Settings(SettingsEvent::ModelSave)
+            }
             id if crate::settings_slots::is_slot_field(id) => {
                 crate::settings_slots::slot_submit(id)
             }
             id if let Some(submit) = crate::settings_pages::list_submit_of(id) => submit,
             id if crate::settings_pages::is_setting_field(id)
-                || id == crate::settings::SETTINGS_FIND
-                || id == crate::settings::SETTINGS_KEYMAP_FIND =>
+                || id == Target::Settings(SettingsEvent::SettingsFind)
+                || id == Target::Settings(SettingsEvent::SettingsKeymapFind) =>
             {
                 id
             }
-            OTHER => NEXT,
-            _ => SEND,
+            Target::Chat(ChatEvent::Other) => Target::Chat(ChatEvent::Next),
+            _ => Target::Composer(ComposerEvent::Send),
         }
     }
 
     /// What pressing Control or Command with Enter in the field `id` hands in, when it hands in something of its own.
-    pub fn hurried_submit_of(id: FocusId) -> Option<FocusId> {
+    pub fn hurried_submit_of(id: Target) -> Option<Target> {
         match id {
-            PROMPT => Some(SEND_NOW),
-            COMMIT_MESSAGE => Some(COMMIT),
-            crate::listing::LISTING_FILTER => Some(crate::quick_sessions::LISTING_PROMPT),
+            Target::Composer(ComposerEvent::Prompt) => {
+                Some(Target::Composer(ComposerEvent::SendNow))
+            }
+            Target::Git(GitEvent::CommitMessage) => Some(Target::Git(GitEvent::Commit)),
+            Target::Editor(EditorEvent::ListingFilter) => {
+                Some(Target::Editor(EditorEvent::ListingPrompt))
+            }
             _ => None,
         }
     }
 
     /// The state with a menu open over the field `field` at `at`.
-    pub fn with_menu(mut self, field: FocusId, at: (f32, f32)) -> Self {
+    pub fn with_menu(mut self, field: Target, at: (f32, f32)) -> Self {
         self.menu = Some(ContextMenu { field, at });
         self
     }
@@ -2870,19 +2659,19 @@ impl WorkspaceState {
     }
 
     /// The state after the agent of the session at `session` did `event`.
-    pub fn heard(mut self, session: usize, event: Event) -> Self {
+    pub fn heard(mut self, session: usize, event: HarnessEvent) -> Self {
         self.hear_in_place(session, event);
         self
     }
 
     /// Takes in what the agent of the session at `session` did, as `event`, without building the state anew.
-    pub fn hear_in_place(&mut self, session: usize, event: Event) {
-        if matches!(&event, Event::Ask(ask) if ask.plan.is_some()) {
+    pub fn hear_in_place(&mut self, session: usize, event: HarnessEvent) {
+        if matches!(&event, HarnessEvent::Ask(ask) if ask.plan.is_some()) {
             self.plan_open = true;
             self.plan_scroll.jump_to(0.0);
         }
-        let finishing = matches!(&event, Event::Finished(_) | Event::Failed(_));
-        let pictured = matches!(&event, Event::Show(_) | Event::Inquire(_));
+        let finishing = matches!(&event, HarnessEvent::Finished(_) | HarnessEvent::Failed(_));
+        let pictured = matches!(&event, HarnessEvent::Show(_) | HarnessEvent::Inquire(_));
         if let Some(held) = self.sessions.get_mut(session) {
             held.hear(event);
             let gone = self.editing_queued.as_ref().is_some_and(|editing| {
@@ -2911,7 +2700,7 @@ impl WorkspaceState {
         match self.window.agents.on_finish {
             pm_config::Finish::Nothing => {}
             pm_config::Finish::OpenReview if changed > 0 => {
-                self = self.after(FocusId(SESSION_BASE + position as u64));
+                self = self.handle(Event::Sidebar(SidebarEvent::Session(position)));
                 self.tab = Tab::Diff;
             }
             pm_config::Finish::Notify | pm_config::Finish::OpenReview => {
@@ -2965,24 +2754,24 @@ impl WorkspaceState {
         self.new_in = submodule;
     }
 
-    /// The state after one of the rows or chips numbered from a base was pressed.
-    fn after_numbered(&mut self, id: u64) {
-        if crate::diff::gutter_of(FocusId(id)).is_some() {
+    /// The state after one of the rows or chips of a list, or a button of the parts that handle their own, was pressed.
+    fn after_listed(&mut self, id: Target) {
+        if matches!(id, Target::Diff(DiffEvent::Gutter { .. })) {
             return;
         }
-        if self.press_exhibit(FocusId(id)) {
+        if self.press_exhibit(id) {
             return;
         }
-        if self.press_inquiry(FocusId(id)) {
+        if self.press_inquiry(id) {
             return;
         }
-        if self.press_terminal(FocusId(id)) {
+        if self.press_terminal(id) {
             return;
         }
-        if self.press_debug(FocusId(id)) {
+        if self.press_debug(id) {
             return;
         }
-        if self.press_continue(FocusId(id)) {
+        if self.press_continue(id) {
             return;
         }
         if self.press_subagent_stop(id) {
@@ -2991,27 +2780,64 @@ impl WorkspaceState {
         if self.press_choice(id) {
             return;
         }
-        let position = |base: u64, count: usize| {
-            id.checked_sub(base)
-                .map(|offset| offset as usize)
-                .filter(|offset| *offset < count)
+        let position = |wanted: fn(usize) -> Target, count: usize| match id {
+            Target::Dialog(DialogEvent::AdderRow(index))
+            | Target::Sidebar(SidebarEvent::Project(index))
+            | Target::Sidebar(SidebarEvent::NewIn(index))
+            | Target::Sidebar(SidebarEvent::Session(index))
+            | Target::Sidebar(SidebarEvent::Agent(index))
+            | Target::Chat(ChatEvent::Choice(index))
+            | Target::Chat(ChatEvent::Hurry(index))
+            | Target::Chat(ChatEvent::RemoveQueued(index))
+            | Target::Chat(ChatEvent::EditQueued(index))
+            | Target::Chat(ChatEvent::Copy(index))
+            | Target::Chat(ChatEvent::Rewind(index))
+            | Target::Chat(ChatEvent::Fork(index))
+            | Target::Chat(ChatEvent::Restore(index))
+            | Target::Chat(ChatEvent::TurnChanges(index))
+            | Target::Chat(ChatEvent::Turn(index))
+            | Target::Tree(TreeEvent::Tree(index))
+            | Target::Diff(DiffEvent::ChangedFile(index))
+            | Target::Diff(DiffEvent::Stage(index))
+            | Target::Diff(DiffEvent::ChangeFolder(index))
+            | Target::Diff(DiffEvent::ChangeFolderStage(index))
+            | Target::Diff(DiffEvent::OpenArrow(index))
+            | Target::Diff(DiffEvent::DiffFold(index))
+            | Target::Diff(DiffEvent::CommentFile(index))
+            | Target::Diff(DiffEvent::CommentRemove(index))
+            | Target::Diff(DiffEvent::Viewed(index))
+                if index < count && id == wanted(index) =>
+            {
+                Some(index)
+            }
+            _ => None,
         };
         let rows = self.adder.as_ref().map_or(0, |open| open.count());
-        if let Some(index) = position(ADDER_ROW_BASE, rows) {
+        if let Some(index) = position(|index| Target::Dialog(DialogEvent::AdderRow(index)), rows) {
             self.adder_chosen(index);
-        } else if let Some(index) = position(PROJECT_BASE, self.projects.len()) {
+        } else if let Some(index) = position(
+            |index| Target::Sidebar(SidebarEvent::Project(index)),
+            self.projects.len(),
+        ) {
             self.page = Page::Project(index);
             self.overview_scroll.jump_to(0.0);
             self.rescope_browser();
-        } else if let Some(index) = position(NEW_IN_BASE, self.projects.len()) {
+        } else if let Some(index) = position(
+            |index| Target::Sidebar(SidebarEvent::NewIn(index)),
+            self.projects.len(),
+        ) {
             self.start_in(index, None);
-        } else if let Some((project, submodule)) = (NEW_IN_SUBMODULE_BASE..SESSION_BASE)
-            .contains(&id)
-            .then(|| crate::sidebar::submodule_rows(self))
-            .and_then(|rows| rows.into_iter().nth((id - NEW_IN_SUBMODULE_BASE) as usize))
-        {
+        } else if let Some((project, submodule)) = match id {
+            Target::Sidebar(SidebarEvent::NewInSubmodule(row)) => {
+                crate::sidebar::submodule_rows(self).into_iter().nth(row)
+            }
+            _ => None,
+        } {
             self.start_in(project, Some(submodule));
-        } else if let Some(index) = position(SESSION_BASE, self.sessions.len()) {
+        } else if let Some(index) = position(
+            |index| Target::Sidebar(SidebarEvent::Session(index)),
+            self.sessions.len(),
+        ) {
             self.sessions[index].closed = false;
             if let Page::Session(before) = self.page
                 && before != index
@@ -3027,46 +2853,80 @@ impl WorkspaceState {
                 .scroll()
                 .jump_to(self.sessions[index].chat_back);
             self.rescope_browser();
-        } else if let Some(index) = position(AGENT_BASE, self.agent_slots()) {
+        } else if let Some(index) = position(
+            |index| Target::Sidebar(SidebarEvent::Agent(index)),
+            self.agent_slots(),
+        ) {
             self.agent = index;
             self.ask_allowance(index, true);
-        } else if let Some(index) = position(CHOICE_BASE, self.choices()) {
-            self.choose(index);
-        } else if let Some(index) = position(HURRY_BASE, self.queued_open()) {
-            self.act_on_queued(index, false);
-        } else if let Some(index) = position(REMOVE_QUEUED_BASE, self.queued_open()) {
-            self.act_on_queued(index, true);
-        } else if let Some(index) = position(crate::queued::EDIT_QUEUED_BASE, self.queued_open()) {
-            self.open_queued_edit(index);
-        } else if let Some(index) = id
-            .checked_sub(COPY_BASE)
-            .map(|offset| offset as usize)
-            .filter(|offset| *offset < self.messages_open())
-        {
-            self.copy(index);
-        } else if let Some(index) = position(REWIND_BASE, self.messages_open()) {
-            self.rewind(index);
-        } else if let Some(index) = position(FORK_BASE, self.messages_open()) {
-            self.fork(index);
-        } else if let Some(index) = position(RESTORE_BASE, self.messages_open()) {
-            self.restoring = Some(index);
-        } else if let Some(index) = position(TURN_CHANGES_BASE, self.messages_open()) {
-            self.turn_changes(index);
-        } else if let Some(index) = position(TURN_BASE, self.messages_open()) {
-            self.toggle_turn(index);
-        } else if let Some(index) = position(TREE_BASE, self.files.len() + self.tree_folders.len())
-        {
-            self.fold_tree_folder(index);
-        } else if id >= LINK_BASE {
-            self.open_link(id - LINK_BASE);
-        } else if id >= DETAILS_BASE {
-            let offset = (id - DETAILS_BASE) as usize;
-            self.toggle_details(offset / 1000, offset % 1000);
-        } else if id >= STEP_BASE {
-            let offset = (id - STEP_BASE) as usize;
-            self.toggle_step(offset / 1000, offset % 1000);
         } else if let Some(index) = position(
-            FILE_BASE,
+            |index| Target::Chat(ChatEvent::Choice(index)),
+            self.choices(),
+        ) {
+            self.choose(index);
+        } else if let Some(index) = position(
+            |index| Target::Chat(ChatEvent::Hurry(index)),
+            self.queued_open(),
+        ) {
+            self.act_on_queued(index, false);
+        } else if let Some(index) = position(
+            |index| Target::Chat(ChatEvent::RemoveQueued(index)),
+            self.queued_open(),
+        ) {
+            self.act_on_queued(index, true);
+        } else if let Some(index) = position(
+            |index| Target::Chat(ChatEvent::EditQueued(index)),
+            self.queued_open(),
+        ) {
+            self.open_queued_edit(index);
+        } else if let Some(index) = position(
+            |index| Target::Chat(ChatEvent::Copy(index)),
+            self.messages_open(),
+        ) {
+            self.copy(index);
+        } else if let Some(index) = position(
+            |index| Target::Chat(ChatEvent::Rewind(index)),
+            self.messages_open(),
+        ) {
+            self.rewind(index);
+        } else if let Some(index) = position(
+            |index| Target::Chat(ChatEvent::Fork(index)),
+            self.messages_open(),
+        ) {
+            self.fork(index);
+        } else if let Some(index) = position(
+            |index| Target::Chat(ChatEvent::Restore(index)),
+            self.messages_open(),
+        ) {
+            self.restoring = Some(index);
+        } else if let Some(index) = position(
+            |index| Target::Chat(ChatEvent::TurnChanges(index)),
+            self.messages_open(),
+        ) {
+            self.turn_changes(index);
+        } else if let Some(index) = position(
+            |index| Target::Chat(ChatEvent::Turn(index)),
+            self.messages_open(),
+        ) {
+            self.toggle_turn(index);
+        } else if let Some(index) = position(
+            |index| Target::Tree(TreeEvent::Tree(index)),
+            self.files.len() + self.tree_folders.len(),
+        ) {
+            self.fold_tree_folder(index);
+        } else if let Target::Chat(ChatEvent::Link {
+            message,
+            piece,
+            link,
+        }) = id
+        {
+            self.open_link(message, piece, link);
+        } else if let Target::Chat(ChatEvent::Details { message, place }) = id {
+            self.toggle_details(message, place);
+        } else if let Target::Chat(ChatEvent::Step { message, position }) = id {
+            self.toggle_step(message, position);
+        } else if let Some(index) = position(
+            |index| Target::Diff(DiffEvent::ChangedFile(index)),
             self.review_session()
                 .map_or(0, |session| session.changes.len()),
         )
@@ -3079,23 +2939,50 @@ impl WorkspaceState {
             } else {
                 self.request_resolver(index);
             }
-        } else if let Some(index) = position(FILE_BASE, self.change_count()) {
+        } else if let Some(index) = position(
+            |index| Target::Diff(DiffEvent::ChangedFile(index)),
+            self.change_count(),
+        ) {
             self.open_change(index);
-        } else if let Some(index) = position(STAGE_BASE, self.change_count()) {
+        } else if let Some(index) = position(
+            |index| Target::Diff(DiffEvent::Stage(index)),
+            self.change_count(),
+        ) {
             self.stage_changes(&[index]);
-        } else if let Some(index) = position(FOLDER_BASE, self.change_folder_count()) {
+        } else if let Some(index) = position(
+            |index| Target::Diff(DiffEvent::ChangeFolder(index)),
+            self.change_folder_count(),
+        ) {
             self.fold_change_folder(index);
-        } else if let Some(index) = position(FOLDER_STAGE_BASE, self.change_folder_count()) {
+        } else if let Some(index) = position(
+            |index| Target::Diff(DiffEvent::ChangeFolderStage(index)),
+            self.change_folder_count(),
+        ) {
             self.stage_change_folder(index);
-        } else if let Some(index) = position(OPEN_ARROW_BASE, self.change_count()) {
+        } else if let Some(index) = position(
+            |index| Target::Diff(DiffEvent::OpenArrow(index)),
+            self.change_count(),
+        ) {
             self.open_changed_file(index);
-        } else if let Some(index) = position(DIFF_FOLD_BASE, self.change_count()) {
+        } else if let Some(index) = position(
+            |index| Target::Diff(DiffEvent::DiffFold(index)),
+            self.change_count(),
+        ) {
             self.fold_diff(index);
-        } else if let Some(index) = position(COMMENT_FILE_BASE, self.change_count()) {
+        } else if let Some(index) = position(
+            |index| Target::Diff(DiffEvent::CommentFile(index)),
+            self.change_count(),
+        ) {
             self.start_comment(index, None, false);
-        } else if let Some(index) = position(COMMENT_REMOVE_BASE, self.comment_count()) {
+        } else if let Some(index) = position(
+            |index| Target::Diff(DiffEvent::CommentRemove(index)),
+            self.comment_count(),
+        ) {
             self.remove_comment(index);
-        } else if let Some(index) = position(VIEWED_BASE, self.change_count()) {
+        } else if let Some(index) = position(
+            |index| Target::Diff(DiffEvent::Viewed(index)),
+            self.change_count(),
+        ) {
             self.change_at(index, |change| change.viewed = !change.viewed);
         }
     }
@@ -3122,16 +3009,14 @@ impl WorkspaceState {
         self.outbox.push(Outgoing::Copy { text });
     }
 
-    /// Opens in the browser the web address of the link that sits `offset` past [`LINK_BASE`] in the open session's replies.
-    fn open_link(&mut self, offset: u64) {
-        let (message, rest) = (offset / LINKS_PER_REPLY, offset % LINKS_PER_REPLY);
-        let (piece, link) = (rest / LINKS_PER_PIECE, rest % LINKS_PER_PIECE);
+    /// Opens in the browser the web address of the link at `link` of the piece `piece` of the reply at `message` of the open session.
+    fn open_link(&mut self, message: usize, piece: usize, link: usize) {
         let address = self
             .open()
-            .and_then(|session| session.messages.get(message as usize))
+            .and_then(|session| session.messages.get(message))
             .and_then(|message| {
-                let (_, piece) = *message.chunks().get(piece as usize)?;
-                pm_markdown::links(piece).into_iter().nth(link as usize)
+                let (_, piece) = *message.chunks().get(piece)?;
+                pm_markdown::links(piece).into_iter().nth(link)
             })
             .filter(|address| pm_harness::is_web_address(address));
         if let Some(address) = address {
@@ -3239,12 +3124,14 @@ impl WorkspaceState {
     }
 
     /// Stops the subagent whose stop button `id` is, one of the open session's that is still at work: asks its server to, and takes the button away until the server says how the subagent stands. Returns whether `id` is such a button.
-    fn press_subagent_stop(&mut self, id: u64) -> bool {
-        if !(SUBAGENT_STOP_BASE..SUBAGENT_STOP_BASE + SUBAGENT_STOP_ROOM).contains(&id) {
+    fn press_subagent_stop(&mut self, id: Target) -> bool {
+        let Target::Chat(ChatEvent::SubagentStop {
+            message,
+            position: step,
+        }) = id
+        else {
             return false;
-        }
-        let offset = (id - SUBAGENT_STOP_BASE) as usize;
-        let (message, step) = (offset / 1000, offset % 1000);
+        };
         let Page::Session(open) = self.page else {
             return true;
         };
@@ -3621,8 +3508,8 @@ impl WorkspaceState {
     }
 
     /// The state after the pointer went down on the line number `id` of the diff, which starts a selection of lines.
-    pub fn comment_drag_begun(mut self, id: FocusId) -> Self {
-        if let Some((change, new, line)) = crate::diff::gutter_of(id) {
+    pub fn comment_drag_begun(mut self, id: Target) -> Self {
+        if let Target::Diff(DiffEvent::Gutter { change, new, line }) = id {
             let range = Range {
                 new,
                 start: line,
@@ -3634,8 +3521,8 @@ impl WorkspaceState {
     }
 
     /// The state after the pointer, held down, moved over the line number `id`, which stretches the selection to it when it is on the same side of the same file.
-    pub fn comment_drag_extended(mut self, id: FocusId) -> Self {
-        let Some((change, new, line)) = crate::diff::gutter_of(id) else {
+    pub fn comment_drag_extended(mut self, id: Target) -> Self {
+        let Target::Diff(DiffEvent::Gutter { change, new, line }) = id else {
             return self;
         };
         if let Some(target) = self.comment_target.as_mut()
@@ -4148,6 +4035,12 @@ fn toggle(set: &mut std::collections::HashSet<String>, path: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::areas::ChatEvent;
+    use crate::areas::DiffEvent;
+    use crate::areas::EditorEvent;
+    use crate::areas::GitEvent;
+    use crate::areas::SearchEvent;
+    use crate::areas::TerminalEvent;
     use crate::git_controls::Pick;
     use crate::panes::{Item, Side};
 
@@ -4155,11 +4048,11 @@ mod tests {
     /// keyboard, the caret shown again after the find bar, and nothing else for a plain press.
     #[test]
     fn a_press_notes_what_it_asks_of_the_app() {
-        let mut state = WorkspaceState::sample().after(TERMINAL);
+        let mut state = WorkspaceState::sample().handle(Event::Terminal(TerminalEvent::Terminal));
         let asked = state.take_asked().expect("a press asks");
         assert!(asked.keyboard_to_shell && !asked.caret);
         assert_eq!(state.take_asked(), None);
-        let mut state = state.after(crate::find::FIND_BAR);
+        let mut state = state.handle(Event::Editor(EditorEvent::FindBar));
         assert_eq!(
             state.take_asked(),
             Some(Asked {
@@ -4168,7 +4061,7 @@ mod tests {
                 caret: true,
             })
         );
-        let mut state = state.after(TAB_DIFF);
+        let mut state = state.handle(Event::Diff(DiffEvent::TabDiff));
         assert_eq!(state.take_asked(), Some(Asked::default()));
     }
 
@@ -4177,10 +4070,10 @@ mod tests {
     fn hearing_in_place_matches_hearing_by_value() {
         let events = || {
             vec![
-                Event::Said("Hello, ".into()),
-                Event::Thought("hm".into()),
-                Event::Said("world.".into()),
-                Event::Failed("it broke".into()),
+                HarnessEvent::Said("Hello, ".into()),
+                HarnessEvent::Thought("hm".into()),
+                HarnessEvent::Said("world.".into()),
+                HarnessEvent::Failed("it broke".into()),
             ]
         };
         let mut by_value = WorkspaceState::sample();
@@ -4248,18 +4141,18 @@ mod tests {
             state = state
                 .pane_dragged(Item::Diff, Some((0, Side::Right)), (0.0, 0.0))
                 .pane_dropped()
-                .after(TAB_CHAT);
+                .handle(Event::Chat(ChatEvent::TabChat));
             for row in [0, 1] {
                 let path = state.sessions[index].changes[row].path.clone();
                 state.closed_diffs.insert(path.clone());
-                state = state.after(FocusId(FILE_BASE + row as u64));
+                state = state.handle(Event::Diff(DiffEvent::ChangedFile(row)));
                 assert_eq!(state.file, Some(row));
                 assert_eq!(state.current_item(), Item::Diff);
                 let panes = state.panes();
                 let group = panes.layout.groups()[panes.focused];
                 assert_eq!(group.items[group.active], Item::Diff);
                 assert!(!state.closed_diffs.contains(&path));
-                state = state.after(FocusId(DIFF_FOLD_BASE + row as u64));
+                state = state.handle(Event::Diff(DiffEvent::DiffFold(row)));
                 assert!(state.closed_diffs.contains(&path));
             }
             state.tab = Tab::Chat;
@@ -4271,7 +4164,7 @@ mod tests {
             state.set_staged(&[0, 1], true);
             state.take_outbox();
             state.message = TextFieldState::new("Review folder changes");
-            state = state.after(COMMIT);
+            state = state.handle(Event::Git(GitEvent::Commit));
             assert!(state.take_outbox().iter().any(|outgoing| matches!(
                 outgoing,
                 Outgoing::Commit { session, message, .. }
@@ -4293,11 +4186,11 @@ mod tests {
             .collect();
         let key =
             crate::change_list::fold_key(crate::change_list::Group::Tracked, "crates/pyre_ik/src");
-        state = state.after(FocusId(FOLDER_BASE));
+        state = state.handle(Event::Diff(DiffEvent::ChangeFolder(0)));
         assert!(state.closed_folders.contains(&key));
         state = state.with_folder_change_menu(0, (0.0, 0.0));
         assert_eq!(state.marked_changes().len(), 4);
-        state = state.after(FocusId(FOLDER_BASE));
+        state = state.handle(Event::Diff(DiffEvent::ChangeFolder(0)));
         assert!(!state.closed_folders.contains(&key));
     }
 
@@ -4317,13 +4210,13 @@ mod tests {
             crate::change_list::Group::Untracked,
             "pandemonium/crates/pm-harness/src",
         );
-        state = state.after(FocusId(FOLDER_BASE + 1));
+        state = state.handle(Event::Diff(DiffEvent::ChangeFolder(1)));
         assert!(state.closed_folders.contains(&key));
         assert_eq!(
-            state.change_folder_row_of(FocusId(FOLDER_BASE + 1)),
+            state.change_folder_row_of(Target::Diff(DiffEvent::ChangeFolder(1))),
             Some(1)
         );
-        state = state.after(FocusId(FOLDER_BASE + 1));
+        state = state.handle(Event::Diff(DiffEvent::ChangeFolder(1)));
         assert!(!state.closed_folders.contains(&key));
     }
 
@@ -4362,8 +4255,11 @@ mod tests {
         state.activity = Some(Activity::Subagents);
         state.take_outbox();
 
-        let button = FocusId(SUBAGENT_STOP_BASE + (reply * 1000 + position) as u64);
-        let mut state = state.after(button);
+        let button = Target::Chat(ChatEvent::SubagentStop {
+            message: reply,
+            position,
+        });
+        let mut state = state.handle(Event::pressing(button));
 
         assert_eq!(state.activity, Some(Activity::Subagents));
         assert!(state.take_outbox().iter().any(|outgoing| matches!(
@@ -4372,7 +4268,7 @@ mod tests {
         )));
         let (_, _, tool) = state.sessions[open].subagents()[0];
         assert_eq!(tool.stoppable(), None);
-        let mut state = state.after(button);
+        let mut state = state.handle(Event::pressing(button));
         assert!(
             !state
                 .take_outbox()
@@ -4390,7 +4286,7 @@ mod tests {
         let open = state.sessions.len() - 1;
         state.page = Page::Session(open);
         state.take_outbox();
-        let mut state = state.after(FocusId(TURN_CHANGES_BASE));
+        let mut state = state.handle(Event::Chat(ChatEvent::TurnChanges(0)));
         assert!(
             !state
                 .take_outbox()
@@ -4399,7 +4295,7 @@ mod tests {
             "no files were kept"
         );
         state.sessions[open].messages[0].checkpoint = true;
-        let mut state = state.after(FocusId(TURN_CHANGES_BASE));
+        let mut state = state.handle(Event::Chat(ChatEvent::TurnChanges(0)));
         assert!(state.take_outbox().iter().any(|outgoing| matches!(
             outgoing,
             Outgoing::TurnChanges { session, turn: 0 } if *session == open
@@ -4430,13 +4326,13 @@ mod tests {
                 vec![change("a.rs"), change("b.rs")],
             )
         };
-        let mut state = shown(state).after(FocusId(crate::excerpts::EXCERPT_UNDO_BASE + 1));
+        let mut state = shown(state).handle(Event::Search(SearchEvent::ExcerptUndo(1)));
         assert!(state.excerpts.is_none());
         assert!(state.take_outbox().iter().any(|outgoing| matches!(
             outgoing,
             Outgoing::UndoTurn { session, turn: 0, paths } if *session == open && paths == &["b.rs".to_owned()]
         )));
-        let mut state = shown(state).after(crate::excerpts::EXCERPTS_UNDO_ALL);
+        let mut state = shown(state).handle(Event::Search(SearchEvent::ExcerptsUndoAll));
         assert!(state.take_outbox().iter().any(|outgoing| matches!(
             outgoing,
             Outgoing::UndoTurn { turn: 0, paths, .. } if paths.is_empty()

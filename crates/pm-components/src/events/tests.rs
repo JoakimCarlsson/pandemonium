@@ -1,6 +1,8 @@
 //! Controls run the lambdas they were given: a click, Enter or Space while the control has
 //! the keyboard, and a secondary press.
 
+use crate::areas::WindowEvent;
+use crate::target::Target;
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -11,19 +13,15 @@ use rustle::{
 
 use super::{Change, Interactive, Operations, activates, provide};
 use crate::browser_menu::BrowserCommand;
-use crate::focus::FocusId;
 use crate::git_menus::MenuKind;
 use crate::terminal_menu::TerminalCommand;
 use crate::tree_actions::TreeTarget;
-
-/// The control the tests press.
-const CONTROL: FocusId = FocusId(41);
 
 /// Operations that let every click count and keep what the views asked of them.
 #[derive(Default)]
 struct Recording {
     /// The controls the primary button went down on, in order.
-    pressed: RefCell<Vec<FocusId>>,
+    pressed: RefCell<Vec<Target>>,
     /// How many times the menu of the conversation's text was asked for.
     message_menus: Cell<usize>,
 }
@@ -33,12 +31,12 @@ impl Operations for Recording {
     fn update(&self, _: Change) {}
 
     /// Keeps the control pressed.
-    fn pressed(&self, id: FocusId, _: Rect, _: u32, _: rustle::ViewConfiguration) {
+    fn pressed(&self, id: Target, _: Rect, _: u32, _: rustle::ViewConfiguration) {
         self.pressed.borrow_mut().push(id);
     }
 
     /// Lets every click count.
-    fn click_lands(&self, _: FocusId, _: Rect) -> bool {
+    fn click_lands(&self, _: Target, _: Rect) -> bool {
         true
     }
 
@@ -54,10 +52,10 @@ impl Operations for Recording {
     fn files_dropped(&self, _: Vec<PathBuf>, _: (f32, f32)) {}
 
     /// Does nothing.
-    fn hovered(&self, _: FocusId, _: bool) {}
+    fn hovered(&self, _: Target, _: bool) {}
 
     /// Does nothing.
-    fn sash_dragged(&self, _: FocusId, _: (f32, f32)) {}
+    fn sash_dragged(&self, _: Target, _: (f32, f32)) {}
 
     /// Does nothing.
     fn sash_released(&self) {}
@@ -69,12 +67,12 @@ impl Operations for Recording {
     fn dismiss_requested(&self) {}
 
     /// Carries nothing.
-    fn carries(&self, _: FocusId) -> bool {
+    fn carries(&self, _: Target) -> bool {
         false
     }
 
     /// Does nothing.
-    fn carry_started(&self, _: FocusId, _: (f32, f32)) {}
+    fn carry_started(&self, _: Target, _: (f32, f32)) {}
 
     /// Does nothing.
     fn carry_moved(&self, _: (f32, f32)) {}
@@ -83,7 +81,7 @@ impl Operations for Recording {
     fn carry_ended(&self, _: Modifiers) {}
 
     /// Does nothing.
-    fn comment_dragged(&self, _: FocusId) {}
+    fn comment_dragged(&self, _: Target) {}
 
     /// Does nothing.
     fn comment_drag_ended(&self) {}
@@ -116,10 +114,10 @@ impl Operations for Recording {
     fn open_color_picker(&self, _: usize) {}
 
     /// Does nothing.
-    fn field_menu_picked(&self, _: FocusId) {}
+    fn field_menu_picked(&self, _: Target) {}
 
     /// Does nothing.
-    fn message_menu_picked(&self, _: FocusId) {}
+    fn message_menu_picked(&self, _: Target) {}
 
     /// Does nothing.
     fn open_browser_capture_menu(&self) {}
@@ -140,7 +138,7 @@ impl Operations for Recording {
     fn open_project_menu(&self, _: usize) {}
 
     /// Does nothing.
-    fn open_git_menu(&self, _: MenuKind, _: Option<FocusId>) {}
+    fn open_git_menu(&self, _: MenuKind, _: Option<Target>) {}
 
     /// Does nothing.
     fn open_pane_menu(&self) {}
@@ -161,7 +159,7 @@ impl Operations for Recording {
     fn open_tree_menu(&self, _: TreeTarget) {}
 
     /// Does nothing.
-    fn open_field_menu(&self, _: FocusId) {}
+    fn open_field_menu(&self, _: Target) {}
 
     /// Does nothing.
     fn open_terminal_menu(&self) {}
@@ -192,7 +190,7 @@ fn laid_out(
     operations: &Rc<Recording>,
     asked: &Rc<Asked>,
     menu: bool,
-    focused: Option<FocusId>,
+    focused: Option<Target>,
 ) -> Embedded {
     let operations: Rc<dyn Operations> = Rc::clone(operations) as Rc<dyn Operations>;
     let asked = Rc::clone(asked);
@@ -204,11 +202,11 @@ fn laid_out(
             let size = Modifier::new().size(100.0, 40.0);
             let modifier = if menu {
                 let menus = Rc::clone(&asked);
-                size.control_menu(CONTROL, on_click, move || {
+                size.control_menu(Target::Window(WindowEvent::Control), on_click, move || {
                     menus.menus.set(menus.menus.get() + 1)
                 })
             } else {
-                size.control_with(CONTROL, on_click)
+                size.control_with(Target::Window(WindowEvent::Control), on_click)
             };
             rustle::spacer(modifier);
         });
@@ -257,7 +255,10 @@ fn a_click_runs_the_lambda() {
     let asked = Rc::new(Asked::default());
     let mut ui = laid_out(&operations, &asked, false, None);
     press(&mut ui, PointerButton::Primary);
-    assert_eq!(*operations.pressed.borrow(), vec![CONTROL]);
+    assert_eq!(
+        *operations.pressed.borrow(),
+        vec![Target::Window(WindowEvent::Control)]
+    );
     assert_eq!(asked.clicks.borrow().len(), 1);
 }
 
@@ -270,7 +271,12 @@ fn keys_run_the_lambda_of_the_focused_control() {
     ui.key_event(down(Key::Enter, Modifiers::NONE));
     ui.update();
     assert!(asked.clicks.borrow().is_empty());
-    let mut ui = laid_out(&operations, &asked, false, Some(CONTROL));
+    let mut ui = laid_out(
+        &operations,
+        &asked,
+        false,
+        Some(Target::Window(WindowEvent::Control)),
+    );
     let shift = Modifiers {
         shift: true,
         ..Modifiers::NONE

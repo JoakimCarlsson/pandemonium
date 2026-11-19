@@ -1,16 +1,18 @@
 //! Adding a project: the modal that offers a folder on this computer or a repository to clone, found through the accounts and organizations on GitHub.
 
-use crate::events::reduce;
+use crate::areas::DialogEvent;
+use crate::events::{Event, send};
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
+use crate::theme::Indicated;
 use rustle::TextFieldState;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 use rustle::{Icon, phosphor};
 
 use crate::Input;
 use crate::Modal;
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::folder_picker::Purpose;
 use crate::icons::spinner;
 use crate::input;
@@ -19,38 +21,8 @@ use crate::theme::{Radius, Role, sp};
 
 use crate::state::{Outgoing, WorkspaceState};
 
-/// Closes the panel, which is what pressing outside it does.
-pub const ADDER_SCRIM: FocusId = FocusId(6000);
-
-/// The panel itself, which keeps a press on it from counting as outside.
-pub const ADDER_BODY: FocusId = FocusId(6001);
-
-/// The row offering the desktop's folder chooser.
-pub const ADDER_BROWSE: FocusId = FocusId(6003);
-
-/// The row offering a repository to clone.
-pub const ADDER_CLONE: FocusId = FocusId(6004);
-
-/// The field the reader types a search or an address into.
-pub const ADDER_FIELD: FocusId = FocusId(6006);
-
-/// Takes the row that is highlighted.
-pub const ADDER_SUBMIT: FocusId = FocusId(6007);
-
-/// Highlights the row above.
-pub const ADDER_UP: FocusId = FocusId(6008);
-
-/// Highlights the row below.
-pub const ADDER_DOWN: FocusId = FocusId(6009);
-
-/// Goes back to the first choices, or closes the panel when they are showing.
-pub const ADDER_ESCAPE: FocusId = FocusId(6010);
-
-/// The first of the rows of a list; the rest follow it.
-pub const ADDER_ROW_BASE: u64 = 6100;
-
 /// How many rows of a list have names.
-const ADDER_ROWS: u64 = 500;
+const ADDER_ROWS: usize = 500;
 
 /// How wide the panel is, in logical pixels.
 const WIDTH: f32 = 632.0;
@@ -310,8 +282,11 @@ impl Adder {
 }
 
 /// The row of the first choices at `index`.
-fn choice_id(index: usize) -> FocusId {
-    [ADDER_BROWSE, ADDER_CLONE][index.min(1)]
+fn choice_id(index: usize) -> Target {
+    [
+        Target::Dialog(DialogEvent::AdderBrowse),
+        Target::Dialog(DialogEvent::AdderClone),
+    ][index.min(1)]
 }
 
 /// Emits the modal for adding a project, when it is open.
@@ -320,9 +295,12 @@ pub fn adder(state: &WorkspaceState) {
     let Some(open) = state.adder.as_ref() else {
         return;
     };
-    Modal::new(ADDER_SCRIM, ADDER_BODY)
-        .width(WIDTH)
-        .build_with(|| panel(open, &state.menu_scroll));
+    Modal::new(
+        Target::Dialog(DialogEvent::AdderScrim),
+        Target::Dialog(DialogEvent::AdderBody),
+    )
+    .width(WIDTH)
+    .build_with(|| panel(open, &state.menu_scroll));
 }
 
 /// Emits what the modal holds: its heading, the field when the step has one and the list, scrolled as `scrolled` says.
@@ -331,48 +309,37 @@ fn panel(open: &Adder, scrolled: &rustle::ScrollState) {
     let banded = || {
         Modifier::new()
             .height(theme::sp(11))
-            .draw_behind(theme::edge(
-                theme::Side::Bottom,
-                1.0,
-                theme::color(Role::Border),
-            ))
-            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .ruled(theme::Side::Bottom)
             .padding_xy(theme::sp(4), 0.0)
     };
-    row_arranged(
-        banded(),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
-        || {
-            line("Add project", 13, 1.4, Role::Text);
-            if let Some(hint) = heading_hint(open) {
-                line(hint, 13, 1.4, Role::Subtle);
-            }
-        },
-    );
+    kit::row(banded(), 2, || {
+        line("Add project", 13, 1.4, Role::Text);
+        if let Some(hint) = heading_hint(open) {
+            line(hint, 13, 1.4, Role::Subtle);
+        }
+    });
     if open.step != Step::Choices {
-        row_arranged(banded(), Arrangement::Start, Alignment::Center, || {
-            Input::new(&open.field, ADDER_FIELD)
+        kit::row(banded(), 0, || {
+            Input::new(&open.field, Target::Dialog(DialogEvent::AdderField))
                 .variant(input::Variant::Ghost)
                 .placeholder(open.placeholder())
                 .modifier(Modifier::new().weight(1.0))
                 .build();
         });
     }
-    column_arranged(
+    kit::column(
         Modifier::new()
             .height_in(0.0, sp(LIST_HEIGHT / 4.0))
             .vertical_scroll(scrolled)
             .fill_max_width()
             .padding(theme::sp(1.5)),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         || {
             for (index, row) in open.rows().iter().enumerate() {
                 let id = if open.step == Step::Choices {
                     choice_id(index)
                 } else {
-                    FocusId(ADDER_ROW_BASE + index as u64)
+                    Target::Dialog(DialogEvent::AdderRow(index))
                 };
                 entry(row, id, index == open.selected);
             }
@@ -394,12 +361,11 @@ fn heading_hint(open: &Adder) -> Option<String> {
 /// Emits the line under the rows: a spinner and what is being waited for, or what is the matter.
 #[track_caller]
 pub(crate) fn status_line(status: Status) {
-    row_arranged(
+    kit::row(
         Modifier::new()
             .padding_xy(theme::sp(2.5), 0.0)
             .padding_xy(0.0, theme::sp(2)),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Center,
+        3,
         || match status {
             Status::Loading(message) => {
                 spinner(4.0, Role::Muted);
@@ -412,7 +378,7 @@ pub(crate) fn status_line(status: Status) {
 
 /// Emits one row of the list: a glyph, a name and what is said under it, highlighted while it is the one the keys act on.
 #[track_caller]
-fn entry(row_of: &Row, id: FocusId, selected: bool) {
+fn entry(row_of: &Row, id: Target, selected: bool) {
     let looks = theme::InteractionTones::new()
         .hover(Role::SurfaceHover)
         .radius(Radius::Lg);
@@ -421,53 +387,49 @@ fn entry(row_of: &Row, id: FocusId, selected: bool) {
     } else {
         looks
     };
-    row_arranged(
+    kit::row(
         Modifier::new()
             .fill_max_width()
-            .interaction_focused(crate::focus::is_held(id))
-            .interaction_background((looks).colors())
+            .indicated(looks, theme::Focused::Held(crate::focus::is_held(id)))
             .cursor(CursorIcon::Pointer)
-            .control(id, reduce(id))
+            .control(id, send(Event::pressing(id)))
             .padding_xy(theme::sp(2.5), 0.0)
             .padding_xy(0.0, theme::sp(1.5)),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Center,
+        3,
         || {
             glyph(row_of.icon.clone(), 4.0, Role::Muted);
-            column_arranged(
-                Modifier::new().weight(1.0),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    rustle::basic_text(
+            kit::column(Modifier::new().weight(1.0), 0, || {
+                kit::text(
+                    Modifier::new(),
+                    row_of.name.clone(),
+                    kit::line(13, Role::Text),
+                );
+                if !row_of.detail.is_empty() {
+                    kit::text(
                         Modifier::new(),
-                        row_of.name.clone(),
-                        theme::text_style(13, 1.4)
-                            .color(theme::color(Role::Text))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
+                        row_of.detail.clone(),
+                        kit::line(12, Role::Subtle),
                     );
-                    if !row_of.detail.is_empty() {
-                        rustle::basic_text(
-                            Modifier::new(),
-                            row_of.detail.clone(),
-                            theme::text_style(12, 1.4)
-                                .color(theme::color(Role::Subtle))
-                                .max_lines(1),
-                            rustle::TextOverflow::Ellipsis,
-                        );
-                    }
-                },
-            );
+                }
+            });
         },
     );
 }
 
 /// Whether `id` names something of the panel.
-pub fn is_adder(id: FocusId) -> bool {
-    let FocusId(number) = id;
-    (ADDER_SCRIM.0..=ADDER_ESCAPE.0).contains(&number)
-        || (ADDER_ROW_BASE..ADDER_ROW_BASE + ADDER_ROWS).contains(&number)
+pub fn is_adder(id: Target) -> bool {
+    matches!(
+        id,
+        Target::Dialog(DialogEvent::AdderScrim)
+            | Target::Dialog(DialogEvent::AdderBody)
+            | Target::Dialog(DialogEvent::AdderBrowse)
+            | Target::Dialog(DialogEvent::AdderClone)
+            | Target::Dialog(DialogEvent::AdderField)
+            | Target::Dialog(DialogEvent::AdderSubmit)
+            | Target::Dialog(DialogEvent::AdderUp)
+            | Target::Dialog(DialogEvent::AdderDown)
+            | Target::Dialog(DialogEvent::AdderEscape)
+    ) || matches!(id, Target::Dialog(DialogEvent::AdderRow(row)) if row < ADDER_ROWS)
 }
 
 impl WorkspaceState {
@@ -477,11 +439,11 @@ impl WorkspaceState {
     }
 
     /// What pressing Enter presses while the panel is open: the highlighted choice, or the highlighted row of a list.
-    pub fn adder_enter(&self) -> Option<FocusId> {
+    pub fn adder_enter(&self) -> Option<Target> {
         let open = self.adder.as_ref()?;
         Some(match open.step {
             Step::Choices => choice_id(open.selected),
-            _ => ADDER_SUBMIT,
+            _ => Target::Dialog(DialogEvent::AdderSubmit),
         })
     }
 
@@ -493,31 +455,35 @@ impl WorkspaceState {
     }
 
     /// The state after something of the panel was pressed: `action` is the name of what.
-    pub(crate) fn adder_pressed(mut self, action: FocusId) -> Self {
+    pub(crate) fn adder_pressed(mut self, action: Target) -> Self {
         let Some(mut open) = self.adder.take() else {
             return self;
         };
         let working = open.working.is_some();
         match action {
-            ADDER_SCRIM => return self.without_adder(),
-            ADDER_ESCAPE if open.step == Step::Choices => return self.without_adder(),
-            ADDER_ESCAPE => {
+            Target::Dialog(DialogEvent::AdderScrim) => return self.without_adder(),
+            Target::Dialog(DialogEvent::AdderEscape) if open.step == Step::Choices => {
+                return self.without_adder();
+            }
+            Target::Dialog(DialogEvent::AdderEscape) => {
                 open.moved_to(match open.step {
                     Step::Repositories => Step::Owners,
                     _ => Step::Choices,
                 });
                 self.menu_scroll.jump_to(0.0);
             }
-            ADDER_UP | ADDER_DOWN if !working => {
+            Target::Dialog(DialogEvent::AdderUp) | Target::Dialog(DialogEvent::AdderDown)
+                if !working =>
+            {
                 let last = open.count().saturating_sub(1);
                 open.selected = match (open.selected, action) {
                     (usize::MAX, _) => 0,
-                    (selected, ADDER_UP) => selected.saturating_sub(1),
+                    (selected, Target::Dialog(DialogEvent::AdderUp)) => selected.saturating_sub(1),
                     (selected, _) => (selected + 1).min(last),
                 };
                 self.keep_selected_in_view(open.selected);
             }
-            ADDER_SUBMIT if !working => {
+            Target::Dialog(DialogEvent::AdderSubmit) if !working => {
                 let index = if open.selected == usize::MAX {
                     0
                 } else {
@@ -527,12 +493,12 @@ impl WorkspaceState {
                 self.adder_chosen(index);
                 return self;
             }
-            ADDER_BROWSE if !working => {
+            Target::Dialog(DialogEvent::AdderBrowse) if !working => {
                 self.menu_scroll.jump_to(0.0);
                 self.open_folder_picker(Purpose::Open, open.machine);
                 return self;
             }
-            ADDER_CLONE if !working => {
+            Target::Dialog(DialogEvent::AdderClone) if !working => {
                 open.moved_to(Step::Owners);
                 open.owners = Listing::Loading;
                 self.menu_scroll.jump_to(0.0);

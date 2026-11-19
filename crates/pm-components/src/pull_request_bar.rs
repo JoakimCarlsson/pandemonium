@@ -1,12 +1,12 @@
 //! The bar under a session's header that tells how the pull request of its branch stands, with its checks and review, and offers what can be done next: push, open, update, mark ready, merge, reopen, and delete the branch from its remote. It names the review as the code host its repository is on does, and offers only pushing when that host is not supported.
 
-use crate::focus::FocusId;
+use crate::areas::GitEvent;
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
 use crate::theme::Role;
-use crate::theme::sp;
 use pm_git::{CheckState, CodeHost, PullRequestStatus, ReviewDecision};
 use rustle::Modifier;
-use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{Icon, phosphor};
 
 use crate::Button;
@@ -16,36 +16,6 @@ use crate::parts::{glyph, line, spacer};
 use crate::sample::Session;
 use crate::size::Size;
 use crate::state::{Outgoing, Page, WorkspaceState};
-
-/// Opens the pull request on its code host.
-pub const PULL_OPEN: FocusId = FocusId(7_414_000);
-
-/// Pushes the branch.
-pub const PULL_PUSH: FocusId = FocusId(7_414_001);
-
-/// Pushes the branch and opens a pull request of it.
-pub const PULL_CREATE: FocusId = FocusId(7_414_002);
-
-/// Pushes the branch and opens a draft pull request of it.
-pub const PULL_CREATE_DRAFT: FocusId = FocusId(7_414_003);
-
-/// Pushes the branch and redrafts the body of its open pull request.
-pub const PULL_UPDATE: FocusId = FocusId(7_414_004);
-
-/// Marks the draft pull request ready for review.
-pub const PULL_READY: FocusId = FocusId(7_414_005);
-
-/// Squashes and merges the open pull request.
-pub const PULL_MERGE: FocusId = FocusId(7_414_006);
-
-/// Reopens the closed pull request.
-pub const PULL_REOPEN: FocusId = FocusId(7_414_007);
-
-/// Deletes the branch from its remote.
-pub const PULL_DELETE_BRANCH: FocusId = FocusId(7_414_008);
-
-/// Opens the page of the pull request's checks.
-pub const PULL_CHECKS: FocusId = FocusId(7_414_009);
 
 /// Whether `session` gets the bar: a session with a branch of its own, made from another, or one that has a pull request already.
 fn shows(session: &Session) -> bool {
@@ -111,15 +81,10 @@ fn tally(icon: Icon, tone: Role, count: usize) {
     if count == 0 {
         return;
     }
-    row_arranged(
-        Modifier::new(),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Center,
-        || {
-            glyph(icon, 3.5, tone);
-            line(count.to_string(), 12, 1.4, tone);
-        },
-    );
+    kit::row(Modifier::new(), 1, || {
+        glyph(icon, 3.5, tone);
+        line(count.to_string(), 12, 1.4, tone);
+    });
 }
 
 /// Emits the button counting the checks by how they stand, whose tooltip names the first that failed; it opens the page of the checks.
@@ -149,21 +114,16 @@ fn checks(request: &PullRequestStatus) {
         } else {
             ""
         },
-        PULL_CHECKS,
+        Target::Git(GitEvent::PullChecks),
     )
     .variant(Variant::Ghost)
     .size(Size::Xs)
     .mark(move || {
-        row_arranged(
-            Modifier::new(),
-            Arrangement::SpacedBy(sp(2)),
-            Alignment::Center,
-            || {
-                tally(phosphor::CHECK_CIRCLE, Role::Success, counts.0);
-                tally(phosphor::X, Role::Danger, counts.1);
-                tally(phosphor::TIMER, Role::Warning, counts.2);
-            },
-        );
+        kit::row(Modifier::new(), 2, || {
+            tally(phosphor::CHECK_CIRCLE, Role::Success, counts.0);
+            tally(phosphor::X, Role::Danger, counts.1);
+            tally(phosphor::TIMER, Role::Warning, counts.2);
+        });
     })
     .tooltip(format!("{summary}: Open the Checks"))
     .build();
@@ -183,7 +143,7 @@ fn review(request: &PullRequestStatus) {
 
 /// Emits a small button saying `label` that does `id`, filled when it is the `main` thing to do, with `tooltip` when there is one.
 #[track_caller]
-fn action(label: &str, id: FocusId, main: bool, tooltip: Option<String>) {
+fn action(label: &str, id: Target, main: bool, tooltip: Option<String>) {
     let button = Button::new(label, id)
         .variant(if main {
             Variant::Default
@@ -202,51 +162,66 @@ fn action(label: &str, id: FocusId, main: bool, tooltip: Option<String>) {
 fn actions(session: &Session) {
     let ahead = session.tracking.upstream.is_none() || session.tracking.ahead > 0;
     if unsupported(session).is_some() {
-        action("Push", PULL_PUSH, true, None);
+        action("Push", Target::Git(GitEvent::PullPush), true, None);
         return;
     }
     let noun = title_case(noun(session));
     match &session.pull_request {
         None => {
-            action("Create Draft", PULL_CREATE_DRAFT, false, None);
+            action(
+                "Create Draft",
+                Target::Git(GitEvent::PullCreateDraft),
+                false,
+                None,
+            );
             action(
                 &format!("Create {noun}"),
-                PULL_CREATE,
+                Target::Git(GitEvent::PullCreate),
                 true,
                 Some(format!("Push and Open a {noun}")),
             );
         }
         Some(request) if request.is_open() => {
             if ahead {
-                action("Push", PULL_PUSH, false, None);
+                action("Push", Target::Git(GitEvent::PullPush), false, None);
             }
             action(
                 "Update",
-                PULL_UPDATE,
+                Target::Git(GitEvent::PullUpdate),
                 false,
                 Some("Push and Redraft the Description".to_owned()),
             );
             if request.draft {
                 action(
                     "Ready",
-                    PULL_READY,
+                    Target::Git(GitEvent::PullReady),
                     true,
                     Some("Ready for Review".to_owned()),
                 );
             } else {
                 action(
                     "Merge",
-                    PULL_MERGE,
+                    Target::Git(GitEvent::PullMerge),
                     true,
                     Some("Squash and Merge".to_owned()),
                 );
             }
         }
         Some(request) if request.is_closed() => {
-            action("Delete Branch", PULL_DELETE_BRANCH, false, None);
-            action("Reopen", PULL_REOPEN, true, None);
+            action(
+                "Delete Branch",
+                Target::Git(GitEvent::PullDeleteBranch),
+                false,
+                None,
+            );
+            action("Reopen", Target::Git(GitEvent::PullReopen), true, None);
         }
-        Some(_) => action("Delete Branch", PULL_DELETE_BRANCH, false, None),
+        Some(_) => action(
+            "Delete Branch",
+            Target::Git(GitEvent::PullDeleteBranch),
+            false,
+            None,
+        ),
     }
 }
 
@@ -264,72 +239,64 @@ pub fn bar(session: &Session) {
     let modifier = Modifier::new()
         .height(theme::sp(10))
         .clip()
-        .draw_behind(theme::edge(
-            theme::Side::Bottom,
-            1.0,
-            theme::color(Role::Border),
-        ))
-        .padding_each(0.0, 0.0, 0.0, 1.0)
+        .ruled(theme::Side::Bottom)
         .padding_xy(theme::sp(5), 0.0);
-    row_arranged(
-        modifier,
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Center,
-        || {
-            match (&session.pull_request, unsupported(session)) {
-                (_, Some(host)) => {
-                    let said = if host.name.is_empty() {
-                        "This code host is not supported yet".to_owned()
-                    } else {
-                        format!("{} is not supported yet", host.name)
-                    };
-                    glyph(phosphor::GIT_DIFF, 3.5, Role::Muted);
-                    line(said, 12, 1.4, Role::Muted);
-                    spacer();
-                }
-                (Some(request), None) => {
-                    let (said, tone) = standing(request);
-                    let number = request.number;
-                    Button::new("", PULL_OPEN)
-                        .variant(Variant::Ghost)
-                        .size(Size::Xs)
-                        .mark(move || state_badge(number, said, tone))
-                        .tooltip(match host_name {
-                            Some(name) => format!("Open on {name}: {}", request.title),
-                            None => format!("Open: {}", request.title),
-                        })
-                        .build();
-                    checks(request);
-                    review(request);
-                    spacer();
-                }
-                (None, None) => {
-                    glyph(phosphor::GIT_DIFF, 3.5, Role::Muted);
-                    line(format!("No {}", noun(session)), 12, 1.4, Role::Muted);
-                    spacer();
-                }
+    kit::row(modifier, 3, || {
+        match (&session.pull_request, unsupported(session)) {
+            (_, Some(host)) => {
+                let said = if host.name.is_empty() {
+                    "This code host is not supported yet".to_owned()
+                } else {
+                    format!("{} is not supported yet", host.name)
+                };
+                glyph(phosphor::GIT_DIFF, 3.5, Role::Muted);
+                line(said, 12, 1.4, Role::Muted);
+                spacer();
             }
-            match session.pull_busy {
-                Some(doing) => {
-                    glyph(phosphor::CIRCLE_DASHED, 3.5, Role::Muted);
-                    line(doing, 12, 1.4, Role::Muted);
-                }
-                None => actions(session),
+            (Some(request), None) => {
+                let (said, tone) = standing(request);
+                let number = request.number;
+                Button::new("", Target::Git(GitEvent::PullOpen))
+                    .variant(Variant::Ghost)
+                    .size(Size::Xs)
+                    .mark(move || state_badge(number, said, tone))
+                    .tooltip(match host_name {
+                        Some(name) => format!("Open on {name}: {}", request.title),
+                        None => format!("Open: {}", request.title),
+                    })
+                    .build();
+                checks(request);
+                review(request);
+                spacer();
             }
-        },
-    );
+            (None, None) => {
+                glyph(phosphor::GIT_DIFF, 3.5, Role::Muted);
+                line(format!("No {}", noun(session)), 12, 1.4, Role::Muted);
+                spacer();
+            }
+        }
+        match session.pull_busy {
+            Some(doing) => {
+                glyph(phosphor::CIRCLE_DASHED, 3.5, Role::Muted);
+                line(doing, 12, 1.4, Role::Muted);
+            }
+            None => actions(session),
+        }
+    });
 }
 
 impl WorkspaceState {
     /// Carries out `action` if it is one of the bar's, on the open session, and says whether it was.
-    pub(crate) fn press_pull_request(&mut self, action: FocusId) -> bool {
+    pub(crate) fn press_pull_request(&mut self, action: Target) -> bool {
         let (operation, doing) = match action {
-            PULL_OPEN | PULL_CHECKS => {
+            Target::Git(GitEvent::PullOpen) | Target::Git(GitEvent::PullChecks) => {
                 let address = self
                     .open()
                     .and_then(|session| session.pull_request.as_ref())
                     .map(|request| match action {
-                        PULL_CHECKS if !request.checks_url.is_empty() => request.checks_url.clone(),
+                        Target::Git(GitEvent::PullChecks) if !request.checks_url.is_empty() => {
+                            request.checks_url.clone()
+                        }
                         _ => request.url.clone(),
                     });
                 if let Some(address) = address {
@@ -337,14 +304,14 @@ impl WorkspaceState {
                 }
                 return true;
             }
-            PULL_PUSH => ("push", "Pushing…"),
-            PULL_CREATE => ("create", "Opening…"),
-            PULL_CREATE_DRAFT => ("create_draft", "Opening the draft…"),
-            PULL_UPDATE => ("update", "Updating…"),
-            PULL_READY => ("ready", "Marking ready…"),
-            PULL_MERGE => ("squash", "Merging…"),
-            PULL_REOPEN => ("reopen", "Reopening…"),
-            PULL_DELETE_BRANCH => ("delete_branch", "Deleting the branch…"),
+            Target::Git(GitEvent::PullPush) => ("push", "Pushing…"),
+            Target::Git(GitEvent::PullCreate) => ("create", "Opening…"),
+            Target::Git(GitEvent::PullCreateDraft) => ("create_draft", "Opening the draft…"),
+            Target::Git(GitEvent::PullUpdate) => ("update", "Updating…"),
+            Target::Git(GitEvent::PullReady) => ("ready", "Marking ready…"),
+            Target::Git(GitEvent::PullMerge) => ("squash", "Merging…"),
+            Target::Git(GitEvent::PullReopen) => ("reopen", "Reopening…"),
+            Target::Git(GitEvent::PullDeleteBranch) => ("delete_branch", "Deleting the branch…"),
             _ => return false,
         };
         let Page::Session(index) = self.page else {

@@ -4,9 +4,9 @@
 //!
 //! Every test builds the app on a snapshot's screen with
 //! [`Rig`](super::headless::Rig), which hands each event to rustle's embedded
-//! interface and then to [`App::after_interface`](super::App), the path the
-//! event loop takes for a window's events, and lets the loop come to rest
-//! with [`App::come_to_rest`](super::App) after each.
+//! interface of the window, whose root hands the app its part of it as it does
+//! in a window rustle's loop runs, and lets the loop come to rest after each,
+//! waking the app as rustle's external handler does.
 //!
 //! What the pointer, the keyboard, the wheel, an input method, the clipboard,
 //! menus and gestures do is covered here, file by file. What is left out, and why:

@@ -1,8 +1,8 @@
 //! The file shown and the browser pane: the code taking the keyboard and
 //! the view's size told to the screen, and the browser's address field and menu.
 
-use pm_components::browser::{BROWSER_ADDRESS, BROWSER_BODY};
-use pm_components::open_files::EDITOR_FIELD;
+use pm_components::areas::{BrowserEvent, EditorEvent};
+use pm_components::target::Target;
 use pm_pages::Screen;
 use rustle::Key;
 
@@ -16,13 +16,16 @@ fn the_code_takes_typing() {
     let text = |rig: &Rig| {
         rig.read(|screen| {
             screen
-                .field(EDITOR_FIELD)
+                .field(Target::Editor(EditorEvent::EditorField))
                 .map(|field| field.text().to_owned())
         })
     };
     let before = text(&rig).expect("a file is shown");
-    rig.click_on(EDITOR_FIELD);
-    assert_eq!(rig.focused(), Some(EDITOR_FIELD));
+    rig.click_on(Target::Editor(EditorEvent::EditorField));
+    assert_eq!(
+        rig.focused(),
+        Some(Target::Editor(EditorEvent::EditorField))
+    );
     rig.type_text("zz");
     let after = text(&rig).expect("a file is shown");
     assert_eq!(after.len(), before.len() + 2);
@@ -51,18 +54,21 @@ fn the_browser_address_and_menu() {
     let address = |rig: &Rig| {
         rig.read(|screen| {
             screen
-                .text_field(BROWSER_ADDRESS)
+                .text_field(Target::Browser(BrowserEvent::BrowserAddress))
                 .map(rustle::TextFieldState::text)
         })
         .unwrap_or_default()
     };
     let before = address(&rig);
-    rig.click_on(BROWSER_ADDRESS);
-    assert_eq!(rig.focused(), Some(BROWSER_ADDRESS));
+    rig.click_on(Target::Browser(BrowserEvent::BrowserAddress));
+    assert_eq!(
+        rig.focused(),
+        Some(Target::Browser(BrowserEvent::BrowserAddress))
+    );
     rig.type_text("x");
     assert_eq!(address(&rig).len(), before.len() + 1);
     rig.key(Key::Escape);
-    let at = rig.center(BROWSER_BODY);
+    let at = rig.center(Target::Browser(BrowserEvent::BrowserBody));
     rig.right_click(at);
     assert!(rig.state(|state| state.browser_menu.is_some()));
 }
@@ -77,14 +83,14 @@ fn resting_on_code_waits_to_ask_about_it() {
     let text = rig
         .read(|screen| {
             screen
-                .field(EDITOR_FIELD)
+                .field(Target::Editor(EditorEvent::EditorField))
                 .map(|field| field.text().to_owned())
         })
         .expect("a file is shown");
     let word = text.find("HashMap").expect("the word is in the file") + 2;
     let caret = rig
         .read(pm_pages::Screen::code_lines)
-        .caret_rect(EDITOR_FIELD, word)
+        .caret_rect(Target::Editor(EditorEvent::EditorField), word)
         .expect("the word is drawn");
     let at = (caret.origin.x, caret.origin.y + caret.size.height / 2.0);
     rig.move_to(at);
@@ -100,7 +106,7 @@ fn resting_on_code_waits_to_ask_about_it() {
 fn code_point(rig: &Rig, offset: usize) -> (f32, f32) {
     let caret = rig
         .read(pm_pages::Screen::code_lines)
-        .caret_rect(EDITOR_FIELD, offset)
+        .caret_rect(Target::Editor(EditorEvent::EditorField), offset)
         .expect("the place is drawn");
     (
         caret.origin.x + 1.0,
@@ -115,21 +121,21 @@ fn selected_code_drags_to_another_place() {
     let text = |rig: &Rig| {
         rig.read(|screen| {
             screen
-                .field(EDITOR_FIELD)
+                .field(Target::Editor(EditorEvent::EditorField))
                 .map(|field| field.text().to_owned())
         })
         .unwrap_or_default()
     };
     let before = text(&rig);
     let word = before.find("LIMIT").expect("the word is in the file");
-    rig.click_on(EDITOR_FIELD);
+    rig.click_on(Target::Editor(EditorEvent::EditorField));
     std::thread::sleep(double_tap_timeout());
     let at = code_point(&rig, word + 2);
     rig.click(at);
     rig.click(at);
     let selected = rig.read(|screen| {
         screen
-            .field(EDITOR_FIELD)
+            .field(Target::Editor(EditorEvent::EditorField))
             .map(|field| field.selected().to_owned())
     });
     assert_eq!(selected.as_deref(), Some("LIMIT"));
@@ -151,7 +157,7 @@ fn alt_shift_drag_selects_columns() {
     let text = rig
         .read(|screen| {
             screen
-                .field(EDITOR_FIELD)
+                .field(Target::Editor(EditorEvent::EditorField))
                 .map(|field| field.text().to_owned())
         })
         .unwrap_or_default();
@@ -159,7 +165,7 @@ fn alt_shift_drag_selects_columns() {
     let third = text
         .find("names: HashMap")
         .expect("the line is in the file");
-    rig.click_on(EDITOR_FIELD);
+    rig.click_on(Target::Editor(EditorEvent::EditorField));
     let from = code_point(&rig, first);
     let to = code_point(&rig, third + 3);
     rig.hold(rustle::Modifiers {
@@ -171,7 +177,7 @@ fn alt_shift_drag_selects_columns() {
     rig.hold(rustle::Modifiers::default());
     let cursors = rig.read(|screen| {
         screen
-            .field(EDITOR_FIELD)
+            .field(Target::Editor(EditorEvent::EditorField))
             .map(|field| field.selected_all().lines().count())
     });
     assert_eq!(cursors, Some(3));

@@ -1,32 +1,16 @@
 //! The page that offers a newer release: its notes, and the button that downloads it and restarts into it.
 
+use crate::Markdown;
+use crate::areas::DialogEvent;
 use crate::button::Variant;
-use crate::focus::FocusId;
+use crate::kit;
 use crate::parts::{line, spacer, wrap};
-use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
+use crate::target::Target;
 use crate::theme;
 use crate::theme::Role;
-use crate::theme::sp;
 use crate::update::{RUNNING, Update};
-use crate::{Button, Markdown};
 use rustle::Modifier;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
-
-/// Downloads the release and restarts into it.
-pub const UPDATE_NOW: FocusId = FocusId(7_019);
-
-/// Opens the page of the release.
-pub const UPDATE_PAGE: FocusId = FocusId(7_025);
-
-/// The tab of the release notes in a pane's strip.
-pub const TAB_UPDATE: FocusId = FocusId(7_411_000);
-
-/// Closes the tab of the release notes.
-pub const UPDATE_CLOSE: FocusId = FocusId(7_411_001);
-
-/// Closes the tab of the release notes, or cancels the download first.
-pub const UPDATE_LATER: FocusId = FocusId(7_411_002);
 
 /// The space around the page's column, in logical pixels, which the notes' width is taken from.
 const MARGIN: f32 = 48.0;
@@ -103,7 +87,7 @@ impl WorkspaceState {
     }
 
     /// Carries out `action` if it presses the tab of an update, and says whether it did.
-    pub(crate) fn press_update(&mut self, action: FocusId) -> bool {
+    pub(crate) fn press_update(&mut self, action: Target) -> bool {
         let Some(Update::Newer {
             url,
             version,
@@ -114,9 +98,11 @@ impl WorkspaceState {
             return false;
         };
         match action {
-            TAB_UPDATE => self.tab = crate::state::Tab::Update,
-            UPDATE_PAGE => self.outbox.push(Outgoing::Open { address: url }),
-            UPDATE_NOW if blocker.is_none() => {
+            Target::Dialog(DialogEvent::TabUpdate) => self.tab = crate::state::Tab::Update,
+            Target::Dialog(DialogEvent::UpdatePage) => {
+                self.outbox.push(Outgoing::Open { address: url })
+            }
+            Target::Dialog(DialogEvent::UpdateNow) if blocker.is_none() => {
                 self.update_run = UpdateRun::Downloading {
                     received: 0,
                     total: 0,
@@ -126,20 +112,13 @@ impl WorkspaceState {
                     version,
                 });
             }
-            UPDATE_CLOSE | UPDATE_LATER => self.close_release(),
+            Target::Dialog(DialogEvent::UpdateClose) | Target::Dialog(DialogEvent::UpdateLater) => {
+                self.close_release()
+            }
             _ => return false,
         }
         true
     }
-}
-
-/// Emits a button of the window, saying `label`.
-#[track_caller]
-fn button(label: &str, id: FocusId, variant: Variant) {
-    Button::new(label, id)
-        .variant(variant)
-        .size(Size::Sm)
-        .build();
 }
 
 /// What the window says under the notes about how the update is going, when it says anything.
@@ -180,31 +159,28 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
         UpdateRun::Downloading { .. } | UpdateRun::Installing
     );
     let installing = matches!(state.update_run, UpdateRun::Installing);
-    row_arranged(
+    kit::row_top(
         Modifier::new()
             .weight(1.0)
             .background(theme::color(Role::Background))
             .padding_xy(theme::sp(6), 0.0),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         || {
-            column_arranged(
+            kit::column(
                 Modifier::new()
                     .fill_max_height()
                     .weight(1.0)
                     .fill_max_width()
                     .padding_xy(0.0, theme::sp(8)),
-                Arrangement::SpacedBy(sp(3)),
-                Alignment::Start,
+                3,
                 || {
-                    rustle::basic_text(
+                    kit::text(
                         Modifier::new(),
                         name,
                         theme::text_style(22, 1.3)
                             .font_weight(rustle::FontWeight::MEDIUM)
                             .color(theme::color(Role::Text))
                             .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
                     );
                     line(format!("This is {RUNNING}{date}."), 13, 1.4, Role::Muted);
                     if let Some(notes) = body {
@@ -221,36 +197,37 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
                         rustle::spacer(Modifier::new().weight(1.0));
                     }
                     if let Some(said) = said {
-                        column_arranged(
-                            Modifier::new(),
-                            Arrangement::Start,
-                            Alignment::Start,
-                            || {
-                                for words in wrap(&said, 13, text_width) {
-                                    line(words, 13, 1.5, Role::Muted);
-                                }
-                            },
-                        );
+                        kit::column(Modifier::new(), 0, || {
+                            for words in wrap(&said, 13, text_width) {
+                                line(words, 13, 1.5, Role::Muted);
+                            }
+                        });
                     }
-                    row_arranged(
-                        Modifier::new().fill_max_width(),
-                        Arrangement::SpacedBy(sp(2)),
-                        Alignment::Center,
-                        || {
-                            button("View on GitHub", UPDATE_PAGE, Variant::Ghost);
-                            spacer();
-                            if !installing {
-                                button(
-                                    if busy { "Cancel" } else { "Later" },
-                                    UPDATE_LATER,
-                                    Variant::Ghost,
-                                );
-                            }
-                            if !busy && blocker.is_none() {
-                                button("Update and Restart", UPDATE_NOW, Variant::Default);
-                            }
-                        },
-                    );
+                    kit::row(Modifier::new().fill_max_width(), 2, || {
+                        kit::small_button(
+                            "View on GitHub",
+                            Target::Dialog(DialogEvent::UpdatePage),
+                            Variant::Ghost,
+                        )
+                        .build();
+                        spacer();
+                        if !installing {
+                            kit::small_button(
+                                if busy { "Cancel" } else { "Later" },
+                                Target::Dialog(DialogEvent::UpdateLater),
+                                Variant::Ghost,
+                            )
+                            .build();
+                        }
+                        if !busy && blocker.is_none() {
+                            kit::small_button(
+                                "Update and Restart",
+                                Target::Dialog(DialogEvent::UpdateNow),
+                                Variant::Default,
+                            )
+                            .build();
+                        }
+                    });
                 },
             );
         },

@@ -1,10 +1,9 @@
 //! The tally: how many lines were added and how many removed.
 
+use crate::kit;
 use crate::theme;
 use crate::theme::Role;
-use crate::theme::sp;
 use rustle::Modifier;
-use rustle::{Alignment, Arrangement, row_arranged};
 
 /// A tally being described: the two counts and how big they are set.
 ///
@@ -50,24 +49,17 @@ impl Tally {
     pub fn build(self) {
         let kind = theme::mono_style(self.pixels, 1.4);
         let (added, removed) = (self.added, self.removed);
-        row_arranged(
-            self.modifier,
-            Arrangement::SpacedBy(sp(1.5)),
-            Alignment::Center,
-            move || {
-                rustle::basic_text(
-                    Modifier::new(),
-                    format!("+{added}"),
-                    kind.color(theme::color(Role::Success)),
-                    rustle::TextOverflow::Ellipsis,
-                );
-                rustle::basic_text(
-                    Modifier::new(),
-                    format!("−{removed}"),
-                    kind.color(theme::color(Role::Danger)),
-                    rustle::TextOverflow::Ellipsis,
-                );
-            },
-        );
+        kit::row(self.modifier, 1.5, move || {
+            kit::text(
+                Modifier::new(),
+                format!("+{added}"),
+                kind.color(theme::color(Role::Success)),
+            );
+            kit::text(
+                Modifier::new(),
+                format!("−{removed}"),
+                kind.color(theme::color(Role::Danger)),
+            );
+        });
     }
 }

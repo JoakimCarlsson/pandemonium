@@ -12,13 +12,12 @@
 //! frame with [`TextLines::frame`], and bytes count into the text of the
 //! field that drew the piece.
 
+use crate::target::Target;
 use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::rc::Rc;
 
 use rustle::{Affinity, Modifier, Offset, Rect, TextLayout};
-
-use crate::focus::FocusId;
 
 /// Where the caret goes when it is moved one place along the screen in a
 /// line that holds right-to-left text: the step of a caret along the screen.
@@ -34,7 +33,7 @@ pub enum Step {
 #[derive(Clone, Debug)]
 pub struct DrawnLine {
     /// The field whose text it is.
-    pub owner: FocusId,
+    pub owner: Target,
     /// The byte of the field's text the piece starts at.
     pub start: usize,
     /// The piece's text, shaped as it was drawn.
@@ -125,7 +124,7 @@ impl TextLines {
     pub fn line(
         &self,
         modifier: Modifier,
-        owner: FocusId,
+        owner: Target,
         start: usize,
         shaped: Rc<RefCell<Option<Rc<TextLayout>>>>,
     ) -> Modifier {
@@ -149,7 +148,7 @@ impl TextLines {
     }
 
     /// The pieces of `owner` drawn in the latest frame, in paint order.
-    pub fn of(&self, owner: FocusId) -> Vec<DrawnLine> {
+    pub fn of(&self, owner: Target) -> Vec<DrawnLine> {
         self.0
             .lines
             .borrow()
@@ -160,7 +159,7 @@ impl TextLines {
     }
 
     /// The pieces of `owner`, grouped into rows from the top, each row from the left.
-    fn rows_of(&self, owner: FocusId) -> Vec<Vec<DrawnLine>> {
+    fn rows_of(&self, owner: Target) -> Vec<Vec<DrawnLine>> {
         let mut pieces = self.of(owner);
         pieces.sort_by(|a, b| {
             a.rect
@@ -185,7 +184,7 @@ impl TextLines {
     /// byte `caret`, and the piece holding it.
     fn row_holding(
         &self,
-        owner: FocusId,
+        owner: Target,
         caret: usize,
     ) -> Option<(Vec<Vec<DrawnLine>>, usize, DrawnLine)> {
         let rows = self.rows_of(owner);
@@ -199,7 +198,7 @@ impl TextLines {
 
     /// The byte of `owner` nearest the point `x`, `y`: on the row the point
     /// is level with, or the last row below it.
-    pub fn offset_in(&self, owner: FocusId, x: f32, y: f32) -> Option<usize> {
+    pub fn offset_in(&self, owner: Target, x: f32, y: f32) -> Option<usize> {
         let rows = self.rows_of(owner);
         let row = rows
             .iter()
@@ -220,7 +219,7 @@ impl TextLines {
 
     /// The byte `by` rows below the byte `caret` of `owner`, as its rows are
     /// drawn, keeping the caret's column; `None` past the first or the last row.
-    pub fn vertical(&self, owner: FocusId, caret: usize, by: isize) -> Option<usize> {
+    pub fn vertical(&self, owner: Target, caret: usize, by: isize) -> Option<usize> {
         let (rows, index, piece) = self.row_holding(owner, caret)?;
         let (x, _, _) = piece.caret_at(caret);
         let row = rows.get(index.checked_add_signed(by)?)?;
@@ -234,7 +233,7 @@ impl TextLines {
 
     /// The byte at the start, or the end when `end` is set, of the row the
     /// byte `caret` of `owner` is on, as drawn.
-    pub fn line_edge(&self, owner: FocusId, caret: usize, end: bool) -> Option<usize> {
+    pub fn line_edge(&self, owner: Target, caret: usize, end: bool) -> Option<usize> {
         let (rows, index, _) = self.row_holding(owner, caret)?;
         let row = &rows[index];
         if end {
@@ -248,7 +247,7 @@ impl TextLines {
     /// right, or left, along the screen, when its row holds right-to-left
     /// text; `None` when the row runs left to right throughout, so moving by
     /// bytes is right.
-    pub fn visual_step(&self, owner: FocusId, caret: usize, right: bool) -> Option<Step> {
+    pub fn visual_step(&self, owner: Target, caret: usize, right: bool) -> Option<Step> {
         let (_, _, piece) = self.row_holding(owner, caret)?;
         match step_in(&piece.layout, caret - piece.start, right)? {
             Step::To(byte) => Some(Step::To(piece.start + byte)),
@@ -258,7 +257,7 @@ impl TextLines {
 
     /// The caret of `owner` at byte `caret` as a rectangle one pixel wide,
     /// for the input method's candidate window.
-    pub fn caret_rect(&self, owner: FocusId, caret: usize) -> Option<Rect> {
+    pub fn caret_rect(&self, owner: Target, caret: usize) -> Option<Rect> {
         let (x, y, height) = self.row_holding(owner, caret)?.2.caret_at(caret);
         Some(Rect::new(Offset::new(x, y), rustle::Size::new(1.0, height)))
     }

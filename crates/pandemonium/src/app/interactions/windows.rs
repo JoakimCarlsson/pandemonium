@@ -2,14 +2,13 @@
 //! the frame, the buttons that minimize, maximize and close, and the
 //! settings window and the folder picker's opening, taking input and closing.
 
-use pm_components::git_prompts::{PROMPT_CONFIRM, Prompt};
-use pm_components::state::SETTINGS;
-use pm_components::title_bar::{
-    FRAMELESS, TITLE_BAR, WINDOW_CLOSE, WINDOW_MAXIMIZE, WINDOW_MINIMIZE,
-};
+use pm_components::areas::{DialogEvent, GitEvent, SidebarEvent, WindowEvent};
+use pm_components::git_prompts::Prompt;
+use pm_components::target::Target;
+use pm_components::title_bar::FRAMELESS;
+use rustle::PointerButton;
 use rustle::ResizeEdge;
 use rustle::{Key, Modifiers};
-use winit::event::MouseButton;
 
 use crate::app::asides::Aside;
 use crate::app::headless::Rig;
@@ -25,7 +24,9 @@ const CONTROL: Modifiers = Modifiers {
 
 /// A place on the title bar with nothing else on it.
 fn bare_title_bar(rig: &Rig) -> (f32, f32) {
-    let bar = rig.region(TITLE_BAR).expect("the title bar is drawn");
+    let bar = rig
+        .region(Target::Window(WindowEvent::TitleBar))
+        .expect("the title bar is drawn");
     (bar.origin.x + 200.0, bar.origin.y + bar.size.height / 2.0)
 }
 
@@ -58,12 +59,12 @@ fn the_frame_edges_resize_the_window() {
     let mut rig = Rig::shot(Shot::Workspace);
     let west = (-10.0, 300.0);
     rig.move_to(west);
-    rig.button_in(None, winit::event::MouseButton::Left, true, west);
-    rig.button_in(None, winit::event::MouseButton::Left, false, west);
+    rig.button_in(None, PointerButton::Primary, true, west);
+    rig.button_in(None, PointerButton::Primary, false, west);
     let corner = (2.0, 2.0);
     rig.move_to(corner);
-    rig.button_in(None, winit::event::MouseButton::Left, true, corner);
-    rig.button_in(None, winit::event::MouseButton::Left, false, corner);
+    rig.button_in(None, PointerButton::Primary, true, corner);
+    rig.button_in(None, PointerButton::Primary, false, corner);
     assert_eq!(
         *rig.window().resized.borrow(),
         [ResizeEdge::West, ResizeEdge::NorthWest]
@@ -102,20 +103,20 @@ fn the_edges_resize() {
     let mut rig = Rig::shot(Shot::Workspace);
     rig.move_to((1.0, 400.0));
     assert_eq!(rig.cursor(), rustle::CursorIcon::EwResize);
-    rig.button_in(None, MouseButton::Left, true, (1.0, 400.0));
-    rig.button_in(None, MouseButton::Left, false, (1.0, 400.0));
+    rig.button_in(None, PointerButton::Primary, true, (1.0, 400.0));
+    rig.button_in(None, PointerButton::Primary, false, (1.0, 400.0));
     rig.move_to((1279.0, 799.0));
     assert_eq!(rig.cursor(), rustle::CursorIcon::NwseResize);
-    rig.button_in(None, MouseButton::Left, true, (1279.0, 799.0));
-    rig.button_in(None, MouseButton::Left, false, (1279.0, 799.0));
+    rig.button_in(None, PointerButton::Primary, true, (1279.0, 799.0));
+    rig.button_in(None, PointerButton::Primary, false, (1279.0, 799.0));
     assert_eq!(
         *rig.window().resized.borrow(),
         vec![ResizeEdge::West, ResizeEdge::SouthEast]
     );
     rig.window().maximized.set(true);
     rig.move_to((1.0, 400.0));
-    rig.button_in(None, MouseButton::Left, true, (1.0, 400.0));
-    rig.button_in(None, MouseButton::Left, false, (1.0, 400.0));
+    rig.button_in(None, PointerButton::Primary, true, (1.0, 400.0));
+    rig.button_in(None, PointerButton::Primary, false, (1.0, 400.0));
     assert_eq!(rig.window().resized.borrow().len(), 2);
 }
 
@@ -126,13 +127,13 @@ fn the_frame_buttons() {
         return;
     }
     let mut rig = Rig::shot(Shot::Workspace);
-    rig.click_on(WINDOW_MAXIMIZE);
+    rig.click_on(Target::Window(WindowEvent::WindowMaximize));
     assert!(rig.window().maximized.get());
-    rig.click_on(WINDOW_MAXIMIZE);
+    rig.click_on(Target::Window(WindowEvent::WindowMaximize));
     assert!(!rig.window().maximized.get());
-    rig.click_on(WINDOW_MINIMIZE);
+    rig.click_on(Target::Window(WindowEvent::WindowMinimize));
     assert!(rig.window().minimized.get());
-    rig.click_on(WINDOW_CLOSE);
+    rig.click_on(Target::Window(WindowEvent::WindowClose));
     assert_eq!(
         rig.state(|state| state.git.prompt.clone()),
         Some(Prompt::Quit)
@@ -145,13 +146,13 @@ fn the_frame_buttons() {
 fn closing_the_window_asks_then_quits() {
     let mut rig = Rig::shot(Shot::Workspace);
     rig.close(None);
-    assert!(!rig.app.borrow_mut().come_to_rest().1);
+    assert!(!rig.quits());
     assert_eq!(
         rig.state(|state| state.git.prompt.clone()),
         Some(Prompt::Quit)
     );
-    rig.click_on(PROMPT_CONFIRM);
-    assert!(rig.app.borrow_mut().come_to_rest().1);
+    rig.click_on(Target::Git(GitEvent::PromptConfirm));
+    assert!(rig.quits());
 }
 
 /// The settings button opens settings in their own window, which takes
@@ -159,7 +160,7 @@ fn closing_the_window_asks_then_quits() {
 #[test]
 fn settings_open_in_their_window_and_escape_closes_it() {
     let mut rig = Rig::shot(Shot::Workspace);
-    rig.click_on(SETTINGS);
+    rig.click_on(Target::Sidebar(SidebarEvent::Settings));
     assert!(rig.aside_open(Aside::Settings));
     assert!(rig.tagged_in(Some(Aside::Settings)).len() > 1);
     rig.key_in(Some(Aside::Settings), Key::Escape);
@@ -171,7 +172,7 @@ fn settings_open_in_their_window_and_escape_closes_it() {
 #[test]
 fn the_settings_window_closes_and_comes_forward() {
     let mut rig = Rig::shot(Shot::Workspace);
-    rig.click_on(SETTINGS);
+    rig.click_on(Target::Sidebar(SidebarEvent::Settings));
     rig.chord(CONTROL, Key::Character(",".into()));
     assert_eq!(rig.aside_window(Aside::Settings).raised.get(), 1);
     rig.close(Some(Aside::Settings));
@@ -184,7 +185,9 @@ fn the_settings_window_closes_and_comes_forward() {
 fn resizing_lays_out_again() {
     let mut rig = Rig::shot(Shot::Workspace);
     rig.resize((900.0, 600.0));
-    let bar = rig.region(TITLE_BAR).expect("the title bar is drawn");
+    let bar = rig
+        .region(Target::Window(WindowEvent::TitleBar))
+        .expect("the title bar is drawn");
     assert!((bar.size.width - 900.0).abs() < 1.0, "{bar:?}");
 }
 
@@ -192,7 +195,7 @@ fn resizing_lays_out_again() {
 #[test]
 fn the_project_adder_opens_and_closes() {
     let mut rig = Rig::shot(Shot::Workspace);
-    rig.click_on(pm_components::state::ADD_PROJECT);
+    rig.click_on(Target::Sidebar(SidebarEvent::AddProject));
     assert!(rig.read(pm_pages::Screen::adder_open));
     rig.key(Key::ArrowDown);
     rig.key(Key::Escape);
@@ -205,18 +208,18 @@ fn the_project_adder_opens_and_closes() {
 #[test]
 fn the_folder_picker_window() {
     let mut rig = Rig::shot(Shot::Workspace);
-    rig.click_on(pm_components::state::ADD_PROJECT);
-    rig.click_on(pm_components::adder::ADDER_BROWSE);
+    rig.click_on(Target::Sidebar(SidebarEvent::AddProject));
+    rig.click_on(Target::Dialog(DialogEvent::AdderBrowse));
     assert!(rig.aside_open(Aside::Picker));
     assert_eq!(rig.aside_window(Aside::Picker).attention.get(), 1);
     assert_eq!(
         rig.focused(),
-        Some(pm_components::folder_picker::PICKER_FIELD)
+        Some(Target::Dialog(DialogEvent::PickerField))
     );
     rig.type_in(Some(Aside::Picker), "src");
     let filter = rig.read(|screen| {
         screen
-            .text_field(pm_components::folder_picker::PICKER_FIELD)
+            .text_field(Target::Dialog(DialogEvent::PickerField))
             .map(rustle::TextFieldState::text)
     });
     assert_eq!(filter.as_deref(), Some("src"));
@@ -229,7 +232,7 @@ fn the_folder_picker_window() {
 #[test]
 fn the_settings_list_picks_a_section() {
     let mut rig = Rig::shot(Shot::Workspace);
-    rig.click_on(SETTINGS);
+    rig.click_on(Target::Sidebar(SidebarEvent::Settings));
     let section = pm_components::settings::Section::Terminal;
     let at = rig.aside_center(Aside::Settings, section.id());
     rig.click_in(Some(Aside::Settings), at);
@@ -240,7 +243,7 @@ fn the_settings_list_picks_a_section() {
         rig.focus_order_in(Some(Aside::Settings)).first(),
         Some(&focused)
     );
-    assert!(!rig.drawn(focused) || focused == TITLE_BAR);
+    assert!(!rig.drawn(focused) || focused == Target::Window(WindowEvent::TitleBar));
 }
 
 /// A tooltip of the main window shows in the main window only, not in the
@@ -248,8 +251,8 @@ fn the_settings_list_picks_a_section() {
 #[test]
 fn tooltips_stay_in_their_window() {
     let mut rig = Rig::shot(Shot::Workspace);
-    rig.click_on(SETTINGS);
-    let on = rig.center(SETTINGS);
+    rig.click_on(Target::Sidebar(SidebarEvent::Settings));
+    let on = rig.center(Target::Sidebar(SidebarEvent::Settings));
     rig.move_to(on);
     rig.wait(400);
     assert!(rig.shows("Open Settings"));

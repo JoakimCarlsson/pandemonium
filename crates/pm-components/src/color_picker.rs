@@ -1,48 +1,12 @@
 //! Choosing another colour for a stretch of the file that spells one: the colour typed in hex, the ways the language server offers to write it, and the one picked written in place of the stretch.
 
-use crate::focus::FocusId;
 use pm_protocol::{ColorPresentation, Span};
 use rustle::TextFieldState;
 
 use crate::state::{Outgoing, WorkspaceState};
 
-/// The field the colour is typed in, as hex.
-pub const COLOR_HEX: FocusId = FocusId(7_420_000);
-
-/// Hands in the colour typed: the first way to write it is taken.
-pub const COLOR_HEX_SUBMIT: FocusId = FocusId(7_420_001);
-
-/// The box the colour is chosen in, which keeps a press on it from counting as outside.
-pub const COLOR_BOX: FocusId = FocusId(7_420_002);
-
-/// The first of the rows that each write the colour one way.
-pub const COLOR_FORMAT_BASE: u64 = 7_420_100;
-
-/// The end of the rows that each write the colour one way.
-const COLOR_FORMAT_END: u64 = 7_420_200;
-
-/// The first of the squares of colour in the file, one for each colour the language server said.
-pub const COLOR_SWATCH_BASE: u64 = 7_421_000;
-
-/// The end of the squares of colour in the file.
-const COLOR_SWATCH_END: u64 = 7_423_000;
-
 /// How many ways of writing the colour are listed.
 pub const COLOR_FORMATS_SHOWN: usize = 8;
-
-/// The way of writing the colour the row `id` stands for, counted from the first.
-pub fn color_format_of(id: FocusId) -> Option<usize> {
-    (COLOR_FORMAT_BASE..COLOR_FORMAT_END)
-        .contains(&id.0)
-        .then(|| (id.0 - COLOR_FORMAT_BASE) as usize)
-}
-
-/// The colour of the file the square `id` stands for, counted from the first.
-pub fn color_swatch_of(id: FocusId) -> Option<usize> {
-    (COLOR_SWATCH_BASE..COLOR_SWATCH_END)
-        .contains(&id.0)
-        .then(|| (id.0 - COLOR_SWATCH_BASE) as usize)
-}
 
 /// A colour of the file being changed.
 #[derive(Clone, Debug, PartialEq)]

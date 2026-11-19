@@ -1,20 +1,19 @@
 //! The menu that opens over the window of a shell: putting what is marked into the chat, copying, pasting, marking everything, clearing and ending the shell, each with the keys the keymap gives it.
 
+use crate::areas::{ComposerEvent, MenuEvent};
+use crate::target::Target;
 use pm_editor::{Action, Keymap};
 
-use crate::focus::FocusId;
-
 use crate::Menu;
-use crate::state::{Outgoing, PROMPT, WorkspaceState};
-
-/// The first of the rows of the menu over a shell; each command's row follows it by the command's place.
-const TERMINAL_MENU_BASE: u64 = 7_404_000;
+use crate::state::{Outgoing, WorkspaceState};
 
 /// How tall the menu over a shell is, in logical pixels, to keep it inside the window.
 pub const TERMINAL_MENU_HEIGHT: f32 = 6.0 * 26.0 + 3.0 * 9.0 + 10.0;
 
 /// What a row of the menu over a shell does.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(
+    Clone, Copy, Debug, serde::Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize,
+)]
 pub enum TerminalCommand {
     /// Puts the marked text into the prompt of the chat.
     AddToChat,
@@ -42,18 +41,16 @@ impl TerminalCommand {
     ];
 
     /// The name of the command's row.
-    pub fn id(self) -> FocusId {
-        let place = Self::ALL
-            .iter()
-            .position(|held| *held == self)
-            .unwrap_or_default();
-        FocusId(TERMINAL_MENU_BASE + place as u64)
+    pub fn id(self) -> Target {
+        Target::Menu(MenuEvent::TerminalMenu(self))
     }
 
     /// The command whose row `id` names.
-    pub fn of(id: FocusId) -> Option<Self> {
-        let place = id.0.checked_sub(TERMINAL_MENU_BASE)?;
-        Self::ALL.get(usize::try_from(place).ok()?).copied()
+    pub fn of(id: Target) -> Option<Self> {
+        match id {
+            Target::Menu(MenuEvent::TerminalMenu(command)) => Some(command),
+            _ => None,
+        }
     }
 
     /// The action of the keymap that does the same.
@@ -105,7 +102,7 @@ impl WorkspaceState {
     }
 
     /// Whether `id` is a row of the menu over a shell while it is open.
-    pub fn is_terminal_menu_row(&self, id: FocusId) -> bool {
+    pub fn is_terminal_menu_row(&self, id: Target) -> bool {
         self.terminal_menu.is_some() && TerminalCommand::of(id).is_some()
     }
 
@@ -115,7 +112,10 @@ impl WorkspaceState {
         match command {
             TerminalCommand::AddToChat => {
                 if let Some(text) = self.terminal_selection().filter(|text| !text.is_empty()) {
-                    return self.typed(PROMPT, &format!("```\n{text}\n```\n"));
+                    return self.typed(
+                        Target::Composer(ComposerEvent::Prompt),
+                        &format!("```\n{text}\n```\n"),
+                    );
                 }
             }
             TerminalCommand::Copy => {

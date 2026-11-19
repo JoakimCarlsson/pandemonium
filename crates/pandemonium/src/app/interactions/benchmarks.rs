@@ -9,12 +9,12 @@
 //! CARGO_TARGET_DIR=build cargo test -p pandemonium benchmark_interactions -- --ignored --nocapture --test-threads=1
 //! ```
 
+use pm_components::areas::{ComposerEvent, WindowEvent};
+use pm_components::target::Target;
 use std::time::{Duration, Instant};
 
-use pm_components::focus::FocusId;
-use pm_components::sash::{REVIEW_SASH, SIDEBAR_SASH};
-use pm_pages::{PROMPT, Screen};
-use winit::event::MouseButton;
+use pm_pages::Screen;
+use rustle::PointerButton;
 
 use crate::app::headless::{Rig, SIZE};
 
@@ -81,7 +81,7 @@ fn summary(samples: &mut [f64]) -> String {
 
 /// Drags the handle `id` by one pixel a frame, `FRAMES` frames to and fro
 /// along its axis, measuring each move.
-fn drag_handle(rig: &mut Rig, id: FocusId, name: &str) {
+fn drag_handle(rig: &mut Rig, id: Target, name: &str) {
     let from = rig.center(id);
     let across = rig.read(|screen| {
         screen
@@ -89,7 +89,7 @@ fn drag_handle(rig: &mut Rig, id: FocusId, name: &str) {
             .map(|(_, grows)| grows.by((0.0, 0.0), (1.0, 0.0)) != 0.0)
     });
     rig.move_to(from);
-    rig.button_in(None, MouseButton::Left, true, from);
+    rig.button_in(None, PointerButton::Primary, true, from);
     let mut samples = Samples::default();
     for step in 1..=FRAMES {
         let reach = if step <= FRAMES / 2 {
@@ -104,18 +104,18 @@ fn drag_handle(rig: &mut Rig, id: FocusId, name: &str) {
         };
         samples.measure(rig, |rig| rig.move_to(at));
     }
-    rig.button_in(None, MouseButton::Left, false, from);
+    rig.button_in(None, PointerButton::Primary, false, from);
     samples.report(name);
 }
 
 /// A handle between two panes of the heavy workspace's split, one not of
 /// the panels around them.
-fn pane_seam(rig: &Rig) -> FocusId {
+fn pane_seam(rig: &Rig) -> Target {
     let fixed = [
-        SIDEBAR_SASH,
-        REVIEW_SASH,
-        pm_components::sash::PLAN_SASH,
-        pm_components::sash::TERMINAL_SASH,
+        Target::Window(WindowEvent::SidebarSash),
+        Target::Window(WindowEvent::ReviewSash),
+        Target::Window(WindowEvent::PlanSash),
+        Target::Window(WindowEvent::TerminalSash),
     ];
     rig.tagged()
         .iter()
@@ -129,8 +129,16 @@ fn pane_seam(rig: &Rig) -> FocusId {
 #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_interactions -- --ignored --nocapture --test-threads=1"]
 fn benchmark_interactions_drag() {
     let mut rig = heavy();
-    drag_handle(&mut rig, SIDEBAR_SASH, "drag sidebar handle");
-    drag_handle(&mut rig, REVIEW_SASH, "drag review handle");
+    drag_handle(
+        &mut rig,
+        Target::Window(WindowEvent::SidebarSash),
+        "drag sidebar handle",
+    );
+    drag_handle(
+        &mut rig,
+        Target::Window(WindowEvent::ReviewSash),
+        "drag review handle",
+    );
     let seam = pane_seam(&rig);
     drag_handle(&mut rig, seam, "drag pane seam");
 }
@@ -141,7 +149,7 @@ fn benchmark_interactions_drag() {
 fn benchmark_interactions_pointer() {
     let mut rig = heavy();
     let mut hover = Samples::default();
-    let (x, top) = rig.center(SIDEBAR_SASH);
+    let (x, top) = rig.center(Target::Window(WindowEvent::SidebarSash));
     for step in 0..FRAMES {
         let at = (
             x + 200.0 + (step % 50) as f32 * 8.0,
@@ -157,7 +165,7 @@ fn benchmark_interactions_pointer() {
 #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_interactions -- --ignored --nocapture --test-threads=1"]
 fn benchmark_interactions_scroll() {
     let mut rig = heavy();
-    let (x, top) = rig.center(SIDEBAR_SASH);
+    let (x, top) = rig.center(Target::Window(WindowEvent::SidebarSash));
     rig.move_to((x + 300.0, top));
     let mut scroll = Samples::default();
     for step in 0..FRAMES {
@@ -172,7 +180,7 @@ fn benchmark_interactions_scroll() {
 #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_interactions -- --ignored --nocapture --test-threads=1"]
 fn benchmark_interactions_typing() {
     let mut rig = heavy();
-    rig.click_on(PROMPT);
+    rig.click_on(Target::Composer(ComposerEvent::Prompt));
     let mut typing = Samples::default();
     for _ in 0..FRAMES {
         typing.measure(&mut rig, |rig| rig.type_text("x"));

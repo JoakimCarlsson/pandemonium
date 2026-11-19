@@ -2,30 +2,28 @@
 //!
 //! The server asks the chat's agent for a handoff summary and starts the session with it, so the window only says where the work goes on and is told the outcome.
 
-use crate::events::reduce;
+use crate::areas::ChatEvent;
+use crate::areas::SidebarEvent;
+use crate::button::Variant;
+use crate::kit::{self};
+
+use crate::areas::ComposerEvent;
+
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
 use rustle::Modifier;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, row_arranged};
 
 use crate::Button;
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::parts::line;
 use crate::popover::{Popover, anchored, heading};
 use crate::sample::{Message, Session, Status};
 use crate::size::Size;
-use crate::state::{BRANCH_BASE, MENU_BODY, Outgoing, Page, Picker, SESSION_BASE, WorkspaceState};
+use crate::state::{Outgoing, Page, Picker, WorkspaceState};
 use crate::theme::Role;
-
-/// The chip above a chat's prompt box that opens the choice of where to continue it.
-pub const CONTINUE: FocusId = FocusId(7130);
-
-/// The button of the choice that asks the server to continue the chat in the project chosen.
-pub const CONTINUE_START: FocusId = FocusId(7131);
-
-/// The first of the rows choosing the project a chat is continued in, by the project's position; the rest follow it.
-pub const CONTINUE_PROJECT_BASE: u64 = 7200;
 
 /// How many projects the choice has rows for.
 const MOST_PROJECTS: usize = 200;
@@ -69,10 +67,10 @@ impl Choice {
 }
 
 /// Whether `id` is the chip, the button or a project row of the choice, which leave the choice open or work it.
-pub fn is_continue_part(id: FocusId) -> bool {
-    id == CONTINUE
-        || id == CONTINUE_START
-        || (CONTINUE_PROJECT_BASE..CONTINUE_PROJECT_BASE + MOST_PROJECTS as u64).contains(&id.0)
+pub fn is_continue_part(id: Target) -> bool {
+    id == Target::Chat(ChatEvent::Continue)
+        || id == Target::Chat(ChatEvent::ContinueStart)
+        || matches!(id, Target::Chat(ChatEvent::ContinueProject(project)) if project < MOST_PROJECTS)
 }
 
 impl WorkspaceState {
@@ -123,14 +121,19 @@ impl WorkspaceState {
     }
 
     /// Picks the branch the row `id` names as the one the worktree is made from, while the choice is open, and returns whether `id` was such a row then.
-    fn press_continue_branch(&mut self, id: FocusId) -> bool {
+    fn press_continue_branch(&mut self, id: Target) -> bool {
         if self.picker != Some(Picker::Continue) {
             return false;
         }
-        let picked =
-            id.0.checked_sub(BRANCH_BASE)
-                .and_then(|row| self.continuing.branches.as_ref()?.get(row as usize))
-                .cloned();
+        let picked = match id {
+            Target::Composer(ComposerEvent::Branch(row)) => self
+                .continuing
+                .branches
+                .as_ref()
+                .and_then(|branches| branches.get(row))
+                .cloned(),
+            _ => None,
+        };
         match picked {
             Some(branch) => {
                 self.continuing.base = Some(branch);
@@ -141,7 +144,7 @@ impl WorkspaceState {
     }
 
     /// Works the chip, a project row, a branch row or the button of the choice named by `id`, and returns whether `id` was one of them.
-    pub(crate) fn press_continue(&mut self, id: FocusId) -> bool {
+    pub(crate) fn press_continue(&mut self, id: Target) -> bool {
         if self.press_continue_branch(id) {
             return true;
         }
@@ -160,13 +163,13 @@ impl WorkspaceState {
             self.picker = None;
             return true;
         }
-        if id == CONTINUE {
+        if id == Target::Chat(ChatEvent::Continue) {
             self.picker = (self.picker != Some(Picker::Continue)).then_some(Picker::Continue);
             if self.picker.is_some() {
                 let chosen = self.continue_project().unwrap_or(offered[0]);
                 self.choose_continue_project(chosen);
             }
-        } else if id == CONTINUE_START {
+        } else if id == Target::Chat(ChatEvent::ContinueStart) {
             let chosen = self.continue_project().zip(self.continuing.from().cloned());
             if let Some((project, base)) = chosen {
                 self.outbox.push(Outgoing::ContinueChat {
@@ -178,11 +181,10 @@ impl WorkspaceState {
                 self.sessions[position].closed = false;
                 self.picker = None;
             }
-        } else {
-            let project = (id.0 - CONTINUE_PROJECT_BASE) as usize;
-            if offered.contains(&project) {
-                self.choose_continue_project(project);
-            }
+        } else if let Target::Chat(ChatEvent::ContinueProject(project)) = id
+            && offered.contains(&project)
+        {
+            self.choose_continue_project(project);
         }
         true
     }
@@ -199,7 +201,7 @@ impl WorkspaceState {
         }
         match (started, failure) {
             (Some(session), _) if self.page == Page::Session(chat) => {
-                self.after(FocusId(SESSION_BASE + session as u64))
+                self.handle(Event::Sidebar(SidebarEvent::Session(session)))
             }
             (None, Some(reason)) => {
                 if let Some(held) = self.sessions.get_mut(chat) {
@@ -215,28 +217,14 @@ impl WorkspaceState {
     }
 }
 
-/// The modifier of a section of the choice set off from what is above it by a rule: `border_t()` with `mt(1)`.
-fn ruled() -> Modifier {
-    Modifier::new()
-        .fill_max_width()
-        .padding_each(0.0, theme::sp(1), 0.0, 0.0)
-        .draw_behind(theme::edge(
-            theme::Side::Top,
-            1.0,
-            theme::color(Role::Border),
-        ))
-        .padding_each(0.0, 1.0, 0.0, 0.0)
-}
-
 /// Emits a line of the choice saying `words`, where rows would be.
 #[track_caller]
 fn said(words: &str) {
-    row_arranged(
+    kit::row(
         Modifier::new()
             .padding_xy(theme::sp(2.5), 0.0)
             .padding_xy(0.0, theme::sp(1.5)),
-        Arrangement::Start,
-        Alignment::Center,
+        0,
         || line(words, 13, 1.4, Role::Subtle),
     );
 }
@@ -254,37 +242,43 @@ fn menu(state: &WorkspaceState, chat: &Session) {
             &held.name,
             &held.directory().to_string_lossy(),
             chosen == Some(project),
-            FocusId(CONTINUE_PROJECT_BASE + project as u64),
+            Target::Chat(ChatEvent::ContinueProject(project)),
         );
     }
     let listed = state.continuing.branches.as_deref();
     let ready = chosen.is_some() && listed.is_some_and(|branches| !branches.is_empty());
-    menu.modifier(Modifier::new().control(MENU_BODY, reduce(MENU_BODY)))
-        .build_with(|| {
-            column_arranged(ruled(), Arrangement::Start, Alignment::Start, || {
-                heading("Branch from", None);
-                match listed {
-                    None => said("Reading the branches…"),
-                    Some([]) => said("Not a Git repository, so it has no worktrees."),
-                    Some(branches) => {
-                        crate::composer::branch_rows(branches, state.continuing.base.as_ref())
-                    }
+    menu.modifier(Modifier::new().control(
+        Target::Composer(ComposerEvent::MenuBody),
+        send(Event::Composer(ComposerEvent::MenuBody)),
+    ))
+    .build_with(|| {
+        kit::column(crate::composer::ruled(), 0, || {
+            heading("Branch from", None);
+            match listed {
+                None => said("Reading the branches…"),
+                Some([]) => said("Not a Git repository, so it has no worktrees."),
+                Some(branches) => {
+                    crate::composer::branch_rows(branches, state.continuing.base.as_ref())
                 }
-            });
-            row_arranged(
-                ruled()
-                    .padding_xy(theme::sp(1), 0.0)
-                    .padding_xy(0.0, theme::sp(1.5)),
-                Arrangement::End,
-                Alignment::Start,
-                || {
-                    Button::new("Continue", CONTINUE_START)
-                        .size(Size::Sm)
-                        .disabled(!ready)
-                        .build();
-                },
-            );
+            }
         });
+        row_arranged(
+            crate::composer::ruled()
+                .padding_xy(theme::sp(1), 0.0)
+                .padding_xy(0.0, theme::sp(1.5)),
+            Arrangement::End,
+            Alignment::Start,
+            || {
+                kit::small_button(
+                    "Continue",
+                    Target::Chat(ChatEvent::ContinueStart),
+                    Variant::Default,
+                )
+                .disabled(!ready)
+                .build();
+            },
+        );
+    });
 }
 
 /// Whether the chip that continues the chat `chat` in a project shows: `chat` is a chat and a project is on its machine.
@@ -306,7 +300,7 @@ pub(crate) fn chip(state: &WorkspaceState, chat: &Session) {
     };
     anchored(
         || {
-            Button::new(label, CONTINUE)
+            Button::new(label, Target::Chat(ChatEvent::Continue))
                 .variant(crate::button::Variant::Ghost)
                 .size(Size::Xs)
                 .with_icon(phosphor::GIT_FORK)

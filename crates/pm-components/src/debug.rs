@@ -1,5 +1,7 @@
 //! Debugging as the workspace holds it: the breakpoints set in the gutter, the program being debugged, and what the reader does to it.
 
+use crate::areas::DebugEvent as DebugControl;
+use crate::target::Target;
 use std::collections::{BTreeMap, BTreeSet};
 
 use pm_protocol::{
@@ -8,84 +10,12 @@ use pm_protocol::{
 };
 use rustle::TextFieldState;
 
-use crate::focus::FocusId;
-
 use crate::listing::{Items, Listing};
 use crate::quick_choices::Choosing;
 use crate::state::{Outgoing, WorkspaceState};
 
-/// Shows the debug tab of the dock.
-pub const DEBUG_TAB: FocusId = FocusId(20_100_000);
-
-/// Runs the paused program on.
-pub const DEBUG_CONTINUE: FocusId = FocusId(20_100_001);
-
-/// Pauses the running program.
-pub const DEBUG_PAUSE: FocusId = FocusId(20_100_002);
-
-/// Runs to the next line.
-pub const DEBUG_STEP_OVER: FocusId = FocusId(20_100_003);
-
-/// Runs into the call on the line.
-pub const DEBUG_STEP_IN: FocusId = FocusId(20_100_004);
-
-/// Runs out of the frame.
-pub const DEBUG_STEP_OUT: FocusId = FocusId(20_100_005);
-
-/// Ends the debugging session.
-pub const DEBUG_STOP: FocusId = FocusId(20_100_006);
-
-/// Starts debugging, listing what the folder can be debugged as.
-pub const DEBUG_START: FocusId = FocusId(20_100_007);
-
-/// The field an expression is typed in to be evaluated in the console.
-pub const DEBUG_CONSOLE_FIELD: FocusId = FocusId(20_100_008);
-
-/// The field an expression is typed in to be watched.
-pub const DEBUG_WATCH_FIELD: FocusId = FocusId(20_100_009);
-
-/// Keeps the expression typed in the watch field.
-pub const DEBUG_WATCH_ADD: FocusId = FocusId(20_100_010);
-
-/// Evaluates the expression typed in the console field.
-pub const DEBUG_CONSOLE_SUBMIT: FocusId = FocusId(20_100_011);
-
-/// The first of the rows of the stack; the rest follow it.
-pub const DEBUG_FRAME_BASE: u64 = 20_101_000;
-
-/// The first of the rows of the variables; the rest follow it.
-pub const DEBUG_VARIABLE_BASE: u64 = 20_102_000;
-
-/// The first of the buttons taking a watch away; the rest follow it.
-pub const DEBUG_WATCH_REMOVE_BASE: u64 = 20_103_000;
-
-/// How many rows each list of the debug tab has room for in ids.
-pub const DEBUG_ROWS: u64 = 1000;
-
-/// The first of the marks in the gutter that set or clear a breakpoint; each file shown has [`BREAKPOINT_LINES`] after its own base.
-pub const BREAKPOINT_BASE: u64 = 5_000_000_000_000;
-
-/// How many lines one file has room for among the marks of the gutter.
-pub const BREAKPOINT_LINES: u64 = 1_000_000;
-
-/// How many files have room among the marks of the gutter.
-const BREAKPOINT_FILES: u64 = 1000;
-
-/// The mark in the gutter of the line `line` of the open file at `file`.
-pub fn breakpoint_mark(file: usize, line: usize) -> FocusId {
-    FocusId(BREAKPOINT_BASE + file as u64 * BREAKPOINT_LINES + line as u64)
-}
-
-/// The open file and the line the gutter mark `id` is on.
-pub fn breakpoint_of(id: FocusId) -> Option<(usize, usize)> {
-    let offset =
-        id.0.checked_sub(BREAKPOINT_BASE)
-            .filter(|offset| *offset < BREAKPOINT_FILES * BREAKPOINT_LINES)?;
-    Some((
-        (offset / BREAKPOINT_LINES) as usize,
-        (offset % BREAKPOINT_LINES) as usize,
-    ))
-}
+/// How many rows each list of the debug tab shows at most.
+pub const DEBUG_ROWS: usize = 1000;
 
 /// How a breakpoint is marked in the gutter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -683,14 +613,14 @@ impl WorkspaceState {
     }
 
     /// Carries out a press on one of the debug tab's controls, and says whether `id` was one.
-    pub(crate) fn press_debug(&mut self, id: FocusId) -> bool {
+    pub(crate) fn press_debug(&mut self, id: Target) -> bool {
         let action = match id {
-            DEBUG_CONTINUE => Some(DebugAction::Continue),
-            DEBUG_PAUSE => Some(DebugAction::Pause),
-            DEBUG_STEP_OVER => Some(DebugAction::StepOver),
-            DEBUG_STEP_IN => Some(DebugAction::StepIn),
-            DEBUG_STEP_OUT => Some(DebugAction::StepOut),
-            DEBUG_STOP => Some(DebugAction::Stop),
+            Target::Debug(DebugControl::DebugContinue) => Some(DebugAction::Continue),
+            Target::Debug(DebugControl::DebugPause) => Some(DebugAction::Pause),
+            Target::Debug(DebugControl::DebugStepOver) => Some(DebugAction::StepOver),
+            Target::Debug(DebugControl::DebugStepIn) => Some(DebugAction::StepIn),
+            Target::Debug(DebugControl::DebugStepOut) => Some(DebugAction::StepOut),
+            Target::Debug(DebugControl::DebugStop) => Some(DebugAction::Stop),
             _ => None,
         };
         if let Some(action) = action {
@@ -698,32 +628,37 @@ impl WorkspaceState {
             return true;
         }
         match id {
-            DEBUG_TAB => {
+            Target::Debug(DebugControl::DebugTab) => {
                 self.bottom = crate::dock::BottomTab::Debug;
                 true
             }
-            DEBUG_CONSOLE_SUBMIT => {
+            Target::Debug(DebugControl::DebugConsoleSubmit) => {
                 self.evaluate_typed();
                 true
             }
-            DEBUG_WATCH_ADD => {
+            Target::Debug(DebugControl::DebugWatchAdd) => {
                 self.watch_typed();
                 true
             }
-            DEBUG_CONSOLE_FIELD | DEBUG_WATCH_FIELD => true,
-            FocusId(number) => self.press_debug_row(number),
+            Target::Debug(DebugControl::DebugConsoleField)
+            | Target::Debug(DebugControl::DebugWatchField) => true,
+            _ => self.press_debug_row(id),
         }
     }
 
-    /// Carries out a press on a row of the stack, the variables or the watches, and says whether `number` was one.
-    fn press_debug_row(&mut self, number: u64) -> bool {
-        let row = |base: u64| {
-            number
-                .checked_sub(base)
-                .filter(|offset| *offset < DEBUG_ROWS)
-                .map(|offset| offset as usize)
+    /// Carries out a press on a row of the stack, the variables or the watches, and says whether `id` was one.
+    fn press_debug_row(&mut self, id: Target) -> bool {
+        let row = |wanted: fn(usize) -> Target| match id {
+            Target::Debug(DebugControl::DebugFrame(index))
+            | Target::Debug(DebugControl::DebugVariable(index))
+            | Target::Debug(DebugControl::DebugWatchRemove(index))
+                if index < DEBUG_ROWS && id == wanted(index) =>
+            {
+                Some(index)
+            }
+            _ => None,
         };
-        if let Some(index) = row(DEBUG_FRAME_BASE) {
+        if let Some(index) = row(|index| Target::Debug(DebugControl::DebugFrame(index))) {
             let frame = self
                 .debug
                 .live()
@@ -737,11 +672,11 @@ impl WorkspaceState {
             }
             return true;
         }
-        if let Some(index) = row(DEBUG_VARIABLE_BASE) {
+        if let Some(index) = row(|index| Target::Debug(DebugControl::DebugVariable(index))) {
             self.toggle_variable(index);
             return true;
         }
-        if let Some(index) = row(DEBUG_WATCH_REMOVE_BASE) {
+        if let Some(index) = row(|index| Target::Debug(DebugControl::DebugWatchRemove(index))) {
             if index < self.debug.watches.len() {
                 self.debug.watches.remove(index);
                 self.send_watches();

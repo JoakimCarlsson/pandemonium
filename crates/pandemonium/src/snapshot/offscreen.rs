@@ -5,9 +5,9 @@
 //! and caret show), in the light or dark theme of a family. Edges are rounded
 //! to whole logical pixels.
 
+use pm_components::target::Target;
 use std::time::Duration;
 
-use pm_components::focus::FocusId;
 use pm_components::focus::{self, FocusKeys};
 use pm_components::theme::{self, Appearance, ThemeFamily, Tokens};
 use rustle::{Offset, PixelRounding, PreviewOptions};
@@ -26,7 +26,7 @@ pub(crate) struct Shot {
     /// Where the pointer rests, in logical pixels, if over the window.
     pub(crate) pointer: Option<(f32, f32)>,
     /// The control holding keyboard focus.
-    pub(crate) focused: Option<FocusId>,
+    pub(crate) focused: Option<Target>,
     /// Whether what is not drawn stays see-through, as around a floating window's frame.
     pub(crate) transparent: bool,
     /// What an input method is composing in what holds the keyboard.
@@ -89,7 +89,7 @@ pub(crate) fn write_png(
         pointer: shot.pointer.map(|(x, y)| Offset::new(x, y)),
         transparent: shot.transparent,
         rounding: PixelRounding::Logical,
-        focused_tag: shot.focused.map(FocusId::tag),
+        focused_tag: shot.focused.map(Target::tag),
     };
     let (width, height, rgba) = match &shot.preedit {
         Some(text) => rustle::preview_pixels_composing(

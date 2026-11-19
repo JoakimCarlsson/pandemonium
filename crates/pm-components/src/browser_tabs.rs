@@ -1,13 +1,13 @@
 //! The tabs of the browser: what each tab holds, opening, showing and closing them, the lock that keeps agents out of a tab, and the strip that draws them.
 
+use crate::areas::BrowserEvent;
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, row_arranged};
 
 use std::ops::Range;
 
-use crate::focus::FocusId;
 use crate::theme::Role;
 use rustle::Modifier;
 use rustle::TextFieldState;
@@ -16,28 +16,9 @@ use crate::Button;
 use crate::browser::{Browser, Command, Pointer};
 use crate::browser_find::PageSearch;
 use crate::browser_safety::Safety;
-use crate::button::Variant;
 use crate::size::Size;
 use crate::state::{Tab, WorkspaceState};
 use crate::tab_chip::{TabChip, TabVariant};
-
-/// Opens a new, empty tab.
-pub const BROWSER_NEW_TAB: FocusId = FocusId(7_440_022);
-
-/// Locks the tab being shown against agents, or unlocks it.
-pub const BROWSER_LOCK: FocusId = FocusId(7_440_023);
-
-/// Scrolls the strip of tabs back to the tabs before the first one shown.
-pub const BROWSER_TABS_PREVIOUS: FocusId = FocusId(7_440_024);
-
-/// Scrolls the strip of tabs on to the tabs after the last one shown.
-pub const BROWSER_TABS_NEXT: FocusId = FocusId(7_440_025);
-
-/// The first target of a tab; the tab at index `i` is `BROWSER_TAB_SELECT + i`.
-pub const BROWSER_TAB_SELECT: u64 = 7_440_100;
-
-/// The first target of a tab's close button; the tab at index `i` is `BROWSER_TAB_CLOSE + i`.
-pub const BROWSER_TAB_CLOSE: u64 = 7_440_200;
 
 /// The most tabs the browser holds.
 pub const MOST_TABS: usize = 32;
@@ -406,11 +387,6 @@ impl WorkspaceState {
         }
     }
 
-    /// Shows the browser pane, as opening a tab does.
-    pub fn browser_pane_shown(&mut self) {
-        self.tab = Tab::Browser;
-    }
-
     /// Closes the tab numbered `id`, and the browser with it when it was the last; says whether there was such a tab.
     pub fn browser_tab_closed(&mut self, id: u32) -> bool {
         let Some(browser) = self.browser.as_mut() else {
@@ -426,32 +402,31 @@ impl WorkspaceState {
     }
 
     /// Carries out pressing a target of the tab strip or the lock, and says whether `id` was one.
-    pub(crate) fn browser_tab_pressed(&mut self, id: FocusId) -> bool {
+    pub(crate) fn browser_tab_pressed(&mut self, id: Target) -> bool {
         let host = self.current_project_host();
         let Some(browser) = self.browser.as_mut() else {
             return false;
         };
-        let count = browser.tabs.len() as u64;
+        let count = browser.tabs.len();
         match id {
-            BROWSER_NEW_TAB => {
+            Target::Browser(BrowserEvent::BrowserNewTab) => {
                 browser.open_tab("about:blank", host, false, true);
             }
-            BROWSER_LOCK => {
+            Target::Browser(BrowserEvent::BrowserLock) => {
                 let tab = &mut browser.tabs[browser.active];
                 tab.locked = !tab.locked && !tab.agent;
             }
-            BROWSER_TABS_PREVIOUS => {
+            Target::Browser(BrowserEvent::BrowserTabsPrevious) => {
                 browser.strip_start = browser.strip_start.saturating_sub(1);
             }
-            BROWSER_TABS_NEXT => {
+            Target::Browser(BrowserEvent::BrowserTabsNext) => {
                 browser.strip_start = (browser.strip_start + 1).min(browser.tabs.len() - 1);
             }
-            FocusId(raw) if (BROWSER_TAB_SELECT..BROWSER_TAB_SELECT + count).contains(&raw) => {
-                browser.select((raw - BROWSER_TAB_SELECT) as usize);
+            Target::Browser(BrowserEvent::BrowserTab(index)) if index < count => {
+                browser.select(index);
                 self.tab = Tab::Browser;
             }
-            FocusId(raw) if (BROWSER_TAB_CLOSE..BROWSER_TAB_CLOSE + count).contains(&raw) => {
-                let index = (raw - BROWSER_TAB_CLOSE) as usize;
+            Target::Browser(BrowserEvent::BrowserTabClose(index)) if index < count => {
                 if browser.close_tab(index) {
                     self.browser_dropped();
                 }
@@ -463,7 +438,7 @@ impl WorkspaceState {
 
     /// Opens a new tab and shows it, as the key for it does.
     pub fn browser_new_tab(&mut self) {
-        self.browser_tab_pressed(BROWSER_NEW_TAB);
+        self.browser_tab_pressed(Target::Browser(BrowserEvent::BrowserNewTab));
     }
 
     /// Closes the tab being shown, as the key for it does.
@@ -471,13 +446,8 @@ impl WorkspaceState {
         let Some(browser) = self.browser.as_ref() else {
             return;
         };
-        let id = FocusId(BROWSER_TAB_CLOSE + browser.active as u64);
+        let id = Target::Browser(BrowserEvent::BrowserTabClose(browser.active));
         self.browser_tab_pressed(id);
-    }
-
-    /// Locks the tab being shown against agents, or unlocks it, as the padlock does.
-    pub fn browser_lock_toggled(&mut self) {
-        self.browser_tab_pressed(BROWSER_LOCK);
     }
 }
 
@@ -486,28 +456,24 @@ impl WorkspaceState {
 pub fn tab_strip(browser: &Browser, width: f32) {
     let (shown, each) = browser.strip_window(width);
     let scrolls = shown.len() < browser.tabs.len();
-    row_arranged(
+    kit::row(
         Modifier::new()
             .height(TAB_STRIP)
             .fill_max_width()
             .clip()
             .background(theme::color(Role::Sidebar))
-            .draw_behind(theme::edge(
-                theme::Side::Bottom,
-                1.0,
-                theme::color(Role::Border),
-            ))
-            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .ruled(theme::Side::Bottom)
             .padding_xy(theme::sp(2), 0.0),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Center,
+        1,
         || {
             if scrolls {
-                Button::icon(phosphor::ARROW_LEFT, BROWSER_TABS_PREVIOUS)
-                    .variant(Variant::Ghost)
-                    .size(Size::Xs)
-                    .disabled(shown.start == 0)
-                    .build();
+                Button::icon(
+                    phosphor::ARROW_LEFT,
+                    Target::Browser(BrowserEvent::BrowserTabsPrevious),
+                )
+                .size(Size::Xs)
+                .disabled(shown.start == 0)
+                .build();
             }
             for index in shown.clone() {
                 let tab = &browser.tabs[index];
@@ -519,8 +485,8 @@ pub fn tab_strip(browser: &Browser, width: f32) {
                 rustle::key(tab.id, || {
                     TabChip::new(
                         tab.label(),
-                        FocusId(BROWSER_TAB_SELECT + index as u64),
-                        FocusId(BROWSER_TAB_CLOSE + index as u64),
+                        Target::Browser(BrowserEvent::BrowserTab(index)),
+                        Target::Browser(BrowserEvent::BrowserTabClose(index)),
                     )
                     .variant(if tab.agent {
                         TabVariant::Agent
@@ -535,16 +501,15 @@ pub fn tab_strip(browser: &Browser, width: f32) {
                 });
             }
             if scrolls {
-                Button::icon(phosphor::ARROW_RIGHT, BROWSER_TABS_NEXT)
-                    .variant(Variant::Ghost)
-                    .size(Size::Xs)
-                    .disabled(shown.end == browser.tabs.len())
-                    .build();
-            }
-            Button::icon(phosphor::PLUS, BROWSER_NEW_TAB)
-                .variant(Variant::Ghost)
-                .size(Size::Sm)
+                Button::icon(
+                    phosphor::ARROW_RIGHT,
+                    Target::Browser(BrowserEvent::BrowserTabsNext),
+                )
+                .size(Size::Xs)
+                .disabled(shown.end == browser.tabs.len())
                 .build();
+            }
+            Button::icon(phosphor::PLUS, Target::Browser(BrowserEvent::BrowserNewTab)).build();
         },
     );
 }

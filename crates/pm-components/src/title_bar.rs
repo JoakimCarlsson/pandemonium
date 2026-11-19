@@ -1,9 +1,13 @@
 //! The bar across the top of the window: back and forward, the command center naming where the window is, the button that opens a newer release while one is out, the settings, and the controls of a window the desktop draws no frame around.
 
+use crate::areas::WindowEvent;
+use crate::areas::{DiffEvent, SidebarEvent, TerminalEvent};
+use crate::kit::{self, Frame};
+
 use crate::events::Interactive;
-use crate::events::reduce;
-use crate::focus::FocusId;
+use crate::events::{Event, send};
 use crate::icons::{panel_bottom, panel_right};
+use crate::target::Target;
 use crate::theme;
 use crate::theme::Role;
 use crate::theme::sp;
@@ -16,38 +20,10 @@ use crate::Button;
 use crate::button::Variant;
 use crate::listing::{LISTING_WIDTH, QUICK_INSET};
 use crate::quick_input::FIELD_HEIGHT;
-use crate::size::Size;
-use crate::state::{Page, REVIEW, SETTINGS, SIDEBAR_TOGGLE, TERMINAL, WorkspaceState};
+use crate::state::{Page, WorkspaceState};
 
 /// How tall the bar is, in logical pixels.
 pub const TITLE_BAR_HEIGHT: f32 = 40.0;
-
-/// The bar itself, which moves the window when it is dragged and maximizes it when it is pressed twice.
-pub const TITLE_BAR: FocusId = FocusId(7_405_000);
-
-/// Goes back to the place shown before.
-pub const GO_BACK: FocusId = FocusId(7_405_001);
-
-/// Goes forward to the place gone back from.
-pub const GO_FORWARD: FocusId = FocusId(7_405_002);
-
-/// The command center, which lists every command.
-pub const COMMAND_CENTER: FocusId = FocusId(7_405_003);
-
-/// Minimizes the window.
-pub const WINDOW_MINIMIZE: FocusId = FocusId(7_405_004);
-
-/// Maximizes the window, or restores it.
-pub const WINDOW_MAXIMIZE: FocusId = FocusId(7_405_005);
-
-/// Closes the window.
-pub const WINDOW_CLOSE: FocusId = FocusId(7_405_006);
-
-/// Opens the page of the newer release that is out.
-pub const UPDATE: FocusId = FocusId(7_405_007);
-
-/// Opens the extensions page, where a newer language or language server is installed.
-pub const LANGUAGE_UPDATE: FocusId = FocusId(7_405_008);
 
 /// How wide the command center is while the bar has room, in logical pixels: as wide as the field of the quick input that opens over it.
 const COMMAND_CENTER_WIDTH: f32 = LISTING_WIDTH - 2.0 * QUICK_INSET;
@@ -118,33 +94,33 @@ impl TitleBar {
             .fill_max_width()
             .height(TITLE_BAR_HEIGHT)
             .background(theme::color(Role::Sidebar))
-            .draw_behind(theme::edge(
-                theme::Side::Bottom,
-                1.0,
-                theme::color(Role::Border),
-            ))
-            .padding_each(0.0, 0.0, 0.0, 1.0)
-            .control(TITLE_BAR, reduce(TITLE_BAR));
+            .ruled(theme::Side::Bottom)
+            .control(
+                Target::Window(WindowEvent::TitleBar),
+                send(Event::Window(WindowEvent::TitleBar)),
+            );
         rustle::layout(own, BarLayout, move || {
-            row_arranged(
+            kit::row(
                 Modifier::new()
                     .fill_max_height()
                     .padding_xy(theme::sp(2), 0.0),
-                Arrangement::SpacedBy(sp(0.5)),
-                Alignment::Center,
+                0.5,
                 || {
                     rustle::spacer(Modifier::new().width(DESKTOP_CONTROLS));
                     if navigation {
                         let back = crate::events::operations();
-                        Button::icon(phosphor::ARROW_LEFT, GO_BACK)
+                        Button::icon(phosphor::ARROW_LEFT, Target::Window(WindowEvent::GoBack))
                             .on_click(move || back.navigate(-1))
                             .tooltip("Go Back")
                             .build();
                         let forward = crate::events::operations();
-                        Button::icon(phosphor::ARROW_RIGHT, GO_FORWARD)
-                            .on_click(move || forward.navigate(1))
-                            .tooltip("Go Forward")
-                            .build();
+                        Button::icon(
+                            phosphor::ARROW_RIGHT,
+                            Target::Window(WindowEvent::GoForward),
+                        )
+                        .on_click(move || forward.navigate(1))
+                        .tooltip("Go Forward")
+                        .build();
                     }
                 },
             );
@@ -157,46 +133,50 @@ impl TitleBar {
                 Alignment::Center,
                 || {
                     if self.language_update {
-                        Button::new("Update languages", LANGUAGE_UPDATE)
-                            .variant(Variant::Ghost)
-                            .tone(Role::Accent)
-                            .size(Size::Sm)
-                            .modifier(Modifier::new().padding_each(0.0, 0.0, theme::sp(1), 0.0))
-                            .tooltip("A newer language or language server is available")
-                            .build();
+                        kit::small_button(
+                            "Update languages",
+                            Target::Window(WindowEvent::LanguageUpdate),
+                            Variant::Ghost,
+                        )
+                        .tone(Role::Accent)
+                        .modifier(Modifier::new().padding_each(0.0, 0.0, theme::sp(1), 0.0))
+                        .tooltip("A newer language or language server is available")
+                        .build();
                     }
                     if self.update {
-                        Button::new("Update", UPDATE)
-                            .variant(Variant::Ghost)
-                            .tone(Role::Accent)
-                            .size(Size::Sm)
-                            .modifier(Modifier::new().padding_each(0.0, 0.0, theme::sp(1), 0.0))
-                            .tooltip("Update Available")
-                            .build();
+                        kit::small_button(
+                            "Update",
+                            Target::Window(WindowEvent::Update),
+                            Variant::Ghost,
+                        )
+                        .tone(Role::Accent)
+                        .modifier(Modifier::new().padding_each(0.0, 0.0, theme::sp(1), 0.0))
+                        .tooltip("Update Available")
+                        .build();
                     }
                     if navigation {
                         layout_toggle(
                             phosphor::SIDEBAR_SIMPLE,
                             sidebar_mark,
-                            SIDEBAR_TOGGLE,
+                            Target::Sidebar(SidebarEvent::SidebarToggle),
                             "Toggle Primary Side Bar",
                             self.sidebar_open,
                         );
                         layout_toggle(
                             phosphor::BROWSER,
                             panel_mark,
-                            TERMINAL,
+                            Target::Terminal(TerminalEvent::Terminal),
                             "Toggle Panel",
                             self.panel_open,
                         );
                         layout_toggle(
                             phosphor::SIDEBAR_SIMPLE,
                             review_mark,
-                            REVIEW,
+                            Target::Diff(DiffEvent::Review),
                             "Toggle Review Panel",
                             self.review_open,
                         );
-                        Button::icon(phosphor::GEAR, SETTINGS)
+                        Button::icon(phosphor::GEAR, Target::Sidebar(SidebarEvent::Settings))
                             .tooltip("Open Settings")
                             .build();
                     }
@@ -284,7 +264,7 @@ impl rustle::Layout for BarLayout {
 /// Emits the button that shows or hides a panel, standing for `icon`, its
 /// look drawn by `mark`, which is told whether the panel is `open`.
 #[track_caller]
-fn layout_toggle(icon: Icon, mark: fn(bool), id: FocusId, words: &str, open: bool) {
+fn layout_toggle(icon: Icon, mark: fn(bool), id: Target, words: &str, open: bool) {
     Button::icon(icon, id)
         .mark(move || mark(open))
         .tooltip(words)
@@ -323,7 +303,7 @@ fn review_mark(open: bool) {
 #[track_caller]
 fn command_center(place: String) {
     let operations = crate::events::operations();
-    Button::new(place, COMMAND_CENTER)
+    Button::new(place, Target::Window(WindowEvent::CommandCenter))
         .on_click(move || operations.open_command_palette())
         .variant(Variant::Field)
         .with_icon(phosphor::MAGNIFYING_GLASS)
@@ -338,7 +318,10 @@ fn command_center(place: String) {
             Modifier::new()
                 .width_in(COMMAND_CENTER_MIN_WIDTH, COMMAND_CENTER_WIDTH)
                 .height(COMMAND_CENTER_HEIGHT)
-                .chain(crate::bounds::placed(COMMAND_CENTER, Modifier::new())),
+                .chain(crate::bounds::placed(
+                    Target::Window(WindowEvent::CommandCenter),
+                    Modifier::new(),
+                )),
         )
         .tooltip("Show All Commands")
         .build();
@@ -347,30 +330,35 @@ fn command_center(place: String) {
 /// Emits the buttons that minimize, maximize and close a window the desktop draws no frame around, or only the one that closes it when `close_only` is set.
 #[track_caller]
 fn window_controls(close_only: bool) {
-    row_arranged(
+    kit::row(
         Modifier::new()
             .padding_xy(theme::sp(1.5), 0.0)
             .fill_max_height(),
-        Arrangement::SpacedBy(sp(0.5)),
-        Alignment::Center,
+        0.5,
         || {
             let operations = crate::events::operations();
             if !close_only {
                 let minimize = Rc::clone(&operations);
-                control(phosphor::MINUS, WINDOW_MINIMIZE, "Minimize", move || {
-                    minimize.minimize_window()
-                });
+                control(
+                    phosphor::MINUS,
+                    Target::Window(WindowEvent::WindowMinimize),
+                    "Minimize",
+                    move || minimize.minimize_window(),
+                );
                 let maximize = Rc::clone(&operations);
                 control(
                     phosphor::ARROWS_OUT_SIMPLE,
-                    WINDOW_MAXIMIZE,
+                    Target::Window(WindowEvent::WindowMaximize),
                     "Maximize",
                     move || maximize.toggle_maximized(),
                 );
             }
-            control(phosphor::X, WINDOW_CLOSE, "Close", move || {
-                operations.close_window()
-            });
+            control(
+                phosphor::X,
+                Target::Window(WindowEvent::WindowClose),
+                "Close",
+                move || operations.close_window(),
+            );
         },
     );
 }
@@ -378,7 +366,7 @@ fn window_controls(close_only: bool) {
 /// Emits one control of the window, showing `icon`, answering to `id`, named `words` and
 /// running `on_click` when clicked.
 #[track_caller]
-fn control(icon: Icon, id: FocusId, words: &str, on_click: impl Fn() + 'static) {
+fn control(icon: Icon, id: Target, words: &str, on_click: impl Fn() + 'static) {
     Button::icon(icon, id)
         .on_click(on_click)
         .modifier(Modifier::new().width(32.0))

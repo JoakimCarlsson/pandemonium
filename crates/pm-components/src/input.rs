@@ -8,23 +8,23 @@
 //! reach the app's own key handler around the window before the field edits
 //! its state itself.
 
-use crate::events::reduce;
+use crate::events::{Event, send};
+use crate::kit;
+use crate::target::Target;
 use crate::theme;
+use crate::theme::Indicated;
 use rustle::{Icon, phosphor};
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::theme::sp;
 use rustle::{
-    Alignment, Arrangement, BasicTextFieldOptions, Modifier, ScrollState, TextFieldDecorator,
-    TextFieldLineLimits, TextFieldState, TextObfuscationMode, TextSelectionColors, column_arranged,
-    row_arranged,
+    BasicTextFieldOptions, Modifier, ScrollState, TextFieldDecorator, TextFieldLineLimits,
+    TextFieldState, TextObfuscationMode, TextSelectionColors,
 };
 use rustle::{CursorIcon, LOCAL_TEXT_SELECTION_COLORS, PointerButton, PointerPhase};
 
 use crate::events;
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::marked;
 use crate::parts::glyph;
 use crate::size::Size;
@@ -46,11 +46,6 @@ const MAX_LINES: usize = 8;
 /// The size and leading every line of a multiline input is set in.
 fn typography() -> rustle::TextStyle {
     theme::text_style(14, LINE_RATIO)
-}
-
-/// How wide the lines of a multiline input `outer` logical pixels wide are, inside its border and padding.
-pub fn inner_width(outer: f32) -> f32 {
-    (outer - 2.0 - 32.0).max(40.0)
 }
 
 /// How an input looks.
@@ -79,7 +74,7 @@ pub struct Input<'a> {
     /// What shows while the line is empty.
     placeholder: &'a str,
     /// The name it answers to.
-    id: FocusId,
+    id: Target,
     /// How it looks.
     variant: Variant,
     /// How big it is.
@@ -104,7 +99,7 @@ pub struct Input<'a> {
 
 impl<'a> Input<'a> {
     /// An input editing `field`, answering to `id`.
-    pub fn new(field: &'a TextFieldState, id: FocusId) -> Self {
+    pub fn new(field: &'a TextFieldState, id: Target) -> Self {
         Self {
             field,
             placeholder: "",
@@ -123,7 +118,7 @@ impl<'a> Input<'a> {
     }
 
     /// A bordered input editing `field` with a magnifying glass before the line, for what is looked for.
-    pub fn search(field: &'a TextFieldState, id: FocusId) -> Self {
+    pub fn search(field: &'a TextFieldState, id: Target) -> Self {
         Self::new(field, id)
             .variant(Variant::Bordered)
             .leading_icon(phosphor::MAGNIFYING_GLASS)
@@ -223,22 +218,30 @@ impl<'a> Input<'a> {
             own = own.background_rounded(theme::color(Role::Surface), Radius::Lg.px());
         }
         let (rest, focused, danger) = border_colors();
-        own = own
-            .interaction_focused(crate::focus::is_held(id))
-            .draw_behind_interactive(move |canvas, interaction| {
-                let tone = match (invalid, interaction.focused) {
-                    (true, _) => danger,
-                    (false, true) => focused,
-                    (false, false) => rest,
-                };
-                if boxed || invalid {
-                    let (width, height) = (canvas.width(), canvas.height());
-                    canvas.stroke_rect(0.0, 0.0, width, height, Radius::Lg.px(), 1.0, tone);
+        let held = theme::Focused::Held(crate::focus::is_held(id));
+        if boxed || invalid {
+            let outline = if invalid {
+                theme::FocusOutline {
+                    idle: danger,
+                    focused: danger,
+                    radius: Radius::Lg,
                 }
-            });
-        own = own
-            .interaction_focused(crate::focus::is_held(id))
-            .draw_over_interactive(theme::focus_ring(2.0, Radius::Lg));
+            } else {
+                theme::FocusOutline {
+                    idle: rest,
+                    focused,
+                    radius: Radius::Lg,
+                }
+            };
+            own = own.indicated(outline, held);
+        }
+        own = own.indicated(
+            theme::FocusRing {
+                width: 2.0,
+                radius: Radius::Lg,
+            },
+            held,
+        );
         if boxed || invalid {
             own = own.padding(1.0);
         }
@@ -246,7 +249,7 @@ impl<'a> Input<'a> {
             own.alpha(0.4).cursor(CursorIcon::NotAllowed)
         } else {
             own.cursor(CursorIcon::Text)
-                .pressable_menu(id, reduce(id), {
+                .pressable_menu(id, send(Event::pressing(id)), {
                     let operations = crate::events::operations();
                     let field = id;
                     move || operations.open_field_menu(field)
@@ -264,27 +267,22 @@ impl<'a> Input<'a> {
         };
         let (field, placeholder, leading) = (self.field, self.placeholder, self.leading);
         let (disabled, secure) = (self.disabled, self.secure);
-        row_arranged(
-            self.modifier.chain(own),
-            Arrangement::SpacedBy(sp(2)),
-            Alignment::Center,
-            move || {
-                if let Some(icon) = leading {
-                    glyph(icon, 4.0, Role::Muted);
-                }
-                FieldText {
-                    field,
-                    id,
-                    kind,
-                    placeholder,
-                    lines: None,
-                    disabled,
-                    secure,
-                    scroll: None,
-                }
-                .build(Modifier::new().weight(1.0));
-            },
-        );
+        kit::row(self.modifier.chain(own), 2, move || {
+            if let Some(icon) = leading {
+                glyph(icon, 4.0, Role::Muted);
+            }
+            FieldText {
+                field,
+                id,
+                kind,
+                placeholder,
+                lines: None,
+                disabled,
+                secure,
+                scroll: None,
+            }
+            .build(Modifier::new().weight(1.0));
+        });
     }
 
     /// Emits a multiline input: its wrapped lines in a column at least
@@ -310,7 +308,7 @@ impl<'a> Input<'a> {
             own.alpha(0.4).cursor(CursorIcon::NotAllowed)
         } else {
             own.cursor(CursorIcon::Text)
-                .pressable_menu(self.id, reduce(self.id), {
+                .pressable_menu(self.id, send(Event::pressing(self.id)), {
                     let operations = crate::events::operations();
                     let field = self.id;
                     move || operations.open_field_menu(field)
@@ -322,12 +320,9 @@ impl<'a> Input<'a> {
                 .padding_each(0.0, 0.0, 0.0, theme::sp(1))
                 .padding_xy(theme::sp(4), 0.0)
         }));
-        column_arranged(
-            self.modifier.chain(own),
-            Arrangement::Start,
-            Alignment::Start,
-            move || text.build(Modifier::new().fill_max_width()),
-        );
+        kit::column(self.modifier.chain(own), 0, move || {
+            text.build(Modifier::new().fill_max_width())
+        });
     }
 }
 
@@ -337,7 +332,7 @@ struct FieldText<'a> {
     /// The state edited.
     field: &'a TextFieldState,
     /// The name the input answers to, whose focus the field follows.
-    id: FocusId,
+    id: Target,
     /// The type the text is set in.
     kind: rustle::TextStyle,
     /// What shows while the text is empty.
@@ -453,7 +448,7 @@ impl FieldText<'_> {
 /// `shaped` text scrolled by `scroll`, unless the press is inside the
 /// selection, and the app opens the input's menu.
 fn context_press(
-    id: FocusId,
+    id: Target,
     field: &TextFieldState,
     shaped: &Rc<RefCell<Option<Rc<rustle::TextLayout>>>>,
     scroll: &ScrollState,

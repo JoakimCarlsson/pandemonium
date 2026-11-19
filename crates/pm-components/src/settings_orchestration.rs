@@ -1,5 +1,7 @@
 //! The orchestration page of the settings window: the switch that starts new conversations in orchestrator mode, and the work categories the agent then hands work to, each a row like a slot of the models page with its model, effort, backups, description and prompt addition.
 
+use crate::areas::SettingsEvent;
+use crate::target::Target;
 use crate::theme::sp;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, FlowOptions, flow_row_with};
@@ -7,8 +9,7 @@ use rustle::{Alignment, Arrangement, FlowOptions, flow_row_with};
 use crate::settings::Section;
 use crate::settings_servers::{boxed, heading_only, note, paragraph};
 use crate::settings_slots::{
-    CATEGORY_ADD, CATEGORY_NEW_NAME, SlotRow, entry, error_note, provider_choice, scope_choice,
-    slot_row, split_effort,
+    SlotRow, entry, error_note, provider_choice, scope_choice, slot_row, split_effort,
 };
 use crate::state::WorkspaceState;
 
@@ -119,9 +120,9 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     }
     entry(
         &slots.new_category,
-        CATEGORY_NEW_NAME,
+        Target::Settings(SettingsEvent::CategoryNewName),
         "Add a category of your own, e.g. docs",
-        ("Add Category", CATEGORY_ADD),
+        ("Add Category", Target::Settings(SettingsEvent::CategoryAdd)),
     );
 }
 
@@ -140,7 +141,7 @@ mod tests {
 
     use super::*;
     use crate::settings_catalog::Setting;
-    use crate::settings_ids::SLOT_CONTROLS;
+    use crate::settings_rows::SLOT_CONTROLS;
     use crate::settings_slots::{DESCRIPTION_COLUMN, SLOT_COLUMNS, card_id};
     use crate::state::Outgoing;
 

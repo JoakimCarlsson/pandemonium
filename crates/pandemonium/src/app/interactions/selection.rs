@@ -2,9 +2,10 @@
 //! and three times, the keys that select all and copy, and files let go
 //! over the window from another application.
 
+use pm_components::areas::{ChatEvent, DiffEvent};
+use pm_components::target::Target;
 use std::path::PathBuf;
 
-use pm_components::state::{CHAT_TEXT, TAB_DIFF};
 use rustle::Rect;
 use rustle::{Key, Modifiers};
 
@@ -21,7 +22,8 @@ const CONTROL: Modifiers = Modifiers {
 
 /// Where the conversation's text was drawn.
 fn conversation(rig: &Rig) -> Rect {
-    rig.region(CHAT_TEXT).expect("the conversation is drawn")
+    rig.region(Target::Chat(ChatEvent::ChatText))
+        .expect("the conversation is drawn")
 }
 
 /// The text of the conversation selected.
@@ -90,7 +92,7 @@ fn select_all_and_let_go() {
         all.contains("Checkpoints are in.") && all.contains("Why it matters"),
         "{all}"
     );
-    rig.click_on(TAB_DIFF);
+    rig.click_on(Target::Diff(DiffEvent::TabDiff));
     assert!(rig.app.borrow().text_selection().is_none());
 }
 

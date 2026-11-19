@@ -2,6 +2,7 @@
 //! a rustle surface in the theme's surface colour, border and corner, with the app's shadow.
 
 use crate::theme;
+use crate::theme::ShadowLayers;
 use crate::theme::{Radius, Role};
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged};
@@ -71,15 +72,15 @@ impl Surface {
     pub fn build_with(self, content: impl FnOnce()) {
         let (shadow, radius) = match self.variant {
             Variant::Compact => (
-                Modifier::new().draw_behind(theme::shadows(&theme::MEDIUM_SHADOW, Radius::Md)),
+                Modifier::new().shadow_layers(&theme::MEDIUM_SHADOW, Radius::Md.px()),
                 Radius::Md,
             ),
             Variant::Floating => (
-                Modifier::new().draw_behind(theme::shadows(&theme::FLOATING_SHADOW, Radius::Xl)),
+                Modifier::new().shadow_layers(&theme::FLOATING_SHADOW, Radius::Xl.px()),
                 Radius::Xl,
             ),
             Variant::Dialog => (
-                Modifier::new().draw_behind(theme::shadows(&theme::MEDIUM_SHADOW, Radius::Xl)),
+                Modifier::new().shadow_layers(&theme::MEDIUM_SHADOW, Radius::Xl.px()),
                 Radius::Xl,
             ),
         };

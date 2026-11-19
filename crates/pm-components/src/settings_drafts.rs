@@ -1,46 +1,25 @@
 //! The form on the pages of skills, instruction files and agent definitions that writes a new one from a template, in the project's folder or the reader's own, and opens it to be filled in.
 
+use crate::areas::SettingsEvent;
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use pm_protocol::library::{
     APPENDS_PROMPT, Item, Kind, PromptFile, REPLACES_PROMPT, Scope, valid_name,
 };
 use rustle::Modifier;
 use rustle::TextFieldState;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
-use crate::focus::FocusId;
 use crate::theme::{Radius, Role};
 
+use crate::Input;
 use crate::button::Variant;
 use crate::parts::line;
-use crate::settings_ids::{DRAFT_SCOPES, SINGLES};
 use crate::settings_row::choices;
+use crate::settings_rows::DRAFT_SCOPES;
 use crate::settings_servers::{boxed, flat_row, wrapped_note};
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
-use crate::{Button, Input};
-
-/// Opens crab's `SYSTEM.md`, making it first when it is not there.
-pub const PROMPT_REPLACE: FocusId = SINGLES.at(83);
-
-/// Opens crab's `APPEND_SYSTEM.md`, making it first when it is not there.
-pub const PROMPT_APPEND: FocusId = SINGLES.at(84);
-
-/// Opens the form for a new customization of the page showing.
-pub const DRAFT_NEW: FocusId = SINGLES.at(93);
-
-/// The box the new customization's name is written in.
-pub const DRAFT_NAME: FocusId = SINGLES.at(94);
-
-/// The box what the new customization is for is written in.
-pub const DRAFT_DESCRIPTION: FocusId = SINGLES.at(95);
-
-/// Writes the new customization.
-pub const DRAFT_CREATE: FocusId = SINGLES.at(96);
-
-/// Closes the form without writing anything.
-pub const DRAFT_CANCEL: FocusId = SINGLES.at(97);
 
 /// Where a new customization can go, in the order the form offers them.
 const SCOPES: [Scope; 2] = [Scope::Workspace, Scope::User];
@@ -99,7 +78,7 @@ impl DraftForm {
 }
 
 /// The choice that puts a new customization in `scope`, when the form offers it.
-pub fn draft_scope(scope: Scope) -> Option<FocusId> {
+pub fn draft_scope(scope: Scope) -> Option<Target> {
     SCOPES
         .iter()
         .position(|offered| *offered == scope)
@@ -122,13 +101,20 @@ fn new_label(kind: Kind) -> &'static str {
 }
 
 /// Whether `id` names a box of the form.
-pub(crate) fn is_draft_field(id: FocusId) -> bool {
-    id == DRAFT_NAME || id == DRAFT_DESCRIPTION
+pub(crate) fn is_draft_field(id: Target) -> bool {
+    id == Target::Settings(SettingsEvent::DraftName)
+        || id == Target::Settings(SettingsEvent::DraftDescription)
 }
 
 /// Whether `id` names a control of the form.
-fn is_draft_control(id: FocusId) -> bool {
-    [DRAFT_NEW, DRAFT_CREATE, DRAFT_CANCEL].contains(&id) || DRAFT_SCOPES.contains(id)
+fn is_draft_control(id: Target) -> bool {
+    [
+        Target::Settings(SettingsEvent::DraftNew),
+        Target::Settings(SettingsEvent::DraftCreate),
+        Target::Settings(SettingsEvent::DraftCancel),
+    ]
+    .contains(&id)
+        || DRAFT_SCOPES.contains(id)
 }
 
 impl WorkspaceState {
@@ -143,18 +129,18 @@ impl WorkspaceState {
     }
 
     /// The state after `action`, which may name a control of the form, was pressed on the page of `kind`; whether it named one.
-    pub(crate) fn draft_pressed(&mut self, action: FocusId, kind: Option<Kind>) -> bool {
+    pub(crate) fn draft_pressed(&mut self, action: Target, kind: Option<Kind>) -> bool {
         if !is_draft_control(action) {
             return false;
         }
         match action {
-            DRAFT_NEW => {
+            Target::Settings(SettingsEvent::DraftNew) => {
                 if let Some(kind) = kind.filter(|kind| draftable(*kind)) {
                     self.open_draft(kind);
                 }
             }
-            DRAFT_CANCEL => self.settings_page.library.draft = None,
-            DRAFT_CREATE => self.create_draft(),
+            Target::Settings(SettingsEvent::DraftCancel) => self.settings_page.library.draft = None,
+            Target::Settings(SettingsEvent::DraftCreate) => self.create_draft(),
             _ => {
                 let scope = DRAFT_SCOPES
                     .index_of(action)
@@ -234,11 +220,11 @@ impl WorkspaceState {
     }
 
     /// The box `id` of the form, if it is open and `id` names one.
-    pub(crate) fn draft_field(&self, id: FocusId) -> Option<&TextFieldState> {
+    pub(crate) fn draft_field(&self, id: Target) -> Option<&TextFieldState> {
         let form = self.settings_page.library.draft.as_ref()?;
         match id {
-            DRAFT_NAME => Some(&form.name),
-            DRAFT_DESCRIPTION => Some(&form.description),
+            Target::Settings(SettingsEvent::DraftName) => Some(&form.name),
+            Target::Settings(SettingsEvent::DraftDescription) => Some(&form.description),
             _ => None,
         }
     }
@@ -246,10 +232,10 @@ impl WorkspaceState {
 
 impl WorkspaceState {
     /// The state after `action`, which may name one of the buttons of crab's prompt files, was pressed; whether it named one. The file in force is opened; one not there yet is made empty in the reader's own folder, then opened.
-    pub(crate) fn prompt_pressed(&mut self, action: FocusId) -> bool {
+    pub(crate) fn prompt_pressed(&mut self, action: Target) -> bool {
         let file = match action {
-            PROMPT_REPLACE => PromptFile::Replace,
-            PROMPT_APPEND => PromptFile::Append,
+            Target::Settings(SettingsEvent::PromptReplace) => PromptFile::Replace,
+            Target::Settings(SettingsEvent::PromptAppend) => PromptFile::Append,
             _ => return false,
         };
         let Some((project, _)) = self.settings_page.library.of else {
@@ -294,77 +280,62 @@ fn prompt_item(state: &WorkspaceState, file: PromptFile) -> Option<&Item> {
 /// Emits the box of crab's own prompt files on the page of instructions, `room` logical pixels across: the one replacing its built-in instructions and the one added to every prompt, each with the button that opens or makes it.
 #[track_caller]
 pub(crate) fn prompt_node(state: &WorkspaceState, room: f32) {
-    let prompt_row = |file: PromptFile, title: &str, about: &str, id: FocusId| {
+    let prompt_row = |file: PromptFile, title: &str, about: &str, id: Target| {
         let found = prompt_item(state, file);
         let said = match found {
             Some(_) => format!("{about} Written."),
             None => format!("{about} Not written yet."),
         };
         flat_row(|| {
-            column_arranged(
-                Modifier::new().weight(1.0),
-                Arrangement::SpacedBy(sp(1)),
-                Alignment::Start,
-                || {
-                    line(title, 13, 1.4, Role::Text);
-                    wrapped_note(&said, (room - 160.0).max(120.0));
-                },
-            );
-            Button::new(if found.is_some() { "Open" } else { "Write" }, id)
-                .variant(Variant::Outline)
-                .size(Size::Sm)
-                .disabled(state.settings_page.library.of.is_none())
-                .build();
+            kit::column(Modifier::new().weight(1.0), 1, || {
+                line(title, 13, 1.4, Role::Text);
+                wrapped_note(&said, (room - 160.0).max(120.0));
+            });
+            kit::small_button(
+                if found.is_some() { "Open" } else { "Write" },
+                id,
+                Variant::Outline,
+            )
+            .disabled(state.settings_page.library.of.is_none())
+            .build();
         });
     };
-    column_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Start,
-        || {
-            row_arranged(
-                Modifier::new().height(theme::sp(9)),
-                Arrangement::Start,
-                Alignment::Center,
-                || {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        "System prompt",
-                        theme::text_style(15, 1.4)
-                            .font_weight(rustle::FontWeight::MEDIUM)
-                            .color(theme::color(Role::Text))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                },
+    kit::column(Modifier::new().fill_max_width(), 2, || {
+        kit::row(Modifier::new().height(theme::sp(9)), 0, || {
+            kit::text(
+                Modifier::new(),
+                "System prompt",
+                kit::strong(15, Role::Text),
             );
-            boxed(|| {
-                prompt_row(
-                    PromptFile::Replace,
-                    "Replace crab's instructions",
-                    "SYSTEM.md takes the place of crab's built-in instructions; its tools, skills and the project's details are still added.",
-                    PROMPT_REPLACE,
-                );
-                prompt_row(
-                    PromptFile::Append,
-                    "Add to every prompt",
-                    "APPEND_SYSTEM.md is added to the end of every prompt, subagents' too.",
-                    PROMPT_APPEND,
-                );
-            });
-        },
-    );
+        });
+        boxed(|| {
+            prompt_row(
+                PromptFile::Replace,
+                "Replace crab's instructions",
+                "SYSTEM.md takes the place of crab's built-in instructions; its tools, skills and the project's details are still added.",
+                Target::Settings(SettingsEvent::PromptReplace),
+            );
+            prompt_row(
+                PromptFile::Append,
+                "Add to every prompt",
+                "APPEND_SYSTEM.md is added to the end of every prompt, subagents' too.",
+                Target::Settings(SettingsEvent::PromptAppend),
+            );
+        });
+    });
 }
 
 /// Emits the button that opens the form for a new customization of `kind`, turned off while the form is open or nothing can be written.
 #[track_caller]
 pub(crate) fn new_button(state: &WorkspaceState, kind: Kind) {
     let library = &state.settings_page.library;
-    Button::new(new_label(kind), DRAFT_NEW)
-        .variant(Variant::Outline)
-        .size(Size::Sm)
-        .disabled(library.draft.is_some() || library.of.is_none())
-        .build();
+    kit::small_button(
+        new_label(kind),
+        Target::Settings(SettingsEvent::DraftNew),
+        Variant::Outline,
+    )
+    .disabled(library.draft.is_some() || library.of.is_none())
+    .build();
 }
 
 /// What the form says about where `scope` puts a new customization of `kind`.
@@ -419,82 +390,69 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) {
         }
         (None, true) => None,
     };
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_width()
-            .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
-            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
-            .padding(1.0)
+            .panel(Radius::Lg)
             .padding(theme::sp(4)),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Start,
+        3,
         || {
-            labelled("Name", &form.name, DRAFT_NAME, name_hint);
+            labelled(
+                "Name",
+                &form.name,
+                Target::Settings(SettingsEvent::DraftName),
+                name_hint,
+            );
             labelled(
                 description_label,
                 &form.description,
-                DRAFT_DESCRIPTION,
+                Target::Settings(SettingsEvent::DraftDescription),
                 description_hint,
             );
             if form.in_project {
-                column_arranged(
-                    Modifier::new(),
-                    Arrangement::SpacedBy(sp(1)),
-                    Alignment::Start,
-                    || {
-                        line("Where", 12, 1.4, Role::Muted);
-                        row_arranged(
-                            Modifier::new(),
-                            Arrangement::Start,
-                            Alignment::Start,
-                            || {
-                                choices(&["This project", "Every project"], picked, |place| {
-                                    DRAFT_SCOPES.id(place)
-                                });
-                            },
-                        );
-                    },
-                );
+                kit::column(Modifier::new(), 1, || {
+                    line("Where", 12, 1.4, Role::Muted);
+                    kit::row_top(Modifier::new(), 0, || {
+                        choices(&["This project", "Every project"], picked, |place| {
+                            DRAFT_SCOPES.id(place)
+                        });
+                    });
+                });
             }
             wrapped_note(&place_note(form.kind, form.scope), room);
             if let Some(message) = message {
                 line(message, 12, 1.4, Role::Danger);
             }
-            row_arranged(
-                Modifier::new(),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Center,
-                || {
-                    Button::new(if form.busy { "Creating…" } else { "Create" }, DRAFT_CREATE)
-                        .size(Size::Sm)
-                        .disabled(!form.complete())
-                        .build();
-                    Button::new("Cancel", DRAFT_CANCEL)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .build();
-                },
-            );
+            kit::row(Modifier::new(), 2, || {
+                kit::small_button(
+                    if form.busy { "Creating…" } else { "Create" },
+                    Target::Settings(SettingsEvent::DraftCreate),
+                    Variant::Default,
+                )
+                .disabled(!form.complete())
+                .build();
+                kit::small_button(
+                    "Cancel",
+                    Target::Settings(SettingsEvent::DraftCancel),
+                    Variant::Ghost,
+                )
+                .build();
+            });
         },
     );
 }
 
 /// Emits a box `id` holding `field`, showing `placeholder` while empty, under the words `label` that say what is written in it.
 #[track_caller]
-fn labelled(label: &str, field: &TextFieldState, id: FocusId, placeholder: &str) {
-    rustle::key(id.0, || {
-        column_arranged(
-            Modifier::new().fill_max_width(),
-            Arrangement::SpacedBy(sp(1)),
-            Alignment::Start,
-            || {
-                line(label, 12, 1.4, Role::Muted);
-                Input::new(field, id)
-                    .size(Size::Sm)
-                    .placeholder(placeholder)
-                    .build();
-            },
-        );
+fn labelled(label: &str, field: &TextFieldState, id: Target, placeholder: &str) {
+    rustle::key(id, || {
+        kit::column(Modifier::new().fill_max_width(), 1, || {
+            line(label, 12, 1.4, Role::Muted);
+            Input::new(field, id)
+                .size(Size::Sm)
+                .placeholder(placeholder)
+                .build();
+        });
     });
 }
 
@@ -522,12 +480,18 @@ mod tests {
         let mut state = WorkspaceState::new(&[]).with_project("/work/app");
         state.read_library();
         state.take_outbox();
-        assert!(state.draft_pressed(DRAFT_NEW, Some(Kind::Skill)));
+        assert!(state.draft_pressed(Target::Settings(SettingsEvent::DraftNew), Some(Kind::Skill)));
         state = state
-            .typed(DRAFT_NAME, "ship-it")
-            .typed(DRAFT_DESCRIPTION, "Ships it");
+            .typed(Target::Settings(SettingsEvent::DraftName), "ship-it")
+            .typed(
+                Target::Settings(SettingsEvent::DraftDescription),
+                "Ships it",
+            );
         assert!(state.draft_pressed(draft_scope(Scope::User).unwrap(), Some(Kind::Skill)));
-        assert!(state.draft_pressed(DRAFT_CREATE, Some(Kind::Skill)));
+        assert!(state.draft_pressed(
+            Target::Settings(SettingsEvent::DraftCreate),
+            Some(Kind::Skill)
+        ));
         let sent = state.take_outbox();
         assert!(sent.iter().any(|outgoing| matches!(
             outgoing,
@@ -558,10 +522,13 @@ mod tests {
             outgoing,
             Outgoing::Library { project: None, host: None, directory, .. } if directory.is_empty()
         )));
-        assert!(state.draft_pressed(DRAFT_NEW, Some(Kind::Skill)));
+        assert!(state.draft_pressed(Target::Settings(SettingsEvent::DraftNew), Some(Kind::Skill)));
         assert!(state.draft_pressed(draft_scope(Scope::Workspace).unwrap(), Some(Kind::Skill)));
-        state = state.typed(DRAFT_NAME, "ship-it");
-        assert!(state.draft_pressed(DRAFT_CREATE, Some(Kind::Skill)));
+        state = state.typed(Target::Settings(SettingsEvent::DraftName), "ship-it");
+        assert!(state.draft_pressed(
+            Target::Settings(SettingsEvent::DraftCreate),
+            Some(Kind::Skill)
+        ));
         assert!(state.take_outbox().iter().any(|outgoing| matches!(
             outgoing,
             Outgoing::CreateCustomization { project: None, scope: Scope::User, directory, .. }
@@ -586,7 +553,7 @@ mod tests {
         };
         let mut state = state.with_library(project, agent, None, vec![written], Vec::new());
         state.take_outbox();
-        assert!(state.prompt_pressed(PROMPT_REPLACE));
+        assert!(state.prompt_pressed(Target::Settings(SettingsEvent::PromptReplace)));
         assert!(state.take_outbox().iter().any(|outgoing| matches!(
             outgoing,
             Outgoing::CreatePromptFile {
@@ -595,7 +562,7 @@ mod tests {
                 ..
             }
         )));
-        assert!(state.prompt_pressed(PROMPT_APPEND));
+        assert!(state.prompt_pressed(Target::Settings(SettingsEvent::PromptAppend)));
         let sent = state.take_outbox();
         assert!(
             !sent
@@ -606,7 +573,7 @@ mod tests {
             outgoing,
             Outgoing::OpenPath { path } if path.ends_with("APPEND_SYSTEM.md")
         )));
-        assert!(!state.prompt_pressed(DRAFT_NEW));
+        assert!(!state.prompt_pressed(Target::Settings(SettingsEvent::DraftNew)));
     }
 
     #[test]

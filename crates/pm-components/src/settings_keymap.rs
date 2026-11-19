@@ -1,21 +1,21 @@
 //! The keymap page of the settings panel: the preset the keys start from, every action with its keys, and the reader's own keys recorded over the preset's.
 
-use crate::events::reduce;
+use crate::areas::SettingsEvent;
+use crate::events::{Event, send};
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
+use crate::theme::Indicated;
 use pm_editor::{Action, shown};
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::theme::{Radius, Role};
 
 use crate::input::Input;
 use crate::parts::line;
-use crate::settings::SETTINGS_KEYMAP_FIND;
 use crate::settings_catalog::Setting;
-use crate::settings_ids::{KEYMAP_CONTROLS, PER_ACTION};
+use crate::settings_rows::{KEYMAP_CONTROLS, PER_ACTION};
 use crate::state::WorkspaceState;
 
 /// What a control of an action does.
@@ -30,7 +30,7 @@ enum Part {
 }
 
 /// The name of the control `part` of `action`, or nothing when the keymap page has no room for the action.
-fn id_of(action: Action, part: Part) -> Option<FocusId> {
+fn id_of(action: Action, part: Part) -> Option<Target> {
     let place = Action::ALL.iter().position(|held| *held == action)?;
     let offset = match part {
         Part::Record => 0,
@@ -41,7 +41,7 @@ fn id_of(action: Action, part: Part) -> Option<FocusId> {
 }
 
 /// The action and the control of it that `id` names.
-fn control_of(id: FocusId) -> Option<(Action, Part)> {
+fn control_of(id: Target) -> Option<(Action, Part)> {
     let (place, offset) = KEYMAP_CONTROLS.cell_of(id, PER_ACTION)?;
     let action = *Action::ALL.get(place)?;
     let part = match offset {
@@ -55,7 +55,7 @@ fn control_of(id: FocusId) -> Option<(Action, Part)> {
 
 impl WorkspaceState {
     /// Carries out pressing the control `id` of the keymap page, and says whether it was one.
-    pub(crate) fn keymap_pressed(&mut self, id: FocusId) -> bool {
+    pub(crate) fn keymap_pressed(&mut self, id: Target) -> bool {
         let Some((action, part)) = control_of(id) else {
             return false;
         };
@@ -99,33 +99,32 @@ impl WorkspaceState {
 }
 
 /// `own`, the modifier of a control, answering to `id` and showing it can be pressed, or as it is when it has no name.
-fn pressable(own: Modifier, id: Option<FocusId>) -> Modifier {
+fn pressable(own: Modifier, id: Option<Target>) -> Modifier {
     match id {
-        Some(id) => own.cursor(CursorIcon::Pointer).control(id, reduce(id)),
+        Some(id) => own
+            .cursor(CursorIcon::Pointer)
+            .control(id, send(Event::pressing(id))),
         None => own,
     }
 }
 
 /// Emits a small button of a row saying `words`, answering to `id`.
 #[track_caller]
-fn small(words: &str, id: Option<FocusId>) {
-    let own = Modifier::new().height(theme::sp(6)).interaction_background(
-        (theme::InteractionTones::new()
+fn small(words: &str, id: Option<Target>) {
+    let own = Modifier::new().height(theme::sp(6)).indicated(
+        theme::InteractionTones::new()
             .hover(Role::SurfaceHover)
-            .radius(Radius::Sm))
-        .colors(),
+            .radius(Radius::Sm),
+        theme::Focused::Rustle,
     );
-    row_arranged(
-        pressable(own, id).padding_xy(theme::sp(2), 0.0),
-        Arrangement::Start,
-        Alignment::Center,
-        || line(words, 11, 1.4, Role::Muted),
-    );
+    kit::row(pressable(own, id).padding_xy(theme::sp(2), 0.0), 0, || {
+        line(words, 11, 1.4, Role::Muted)
+    });
 }
 
 /// Emits the keys of `action`, each as a key cap, or what recording asks for while it records, answering to `id`.
 #[track_caller]
-fn caps(keys: &[String], recording: Option<&[String]>, id: Option<FocusId>) {
+fn caps(keys: &[String], recording: Option<&[String]>, id: Option<Target>) {
     let edge = if recording.is_some() {
         Role::Accent
     } else {
@@ -136,13 +135,10 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: Option<FocusId>) {
         .background_rounded(theme::color(Role::Background), Radius::Sm.px())
         .border(1.0, theme::color(edge), Radius::Sm.px())
         .padding(1.0);
-    let code = theme::mono_style(12, 1.4)
-        .color(theme::color(Role::Text))
-        .max_lines(1);
-    row_arranged(
+    let code = kit::code(12, Role::Text);
+    kit::row(
         pressable(own, id).padding_xy(theme::sp(1.5), 0.0),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Center,
+        1,
         move || {
             if let Some(so_far) = recording {
                 let said = if so_far.is_empty() {
@@ -150,7 +146,7 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: Option<FocusId>) {
                 } else {
                     format!("{} …", shown(&so_far.join(" ")))
                 };
-                rustle::basic_text(Modifier::new(), said, code, rustle::TextOverflow::Ellipsis);
+                kit::text(Modifier::new(), said, code);
             } else if keys.is_empty() {
                 line("Not bound", 12, 1.4, Role::Subtle);
             } else {
@@ -158,12 +154,7 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: Option<FocusId>) {
                     if place > 0 {
                         line("or", 11, 1.4, Role::Subtle);
                     }
-                    rustle::basic_text(
-                        Modifier::new(),
-                        shown(binding),
-                        code,
-                        rustle::TextOverflow::Ellipsis,
-                    );
+                    kit::text(Modifier::new(), shown(binding), code);
                 }
             }
         },
@@ -184,9 +175,12 @@ fn found(action: Action, keys: &[String], needle: &str) -> bool {
 /// Emits the box the actions are searched with.
 #[track_caller]
 fn search_box(state: &WorkspaceState) {
-    Input::search(&state.settings_page.keymap_find, SETTINGS_KEYMAP_FIND)
-        .placeholder("Search actions by name or keys")
-        .build();
+    Input::search(
+        &state.settings_page.keymap_find,
+        Target::Settings(SettingsEvent::SettingsKeymapFind),
+    )
+    .placeholder("Search actions by name or keys")
+    .build();
 }
 
 /// One action the search found, with what its row shows.
@@ -266,24 +260,11 @@ pub(crate) fn rows(state: &WorkspaceState, room: f32) {
 /// Emits the heading `group` over a bordered box holding the row of each of `members`, ruled between them.
 #[track_caller]
 fn section(group: &str, members: &[Found]) {
-    rustle::basic_text(
-        Modifier::new(),
-        group,
-        theme::text_style(13, 1.4)
-            .font_weight(rustle::FontWeight::MEDIUM)
-            .color(theme::color(Role::Text))
-            .max_lines(1),
-        rustle::TextOverflow::Ellipsis,
-    );
+    kit::text(Modifier::new(), group, kit::strong(13, Role::Text));
     let last = members.len().saturating_sub(1);
-    column_arranged(
-        Modifier::new()
-            .fill_max_width()
-            .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
-            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
-            .padding(1.0),
-        Arrangement::Start,
-        Alignment::Start,
+    kit::column(
+        Modifier::new().fill_max_width().panel(Radius::Lg),
+        0,
         || {
             for (place, entry) in members.iter().enumerate() {
                 rustle::key(place, || action_row(entry, place < last));
@@ -298,51 +279,35 @@ fn action_row(entry: &Found, ruled: bool) {
     let action = entry.action;
     let own = Modifier::new().fill_max_width();
     let own = if ruled {
-        own.draw_behind(theme::edge(
-            theme::Side::Bottom,
-            1.0,
-            theme::color(Role::Border),
-        ))
-        .padding_each(0.0, 0.0, 0.0, 1.0)
+        own.ruled(theme::Side::Bottom)
     } else {
         own
     };
-    row_arranged(
+    kit::row(
         own.padding_xy(theme::sp(4), 0.0)
             .padding_xy(0.0, theme::sp(2)),
-        Arrangement::SpacedBy(sp(6)),
-        Alignment::Center,
+        6,
         || {
-            column_arranged(
-                Modifier::new().weight(1.0),
-                Arrangement::SpacedBy(sp(0.5)),
-                Alignment::Start,
-                || {
-                    line(action.title(), 13, 1.4, Role::Text);
-                    if !entry.clashes.is_empty() {
-                        line(
-                            format!("Also bound to {}", entry.clashes.join(", ")),
-                            11,
-                            1.4,
-                            Role::Warning,
-                        );
-                    }
-                },
-            );
-            row_arranged(
-                Modifier::new(),
-                Arrangement::SpacedBy(sp(1)),
-                Alignment::Center,
-                || {
-                    caps(&entry.keys, entry.recording, id_of(action, Part::Record));
-                    if entry.own {
-                        small("Reset", id_of(action, Part::Reset));
-                    }
-                    if !entry.keys.is_empty() {
-                        small("Clear", id_of(action, Part::Clear));
-                    }
-                },
-            );
+            kit::column(Modifier::new().weight(1.0), 0.5, || {
+                line(action.title(), 13, 1.4, Role::Text);
+                if !entry.clashes.is_empty() {
+                    line(
+                        format!("Also bound to {}", entry.clashes.join(", ")),
+                        11,
+                        1.4,
+                        Role::Warning,
+                    );
+                }
+            });
+            kit::row(Modifier::new(), 1, || {
+                caps(&entry.keys, entry.recording, id_of(action, Part::Record));
+                if entry.own {
+                    small("Reset", id_of(action, Part::Reset));
+                }
+                if !entry.keys.is_empty() {
+                    small("Clear", id_of(action, Part::Clear));
+                }
+            });
         },
     );
 }

@@ -8,7 +8,4 @@ mod tasking;
 mod workspace;
 
 pub use screen::{Screen, picker_screen, screen, settings_screen, settings_window};
-pub use workspace::{
-    ADD_PROJECT, ATTACH, HISTORY, Outgoing, PROMPT, SEND, STOP, TAB_DIFF, TERMINAL, TERMINAL_BODY,
-    WorkspaceState,
-};
+pub use workspace::{Outgoing, WorkspaceState};

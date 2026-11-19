@@ -2,30 +2,11 @@
 
 use pm_protocol::{CodeLens, FileEdit, InlayHint, Location, Seek, SemanticToken};
 
-use crate::focus::FocusId;
 use crate::listing::{Items, Listing};
 use crate::state::{Outgoing, WorkspaceState};
 
 /// How tall a view is taken to be, in logical pixels, until the one drawn has been measured.
 const VIEW_HEIGHT: f32 = 1200.0;
-
-/// The first of the marks standing for lenses, each following it by the place of the lens in the list the server gave.
-pub const LENS_BASE: u64 = 8_600_000;
-
-/// One past the last mark standing for lenses.
-pub const LENS_END: u64 = 8_700_000;
-
-/// The mark that presses the lens at `index` of the list the server gave.
-pub fn lens_mark(index: usize) -> FocusId {
-    FocusId(LENS_BASE + index as u64)
-}
-
-/// The lens, by its place in the list the server gave, that the mark `id` presses.
-pub fn lens_of(id: FocusId) -> Option<usize> {
-    (LENS_BASE..LENS_END)
-        .contains(&id.0)
-        .then(|| (id.0 - LENS_BASE) as usize)
-}
 
 impl WorkspaceState {
     /// Asks the language server for what it says to show in and beside the lines of the file shown, whatever it was not asked or did not answer for the text as it is, and lets go of what the reader turned off.

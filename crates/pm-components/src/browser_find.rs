@@ -1,19 +1,20 @@
 //! Finding text in the page of the browser: the search the engine runs, and the bar over the top right corner of the page that drives it.
 
-use crate::events::reduce;
+use crate::areas::BrowserEvent;
+use crate::kit::{self, Frame};
+use crate::theme::ShadowLayers;
+
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
 use rustle::TextFieldState;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{BoxAlignment, Modifier};
 
 use crate::events::Interactive;
 use crate::theme::{Radius, Role, sp};
 
-use crate::browser::{
-    BROWSER_FIND_BAR, BROWSER_FIND_CLOSE, BROWSER_FIND_FIELD, BROWSER_FIND_NEXT,
-    BROWSER_FIND_PREVIOUS, Command,
-};
+use crate::browser::Command;
 use crate::find::SHADOW;
 use crate::parts::line;
 use crate::size::Size;
@@ -154,48 +155,51 @@ impl WorkspaceState {
 pub fn find_bar(search: &PageSearch, page: f32, beside: f32) {
     let (said, tone) = search.tally();
     let field = (page - 2.0 * EDGE - BAR_EXTRA).clamp(FIELD_LEAST, FIELD_WIDTH);
-    row_arranged(
+    kit::row(
         Modifier::new()
             .align(BoxAlignment::TopEnd)
             .offset(-sp((EDGE + beside) / 4.0), sp(2))
             .z_index(40)
-            .draw_behind(theme::shadows(&SHADOW, Radius::Md))
-            .background_rounded(theme::color(Role::Surface), Radius::Md.px())
-            .border(1.0, theme::color(Role::Border), Radius::Md.px())
-            .padding(1.0)
-            .control(BROWSER_FIND_BAR, reduce(BROWSER_FIND_BAR))
+            .shadow_layers(&SHADOW, Radius::Md.px())
+            .panel(Radius::Md)
+            .control(
+                Target::Browser(BrowserEvent::BrowserFindBar),
+                send(Event::Browser(BrowserEvent::BrowserFindBar)),
+            )
             .padding(theme::sp(1)),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Center,
+        1,
         || {
-            column_arranged(
-                Modifier::new().width(field),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    Input::new(&search.query, BROWSER_FIND_FIELD)
-                        .modifier(Modifier::new().fill_max_width())
-                        .size(Size::Sm)
-                        .placeholder("Find in page")
-                        .invalid(
-                            !search.query.text().is_empty() && search.counted && search.total == 0,
-                        )
-                        .build();
-                },
-            );
-            column_arranged(
+            kit::column(Modifier::new().width(field), 0, || {
+                Input::new(
+                    &search.query,
+                    Target::Browser(BrowserEvent::BrowserFindField),
+                )
+                .modifier(Modifier::new().fill_max_width())
+                .size(Size::Sm)
+                .placeholder("Find in page")
+                .invalid(!search.query.text().is_empty() && search.counted && search.total == 0)
+                .build();
+            });
+            kit::column(
                 Modifier::new()
                     .width(COUNT_WIDTH)
                     .padding_xy(theme::sp(1), 0.0),
-                Arrangement::Start,
-                Alignment::Start,
+                0,
                 || {
                     line(said, 11, 1.4, tone);
                 },
             );
-            Button::icon(phosphor::ARROW_UP, BROWSER_FIND_PREVIOUS).build();
-            Button::icon(phosphor::ARROW_DOWN, BROWSER_FIND_NEXT).build();
-            Button::icon(phosphor::X, BROWSER_FIND_CLOSE).build();
+            Button::icon(
+                phosphor::ARROW_UP,
+                Target::Browser(BrowserEvent::BrowserFindPrevious),
+            )
+            .build();
+            Button::icon(
+                phosphor::ARROW_DOWN,
+                Target::Browser(BrowserEvent::BrowserFindNext),
+            )
+            .build();
+            Button::icon(phosphor::X, Target::Browser(BrowserEvent::BrowserFindClose)).build();
         },
     );
 }

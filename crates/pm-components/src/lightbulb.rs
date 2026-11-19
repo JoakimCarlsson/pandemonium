@@ -1,12 +1,8 @@
 //! The marker beside the line of the caret that says the language server offers changes there, and the question that finds out.
 
-use crate::focus::FocusId;
 use pm_editor::LightbulbShown;
 
 use crate::state::{Outgoing, WorkspaceState};
-
-/// The marker beside the line of the caret, which opens the list of changes when pressed.
-pub const LIGHTBULB: FocusId = FocusId(7_402_200);
 
 impl WorkspaceState {
     /// Asks the language server whether it offers changes at the caret or the selection of the file shown, only to mark the line; nothing when the marker is off, a list of changes is open, or the marker is for problem lines and this line has none.

@@ -1,39 +1,14 @@
 //! The panes of the main area: tab groups laid side by side or one above the other, each tab dragged to another group or to the edge of one to split it.
 
-use crate::focus::FocusId;
+use crate::areas::{
+    BrowserEvent, ChatEvent, DialogEvent, DiffEvent, EditorEvent, SearchEvent, WindowEvent,
+};
+use crate::target::Target;
 use serde::{Deserialize, Serialize};
 
-use crate::open_files::FILE_TAB_BASE;
 use crate::sash::Grows;
-use crate::state::{Page, TAB_CHAT, TAB_DIFF, Tab, WorkspaceState};
+use crate::state::{Page, Tab, WorkspaceState};
 use crate::terminal;
-
-/// The first of the boxes that are the panes; the rest follow it in the order the panes are laid out.
-pub const PANE_BASE: u64 = 4_500_000;
-
-/// The first of the handles between two panes; the rest follow it in the order the splits are laid out.
-pub const SPLIT_SASH_BASE: u64 = 4_600_000;
-
-/// The button in the strip of tabs that opens the menu of panes.
-pub const PANE_MENU: FocusId = FocusId(7096);
-
-/// The row of the menu of panes that splits the pane worked in with its tab on the right.
-pub const SPLIT_RIGHT: FocusId = FocusId(7097);
-
-/// The row of the menu of panes that splits the pane worked in with its tab on the left.
-pub const SPLIT_LEFT: FocusId = FocusId(7098);
-
-/// The row of the menu of panes that splits the pane worked in with its tab above.
-pub const SPLIT_UP: FocusId = FocusId(7099);
-
-/// The row of the menu of panes that splits the pane worked in with its tab below.
-pub const SPLIT_DOWN: FocusId = FocusId(7100);
-
-/// The first of the buttons of empty panes; each pane has five, by its position: bring the page in, bring the diff in, show the files, close it, bring the browser in.
-pub const PANE_PUT_BASE: u64 = 4_800_000;
-
-/// How many ids each range above holds.
-const RANGE: u64 = 100_000;
 
 /// How tall the strip of tabs above a pane is, in logical pixels.
 pub const TABS: f32 = 48.0;
@@ -228,7 +203,7 @@ pub struct Placed<'a> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Seam {
     /// The handle.
-    pub id: FocusId,
+    pub id: Target,
     /// Which way the sides lie.
     pub axis: Axis,
     /// Where its line starts.
@@ -334,7 +309,7 @@ impl Layout {
         } = self
         {
             let (one, two) = area.halves(*axis, *ratio);
-            let id = FocusId(SPLIT_SASH_BASE + seams.len() as u64);
+            let id = Target::Window(WindowEvent::SplitSash(seams.len()));
             seams.push(match axis {
                 Axis::Row => Seam {
                     id,
@@ -661,28 +636,14 @@ pub struct Panes {
 }
 
 /// The edge the row `id` of the menu of panes splits the pane worked in on, if it is one of its rows.
-pub fn split_row_of(id: FocusId) -> Option<Side> {
+pub fn split_row_of(id: Target) -> Option<Side> {
     match id {
-        SPLIT_RIGHT => Some(Side::Right),
-        SPLIT_LEFT => Some(Side::Left),
-        SPLIT_UP => Some(Side::Top),
-        SPLIT_DOWN => Some(Side::Bottom),
+        Target::Window(WindowEvent::SplitRight) => Some(Side::Right),
+        Target::Window(WindowEvent::SplitLeft) => Some(Side::Left),
+        Target::Window(WindowEvent::SplitUp) => Some(Side::Top),
+        Target::Window(WindowEvent::SplitDown) => Some(Side::Bottom),
         _ => None,
     }
-}
-
-/// Which handle between panes `id` is, if it is one.
-pub fn split_sash_of(id: FocusId) -> Option<usize> {
-    id.0.checked_sub(SPLIT_SASH_BASE)
-        .filter(|offset| *offset < RANGE)
-        .map(|offset| offset as usize)
-}
-
-/// Which pane `id` is the box of, if it is one.
-pub fn pane_of(id: FocusId) -> Option<usize> {
-    id.0.checked_sub(PANE_BASE)
-        .filter(|offset| *offset < RANGE)
-        .map(|offset| offset as usize)
 }
 
 impl WorkspaceState {
@@ -834,15 +795,17 @@ impl WorkspaceState {
     }
 
     /// The tab `id` is in a pane's strip, if it is one.
-    pub fn pane_tab_of(&self, id: FocusId) -> Option<Item> {
+    pub fn pane_tab_of(&self, id: Target) -> Option<Item> {
         match id {
-            TAB_CHAT => Some(Item::Page),
-            TAB_DIFF => Some(Item::Diff),
-            crate::excerpts::TAB_EXCERPTS => Some(Item::Excerpts),
-            crate::browser::TAB_BROWSER => Some(Item::Browser),
-            crate::update_dialog::TAB_UPDATE => Some(Item::Update),
+            Target::Chat(ChatEvent::TabChat) => Some(Item::Page),
+            Target::Diff(DiffEvent::TabDiff) => Some(Item::Diff),
+            Target::Search(SearchEvent::TabExcerpts) => Some(Item::Excerpts),
+            Target::Browser(BrowserEvent::TabBrowser) => Some(Item::Browser),
+            Target::Dialog(DialogEvent::TabUpdate) => Some(Item::Update),
             _ => {
-                let index = id.0.checked_sub(FILE_TAB_BASE)? as usize;
+                let Target::Editor(EditorEvent::FileTab(index)) = id else {
+                    return None;
+                };
                 let viewer = self.git.viewers.get(index)?;
                 Some(Item::File {
                     path: viewer.path.clone(),
@@ -890,14 +853,10 @@ impl WorkspaceState {
     }
 
     /// Carries out the button `id` of an empty pane, if it is one: brings the page, the diff or the browser into it, shows the files to open one in it, or closes it.
-    pub(crate) fn press_empty_pane(&mut self, id: FocusId) -> bool {
-        let Some(offset) =
-            id.0.checked_sub(PANE_PUT_BASE)
-                .filter(|offset| *offset < RANGE)
-        else {
+    pub(crate) fn press_empty_pane(&mut self, id: Target) -> bool {
+        let Target::Window(WindowEvent::PanePut { pane, put }) = id else {
             return false;
         };
-        let (pane, put) = ((offset / 5) as usize, offset % 5);
         match put {
             0 | 1 => {
                 let item = if put == 0 { Item::Page } else { Item::Diff };

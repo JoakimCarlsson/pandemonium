@@ -1,19 +1,18 @@
 //! Clearing the cookies and site storage of the browser: the question put to the reader first, and what answering it does.
 
-use crate::browser::{
-    BROWSER_CLEAR_CANCEL, BROWSER_CLEAR_CONFIRM, BROWSER_CLEAR_INSIDE, BROWSER_CLEAR_OUTSIDE,
-    Command,
-};
+use crate::areas::BrowserEvent;
+use crate::browser::Command;
 use crate::button::Variant;
 use crate::git_prompts::{QuestionIds, question_of};
 use crate::state::WorkspaceState;
+use crate::target::Target;
 
 /// What the question answers to.
 const IDS: QuestionIds = QuestionIds {
-    outside: BROWSER_CLEAR_OUTSIDE,
-    inside: BROWSER_CLEAR_INSIDE,
-    confirm: BROWSER_CLEAR_CONFIRM,
-    cancel: BROWSER_CLEAR_CANCEL,
+    outside: Target::Browser(BrowserEvent::BrowserClearOutside),
+    inside: Target::Browser(BrowserEvent::BrowserClearInside),
+    confirm: Target::Browser(BrowserEvent::BrowserClearConfirm),
+    cancel: Target::Browser(BrowserEvent::BrowserClearCancel),
 };
 
 impl WorkspaceState {

@@ -1,11 +1,11 @@
 //! Markdown: a source laid out as paragraphs, headings, lists, code, quotes, fold-outs, rules and tables.
 
-use crate::events::reduce;
+use crate::events::{Event, send};
+use crate::kit::{self, Frame};
 use crate::theme;
 use crate::theme::sp;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
-use std::hash::{DefaultHasher, Hash, Hasher};
+use rustle::{Alignment, Arrangement, column_arranged};
 
 use pm_markdown::{Block, Inline, Span};
 use rustle::{CursorIcon, Modifier};
@@ -16,8 +16,8 @@ use crate::figures::{
     Figures, diagram_key, diagram_node, figure_marks, formula_key, image_key, images_node,
     is_diagram,
 };
-use crate::focus::FocusId;
 use crate::parts::{glyph, line};
+use crate::target::Target;
 use crate::theme::{Radius, Role};
 
 /// The line height of running text, as a share of its size.
@@ -53,11 +53,11 @@ pub struct Markdown<'a> {
     /// The colour of running text.
     tone: Role,
     /// The name of the first fold-out's summary, the rest following it, when they can be pressed.
-    details: Option<u64>,
+    details: Option<Target>,
     /// The fold-outs that are open, by their place in the source; all are when none can be pressed.
     unfolded: Vec<usize>,
     /// The name of the first link, the rest following it in the order [`pm_markdown::links`] gives their addresses, when they can be pressed.
-    links: Option<u64>,
+    links: Option<Target>,
     /// The figures drawn or fetched so far, when diagrams and images are shown as pictures.
     figures: Option<&'a Figures>,
     /// The markdown file the source is, from the root of its repository, which the paths of its images start from; nothing for text in no file.
@@ -98,8 +98,8 @@ impl<'a> Markdown<'a> {
         self
     }
 
-    /// Links that can be pressed, the first answering to `base` and the rest following it in the order [`pm_markdown::links`] gives their addresses.
-    pub fn links(mut self, base: u64) -> Self {
+    /// Links that can be pressed, the first named by `base` and the rest following it in the order [`pm_markdown::links`] gives their addresses, as [`Target::offset`] counts them.
+    pub fn links(mut self, base: Target) -> Self {
         self.links = Some(base);
         self
     }
@@ -111,9 +111,9 @@ impl<'a> Markdown<'a> {
         self
     }
 
-    /// Fold-outs whose summaries are named from `base` up, in the order the
-    /// source has them, closed but for those placed in `unfolded`.
-    pub fn details(mut self, base: u64, unfolded: Vec<usize>) -> Self {
+    /// Fold-outs whose summaries are named from `base` on, in the order the
+    /// source has them as [`Target::offset`] counts them, closed but for those placed in `unfolded`.
+    pub fn details(mut self, base: Target, unfolded: Vec<usize>) -> Self {
         self.details = Some(base);
         self.unfolded = unfolded;
         self
@@ -142,7 +142,7 @@ impl<'a> Markdown<'a> {
             .figures
             .map(|figures| figure_marks(self.source, self.place, figures))
             .unwrap_or_default();
-        let whole = hash((
+        let whole = crate::figures::key_of((
             self.source,
             self.pixels,
             self.tone,
@@ -168,7 +168,7 @@ impl<'a> Markdown<'a> {
                             .copied()
                             .filter(|place| (first..seen).contains(place))
                             .collect();
-                        let key = hash((
+                        let key = crate::figures::key_of((
                             block,
                             self.pixels,
                             self.tone,
@@ -199,25 +199,18 @@ impl<'a> Markdown<'a> {
     }
 }
 
-/// `value` hashed, to tell one kept stretch of the drawing from another.
-fn hash(value: impl Hash) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
-}
-
 /// One pass of laying blocks out.
 struct Layout<'s> {
     /// How tall running text is, in logical pixels.
     pixels: u32,
     /// The name of the first fold-out's summary, when they can be pressed.
-    details: Option<u64>,
+    details: Option<Target>,
     /// The fold-outs that are open, by their place in the source.
     unfolded: Vec<usize>,
     /// How many fold-outs were laid out or passed over so far.
     seen: usize,
     /// The name of the first link, when links can be pressed.
-    links: Option<u64>,
+    links: Option<Target>,
     /// The figures drawn or fetched so far, when diagrams and images are shown as pictures.
     figures: Option<&'s Figures>,
     /// The markdown file the source is, which the paths of its images start from.
@@ -234,16 +227,11 @@ impl Layout<'_> {
     /// `modifier`, `width` wide, running text in `tone`.
     #[track_caller]
     fn blocks(&mut self, modifier: Modifier, gap: f32, blocks: &[Block], tone: Role, width: f32) {
-        column_arranged(
-            modifier,
-            Arrangement::SpacedBy(sp(gap)),
-            Alignment::Start,
-            || {
-                for block in blocks {
-                    self.block(block, tone, width);
-                }
-            },
-        );
+        kit::column(modifier, gap, || {
+            for block in blocks {
+                self.block(block, tone, width);
+            }
+        });
     }
 
     /// Emits one block, `width` wide, running text in `tone`.
@@ -279,7 +267,7 @@ impl Layout<'_> {
                     ))
                     .padding_each(2.0, 0.0, 0.0, 0.0)
                     .padding_each(theme::sp(QUOTE_INDENT / 4.0 - 0.5), 0.0, 0.0, 0.0);
-                row_arranged(own, Arrangement::Start, Alignment::Start, || {
+                kit::row_top(own, 0, || {
                     self.blocks(
                         Modifier::new(),
                         3.0,
@@ -331,47 +319,36 @@ impl Layout<'_> {
         let mut head = Modifier::new().cursor(CursorIcon::Pointer);
         if let Some(base) = self.details {
             head = head.control(
-                FocusId(base + place as u64),
-                reduce(FocusId(base + place as u64)),
+                base.offset(place),
+                send(Event::pressing(base.offset(place))),
             );
         }
         let pixels = self.pixels;
-        column_arranged(
+        kit::column(
             Modifier::new().fill_max_width().width_in(0.0, width),
-            Arrangement::SpacedBy(sp(2)),
-            Alignment::Start,
+            2,
             || {
-                row_arranged(
-                    Modifier::new().fill_max_width().chain(head),
-                    Arrangement::SpacedBy(sp(1.5)),
-                    Alignment::Start,
-                    || {
-                        row_arranged(
-                            Modifier::new().height(height),
-                            Arrangement::Start,
-                            Alignment::Center,
-                            || {
-                                glyph(
-                                    if open {
-                                        phosphor::CARET_DOWN
-                                    } else {
-                                        phosphor::CARET_RIGHT
-                                    },
-                                    3.5,
-                                    Role::Subtle,
-                                );
+                kit::row_top(Modifier::new().fill_max_width().chain(head), 1.5, || {
+                    kit::row(Modifier::new().height(height), 0, || {
+                        glyph(
+                            if open {
+                                phosphor::CARET_DOWN
+                            } else {
+                                phosphor::CARET_RIGHT
                             },
+                            3.5,
+                            Role::Subtle,
                         );
-                        self.text(
-                            Modifier::new().weight(1.0),
-                            summary,
-                            pixels,
-                            true,
-                            tone,
-                            width - 20.0,
-                        );
-                    },
-                );
+                    });
+                    self.text(
+                        Modifier::new().weight(1.0),
+                        summary,
+                        pixels,
+                        true,
+                        tone,
+                        width - 20.0,
+                    );
+                });
                 if !open {
                     self.seen += count_details(blocks);
                     return;
@@ -385,7 +362,7 @@ impl Layout<'_> {
                     ))
                     .padding_each(2.0, 0.0, 0.0, 0.0)
                     .padding_each(INDENT - 8.0, 0.0, 0.0, 0.0);
-                row_arranged(bar, Arrangement::Start, Alignment::Start, || {
+                kit::row_top(bar, 0, || {
                     self.blocks(Modifier::new(), 3.0, blocks, tone, width - INDENT);
                 });
             },
@@ -397,50 +374,33 @@ impl Layout<'_> {
     fn list(&mut self, start: Option<u64>, items: &[Vec<Block>], tone: Role, width: f32) {
         let height = self.line_height();
         let pixels = self.pixels;
-        column_arranged(
-            Modifier::new(),
-            Arrangement::SpacedBy(sp(1.5)),
-            Alignment::Start,
-            || {
-                for (index, item) in items.iter().enumerate() {
-                    row_arranged(
-                        Modifier::new(),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            row_arranged(
-                                Modifier::new().width(INDENT).height(height),
-                                Arrangement::Start,
-                                Alignment::Center,
-                                || match start {
-                                    Some(first) => line(
-                                        format!("{}.", first + index as u64),
-                                        pixels,
-                                        LEADING,
-                                        Role::Muted,
+        kit::column(Modifier::new(), 1.5, || {
+            for (index, item) in items.iter().enumerate() {
+                kit::row_top(Modifier::new(), 0, || {
+                    kit::row(
+                        Modifier::new().width(INDENT).height(height),
+                        0,
+                        || match start {
+                            Some(first) => line(
+                                format!("{}.", first + index as u64),
+                                pixels,
+                                LEADING,
+                                Role::Muted,
+                            ),
+                            None => rustle::spacer(
+                                Modifier::new()
+                                    .size(theme::sp(1), theme::sp(1))
+                                    .background_rounded(
+                                        theme::color(Role::Subtle),
+                                        Radius::Full.px(),
                                     ),
-                                    None => rustle::spacer(
-                                        Modifier::new()
-                                            .size(theme::sp(1), theme::sp(1))
-                                            .background_rounded(
-                                                theme::color(Role::Subtle),
-                                                Radius::Full.px(),
-                                            ),
-                                    ),
-                                },
-                            );
-                            self.blocks(
-                                Modifier::new().weight(1.0),
-                                1.5,
-                                item,
-                                tone,
-                                width - INDENT,
-                            );
+                            ),
                         },
                     );
-                }
-            },
-        );
+                    self.blocks(Modifier::new().weight(1.0), 1.5, item, tone, width - INDENT);
+                });
+            }
+        });
     }
 
     /// Emits a block of code in a bordered box, its long lines broken to fit `width`.
@@ -457,17 +417,11 @@ impl Layout<'_> {
         }
         CodeBox::new(move || {
             for content in lines {
-                row_arranged(
+                kit::row_top(
                     Modifier::new().padding_xy(theme::sp(3.5), 0.0),
-                    Arrangement::Start,
-                    Alignment::Start,
+                    0,
                     move || {
-                        rustle::basic_text(
-                            Modifier::new(),
-                            content,
-                            kind,
-                            rustle::TextOverflow::Ellipsis,
-                        );
+                        kit::text(Modifier::new(), content, kind);
                     },
                 );
             }
@@ -486,15 +440,10 @@ impl Layout<'_> {
             Some(Ok(drawing)) => diagram_node(drawing, width),
             Some(Err(_)) => {
                 let pixels = self.pixels;
-                column_arranged(
-                    Modifier::new(),
-                    Arrangement::SpacedBy(sp(1.5)),
-                    Alignment::Start,
-                    || {
-                        self.code(source, width);
-                        line(failed, pixels - 2, 1.4, Role::Subtle);
-                    },
-                );
+                kit::column(Modifier::new(), 1.5, || {
+                    self.code(source, width);
+                    line(failed, pixels - 2, 1.4, Role::Subtle);
+                });
             }
             None => self.code(source, width),
         }
@@ -512,15 +461,11 @@ impl Layout<'_> {
             .max(1);
         let cell_width = ((width - 2.0) / columns as f32).floor();
         let pixels = self.pixels - 1;
-        let own = Modifier::new()
-            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
-            .padding(1.0)
-            .clip();
-        column_arranged(own, Arrangement::Start, Alignment::Start, || {
-            row_arranged(
+        let own = Modifier::new().outlined(Radius::Lg).clip();
+        kit::column(own, 0, || {
+            kit::row_top(
                 Modifier::new().background(theme::color(Role::Surface)),
-                Arrangement::Start,
-                Alignment::Start,
+                0,
                 || {
                     for cell in head {
                         self.cell(cell, pixels, true, tone, cell_width);
@@ -528,22 +473,11 @@ impl Layout<'_> {
                 },
             );
             for cells in rows {
-                row_arranged(
-                    Modifier::new()
-                        .draw_behind(theme::edge(
-                            theme::Side::Top,
-                            1.0,
-                            theme::color(Role::Border),
-                        ))
-                        .padding_each(0.0, 1.0, 0.0, 0.0),
-                    Arrangement::Start,
-                    Alignment::Start,
-                    || {
-                        for cell in cells {
-                            self.cell(cell, pixels, false, tone, cell_width);
-                        }
-                    },
-                );
+                kit::row_top(Modifier::new().ruled(theme::Side::Top), 0, || {
+                    for cell in cells {
+                        self.cell(cell, pixels, false, tone, cell_width);
+                    }
+                });
             }
         });
     }
@@ -551,13 +485,12 @@ impl Layout<'_> {
     /// Emits one cell of a table, `width` wide, set heavier when it is a heading.
     #[track_caller]
     fn cell(&mut self, spans: &[Span], pixels: u32, strong: bool, tone: Role, width: f32) {
-        column_arranged(
+        kit::column(
             Modifier::new()
                 .width(width)
                 .padding_xy(theme::sp(2.5), 0.0)
                 .padding_xy(0.0, theme::sp(1.5)),
-            Arrangement::Start,
-            Alignment::Start,
+            0,
             || self.text(Modifier::new(), spans, pixels, strong, tone, width - 20.0),
         );
     }
@@ -608,27 +541,22 @@ impl Layout<'_> {
         }
         let height = pixels as f32 * LEADING;
         let links = self.links;
-        column_arranged(modifier, Arrangement::Start, Alignment::Start, move || {
+        kit::column(modifier, 0, move || {
             for runs in lines {
-                row_arranged(
-                    Modifier::new().height(height),
-                    Arrangement::Start,
-                    Alignment::Center,
-                    move || {
-                        for (content, inline) in runs {
-                            let pressed = match (links, inline.target) {
-                                (Some(base), target) if target > 0 => {
-                                    Modifier::new().cursor(CursorIcon::Pointer).control(
-                                        FocusId(base + u64::from(target) - 1),
-                                        reduce(FocusId(base + u64::from(target) - 1)),
-                                    )
-                                }
-                                _ => Modifier::new(),
-                            };
-                            run(pressed, content, inline, pixels, strong, tone);
-                        }
-                    },
-                );
+                kit::row(Modifier::new().height(height), 0, move || {
+                    for (content, inline) in runs {
+                        let pressed = match (links, inline.target) {
+                            (Some(base), target) if target > 0 => {
+                                Modifier::new().cursor(CursorIcon::Pointer).control(
+                                    base.offset(usize::from(target) - 1),
+                                    send(Event::pressing(base.offset(usize::from(target) - 1))),
+                                )
+                            }
+                            _ => Modifier::new(),
+                        };
+                        run(pressed, content, inline, pixels, strong, tone);
+                    }
+                });
             }
         });
     }
@@ -732,5 +660,5 @@ fn run(modifier: Modifier, content: String, inline: Inline, pixels: u32, strong:
             .padding_xy(CODE_PAD, 0.0),
         false => modifier,
     };
-    rustle::basic_text(modifier, content, kind, rustle::TextOverflow::Ellipsis);
+    kit::text(modifier, content, kind);
 }

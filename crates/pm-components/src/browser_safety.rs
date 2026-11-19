@@ -1,56 +1,26 @@
 //! What keeps the reader safe in the browser pane: the questions a page asks about the reader's machine, a site whose certificate is not trusted, and the files a page downloaded.
 
-use crate::events::reduce;
+use crate::areas::BrowserEvent;
+use crate::kit::{self, Frame};
+
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, row_arranged};
 
 use std::time::{Duration, Instant};
 
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::theme::{Radius, Role};
 use rustle::Modifier;
 
 use crate::Button;
 use crate::button::Variant;
 use crate::parts::{clipped, line, wrap};
-use crate::size::Size;
-
-/// The first of the names of the button that allows what a question asks; the question's number, modulo [`QUESTION_SLOTS`], is added to it, so a press that began on one question cannot end on another.
-const ALLOW_BASE: u64 = 7_440_600;
-
-/// The first of the names of the button that refuses what a question asks; numbered like the allow buttons.
-const BLOCK_BASE: u64 = 7_440_600 + QUESTION_SLOTS;
-
-/// How many questions the names of the allow and block buttons tell apart.
-const QUESTION_SLOTS: u64 = 64;
-
-/// The bar with the first question, which takes presses that land on it and are for neither button, so they never reach the page under it.
-pub const BROWSER_QUESTION_BAR: FocusId = FocusId(7_440_805);
 
 /// How long after a question first shows, or the question shown changes, pressing Allow does nothing, in case the reader was about to press something the page moved under the pointer.
 pub const ALLOW_DELAY: Duration = Duration::from_millis(500);
-
-/// The name of the button that allows what the question `id` asks.
-pub fn allow_id(id: u64) -> FocusId {
-    FocusId(ALLOW_BASE + id % QUESTION_SLOTS)
-}
-
-/// The name of the button that refuses what the question `id` asks.
-pub fn block_id(id: u64) -> FocusId {
-    FocusId(BLOCK_BASE + id % QUESTION_SLOTS)
-}
-
-/// Takes away the note about a download.
-pub const BROWSER_DISMISS: FocusId = FocusId(7_440_802);
-
-/// Takes the page back from a site whose certificate is not trusted.
-pub const BROWSER_CERT_BACK: FocusId = FocusId(7_440_803);
-
-/// Loads a site whose certificate is not trusted anyway; the first press asks again, the second does it.
-pub const BROWSER_CERT_PROCEED: FocusId = FocusId(7_440_804);
 
 /// How tall the bar with a question or a note is, in logical pixels.
 pub const BAR: f32 = 40.0;
@@ -183,19 +153,19 @@ impl Safety {
     }
 
     /// Carries out pressing `id`, and says whether it was something of this part.
-    pub fn press(&mut self, id: FocusId) -> bool {
+    pub fn press(&mut self, id: Target) -> bool {
         self.press_at(id, Instant::now())
     }
 
     /// Carries out pressing `id` at the time `now`, and says whether it was something of this part. A press of Allow or Block answers only the question it was named for, which is the one that was showing when the press began, and Allow only once [`ALLOW_DELAY`] has passed.
-    pub fn press_at(&mut self, id: FocusId, now: Instant) -> bool {
+    pub fn press_at(&mut self, id: Target, now: Instant) -> bool {
         match id {
-            BROWSER_QUESTION_BAR => {}
-            FocusId(number) if (ALLOW_BASE..BLOCK_BASE + QUESTION_SLOTS).contains(&number) => {
-                let allow = number < BLOCK_BASE;
-                let slot = (number - if allow { ALLOW_BASE } else { BLOCK_BASE }) % QUESTION_SLOTS;
-                let showing = self.questions.first().map(|asked| asked.id);
-                let named = showing.filter(|shown| shown % QUESTION_SLOTS == slot);
+            Target::Browser(BrowserEvent::BrowserQuestionBar) => {}
+            Target::Browser(BrowserEvent::BrowserAllow(asked))
+            | Target::Browser(BrowserEvent::BrowserBlock(asked)) => {
+                let allow = matches!(id, Target::Browser(BrowserEvent::BrowserAllow(_)));
+                let showing = self.questions.first().map(|question| question.id);
+                let named = showing.filter(|shown| *shown == asked);
                 if let Some(question) = named
                     && (!allow || self.allow_ready(now))
                 {
@@ -207,13 +177,13 @@ impl Safety {
                     self.track(now);
                 }
             }
-            BROWSER_DISMISS => self.download = None,
-            BROWSER_CERT_BACK => {
+            Target::Browser(BrowserEvent::BrowserDismiss) => self.download = None,
+            Target::Browser(BrowserEvent::BrowserCertBack) => {
                 if self.certificate.take().is_some() {
                     self.answers.push(Answer::Certificate { proceed: false });
                 }
             }
-            BROWSER_CERT_PROCEED => match self.certificate.as_mut() {
+            Target::Browser(BrowserEvent::BrowserCertProceed) => match self.certificate.as_mut() {
                 Some(certificate) if !certificate.confirming => certificate.confirming = true,
                 Some(_) => {
                     self.certificate = None;
@@ -250,7 +220,10 @@ impl Safety {
                 .offset(0.0, 0.0)
                 .width(width)
                 .z_index(40)
-                .control(BROWSER_QUESTION_BAR, reduce(BROWSER_QUESTION_BAR)),
+                .control(
+                    Target::Browser(BrowserEvent::BrowserQuestionBar),
+                    send(Event::Browser(BrowserEvent::BrowserQuestionBar)),
+                ),
             asked,
             self.questions.len() - 1,
             self.allow_ready(now),
@@ -266,20 +239,14 @@ fn host_of(origin: &str) -> &str {
 /// Emits a bar as tall as [`BAR`] and as wide as its parent, with `modifier` around it, holding what `content` emits side by side: its words, then its buttons.
 #[track_caller]
 fn bar(modifier: Modifier, content: impl FnOnce()) {
-    row_arranged(
+    kit::row(
         modifier
             .height(BAR)
             .fill_max_width()
             .background(theme::color(Role::Surface))
-            .draw_behind(theme::edge(
-                theme::Side::Bottom,
-                1.0,
-                theme::color(Role::Border),
-            ))
-            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .ruled(theme::Side::Bottom)
             .padding_xy(theme::sp(3), 0.0),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
+        2,
         content,
     );
 }
@@ -297,19 +264,23 @@ fn question_bar(modifier: Modifier, asked: &Question, waiting: usize, ready: boo
     }
     bar(modifier, || {
         clipped(words, 13, Role::Text);
-        Button::new("Block", block_id(asked.id))
-            .variant(Variant::Outline)
-            .size(Size::Sm)
-            .build();
-        Button::new("Allow", allow_id(asked.id))
-            .variant(if ready {
+        kit::small_button(
+            "Block",
+            Target::Browser(BrowserEvent::BrowserBlock(asked.id)),
+            Variant::Outline,
+        )
+        .build();
+        kit::small_button(
+            "Allow",
+            Target::Browser(BrowserEvent::BrowserAllow(asked.id)),
+            if ready {
                 Variant::Default
             } else {
                 Variant::Secondary
-            })
-            .size(Size::Sm)
-            .disabled(!ready)
-            .build();
+            },
+        )
+        .disabled(!ready)
+        .build();
     });
 }
 
@@ -328,7 +299,7 @@ fn download_bar(download: &Download) {
     };
     bar(Modifier::new(), || {
         clipped(words, 13, tone);
-        Button::icon(phosphor::X, BROWSER_DISMISS).build();
+        Button::icon(phosphor::X, Target::Browser(BrowserEvent::BrowserDismiss)).build();
     });
 }
 
@@ -352,47 +323,27 @@ fn reason(error: &str) -> &'static str {
 #[track_caller]
 fn paragraph(content: &str, pixels: u32, tone: Role, room: f32) {
     let lines = wrap(content, pixels, room);
-    column_arranged(
-        Modifier::new(),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            for words in lines {
-                line(words, pixels, 1.45, tone);
-            }
-        },
-    );
+    kit::column(Modifier::new(), 0, || {
+        for words in lines {
+            line(words, pixels, 1.45, tone);
+        }
+    });
 }
 
 /// Emits a row of the certificate's details: `name`, and what it says in `value`, set in the code face when `mono`.
 #[track_caller]
 fn detail(name: &str, value: &str, mono: bool) {
     let value = if value.is_empty() { "unknown" } else { value };
-    let kind = theme::text_style(12, 1.4)
-        .color(theme::color(Role::Text))
-        .max_lines(1);
+    let kind = kit::line(12, Role::Text);
     let kind = if mono { theme::in_mono(kind) } else { kind };
-    row_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Start,
-        || {
-            rustle::basic_text(
-                Modifier::new().width(108.0),
-                name,
-                theme::text_style(12, 1.4)
-                    .color(theme::color(Role::Muted))
-                    .max_lines(1),
-                rustle::TextOverflow::Ellipsis,
-            );
-            rustle::basic_text(
-                Modifier::new().weight(1.0),
-                value,
-                kind,
-                rustle::TextOverflow::Ellipsis,
-            );
-        },
-    );
+    kit::row_top(Modifier::new().fill_max_width(), 3, || {
+        kit::text(
+            Modifier::new().width(108.0),
+            name,
+            kit::line(12, Role::Muted),
+        );
+        kit::text(Modifier::new().weight(1.0), value, kind);
+    });
 }
 
 /// Emits the page that stands in for a site whose certificate is not trusted, `width` by `height` logical pixels: what is wrong with the certificate and the buttons that go back or, deliberately, go on.
@@ -421,24 +372,20 @@ pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) {
         Arrangement::Center,
         Alignment::Center,
         || {
-            column_arranged(
+            kit::column(
                 Modifier::new()
                     .width(across)
-                    .background_rounded(theme::color(Role::Surface), Radius::Xl.px())
-                    .border(1.0, theme::color(Role::Border), Radius::Xl.px())
-                    .padding(1.0)
+                    .panel(Radius::Xl)
                     .padding(theme::sp(5)),
-                Arrangement::SpacedBy(sp(3)),
-                Alignment::Start,
+                3,
                 || {
-                    rustle::basic_text(
+                    kit::text(
                         Modifier::new(),
                         "Not secure: certificate not trusted",
                         theme::text_style(18, 1.3)
                             .font_weight(rustle::FontWeight::SEMI_BOLD)
                             .color(theme::color(Role::Danger))
                             .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
                     );
                     paragraph(
                         &format!(
@@ -454,12 +401,11 @@ pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) {
                         Role::Muted,
                         room,
                     );
-                    column_arranged(
+                    kit::column(
                         Modifier::new()
                             .fill_max_width()
                             .padding_xy(0.0, theme::sp(2)),
-                        Arrangement::SpacedBy(sp(1)),
-                        Alignment::Start,
+                        1,
                         || {
                             detail("Site", &certificate.url, false);
                             detail("Issued to", &certificate.subject, false);
@@ -468,24 +414,20 @@ pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) {
                             detail("SHA-256", &certificate.fingerprint, true);
                         },
                     );
-                    row_arranged(
-                        Modifier::new(),
-                        Arrangement::SpacedBy(sp(2)),
-                        Alignment::Center,
-                        || {
-                            Button::new("Go back", BROWSER_CERT_BACK).build();
-                            if certificate.confirming {
-                                Button::new(proceed, BROWSER_CERT_PROCEED)
-                                    .variant(Variant::Destructive)
-                                    .build();
-                            } else {
-                                Button::new(proceed, BROWSER_CERT_PROCEED)
-                                    .variant(Variant::Outline)
-                                    .tone(Role::Danger)
-                                    .build();
-                            }
-                        },
-                    );
+                    kit::row(Modifier::new(), 2, || {
+                        Button::new("Go back", Target::Browser(BrowserEvent::BrowserCertBack))
+                            .build();
+                        if certificate.confirming {
+                            Button::new(proceed, Target::Browser(BrowserEvent::BrowserCertProceed))
+                                .variant(Variant::Destructive)
+                                .build();
+                        } else {
+                            Button::new(proceed, Target::Browser(BrowserEvent::BrowserCertProceed))
+                                .variant(Variant::Outline)
+                                .tone(Role::Danger)
+                                .build();
+                        }
+                    });
                     paragraph(
                         if certificate.confirming {
                             "Press again to load the site. This is remembered for this site until the browser closes."

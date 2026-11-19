@@ -1,20 +1,21 @@
 //! A row of the settings window: what a setting is called and does beside, or above, its one control, and the button that puts it back as it comes once it was changed; with the controls a row is made of.
 
-use crate::events::reduce;
+use crate::events::{Event, send};
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
+use crate::theme::Indicated;
 use rustle::TextFieldState;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
 use rustle::{Icon, phosphor};
 
 use crate::Button;
 use crate::button::Variant;
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::input::Input;
 use crate::parts::{clipped, glyph, line, wrap};
-use crate::settings_ids::PICKS;
+use crate::settings_rows::PICKS;
 use crate::size::Size;
 use crate::theme::{Radius, Role};
 use crate::tile::Tile;
@@ -55,10 +56,12 @@ const FILTERED_FROM: usize = 10;
 /// but cannot be pressed. It is rustle's switch with a text-coloured knob on the success
 /// colour while on and on the border colour while off.
 #[track_caller]
-pub fn switch(on: bool, id: Option<FocusId>) {
+pub fn switch(on: bool, id: Option<Target>) {
     let mut modifier = Modifier::new().size(SWITCH_WIDTH, theme::sp(5));
     if let Some(id) = id {
-        modifier = modifier.cursor(CursorIcon::Pointer).control(id, reduce(id));
+        modifier = modifier
+            .cursor(CursorIcon::Pointer)
+            .control(id, send(Event::pressing(id)));
     }
     let colors = rustle::SwitchColors {
         checked_thumb_color: theme::color(Role::Text),
@@ -80,8 +83,8 @@ pub fn choices_width(names: &[&str]) -> f32 {
 /// Emits the choices `names` side by side as rustle's single-choice segmented buttons, `picked`
 /// marked, each answering to the name `id_of` gives its place; a choice given no name is left out.
 #[track_caller]
-pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> Option<FocusId>) {
-    let shown: Vec<(usize, &str, FocusId)> = names
+pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> Option<Target>) {
+    let shown: Vec<(usize, &str, Target)> = names
         .iter()
         .enumerate()
         .filter_map(|(option, name)| id_of(option).map(|id| (option, *name, id)))
@@ -103,7 +106,7 @@ pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> Option<Fo
                         rustle::SegmentedButtonDefaults::item_shape(index, count, base),
                         Modifier::new()
                             .cursor(CursorIcon::Pointer)
-                            .control(id, reduce(id)),
+                            .control(id, send(Event::pressing(id))),
                         true,
                         colors,
                         rustle::SegmentedButtonDefaults::border_stroke(
@@ -141,21 +144,16 @@ pub const NUMBER_WIDTH: f32 = 136.0;
 
 /// Emits the number `shown` between the buttons `smaller` and `bigger` that change it.
 #[track_caller]
-pub fn number(shown: String, smaller: FocusId, bigger: FocusId) {
-    let button = |icon: Icon, id: FocusId| {
-        Button::icon(icon, id)
-            .size(Size::Sm)
-            .tone(Role::Text)
-            .build();
+pub fn number(shown: String, smaller: Target, bigger: Target) {
+    let button = |icon: Icon, id: Target| {
+        Button::icon(icon, id).tone(Role::Text).build();
     };
-    row_arranged(
+    kit::row(
         Modifier::new()
             .height(theme::sp(8))
-            .border(1.0, theme::color(Role::Border), Radius::Md.px())
-            .padding(1.0)
+            .outlined(Radius::Md)
             .padding_xy(theme::sp(0.5), 0.0),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Center,
+        1,
         || {
             button(phosphor::MINUS, smaller);
             row_arranged(
@@ -163,14 +161,7 @@ pub fn number(shown: String, smaller: FocusId, bigger: FocusId) {
                 Arrangement::Center,
                 Alignment::Start,
                 || {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        shown,
-                        theme::mono_style(12, 1.4)
-                            .color(theme::color(Role::Text))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
-                    );
+                    kit::text(Modifier::new(), shown, kit::code(12, Role::Text));
                 },
             );
             button(phosphor::PLUS, bigger);
@@ -180,10 +171,8 @@ pub fn number(shown: String, smaller: FocusId, bigger: FocusId) {
 
 /// Emits the button saying `shown`, the choice picked, `width` logical pixels wide, that opens the list of choices, answering to `id`; its chevron points down while the list is `open`.
 #[track_caller]
-pub fn picker(shown: &str, width: f32, id: FocusId, open: bool) {
-    Button::new(shown, id)
-        .variant(Variant::Field)
-        .size(Size::Sm)
+pub fn picker(shown: &str, width: f32, id: Target, open: bool) {
+    kit::small_button(shown, id, Variant::Field)
         .width(width)
         .selected(open)
         .trailing_icon(if open {
@@ -207,24 +196,20 @@ pub fn picker_shown(options: &[String], filter: &TextFieldState) -> Vec<usize> {
 
 /// Emits the open list of `options` under a row, `picked` marked, narrowed by what `filter` holds when they are many; each row shown answers to its row in [`PICKS`], so a list of any length names its rows the same way.
 #[track_caller]
-pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&TextFieldState, FocusId)) {
+pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&TextFieldState, Target)) {
     let shown = picker_shown(options, filter.0);
     let more = shown.len().saturating_sub(MOST_LISTED);
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_width()
-            .background_rounded(theme::color(Role::Surface), Radius::Md.px())
-            .border(1.0, theme::color(Role::Border), Radius::Md.px())
-            .padding(1.0)
+            .panel(Radius::Md)
             .padding(theme::sp(1)),
-        Arrangement::SpacedBy(sp(0.5)),
-        Alignment::Start,
+        0.5,
         || {
             if options.len() >= FILTERED_FROM {
-                column_arranged(
+                kit::column(
                     Modifier::new().fill_max_width().padding(theme::sp(1)),
-                    Arrangement::Start,
-                    Alignment::Start,
+                    0,
                     || {
                         Input::search(filter.0, filter.1)
                             .size(Size::Sm)
@@ -254,12 +239,11 @@ pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&TextFiel
                     });
             }
             if more > 0 {
-                row_arranged(
+                kit::row(
                     Modifier::new()
                         .height(theme::sp(6))
                         .padding_xy(theme::sp(2), 0.0),
-                    Arrangement::Start,
-                    Alignment::Center,
+                    0,
                     || {
                         line(
                             format!("{more} more; type to narrow"),
@@ -276,7 +260,7 @@ pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&TextFiel
 
 /// Emits the box `field` is written in, answering to `id`, saying `placeholder` while empty.
 #[track_caller]
-pub fn text_box(field: &TextFieldState, id: FocusId, placeholder: &str) {
+pub fn text_box(field: &TextFieldState, id: Target, placeholder: &str) {
     Input::new(field, id)
         .size(Size::Sm)
         .placeholder(placeholder)
@@ -287,75 +271,51 @@ pub fn text_box(field: &TextFieldState, id: FocusId, placeholder: &str) {
 #[track_caller]
 pub fn list(
     lines: &[String],
-    remove_of: impl Fn(usize) -> Option<FocusId>,
-    field: (&TextFieldState, FocusId),
-    add: (FocusId, &str),
+    remove_of: impl Fn(usize) -> Option<Target>,
+    field: (&TextFieldState, Target),
+    add: (Target, &str),
     placeholder: &str,
 ) {
-    column_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Start,
-        || {
-            for (place, text) in lines.iter().enumerate() {
-                row_arranged(
-                    Modifier::new()
-                        .fill_max_width()
-                        .height(theme::sp(6))
-                        .interaction_background(
-                            (theme::InteractionTones::new()
-                                .hover(Role::SurfaceHover)
-                                .radius(Radius::Sm))
-                            .colors(),
-                        )
-                        .padding_xy(theme::sp(2), 0.0),
-                    Arrangement::SpacedBy(sp(2)),
-                    Alignment::Center,
-                    || {
-                        row_arranged(
-                            Modifier::new().weight(1.0),
-                            Arrangement::Start,
-                            Alignment::Center,
-                            || {
-                                rustle::basic_text(
-                                    Modifier::new(),
-                                    text.as_str(),
-                                    theme::mono_style(12, 1.4)
-                                        .color(theme::color(Role::Text))
-                                        .max_lines(1),
-                                    rustle::TextOverflow::Ellipsis,
-                                );
-                            },
-                        );
-                        if let Some(remove) = remove_of(place) {
-                            Button::icon(phosphor::X, remove).size(Size::Xs).build();
-                        }
-                    },
-                );
-            }
-            row_arranged(
-                Modifier::new().padding_each(0.0, theme::sp(1), 0.0, 0.0),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Center,
+    kit::column(Modifier::new().fill_max_width(), 1, || {
+        for (place, text) in lines.iter().enumerate() {
+            kit::row(
+                Modifier::new()
+                    .fill_max_width()
+                    .height(theme::sp(6))
+                    .indicated(
+                        theme::InteractionTones::new()
+                            .hover(Role::SurfaceHover)
+                            .radius(Radius::Sm),
+                        theme::Focused::Rustle,
+                    )
+                    .padding_xy(theme::sp(2), 0.0),
+                2,
                 || {
-                    column_arranged(
-                        Modifier::new().width(TEXT_WIDTH),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            text_box(field.0, field.1, placeholder);
-                        },
-                    );
-                    Button::new(add.1.to_owned(), add.0).size(Size::Sm).build();
+                    kit::row(Modifier::new().weight(1.0), 0, || {
+                        kit::text(Modifier::new(), text.as_str(), kit::code(12, Role::Text));
+                    });
+                    if let Some(remove) = remove_of(place) {
+                        Button::icon(phosphor::X, remove).size(Size::Xs).build();
+                    }
                 },
             );
-        },
-    );
+        }
+        kit::row(
+            Modifier::new().padding_each(0.0, theme::sp(1), 0.0, 0.0),
+            2,
+            || {
+                kit::column(Modifier::new().width(TEXT_WIDTH), 0, || {
+                    text_box(field.0, field.1, placeholder);
+                });
+                kit::small_button(add.1.to_owned(), add.0, Variant::Default).build();
+            },
+        );
+    });
 }
 
 /// Emits the button that puts a setting back as it comes, answering to `id`.
 #[track_caller]
-fn reset_button(id: FocusId) {
+fn reset_button(id: Target) {
     Button::icon(phosphor::ARROW_COUNTER_CLOCKWISE, id)
         .size(Size::Xs)
         .build();
@@ -378,7 +338,7 @@ pub struct SettingRow<'a> {
     /// What emits the control, and how wide it is drawn at most in logical pixels, which says whether the words fit beside it; nothing for a box of text, which is as wide as the row lets it.
     control: Option<(Content<'a>, Option<f32>)>,
     /// The button that resets it, while it was changed.
-    reset: Option<FocusId>,
+    reset: Option<Target>,
     /// What emits what opens under the row, such as a list of choices.
     below: Option<Content<'a>>,
     /// What the caller puts around the row's box.
@@ -405,7 +365,7 @@ impl<'a> SettingRow<'a> {
     }
 
     /// The row with the button that resets it, answering to `id`, when it is given one.
-    pub fn reset(mut self, id: Option<FocusId>) -> Self {
+    pub fn reset(mut self, id: Option<Target>) -> Self {
         self.reset = id;
         self
     }
@@ -441,103 +401,58 @@ impl<'a> SettingRow<'a> {
             .fill_max_width()
             .chain(self.modifier)
             .chain(Modifier::new().padding_xy(0.0, theme::sp(3)));
-        column_arranged(
-            modifier,
-            Arrangement::SpacedBy(sp(2)),
-            Alignment::Start,
-            move || {
-                if stacked {
-                    column_arranged(
-                        Modifier::new().fill_max_width(),
-                        Arrangement::SpacedBy(sp(2)),
-                        Alignment::Start,
-                        || {
-                            row_arranged(
-                                Modifier::new().fill_max_width(),
-                                Arrangement::SpacedBy(sp(2)),
-                                Alignment::Start,
-                                || {
-                                    about_words(&title, &about, words, Modifier::new().weight(1.0));
-                                    if let Some(id) = reset {
-                                        reset_button(id);
-                                    }
-                                },
-                            );
-                            match control {
-                                Some((control, Some(_))) => {
-                                    row_arranged(
-                                        Modifier::new().fill_max_width(),
-                                        Arrangement::Start,
-                                        Alignment::Start,
-                                        control,
-                                    );
-                                }
-                                Some((control, None)) => {
-                                    column_arranged(
-                                        Modifier::new().fill_max_width(),
-                                        Arrangement::Start,
-                                        Alignment::Start,
-                                        control,
-                                    );
-                                }
-                                None => {}
+        kit::column(modifier, 2, move || {
+            if stacked {
+                kit::column(Modifier::new().fill_max_width(), 2, || {
+                    kit::row_top(Modifier::new().fill_max_width(), 2, || {
+                        about_words(&title, &about, words, Modifier::new().weight(1.0));
+                        if let Some(id) = reset {
+                            reset_button(id);
+                        }
+                    });
+                    match control {
+                        Some((control, Some(_))) => {
+                            kit::row_top(Modifier::new().fill_max_width(), 0, control);
+                        }
+                        Some((control, None)) => {
+                            kit::column(Modifier::new().fill_max_width(), 0, control);
+                        }
+                        None => {}
+                    }
+                });
+            } else {
+                kit::row(Modifier::new().fill_max_width(), 6, || {
+                    about_words(&title, &about, words, Modifier::new().weight(1.0));
+                    kit::row(Modifier::new(), 2, || {
+                        if let Some(id) = reset {
+                            reset_button(id);
+                        }
+                        match control {
+                            Some((control, Some(_))) => control(),
+                            Some((control, None)) => {
+                                kit::column(Modifier::new().width(TEXT_WIDTH), 0, control);
                             }
-                        },
-                    );
-                } else {
-                    row_arranged(
-                        Modifier::new().fill_max_width(),
-                        Arrangement::SpacedBy(sp(6)),
-                        Alignment::Center,
-                        || {
-                            about_words(&title, &about, words, Modifier::new().weight(1.0));
-                            row_arranged(
-                                Modifier::new(),
-                                Arrangement::SpacedBy(sp(2)),
-                                Alignment::Center,
-                                || {
-                                    if let Some(id) = reset {
-                                        reset_button(id);
-                                    }
-                                    match control {
-                                        Some((control, Some(_))) => control(),
-                                        Some((control, None)) => {
-                                            column_arranged(
-                                                Modifier::new().width(TEXT_WIDTH),
-                                                Arrangement::Start,
-                                                Alignment::Start,
-                                                control,
-                                            );
-                                        }
-                                        None => {}
-                                    }
-                                },
-                            );
-                        },
-                    );
-                }
-                if let Some(below) = below {
-                    below();
-                }
-            },
-        );
+                            None => {}
+                        }
+                    });
+                });
+            }
+            if let Some(below) = below {
+                below();
+            }
+        });
     }
 }
 
 /// Emits what a setting is called, `title`, over what it does, `about`, each wrapped to `words` logical pixels, in a column `modifier` sizes.
 #[track_caller]
 fn about_words(title: &str, about: &str, words: f32, modifier: Modifier) {
-    column_arranged(
-        modifier,
-        Arrangement::SpacedBy(sp(0.5)),
-        Alignment::Start,
-        || {
-            for part in wrap(title, 13, words) {
-                line(part, 13, 1.4, Role::Text);
-            }
-            for part in wrap(about, 12, words) {
-                line(part, 12, 1.4, Role::Muted);
-            }
-        },
-    );
+    kit::column(modifier, 0.5, || {
+        for part in wrap(title, 13, words) {
+            line(part, 13, 1.4, Role::Text);
+        }
+        for part in wrap(about, 12, words) {
+            line(part, 12, 1.4, Role::Muted);
+        }
+    });
 }

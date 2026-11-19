@@ -1,21 +1,25 @@
 //! What the user does to the controls the views draw, handed to the app as event lambdas.
 //!
 //! A control takes what clicking it does as a lambda, the way a composable takes its
-//! `onClick`: [`Interactive::control`] names the control and runs its lambda when it is
-//! clicked, or activated with Enter or Space while it holds the keyboard. The lambdas call
-//! the app's state holder, the [`Operations`] the views are composed under, provided once
-//! at the root with [`provide`]: [`Operations::update`] runs a reducer of the workspace
-//! (most controls hand their press to [`WorkspaceState::after`] with [`reduce`]), and the
-//! named operations do what only the app can, such as opening a menu where the pointer is,
-//! moving the window or talking to the servers. The app does what every event asks
-//! afterwards (saving, sending, the focus a reducer asked for) in one place.
+//! `onClick`: [`Interactive::control`] names the control by its [`Target`] and runs its
+//! lambda when it is clicked, or activated with Enter or Space while it holds the keyboard.
+//! The lambdas call the app's state holder, the [`Operations`] the views are composed
+//! under, provided once at the root with [`provide`]: [`Operations::send`] hands the
+//! workspace's reducer, [`WorkspaceState::handle`], an [`Event`] (most controls send
+//! an area event such as [`Event::Sidebar`] with [`send`]), [`Operations::update`] runs any other change of the
+//! workspace, and the named operations do what only the app can, such as opening a menu
+//! where the pointer is, moving the window or talking to the servers. The app does what
+//! every event asks afterwards (saving, sending, the focus a reducer asked for) in one
+//! place.
 //!
 //! What the views report besides, so the app knows where the pointer and the presses are,
-//! keeps the control's [`FocusId`]: the press that went down on a control
+//! keeps the control's [`Target`]: the press that went down on a control
 //! ([`Operations::pressed`]), the pointer over it ([`Operations::hovered`]) and a drag of
 //! it ([`Operations::carry_started`]). Keyboard focus is rustle's, followed by the app
 //! through [`crate::focus`].
 
+use crate::areas::ChatEvent;
+use crate::target::Target;
 use std::cell::Cell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -27,12 +31,73 @@ use rustle::{
 };
 
 use crate::browser_menu::BrowserCommand;
-use crate::focus::{self, FocusId};
+use crate::focus;
 use crate::git_controls::Pick;
 use crate::git_menus::MenuKind;
 use crate::state::WorkspaceState;
 use crate::terminal_menu::TerminalCommand;
 use crate::tree_actions::TreeTarget;
+
+/// Something the reader did to a control of the window, as the workspace's reducer,
+/// [`WorkspaceState::handle`], takes it.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Event {
+    /// A control of the sidebar was clicked, or activated with Enter or Space.
+    Sidebar(crate::areas::SidebarEvent),
+    /// A control of the conversation was clicked, or activated with Enter or Space.
+    Chat(crate::areas::ChatEvent),
+    /// A control of the prompt box and its chips was clicked, or activated with Enter or Space.
+    Composer(crate::areas::ComposerEvent),
+    /// A control of the review of the changes was clicked, or activated with Enter or Space.
+    Diff(crate::areas::DiffEvent),
+    /// A control of the project's files was clicked, or activated with Enter or Space.
+    Tree(crate::areas::TreeEvent),
+    /// A control of the file shown was clicked, or activated with Enter or Space.
+    Editor(crate::areas::EditorEvent),
+    /// A control of the project search, the excerpts and the conflict resolver was clicked, or activated with Enter or Space.
+    Search(crate::areas::SearchEvent),
+    /// A control of source control was clicked, or activated with Enter or Space.
+    Git(crate::areas::GitEvent),
+    /// A control of the dock's shells and problems was clicked, or activated with Enter or Space.
+    Terminal(crate::areas::TerminalEvent),
+    /// A control of the debug tab was clicked, or activated with Enter or Space.
+    Debug(crate::areas::DebugEvent),
+    /// A control of the browser pane was clicked, or activated with Enter or Space.
+    Browser(crate::areas::BrowserEvent),
+    /// A control of the settings window was clicked, or activated with Enter or Space.
+    Settings(crate::areas::SettingsEvent),
+    /// A control of an open menu was clicked, or activated with Enter or Space.
+    Menu(crate::areas::MenuEvent),
+    /// A control of a dialog was clicked, or activated with Enter or Space.
+    Dialog(crate::areas::DialogEvent),
+    /// A control of the window's frame and panes was clicked, or activated with Enter or Space.
+    Window(crate::areas::WindowEvent),
+    /// Something was done to a text field.
+    Field(FieldEvent),
+}
+
+/// What was done to a text field, named by its [`Target`].
+#[derive(Clone, Debug, PartialEq)]
+pub enum FieldEvent {
+    /// The reader changed the text of the field through its text field.
+    Changed(Target),
+    /// The reader typed `text` into the field over its selection.
+    Typed {
+        /// The field typed in.
+        field: Target,
+        /// What was typed.
+        text: String,
+    },
+    /// The reader left the field.
+    Left(Target),
+    /// `edit` was made to the code editor's field.
+    Edited {
+        /// The field edited.
+        field: Target,
+        /// The change made to it.
+        edit: pm_field::Edit,
+    },
+}
 
 /// A change of the workspace: the state it was, made into the state it is after the change.
 pub type Change = Box<dyn FnOnce(WorkspaceState) -> WorkspaceState>;
@@ -43,30 +108,52 @@ pub type Change = Box<dyn FnOnce(WorkspaceState) -> WorkspaceState>;
 pub trait Operations {
     /// Changes the workspace with `change`, then does what the change asks of the app.
     fn update(&self, change: Change);
+    /// Hands `event` to the workspace's reducer, [`WorkspaceState::handle`], then does what
+    /// it asks of the app.
+    fn send(&self, event: Event) {
+        self.update(Box::new(move |state| state.handle(event)));
+    }
     /// The primary button went down on the control `id`, laid out at `area` in the window,
     /// making `clicks` presses in a row as rustle counted them by `configuration`, the view
     /// configuration in effect where the control was composed: the app follows the press
     /// (fields take the keyboard, a handle takes hold of the pointer, a menu opened from the
     /// control hangs from `area`).
-    fn pressed(&self, id: FocusId, area: Rect, clicks: u32, configuration: ViewConfiguration);
+    fn pressed(&self, id: Target, area: Rect, clicks: u32, configuration: ViewConfiguration);
     /// The primary button came up on the control `id` it went down on, laid out at `area`.
     /// Returns whether the click counts, which it does not after the press dragged something
     /// or was taken by a handle; a click that counts gives the keyboard to the field or page
     /// it is on.
-    fn click_lands(&self, id: FocusId, area: Rect) -> bool;
+    fn click_lands(&self, id: Target, area: Rect) -> bool;
     /// A key went down or up in the window, before whatever holds rustle's focus sees it.
     /// Returns whether the holder took it, in which case nothing else in the window does.
     fn key(&self, event: &KeyEvent) -> bool;
+    /// The input method is composing `text` for the area `id` that takes text the holder
+    /// handles itself, or stopped composing when `text` is empty.
+    fn composing(&self, id: Target, text: String) {
+        let _ = (id, text);
+    }
+    /// The input method committed `text` for the area `id` that takes text the holder
+    /// handles itself.
+    fn committed(&self, id: Target, text: String) {
+        let _ = (id, text);
+    }
+    /// Where the input method's candidates go for the area `id` that takes text the holder
+    /// handles itself, in logical pixels from the window's top left, when the holder knows
+    /// better than the area.
+    fn caret_area(&self, id: Target) -> Option<Rect> {
+        let _ = id;
+        None
+    }
     /// Files from another application are held over the window at `at`, or left it, or
     /// were let go elsewhere, when `at` is `None`.
     fn files_held(&self, at: Option<(f32, f32)>);
     /// Files from another application, at `paths`, were let go over the window at `at`.
     fn files_dropped(&self, paths: Vec<PathBuf>, at: (f32, f32));
     /// The pointer came over the control `id`, or left it when not `over`.
-    fn hovered(&self, id: FocusId, over: bool);
+    fn hovered(&self, id: Target, over: bool);
     /// The handle `id` on the edge of a panel is dragged `by` logical pixels across and
     /// down from where the drag began.
-    fn sash_dragged(&self, id: FocusId, by: (f32, f32));
+    fn sash_dragged(&self, id: Target, by: (f32, f32));
     /// The drag of a panel's handle ended.
     fn sash_released(&self);
     /// The minimap is pressed or dragged `down` logical pixels from its top, of its `height`.
@@ -76,15 +163,15 @@ pub trait Operations {
     fn dismiss_requested(&self);
     /// Whether the control `id` can be dragged elsewhere in the window: a project's header,
     /// a pane's tab or a row of the project's files.
-    fn carries(&self, id: FocusId) -> bool;
+    fn carries(&self, id: Target) -> bool;
     /// A drag of the control `id` started, the pointer at `at` in the window.
-    fn carry_started(&self, id: FocusId, at: (f32, f32));
+    fn carry_started(&self, id: Target, at: (f32, f32));
     /// The pointer carrying a control moved to `at` in the window.
     fn carry_moved(&self, at: (f32, f32));
     /// The drag of a control ended where the pointer let go, with `modifiers` held.
     fn carry_ended(&self, modifiers: Modifiers);
     /// The number of a line `id` of a diff is pressed, or the pointer dragged on from it.
-    fn comment_dragged(&self, id: FocusId);
+    fn comment_dragged(&self, id: Target);
     /// The press or drag on the numbers of a diff's lines ended.
     fn comment_drag_ended(&self);
     /// The primary button went down on the edge or corner `edge` of the window's frame.
@@ -106,9 +193,9 @@ pub trait Operations {
     /// Opens the colour picker on the colour swatch `index` of the file shown.
     fn open_color_picker(&self, index: usize);
     /// Carries out the row `row` of the menu open over a field, and closes the menu.
-    fn field_menu_picked(&self, row: FocusId);
+    fn field_menu_picked(&self, row: Target);
     /// Carries out the row `row` of the menu open over the conversation's text.
-    fn message_menu_picked(&self, row: FocusId);
+    fn message_menu_picked(&self, row: Target);
     /// Opens the menu of what the page's capture button takes.
     fn open_browser_capture_menu(&self);
     /// Carries out `command` of the menu open over a web page.
@@ -123,7 +210,7 @@ pub trait Operations {
     fn open_project_menu(&self, project: usize);
     /// Opens the menu `kind` of the changes, hanging from the control `trigger` when one
     /// opened it, or under the pointer.
-    fn open_git_menu(&self, kind: MenuKind, trigger: Option<FocusId>);
+    fn open_git_menu(&self, kind: MenuKind, trigger: Option<Target>);
     /// Opens the menu of the pane that has the keyboard.
     fn open_pane_menu(&self);
     /// Opens the menu of the session `session`, under the pointer.
@@ -137,7 +224,7 @@ pub trait Operations {
     /// Opens the menu of the row `target` of the project's files, under the pointer.
     fn open_tree_menu(&self, target: TreeTarget);
     /// Opens the menu of the field `field` at the pointer.
-    fn open_field_menu(&self, field: FocusId);
+    fn open_field_menu(&self, field: Target);
     /// Opens the menu of the shell showing.
     fn open_terminal_menu(&self);
     /// Opens the menu of the web page showing.
@@ -155,10 +242,10 @@ impl Operations for Unattended {
     fn update(&self, _: Change) {}
 
     /// Does nothing.
-    fn pressed(&self, _: FocusId, _: Rect, _: u32, _: ViewConfiguration) {}
+    fn pressed(&self, _: Target, _: Rect, _: u32, _: ViewConfiguration) {}
 
     /// Lets no click count.
-    fn click_lands(&self, _: FocusId, _: Rect) -> bool {
+    fn click_lands(&self, _: Target, _: Rect) -> bool {
         false
     }
 
@@ -174,10 +261,10 @@ impl Operations for Unattended {
     fn files_dropped(&self, _: Vec<PathBuf>, _: (f32, f32)) {}
 
     /// Does nothing.
-    fn hovered(&self, _: FocusId, _: bool) {}
+    fn hovered(&self, _: Target, _: bool) {}
 
     /// Does nothing.
-    fn sash_dragged(&self, _: FocusId, _: (f32, f32)) {}
+    fn sash_dragged(&self, _: Target, _: (f32, f32)) {}
 
     /// Does nothing.
     fn sash_released(&self) {}
@@ -189,12 +276,12 @@ impl Operations for Unattended {
     fn dismiss_requested(&self) {}
 
     /// Carries nothing.
-    fn carries(&self, _: FocusId) -> bool {
+    fn carries(&self, _: Target) -> bool {
         false
     }
 
     /// Does nothing.
-    fn carry_started(&self, _: FocusId, _: (f32, f32)) {}
+    fn carry_started(&self, _: Target, _: (f32, f32)) {}
 
     /// Does nothing.
     fn carry_moved(&self, _: (f32, f32)) {}
@@ -203,7 +290,7 @@ impl Operations for Unattended {
     fn carry_ended(&self, _: Modifiers) {}
 
     /// Does nothing.
-    fn comment_dragged(&self, _: FocusId) {}
+    fn comment_dragged(&self, _: Target) {}
 
     /// Does nothing.
     fn comment_drag_ended(&self) {}
@@ -236,10 +323,10 @@ impl Operations for Unattended {
     fn open_color_picker(&self, _: usize) {}
 
     /// Does nothing.
-    fn field_menu_picked(&self, _: FocusId) {}
+    fn field_menu_picked(&self, _: Target) {}
 
     /// Does nothing.
-    fn message_menu_picked(&self, _: FocusId) {}
+    fn message_menu_picked(&self, _: Target) {}
 
     /// Does nothing.
     fn open_browser_capture_menu(&self) {}
@@ -260,7 +347,7 @@ impl Operations for Unattended {
     fn open_project_menu(&self, _: usize) {}
 
     /// Does nothing.
-    fn open_git_menu(&self, _: MenuKind, _: Option<FocusId>) {}
+    fn open_git_menu(&self, _: MenuKind, _: Option<Target>) {}
 
     /// Does nothing.
     fn open_pane_menu(&self) {}
@@ -281,7 +368,7 @@ impl Operations for Unattended {
     fn open_tree_menu(&self, _: TreeTarget) {}
 
     /// Does nothing.
-    fn open_field_menu(&self, _: FocusId) {}
+    fn open_field_menu(&self, _: Target) {}
 
     /// Does nothing.
     fn open_terminal_menu(&self) {}
@@ -330,9 +417,9 @@ impl OnClick {
     }
 
     /// What a click on the control `id` does when its builder was given nothing: the
-    /// workspace's reducer takes the press, as [`reduce`] hands it.
-    pub fn or_reduce(given: Option<Self>, id: FocusId) -> Self {
-        given.unwrap_or_else(|| Self::new(reduce(id)))
+    /// workspace's reducer takes the press, as [`send`] hands it [`Event::pressing`] of `id`.
+    pub fn or_send(given: Option<Self>, id: Target) -> Self {
+        given.unwrap_or_else(|| Self::new(send(Event::pressing(id))))
     }
 
     /// The lambda, to hand to [`Interactive::control`].
@@ -348,19 +435,19 @@ impl std::fmt::Debug for OnClick {
     }
 }
 
-/// The lambda that hands a press of the control `id` to the workspace's reducer,
-/// [`WorkspaceState::after`], which is what most controls do when clicked.
-pub fn reduce(id: FocusId) -> impl Fn() + Clone + 'static {
+/// The lambda that hands `event` to the workspace's reducer, [`WorkspaceState::handle`],
+/// which is what most controls do when clicked, with the event of their area.
+pub fn send(event: Event) -> impl Fn() + Clone + 'static {
     let operations = operations();
-    move || operations.update(Box::new(move |state| state.after(id)))
+    move || operations.send(event.clone())
 }
 
 /// The lambda that hands a press of the row `id` of a list the reader picks several rows
 /// of to the workspace: with Shift held `pick` picks the rows from the last one picked to
 /// it ([`Pick::Range`]), with Control or Command it picks it or lets it go
-/// ([`Pick::Toggle`]), and otherwise the row is pressed as [`reduce`] presses it.
+/// ([`Pick::Toggle`]), and otherwise the row is pressed as [`send`] presses it.
 pub fn picking(
-    id: FocusId,
+    id: Target,
     pick: impl Fn(WorkspaceState, Pick) -> WorkspaceState + 'static,
 ) -> impl Fn(Modifiers) + 'static {
     let operations = operations();
@@ -372,7 +459,7 @@ pub fn picking(
         } else if held.ctrl || held.meta {
             Box::new(move |state| pick(state, Pick::Toggle))
         } else {
-            Box::new(move |state| state.after(id))
+            Box::new(move |state| state.handle(Event::pressing(id)))
         };
         operations.update(change);
     }
@@ -392,7 +479,7 @@ fn activates(event: &KeyEvent) -> bool {
 /// The modifier that hands a drag of the handle `id` on a panel's edge to the app, as
 /// `detectDragGestures` hands its `onDrag` and `onDragEnd` lambdas the distance dragged: from
 /// the press on, how far the pointer went from where it went down, and the end of the drag.
-pub fn sash_drag(id: FocusId) -> Modifier {
+pub fn sash_drag(id: Target) -> Modifier {
     let operations = operations();
     let ended = Rc::clone(&operations);
     let start: Rc<Cell<Option<Offset>>> = Rc::default();
@@ -422,7 +509,7 @@ pub fn minimap_drag() -> Modifier {
 
 /// What a drag and drop inside the window carries: the control it started from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Carried(pub FocusId);
+pub struct Carried(pub Target);
 
 /// The window's root as the place every drag of a control is carried over: Compose's
 /// `dragAndDropTarget` on the root, telling the app the drag started, where the pointer
@@ -434,7 +521,7 @@ struct Carrying {
 
 impl Carrying {
     /// The control `event` carries and where the pointer is, when it carries one.
-    fn of(event: &DragAndDropEvent) -> Option<(FocusId, (f32, f32))> {
+    fn of(event: &DragAndDropEvent) -> Option<(Target, (f32, f32))> {
         let Carried(id) = *event.payload::<Carried>()?;
         Some((id, (event.position.x, event.position.y)))
     }
@@ -479,7 +566,7 @@ pub fn carry_target() -> Modifier {
 
 /// The modifier of the numbers of a diff's lines that hands a press and drag on them to the
 /// app, as `detectDragGestures` hands its lambdas: the press and each move, then the end.
-pub fn comment_drag(id: FocusId) -> Modifier {
+pub fn comment_drag(id: Target) -> Modifier {
     let operations = operations();
     let ended = Rc::clone(&operations);
     Modifier::new()
@@ -553,7 +640,7 @@ fn message_menu() -> Rc<dyn Fn()> {
 /// configuration in effect here; the pointer coming over it or leaving it is reported, and
 /// a drag of it when the app [carries](Operations::carries) it. A secondary press runs
 /// `on_context`, as a composable's `onContextMenu` lambda.
-fn reporting(id: FocusId, on_click: Rc<dyn Fn(Modifiers)>, on_context: Rc<dyn Fn()>) -> Modifier {
+fn reporting(id: Target, on_click: Rc<dyn Fn(Modifiers)>, on_context: Rc<dyn Fn()>) -> Modifier {
     let operations = operations();
     let (hover, carry) = (Rc::clone(&operations), Rc::clone(&operations));
     let area: Rc<Cell<Rect>> = Rc::default();
@@ -597,34 +684,34 @@ pub trait Interactive: Sized {
     /// over it, and `on_click` runs when it is clicked, or activated with Enter or Space
     /// while it holds the keyboard. Dragged away when the app [carries](Operations::carries) it.
     #[track_caller]
-    fn control(self, id: FocusId, on_click: impl Fn() + 'static) -> Self;
+    fn control(self, id: Target, on_click: impl Fn() + 'static) -> Self;
     /// Like [`control`](Self::control), with `on_click` told the modifier keys held, for a
     /// row the reader picks several of with Shift or Control.
     #[track_caller]
-    fn control_with(self, id: FocusId, on_click: impl Fn(Modifiers) + 'static) -> Self;
+    fn control_with(self, id: Target, on_click: impl Fn(Modifiers) + 'static) -> Self;
     /// Like [`control_with`](Self::control_with), with `on_context` run when the secondary
     /// button goes down on the control: what opens its menu.
     #[track_caller]
     fn control_menu(
         self,
-        id: FocusId,
+        id: Target,
         on_click: impl Fn(Modifiers) + 'static,
         on_context: impl Fn() + 'static,
     ) -> Self;
     /// Like [`control`](Self::control), without making the area a focus target, for a
     /// control whose keyboard focus is held by what it holds, such as a text field's box.
-    fn pressable(self, id: FocusId, on_click: impl Fn() + 'static) -> Self;
+    fn pressable(self, id: Target, on_click: impl Fn() + 'static) -> Self;
     /// Like [`pressable`](Self::pressable), with `on_context` run when the secondary button
     /// goes down on the area: what opens its menu.
     fn pressable_menu(
         self,
-        id: FocusId,
+        id: Target,
         on_click: impl Fn() + 'static,
         on_context: impl Fn() + 'static,
     ) -> Self;
     /// Marks the area as message `index` of the conversation: tests find it by the tag of
-    /// [`CHAT_TEXT`](crate::state::CHAT_TEXT), and the app finds the message under a point
-    /// among the places of [`message_area_id`](crate::message_menu::message_area_id).
+    /// [`CHAT_TEXT`](crate::areas::ChatEvent::ChatText), and the app finds the message under a point
+    /// among the places of [`ChatEvent::MessageArea`](crate::areas::ChatEvent::MessageArea).
     fn message_area(self, index: usize) -> Self;
 }
 
@@ -633,7 +720,7 @@ pub trait Interactive: Sized {
 #[track_caller]
 fn focus_control(
     modifier: Modifier,
-    id: FocusId,
+    id: Target,
     on_click: Rc<dyn Fn(Modifiers)>,
     on_context: Rc<dyn Fn()>,
 ) -> Modifier {
@@ -655,26 +742,26 @@ fn focus_control(
 
 impl Interactive for Modifier {
     #[track_caller]
-    fn control(self, id: FocusId, on_click: impl Fn() + 'static) -> Self {
+    fn control(self, id: Target, on_click: impl Fn() + 'static) -> Self {
         focus_control(self, id, Rc::new(move |_| on_click()), message_menu())
     }
 
     #[track_caller]
-    fn control_with(self, id: FocusId, on_click: impl Fn(Modifiers) + 'static) -> Self {
+    fn control_with(self, id: Target, on_click: impl Fn(Modifiers) + 'static) -> Self {
         focus_control(self, id, Rc::new(on_click), message_menu())
     }
 
     #[track_caller]
     fn control_menu(
         self,
-        id: FocusId,
+        id: Target,
         on_click: impl Fn(Modifiers) + 'static,
         on_context: impl Fn() + 'static,
     ) -> Self {
         focus_control(self, id, Rc::new(on_click), Rc::new(on_context))
     }
 
-    fn pressable(self, id: FocusId, on_click: impl Fn() + 'static) -> Self {
+    fn pressable(self, id: Target, on_click: impl Fn() + 'static) -> Self {
         self.pressable_menu(id, on_click, {
             let open = message_menu();
             move || open()
@@ -683,7 +770,7 @@ impl Interactive for Modifier {
 
     fn pressable_menu(
         self,
-        id: FocusId,
+        id: Target,
         on_click: impl Fn() + 'static,
         on_context: impl Fn() + 'static,
     ) -> Self {
@@ -696,8 +783,8 @@ impl Interactive for Modifier {
 
     fn message_area(self, index: usize) -> Self {
         crate::bounds::placed(
-            crate::message_menu::message_area_id(index),
-            self.test_tag(crate::state::CHAT_TEXT.tag()),
+            Target::Chat(ChatEvent::MessageArea(index)),
+            self.test_tag(Target::Chat(ChatEvent::ChatText).tag()),
         )
     }
 }

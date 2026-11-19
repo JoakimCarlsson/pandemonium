@@ -1,20 +1,16 @@
 //! The terminal dock's state: the shells open in each session and what is done to them.
 
+use crate::areas::TerminalEvent;
+use crate::target::Target;
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 
 use pm_field::Reach;
 use pm_terminal::{Emulator, Link};
 
-use crate::focus::FocusId;
-
 use crate::sample::Session;
 
-use crate::state::{
-    BOTTOM_PROBLEMS, BOTTOM_PROBLEMS_COUNT, BOTTOM_TERMINAL, MAXIMIZE_TERMINAL, NEW_TERMINAL,
-    Outgoing, PROBLEM_ROW_BASE, ProblemsKey, TERMINAL, TERMINAL_CLOSE_BASE, TERMINAL_TAB_BASE,
-    WorkspaceState,
-};
+use crate::state::{Outgoing, ProblemsKey, WorkspaceState};
 
 /// The tabs of the dock, one of which shows at a time.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -30,9 +26,6 @@ pub enum BottomTab {
 
 /// How many columns and lines a shell has before the dock has been measured.
 pub const FIRST_SIZE: (u16, u16) = (80, 24);
-
-/// How many of the shell's lines one notch of the wheel scrolls.
-pub const WHEEL_LINES: usize = 3;
 
 /// An emulator that the state and what draws it share.
 #[derive(Clone)]
@@ -358,38 +351,35 @@ impl WorkspaceState {
     }
 
     /// Carries out a press on one of the dock's controls, and says whether `id` was one.
-    pub(crate) fn press_terminal(&mut self, id: FocusId) -> bool {
+    pub(crate) fn press_terminal(&mut self, id: Target) -> bool {
         match id {
-            TERMINAL => self.toggle_terminal(),
-            NEW_TERMINAL => self.open_terminal(),
-            BOTTOM_TERMINAL => self.show_terminal_tab(),
-            BOTTOM_PROBLEMS | BOTTOM_PROBLEMS_COUNT => self.show_problems(),
-            MAXIMIZE_TERMINAL => self.terminal_maximized = !self.terminal_maximized,
-            FocusId(number) => {
-                let count = self.docked().map_or(0, |session| session.terminals.len());
-                let offset = |base: u64| {
-                    number
-                        .checked_sub(base)
-                        .map(|offset| offset as usize)
-                        .filter(|offset| *offset < count)
-                };
-                if let Some(index) = offset(TERMINAL_TAB_BASE) {
-                    self.bottom = BottomTab::Terminal;
-                    if let Some(position) = self.docked_position() {
-                        self.sessions[position].terminal_active = index;
-                    }
-                } else if let Some(index) = offset(TERMINAL_CLOSE_BASE) {
-                    self.close_terminal_tab(index);
-                } else if let Some(index) = number
-                    .checked_sub(PROBLEM_ROW_BASE)
-                    .map(|offset| offset as usize)
-                    .filter(|offset| *offset < self.current_problems().len())
-                {
-                    self.problem_picked = Some(index);
-                } else {
-                    return false;
+            Target::Terminal(TerminalEvent::Terminal) => self.toggle_terminal(),
+            Target::Terminal(TerminalEvent::NewTerminal) => self.open_terminal(),
+            Target::Terminal(TerminalEvent::BottomTerminal) => self.show_terminal_tab(),
+            Target::Terminal(TerminalEvent::BottomProblems)
+            | Target::Terminal(TerminalEvent::BottomProblemsCount) => self.show_problems(),
+            Target::Terminal(TerminalEvent::MaximizeTerminal) => {
+                self.terminal_maximized = !self.terminal_maximized
+            }
+            Target::Terminal(TerminalEvent::TerminalTab(index))
+                if index < self.docked().map_or(0, |session| session.terminals.len()) =>
+            {
+                self.bottom = BottomTab::Terminal;
+                if let Some(position) = self.docked_position() {
+                    self.sessions[position].terminal_active = index;
                 }
             }
+            Target::Terminal(TerminalEvent::TerminalClose(index))
+                if index < self.docked().map_or(0, |session| session.terminals.len()) =>
+            {
+                self.close_terminal_tab(index);
+            }
+            Target::Terminal(TerminalEvent::ProblemRow(index))
+                if index < self.current_problems().len() =>
+            {
+                self.problem_picked = Some(index);
+            }
+            _ => return false,
         }
         true
     }
@@ -637,11 +627,11 @@ impl WorkspaceState {
     }
 
     /// Whether pressing `id` shows a shell that should then take the keyboard.
-    pub fn takes_keyboard(id: FocusId) -> bool {
-        id == TERMINAL
-            || id == NEW_TERMINAL
-            || id == BOTTOM_TERMINAL
-            || (TERMINAL_TAB_BASE..TERMINAL_CLOSE_BASE).contains(&id.0)
+    pub fn takes_keyboard(id: Target) -> bool {
+        id == Target::Terminal(TerminalEvent::Terminal)
+            || id == Target::Terminal(TerminalEvent::NewTerminal)
+            || id == Target::Terminal(TerminalEvent::BottomTerminal)
+            || matches!(id, Target::Terminal(TerminalEvent::TerminalTab(_)))
     }
 }
 

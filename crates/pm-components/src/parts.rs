@@ -1,11 +1,11 @@
 //! Small pieces the screens share: a line of text, a glyph, a check box.
 
 use crate::icons::icon;
+use crate::kit;
 use crate::theme;
 use crate::theme::Tone;
 use rustle::Icon;
 use rustle::Modifier;
-use rustle::{Alignment, Arrangement, column_arranged};
 
 /// How wide, as a share of its height, a character of body text is taken to be.
 const CHARACTER_WIDTH: f32 = 0.53;
@@ -14,13 +14,12 @@ const CHARACTER_WIDTH: f32 = 0.53;
 /// in `tone`, ended with an ellipsis when the box it sits in is too narrow for it.
 #[track_caller]
 pub fn line(content: impl Into<String>, pixels: u32, ratio: f32, tone: impl Into<Tone>) {
-    rustle::basic_text(
+    kit::text(
         Modifier::new(),
         content,
         theme::text_style(pixels, ratio)
             .color(theme::color(tone))
             .max_lines(1),
-        rustle::TextOverflow::Ellipsis,
     );
 }
 
@@ -33,13 +32,10 @@ pub fn glyph(name: Icon, steps: f32, tone: impl Into<Tone>) {
 /// Emits a box that takes the room left in its row and cuts a line of `content` short at its edge.
 #[track_caller]
 pub fn clipped(content: impl Into<String>, pixels: u32, tone: impl Into<Tone>) {
-    rustle::basic_text(
+    kit::text(
         Modifier::new().weight(1.0),
         content,
-        theme::text_style(pixels, 1.4)
-            .color(theme::color(tone))
-            .max_lines(1),
-        rustle::TextOverflow::Ellipsis,
+        kit::line(pixels, tone),
     );
 }
 
@@ -57,25 +53,19 @@ pub fn paragraph(content: &str, pixels: u32, ratio: f32, tone: impl Into<Tone>, 
     let kind = theme::text_style(pixels, ratio);
     let tone = tone.into();
     let lines = rustle::wrap_at_spaces(content, &kind, width.max(32.0));
-    column_arranged(
-        Modifier::new(),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            for part in lines {
-                if part.end == part.start {
-                    rustle::spacer(Modifier::new().height(theme::sp(3)));
-                } else {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        &content[part.start..part.end],
-                        kind.color(theme::color(tone)),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                }
+    kit::column(Modifier::new(), 0, || {
+        for part in lines {
+            if part.end == part.start {
+                rustle::spacer(Modifier::new().height(theme::sp(3)));
+            } else {
+                kit::text(
+                    Modifier::new(),
+                    &content[part.start..part.end],
+                    kind.color(theme::color(tone)),
+                );
             }
-        },
-    );
+        }
+    });
 }
 
 /// The lines `content` breaks into when each may hold as many characters of

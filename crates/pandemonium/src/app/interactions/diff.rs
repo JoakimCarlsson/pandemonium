@@ -1,8 +1,11 @@
 //! The diff: its lazy list keeps an opened file at its top while the diffs of
 //! the files above it arrive, and keeps what the reader scrolled to in place.
 
-use pm_components::focus::FocusId;
-use pm_components::state::{DIFF_FOLD_BASE, FILE_BASE, WorkspaceState};
+use pm_components::areas::DiffEvent;
+
+use pm_components::events::Event;
+use pm_components::state::WorkspaceState;
+use pm_components::target::Target;
 use pm_pages::Screen;
 
 use crate::app::headless::{Rig, SIZE};
@@ -18,7 +21,7 @@ const OPENED: usize = 3;
 fn opened() -> Rig {
     let Screen::Workspace(state) = Shot::DiffListed.screen();
     Rig::new(
-        Screen::Workspace(state.after(FocusId(FILE_BASE + OPENED as u64))),
+        Screen::Workspace(state.handle(Event::Diff(DiffEvent::ChangedFile(OPENED)))),
         SHORT,
     )
 }
@@ -36,7 +39,7 @@ fn list_bounds(rig: &Rig) -> Option<rustle::Rect> {
 /// How far below the top of the diff's list the fold button of the file at `index` is drawn, if it is.
 fn below_top(rig: &Rig, index: usize) -> Option<f32> {
     let list = list_bounds(rig)?;
-    let fold = rig.region(FocusId(DIFF_FOLD_BASE + index as u64))?;
+    let fold = rig.region(Target::Diff(DiffEvent::DiffFold(index)))?;
     Some(fold.origin.y - list.origin.y)
 }
 

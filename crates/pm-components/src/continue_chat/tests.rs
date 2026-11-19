@@ -1,10 +1,13 @@
 //! Tests of continuing a chat in a project: which projects are offered, what the choice asks of the server, and what the window does with the outcome.
 
-use crate::focus::FocusId;
+use crate::areas::ComposerEvent;
 
-use super::{CONTINUE, CONTINUE_PROJECT_BASE, CONTINUE_START};
+use crate::areas::ChatEvent;
+
+use crate::events::Event;
+
 use crate::sample::{Session, Status};
-use crate::state::{BRANCH_BASE, Outgoing, Page, Picker, WorkspaceState};
+use crate::state::{Outgoing, Page, Picker, WorkspaceState};
 
 /// A workspace of a project on this machine, one on the machine `builder` and a second on this machine, open on an idle chat on this machine, and the chat's position.
 fn on_a_chat() -> (WorkspaceState, usize) {
@@ -37,25 +40,25 @@ fn projects_on_other_machines_are_not_offered() {
 fn the_choice_asks_the_server_to_continue() {
     let (state, chat) = on_a_chat();
 
-    let mut state = state.after(CONTINUE);
+    let mut state = state.handle(Event::Chat(ChatEvent::Continue));
     assert_eq!(state.picker, Some(Picker::Continue));
     assert_eq!(state.continue_project(), Some(0));
     assert!(state.take_outbox().iter().any(
         |outgoing| matches!(outgoing, Outgoing::Branches { project: 0, host: None, directory } if directory == "/work/app")
     ));
 
-    let state = state.after(FocusId(CONTINUE_PROJECT_BASE + 1));
+    let state = state.handle(Event::Chat(ChatEvent::ContinueProject(1)));
     assert_eq!(
         state.continue_project(),
         Some(0),
         "another machine's project is not taken"
     );
-    let mut state = state.after(FocusId(CONTINUE_PROJECT_BASE + 2));
+    let mut state = state.handle(Event::Chat(ChatEvent::ContinueProject(2)));
     assert_eq!(state.continue_project(), Some(2));
     state.take_outbox();
     let state = state.with_branches(2, vec!["main".to_owned(), "next".to_owned()]);
 
-    let state = state.after(FocusId(BRANCH_BASE + 1));
+    let state = state.handle(Event::Composer(ComposerEvent::Branch(1)));
     assert_eq!(
         state.picker,
         Some(Picker::Continue),
@@ -67,7 +70,7 @@ fn the_choice_asks_the_server_to_continue() {
         "the page for starting work keeps its own choice"
     );
 
-    let mut state = state.after(CONTINUE_START);
+    let mut state = state.handle(Event::Chat(ChatEvent::ContinueStart));
     assert_eq!(state.picker, None);
     assert!(state.sessions[chat].handing_over);
     assert!(!state.can_continue(&state.sessions[chat]));
@@ -83,7 +86,7 @@ fn a_working_chat_cannot_be_continued() {
     let (mut state, chat) = on_a_chat();
     state.sessions[chat].status = Status::Working;
     assert!(!state.can_continue(&state.sessions[chat]));
-    let mut state = state.after(CONTINUE);
+    let mut state = state.handle(Event::Chat(ChatEvent::Continue));
     assert_eq!(state.picker, None);
 
     state.sessions[chat].status = Status::Idle;
@@ -93,7 +96,7 @@ fn a_working_chat_cannot_be_continued() {
         files: Vec::new(),
     });
     assert!(!state.can_continue(&state.sessions[chat]));
-    assert_eq!(state.after(CONTINUE).picker, None);
+    assert_eq!(state.handle(Event::Chat(ChatEvent::Continue)).picker, None);
 }
 
 /// When the server started the session the window moves to it and the chat stays listed; when it did not, the chat says why and can be continued again.

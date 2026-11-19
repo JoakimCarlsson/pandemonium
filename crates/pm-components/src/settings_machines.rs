@@ -1,43 +1,26 @@
 //! The servers page of the settings window: the server on this machine and the ones on other machines the window knows, each changed or taken out from its row, the form a server is added or changed with, and which one new projects go to.
 
+use crate::areas::SettingsEvent;
+use crate::kit;
+use crate::target::Target;
 use crate::theme;
 use crate::theme::sp;
 use pm_config::{KnownServer, Reach};
 use rustle::Modifier;
 use rustle::TextFieldState;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, row_arranged};
 
-use crate::focus::FocusId;
 use crate::theme::Role;
 
-use crate::Button;
 use crate::button::Variant;
 use crate::input::Input;
 use crate::parts::line;
 use crate::settings::Section;
-use crate::settings_ids::{MACHINE_EDITS, MACHINE_REACHES, MACHINE_REMOVES, SINGLES};
 use crate::settings_pages::page_rows;
 use crate::settings_row::choices;
+use crate::settings_rows::{MACHINE_EDITS, MACHINE_REACHES, MACHINE_REMOVES};
 use crate::size::Size;
 use crate::state::WorkspaceState;
-
-/// Opens the form for adding a server.
-pub const MACHINE_ADD: FocusId = SINGLES.at(70);
-
-/// Keeps what the form holds.
-pub const MACHINE_SAVE: FocusId = SINGLES.at(71);
-
-/// Puts the form away without keeping it.
-pub const MACHINE_CANCEL: FocusId = SINGLES.at(72);
-
-/// The box the form's name is written in.
-pub const MACHINE_NAME: FocusId = SINGLES.at(73);
-
-/// The box the form's address is written in.
-pub const MACHINE_ADDRESS: FocusId = SINGLES.at(74);
-
-/// The box the form's token is written in.
-pub const MACHINE_TOKEN: FocusId = SINGLES.at(75);
 
 /// How the servers can be reached, in the order the form offers them.
 const REACHES: [Reach; 5] = [
@@ -100,20 +83,25 @@ impl MachineForm {
 }
 
 /// Whether `id` names a box of the form.
-pub(crate) fn is_machine_field(id: FocusId) -> bool {
-    [MACHINE_NAME, MACHINE_ADDRESS, MACHINE_TOKEN].contains(&id)
+pub(crate) fn is_machine_field(id: Target) -> bool {
+    [
+        Target::Settings(SettingsEvent::MachineName),
+        Target::Settings(SettingsEvent::MachineAddress),
+        Target::Settings(SettingsEvent::MachineToken),
+    ]
+    .contains(&id)
 }
 
 impl WorkspaceState {
     /// Carries out pressing `id` on the servers page, and says whether it was something of it.
-    pub(crate) fn machines_pressed(&mut self, id: FocusId) -> bool {
+    pub(crate) fn machines_pressed(&mut self, id: Target) -> bool {
         match id {
-            MACHINE_ADD => {
+            Target::Settings(SettingsEvent::MachineAdd) => {
                 self.settings_page.server_form =
                     Some(MachineForm::holding(None, &KnownServer::default()));
             }
-            MACHINE_CANCEL => self.settings_page.server_form = None,
-            MACHINE_SAVE => self.save_machine(),
+            Target::Settings(SettingsEvent::MachineCancel) => self.settings_page.server_form = None,
+            Target::Settings(SettingsEvent::MachineSave) => self.save_machine(),
             _ if let Some(option) = MACHINE_REACHES.index_of(id) => {
                 if let (Some(form), Some(reach)) =
                     (self.settings_page.server_form.as_mut(), REACHES.get(option))
@@ -171,12 +159,12 @@ impl WorkspaceState {
     }
 
     /// The box `id` of the form, while it is open.
-    pub(crate) fn machine_field(&self, id: FocusId) -> Option<&TextFieldState> {
+    pub(crate) fn machine_field(&self, id: Target) -> Option<&TextFieldState> {
         let form = self.settings_page.server_form.as_ref()?;
         match id {
-            MACHINE_NAME => Some(&form.name),
-            MACHINE_ADDRESS => Some(&form.address),
-            MACHINE_TOKEN => Some(&form.token),
+            Target::Settings(SettingsEvent::MachineName) => Some(&form.name),
+            Target::Settings(SettingsEvent::MachineAddress) => Some(&form.address),
+            Target::Settings(SettingsEvent::MachineToken) => Some(&form.token),
             _ => None,
         }
     }
@@ -184,20 +172,15 @@ impl WorkspaceState {
 
 /// Emits a box of the form under the words that say what is written in it.
 #[track_caller]
-fn labelled(words: &str, field: &TextFieldState, id: FocusId, placeholder: &str) {
-    column_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Start,
-        || {
-            line(words, 12, 1.4, Role::Muted);
-            Input::new(field, id)
-                .size(Size::Sm)
-                .placeholder(placeholder)
-                .secure(crate::state::WorkspaceState::is_secure(id))
-                .build();
-        },
-    );
+pub(crate) fn labelled(words: &str, field: &TextFieldState, id: Target, placeholder: &str) {
+    kit::column(Modifier::new().fill_max_width(), 1, || {
+        line(words, 12, 1.4, Role::Muted);
+        Input::new(field, id)
+            .size(Size::Sm)
+            .placeholder(placeholder)
+            .secure(crate::state::WorkspaceState::is_secure(id))
+            .build();
+    });
 }
 
 /// Emits the form a server is added or changed with.
@@ -217,38 +200,37 @@ fn form_node(form: &MachineForm) {
         .iter()
         .position(|held| *held == form.reach)
         .unwrap_or(0);
-    column_arranged(
+    kit::column(
         Modifier::new().fill_max_width().padding(theme::sp(3)),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Start,
+        3,
         || {
-            labelled("Name", &form.name, MACHINE_NAME, "e.g. Build box");
-            column_arranged(
-                Modifier::new(),
-                Arrangement::SpacedBy(sp(1)),
-                Alignment::Start,
-                || {
-                    line("Reached", 12, 1.4, Role::Muted);
-                    row_arranged(
-                        Modifier::new(),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            choices(
-                                &["Direct", "SSH", "WSL", "Dev container", "Tunnel"],
-                                picked,
-                                |option| MACHINE_REACHES.id(option),
-                            );
-                        },
-                    );
-                },
+            labelled(
+                "Name",
+                &form.name,
+                Target::Settings(SettingsEvent::MachineName),
+                "e.g. Build box",
             );
-            labelled(address_label, &form.address, MACHINE_ADDRESS, address_hint);
+            kit::column(Modifier::new(), 1, || {
+                line("Reached", 12, 1.4, Role::Muted);
+                kit::row_top(Modifier::new(), 0, || {
+                    choices(
+                        &["Direct", "SSH", "WSL", "Dev container", "Tunnel"],
+                        picked,
+                        |option| MACHINE_REACHES.id(option),
+                    );
+                });
+            });
+            labelled(
+                address_label,
+                &form.address,
+                Target::Settings(SettingsEvent::MachineAddress),
+                address_hint,
+            );
             if form.reach.keeps_token() {
                 labelled(
                     "Token",
                     &form.token,
-                    MACHINE_TOKEN,
+                    Target::Settings(SettingsEvent::MachineToken),
                     "As in server.json on that machine",
                 );
             }
@@ -257,14 +239,19 @@ fn form_node(form: &MachineForm) {
                 Arrangement::SpacedByAligned(sp(2), Alignment::End),
                 Alignment::Center,
                 || {
-                    Button::new("Cancel", MACHINE_CANCEL)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .build();
-                    Button::new("Save", MACHINE_SAVE)
-                        .size(Size::Sm)
-                        .disabled(form.server().is_none())
-                        .build();
+                    kit::small_button(
+                        "Cancel",
+                        Target::Settings(SettingsEvent::MachineCancel),
+                        Variant::Ghost,
+                    )
+                    .build();
+                    kit::small_button(
+                        "Save",
+                        Target::Settings(SettingsEvent::MachineSave),
+                        Variant::Default,
+                    )
+                    .disabled(form.server().is_none())
+                    .build();
                 },
             );
         },
@@ -274,42 +261,25 @@ fn form_node(form: &MachineForm) {
 /// Emits the row of a server: its name over how it is reached, and its buttons when it can be changed and the page has names for them.
 #[track_caller]
 fn machine_row(name: &str, reach: String, buttons: Option<usize>) {
-    row_arranged(
+    kit::row(
         Modifier::new()
             .padding_xy(theme::sp(3), 0.0)
             .padding_xy(0.0, theme::sp(3)),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Center,
+        3,
         || {
-            column_arranged(
-                Modifier::new().weight(1.0),
-                Arrangement::SpacedBy(sp(0.5)),
-                Alignment::Start,
-                || {
-                    line(name, 13, 1.4, Role::Text);
-                    line(reach, 12, 1.4, Role::Muted);
-                },
-            );
+            kit::column(Modifier::new().weight(1.0), 0.5, || {
+                line(name, 13, 1.4, Role::Text);
+                line(reach, 12, 1.4, Role::Muted);
+            });
             if let Some(index) = buttons {
-                row_arranged(
-                    Modifier::new(),
-                    Arrangement::SpacedBy(sp(1)),
-                    Alignment::Center,
-                    || {
-                        if let Some(edit) = MACHINE_EDITS.id(index) {
-                            Button::new("Edit", edit)
-                                .variant(Variant::Ghost)
-                                .size(Size::Sm)
-                                .build();
-                        }
-                        if let Some(remove) = MACHINE_REMOVES.id(index) {
-                            Button::new("Remove", remove)
-                                .variant(Variant::Ghost)
-                                .size(Size::Sm)
-                                .build();
-                        }
-                    },
-                );
+                kit::row(Modifier::new(), 1, || {
+                    if let Some(edit) = MACHINE_EDITS.id(index) {
+                        kit::small_button("Edit", edit, Variant::Ghost).build();
+                    }
+                    if let Some(remove) = MACHINE_REMOVES.id(index) {
+                        kit::small_button("Remove", remove, Variant::Ghost).build();
+                    }
+                });
             }
         },
     );
@@ -338,11 +308,13 @@ pub(crate) fn body(state: &WorkspaceState, room: f32) {
         Alignment::Center,
         || {
             crate::settings_servers::heading_only("Servers", state.window.servers.known.len() + 1);
-            Button::new("Add Server", MACHINE_ADD)
-                .variant(Variant::Outline)
-                .size(Size::Sm)
-                .disabled(adding)
-                .build();
+            kit::small_button(
+                "Add Server",
+                Target::Settings(SettingsEvent::MachineAdd),
+                Variant::Outline,
+            )
+            .disabled(adding)
+            .build();
         },
     );
     crate::settings_servers::boxed(|| {

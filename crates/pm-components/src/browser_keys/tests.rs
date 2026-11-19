@@ -1,5 +1,7 @@
 //! Tests of which keys the browser takes for itself.
 
+use crate::areas::BrowserEvent;
+use crate::target::Target;
 use rustle::{Key, KeyEvent, Modifiers};
 
 use super::{Shortcut, shortcut_of};
@@ -101,7 +103,7 @@ fn find_opens_steps_and_closes() {
     state.browser_shortcut(Shortcut::Find);
     assert!(state.browser_find_open());
     assert!(commands(&mut state).is_empty());
-    state = state.typed(crate::browser::BROWSER_FIND_FIELD, "ab");
+    state = state.typed(Target::Browser(BrowserEvent::BrowserFindField), "ab");
     assert_eq!(
         commands(&mut state),
         vec![Command::Find {

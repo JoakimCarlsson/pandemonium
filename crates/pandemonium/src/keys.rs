@@ -1,21 +1,9 @@
-//! What the window's keys mean to the app: the modifiers the window reports, which keys the
-//! app reacts to, and the text edits and clipboard actions a key event asks for. The app
+//! What the window's keys mean to the app: which keys the app reacts to, and the text edits and clipboard actions a key event asks for. The app
 //! matches on rustle's [`KeyEvent`]s directly; these turn them into the plain values of the
 //! crates below it, such as [`pm_field::Edit`].
 
 use pm_field::{Edit, Motion};
-use rustle::{Key, KeyEvent, Modifiers};
-use winit::keyboard::ModifiersState;
-
-/// Rustle's modifiers for the window's.
-pub fn modifiers(state: ModifiersState) -> Modifiers {
-    Modifiers {
-        shift: state.shift_key(),
-        ctrl: state.control_key(),
-        alt: state.alt_key(),
-        meta: state.meta_key(),
-    }
-}
+use rustle::{Key, KeyEvent};
 
 /// Whether the app reacts to the key of `event`: a character it typed, a named key it has
 /// a use for or a function key up to F12; not a modifier pressed on its own, nor text an

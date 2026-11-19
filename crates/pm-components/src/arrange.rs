@@ -1,38 +1,9 @@
 //! Arranging the projects: the menu on each one, putting them in another order by dragging, and taking one away.
 
-use crate::focus::FocusId;
+use crate::areas::{MenuEvent, SidebarEvent};
 use crate::git_prompts::Prompt;
-use crate::state::{NEW_IN_BASE, Outgoing, PROJECT_BASE, Page, SESSION_BASE, WorkspaceState};
-
-/// The first of the buttons opening the menu of a project; the rest follow it.
-pub const PROJECT_MORE_BASE: u64 = 1200;
-
-/// The row of a project's menu that starts a session in it.
-pub const PROJECT_MENU_NEW: FocusId = FocusId(305);
-
-/// The row of a project's menu that takes it out of the window.
-pub const PROJECT_MENU_REMOVE: FocusId = FocusId(306);
-
-/// The row of a session's menu that closes it.
-pub const SESSION_MENU_CLOSE: FocusId = FocusId(307);
-
-/// The row of a session's menu that copies the folder it works in.
-pub const SESSION_MENU_COPY_PATH: FocusId = FocusId(7086);
-
-/// The row of a session's menu that copies the branch it is on.
-pub const SESSION_MENU_COPY_BRANCH: FocusId = FocusId(7087);
-
-/// The row of a session's menu that asks for a new title.
-pub const SESSION_MENU_RENAME: FocusId = FocusId(7088);
-
-/// The row of a session's menu that shows its folder in the file manager.
-pub const SESSION_MENU_OPEN_FOLDER: FocusId = FocusId(7089);
-
-/// The row of a chat's menu that removes it for good: its scratch folder is deleted with what is in it.
-pub const SESSION_MENU_REMOVE: FocusId = FocusId(7123);
-
-/// The row that toggles whether the session has been read.
-pub const SESSION_MENU_READ: FocusId = FocusId(7103);
+use crate::state::{Outgoing, Page, WorkspaceState};
+use crate::target::Target;
 
 /// The menu open over a session, and where.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -64,45 +35,50 @@ pub struct ProjectDrag {
 }
 
 /// Whether `id` names the row of a session's menu.
-pub fn is_session_menu_item(id: FocusId) -> bool {
+pub fn is_session_menu_item(id: Target) -> bool {
     [
-        SESSION_MENU_READ,
-        SESSION_MENU_CLOSE,
-        SESSION_MENU_REMOVE,
-        SESSION_MENU_COPY_PATH,
-        SESSION_MENU_COPY_BRANCH,
-        SESSION_MENU_RENAME,
-        SESSION_MENU_OPEN_FOLDER,
+        Target::Menu(MenuEvent::SessionMenuRead),
+        Target::Menu(MenuEvent::SessionMenuClose),
+        Target::Menu(MenuEvent::SessionMenuRemove),
+        Target::Menu(MenuEvent::SessionMenuCopyPath),
+        Target::Menu(MenuEvent::SessionMenuCopyBranch),
+        Target::Menu(MenuEvent::SessionMenuRename),
+        Target::Menu(MenuEvent::SessionMenuOpenFolder),
     ]
     .contains(&id)
 }
 
 /// Whether `id` names a row of a project's menu.
-pub fn is_project_menu_item(id: FocusId) -> bool {
-    id == PROJECT_MENU_NEW || id == PROJECT_MENU_REMOVE
+pub fn is_project_menu_item(id: Target) -> bool {
+    id == Target::Menu(MenuEvent::ProjectMenuNew)
+        || id == Target::Menu(MenuEvent::ProjectMenuRemove)
 }
 
 impl WorkspaceState {
     /// Which project's header `id` is, if it is one.
-    pub fn header_of(&self, id: FocusId) -> Option<usize> {
-        id.0.checked_sub(PROJECT_BASE)
-            .map(|index| index as usize)
-            .filter(|index| *index < self.projects.len())
+    pub fn header_of(&self, id: Target) -> Option<usize> {
+        match id {
+            Target::Sidebar(SidebarEvent::Project(index)) if index < self.projects.len() => {
+                Some(index)
+            }
+            _ => None,
+        }
     }
 
     /// The project the element `id` belongs to: its header, its row for new work or one of its sessions.
-    pub fn project_at(&self, id: FocusId) -> Option<usize> {
-        let within = |base: u64, count: usize| {
-            id.0.checked_sub(base)
-                .map(|index| index as usize)
-                .filter(|index| *index < count)
-        };
-        within(PROJECT_BASE, self.projects.len())
-            .or_else(|| within(NEW_IN_BASE, self.projects.len()))
-            .or_else(|| {
-                within(SESSION_BASE, self.sessions.len())
-                    .and_then(|position| self.sessions[position].project)
-            })
+    pub fn project_at(&self, id: Target) -> Option<usize> {
+        match id {
+            Target::Sidebar(SidebarEvent::Project(index))
+            | Target::Sidebar(SidebarEvent::NewIn(index))
+                if index < self.projects.len() =>
+            {
+                Some(index)
+            }
+            Target::Sidebar(SidebarEvent::Session(position)) if position < self.sessions.len() => {
+                self.sessions[position].project
+            }
+            _ => None,
+        }
     }
 
     /// The state with the menu of the session at `session` open at `at`.
@@ -125,7 +101,7 @@ impl WorkspaceState {
     }
 
     /// The state after the row `row` of the open session menu was pressed.
-    pub(crate) fn session_menu_pressed(mut self, row: FocusId) -> Self {
+    pub(crate) fn session_menu_pressed(mut self, row: Target) -> Self {
         let Some(open) = self.session_menu.take() else {
             return self;
         };
@@ -133,7 +109,7 @@ impl WorkspaceState {
             return self;
         };
         match row {
-            SESSION_MENU_READ => {
+            Target::Menu(MenuEvent::SessionMenuRead) => {
                 let held = &mut self.sessions[open.session];
                 if held.unread() {
                     held.mark_read();
@@ -143,28 +119,28 @@ impl WorkspaceState {
                 }
                 self
             }
-            SESSION_MENU_COPY_PATH => {
+            Target::Menu(MenuEvent::SessionMenuCopyPath) => {
                 let text = held.directory.clone();
                 self.outbox.push(Outgoing::Copy { text });
                 self
             }
-            SESSION_MENU_COPY_BRANCH => {
+            Target::Menu(MenuEvent::SessionMenuCopyBranch) => {
                 let text = held.branch.clone();
                 self.outbox.push(Outgoing::Copy { text });
                 self
             }
-            SESSION_MENU_RENAME => {
+            Target::Menu(MenuEvent::SessionMenuRename) => {
                 self.git.rename = rustle::TextFieldState::new(held.title.clone());
                 self.ask(Prompt::Rename(open.session));
                 self
             }
-            SESSION_MENU_OPEN_FOLDER => {
+            Target::Menu(MenuEvent::SessionMenuOpenFolder) => {
                 self.outbox.push(Outgoing::OpenFolder {
                     session: open.session,
                 });
                 self
             }
-            SESSION_MENU_REMOVE => {
+            Target::Menu(MenuEvent::SessionMenuRemove) => {
                 if held.is_chat() {
                     self.ask(Prompt::Close(open.session));
                 }
@@ -237,11 +213,11 @@ impl WorkspaceState {
     }
 
     /// The state after the row `row` of the open project menu was pressed.
-    pub(crate) fn project_menu_pressed(mut self, row: FocusId) -> Self {
+    pub(crate) fn project_menu_pressed(mut self, row: Target) -> Self {
         let Some(open) = self.project_menu.take() else {
             return self;
         };
-        if row == PROJECT_MENU_NEW {
+        if row == Target::Menu(MenuEvent::ProjectMenuNew) {
             self.start_in(open.project, None);
             self.sync_context();
             self

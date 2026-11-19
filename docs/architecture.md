@@ -5,9 +5,9 @@ window; a **session** is an agent working in its own git worktree of one of
 them; the window shows both as first-class items: files, worktrees, diffs and
 the agent's own conversation, in panes, not in a terminal beside the editor.
 
-**Stack:** Rust 2024 · winit (windowing) · rustle (the declarative UI
-framework, drawing through wgpu). Linux first; macOS and Windows follow from winit and wgpu, not
-from platform-specific code.
+**Stack:** Rust 2024 · rustle (the declarative UI framework, which owns the
+windows and the event loop, through winit, and draws through wgpu). Linux first;
+macOS and Windows follow from rustle and wgpu, not from platform-specific code.
 
 ## Client and server
 
@@ -38,20 +38,32 @@ One crate per layer, each depending only on the layers below it.
   roles Compose has a slot for, the type scale and the corners, rustle's
   `LOCAL_SCROLLBAR_STYLE` the scrollbar look, and one composition local the
   tokens rustle has no slot for (every role, syntax colours, font stacks).
+  `pm-components/src/kit.rs` is the app's small design system on top of it:
+  themed rows and columns with gaps in theme steps, single lines of text in
+  the type sizes and roles views use, the border-role dividing rule, and the
+  `Frame` modifiers for ruled, outlined and panelled boxes, each a thin
+  wrapper over the rustle composable or modifier it names.
   Text is set in rustle `TextStyle`s (`theme::text_style`, `code_style`)
   with rustle's text composables; the conversation is selectable through
   rustle's `selection_container`, and the file tree, diff, conversation and
   code view are rustle lazy lists. Boxes are plain rustle modifiers with theme
   values (`theme::sp`, `theme::color`, `Radius::px`); hover, press and focus
-  looks are rustle's `interaction_background` and interactive drawing with
-  the theme's `InteractionTones`; buttons, cards, badges and surfaces are
+  looks are rustle indications: the theme's `InteractionTones`, `FocusRing`
+  and `FocusOutline` are `IndicationNodeFactory`s drawn from a remembered
+  `MutableInteractionSource` that `theme::Indicated::indicated` feeds with
+  hovers, primary presses and focus (rustle's or the app's own); shadows are
+  rustle `Shadow` layers cast with `drop_shadow_with` (`theme::box_shadow`,
+  `ShadowLayers`); spinners turn on an angle of rustle's
+  `remember_infinite_transition`; buttons, cards, badges and surfaces are
   rustle `surface_custom`/`outlined_card`, check boxes and switches rustle's
   `tri_state_checkbox`/`switch_with`, rules rustle's dividers, all in the
   theme's colours, sizes and corners. Icons are rustle's Phosphor constants
   (`rustle::phosphor::X`, `phosphor::fill::X`) used directly, drawn by the
   helpers in `pm-components/src/icons.rs`, which also holds the few panel
   drawings made from Phosphor's own and rasterises artwork that arrives at
-  run time. What floats
+  run time. Opened `.svg` files, diagrams and formulas are drawn into pixels
+  by rustle's `SvgPainter` (`pandemonium/src/work/picture.rs`), whose text is
+  set with the interface's font database and whose embedded images are drawn. What floats
   over the screen is rustle popups (`pm-components/src/popups.rs`): popovers
   placed against the box they are declared in, menus and code assists at a
   window point, kept inside the window's frame clear of its shadow band by a
@@ -87,16 +99,24 @@ One crate per layer, each depending only on the layers below it.
   open the menu of the conversation's text). `Button`, `Tile`, `Checkbox` and
   `Menu` take `on_click`/`on_pick`/`on_context` in their builders. The lambdas
   call the app's state holder, the `Operations` trait the binary implements
-  (its `Controller`), provided once at each window's root: `update(change)` runs
-  a reducer of the workspace, and most controls hand their press to the
-  workspace's reducer with `events::reduce(id)` (`WorkspaceState::after(id)`,
-  keyed by the control's `FocusId`); named operations do what only the app can
+  (its `Controller`), provided once at each window's root: `send(event)` hands
+  an `events::Event` to the workspace's reducer, `WorkspaceState::handle`, and
+  most controls send the event of their area, such as `Event::Sidebar(SidebarEvent::Session(index))` (`pm-components/src/areas.rs`), with `events::send`; the control is
+  named by its typed `Target` (`pm-components/src/target.rs`). Each control is
+  named once, as a variant of its area's enum in `areas.rs`; a `Target` wraps
+  that variant in its area, such as `Target::Composer(ComposerEvent::Prompt)` or
+  `Target::Sidebar(SidebarEvent::Session(index))`, so an event and its target
+  are the same value under the same area (`Event::pressing` and each area's
+  handler only rewrap it before the `pressed` reducer matches the nested
+  target); fields send `Event::Field`
+  (typed, changed, left, edited); `update(change)` runs any other change of the
+  workspace; named operations do what only the app can
   (`open_command_palette`, `navigate`, `attach`, `take_listing`,
   `open_project_menu`, `open_git_menu`, `minimize_window`, …). After every
   change the binary does in one place (`App::settle`) what the change asks
   (`WorkspaceState::asked`: the focus to give, the shell taking the keyboard,
   the caret shown again), then saves and sends. Keymap commands call the same
-  reducer or operations. What stays keyed by `FocusId` is the views' report of
+  reducer or operations. What stays keyed by `Target` is the views' report of
   the pointer: the press that went down on a control (`Operations::pressed`, for
   fields, handles and the title bar), whether a click counts
   (`Operations::click_lands`: the press began there and dragged nothing), the
@@ -108,10 +128,10 @@ One crate per layer, each depending only on the layers below it.
   the pointer carries it and that it ended (`events::carry_target`). The
   title bar moves the window through its control's press, and strips laid
   over a floating frame's edges resize it (`resize_edges`). Every control carries
-  the rustle `test_tag` of its `FocusId`, by which headless tests and
+  the rustle `test_tag` of its `Target` (`Target::tag`), by which headless tests and
   snapshots find it (`pm-components/src/tagged.rs`). Keyboard focus is
   rustle's: every control is a focus target Tab walks in paint order, and the
-  binary keeps the `FocusId` of the control holding it as the domain key its
+  binary keeps the `Target` of the control holding it as the domain key its
   logic asks about (`pm-components/src/focus.rs`): a control asks for rustle
   focus while the app keeps focus on it and tells the app when rustle moved
   focus (`on_focus_changed`). The file tree keeps its focused row composed and
@@ -227,8 +247,62 @@ One crate per layer, each depending only on the layers below it.
   its commands). An extension lives on the server of its machine; its themes,
   icon themes and command names are read by the window. `docs/extensions.md`
   describes the package.
-- **Binary:** `pandemonium`: the event loop, the window and the threads that
-  talk to the servers. It wires the layers and implements none of them.
+- **Binary:** `pandemonium`: the root composable of the windows, the app's
+  handling of what happens in them and the threads that talk to the servers. It
+  wires the layers and implements none of them.
+
+## The windows and the app
+
+The binary has no event loop of its own and does not depend on winit. `main`
+makes the `App` and hands it to `app::run`, which calls `rustle::run_with` with
+the main window's options and a root composable (`app/host.rs`). The root shows
+the main window and opens the settings window and the folder picker's with
+`rustle::window` while the screen says they are open; their `on_close_request`
+closes what they show, and `rustle::set_close_handler` asks the app before the
+main window closes.
+
+What the app does with the windows goes through rustle's API:
+
+- **Pointer.** Each window's root carries `Modifier::on_pointer_event`
+  listeners for every button, the wheel, moves and the pointer leaving, consumed
+  or not. In the initial pass the app notes what the keyboard holds; in the
+  final pass, which comes after the controls' own gestures, it carries out its
+  part of the event with what the controls claimed (`app/controller.rs`).
+- **Keys and input methods.** The root's preview key handler hands every key to
+  the app first. The code editor, the shell and a web page take text through a
+  `PlatformTextInputSession` started by `pm_components::focus::keyboard_focus`:
+  what the input method composes and commits goes to the app, which also says
+  where the editor's caret is for the candidate window.
+- **The window.** Its focus, size and modifier keys come from
+  `LOCAL_WINDOW_INFO`, its scale from `LOCAL_DENSITY` and the desktop's
+  appearance from `is_system_in_dark_theme`, each followed by a
+  `disposable_effect` keyed on the value. Maximizing, minimizing, moving,
+  resizing, bringing forward and asking for attention go through
+  `WindowHandle` (`app/port.rs`); the frame's shadow is a `WindowShadow`.
+- **Waking.** The app's work and the servers' connections wake the loop with
+  `rustle::external_waker`, and `rustle::set_external_handler` runs
+  `App::on_wake`, which only drains what woke it: the work's results and the
+  outbox, an event the interface finished handling, and a frame drawn, which
+  `rustle::set_frame_observer` reports.
+- **Idle work.** Everything else is an effect of the main window's root
+  (`idle_effects` in `app/host.rs`), each keyed on the state it follows: what
+  follows a change of the screen (settings written, the outbox delivered, the
+  view's save put off, the place recorded, the windows beside the main one
+  followed) on the screen's generation; the card about a word, the highlight
+  and marker requests, autosave, recording keys, the release check and the
+  view's save each as a `launched_effect` keyed on when it is due, waiting with
+  rustle's `delay`, which sets a timer and draws nothing meanwhile; the agents'
+  work looked at and the browser's pages pumped at their intervals while that
+  work is under way; the main window closed once the app quits; and the view
+  saved when the root leaves the composition. The app says what it waits for
+  after each turn (`App::publish_idle`) in one rustle state those effects read.
+
+The interaction tests and benchmarks (`app/interactions`) run the same views
+headless through `rustle::Embedded` (`app/headless.rs`): the rig feeds each
+window's embedded interface pointer, key, wheel, input-method and file events,
+the roots hand the app its part as in a window, and the rig wakes the app as
+the external handler does, with stand-ins recording what was asked of the
+windows.
 - **Not built yet** (one doc comment each): `pm-session`, `pm-review`.
 
 ## Code hosts

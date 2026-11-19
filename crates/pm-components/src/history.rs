@@ -1,12 +1,13 @@
 //! The history page: every session of every project, newest first, grouped by when it last changed and narrowed by a search.
 
+use crate::areas::SidebarEvent;
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use rustle::Modifier;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, row_arranged};
 
-use crate::focus::FocusId;
 use crate::theme::{Radius, Role};
 
 use crate::age::{self, Span};
@@ -14,7 +15,7 @@ use crate::input::{self, Input};
 use crate::parts::{clipped, glyph};
 use crate::sample::Session;
 use crate::size::Size;
-use crate::state::{HISTORY_SEARCH, SESSION_BASE, WorkspaceState};
+use crate::state::WorkspaceState;
 use crate::tile::Tile;
 
 impl WorkspaceState {}
@@ -42,58 +43,38 @@ const LOCAL_MACHINE: &str = "local";
 pub fn history(state: &WorkspaceState) {
     let now = age::now();
     let rows = matching(state);
-    column_arranged(
-        Modifier::new().weight(1.0),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            heading();
-            search(state);
-            column_arranged(
-                Modifier::new()
-                    .fill_max_width()
-                    .weight(1.0)
-                    .vertical_scroll(&state.history_scroll)
-                    .fill_max_width()
-                    .padding_xy(theme::sp(5), 0.0),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    for span in Span::ALL {
-                        group(state, span, &rows, now);
-                    }
-                },
-            );
-        },
-    );
+    kit::column(Modifier::new().weight(1.0), 0, || {
+        heading();
+        search(state);
+        kit::column(
+            Modifier::new()
+                .fill_max_width()
+                .weight(1.0)
+                .vertical_scroll(&state.history_scroll)
+                .fill_max_width()
+                .padding_xy(theme::sp(5), 0.0),
+            0,
+            || {
+                for span in Span::ALL {
+                    group(state, span, &rows, now);
+                }
+            },
+        );
+    });
 }
 
 /// Emits the bar across the top naming the page.
 #[track_caller]
 fn heading() {
-    row_arranged(
+    kit::row(
         Modifier::new()
             .fill_max_width()
             .height(theme::sp(12))
-            .draw_behind(theme::edge(
-                theme::Side::Bottom,
-                1.0,
-                theme::color(Role::Border),
-            ))
-            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .ruled(theme::Side::Bottom)
             .padding_xy(theme::sp(5), 0.0),
-        Arrangement::Start,
-        Alignment::Center,
+        0,
         || {
-            rustle::basic_text(
-                Modifier::new(),
-                "History",
-                theme::text_style(14, 1.4)
-                    .font_weight(rustle::FontWeight::MEDIUM)
-                    .color(theme::color(Role::Text))
-                    .max_lines(1),
-                rustle::TextOverflow::Ellipsis,
-            );
+            kit::text(Modifier::new(), "History", kit::strong(14, Role::Text));
         },
     );
 }
@@ -101,32 +82,31 @@ fn heading() {
 /// Emits the box the reader types into to narrow the list.
 #[track_caller]
 fn search(state: &WorkspaceState) {
-    column_arranged(
+    kit::column(
         Modifier::new()
             .padding_xy(theme::sp(5), 0.0)
             .padding_each(0.0, theme::sp(5), 0.0, 0.0)
             .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         || {
-            row_arranged(
+            kit::row(
                 Modifier::new()
                     .width(SEARCH_WIDTH)
                     .height(theme::sp(10))
-                    .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
-                    .border(1.0, theme::color(Role::Border), Radius::Lg.px())
-                    .padding(1.0)
+                    .panel(Radius::Lg)
                     .padding_xy(theme::sp(3), 0.0),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Center,
+                2,
                 || {
                     glyph(phosphor::MAGNIFYING_GLASS, 4.0, Role::Muted);
-                    Input::new(&state.history_search, HISTORY_SEARCH)
-                        .variant(input::Variant::Ghost)
-                        .size(Size::Sm)
-                        .placeholder("Search history")
-                        .modifier(Modifier::new().weight(1.0))
-                        .build();
+                    Input::new(
+                        &state.history_search,
+                        Target::Sidebar(SidebarEvent::HistorySearch),
+                    )
+                    .variant(input::Variant::Ghost)
+                    .size(Size::Sm)
+                    .placeholder("Search history")
+                    .modifier(Modifier::new().weight(1.0))
+                    .build();
                 },
             );
         },
@@ -171,29 +151,19 @@ fn group(state: &WorkspaceState, span: Span, rows: &[usize], now: u64) {
     if members.is_empty() {
         return;
     }
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_width()
             .padding_each(0.0, theme::sp(5), 0.0, 0.0),
-        Arrangement::SpacedBy(sp(0.5)),
-        Alignment::Start,
+        0.5,
         || {
-            row_arranged(
+            kit::row(
                 Modifier::new()
                     .height(theme::sp(8))
                     .padding_xy(theme::sp(3), 0.0),
-                Arrangement::Start,
-                Alignment::Center,
+                0,
                 || {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        span.title(),
-                        theme::text_style(14, 1.4)
-                            .font_weight(rustle::FontWeight::MEDIUM)
-                            .color(theme::color(Role::Text))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
-                    );
+                    kit::text(Modifier::new(), span.title(), kit::strong(14, Role::Text));
                 },
             );
             for index in members {
@@ -216,37 +186,22 @@ fn row_of(state: &WorkspaceState, index: usize) {
         .unwrap_or_else(|| LOCAL_MACHINE.to_owned());
     let agent = state.agent_look(session.agent);
     let operations = crate::events::operations();
-    Tile::new(FocusId(SESSION_BASE + index as u64))
+    Tile::new(Target::Sidebar(SidebarEvent::Session(index)))
         .on_context(move || operations.open_session_menu(index))
         .height(12.0)
         .modifier(Modifier::new().fill_max_width())
         .inner(Modifier::new().padding_xy(theme::sp(3), 0.0))
         .build_with(|| {
-            row_arranged(
-                Modifier::new().weight(1.0),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Center,
-                || {
-                    rustle::basic_text(
-                        Modifier::new().width_in(0.0, 560.0),
-                        &session.title,
-                        theme::text_style(14, 1.4)
-                            .color(theme::color(Role::Text))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                    glyph(phosphor::CARET_RIGHT, 4.0, Role::Subtle);
-                    glyph(agent.icon, 4.0, Role::Muted);
-                    rustle::basic_text(
-                        Modifier::new(),
-                        agent.name,
-                        theme::text_style(14, 1.4)
-                            .color(theme::color(Role::Muted))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                },
-            );
+            kit::row(Modifier::new().weight(1.0), 2, || {
+                kit::text(
+                    Modifier::new().width_in(0.0, 560.0),
+                    &session.title,
+                    kit::line(14, Role::Text),
+                );
+                glyph(phosphor::CARET_RIGHT, 4.0, Role::Subtle);
+                glyph(agent.icon, 4.0, Role::Muted);
+                kit::text(Modifier::new(), agent.name, kit::line(14, Role::Muted));
+            });
             cell(project, PROJECT_WIDTH, false);
             cell(&machine, MACHINE_WIDTH, false);
             cell(&session.branch, BRANCH_WIDTH, false);

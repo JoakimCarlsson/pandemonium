@@ -1,60 +1,27 @@
 //! The model servers page of the settings window: the OpenAI-compatible servers declared on the server's machine, each offered as an agent with its models, the form a server is added or changed with, and the models a server is found to offer, picked from to make its list.
 
+use crate::areas::SettingsEvent;
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
 use crate::theme::sp;
 use pm_harness::{ModelServer, ServerWire};
 use rustle::Modifier;
 use rustle::TextFieldState;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
+use rustle::{Alignment, Arrangement, FlowOptions, flow_row_with, row_arranged};
 
-use crate::focus::FocusId;
 use crate::theme::{Radius, Role};
 
+use crate::Badge;
 use crate::agent_list::AgentEntry;
 use crate::button::Variant;
 use crate::checkbox::Checkbox;
-use crate::input::Input;
 use crate::parts::line;
-use crate::settings_ids::{FOUND_MODEL_PICKS, MODEL_SERVER_EDITS, MODEL_SERVER_REMOVES, SINGLES};
 use crate::settings_row::choices;
+use crate::settings_rows::{FOUND_MODEL_PICKS, MODEL_SERVER_EDITS, MODEL_SERVER_REMOVES};
 use crate::settings_servers::{boxed, heading_only, note, paragraph, wrapped_note};
-use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
-use crate::{Badge, Button};
-
-/// Opens the form for declaring a model server.
-pub const MODEL_ADD: FocusId = SINGLES.at(10);
-
-/// Keeps what the form holds.
-pub const MODEL_SAVE: FocusId = SINGLES.at(11);
-
-/// Puts the form away without keeping it.
-pub const MODEL_CANCEL: FocusId = SINGLES.at(12);
-
-/// The box the server's name is written in.
-pub const MODEL_NAME: FocusId = SINGLES.at(13);
-
-/// The box the server's base URL is written in.
-pub const MODEL_URL: FocusId = SINGLES.at(14);
-
-/// The box the server's API key is written in; it never shows a key already saved.
-pub const MODEL_KEY: FocusId = SINGLES.at(15);
-
-/// The box naming the environment variables the server's key is read from.
-pub const MODEL_KEY_ENV: FocusId = SINGLES.at(16);
-
-/// The box the models the server offers are listed in, separated by commas.
-pub const MODEL_LIST: FocusId = SINGLES.at(17);
-
-/// Asks the server which models it offers.
-pub const MODEL_FIND: FocusId = SINGLES.at(18);
-
-/// Has the server spoken to through the Chat Completions API.
-pub const MODEL_WIRE_CHAT: FocusId = SINGLES.at(19);
-
-/// Has the server spoken to through the Responses API.
-pub const MODEL_WIRE_RESPONSES: FocusId = SINGLES.at(20);
 
 /// The protocols a server can speak, in the order the form offers them, with the names the form gives them.
 const WIRES: [(ServerWire, &str); 2] = [
@@ -234,8 +201,15 @@ fn id_from(name: &str, taken: &[String]) -> String {
 }
 
 /// Whether `id` names a box of the form.
-pub(crate) fn is_model_field(id: FocusId) -> bool {
-    [MODEL_NAME, MODEL_URL, MODEL_KEY, MODEL_KEY_ENV, MODEL_LIST].contains(&id)
+pub(crate) fn is_model_field(id: Target) -> bool {
+    [
+        Target::Settings(SettingsEvent::ModelName),
+        Target::Settings(SettingsEvent::ModelUrl),
+        Target::Settings(SettingsEvent::ModelKey),
+        Target::Settings(SettingsEvent::ModelKeyEnv),
+        Target::Settings(SettingsEvent::ModelList),
+    ]
+    .contains(&id)
 }
 
 impl AgentEntry {
@@ -310,17 +284,18 @@ impl WorkspaceState {
     }
 
     /// Carries out pressing `id` on the model servers page, and says whether it was something of it.
-    pub(crate) fn models_pressed(&mut self, id: FocusId) -> bool {
+    pub(crate) fn models_pressed(&mut self, id: Target) -> bool {
         match id {
-            MODEL_ADD => {
+            Target::Settings(SettingsEvent::ModelAdd) => {
                 self.settings_page.models.form = Some(ModelServerForm::holding(None, None))
             }
-            MODEL_CANCEL => self.settings_page.models.form = None,
-            MODEL_SAVE => self.save_model_server(),
-            MODEL_FIND => self.find_models(),
-            MODEL_WIRE_CHAT | MODEL_WIRE_RESPONSES => {
+            Target::Settings(SettingsEvent::ModelCancel) => self.settings_page.models.form = None,
+            Target::Settings(SettingsEvent::ModelSave) => self.save_model_server(),
+            Target::Settings(SettingsEvent::ModelFind) => self.find_models(),
+            Target::Settings(SettingsEvent::ModelWireChat)
+            | Target::Settings(SettingsEvent::ModelWireResponses) => {
                 if let Some(form) = self.settings_page.models.form.as_mut() {
-                    form.wire = if id == MODEL_WIRE_CHAT {
+                    form.wire = if id == Target::Settings(SettingsEvent::ModelWireChat) {
                         ServerWire::ChatCompletions
                     } else {
                         ServerWire::Responses
@@ -423,35 +398,17 @@ impl WorkspaceState {
     }
 
     /// The box `id` of the form, while it is open.
-    pub(crate) fn model_field(&self, id: FocusId) -> Option<&TextFieldState> {
+    pub(crate) fn model_field(&self, id: Target) -> Option<&TextFieldState> {
         let form = self.settings_page.models.form.as_ref()?;
         match id {
-            MODEL_NAME => Some(&form.name),
-            MODEL_URL => Some(&form.base_url),
-            MODEL_KEY => Some(&form.key),
-            MODEL_KEY_ENV => Some(&form.key_env),
-            MODEL_LIST => Some(&form.models),
+            Target::Settings(SettingsEvent::ModelName) => Some(&form.name),
+            Target::Settings(SettingsEvent::ModelUrl) => Some(&form.base_url),
+            Target::Settings(SettingsEvent::ModelKey) => Some(&form.key),
+            Target::Settings(SettingsEvent::ModelKeyEnv) => Some(&form.key_env),
+            Target::Settings(SettingsEvent::ModelList) => Some(&form.models),
             _ => None,
         }
     }
-}
-
-/// Emits a box of the form under the words that say what is written in it.
-#[track_caller]
-fn labelled(words: &str, field: &TextFieldState, id: FocusId, placeholder: &str) {
-    column_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Start,
-        || {
-            line(words, 12, 1.4, Role::Muted);
-            Input::new(field, id)
-                .size(Size::Sm)
-                .placeholder(placeholder)
-                .secure(crate::state::WorkspaceState::is_secure(id))
-                .build();
-        },
-    );
 }
 
 /// Emits the models the server was found to offer, each with a box that lists it in the form or takes it out, or what asking it came to; nothing when it was not asked or offers none.
@@ -470,52 +427,34 @@ fn found_node(form: &ModelServerForm, room: f32) {
         return;
     }
     let listed = form.listed();
-    column_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Start,
-        || {
-            wrapped_note(
-                &format!(
-                    "Found {} models; tick the ones to offer, or leave the list blank to offer every one.",
-                    found.models.len()
-                ),
-                (room - 48.0).max(160.0),
-            );
-            flow_row_with(
-                Modifier::new()
-                    .fill_max_width()
-                    .background_rounded(theme::color(Role::Background), Radius::Md.px())
-                    .border(1.0, theme::color(Role::Border), Radius::Md.px())
-                    .padding(1.0)
-                    .padding(theme::sp(3)),
-                FlowOptions::new(sp(3), sp(3)),
-                || {
-                    for (place, model) in found.models.iter().enumerate() {
-                        let Some(pick) = FOUND_MODEL_PICKS.id(place) else {
-                            continue;
-                        };
-                        row_arranged(
-                            Modifier::new(),
-                            Arrangement::SpacedBy(sp(2)),
-                            Alignment::Center,
-                            || {
-                                Checkbox::new(listed.contains(model), pick).build();
-                                rustle::basic_text(
-                                    Modifier::new(),
-                                    model.clone(),
-                                    theme::mono_style(12, 1.4)
-                                        .color(theme::color(Role::Text))
-                                        .max_lines(1),
-                                    rustle::TextOverflow::Ellipsis,
-                                );
-                            },
-                        );
-                    }
-                },
-            );
-        },
-    );
+    kit::column(Modifier::new().fill_max_width(), 2, || {
+        wrapped_note(
+            &format!(
+                "Found {} models; tick the ones to offer, or leave the list blank to offer every one.",
+                found.models.len()
+            ),
+            (room - 48.0).max(160.0),
+        );
+        flow_row_with(
+            Modifier::new()
+                .fill_max_width()
+                .background_rounded(theme::color(Role::Background), Radius::Md.px())
+                .outlined(Radius::Md)
+                .padding(theme::sp(3)),
+            FlowOptions::new(sp(3), sp(3)),
+            || {
+                for (place, model) in found.models.iter().enumerate() {
+                    let Some(pick) = FOUND_MODEL_PICKS.id(place) else {
+                        continue;
+                    };
+                    kit::row(Modifier::new(), 2, || {
+                        Checkbox::new(listed.contains(model), pick).build();
+                        kit::text(Modifier::new(), model.clone(), kit::code(12, Role::Text));
+                    });
+                }
+            },
+        );
+    });
 }
 
 /// Emits the form a model server is declared or changed with, `room` logical pixels across.
@@ -530,47 +469,51 @@ fn form_node(form: &ModelServerForm, room: f32) {
     } else {
         "sk-..."
     };
-    column_arranged(
+    kit::column(
         Modifier::new().fill_max_width().padding(theme::sp(3)),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Start,
+        3,
         || {
-            labelled("Name", &form.name, MODEL_NAME, "e.g. Company gateway");
-            labelled(
+            crate::settings_machines::labelled(
+                "Name",
+                &form.name,
+                Target::Settings(SettingsEvent::ModelName),
+                "e.g. Company gateway",
+            );
+            crate::settings_machines::labelled(
                 "Base URL",
                 &form.base_url,
-                MODEL_URL,
+                Target::Settings(SettingsEvent::ModelUrl),
                 "e.g. http://localhost:8000/v1",
             );
-            column_arranged(
-                Modifier::new(),
-                Arrangement::SpacedBy(sp(1)),
-                Alignment::Start,
-                || {
-                    line("API", 12, 1.4, Role::Muted);
-                    row_arranged(
-                        Modifier::new(),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            choices(&WIRES.map(|(_, name)| name), picked, |option| {
-                                [MODEL_WIRE_CHAT, MODEL_WIRE_RESPONSES].get(option).copied()
-                            });
-                        },
-                    );
-                },
+            kit::column(Modifier::new(), 1, || {
+                line("API", 12, 1.4, Role::Muted);
+                kit::row_top(Modifier::new(), 0, || {
+                    choices(&WIRES.map(|(_, name)| name), picked, |option| {
+                        [
+                            Target::Settings(SettingsEvent::ModelWireChat),
+                            Target::Settings(SettingsEvent::ModelWireResponses),
+                        ]
+                        .get(option)
+                        .copied()
+                    });
+                });
+            });
+            crate::settings_machines::labelled(
+                "API key",
+                &form.key,
+                Target::Settings(SettingsEvent::ModelKey),
+                key_hint,
             );
-            labelled("API key", &form.key, MODEL_KEY, key_hint);
-            labelled(
+            crate::settings_machines::labelled(
                 "Or read the key from (environment variables)",
                 &form.key_env,
-                MODEL_KEY_ENV,
+                Target::Settings(SettingsEvent::ModelKeyEnv),
                 "e.g. GATEWAY_API_KEY",
             );
-            labelled(
+            crate::settings_machines::labelled(
                 "Models (separated by commas; blank asks the server)",
                 &form.models,
-                MODEL_LIST,
+                Target::Settings(SettingsEvent::ModelList),
                 "e.g. qwen3-coder, gpt-oss-120b",
             );
             found_node(form, room);
@@ -579,27 +522,32 @@ fn form_node(form: &ModelServerForm, room: f32) {
                 Arrangement::SpaceBetween,
                 Alignment::Center,
                 || {
-                    Button::new("Find models", MODEL_FIND)
-                        .variant(Variant::Outline)
-                        .size(Size::Sm)
-                        .with_icon(phosphor::MAGNIFYING_GLASS)
-                        .disabled(
-                            form.base_url.text().trim().is_empty() || form.found.asking.is_some(),
-                        )
-                        .build();
+                    kit::small_button(
+                        "Find models",
+                        Target::Settings(SettingsEvent::ModelFind),
+                        Variant::Outline,
+                    )
+                    .with_icon(phosphor::MAGNIFYING_GLASS)
+                    .disabled(form.base_url.text().trim().is_empty() || form.found.asking.is_some())
+                    .build();
                     row_arranged(
                         Modifier::new(),
                         Arrangement::SpacedByAligned(sp(2), Alignment::End),
                         Alignment::Center,
                         || {
-                            Button::new("Cancel", MODEL_CANCEL)
-                                .variant(Variant::Ghost)
-                                .size(Size::Sm)
-                                .build();
-                            Button::new("Save", MODEL_SAVE)
-                                .size(Size::Sm)
-                                .disabled(!form.complete())
-                                .build();
+                            kit::small_button(
+                                "Cancel",
+                                Target::Settings(SettingsEvent::ModelCancel),
+                                Variant::Ghost,
+                            )
+                            .build();
+                            kit::small_button(
+                                "Save",
+                                Target::Settings(SettingsEvent::ModelSave),
+                                Variant::Default,
+                            )
+                            .disabled(!form.complete())
+                            .build();
                         },
                     );
                 },
@@ -638,70 +586,37 @@ fn key_badge(server: &ModelServer) -> Option<String> {
 #[track_caller]
 fn server_row(index: usize, server: &ModelServer) {
     let name = server.label.clone().unwrap_or_else(|| server.id.clone());
-    row_arranged(
+    kit::row(
         Modifier::new()
             .fill_max_width()
             .padding_xy(theme::sp(3), 0.0)
             .padding_xy(0.0, theme::sp(3)),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Center,
+        3,
         || {
-            column_arranged(
-                Modifier::new().weight(1.0),
-                Arrangement::SpacedBy(sp(0.5)),
-                Alignment::Start,
-                || {
-                    row_arranged(
-                        Modifier::new(),
-                        Arrangement::SpacedBy(sp(2)),
-                        Alignment::Center,
-                        || {
-                            rustle::basic_text(
-                                Modifier::new(),
-                                name,
-                                theme::text_style(13, 1.4)
-                                    .font_weight(rustle::FontWeight::MEDIUM)
-                                    .color(theme::color(Role::Text))
-                                    .max_lines(1),
-                                rustle::TextOverflow::Ellipsis,
-                            );
-                            if let Some(said) = key_badge(server) {
-                                Badge::new(said).build();
-                            }
-                        },
+            kit::column(Modifier::new().weight(1.0), 0.5, || {
+                kit::row(Modifier::new(), 2, || {
+                    kit::text(Modifier::new(), name, kit::strong(13, Role::Text));
+                    if let Some(said) = key_badge(server) {
+                        Badge::new(said).build();
+                    }
+                });
+                line(detail_of(server), 12, 1.4, Role::Muted);
+                if !server.models.is_empty() {
+                    kit::text(
+                        Modifier::new().fill_max_width(),
+                        server.models.join(", "),
+                        kit::line(11, Role::Subtle),
                     );
-                    line(detail_of(server), 12, 1.4, Role::Muted);
-                    if !server.models.is_empty() {
-                        rustle::basic_text(
-                            Modifier::new().fill_max_width(),
-                            server.models.join(", "),
-                            theme::text_style(11, 1.4)
-                                .color(theme::color(Role::Subtle))
-                                .max_lines(1),
-                            rustle::TextOverflow::Ellipsis,
-                        );
-                    }
-                },
-            );
-            row_arranged(
-                Modifier::new(),
-                Arrangement::SpacedBy(sp(1)),
-                Alignment::Center,
-                || {
-                    if let Some(edit) = MODEL_SERVER_EDITS.id(index) {
-                        Button::new("Edit", edit)
-                            .variant(Variant::Ghost)
-                            .size(Size::Sm)
-                            .build();
-                    }
-                    if let Some(remove) = MODEL_SERVER_REMOVES.id(index) {
-                        Button::new("Remove", remove)
-                            .variant(Variant::Ghost)
-                            .size(Size::Sm)
-                            .build();
-                    }
-                },
-            );
+                }
+            });
+            kit::row(Modifier::new(), 1, || {
+                if let Some(edit) = MODEL_SERVER_EDITS.id(index) {
+                    kit::small_button("Edit", edit, Variant::Ghost).build();
+                }
+                if let Some(remove) = MODEL_SERVER_REMOVES.id(index) {
+                    kit::small_button("Remove", remove, Variant::Ghost).build();
+                }
+            });
         },
     );
 }
@@ -726,11 +641,13 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
         Alignment::Center,
         || {
             heading_only("Servers", models.servers.len());
-            Button::new("Add Server", MODEL_ADD)
-                .variant(Variant::Outline)
-                .size(Size::Sm)
-                .disabled(adding)
-                .build();
+            kit::small_button(
+                "Add Server",
+                Target::Settings(SettingsEvent::ModelAdd),
+                Variant::Outline,
+            )
+            .disabled(adding)
+            .build();
         },
     );
     if models.servers.is_empty() && !adding {
@@ -789,7 +706,7 @@ mod tests {
     }
 
     /// Writes `text` into the box `id`.
-    fn typed(state: WorkspaceState, id: FocusId, text: &str) -> WorkspaceState {
+    fn typed(state: WorkspaceState, id: Target, text: &str) -> WorkspaceState {
         state.typed(id, text)
     }
 
@@ -810,14 +727,31 @@ mod tests {
     /// A server declared with a name, an address, the Responses API and a key is sent to be saved under an id made from its name, with its key, and the form goes away.
     #[test]
     fn a_new_server_is_saved_under_an_id_from_its_name() {
-        let state = open_with(Vec::new()).settings_pressed(MODEL_ADD);
-        let state = typed(state, MODEL_NAME, "Lab Box!");
-        let state = typed(state, MODEL_URL, "http://lab:8000/v1");
-        let state = typed(state, MODEL_KEY, "sk-secret");
-        let state = typed(state, MODEL_LIST, "qwen3-coder, gpt-oss  qwen3-coder");
+        let state =
+            open_with(Vec::new()).settings_pressed(Target::Settings(SettingsEvent::ModelAdd));
+        let state = typed(
+            state,
+            Target::Settings(SettingsEvent::ModelName),
+            "Lab Box!",
+        );
+        let state = typed(
+            state,
+            Target::Settings(SettingsEvent::ModelUrl),
+            "http://lab:8000/v1",
+        );
+        let state = typed(
+            state,
+            Target::Settings(SettingsEvent::ModelKey),
+            "sk-secret",
+        );
+        let state = typed(
+            state,
+            Target::Settings(SettingsEvent::ModelList),
+            "qwen3-coder, gpt-oss  qwen3-coder",
+        );
         let mut state = state
-            .settings_pressed(MODEL_WIRE_RESPONSES)
-            .settings_pressed(MODEL_SAVE);
+            .settings_pressed(Target::Settings(SettingsEvent::ModelWireResponses))
+            .settings_pressed(Target::Settings(SettingsEvent::ModelSave));
         assert!(state.settings_page.models.form.is_none());
         let sent = state.take_outbox();
         let Some(Outgoing::SaveModelServer(server)) = sent
@@ -836,8 +770,10 @@ mod tests {
     /// A form missing its address is not saved and stays open.
     #[test]
     fn an_incomplete_server_is_not_saved() {
-        let state = open_with(Vec::new()).settings_pressed(MODEL_ADD);
-        let mut state = typed(state, MODEL_NAME, "Box").settings_pressed(MODEL_SAVE);
+        let state =
+            open_with(Vec::new()).settings_pressed(Target::Settings(SettingsEvent::ModelAdd));
+        let mut state = typed(state, Target::Settings(SettingsEvent::ModelName), "Box")
+            .settings_pressed(Target::Settings(SettingsEvent::ModelSave));
         assert!(state.settings_page.models.form.is_some());
         assert!(
             !state
@@ -853,19 +789,20 @@ mod tests {
         let state = open_with(vec![saved()]).settings_pressed(MODEL_SERVER_EDITS.at(0));
         assert_eq!(
             state
-                .text_field(MODEL_KEY)
+                .text_field(Target::Settings(SettingsEvent::ModelKey))
                 .map(TextFieldState::text)
                 .as_deref(),
             Some("")
         );
         assert_eq!(
             state
-                .text_field(MODEL_NAME)
+                .text_field(Target::Settings(SettingsEvent::ModelName))
                 .map(TextFieldState::text)
                 .as_deref(),
             Some("Gateway")
         );
-        let mut state = typed(state, MODEL_NAME, " Two").settings_pressed(MODEL_SAVE);
+        let mut state = typed(state, Target::Settings(SettingsEvent::ModelName), " Two")
+            .settings_pressed(Target::Settings(SettingsEvent::ModelSave));
         let sent = state.take_outbox();
         let Some(Outgoing::SaveModelServer(server)) = sent.first() else {
             panic!("nothing was saved: {sent:?}");
@@ -889,7 +826,8 @@ mod tests {
     #[test]
     fn found_models_are_picked_into_the_list() {
         let state = open_with(vec![saved()]).settings_pressed(MODEL_SERVER_EDITS.at(0));
-        let mut state = typed(state, MODEL_LIST, "kept").settings_pressed(MODEL_FIND);
+        let mut state = typed(state, Target::Settings(SettingsEvent::ModelList), "kept")
+            .settings_pressed(Target::Settings(SettingsEvent::ModelFind));
         let sent = state.take_outbox();
         let Some(Outgoing::FindModels { ticket, server }) = sent.first() else {
             panic!("no models were asked for: {sent:?}");
@@ -907,7 +845,7 @@ mod tests {
             .settings_pressed(FOUND_MODEL_PICKS.at(0));
         assert_eq!(
             state
-                .text_field(MODEL_LIST)
+                .text_field(Target::Settings(SettingsEvent::ModelList))
                 .map(TextFieldState::text)
                 .as_deref(),
             Some("kept, a")
@@ -931,7 +869,7 @@ mod tests {
     fn a_failed_search_says_why() {
         let state = open_with(vec![saved()])
             .settings_pressed(MODEL_SERVER_EDITS.at(0))
-            .settings_pressed(MODEL_FIND);
+            .settings_pressed(Target::Settings(SettingsEvent::ModelFind));
         let state = state.with_found_models(0, Err("connection refused".to_owned()));
         let found = &state.settings_page.models.form.as_ref().unwrap().found;
         assert_eq!(found.error.as_deref(), Some("connection refused"));

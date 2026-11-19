@@ -1,7 +1,8 @@
 //! The shell: taking the keyboard when pressed, keys and an input method's
 //! text sent to it, marking its text by dragging, its menu, and the wheel.
 
-use pm_components::state::TERMINAL_BODY;
+use pm_components::areas::TerminalEvent;
+use pm_components::target::Target;
 use rustle::Key;
 
 use crate::app::headless::Rig;
@@ -27,8 +28,11 @@ fn opened() -> Rig {
 #[test]
 fn the_shell_takes_the_keyboard_and_keys() {
     let mut rig = opened();
-    rig.click_on(TERMINAL_BODY);
-    assert_eq!(rig.focused(), Some(TERMINAL_BODY));
+    rig.click_on(Target::Terminal(TerminalEvent::TerminalBody));
+    assert_eq!(
+        rig.focused(),
+        Some(Target::Terminal(TerminalEvent::TerminalBody))
+    );
     let _ = sent(&mut rig);
     rig.type_text("ls");
     rig.key(Key::Enter);
@@ -43,7 +47,7 @@ fn the_shell_takes_the_keyboard_and_keys() {
 #[test]
 fn an_input_method_types_into_the_shell() {
     let mut rig = opened();
-    rig.click_on(TERMINAL_BODY);
+    rig.click_on(Target::Terminal(TerminalEvent::TerminalBody));
     let _ = sent(&mut rig);
     rig.commit("é");
     let asked = sent(&mut rig);
@@ -54,7 +58,9 @@ fn an_input_method_types_into_the_shell() {
 #[test]
 fn dragging_marks_the_shell_text() {
     let mut rig = Rig::shot(Shot::Terminal);
-    let body = rig.region(TERMINAL_BODY).expect("the shell is drawn");
+    let body = rig
+        .region(Target::Terminal(TerminalEvent::TerminalBody))
+        .expect("the shell is drawn");
     let from = (body.origin.x + 4.0, body.origin.y + 6.0);
     rig.drag(from, (from.0 + 80.0, from.1), 5);
     let marked = rig.read(|screen| screen.terminal_selection());
@@ -65,7 +71,7 @@ fn dragging_marks_the_shell_text() {
 #[test]
 fn the_shell_menu_opens() {
     let mut rig = Rig::shot(Shot::Terminal);
-    let at = rig.center(TERMINAL_BODY);
+    let at = rig.center(Target::Terminal(TerminalEvent::TerminalBody));
     rig.right_click(at);
     assert!(rig.state(|state| state.terminal_menu.is_some()));
     rig.key(Key::Escape);

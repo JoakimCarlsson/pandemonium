@@ -1,19 +1,21 @@
 //! The quick input as it is drawn: a field over the command center it opens from, and under it the rows of what the field lists, the letters typed marked in their names and the keys of each command on caps.
 
-use crate::events::reduce;
+use crate::areas::EditorEvent;
+use crate::kit::{self, Frame};
+use crate::theme::Indicated;
+use crate::theme::ShadowLayers;
+
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use crate::assist::listing_cells;
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::input::Input;
 use crate::listing::{
-    Destination, Items, LISTING_BODY, LISTING_FILTER, LISTING_ROW_BASE, LISTING_WIDTH, Listing,
-    Quick, line_named, matched_characters, task_title,
+    Destination, Items, LISTING_WIDTH, Listing, Quick, line_named, matched_characters, task_title,
 };
 use crate::parts::{glyph, line};
 use crate::size::Size;
@@ -32,7 +34,7 @@ const PREVIEWED_TITLE: f32 = 170.0;
 pub const FIELD_HEIGHT: f32 = 28.0;
 
 /// The shadow the quick input casts over the window, as `(x, y, blur, spread, alpha)`.
-const SHADOW: [(f32, f32, f32, f32, f32); 1] = [(0.0, 10.0, 32.0, 0.0, 0.36)];
+const SHADOW: [rustle::Shadow; 1] = [crate::theme::box_shadow(0.0, 10.0, 32.0, 0.0, 0.36)];
 
 /// What a row of the quick input holds, emitted when the row is drawn.
 type Cells<'a> = Box<dyn FnOnce() + 'a>;
@@ -52,31 +54,30 @@ pub fn quick_input(listing: &Listing) {
         .picked
         .saturating_sub(QUICK_SHOWN - 1)
         .min(count.saturating_sub(QUICK_SHOWN));
-    column_arranged(
+    kit::column(
         Modifier::new()
             .offset(listing.at.0, listing.at.1)
             .z_index(60)
             .width(LISTING_WIDTH)
-            .draw_behind(theme::shadows(&SHADOW, Radius::Lg))
-            .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
-            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
-            .padding(1.0)
+            .shadow_layers(&SHADOW, Radius::Lg.px())
+            .panel(Radius::Lg)
             .clip()
-            .control(LISTING_BODY, reduce(LISTING_BODY)),
-        Arrangement::Start,
-        Alignment::Start,
+            .control(
+                Target::Editor(EditorEvent::ListingBody),
+                send(Event::Editor(EditorEvent::ListingBody)),
+            ),
+        0,
         || {
             if let Some(filter) = listing.items.filter() {
-                column_arranged(
+                kit::column(
                     Modifier::new()
                         .fill_max_width()
                         .padding_xy(theme::sp(1.5), 0.0)
                         .padding_each(0.0, theme::sp(1.5), 0.0, 0.0)
                         .padding_each(0.0, 0.0, 0.0, theme::sp(1)),
-                    Arrangement::Start,
-                    Alignment::Start,
+                    0,
                     || {
-                        Input::new(filter, LISTING_FILTER)
+                        Input::new(filter, Target::Editor(EditorEvent::ListingFilter))
                             .size(Size::Sm)
                             .placeholder(listing.items.placeholder())
                             .modifier(Modifier::new().fill_max_width().height(FIELD_HEIGHT))
@@ -84,22 +85,20 @@ pub fn quick_input(listing: &Listing) {
                     },
                 );
             }
-            column_arranged(
+            kit::column(
                 Modifier::new()
                     .fill_max_width()
                     .padding_xy(theme::sp(1.5), 0.0)
                     .padding_each(0.0, 0.0, 0.0, theme::sp(1.75)),
-                Arrangement::Start,
-                Alignment::Start,
+                0,
                 || {
                     if let Some(said) = status {
-                        row_arranged(
+                        kit::row(
                             Modifier::new()
                                 .fill_max_width()
                                 .height(ROW)
                                 .padding_xy(theme::sp(1.5), 0.0),
-                            Arrangement::Start,
-                            Alignment::Center,
+                            0,
                             || line(said, 13, 1.4, Role::Muted),
                         );
                     }
@@ -135,12 +134,7 @@ fn empty_words(items: &Items) -> String {
 /// Emits `content` in a line of `pixels` tall type in `tone`, in a box `modifier` shapes that cuts it short at its edge.
 #[track_caller]
 fn cut(modifier: Modifier, content: impl Into<String>, pixels: u32, tone: Role) {
-    row_arranged(
-        modifier.clip(),
-        Arrangement::Start,
-        Alignment::Start,
-        || line(content, pixels, 1.4, tone),
-    );
+    kit::row_top(modifier.clip(), 0, || line(content, pixels, 1.4, tone));
 }
 
 /// Emits the row at `place` among those shown, of the item at `index`, filled under the pointer and when `picked`.
@@ -314,7 +308,7 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
             (cells, None)
         }
     };
-    let id = FocusId(LISTING_ROW_BASE + place as u64);
+    let id = Target::Editor(EditorEvent::ListingRow(place));
     let looks = if picked {
         theme::InteractionTones::new()
             .idle(Role::SurfaceSelected)
@@ -322,30 +316,23 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
     } else {
         theme::InteractionTones::new().hover(Role::SurfaceHover)
     };
-    let own = Modifier::new()
-        .fill_max_width()
-        .height(ROW)
-        .interaction_focused(crate::focus::is_held(id))
-        .interaction_background((looks.radius(Radius::Sm)).colors());
+    let own = Modifier::new().fill_max_width().height(ROW).indicated(
+        looks.radius(Radius::Sm),
+        theme::Focused::Held(crate::focus::is_held(id)),
+    );
     let own = if group.is_some_and(|(_, ruled)| ruled) {
-        own.draw_behind(theme::edge(
-            theme::Side::Top,
-            1.0,
-            theme::color(Role::Border),
-        ))
-        .padding_each(0.0, 1.0, 0.0, 0.0)
+        own.ruled(theme::Side::Top)
     } else {
         own
     };
-    row_arranged(
+    kit::row(
         own.cursor(CursorIcon::Pointer)
             .control(id, {
                 let operations = crate::events::operations();
                 move || operations.take_listing(Some(place))
             })
             .padding_xy(theme::sp(1.5), 0.0),
-        Arrangement::SpacedBy(sp(1.5)),
-        Alignment::Center,
+        1.5,
         cells,
     );
 }
@@ -362,32 +349,21 @@ fn marked(modifier: Modifier, name: &str, query: &str) {
             _ => runs.push((character.to_string(), lit)),
         }
     }
-    row_arranged(
-        modifier.clip(),
-        Arrangement::Start,
-        Alignment::Center,
-        move || {
-            let kind = theme::text_style(13, 1.4);
-            for (run, lit) in runs {
-                if lit {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        run,
-                        kind.font_weight(rustle::FontWeight::SEMI_BOLD)
-                            .color(theme::color(Role::Accent)),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                } else {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        run,
-                        kind.color(theme::color(Role::Text)),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                }
+    kit::row(modifier.clip(), 0, move || {
+        let kind = theme::text_style(13, 1.4);
+        for (run, lit) in runs {
+            if lit {
+                kit::text(
+                    Modifier::new(),
+                    run,
+                    kind.font_weight(rustle::FontWeight::SEMI_BOLD)
+                        .color(theme::color(Role::Accent)),
+                );
+            } else {
+                kit::text(Modifier::new(), run, kind.color(theme::color(Role::Text)));
             }
-        },
-    );
+        }
+    });
 }
 
 /// Emits the name of a group of rows, at the end of its first row.
@@ -399,42 +375,30 @@ fn separator(said: &str) {
 /// Emits the keys `binding` is pressed with, such as `Ctrl+K Ctrl+I`, each on a cap of its own, joined by `+` within a chord and set apart between chords.
 #[track_caller]
 fn keycaps(binding: &str) {
-    row_arranged(
-        Modifier::new(),
-        Arrangement::SpacedBy(sp(1.5)),
-        Alignment::Center,
-        || {
-            for chord in binding.split(' ') {
-                row_arranged(
-                    Modifier::new(),
-                    Arrangement::SpacedBy(sp(0.5)),
-                    Alignment::Center,
-                    || {
-                        for (place, key) in chord.split('+').enumerate() {
-                            if place > 0 {
-                                line("+", 11, 1.0, Role::Subtle);
-                            }
-                            keycap(key);
-                        }
-                    },
-                );
-            }
-        },
-    );
+    kit::row(Modifier::new(), 1.5, || {
+        for chord in binding.split(' ') {
+            kit::row(Modifier::new(), 0.5, || {
+                for (place, key) in chord.split('+').enumerate() {
+                    if place > 0 {
+                        line("+", 11, 1.0, Role::Subtle);
+                    }
+                    keycap(key);
+                }
+            });
+        }
+    });
 }
 
 /// Emits one key, on a cap.
 #[track_caller]
 fn keycap(key: &str) {
-    row_arranged(
+    kit::row(
         Modifier::new()
             .height(17.0)
             .background_rounded(theme::color(Role::Background), Radius::Sm.px())
-            .border(1.0, theme::color(Role::Border), Radius::Sm.px())
-            .padding(1.0)
+            .outlined(Radius::Sm)
             .padding_xy(theme::sp(1.25), 0.0),
-        Arrangement::Start,
-        Alignment::Center,
+        0,
         || line(key, 11, 1.0, Role::Muted),
     );
 }

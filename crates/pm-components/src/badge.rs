@@ -1,8 +1,8 @@
 //! The badge: a small label in a pill, filled, washed in its colour or quietly neutral.
 
+use crate::kit;
 use crate::theme;
 use rustle::Modifier;
-use rustle::{Alignment, Arrangement, row_arranged};
 
 use crate::theme::{Radius, Role, Tone};
 
@@ -103,7 +103,7 @@ impl Badge {
             theme::color(words),
             None,
             move || {
-                row_arranged(inner, Arrangement::Start, Alignment::Center, move || {
+                kit::row(inner, 0, move || {
                     line(label, 11, 1.2, words);
                 });
             },

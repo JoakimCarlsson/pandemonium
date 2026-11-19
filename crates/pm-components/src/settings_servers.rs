@@ -1,29 +1,25 @@
 //! The pages of the settings panel that list servers: the agents that can be started and the tool servers every agent is started with, each with the ones added, a form to add or change one, and what the public registry offers.
 
-use crate::events::reduce;
+use crate::areas::SettingsEvent;
+use crate::events::{Event, send};
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use pm_protocol::{McpServer, ToolListing};
 use rustle::TextFieldState;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
 
 use crate::agent_list::AgentEntry;
 use crate::button::Variant;
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::input::Input;
 use crate::menu::Menu;
 use crate::parts::{glyph, line, wrap};
-use crate::settings::{
-    SETTINGS_ADD, SETTINGS_CANCEL, SETTINGS_DOCS, SETTINGS_ENV, SETTINGS_MENU_COPY,
-    SETTINGS_MENU_EDIT, SETTINGS_MENU_REMOVE, SETTINGS_MENU_TOGGLE, SETTINGS_MENU_WEBSITE,
-    SETTINGS_NAME, SETTINGS_RELEASE, SETTINGS_SAVE, SETTINGS_SEARCH, SETTINGS_SEARCH_GO,
-    SETTINGS_TARGET, SETTINGS_TOGGLE_AVAILABLE, SETTINGS_TOGGLE_INSTALLED, Section,
-};
-use crate::settings_ids::{INSTALLS, SERVER_MORES, SERVER_SWITCHES};
+use crate::settings::Section;
 use crate::settings_row::switch;
+use crate::settings_rows::{INSTALLS, SERVER_MORES, SERVER_SWITCHES};
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::theme::{Radius, Role};
@@ -234,33 +230,35 @@ impl WorkspaceState {
     }
 
     /// The state after `action`, which names a button of a server list or its form, was pressed.
-    pub(crate) fn servers_pressed(mut self, action: FocusId) -> Self {
+    pub(crate) fn servers_pressed(mut self, action: Target) -> Self {
         match action {
-            SETTINGS_ADD => {
+            Target::Settings(SettingsEvent::SettingsAdd) => {
                 self.settings_servers.form = Some(ServerForm::holding(None, "", "", &[]))
             }
-            SETTINGS_CANCEL => self.settings_servers.form = None,
-            SETTINGS_TOGGLE_INSTALLED => {
+            Target::Settings(SettingsEvent::SettingsCancel) => self.settings_servers.form = None,
+            Target::Settings(SettingsEvent::SettingsToggleInstalled) => {
                 self.settings_servers.installed_folded = !self.settings_servers.installed_folded;
             }
-            SETTINGS_TOGGLE_AVAILABLE => {
+            Target::Settings(SettingsEvent::SettingsToggleAvailable) => {
                 self.settings_servers.available_folded = !self.settings_servers.available_folded;
             }
-            SETTINGS_SAVE => self.save_form(),
-            SETTINGS_SEARCH_GO if self.settings == Some(Section::McpServers) => {
+            Target::Settings(SettingsEvent::SettingsSave) => self.save_form(),
+            Target::Settings(SettingsEvent::SettingsSearchGo)
+                if self.settings == Some(Section::McpServers) =>
+            {
                 let query = self.settings_servers.search.text().trim().to_owned();
                 self.search_tools(query);
             }
             _ if let Some(index) = INSTALLS.index_of(action) => self.install(index),
             _ if let Some(index) = SERVER_SWITCHES.index_of(action) => self.toggle_server(index),
-            SETTINGS_DOCS => self.outbox.push(Outgoing::Open {
+            Target::Settings(SettingsEvent::SettingsDocs) => self.outbox.push(Outgoing::Open {
                 address: TOOL_SERVERS_DOCS.to_owned(),
             }),
-            SETTINGS_MENU_TOGGLE
-            | SETTINGS_MENU_EDIT
-            | SETTINGS_MENU_COPY
-            | SETTINGS_MENU_WEBSITE
-            | SETTINGS_MENU_REMOVE => self.menu_pressed(action),
+            Target::Settings(SettingsEvent::SettingsMenuToggle)
+            | Target::Settings(SettingsEvent::SettingsMenuEdit)
+            | Target::Settings(SettingsEvent::SettingsMenuCopy)
+            | Target::Settings(SettingsEvent::SettingsMenuWebsite)
+            | Target::Settings(SettingsEvent::SettingsMenuRemove) => self.menu_pressed(action),
             _ => {}
         }
         self
@@ -351,14 +349,14 @@ impl WorkspaceState {
     }
 
     /// Whether `id` names a row of the menu of a server that is open.
-    pub(crate) fn settings_menu_row(&self, id: FocusId) -> bool {
+    pub(crate) fn settings_menu_row(&self, id: Target) -> bool {
         self.settings_servers.menu.is_some()
             && [
-                SETTINGS_MENU_TOGGLE,
-                SETTINGS_MENU_EDIT,
-                SETTINGS_MENU_COPY,
-                SETTINGS_MENU_WEBSITE,
-                SETTINGS_MENU_REMOVE,
+                Target::Settings(SettingsEvent::SettingsMenuToggle),
+                Target::Settings(SettingsEvent::SettingsMenuEdit),
+                Target::Settings(SettingsEvent::SettingsMenuCopy),
+                Target::Settings(SettingsEvent::SettingsMenuWebsite),
+                Target::Settings(SettingsEvent::SettingsMenuRemove),
             ]
             .contains(&id)
     }
@@ -379,22 +377,24 @@ impl WorkspaceState {
     }
 
     /// The state after the row `row` of the open menu of a server was pressed, and the menu closed.
-    fn menu_pressed(&mut self, row: FocusId) {
+    fn menu_pressed(&mut self, row: Target) {
         let Some(open) = self.settings_servers.menu.take() else {
             return;
         };
         match row {
-            SETTINGS_MENU_TOGGLE => self.toggle_server(open.index),
-            SETTINGS_MENU_EDIT => self.settings_servers.form = self.form_for(open.index),
-            SETTINGS_MENU_REMOVE => self.remove_server(open.index),
-            SETTINGS_MENU_COPY => {
+            Target::Settings(SettingsEvent::SettingsMenuToggle) => self.toggle_server(open.index),
+            Target::Settings(SettingsEvent::SettingsMenuEdit) => {
+                self.settings_servers.form = self.form_for(open.index)
+            }
+            Target::Settings(SettingsEvent::SettingsMenuRemove) => self.remove_server(open.index),
+            Target::Settings(SettingsEvent::SettingsMenuCopy) => {
                 if let Some(tool) = self.settings_servers.tools.get(open.index) {
                     self.outbox.push(Outgoing::Copy {
                         text: configuration_of(tool),
                     });
                 }
             }
-            SETTINGS_MENU_WEBSITE => {
+            Target::Settings(SettingsEvent::SettingsMenuWebsite) => {
                 if let Some(tool) = self.settings_servers.tools.get(open.index) {
                     self.outbox.push(Outgoing::Open {
                         address: tool.website.clone(),
@@ -426,15 +426,15 @@ impl WorkspaceState {
     }
 
     /// The box `id` of the page, if it is open and `id` names one.
-    pub(crate) fn server_form_field(&self, id: FocusId) -> Option<&TextFieldState> {
-        if id == SETTINGS_SEARCH {
+    pub(crate) fn server_form_field(&self, id: Target) -> Option<&TextFieldState> {
+        if id == Target::Settings(SettingsEvent::SettingsSearch) {
             return Some(&self.settings_servers.search);
         }
         let form = self.settings_servers.form.as_ref()?;
         match id {
-            SETTINGS_NAME => Some(&form.name),
-            SETTINGS_TARGET => Some(&form.target),
-            SETTINGS_ENV => Some(&form.env),
+            Target::Settings(SettingsEvent::SettingsName) => Some(&form.name),
+            Target::Settings(SettingsEvent::SettingsTarget) => Some(&form.target),
+            Target::Settings(SettingsEvent::SettingsEnv) => Some(&form.env),
             _ => None,
         }
     }
@@ -485,47 +485,77 @@ fn server_menu_of(state: &WorkspaceState) -> Option<Menu> {
             let tool = state.settings_servers.tools.get(open.index)?;
             if tool.extension.is_some() {
                 return Some(
-                    menu.item("Copy Configuration (JSON)", None, SETTINGS_MENU_COPY, false)
-                        .item(
-                            "Open Website",
-                            None,
-                            SETTINGS_MENU_WEBSITE,
-                            tool.website.is_empty(),
-                        ),
+                    menu.item(
+                        "Copy Configuration (JSON)",
+                        None,
+                        Target::Settings(SettingsEvent::SettingsMenuCopy),
+                        false,
+                    )
+                    .item(
+                        "Open Website",
+                        None,
+                        Target::Settings(SettingsEvent::SettingsMenuWebsite),
+                        tool.website.is_empty(),
+                    ),
                 );
             }
             menu.item(
                 if tool.enabled { "Disable" } else { "Enable" },
                 None,
-                SETTINGS_MENU_TOGGLE,
+                Target::Settings(SettingsEvent::SettingsMenuToggle),
                 false,
             )
-            .item("Edit…", None, SETTINGS_MENU_EDIT, false)
+            .item(
+                "Edit…",
+                None,
+                Target::Settings(SettingsEvent::SettingsMenuEdit),
+                false,
+            )
             .separator()
-            .item("Copy Configuration (JSON)", None, SETTINGS_MENU_COPY, false)
+            .item(
+                "Copy Configuration (JSON)",
+                None,
+                Target::Settings(SettingsEvent::SettingsMenuCopy),
+                false,
+            )
             .item(
                 "Open Website",
                 None,
-                SETTINGS_MENU_WEBSITE,
+                Target::Settings(SettingsEvent::SettingsMenuWebsite),
                 tool.website.is_empty(),
             )
             .separator()
-            .item("Uninstall", None, SETTINGS_MENU_REMOVE, false)
+            .item(
+                "Uninstall",
+                None,
+                Target::Settings(SettingsEvent::SettingsMenuRemove),
+                false,
+            )
         }
         _ => menu
-            .item("Edit…", None, SETTINGS_MENU_EDIT, false)
+            .item(
+                "Edit…",
+                None,
+                Target::Settings(SettingsEvent::SettingsMenuEdit),
+                false,
+            )
             .separator()
-            .item("Remove", None, SETTINGS_MENU_REMOVE, false),
+            .item(
+                "Remove",
+                None,
+                Target::Settings(SettingsEvent::SettingsMenuRemove),
+                false,
+            ),
     })
 }
 
 /// Whether `id` names a box of the pages.
-pub(crate) fn is_form_field(id: FocusId) -> bool {
+pub(crate) fn is_form_field(id: Target) -> bool {
     [
-        SETTINGS_NAME,
-        SETTINGS_TARGET,
-        SETTINGS_ENV,
-        SETTINGS_SEARCH,
+        Target::Settings(SettingsEvent::SettingsName),
+        Target::Settings(SettingsEvent::SettingsTarget),
+        Target::Settings(SettingsEvent::SettingsEnv),
+        Target::Settings(SettingsEvent::SettingsSearch),
     ]
     .contains(&id)
 }
@@ -590,55 +620,41 @@ fn summary(section: Section) -> &'static str {
 
 /// The type of the title of a list or a row: `pixels` tall, medium weight, in `tone`, cut short at the edge of its box.
 fn title_type(pixels: u32, tone: Role) -> rustle::TextStyle {
-    theme::text_style(pixels, 1.4)
-        .font_weight(rustle::FontWeight::MEDIUM)
-        .color(theme::color(tone))
-        .max_lines(1)
+    kit::strong(pixels, tone)
 }
 
 /// Emits the words `content` breaks into, one line under another, in no more than `room` logical pixels across.
 #[track_caller]
 pub(crate) fn paragraph(content: &str, room: f32) {
-    column_arranged(
-        Modifier::new(),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            for words in wrap(content, 13, room.min(PARAGRAPH_WIDTH)) {
-                line(words, 13, 1.5, Role::Muted);
-            }
-        },
-    );
+    kit::column(Modifier::new(), 0, || {
+        for words in wrap(content, 13, room.min(PARAGRAPH_WIDTH)) {
+            line(words, 13, 1.5, Role::Muted);
+        }
+    });
 }
 
 /// Emits the breadcrumb over the title of `section`'s page, and the title.
 #[track_caller]
 pub(crate) fn page_title(section: Section) {
-    column_arranged(
-        Modifier::new(),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Start,
-        || {
-            if let Some(parent) = section.parent() {
-                line(parent.title(), 12, 1.4, Role::Muted);
-            }
-            rustle::basic_text(
-                Modifier::new(),
-                section.title(),
-                theme::text_style(22, 1.3)
-                    .font_weight(rustle::FontWeight::MEDIUM)
-                    .color(theme::color(Role::Text))
-                    .max_lines(1),
-                rustle::TextOverflow::Ellipsis,
-            );
-        },
-    );
+    kit::column(Modifier::new(), 1, || {
+        if let Some(parent) = section.parent() {
+            line(parent.title(), 12, 1.4, Role::Muted);
+        }
+        kit::text(
+            Modifier::new(),
+            section.title(),
+            theme::text_style(22, 1.3)
+                .font_weight(rustle::FontWeight::MEDIUM)
+                .color(theme::color(Role::Text))
+                .max_lines(1),
+        );
+    });
 }
 
 /// Emits what the right side of the window holds under the title of `section`: what it is for, then its settings, `room` logical pixels across, scrolled as the page showing is.
 #[track_caller]
 pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) {
-    column_arranged(
+    kit::column(
         Modifier::new()
             .weight(1.0)
             .clip()
@@ -646,17 +662,11 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) {
             .fill_max_width()
             .padding_xy(theme::sp(8), 0.0)
             .padding_each(0.0, 0.0, 0.0, theme::sp(6)),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         || {
-            column_arranged(
-                Modifier::new().fill_max_width(),
-                Arrangement::SpacedBy(sp(4)),
-                Alignment::Start,
-                || {
-                    section_content(state, section, room);
-                },
-            );
+            kit::column(Modifier::new().fill_max_width(), 4, || {
+                section_content(state, section, room);
+            });
         },
     );
 }
@@ -711,12 +721,7 @@ fn section_content(state: &WorkspaceState, section: Section, room: f32) {
         Section::Agents => {
             about();
             crate::settings_pages::page_rows(state, section, room);
-            rustle::basic_text(
-                Modifier::new(),
-                "Explore",
-                title_type(15, Role::Text),
-                rustle::TextOverflow::Ellipsis,
-            );
+            kit::text(Modifier::new(), "Explore", title_type(15, Role::Text));
             for part in [
                 Section::AgentServers,
                 Section::McpServers,
@@ -762,27 +767,19 @@ fn release_note(state: &WorkspaceState, room: f32) {
             false,
         ),
     };
-    row_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Center,
-        || {
-            row_arranged(
-                Modifier::new().weight(1.0),
-                Arrangement::Start,
-                Alignment::Center,
-                || {
-                    wrapped_note(&said, (room - 160.0).max(120.0));
-                },
-            );
-            if newer {
-                Button::new("Open Release Page", SETTINGS_RELEASE)
-                    .variant(Variant::Outline)
-                    .size(Size::Sm)
-                    .build();
-            }
-        },
-    );
+    kit::row(Modifier::new().fill_max_width(), 3, || {
+        kit::row(Modifier::new().weight(1.0), 0, || {
+            wrapped_note(&said, (room - 160.0).max(120.0));
+        });
+        if newer {
+            kit::small_button(
+                "Open Release Page",
+                Target::Settings(SettingsEvent::SettingsRelease),
+                Variant::Outline,
+            )
+            .build();
+        }
+    });
 }
 
 /// How many servers `section` lists, in words.
@@ -803,27 +800,15 @@ fn count_of(state: &WorkspaceState, section: Section) -> String {
 pub(crate) fn boxed(rows: impl FnOnce()) {
     let rows = rustle::collect(rows);
     let last = rows.len().saturating_sub(1);
-    column_arranged(
-        Modifier::new()
-            .fill_max_width()
-            .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
-            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
-            .padding(1.0)
-            .clip(),
-        Arrangement::Start,
-        Alignment::Start,
+    kit::column(
+        Modifier::new().fill_max_width().panel(Radius::Lg).clip(),
+        0,
         || {
             for (place, mut held) in rows.into_iter().enumerate() {
                 let ruled = if place == last {
                     Modifier::new()
                 } else {
-                    Modifier::new()
-                        .draw_behind(theme::edge(
-                            theme::Side::Bottom,
-                            1.0,
-                            theme::color(Role::Border),
-                        ))
-                        .padding_each(0.0, 0.0, 0.0, 1.0)
+                    Modifier::new().ruled(theme::Side::Bottom)
                 };
                 held.modifier = Modifier::new()
                     .fill_max_width()
@@ -856,48 +841,32 @@ pub(crate) fn card(section: Section, count: String) {
                 .fill_max_width()
                 .background_rounded(theme::color(Role::Surface), Radius::Lg.px()),
         )
-        .inner(
-            Modifier::new()
-                .border(1.0, theme::color(Role::Border), Radius::Lg.px())
-                .padding(1.0)
-                .padding(theme::sp(4)),
-        )
+        .inner(Modifier::new().outlined(Radius::Lg).padding(theme::sp(4)))
         .alignment(Alignment::Start)
         .build_with(|| {
-            column_arranged(
-                Modifier::new().weight(1.0),
-                Arrangement::SpacedBy(sp(1)),
-                Alignment::Start,
-                || {
-                    row_arranged(
-                        Modifier::new().fill_max_width(),
-                        Arrangement::SpaceBetween,
-                        Alignment::Center,
-                        || {
-                            rustle::basic_text(
-                                Modifier::new(),
-                                section.title(),
-                                title_type(14, Role::Text),
-                                rustle::TextOverflow::Ellipsis,
-                            );
-                            line(count, 12, 1.4, Role::Muted);
-                        },
-                    );
-                    line(about, 12, 1.4, Role::Muted);
-                },
-            );
+            kit::column(Modifier::new().weight(1.0), 1, || {
+                row_arranged(
+                    Modifier::new().fill_max_width(),
+                    Arrangement::SpaceBetween,
+                    Alignment::Center,
+                    || {
+                        kit::text(Modifier::new(), section.title(), title_type(14, Role::Text));
+                        line(count, 12, 1.4, Role::Muted);
+                    },
+                );
+                line(about, 12, 1.4, Role::Muted);
+            });
         });
 }
 
 /// Emits a row of a boxed list: what `content` emits side by side, with room around it.
 #[track_caller]
 pub(crate) fn flat_row(content: impl FnOnce()) {
-    row_arranged(
+    kit::row(
         Modifier::new()
             .padding_xy(theme::sp(3), 0.0)
             .padding_xy(0.0, theme::sp(3)),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Center,
+        3,
         content,
     );
 }
@@ -911,11 +880,13 @@ fn list(state: &WorkspaceState, section: Section, room: f32) {
     let needle = state.needle();
     paragraph(summary(section), room);
     if section == Section::McpServers {
-        Button::new("Learn more about MCP servers", SETTINGS_DOCS)
-            .variant(Variant::Ghost)
-            .size(Size::Sm)
-            .modifier(Modifier::new().align(BoxAlignment::TopStart))
-            .build();
+        kit::small_button(
+            "Learn more about MCP servers",
+            Target::Settings(SettingsEvent::SettingsDocs),
+            Variant::Ghost,
+        )
+        .modifier(Modifier::new().align(BoxAlignment::TopStart))
+        .build();
     }
     search_box(state, section);
     if let (Some(form), true) = (form, adding) {
@@ -931,13 +902,15 @@ fn list(state: &WorkspaceState, section: Section, room: f32) {
                 "Installed",
                 installed.len(),
                 !settings.installed_folded,
-                SETTINGS_TOGGLE_INSTALLED,
+                Target::Settings(SettingsEvent::SettingsToggleInstalled),
             );
-            Button::new("Add Server", SETTINGS_ADD)
-                .variant(Variant::Outline)
-                .size(Size::Sm)
-                .disabled(adding)
-                .build();
+            kit::small_button(
+                "Add Server",
+                Target::Settings(SettingsEvent::SettingsAdd),
+                Variant::Outline,
+            )
+            .disabled(adding)
+            .build();
         },
     );
     if !settings.installed_folded {
@@ -961,7 +934,7 @@ fn list(state: &WorkspaceState, section: Section, room: f32) {
         "Available",
         offers.rows.len(),
         !settings.available_folded,
-        SETTINGS_TOGGLE_AVAILABLE,
+        Target::Settings(SettingsEvent::SettingsToggleAvailable),
     );
     wrapped_note(
         "Featured MCP servers from the marketplace. Search to find more.",
@@ -1000,35 +973,32 @@ pub(crate) fn search_box(state: &WorkspaceState, section: Section) {
         Section::Tools => "Search tools",
         _ => "Search MCP servers; Enter searches the registry",
     };
-    Input::search(&state.settings_servers.search, SETTINGS_SEARCH)
-        .size(Size::Lg)
-        .placeholder(placeholder)
-        .build();
+    Input::search(
+        &state.settings_servers.search,
+        Target::Settings(SettingsEvent::SettingsSearch),
+    )
+    .size(Size::Lg)
+    .placeholder(placeholder)
+    .build();
 }
 
 /// Emits the name of a list that opens and folds it, with how many rows it holds.
 #[track_caller]
-fn heading(title: &str, count: usize, open: bool, toggle: FocusId) {
+fn heading(title: &str, count: usize, open: bool, toggle: Target) {
     let chevron = if open {
         phosphor::CARET_DOWN
     } else {
         phosphor::CARET_RIGHT
     };
-    row_arranged(
+    kit::row(
         Modifier::new()
             .height(theme::sp(9))
             .cursor(CursorIcon::Pointer)
-            .control(toggle, reduce(toggle)),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
+            .control(toggle, send(Event::pressing(toggle))),
+        2,
         || {
             glyph(chevron, 4.0, Role::Muted);
-            rustle::basic_text(
-                Modifier::new(),
-                title,
-                title_type(15, Role::Text),
-                rustle::TextOverflow::Ellipsis,
-            );
+            kit::text(Modifier::new(), title, title_type(15, Role::Text));
             Badge::new(count.to_string()).build();
         },
     );
@@ -1037,20 +1007,10 @@ fn heading(title: &str, count: usize, open: bool, toggle: FocusId) {
 /// Emits the name of a list that does not fold, with how many rows it holds.
 #[track_caller]
 pub(crate) fn heading_only(title: &str, count: usize) {
-    row_arranged(
-        Modifier::new().height(theme::sp(9)),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
-        || {
-            rustle::basic_text(
-                Modifier::new(),
-                title,
-                title_type(15, Role::Text),
-                rustle::TextOverflow::Ellipsis,
-            );
-            Badge::new(count.to_string()).build();
-        },
-    );
+    kit::row(Modifier::new().height(theme::sp(9)), 2, || {
+        kit::text(Modifier::new(), title, title_type(15, Role::Text));
+        Badge::new(count.to_string()).build();
+    });
 }
 
 /// Emits a line that only says something.
@@ -1062,16 +1022,11 @@ pub(crate) fn note(message: &str) {
 /// Emits a quiet note saying `message`, broken into lines no more than `room` logical pixels across.
 #[track_caller]
 pub(crate) fn wrapped_note(message: &str, room: f32) {
-    column_arranged(
-        Modifier::new(),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            for words in wrap(message, 12, room) {
-                line(words, 12, 1.4, Role::Muted);
-            }
-        },
-    );
+    kit::column(Modifier::new(), 0, || {
+        for words in wrap(message, 12, room) {
+            line(words, 12, 1.4, Role::Muted);
+        }
+    });
 }
 
 /// How a tool server is reached, in the words of its row: what kind it is, where, and how many variables it takes.
@@ -1197,56 +1152,30 @@ fn offered_rows(state: &WorkspaceState) -> Offered {
 fn offer(index: usize, title: &str, description: &str, how: &str, action: &str, installed: bool) {
     let button = INSTALLS.id(index).map(|install| {
         if installed {
-            Button::new("Installed", install)
-                .variant(Variant::Outline)
-                .size(Size::Sm)
-                .disabled(true)
+            kit::small_button("Installed", install, Variant::Outline).disabled(true)
         } else {
-            Button::new(action, install).size(Size::Sm)
+            kit::small_button(action, install, Variant::Default)
         }
     });
     flat_row(|| {
-        column_arranged(
-            Modifier::new().weight(1.0).clip(),
-            Arrangement::SpacedBy(sp(1)),
-            Alignment::Start,
-            || {
-                rustle::basic_text(
+        kit::column(Modifier::new().weight(1.0).clip(), 1, || {
+            kit::text(Modifier::new(), title, title_type(13, Role::Text));
+            kit::text(Modifier::new(), description, kit::line(12, Role::Muted));
+        });
+        kit::row(Modifier::new(), 3, || {
+            if !how.is_empty() {
+                kit::text(
                     Modifier::new(),
-                    title,
-                    title_type(13, Role::Text),
-                    rustle::TextOverflow::Ellipsis,
-                );
-                rustle::basic_text(
-                    Modifier::new(),
-                    description,
-                    theme::text_style(12, 1.4)
-                        .color(theme::color(Role::Muted))
+                    how,
+                    theme::mono_style(11, 1.5)
+                        .color(theme::color(Role::Subtle))
                         .max_lines(1),
-                    rustle::TextOverflow::Ellipsis,
                 );
-            },
-        );
-        row_arranged(
-            Modifier::new(),
-            Arrangement::SpacedBy(sp(3)),
-            Alignment::Center,
-            || {
-                if !how.is_empty() {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        how,
-                        theme::mono_style(11, 1.5)
-                            .color(theme::color(Role::Subtle))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                }
-                if let Some(button) = button {
-                    button.build();
-                }
-            },
-        );
+            }
+            if let Some(button) = button {
+                button.build();
+            }
+        });
     });
 }
 
@@ -1255,67 +1184,42 @@ fn offer(index: usize, title: &str, description: &str, how: &str, action: &str, 
 fn installed_row(shown: InstalledRow) {
     let dim = shown.enabled == Some(false);
     flat_row(|| {
-        column_arranged(
-            Modifier::new().weight(1.0).clip(),
-            Arrangement::SpacedBy(sp(1)),
-            Alignment::Start,
-            || {
-                row_arranged(
+        kit::column(Modifier::new().weight(1.0).clip(), 1, || {
+            kit::row(Modifier::new(), 2, || {
+                kit::text(
                     Modifier::new(),
-                    Arrangement::SpacedBy(sp(2)),
-                    Alignment::Center,
-                    || {
-                        rustle::basic_text(
-                            Modifier::new(),
-                            shown.title.as_str(),
-                            title_type(13, if dim { Role::Muted } else { Role::Text }),
-                            rustle::TextOverflow::Ellipsis,
-                        );
-                        for (words, tone) in &shown.badges {
-                            Badge::new(*words).tone(*tone).build();
-                        }
-                    },
+                    shown.title.as_str(),
+                    title_type(13, if dim { Role::Muted } else { Role::Text }),
                 );
-                if !shown.description.is_empty() {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        shown.description.as_str(),
-                        theme::text_style(12, 1.4)
-                            .color(theme::color(Role::Muted))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
-                    );
+                for (words, tone) in &shown.badges {
+                    Badge::new(*words).tone(*tone).build();
                 }
-                rustle::basic_text(
+            });
+            if !shown.description.is_empty() {
+                kit::text(
                     Modifier::new(),
-                    shown.detail.as_str(),
-                    theme::text_style(11, 1.4)
-                        .color(theme::color(Role::Subtle))
-                        .max_lines(1),
-                    rustle::TextOverflow::Ellipsis,
+                    shown.description.as_str(),
+                    kit::line(12, Role::Muted),
                 );
-            },
-        );
-        row_arranged(
-            Modifier::new(),
-            Arrangement::SpacedBy(sp(2)),
-            Alignment::Center,
-            || {
-                if let (Some(place), Some(on), true) =
-                    (shown.place, shown.enabled, shown.switchable)
-                {
-                    switch(on, SERVER_SWITCHES.id(place));
-                }
-                if let Some(more) = shown.place.and_then(|place| SERVER_MORES.id(place)) {
-                    let operations = crate::events::operations();
-                    let index = shown.place.unwrap_or_default();
-                    Button::icon(phosphor::DOTS_THREE, more)
-                        .on_click(move || operations.open_settings_menu(index))
-                        .size(Size::Sm)
-                        .build();
-                }
-            },
-        );
+            }
+            kit::text(
+                Modifier::new(),
+                shown.detail.as_str(),
+                kit::line(11, Role::Subtle),
+            );
+        });
+        kit::row(Modifier::new(), 2, || {
+            if let (Some(place), Some(on), true) = (shown.place, shown.enabled, shown.switchable) {
+                switch(on, SERVER_SWITCHES.id(place));
+            }
+            if let Some(more) = shown.place.and_then(|place| SERVER_MORES.id(place)) {
+                let operations = crate::events::operations();
+                let index = shown.place.unwrap_or_default();
+                Button::icon(phosphor::DOTS_THREE, more)
+                    .on_click(move || operations.open_settings_menu(index))
+                    .build();
+            }
+        });
     });
 }
 
@@ -1330,51 +1234,58 @@ fn form_node(form: &ServerForm, section: Section) {
         Section::AgentServers => "Environment (NAME=value, separated by spaces)",
         _ => "Environment or headers (NAME=value, separated by spaces)",
     };
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_width()
-            .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
-            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
-            .padding(1.0)
+            .panel(Radius::Lg)
             .padding(theme::sp(4)),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Start,
+        3,
         || {
-            labelled("Name", &form.name, SETTINGS_NAME, "My server");
-            labelled(target, &form.target, SETTINGS_TARGET, "npx my-server");
-            labelled(environment, &form.env, SETTINGS_ENV, "TOKEN=abc");
-            row_arranged(
-                Modifier::new(),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Center,
-                || {
-                    Button::new("Save", SETTINGS_SAVE)
-                        .size(Size::Sm)
-                        .disabled(!form.complete())
-                        .build();
-                    Button::new("Cancel", SETTINGS_CANCEL)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .build();
-                },
+            labelled(
+                "Name",
+                &form.name,
+                Target::Settings(SettingsEvent::SettingsName),
+                "My server",
             );
+            labelled(
+                target,
+                &form.target,
+                Target::Settings(SettingsEvent::SettingsTarget),
+                "npx my-server",
+            );
+            labelled(
+                environment,
+                &form.env,
+                Target::Settings(SettingsEvent::SettingsEnv),
+                "TOKEN=abc",
+            );
+            kit::row(Modifier::new(), 2, || {
+                kit::small_button(
+                    "Save",
+                    Target::Settings(SettingsEvent::SettingsSave),
+                    Variant::Default,
+                )
+                .disabled(!form.complete())
+                .build();
+                kit::small_button(
+                    "Cancel",
+                    Target::Settings(SettingsEvent::SettingsCancel),
+                    Variant::Ghost,
+                )
+                .build();
+            });
         },
     );
 }
 
 /// Emits a box under the words that say what is written in it.
 #[track_caller]
-fn labelled(words: &str, field: &TextFieldState, id: FocusId, placeholder: &str) {
-    column_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Start,
-        || {
-            line(words, 12, 1.4, Role::Muted);
-            Input::new(field, id)
-                .size(Size::Sm)
-                .placeholder(placeholder)
-                .build();
-        },
-    );
+fn labelled(words: &str, field: &TextFieldState, id: Target, placeholder: &str) {
+    kit::column(Modifier::new().fill_max_width(), 1, || {
+        line(words, 12, 1.4, Role::Muted);
+        Input::new(field, id)
+            .size(Size::Sm)
+            .placeholder(placeholder)
+            .build();
+    });
 }

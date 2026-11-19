@@ -1,5 +1,8 @@
 //! The changed files in groups: staged, tracked and untracked, each file with how it changed, a way to open it and a box that stages it.
 
+use crate::areas::{DiffEvent, GitEvent};
+use crate::kit;
+use crate::target::Target;
 use crate::theme;
 use rustle::Modifier;
 use rustle::phosphor;
@@ -8,12 +11,10 @@ use rustle::{Alignment, Arrangement, row_arranged};
 use std::collections::HashSet;
 
 use crate::file_icon::file_icon;
-use crate::focus::FocusId;
-use crate::git_controls::{GROUP_TRACKED, GROUP_UNTRACKED, OPEN_ARROW_BASE};
+
 use crate::parts::glyph;
 use crate::sample::{Change, Session};
-use crate::size::Size;
-use crate::state::{FILE_BASE, FOLDER_BASE, FOLDER_STAGE_BASE, STAGE_BASE, WorkspaceState};
+use crate::state::WorkspaceState;
 use crate::theme::{Radius, Role, Tone};
 use crate::tile::Tile;
 use crate::tree::{Entry, Folder, Layout, build_stopping, folders};
@@ -46,11 +47,11 @@ impl Group {
     }
 
     /// The name the box on the heading answers to, when the group has one.
-    fn id(self) -> Option<FocusId> {
+    fn id(self) -> Option<Target> {
         match self {
             Self::Conflicted => None,
-            Self::Tracked => Some(GROUP_TRACKED),
-            Self::Untracked => Some(GROUP_UNTRACKED),
+            Self::Tracked => Some(Target::Git(GitEvent::GroupTracked)),
+            Self::Untracked => Some(Target::Git(GitEvent::GroupUntracked)),
         }
     }
 
@@ -86,7 +87,7 @@ pub(crate) fn mark_color(letter: &str) -> Tone {
 
 /// Emits the box that says how much of a file is in the index.
 #[track_caller]
-fn staged_box(change: &Change, id: FocusId) {
+fn staged_box(change: &Change, id: Target) {
     Checkbox::new(change.fully_staged(), id)
         .mixed(change.staged && change.unstaged)
         .build();
@@ -110,11 +111,10 @@ fn heading(changes: &[Change], group: Group, repository: Option<&str>) {
         Arrangement::SpaceBetween,
         Alignment::Center,
         || {
-            rustle::basic_text(
+            kit::text(
                 Modifier::new(),
                 format!("{} ({})", group.label(), files.len()),
                 theme::text_style(11, 1.4).color(theme::color(Role::Subtle)),
-                rustle::TextOverflow::Ellipsis,
             );
             if let Some(id) = group.id() {
                 Checkbox::new(staged == files.len(), id)
@@ -282,7 +282,7 @@ fn file_row(state: &WorkspaceState, change: &Change, index: usize, name: &str, d
     let letter = change.mark();
     let tone = mark_color(letter);
     let operations = crate::events::operations();
-    let id = FocusId(FILE_BASE + index as u64);
+    let id = Target::Diff(DiffEvent::ChangedFile(index));
     Tile::new(id)
         .on_pick(crate::events::picking(id, move |state, how| {
             state.change_picked(index, how)
@@ -309,40 +309,28 @@ fn file_row(state: &WorkspaceState, change: &Change, index: usize, name: &str, d
                 Some(_) => glyph(phosphor::GIT_BRANCH, 3.5, Role::Muted),
                 None => file_icon(name, 3.5),
             }
-            rustle::basic_text(
-                Modifier::new().weight(1.0),
-                name,
-                theme::text_style(13, 1.4)
-                    .color(theme::color(Role::Text))
-                    .max_lines(1),
-                rustle::TextOverflow::Ellipsis,
-            );
+            kit::text(Modifier::new().weight(1.0), name, kit::line(13, Role::Text));
             if let Some(moved) = change.moved.as_ref() {
-                rustle::basic_text(
+                kit::text(
                     Modifier::new(),
                     commit_count(moved),
-                    theme::text_style(11, 1.4)
-                        .color(theme::color(Role::Subtle))
-                        .max_lines(1),
-                    rustle::TextOverflow::Ellipsis,
+                    kit::line(11, Role::Subtle),
                 );
             }
-            rustle::basic_text(
+            kit::text(
                 Modifier::new(),
                 letter,
                 theme::mono_style(11, 1.4).color(theme::color(tone)),
-                rustle::TextOverflow::Ellipsis,
             );
             if change.moved.is_none() {
                 Button::icon(
                     phosphor::ARROW_RIGHT,
-                    FocusId(OPEN_ARROW_BASE + index as u64),
+                    Target::Diff(DiffEvent::OpenArrow(index)),
                 )
-                .size(Size::Sm)
                 .build();
             }
             if !change.conflicted {
-                staged_box(change, FocusId(STAGE_BASE + index as u64));
+                staged_box(change, Target::Diff(DiffEvent::Stage(index)));
             }
         });
 }
@@ -383,7 +371,7 @@ fn folder_row(
     let added = inside.iter().map(|&index| changes[index].added()).sum();
     let removed = inside.iter().map(|&index| changes[index].removed()).sum();
     let operations = crate::events::operations();
-    Tile::new(FocusId(FOLDER_BASE + position as u64))
+    Tile::new(Target::Diff(DiffEvent::ChangeFolder(position)))
         .on_context(move || operations.open_folder_change_menu(position))
         .modifier(Modifier::new().fill_max_width())
         .height(6.5)
@@ -406,32 +394,26 @@ fn folder_row(
             );
             Checkbox::new(
                 !inside.is_empty() && staged == inside.len(),
-                FocusId(FOLDER_STAGE_BASE + position as u64),
+                Target::Diff(DiffEvent::ChangeFolderStage(position)),
             )
             .mixed(partly && staged < inside.len())
             .build();
             if stops(changes, None).contains(&folder.path.as_str()) {
                 glyph(phosphor::GIT_BRANCH, 3.5, Role::Muted);
             }
-            rustle::basic_text(
+            kit::text(
                 Modifier::new().weight(1.0),
                 &folder.name,
-                theme::text_style(13, 1.4)
-                    .color(theme::color(Role::Text))
-                    .max_lines(1),
-                rustle::TextOverflow::Ellipsis,
+                kit::line(13, Role::Text),
             );
             if let Some(standing) = standings
                 .iter()
                 .find(|standing| standing.path == folder.path)
             {
-                rustle::basic_text(
+                kit::text(
                     Modifier::new(),
                     standing_label(standing),
-                    theme::mono_style(11, 1.4)
-                        .color(theme::color(Role::Subtle))
-                        .max_lines(1),
-                    rustle::TextOverflow::Ellipsis,
+                    kit::code(11, Role::Subtle),
                 );
             }
             Tally::new(added, removed).size(11).build();

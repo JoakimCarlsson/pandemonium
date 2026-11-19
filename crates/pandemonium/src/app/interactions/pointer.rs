@@ -1,16 +1,17 @@
 //! Pressing buttons, rows and tabs, hovering for tooltips and the cursor,
 //! and the mouse's back and forward buttons.
 
-use pm_components::focus::FocusId;
-use pm_components::state::{Page, SESSION_BASE, SETTINGS, TAB_CHAT, TAB_DIFF, Tab};
-use winit::event::MouseButton;
+use pm_components::areas::{ChatEvent, DiffEvent, SidebarEvent};
+use pm_components::state::{Page, Tab};
+use pm_components::target::Target;
+use rustle::PointerButton;
 
 use crate::app::headless::Rig;
 use crate::snapshot::Shot;
 
 /// The row of the `index`th session in the sidebar.
-fn session_row(index: u64) -> FocusId {
-    FocusId(SESSION_BASE + index)
+fn session_row(index: usize) -> Target {
+    Target::Sidebar(SidebarEvent::Session(index))
 }
 
 /// Pressing a session's row in the sidebar opens it.
@@ -29,9 +30,9 @@ fn a_press_let_go_elsewhere_does_nothing() {
     let from = rig.center(session_row(1));
     let to = rig.center(session_row(2));
     rig.move_to(from);
-    rig.button_in(None, MouseButton::Left, true, from);
+    rig.button_in(None, PointerButton::Primary, true, from);
     rig.move_to(to);
-    rig.button_in(None, MouseButton::Left, false, to);
+    rig.button_in(None, PointerButton::Primary, false, to);
     assert_eq!(rig.state(|state| state.page), Page::Session(0));
 }
 
@@ -39,9 +40,9 @@ fn a_press_let_go_elsewhere_does_nothing() {
 #[test]
 fn tabs_switch_the_view() {
     let mut rig = Rig::shot(Shot::Workspace);
-    rig.click_on(TAB_DIFF);
+    rig.click_on(Target::Diff(DiffEvent::TabDiff));
     assert_eq!(rig.state(|state| state.tab), Tab::Diff);
-    rig.click_on(TAB_CHAT);
+    rig.click_on(Target::Chat(ChatEvent::TabChat));
     assert_eq!(rig.state(|state| state.tab), Tab::Chat);
 }
 
@@ -49,7 +50,7 @@ fn tabs_switch_the_view() {
 #[test]
 fn a_tooltip_shows_after_a_rest_and_goes_on_leaving() {
     let mut rig = Rig::shot(Shot::Workspace);
-    let on = rig.center(SETTINGS);
+    let on = rig.center(Target::Sidebar(SidebarEvent::Settings));
     rig.move_to(on);
     assert!(!rig.shows("Open Settings"));
     rig.wait(400);
@@ -65,12 +66,12 @@ fn the_mouse_steps_back_and_forward() {
     let mut rig = Rig::shot(Shot::Workspace);
     rig.click_on(session_row(1));
     rig.click_on(session_row(2));
-    let at = rig.center(TAB_CHAT);
-    rig.button_in(None, MouseButton::Back, true, at);
-    rig.button_in(None, MouseButton::Back, false, at);
+    let at = rig.center(Target::Chat(ChatEvent::TabChat));
+    rig.button_in(None, PointerButton::Back, true, at);
+    rig.button_in(None, PointerButton::Back, false, at);
     assert_eq!(rig.state(|state| state.page), Page::Session(1));
-    rig.button_in(None, MouseButton::Forward, true, at);
-    rig.button_in(None, MouseButton::Forward, false, at);
+    rig.button_in(None, PointerButton::Forward, true, at);
+    rig.button_in(None, PointerButton::Forward, false, at);
     assert_eq!(rig.state(|state| state.page), Page::Session(2));
 }
 

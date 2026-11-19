@@ -2,33 +2,28 @@
 //!
 //! Each row paints its own slice of the lanes: the lines that cross its upper and lower halves and the dot of its commit. A line that changes lane runs down its own lane and across to the commit it meets, so rows stacked on each other join into one picture without any row knowing about its neighbours.
 
-use crate::events::reduce;
+use crate::areas::GitEvent;
+use crate::events::{Event, send};
 use crate::git_menus::MenuKind;
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
+use crate::theme::Indicated;
 use crate::theme::sp;
 use pm_git::{Commit, Edge, Half, Lanes};
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 use rustle::{Icon, phosphor};
 
 use crate::Sash;
 use crate::events::Interactive;
-use crate::focus::FocusId;
-use crate::git_controls::{
-    CHANGES_REFRESH, GRAPH_FETCH, GRAPH_PULL, GRAPH_PUSH, GRAPH_REFS, GRAPH_SASH, GRAPH_TARGET,
-    GRAPH_TOGGLE,
-};
+
 use crate::parts::{glyph, line};
-use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::theme::{Radius, Role, Tone};
 use crate::{Badge, Button, badge};
 
 /// How tall the graph is when it is open, in logical pixels.
 pub const HEIGHT: f32 = 280.0;
-
-/// The first of the rows of commits, which answer to a right press with the menu on a commit; the rest follow it.
-pub const HISTORY_ROW_BASE: u64 = 8800;
 
 /// The least and the most the graph can be made tall, in logical pixels.
 pub const HEIGHTS: (f32, f32) = (120.0, 640.0);
@@ -180,20 +175,20 @@ fn reference_badge(decorated: &str, color: Tone) {
 #[track_caller]
 fn commit_row(commit: &Commit, columns: usize, position: usize) {
     let color = lane_color(commit.lanes.color);
-    let id = FocusId(HISTORY_ROW_BASE + position as u64);
-    row_arranged(
+    let id = Target::Git(GitEvent::HistoryRow(position));
+    kit::row(
         Modifier::new()
             .fill_max_width()
             .height(ROW)
             .clip()
-            .interaction_focused(crate::focus::is_held(id))
-            .interaction_background(
-                (theme::InteractionTones::new().hover(Role::SurfaceHover)).colors(),
+            .indicated(
+                theme::InteractionTones::new().hover(Role::SurfaceHover),
+                theme::Focused::Held(crate::focus::is_held(id)),
             )
             .control_menu(
                 id,
                 {
-                    let pressed = reduce(id);
+                    let pressed = send(Event::pressing(id));
                     move |_| pressed()
                 },
                 {
@@ -202,34 +197,28 @@ fn commit_row(commit: &Commit, columns: usize, position: usize) {
                 },
             )
             .padding_xy(theme::sp(3), 0.0),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
+        2,
         || {
             cell(&commit.lanes, columns);
-            rustle::basic_text(
+            kit::text(
                 Modifier::new(),
                 commit.id.clone(),
                 theme::mono_style(11, 1.4).color(theme::color(Role::Muted)),
-                rustle::TextOverflow::Ellipsis,
             );
             for name in commit.refs.iter().take(SHOWN_REFS) {
                 reference_badge(name, color);
             }
             if commit.refs.len() > SHOWN_REFS {
-                rustle::basic_text(
+                kit::text(
                     Modifier::new(),
                     format!("+{}", commit.refs.len() - SHOWN_REFS),
                     theme::text_style(11, 1.4).color(theme::color(Role::Subtle)),
-                    rustle::TextOverflow::Ellipsis,
                 );
             }
-            rustle::basic_text(
+            kit::text(
                 Modifier::new().weight(1.0),
                 &commit.summary,
-                theme::text_style(12, 1.4)
-                    .color(theme::color(Role::Text))
-                    .max_lines(1),
-                rustle::TextOverflow::Ellipsis,
+                kit::line(12, Role::Text),
             );
         },
     );
@@ -259,24 +248,25 @@ fn visible(commits: &[Commit], columns: usize, scroll: f32, height: f32) {
 #[track_caller]
 fn refs_button(all: bool, tip: &str) {
     crate::tooltip::with_tooltip(tip, || {
-        row_arranged(
+        kit::row(
             Modifier::new()
                 .height(theme::sp(6))
-                .interaction_focused(crate::focus::is_held(GRAPH_REFS))
-                .interaction_background(
-                    (theme::InteractionTones::new()
+                .indicated(
+                    theme::InteractionTones::new()
                         .hover(Role::SurfaceHover)
-                        .radius(Radius::Md))
-                    .colors(),
+                        .radius(Radius::Md),
+                    theme::Focused::Held(crate::focus::is_held(Target::Git(GitEvent::GraphRefs))),
                 )
                 .cursor(CursorIcon::Pointer)
-                .control(GRAPH_REFS, {
+                .control(Target::Git(GitEvent::GraphRefs), {
                     let operations = crate::events::operations();
-                    move || operations.open_git_menu(MenuKind::Refs, Some(GRAPH_REFS))
+                    move || {
+                        operations
+                            .open_git_menu(MenuKind::Refs, Some(Target::Git(GitEvent::GraphRefs)))
+                    }
                 })
                 .padding_xy(theme::sp(2), 0.0),
-            Arrangement::SpacedBy(sp(1)),
-            Alignment::Center,
+            1,
             || {
                 glyph(phosphor::GIT_FORK, 3.5, Role::Muted);
                 line(if all { "All" } else { "Auto" }, 12, 1.4, Role::Text);
@@ -288,9 +278,8 @@ fn refs_button(all: bool, tip: &str) {
 
 /// Emits a small button showing `icon` that answers to `id`, spinning while `spinning`, with `tip` shown while it is hovered.
 #[track_caller]
-fn strip_button(icon: Icon, id: FocusId, spinning: bool, tip: &str) {
+fn strip_button(icon: Icon, id: Target, spinning: bool, tip: &str) {
     Button::icon(icon, id)
-        .size(Size::Sm)
         .spinning(spinning)
         .tooltip(tip)
         .build();
@@ -314,7 +303,7 @@ fn strip(state: &WorkspaceState) {
                 } else {
                     phosphor::CARET_RIGHT
                 },
-                GRAPH_TOGGLE,
+                Target::Git(GitEvent::GraphToggle),
                 false,
                 if open {
                     "Collapse Graph"
@@ -326,21 +315,31 @@ fn strip(state: &WorkspaceState) {
             refs_button(git.graph_all, "Choose history references");
             strip_button(
                 phosphor::TARGET,
-                GRAPH_TARGET,
+                Target::Git(GitEvent::GraphTarget),
                 false,
                 "Go to current history item",
             );
             strip_button(
                 phosphor::CLOUD_ARROW_DOWN,
-                GRAPH_FETCH,
+                Target::Git(GitEvent::GraphFetch),
                 false,
                 "Fetch from all remotes",
             );
-            strip_button(phosphor::ARROW_LINE_DOWN, GRAPH_PULL, false, "Pull");
-            strip_button(phosphor::ARROW_LINE_UP, GRAPH_PUSH, false, "Push");
+            strip_button(
+                phosphor::ARROW_LINE_DOWN,
+                Target::Git(GitEvent::GraphPull),
+                false,
+                "Pull",
+            );
+            strip_button(
+                phosphor::ARROW_LINE_UP,
+                Target::Git(GitEvent::GraphPush),
+                false,
+                "Push",
+            );
             strip_button(
                 phosphor::ARROWS_CLOCKWISE,
-                CHANGES_REFRESH,
+                Target::Git(GitEvent::ChangesRefresh),
                 git.working,
                 "Refresh",
             );
@@ -430,72 +429,59 @@ pub fn graph(state: &WorkspaceState) {
     let git = &state.git;
     let open = git.graph_open;
     let height = git.graph_height.clamp(HEIGHTS.0, HEIGHTS.1);
-    column_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            if open {
-                Sash::row(GRAPH_SASH)
-                    .modifier(Modifier::new().fill_max_width())
-                    .build();
-            }
-            column_arranged(
-                Modifier::new()
-                    .fill_max_width()
-                    .height(if open { height } else { 28.0 })
-                    .draw_behind(theme::edge(
-                        theme::Side::Top,
-                        1.0,
-                        theme::color(Role::Border),
-                    ))
-                    .padding_each(0.0, 1.0, 0.0, 0.0)
-                    .clip(),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    strip(state);
-                    if !open {
-                        return;
-                    }
-                    let columns = git
-                        .history
-                        .iter()
-                        .map(|commit| commit.lanes.width)
-                        .max()
-                        .unwrap_or(1);
-                    column_arranged(
-                        Modifier::new()
-                            .fill_max_width()
-                            .weight(1.0)
-                            .vertical_scroll(&git.graph_scroll)
-                            .fill_max_width(),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            if git.history.is_empty() {
-                                column_arranged(
-                                    Modifier::new()
-                                        .padding_xy(theme::sp(4), 0.0)
-                                        .padding_xy(0.0, theme::sp(2)),
-                                    Arrangement::Start,
-                                    Alignment::Start,
-                                    || {
-                                        line("No commits.", 12, 1.4, Role::Subtle);
-                                    },
-                                );
-                            } else {
-                                visible(
-                                    &git.history,
-                                    columns,
-                                    git.graph_scroll.offset(),
-                                    height - 28.0,
-                                );
-                            }
-                        },
-                    );
-                },
-            );
-        },
-    );
+    kit::column(Modifier::new().fill_max_width(), 0, || {
+        if open {
+            Sash::row(Target::Git(GitEvent::GraphSash))
+                .modifier(Modifier::new().fill_max_width())
+                .build();
+        }
+        kit::column(
+            Modifier::new()
+                .fill_max_width()
+                .height(if open { height } else { 28.0 })
+                .ruled(theme::Side::Top)
+                .clip(),
+            0,
+            || {
+                strip(state);
+                if !open {
+                    return;
+                }
+                let columns = git
+                    .history
+                    .iter()
+                    .map(|commit| commit.lanes.width)
+                    .max()
+                    .unwrap_or(1);
+                kit::column(
+                    Modifier::new()
+                        .fill_max_width()
+                        .weight(1.0)
+                        .vertical_scroll(&git.graph_scroll)
+                        .fill_max_width(),
+                    0,
+                    || {
+                        if git.history.is_empty() {
+                            kit::column(
+                                Modifier::new()
+                                    .padding_xy(theme::sp(4), 0.0)
+                                    .padding_xy(0.0, theme::sp(2)),
+                                0,
+                                || {
+                                    line("No commits.", 12, 1.4, Role::Subtle);
+                                },
+                            );
+                        } else {
+                            visible(
+                                &git.history,
+                                columns,
+                                git.graph_scroll.offset(),
+                                height - 28.0,
+                            );
+                        }
+                    },
+                );
+            },
+        );
+    });
 }

@@ -1,15 +1,13 @@
 //! The workspace window: the sidebar of projects and sessions beside the page the reader is on.
 
+use pm_components::areas::{MenuEvent, WindowEvent};
+use pm_components::target::Target;
 use pm_components::theme;
 use pm_components::theme::Role;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
-use pm_components::arrange::{
-    PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectMenu, SESSION_MENU_CLOSE,
-    SESSION_MENU_COPY_BRANCH, SESSION_MENU_COPY_PATH, SESSION_MENU_OPEN_FOLDER, SESSION_MENU_READ,
-    SESSION_MENU_REMOVE, SESSION_MENU_RENAME, SessionMenu,
-};
+use pm_components::arrange::{ProjectMenu, SessionMenu};
 use pm_components::context_menu::{editor_menu, field_menu};
 use pm_components::git_prompts;
 use pm_components::message_menu::message_menu;
@@ -17,13 +15,10 @@ use pm_components::title_bar::TITLE_BAR_HEIGHT;
 use pm_components::{Menu, TitleBar, Window};
 use pm_components::{adder, history, plan, review, settings, sidebar, terminal};
 
-pub use pm_components::state::{
-    ADD_PROJECT, ATTACH, HISTORY, Outgoing, PROMPT, SEND, STOP, TAB_DIFF, TERMINAL, TERMINAL_BODY,
-    WorkspaceState,
-};
+pub use pm_components::state::{Outgoing, WorkspaceState};
 
 use pm_components::revision::region;
-use pm_components::sash::{PLAN_SASH, REVIEW_SASH, SIDEBAR_SASH, Sash, TERMINAL_SASH};
+use pm_components::sash::Sash;
 use pm_components::state::Page;
 
 use crate::panes;
@@ -92,22 +87,22 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
                 },
             );
             if state.sidebar_open {
-                Sash::column(SIDEBAR_SASH)
+                Sash::column(Target::Window(WindowEvent::SidebarSash))
                     .at((sidebar_width, TITLE_BAR_HEIGHT), page)
                     .build();
             }
             if planning {
-                Sash::column(PLAN_SASH)
+                Sash::column(Target::Window(WindowEvent::PlanSash))
                     .at((sidebar_width + main_width, TITLE_BAR_HEIGHT), page)
                     .build();
             }
             if reviewing {
-                Sash::column(REVIEW_SASH)
+                Sash::column(Target::Window(WindowEvent::ReviewSash))
                     .at((width - review_width, TITLE_BAR_HEIGHT), page)
                     .build();
             }
             if state.docking() {
-                Sash::row(TERMINAL_SASH)
+                Sash::row(Target::Window(WindowEvent::TerminalSash))
                     .at(
                         (sidebar_width, height - terminal::height(state, page)),
                         main_width,
@@ -187,9 +182,19 @@ fn over(state: &WorkspaceState, height: f32, reviewing: bool) {
 #[track_caller]
 fn project_menu(open: ProjectMenu) {
     Menu::new(open.at.0, open.at.1)
-        .item("New session", None, PROJECT_MENU_NEW, false)
+        .item(
+            "New session",
+            None,
+            Target::Menu(MenuEvent::ProjectMenuNew),
+            false,
+        )
         .separator()
-        .item("Remove workspace", None, PROJECT_MENU_REMOVE, false)
+        .item(
+            "Remove workspace",
+            None,
+            Target::Menu(MenuEvent::ProjectMenuRemove),
+            false,
+        )
         .build();
 }
 
@@ -199,13 +204,17 @@ fn session_menu(state: &WorkspaceState, open: SessionMenu) {
     let held = state.sessions.get(open.session);
     let on_branch = held.is_some_and(|held| held.on_branch);
     let chat = held.is_some_and(|held| held.is_chat());
-    let mut menu =
-        Menu::new(open.at.0, open.at.1).item("Copy path", None, SESSION_MENU_COPY_PATH, false);
+    let mut menu = Menu::new(open.at.0, open.at.1).item(
+        "Copy path",
+        None,
+        Target::Menu(MenuEvent::SessionMenuCopyPath),
+        false,
+    );
     if !chat {
         menu = menu.item(
             "Copy branch name",
             None,
-            SESSION_MENU_COPY_BRANCH,
+            Target::Menu(MenuEvent::SessionMenuCopyBranch),
             !on_branch,
         );
     }
@@ -217,13 +226,13 @@ fn session_menu(state: &WorkspaceState, open: SessionMenu) {
                 "Rename session"
             },
             None,
-            SESSION_MENU_RENAME,
+            Target::Menu(MenuEvent::SessionMenuRename),
             false,
         )
         .item(
             "Open in file manager",
             None,
-            SESSION_MENU_OPEN_FOLDER,
+            Target::Menu(MenuEvent::SessionMenuOpenFolder),
             state.is_remote_session(open.session),
         );
     let menu = menu
@@ -234,14 +243,24 @@ fn session_menu(state: &WorkspaceState, open: SessionMenu) {
                 "Mark as unread"
             },
             None,
-            SESSION_MENU_READ,
+            Target::Menu(MenuEvent::SessionMenuRead),
             false,
         )
         .separator()
-        .item("Archive", None, SESSION_MENU_CLOSE, false);
+        .item(
+            "Archive",
+            None,
+            Target::Menu(MenuEvent::SessionMenuClose),
+            false,
+        );
     if chat {
-        menu.item("Remove", None, SESSION_MENU_REMOVE, false)
-            .build();
+        menu.item(
+            "Remove",
+            None,
+            Target::Menu(MenuEvent::SessionMenuRemove),
+            false,
+        )
+        .build();
     } else {
         menu.build();
     }

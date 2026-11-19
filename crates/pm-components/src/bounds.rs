@@ -1,13 +1,12 @@
 //! Where an area was drawn, held by the state that owns the area, as a
 //! Compose state holder keeps what `onGloballyPositioned` told it.
 
+use crate::target::Target;
 use std::cell::Cell;
 use std::fmt;
 use std::rc::Rc;
 
 use rustle::{Modifier, Rect};
-
-use crate::focus::FocusId;
 
 /// Where an area is drawn in its window, in logical pixels: told by the area
 /// each time the display is built. Two handles are equal when they are the
@@ -89,7 +88,7 @@ impl fmt::Debug for Bounds {
 /// to the views with [`Places::provide`]. Two handles are equal when they are the same
 /// holder.
 #[derive(Clone, Default)]
-pub struct Places(Rc<std::cell::RefCell<std::collections::HashMap<FocusId, Bounds>>>);
+pub struct Places(Rc<std::cell::RefCell<std::collections::HashMap<Target, Bounds>>>);
 
 /// The places the views composed below report to.
 static LOCAL_PLACES: rustle::CompositionLocal<Option<Places>> =
@@ -97,17 +96,17 @@ static LOCAL_PLACES: rustle::CompositionLocal<Option<Places>> =
 
 impl Places {
     /// The bounds of the area named `id`, made when first asked for.
-    pub fn of(&self, id: FocusId) -> Bounds {
+    pub fn of(&self, id: Target) -> Bounds {
         self.0.borrow_mut().entry(id).or_default().clone()
     }
 
     /// Where the area named `id` is drawn, while it is in the composition.
-    pub fn get(&self, id: FocusId) -> Option<Rect> {
+    pub fn get(&self, id: Target) -> Option<Rect> {
         self.0.borrow().get(&id).and_then(Bounds::get)
     }
 
     /// The areas shown now and where they are drawn, in no particular order.
-    pub fn shown(&self) -> Vec<(FocusId, Rect)> {
+    pub fn shown(&self) -> Vec<(Target, Rect)> {
         self.0
             .borrow()
             .iter()
@@ -141,7 +140,7 @@ impl fmt::Debug for Places {
 /// `modifier` telling the [`Places`] the views are composed with the part of the area named
 /// `id` that is visible, as `onGloballyPositioned` tells a state holder; nothing without one.
 #[track_caller]
-pub fn placed(id: FocusId, modifier: Modifier) -> Modifier {
+pub fn placed(id: Target, modifier: Modifier) -> Modifier {
     match LOCAL_PLACES.current() {
         Some(places) => places.of(id).track_visible(modifier),
         None => modifier,

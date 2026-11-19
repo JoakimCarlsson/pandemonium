@@ -1,14 +1,15 @@
 //! The menu: a floating list of actions opened at a point.
 
-use crate::events::reduce;
+use crate::events::{Event, send};
+use crate::kit;
+use crate::target::Target;
 use crate::theme;
-use rustle::{Alignment, Arrangement, row_arranged};
+use crate::theme::Indicated;
 use rustle::{CursorIcon, Modifier};
 use std::rc::Rc;
 
 use crate::Surface;
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::theme::{Radius, Role, sp};
 
 /// How far a menu opened from a control hangs from it, in logical pixels.
@@ -24,7 +25,7 @@ pub enum Entry {
         /// The keys that do the same, written out, if any.
         shortcut: Option<String>,
         /// The name the row answers to.
-        id: FocusId,
+        id: Target,
         /// Whether the row is switched off.
         disabled: bool,
     },
@@ -56,7 +57,7 @@ pub struct Menu {
 
 /// What picking a row of a menu does, told the row's id, as the menu's builder keeps it.
 #[derive(Clone)]
-struct Pick(Rc<dyn Fn(FocusId)>);
+struct Pick(Rc<dyn Fn(Target)>);
 
 impl std::fmt::Debug for Pick {
     /// Writes that there is a lambda, which has nothing else to show.
@@ -86,7 +87,7 @@ impl Menu {
 
     /// The menu running `on_pick` with the id of the row picked, in place of handing the
     /// press of the row to the workspace's reducer.
-    pub fn on_pick(mut self, on_pick: impl Fn(FocusId) + 'static) -> Self {
+    pub fn on_pick(mut self, on_pick: impl Fn(Target) + 'static) -> Self {
         self.on_pick = Some(Pick(Rc::new(on_pick)));
         self
     }
@@ -105,13 +106,7 @@ impl Menu {
 
     /// The menu with a row saying `label`, answering to `id`, written with
     /// `shortcut` beside it, and switched off while `disabled` is true.
-    pub fn item(
-        mut self,
-        label: &str,
-        shortcut: Option<&str>,
-        id: FocusId,
-        disabled: bool,
-    ) -> Self {
+    pub fn item(mut self, label: &str, shortcut: Option<&str>, id: Target, disabled: bool) -> Self {
         self.entries.push(Entry::Item {
             label: label.to_owned(),
             shortcut: shortcut.map(str::to_owned),
@@ -194,8 +189,8 @@ impl Menu {
 
 /// What clicking the row `id` does: `on_pick` told the row, or the workspace's reducer
 /// taking the press without one.
-fn picked(id: FocusId, on_pick: Option<Pick>) -> impl Fn() + 'static {
-    let reduced = reduce(id);
+fn picked(id: Target, on_pick: Option<Pick>) -> impl Fn() + 'static {
+    let reduced = send(Event::pressing(id));
     move || match &on_pick {
         Some(Pick(on_pick)) => on_pick(id),
         None => reduced(),
@@ -227,37 +222,30 @@ fn menu_row(entry: Entry, height: f32, on_pick: Option<Pick>) {
                 modifier.alpha(0.4).cursor(CursorIcon::NotAllowed)
             } else {
                 modifier
-                    .interaction_background(
+                    .indicated(
                         theme::InteractionTones::new()
                             .hover(Role::SurfaceHover)
                             .active(Role::SurfaceActive)
-                            .radius(Radius::Sm)
-                            .colors(),
+                            .radius(Radius::Sm),
+                        theme::Focused::Rustle,
                     )
                     .cursor(CursorIcon::Pointer)
                     .control(id, picked(id, on_pick))
             };
-            row_arranged(
-                modifier.padding_xy(theme::sp(2), 0.0),
-                Arrangement::SpacedBy(sp(4)),
-                Alignment::Center,
-                move || {
-                    rustle::basic_text(
-                        Modifier::new().weight(1.0),
-                        words,
-                        theme::text_style(13, 1.4).color(theme::color(Role::Text)),
-                        rustle::TextOverflow::Ellipsis,
+            kit::row(modifier.padding_xy(theme::sp(2), 0.0), 4, move || {
+                kit::text(
+                    Modifier::new().weight(1.0),
+                    words,
+                    theme::text_style(13, 1.4).color(theme::color(Role::Text)),
+                );
+                if let Some(shortcut) = shortcut {
+                    kit::text(
+                        Modifier::new(),
+                        shortcut,
+                        theme::text_style(12, 1.4).color(theme::color(Role::Subtle)),
                     );
-                    if let Some(shortcut) = shortcut {
-                        rustle::basic_text(
-                            Modifier::new(),
-                            shortcut,
-                            theme::text_style(12, 1.4).color(theme::color(Role::Subtle)),
-                            rustle::TextOverflow::Ellipsis,
-                        );
-                    }
-                },
-            );
+                }
+            });
         }
     }
 }

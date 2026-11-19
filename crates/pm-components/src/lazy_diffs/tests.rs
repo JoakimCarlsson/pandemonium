@@ -1,10 +1,12 @@
 //! Tests of asking for the diffs of the files near the view and of anchoring the diff's list to an opened file while the diffs of the files above it arrive.
 
-use crate::focus::FocusId;
+use crate::areas::DiffEvent;
+
+use crate::events::Event;
 
 use crate::diff::header_item;
 use crate::sample::Change;
-use crate::state::{DIFF_FOLD_BASE, Outgoing, Page, WorkspaceState};
+use crate::state::{Outgoing, Page, WorkspaceState};
 
 /// How many files the session under test has changed, none of whose diffs have been read.
 const FILES: usize = 30;
@@ -56,7 +58,7 @@ fn header_items_follow_what_the_files_above_show() {
     let (asked, files) = diffs_above();
     state = state.with_diffs(0, &asked, files);
     assert_eq!(opened_item(&state), OPENED * 62);
-    state = state.after(FocusId(DIFF_FOLD_BASE));
+    state = state.handle(Event::Diff(DiffEvent::DiffFold(0)));
     assert_eq!(opened_item(&state), (OPENED - 1) * 62 + 1);
 }
 
@@ -68,7 +70,7 @@ fn the_anchor_holds_until_the_diff_is_scrolled() {
     assert_eq!(state.diff_anchor, Some((0, path(OPENED))));
     let (asked, files) = diffs_above();
     state = state.with_diffs(0, &asked, files);
-    state = state.after(FocusId(DIFF_FOLD_BASE));
+    state = state.handle(Event::Diff(DiffEvent::DiffFold(0)));
     assert_eq!(state.diff_anchor, Some((0, path(OPENED))));
     state.diff_list.scroll().jump_to(40.0);
     assert!(state.follow_scrolls());

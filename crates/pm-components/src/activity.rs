@@ -1,31 +1,35 @@
 //! The chips above the prompt box that sum up what the agent is doing, each opening its details.
 
-use crate::events::reduce;
+use crate::areas::ChatEvent;
+use crate::areas::DiffEvent;
+use crate::kit::{self, Frame};
+use crate::theme::Indicated;
+use crate::theme::ShadowLayers;
+
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
 use crate::theme::sp;
 use pm_harness::Progress;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
+use rustle::{Alignment, FlowOptions, flow_row_with};
 use rustle::{CursorIcon, Modifier};
 
 use crate::Button;
 use crate::Tally;
 use crate::button::Variant;
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::icons::spinner;
 use crate::parts::{clipped, line};
 use crate::popups::{Placement, anchored};
 use crate::sample::{Session, Step};
 use crate::size::Size;
-use crate::state::{
-    APPROVALS_CHIP, Activity, OPEN_DIFF, PLAN_CHIP, SHELLS_CHIP, SUBAGENTS_CHIP, WorkspaceState,
-};
+use crate::state::{Activity, WorkspaceState};
 use crate::steps::{elapsed, plan, question, subagents};
 use crate::theme::{Radius, Role};
 
 /// A pill in the strip of activity that says what there is, filled while it is the one open, answering to `id`.
-fn chip(label: impl Into<String>, id: FocusId) -> Button {
+fn chip(label: impl Into<String>, id: Target) -> Button {
     Button::new(label, id)
         .variant(Variant::Outline)
         .round()
@@ -47,16 +51,13 @@ pub(crate) fn latest_plan(session: &Session) -> Option<&[pm_harness::PlanStep]> 
 
 /// Emits the card of the commands the agent left running, with how long each has gone on.
 fn shells(session: &Session) {
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_width()
-            .background_rounded(theme::color(Role::Surface), Radius::Lg.px())
-            .border(1.0, theme::color(Role::Border), Radius::Lg.px())
-            .padding(1.0)
+            .panel(Radius::Lg)
             .padding_xy(theme::sp(3.5), 0.0)
             .padding_xy(0.0, theme::sp(3)),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Start,
+        2,
         || {
             line(
                 format!("{} running", session.shells.len()),
@@ -65,21 +66,16 @@ fn shells(session: &Session) {
                 Role::Muted,
             );
             for shell in &session.shells {
-                row_arranged(
-                    Modifier::new(),
-                    Arrangement::SpacedBy(sp(2.5)),
-                    Alignment::Center,
-                    || {
-                        spinner(3.5, Role::Muted);
-                        clipped(&shell.label, 13, Role::Text);
-                        line(
-                            elapsed(shell.started.elapsed().as_secs()),
-                            12,
-                            1.4,
-                            Role::Subtle,
-                        );
-                    },
-                );
+                kit::row(Modifier::new(), 2.5, || {
+                    spinner(3.5, Role::Muted);
+                    clipped(&shell.label, 13, Role::Text);
+                    line(
+                        elapsed(shell.started.elapsed().as_secs()),
+                        12,
+                        1.4,
+                        Role::Subtle,
+                    );
+                });
             }
         },
     );
@@ -130,16 +126,14 @@ fn has_panel(session: &Session, open: Activity) -> bool {
 /// Emits the open panel `open` for `session`, `width` logical pixels wide, hanging over the chips.
 #[track_caller]
 fn panel(state: &WorkspaceState, session: &Session, open: Activity, width: f32) {
-    column_arranged(
+    kit::column(
         Modifier::new()
             .width(width)
-            .draw_behind(theme::shadows(&theme::MEDIUM_SHADOW, Radius::Xl))
+            .shadow_layers(&theme::MEDIUM_SHADOW, Radius::Xl.px())
             .background_rounded(theme::color(Role::Background), Radius::Xl.px())
-            .border(1.0, theme::color(Role::Border), Radius::Xl.px())
-            .padding(1.0)
+            .outlined(Radius::Xl)
             .padding(theme::sp(2)),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         || match open {
             Activity::Plan => {
                 if let Some(items) = latest_plan(session) {
@@ -200,32 +194,41 @@ fn chips(
         FlowOptions::new(sp(2), sp(2)).item_alignment(Alignment::Center),
         || {
             if awaiting > 0 {
-                chip(format!("{awaiting} awaiting approval"), APPROVALS_CHIP)
-                    .mark(|| {
-                        rustle::spacer(
-                            Modifier::new()
-                                .size(theme::sp(1.5), theme::sp(1.5))
-                                .background_rounded(theme::color(Role::Danger), Radius::Full.px()),
-                        )
-                    })
-                    .selected(state.activity == Some(Activity::Approvals))
-                    .build();
+                chip(
+                    format!("{awaiting} awaiting approval"),
+                    Target::Chat(ChatEvent::ApprovalsChip),
+                )
+                .mark(|| {
+                    rustle::spacer(
+                        Modifier::new()
+                            .size(theme::sp(1.5), theme::sp(1.5))
+                            .background_rounded(theme::color(Role::Danger), Radius::Full.px()),
+                    )
+                })
+                .selected(state.activity == Some(Activity::Approvals))
+                .build();
             }
             if let Some(items) = plan_items {
                 let done = items
                     .iter()
                     .filter(|item| item.progress == Progress::Done)
                     .count();
-                chip(format!("{done}/{} tasks", items.len()), PLAN_CHIP)
-                    .with_icon(phosphor::CHECK_CIRCLE)
-                    .selected(state.activity == Some(Activity::Plan))
-                    .build();
+                chip(
+                    format!("{done}/{} tasks", items.len()),
+                    Target::Chat(ChatEvent::PlanChip),
+                )
+                .with_icon(phosphor::CHECK_CIRCLE)
+                .selected(state.activity == Some(Activity::Plan))
+                .build();
             }
             if working_agents > 0 {
-                chip(format!("{working_agents} running"), SUBAGENTS_CHIP)
-                    .mark(|| spinner(3.5, Role::Muted))
-                    .selected(state.activity == Some(Activity::Subagents))
-                    .build();
+                chip(
+                    format!("{working_agents} running"),
+                    Target::Chat(ChatEvent::SubagentsChip),
+                )
+                .mark(|| spinner(3.5, Role::Muted))
+                .selected(state.activity == Some(Activity::Subagents))
+                .build();
             }
             if !session.shells.is_empty() {
                 let count = session.shells.len();
@@ -234,30 +237,32 @@ fn chips(
                         "{count} {} running",
                         if count == 1 { "command" } else { "commands" }
                     ),
-                    SHELLS_CHIP,
+                    Target::Chat(ChatEvent::ShellsChip),
                 )
                 .mark(|| spinner(3.5, Role::Muted))
                 .selected(state.activity == Some(Activity::Shells))
                 .build();
             }
             if !session.changes.is_empty() {
-                row_arranged(
+                kit::row(
                     Modifier::new()
                         .height(theme::sp(7))
-                        .interaction_focused(crate::focus::is_held(OPEN_DIFF))
-                        .interaction_background(
-                            (theme::InteractionTones::new()
+                        .indicated(
+                            theme::InteractionTones::new()
                                 .hover(Role::SurfaceHover)
-                                .radius(Radius::Full))
-                            .colors(),
+                                .radius(Radius::Full),
+                            theme::Focused::Held(crate::focus::is_held(Target::Diff(
+                                DiffEvent::OpenDiff,
+                            ))),
                         )
-                        .border(1.0, theme::color(Role::Border), Radius::Full.px())
-                        .padding(1.0)
+                        .outlined(Radius::Full)
                         .cursor(CursorIcon::Pointer)
-                        .control(OPEN_DIFF, reduce(OPEN_DIFF))
+                        .control(
+                            Target::Diff(DiffEvent::OpenDiff),
+                            send(Event::Diff(DiffEvent::OpenDiff)),
+                        )
                         .padding_xy(theme::sp(3), 0.0),
-                    Arrangement::Start,
-                    Alignment::Center,
+                    0,
                     || {
                         Tally::new(session.added(), session.removed())
                             .size(12)

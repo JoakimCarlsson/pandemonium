@@ -1,9 +1,13 @@
 //! Every file of the project as a tree of folders, folders first, with the files git sees changed marked.
 
+use crate::areas::TreeEvent;
+use crate::kit::{self, Frame};
+use crate::theme::ShadowLayers;
+
+use crate::target::Target;
 use crate::theme;
 use crate::theme::sp;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -14,17 +18,16 @@ use crate::Input;
 use crate::change_list::mark_color;
 use crate::events::Interactive;
 use crate::file_icon::{file_icon, folder_icon};
-use crate::focus::FocusId;
 use crate::icons::icon as icon_of;
 use crate::size::Size;
-use crate::state::{TREE_BASE, WorkspaceState};
+use crate::state::WorkspaceState;
 use crate::theme::{Radius, Role, Tone};
 use crate::tile::Tile;
 use crate::tree::{Entry, Folder, folders};
 
 mod cache;
 
-use crate::tree_actions::{ENTRY_FIELD, Naming, TREE_FILE_BASE, TREE_SPACE, TreeTarget};
+use crate::tree_actions::{Naming, TreeTarget};
 use cache::tree;
 
 /// How far, in steps, each level of the tree indents its rows.
@@ -171,7 +174,7 @@ fn entry_row(
     name: &str,
     depth: usize,
     fold: Option<bool>,
-    id: FocusId,
+    id: Target,
     target: TreeTarget,
     look: &Look,
 ) {
@@ -215,23 +218,9 @@ fn entry_row(
                 None => rustle::spacer(Modifier::new().size(theme::sp(3.5), theme::sp(3.5))),
             }
             icon();
-            rustle::basic_text(
-                Modifier::new().weight(1.0),
-                name,
-                theme::text_style(13, 1.4)
-                    .color(theme::color(tone))
-                    .max_lines(1),
-                rustle::TextOverflow::Ellipsis,
-            );
+            kit::text(Modifier::new().weight(1.0), name, kit::line(13, tone));
             if let Some(letter) = letter {
-                rustle::basic_text(
-                    Modifier::new(),
-                    letter,
-                    theme::mono_style(11, 1.4)
-                        .color(theme::color(tone))
-                        .max_lines(1),
-                    rustle::TextOverflow::Ellipsis,
-                );
+                kit::text(Modifier::new(), letter, kit::code(11, tone));
             }
         });
 }
@@ -252,18 +241,15 @@ pub fn drag_ghost(state: &WorkspaceState) {
     } else {
         format!("{count} items")
     };
-    row_arranged(
+    kit::row(
         Modifier::new()
             .offset(drag.at.0 + 12.0, drag.at.1 + 10.0)
             .z_index_unclipped(60)
             .height(theme::sp(7))
-            .draw_behind(theme::shadows(&theme::MEDIUM_SHADOW, Radius::Md))
-            .background_rounded(theme::color(Role::Surface), Radius::Md.px())
-            .border(1.0, theme::color(Role::Border), Radius::Md.px())
-            .padding(1.0)
+            .shadow_layers(&theme::MEDIUM_SHADOW, Radius::Md.px())
+            .panel(Radius::Md)
             .padding_xy(theme::sp(2), 0.0),
-        Arrangement::SpacedBy(sp(1.5)),
-        Alignment::Center,
+        1.5,
         || {
             if count != 1 {
                 icon_of(phosphor::COPY, 4.0, Role::Muted);
@@ -272,14 +258,7 @@ pub fn drag_ghost(state: &WorkspaceState) {
             } else {
                 file_icon(name, 4.0);
             }
-            rustle::basic_text(
-                Modifier::new(),
-                &words,
-                theme::text_style(13, 1.4)
-                    .color(theme::color(Role::Text))
-                    .max_lines(1),
-                rustle::TextOverflow::Ellipsis,
-            );
+            kit::text(Modifier::new(), &words, kit::line(13, Role::Text));
         },
     );
 }
@@ -292,14 +271,13 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) {
     };
     let problem = state.naming_problem();
     rustle::column_with(Modifier::new().fill_max_width(), || {
-        row_arranged(
+        kit::row(
             Modifier::new()
                 .fill_max_width()
                 .height(theme::sp(6))
                 .padding_each(theme::sp(3.0 + depth as f32 * INDENT), 0.0, 0.0, 0.0)
                 .padding_each(0.0, 0.0, theme::sp(3), 0.0),
-            Arrangement::SpacedBy(sp(2)),
-            Alignment::Center,
+            2,
             || {
                 rustle::spacer(Modifier::new().size(theme::sp(3.5), theme::sp(3.5)));
                 if folder {
@@ -307,7 +285,7 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) {
                 } else {
                     file_icon(&field.text(), 4.0);
                 }
-                Input::new(field, ENTRY_FIELD)
+                Input::new(field, Target::Tree(TreeEvent::EntryField))
                     .size(Size::Sm)
                     .invalid(problem.is_some())
                     .modifier(Modifier::new().weight(1.0))
@@ -317,23 +295,13 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) {
         let Some(problem) = problem else {
             return;
         };
-        column_arranged(
+        kit::column(
             Modifier::new()
                 .padding_each(theme::sp(3.0 + depth as f32 * INDENT + 8.0), 0.0, 0.0, 0.0)
                 .padding_each(0.0, 0.0, theme::sp(3), 0.0)
                 .padding_each(0.0, 0.0, 0.0, theme::sp(1)),
-            Arrangement::Start,
-            Alignment::Start,
-            || {
-                rustle::basic_text(
-                    Modifier::new(),
-                    problem,
-                    theme::text_style(12, 1.4)
-                        .color(theme::color(Role::Danger))
-                        .max_lines(1),
-                    rustle::TextOverflow::Ellipsis,
-                )
-            },
+            0,
+            || kit::text(Modifier::new(), problem, kit::line(12, Role::Danger)),
         );
     });
 }
@@ -397,23 +365,23 @@ enum Item<'a> {
 
 impl Item<'_> {
     /// The control the item answers to, if it is one focus can be on.
-    fn id(&self) -> Option<FocusId> {
+    fn id(&self) -> Option<Target> {
         match self {
-            Item::Field { .. } => Some(ENTRY_FIELD),
-            Item::File { index, .. } => Some(FocusId(TREE_FILE_BASE + *index as u64)),
-            Item::Folder { folder, .. } => Some(FocusId(TREE_BASE + folder.position as u64)),
+            Item::Field { .. } => Some(Target::Tree(TreeEvent::EntryField)),
+            Item::File { index, .. } => Some(Target::Tree(TreeEvent::TreeFile(*index))),
+            Item::Folder { folder, .. } => Some(Target::Tree(TreeEvent::Tree(folder.position))),
             Item::Nothing => None,
-            Item::Space => Some(TREE_SPACE),
+            Item::Space => Some(Target::Tree(TreeEvent::TreeSpace)),
         }
     }
 
     /// The key the list knows the item by.
-    fn key(&self) -> u64 {
-        self.id().map_or(u64::MAX, |id| id.0)
+    fn key(&self) -> Option<Target> {
+        self.id()
     }
 
     /// The row of the tree the item is, if it is one.
-    fn row(&self) -> Option<FocusId> {
+    fn row(&self) -> Option<Target> {
         match self {
             Item::File { .. } | Item::Folder { .. } => self.id(),
             _ => None,
@@ -543,7 +511,7 @@ impl WorkspaceState {
 /// The key handler of the tree: Tab or Shift+Tab from a row moves to the next or previous row
 /// in tree order, scrolling it wholly into view and asking for focus on it, as a lazy list
 /// brings the item focus moves to into view; past the first or last row Tab is left alone.
-fn walks_rows(rows: Rc<Vec<(FocusId, usize)>>, list: rustle::LazyListState) -> Modifier {
+fn walks_rows(rows: Rc<Vec<(Target, usize)>>, list: rustle::LazyListState) -> Modifier {
     let keys = crate::focus::keys();
     Modifier::new().on_key_event(move |event| {
         if !event.pressed || event.key != rustle::Key::Tab {
@@ -572,7 +540,7 @@ fn walks_rows(rows: Rc<Vec<(FocusId, usize)>>, list: rustle::LazyListState) -> M
 /// Keeps the item being composed composed while focus is on `id`, even scrolled out of view,
 /// as a focused item of a lazy list pins itself.
 #[track_caller]
-fn pin_while_held(id: FocusId) {
+fn pin_while_held(id: Target) {
     let held = crate::focus::is_held(id);
     let container = rustle::LOCAL_PINNABLE_CONTAINER.current();
     rustle::disposable_effect(held, move || {
@@ -607,11 +575,11 @@ fn space(state: &WorkspaceState, index: usize) {
         );
     }
     let operations = crate::events::operations();
-    let pressed = crate::events::reduce(TREE_SPACE);
+    let pressed = crate::events::send(crate::events::Event::Tree(TreeEvent::TreeSpace));
     rustle::spacer(crate::bounds::placed(
-        TREE_SPACE,
+        Target::Tree(TreeEvent::TreeSpace),
         around.control_menu(
-            TREE_SPACE,
+            Target::Tree(TreeEvent::TreeSpace),
             move |_| pressed(),
             move || operations.open_tree_menu(TreeTarget::root()),
         ),
@@ -642,7 +610,7 @@ fn file_row(
         name,
         depth,
         None,
-        FocusId(TREE_FILE_BASE + index as u64),
+        Target::Tree(TreeEvent::TreeFile(index)),
         TreeTarget {
             path: path.to_owned(),
             folder: false,
@@ -678,7 +646,7 @@ fn folder_row(
         &folder.name,
         depth,
         Some(open),
-        FocusId(TREE_BASE + folder.position as u64),
+        Target::Tree(TreeEvent::Tree(folder.position)),
         TreeTarget {
             path: folder.path.clone(),
             folder: true,
@@ -694,7 +662,7 @@ fn folder_row(
 pub fn list(state: &WorkspaceState) {
     let entries = tree(&state.files, &state.tree_folders);
     let items = items(state, &entries);
-    let rows: Rc<Vec<(FocusId, usize)>> = Rc::new(
+    let rows: Rc<Vec<(Target, usize)>> = Rc::new(
         items
             .iter()
             .enumerate()

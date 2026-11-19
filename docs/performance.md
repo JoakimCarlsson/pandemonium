@@ -27,8 +27,9 @@ CARGO_TARGET_DIR=build cargo test -p pandemonium benchmark_interactions -- --ign
 ```
 
 The benchmarks in `crates/pandemonium/src/app/interactions/benchmarks.rs`
-drive the app headless through the interaction rig, as the event loop feeds
-it, on a heavy workspace (`snapshot::heavy_workspace`): the file shown, the
+drive the app headless through the interaction rig, which feeds rustle's
+`Embedded` interfaces as rustle's event loop feeds a window and wakes the app as
+its external handler does, on a heavy workspace (`snapshot::heavy_workspace`): the file shown, the
 conversation and the diff side by side in panes, 40 replies of 30 markdown
 paragraphs each, and the review panel open on a tree of 400 files. They drag
 the sidebar's handle, the review panel's handle and a seam between panes a
@@ -120,8 +121,8 @@ server's bell as soon as they queue an event, and the pump runs on the ring; its
 and on a waker, on the server's side and on the client's. Queueing a message
 for the client, or a request for the server, rings that waker, so it is written
 at once instead of at the next 25 ms read timeout. The client's connection
-thread calls a wake function after each report, which the window turns into an
-event loop user event, so incoming events are applied at once instead of at the
+thread calls a wake function after each report, rustle's `external_waker`, which
+wakes the event loop to run the app's external handler, so incoming events are applied at once instead of at the
 next 50 ms tick while an agent works.
 
 Measured over a loopback WebSocket with an agent streaming one chunk every
@@ -222,7 +223,7 @@ PANDEMONIUM_STARTUP_TIMINGS=1 CARGO_TARGET_DIR=build cargo run --release -p pand
 ```
 
 Stderr reports the milliseconds since the process began at each phase: the
-event loop, the saved settings, fonts and the model, the window, the renderer,
+saved settings, fonts and the model, the window, the renderer,
 the first presented frame and the first listing of this machine's sessions.
 
 The window opens on what this machine has saved (projects, choices, accounts,
@@ -247,7 +248,7 @@ projects, milliseconds from process start (three runs each):
 With two unreachable `ssh://` projects added, the warm first frame was 252-337
 before and 231-246 after.
 
-The GPU opens on its own thread, started before the event loop. The window
+The GPU opens on its own thread, started before rustle's event loop. The window
 builds its first scene while it opens, so the device is ready by the time the
 scene is. The instance asks only for the primary graphics interfaces (Vulkan,
 Metal, DX12), so no OpenGL, Mesa or LLVM driver is loaded. Together these took
@@ -257,7 +258,10 @@ GPU vendor's shader compiler.
 
 ## Idle and streaming
 
-An idle window draws nothing. A blinking caret asks for a frame at its next
+An idle window draws nothing and the app sleeps: what waits on time is an
+effect keyed on its deadline that waits with rustle's `delay`, a timer the loop
+sleeps until without drawing, and polling (the browser's pump, an agent being
+heard) runs only while that work is under way. A blinking caret asks for a frame at its next
 change, not for continuous frames, and the input method is told where the caret
 is only when it moves. Telling it every frame made the desktop answer with an
 empty composition each time, which dirtied the model and drew another frame, at

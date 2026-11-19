@@ -1,9 +1,10 @@
 //! The tile: a row of a list that holds its children side by side, answers to a press and fills under the pointer and while it is selected.
 
 use crate::events::Interactive;
-use crate::events::{OnClick, reduce};
-use crate::focus::FocusId;
+use crate::events::{Event, OnClick, send};
+use crate::target::Target;
 use crate::theme;
+use crate::theme::Indicated;
 use crate::theme::sp;
 use crate::theme::{Radius, Role};
 use rustle::Modifiers;
@@ -19,7 +20,7 @@ use std::rc::Rc;
 #[derive(Clone, Debug)]
 pub struct Tile {
     /// The name it answers to.
-    id: FocusId,
+    id: Target,
     /// How tall it is, in steps of four logical pixels.
     height: f32,
     /// How far apart its children sit, in steps of four logical pixels.
@@ -56,7 +57,7 @@ impl std::fmt::Debug for Picked {
 
 impl Tile {
     /// An empty row 36 logical pixels tall answering to `id`.
-    pub fn new(id: FocusId) -> Self {
+    pub fn new(id: Target) -> Self {
         Self {
             id,
             height: 9.0,
@@ -94,7 +95,7 @@ impl Tile {
     /// the press.
     fn clicked(&self) -> impl Fn(Modifiers) + 'static {
         let given = self.on_click.clone();
-        let reduced = reduce(self.id);
+        let reduced = send(Event::pressing(self.id));
         move |held| match &given {
             Some(Picked(on_pick)) => on_pick(held),
             None => reduced(),
@@ -176,8 +177,7 @@ impl Tile {
         let modifier = self.modifier.chain(
             Modifier::new()
                 .height(theme::sp(self.height))
-                .interaction_focused(crate::focus::is_held(self.id))
-                .interaction_background((looks).colors())
+                .indicated(looks, theme::Focused::Held(crate::focus::is_held(self.id)))
                 .cursor(CursorIcon::Pointer)
                 .chain(reacting)
                 .chain(self.inner),

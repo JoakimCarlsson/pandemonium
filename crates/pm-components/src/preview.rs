@@ -1,11 +1,12 @@
 //! A file shown rendered rather than as its source: markdown laid out as a page, and pictures drawn whole.
 
-use crate::focus::FocusId;
+use crate::areas::EditorEvent;
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use crate::theme::{Radius, Role};
 use rustle::Modifier;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, row_arranged};
 
 use crate::Button;
 use crate::button::Variant;
@@ -14,18 +15,6 @@ use crate::markdown::Markdown;
 use crate::open_files::{Contents, STRIP, Viewer};
 use crate::parts::line;
 use crate::size::Size;
-
-/// Shows the file shown rendered.
-pub const PREVIEW_SHOW: FocusId = FocusId(7094);
-
-/// Shows the source of the file shown.
-pub const SOURCE_SHOW: FocusId = FocusId(7095);
-
-/// The first link of a markdown file shown rendered; the rest follow it.
-pub const PREVIEW_LINK_BASE: u64 = 4_200_000;
-
-/// How many links of a markdown file shown rendered can be pressed.
-pub const PREVIEW_LINKS: u64 = 100_000;
 
 /// How many pixels of a drawn vector picture fall on one logical pixel, so it stays sharp on a dense screen.
 pub const VECTOR_DENSITY: f32 = 2.0;
@@ -103,23 +92,18 @@ pub fn switch(viewer: &Viewer) {
         return;
     }
     let shown = viewer.rendering() == Some(rendering);
-    row_arranged(
-        Modifier::new(),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Center,
-        || {
-            Button::new("Preview", PREVIEW_SHOW)
-                .variant(Variant::Ghost)
-                .size(Size::Xs)
-                .selected(shown)
-                .build();
-            Button::new("Source", SOURCE_SHOW)
-                .variant(Variant::Ghost)
-                .size(Size::Xs)
-                .selected(!shown)
-                .build();
-        },
-    );
+    kit::row(Modifier::new(), 1, || {
+        Button::new("Preview", Target::Editor(EditorEvent::PreviewShow))
+            .variant(Variant::Ghost)
+            .size(Size::Xs)
+            .selected(shown)
+            .build();
+        Button::new("Source", Target::Editor(EditorEvent::SourceShow))
+            .variant(Variant::Ghost)
+            .size(Size::Xs)
+            .selected(!shown)
+            .build();
+    });
 }
 
 /// Emits what the strip says about the picture of the file shown: how many pixels it has across and down.
@@ -162,13 +146,12 @@ pub fn rendered(viewer: &Viewer, figures: &Figures, (width, height): (f32, f32))
 
 /// Emits a line saying `message` where the rendering would be.
 #[track_caller]
-fn note(message: &str) {
-    column_arranged(
+pub(crate) fn note(message: &str) {
+    kit::column(
         Modifier::new()
             .padding_xy(theme::sp(4), 0.0)
             .padding_xy(0.0, theme::sp(4)),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         || {
             line(message, 13, 1.4, Role::Subtle);
         },
@@ -186,17 +169,12 @@ fn page(path: &str, source: &str, figures: &Figures, width: f32) {
         Arrangement::Center,
         Alignment::Start,
         || {
-            column_arranged(
-                Modifier::new().width(column),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    Markdown::new(source, column)
-                        .links(PREVIEW_LINK_BASE)
-                        .figures(figures, Some(path))
-                        .build();
-                },
-            );
+            kit::column(Modifier::new().width(column), 0, || {
+                Markdown::new(source, column)
+                    .links(Target::Editor(EditorEvent::PreviewLink(0)))
+                    .figures(figures, Some(path))
+                    .build();
+            });
         },
     );
 }
@@ -222,9 +200,7 @@ fn framed(picture: &rustle::ImageData, density: f32, room: (f32, f32)) {
                 Modifier::new()
                     .width(across * fit)
                     .height(down * fit)
-                    .background_rounded(theme::color(Role::Surface), Radius::Sm.px())
-                    .border(1.0, theme::color(Role::Border), Radius::Sm.px())
-                    .padding(1.0),
+                    .panel(Radius::Sm),
                 picture,
                 rustle::ContentScale::Crop,
             );

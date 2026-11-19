@@ -1,11 +1,10 @@
 //! The small notice in a conversation that its turn moved to a backup model, because the model of a slot kept failing.
 
+use crate::kit;
 use crate::theme;
 use crate::theme::Role;
-use crate::theme::sp;
 use rustle::Modifier;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, row_arranged};
 
 use crate::parts::{clipped, glyph};
 
@@ -36,12 +35,11 @@ pub fn fallback_words(from: &str, to: &str, reason: &str) -> String {
 #[track_caller]
 pub fn fallback_notice(from: &str, to: &str, reason: &str) {
     let words = fallback_words(from, to, reason);
-    row_arranged(
+    kit::row(
         Modifier::new()
             .padding_xy(theme::sp(1), 0.0)
             .padding_xy(0.0, theme::sp(0.5)),
-        Arrangement::SpacedBy(sp(1.5)),
-        Alignment::Center,
+        1.5,
         move || {
             glyph(phosphor::LIGHTNING, 3.5, Role::Warning);
             clipped(words, 12, Role::Muted);

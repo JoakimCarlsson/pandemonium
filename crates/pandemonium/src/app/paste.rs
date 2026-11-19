@@ -1,9 +1,9 @@
 //! Pasting files and pictures from the clipboard into the prompt as attachments.
 
+use pm_components::areas::ComposerEvent;
+use pm_components::target::Target;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use pm_pages::PROMPT;
 
 use super::App;
 
@@ -37,7 +37,7 @@ impl App {
         self.model
             .update(|state| *state = std::mem::take(state).with_attachments(&paths));
         self.work.preview(paths);
-        self.focus.focus(PROMPT);
+        self.focus.focus(Target::Composer(ComposerEvent::Prompt));
     }
 }
 

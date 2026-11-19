@@ -1,32 +1,24 @@
 //! The questions and lists for publishing a branch, choosing what it follows, renaming, deleting, merging and rebasing it.
 
-use crate::events::reduce;
+use crate::areas::GitEvent;
+use crate::kit;
+
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use rustle::TextFieldState;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::theme::Role;
 
 use crate::button::Variant;
-use crate::git_prompts::{PROMPT_CANCEL, PROMPT_CONFIRM, PROMPT_INSIDE, PROMPT_OUTSIDE, Prompt};
+use crate::git_prompts::Prompt;
 use crate::parts::{line, spacer, wrap};
 use crate::popover::row;
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
-use crate::{Button, Checkbox, Input, Modal};
-
-/// The box a branch is named in, or the list of branches is searched in.
-pub const BRANCH_TASK_FIELD: FocusId = FocusId(7110);
-
-/// The check box that carries a rename or a deletion over to the branch on the remote.
-pub const BRANCH_TASK_REMOTE: FocusId = FocusId(7111);
-
-/// The first of the rows of the list that is open; the rest follow it.
-pub const BRANCH_TASK_ROW_BASE: u64 = 8850;
+use crate::{Checkbox, Input, Modal};
 
 /// How many rows a list shows at once.
 const ROWS: usize = 12;
@@ -198,26 +190,24 @@ impl WorkspaceState {
     }
 
     /// Carries out `action` if it presses something in the question or list about a branch, and says whether it did.
-    pub(crate) fn press_branch_task(&mut self, action: FocusId) -> bool {
+    pub(crate) fn press_branch_task(&mut self, action: Target) -> bool {
         if self.git.branching.is_none() || !matches!(self.git.prompt, Some(Prompt::Branch(_))) {
             return false;
         }
         match action {
-            BRANCH_TASK_FIELD => {}
-            BRANCH_TASK_REMOTE => {
+            Target::Git(GitEvent::BranchTaskField) => {}
+            Target::Git(GitEvent::BranchTaskRemote) => {
                 if let Some(open) = self.git.branching.as_mut() {
                     open.with_remote = !open.with_remote;
                 }
             }
             _ => {
-                let Some(row) = action
-                    .0
-                    .checked_sub(BRANCH_TASK_ROW_BASE)
-                    .map(|row| row as usize)
-                    .filter(|row| *row < ROWS)
-                else {
+                let Target::Git(GitEvent::BranchTaskRow(row)) = action else {
                     return false;
                 };
+                if row >= ROWS {
+                    return false;
+                }
                 self.choose_branch(row);
             }
         }
@@ -349,15 +339,6 @@ impl WorkspaceState {
     }
 }
 
-/// Emits a button of a question, saying `label`.
-#[track_caller]
-fn button(label: &str, id: FocusId, variant: Variant) {
-    Button::new(label, id)
-        .variant(variant)
-        .size(Size::Sm)
-        .build();
-}
-
 /// `count` commits, worded for one or many.
 fn commits(count: usize) -> String {
     if count == 1 {
@@ -370,15 +351,17 @@ fn commits(count: usize) -> String {
 /// Emits a row with a check box that says `label`, ticked while `checked`.
 #[track_caller]
 fn tick(label: &str, checked: bool) {
-    row_arranged(
+    kit::row(
         Modifier::new()
             .cursor(CursorIcon::Pointer)
-            .control(BRANCH_TASK_REMOTE, reduce(BRANCH_TASK_REMOTE))
+            .control(
+                Target::Git(GitEvent::BranchTaskRemote),
+                send(Event::Git(GitEvent::BranchTaskRemote)),
+            )
             .padding_xy(theme::sp(2), 0.0),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
+        2,
         || {
-            Checkbox::new(checked, BRANCH_TASK_REMOTE).build();
+            Checkbox::new(checked, Target::Git(GitEvent::BranchTaskRemote)).build();
             line(label, 13, 1.4, Role::Text);
         },
     );
@@ -400,7 +383,7 @@ fn choice_rows(choices: &[(String, String, bool)]) {
             name,
             description,
             *chosen,
-            FocusId(BRANCH_TASK_ROW_BASE + position as u64),
+            Target::Git(GitEvent::BranchTaskRow(position)),
         );
     }
 }
@@ -408,15 +391,7 @@ fn choice_rows(choices: &[(String, String, bool)]) {
 /// Emits a line of `words` set as a title, `pixels` tall, in the text colour and medium weight.
 #[track_caller]
 fn title_line(words: impl Into<String>, pixels: u32) {
-    rustle::basic_text(
-        Modifier::new(),
-        words,
-        theme::text_style(pixels, 1.4)
-            .font_weight(rustle::FontWeight::MEDIUM)
-            .color(theme::color(Role::Text))
-            .max_lines(1),
-        rustle::TextOverflow::Ellipsis,
-    );
+    kit::text(Modifier::new(), words, kit::strong(pixels, Role::Text));
 }
 
 /// Emits the question or list about a branch that is open, in a modal; nothing when none is open.
@@ -431,11 +406,11 @@ pub fn branch_prompt(state: &WorkspaceState, task: BranchTask) {
     let upstream = state
         .review_session()
         .and_then(|session| session.tracking.upstream.clone());
-    Modal::new(PROMPT_OUTSIDE, PROMPT_INSIDE)
+    Modal::new(Target::Git(GitEvent::PromptOutside), Target::Git(GitEvent::PromptInside))
         .width(WIDTH)
         .build_with(|| {
             let mut confirm: Option<(&str, Variant)> = None;
-            column_arranged(Modifier::new().padding(theme::sp(5)), Arrangement::SpacedBy(sp(3)), Alignment::Start, || {
+            kit::column(Modifier::new().padding(theme::sp(5)), 3, || {
                 title_line(task.title(), 15);
                 if loading {
                     line("Reading the remotes…", 13, 1.4, Role::Subtle);
@@ -450,7 +425,7 @@ pub fn branch_prompt(state: &WorkspaceState, task: BranchTask) {
                                 choice_rows(&choices);
                             }
                             line("Branch name on the remote", 12, 1.4, Role::Subtle);
-                            Input::new(&open.field, BRANCH_TASK_FIELD)
+                            Input::new(&open.field, Target::Git(GitEvent::BranchTaskField))
                                 .modifier(Modifier::new().fill_max_width())
                                 .placeholder(&current)
                                 .size(Size::Md)
@@ -458,7 +433,7 @@ pub fn branch_prompt(state: &WorkspaceState, task: BranchTask) {
                             confirm = Some(("Publish", Variant::Default));
                         }
                         BranchTask::Rename => {
-                            Input::new(&open.field, BRANCH_TASK_FIELD)
+                            Input::new(&open.field, Target::Git(GitEvent::BranchTaskField))
                                 .modifier(Modifier::new().fill_max_width())
                                 .placeholder("New name")
                                 .size(Size::Md)
@@ -506,7 +481,7 @@ pub fn branch_prompt(state: &WorkspaceState, task: BranchTask) {
                             }
                         }
                         _ => {
-                            Input::new(&open.field, BRANCH_TASK_FIELD)
+                            Input::new(&open.field, Target::Git(GitEvent::BranchTaskField))
                                 .modifier(Modifier::new().fill_max_width())
                                 .placeholder("Search branches")
                                 .size(Size::Md)
@@ -528,15 +503,11 @@ pub fn branch_prompt(state: &WorkspaceState, task: BranchTask) {
                     }
                 }
             });
-            row_arranged(
-                Modifier::new().fill_max_width().padding_xy(theme::sp(5), 0.0).padding_each(0.0, 0.0, 0.0, theme::sp(5)),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Center,
-                || {
+            kit::row(Modifier::new().fill_max_width().padding_xy(theme::sp(5), 0.0).padding_each(0.0, 0.0, 0.0, theme::sp(5)), 2, || {
                     spacer();
-                    button("Cancel", PROMPT_CANCEL, Variant::Ghost);
+                    kit::small_button("Cancel", Target::Git(GitEvent::PromptCancel), Variant::Ghost).build();
                     if let Some((label, variant)) = confirm.filter(|_| !loading) {
-                        button(label, PROMPT_CONFIRM, variant);
+                        kit::small_button(label, Target::Git(GitEvent::PromptConfirm), variant).build();
                     }
                 });
         });

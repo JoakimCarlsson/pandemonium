@@ -1,12 +1,13 @@
 //! The lists the quick input offers to pick one thing from: a theme, a keymap, a setting of the agent and its values, a message to rewind to or fork from, a branch to check out, or what to type to list something else; and what picking each does.
 
+use crate::areas::ChatEvent;
+use crate::events::Event;
+use crate::target::Target;
 use pm_editor::Preset;
 use rustle::TextFieldState;
 
-use crate::focus::FocusId;
-
 use crate::listing::{Items, Listing};
-use crate::state::{FORK_BASE, Outgoing, Page, RESTORE_BASE, REWIND_BASE, WorkspaceState};
+use crate::state::{Outgoing, Page, WorkspaceState};
 
 /// What a list of choices is for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -87,7 +88,7 @@ impl Choosing {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Then {
     /// Presses the control `id`, as a click on it would.
-    Press(FocusId),
+    Press(Target),
     /// Draws the window in the theme family of this name.
     Theme(String),
     /// Starts the keys from this keymap.
@@ -218,10 +219,10 @@ impl WorkspaceState {
                 let Some(session) = self.open() else {
                     return Vec::new();
                 };
-                let (wanted, base) = match choosing {
-                    Choosing::Rewind => (true, REWIND_BASE),
-                    Choosing::Restore => (true, RESTORE_BASE),
-                    _ => (false, FORK_BASE),
+                let (wanted, target): (bool, fn(usize) -> Target) = match choosing {
+                    Choosing::Rewind => (true, |index| Target::Chat(ChatEvent::Rewind(index))),
+                    Choosing::Restore => (true, |index| Target::Chat(ChatEvent::Restore(index))),
+                    _ => (false, |index| Target::Chat(ChatEvent::Fork(index))),
                 };
                 session
                     .messages
@@ -230,11 +231,7 @@ impl WorkspaceState {
                     .rev()
                     .filter(|(_, message)| message.from_user == wanted)
                     .map(|(index, message)| {
-                        Choice::new(
-                            first_line(&message.text),
-                            "",
-                            Then::Press(FocusId(base + index as u64)),
-                        )
+                        Choice::new(first_line(&message.text), "", Then::Press(target(index)))
                     })
                     .filter(|choice| !choice.label.is_empty())
                     .collect()
@@ -406,7 +403,7 @@ impl WorkspaceState {
     /// The state after `choice` was picked from the quick input hanging at `at`.
     pub(crate) fn choice_taken(mut self, choice: Choice, at: (f32, f32)) -> Self {
         match choice.then {
-            Then::Press(id) => self.after(id),
+            Then::Press(id) => self.handle(Event::pressing(id)),
             Then::Theme(name) => {
                 self.window.appearance.light_theme = name.clone();
                 self.window.appearance.dark_theme = name;
@@ -482,7 +479,7 @@ impl WorkspaceState {
     }
 
     /// The state with the menu of the session shown pressed on its row `row`, as a click on that row would.
-    pub fn session_command(mut self, row: FocusId) -> Self {
+    pub fn session_command(mut self, row: Target) -> Self {
         let Page::Session(session) = self.page else {
             return self;
         };
@@ -490,17 +487,17 @@ impl WorkspaceState {
             session,
             at: (0.0, 0.0),
         });
-        self.after(row)
+        self.handle(Event::pressing(row))
     }
 
     /// The control answering what the agent of the session shown asks with an answer of `verdict`, when it asks.
-    pub fn answer_of(&self, verdict: pm_harness::Verdict) -> Option<FocusId> {
+    pub fn answer_of(&self, verdict: pm_harness::Verdict) -> Option<Target> {
         let ask = self.open()?.ask.as_ref()?;
         let index = ask
             .choices
             .iter()
             .position(|choice| choice.verdict == verdict)?;
-        Some(FocusId(crate::state::CHOICE_BASE + index as u64))
+        Some(Target::Chat(ChatEvent::Choice(index)))
     }
 
     /// The state with the menu of the tab shown pressed on `command`, as a click on that row would.

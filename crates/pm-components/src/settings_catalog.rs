@@ -1,9 +1,8 @@
 //! Every setting the settings window shows as a row: the page it is on, what it is called and does, and who keeps it.
 
-use crate::focus::FocusId;
-
 use crate::settings::Section;
-use crate::settings_ids::{PER_SETTING, SETTING_CONTROLS};
+use crate::settings_rows::{PER_SETTING, SETTING_CONTROLS};
+use crate::target::Target;
 
 /// The control of a setting that opens or closes its list of choices.
 pub const OPEN_LIST: usize = 6;
@@ -1039,19 +1038,19 @@ impl Setting {
     }
 
     /// The name of its control at `option`, or nothing when `option` is past the controls a setting has room for.
-    pub fn id(self, option: usize) -> Option<FocusId> {
+    pub fn id(self, option: usize) -> Option<Target> {
         let place = Self::ALL.iter().position(|held| *held == self)?;
         SETTING_CONTROLS.cell(place, option, PER_SETTING)
     }
 
     /// The setting, and the option of its control, that `id` names.
-    pub(crate) fn of(id: FocusId) -> Option<(Self, usize)> {
+    pub(crate) fn of(id: Target) -> Option<(Self, usize)> {
         let (place, option) = SETTING_CONTROLS.cell_of(id, PER_SETTING)?;
         Some((*Self::ALL.get(place)?, option))
     }
 
     /// The name of the choice at `option` of its row of choices, or nothing when `option` would reach the controls that open its list or reset it.
-    pub(crate) fn choice_id(self, option: usize) -> Option<FocusId> {
+    pub(crate) fn choice_id(self, option: usize) -> Option<Target> {
         (option < OPEN_LIST).then(|| self.id(option)).flatten()
     }
 
@@ -1061,7 +1060,7 @@ impl Setting {
     }
 
     /// The setting written as text whose box `id` is.
-    pub(crate) fn text_of(id: FocusId) -> Option<Self> {
+    pub(crate) fn text_of(id: Target) -> Option<Self> {
         Self::of(id)
             .filter(|(setting, option)| *option == 0 && setting.is_text())
             .map(|(setting, _)| setting)

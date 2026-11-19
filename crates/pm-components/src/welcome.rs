@@ -1,5 +1,8 @@
 //! The empty page of a new session or a new chat: pick an agent, then describe the work.
 
+use crate::areas::{DiffEvent, SidebarEvent};
+use crate::kit;
+use crate::target::Target;
 use crate::theme;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with};
 use rustle::{BoxAlignment, Modifier, phosphor};
@@ -7,17 +10,16 @@ use rustle::{BoxAlignment, Modifier, phosphor};
 use crate::Button;
 use crate::button::Variant;
 use crate::composer::composer;
-use crate::focus::FocusId;
 use crate::icons::panel_right;
 use crate::size::Size;
-use crate::state::{AGENT_BASE, Page, REVIEW, WorkspaceState};
+use crate::state::{Page, WorkspaceState};
 use crate::theme::{Role, sp};
 
 /// Emits a chip naming one agent, filled while it is the one chosen, with how much of its account's allowance is used as its tooltip once the provider has said.
 #[track_caller]
 fn chip(state: &WorkspaceState, index: usize) {
     let agent = state.agent_look(index);
-    let chip = Button::new(agent.name, FocusId(AGENT_BASE + index as u64))
+    let chip = Button::new(agent.name, Target::Sidebar(SidebarEvent::Agent(index)))
         .variant(Variant::Outline)
         .round()
         .with_icon(agent.icon)
@@ -69,13 +71,12 @@ pub fn welcome(state: &WorkspaceState, above: f32) {
                     Arrangement::SpacedBy(sp(7)),
                     Alignment::Center,
                     || {
-                        rustle::basic_text(
+                        kit::text(
                             Modifier::new(),
                             heading(state),
                             theme::text_style(28, 1.25)
                                 .font_weight(rustle::FontWeight::SEMI_BOLD)
                                 .color(theme::color(Role::Text)),
-                            rustle::TextOverflow::Ellipsis,
                         );
                         flow_row_with(
                             Modifier::new().fill_max_width(),
@@ -98,7 +99,7 @@ pub fn welcome(state: &WorkspaceState, above: f32) {
             },
         );
         if !state.review && reviewable {
-            Button::icon(phosphor::SIDEBAR_SIMPLE, REVIEW)
+            Button::icon(phosphor::SIDEBAR_SIMPLE, Target::Diff(DiffEvent::Review))
                 .mark(|| panel_right(false, 4.0, Role::Muted))
                 .modifier(
                     Modifier::new()

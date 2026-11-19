@@ -1,102 +1,30 @@
 //! The browser pane: a page of the web beside the agent's work, with its address bar and, beside it, the developer tools of the page.
 
-use crate::events::reduce;
+use crate::areas::BrowserEvent;
+use crate::events::{Event, send};
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use rustle::TextFieldState;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use std::ops::{Deref, DerefMut};
 
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::icons::panel_right;
 use crate::theme::Role;
 
 use crate::browser_address::address_of;
 use crate::browser_find::find_bar;
 use crate::browser_safety::{Answer, certificate_page};
-use crate::browser_tabs::{BROWSER_LOCK, BrowserTab, SavedTab, TAB_STRIP, tab_strip};
+use crate::browser_tabs::{BrowserTab, SavedTab, TAB_STRIP, tab_strip};
 use crate::button::Variant;
 use crate::parts::line;
 use crate::sash::Sash;
 use crate::size::Size;
 use crate::state::{Page, Tab, WorkspaceState};
 use crate::{Button, Input};
-
-/// The tab of the browser in a pane's strip.
-pub const TAB_BROWSER: FocusId = FocusId(7_440_000);
-
-/// Closes the browser.
-pub const BROWSER_CLOSE: FocusId = FocusId(7_440_001);
-
-/// The window of the page, which takes the pointer and the keyboard while it has focus.
-pub const BROWSER_BODY: FocusId = FocusId(7_440_002);
-
-/// The line the address of the page is typed in.
-pub const BROWSER_ADDRESS: FocusId = FocusId(7_440_003);
-
-/// Goes back one page in the history.
-pub const BROWSER_BACK: FocusId = FocusId(7_440_004);
-
-/// Goes forward one page in the history.
-pub const BROWSER_FORWARD: FocusId = FocusId(7_440_005);
-
-/// Loads the page again.
-pub const BROWSER_RELOAD: FocusId = FocusId(7_440_006);
-
-/// Shows or hides the developer tools beside the page.
-pub const BROWSER_TOOLS: FocusId = FocusId(7_440_007);
-
-/// The window of the developer tools, which takes the pointer and the keyboard while it has focus.
-pub const BROWSER_TOOLS_BODY: FocusId = FocusId(7_440_008);
-
-/// Loads the address that was typed.
-pub const BROWSER_GO: FocusId = FocusId(7_440_009);
-
-/// Turns on or off picking an element of the page to send to the agent.
-pub const BROWSER_PICK: FocusId = FocusId(7_440_010);
-
-/// The handle between the page and its developer tools, dragged to change how wide the tools are.
-pub const BROWSER_SASH: FocusId = FocusId(7_440_011);
-
-/// The line the text to find in the page is typed in.
-pub const BROWSER_FIND_FIELD: FocusId = FocusId(7_440_012);
-
-/// Goes to the next match of the text found in the page.
-pub const BROWSER_FIND_NEXT: FocusId = FocusId(7_440_013);
-
-/// Goes to the previous match of the text found in the page.
-pub const BROWSER_FIND_PREVIOUS: FocusId = FocusId(7_440_014);
-
-/// Closes the bar for finding in the page.
-pub const BROWSER_FIND_CLOSE: FocusId = FocusId(7_440_015);
-
-/// The bar for finding in the page.
-pub const BROWSER_FIND_BAR: FocusId = FocusId(7_440_016);
-
-/// The zoom of the page, shown while it is not 100%; pressing it puts the zoom back.
-pub const BROWSER_ZOOM: FocusId = FocusId(7_440_017);
-
-/// The dimmed window behind the question about clearing cookies and site data.
-pub const BROWSER_CLEAR_OUTSIDE: FocusId = FocusId(7_440_018);
-
-/// The panel of the question about clearing cookies and site data.
-pub const BROWSER_CLEAR_INSIDE: FocusId = FocusId(7_440_019);
-
-/// Clears the cookies and site data.
-pub const BROWSER_CLEAR_CONFIRM: FocusId = FocusId(7_440_020);
-
-/// Leaves the cookies and site data as they are.
-pub const BROWSER_CLEAR_CANCEL: FocusId = FocusId(7_440_021);
-
-/// Opens the menu of what can be added to the prompt from the page: pictures of it and its console.
-pub const BROWSER_CAPTURE: FocusId = FocusId(7_440_900);
-
-/// One past the last thing of the browser.
-const BROWSER_END: u64 = 7_441_000;
 
 /// Where a page opens when the browser is opened with nothing typed.
 pub const HOME: &str = "http://localhost:5173";
@@ -350,8 +278,45 @@ fn served_move(current: &str, address: &str) -> Move {
 }
 
 /// Whether `id` is something of the browser.
-pub fn is_browser_part(id: FocusId) -> bool {
-    (TAB_BROWSER.0..BROWSER_END).contains(&id.0)
+pub fn is_browser_part(id: Target) -> bool {
+    matches!(
+        id,
+        Target::Browser(BrowserEvent::TabBrowser)
+            | Target::Browser(BrowserEvent::BrowserClose)
+            | Target::Browser(BrowserEvent::BrowserBody)
+            | Target::Browser(BrowserEvent::BrowserAddress)
+            | Target::Browser(BrowserEvent::BrowserBack)
+            | Target::Browser(BrowserEvent::BrowserForward)
+            | Target::Browser(BrowserEvent::BrowserReload)
+            | Target::Browser(BrowserEvent::BrowserTools)
+            | Target::Browser(BrowserEvent::BrowserToolsBody)
+            | Target::Browser(BrowserEvent::BrowserGo)
+            | Target::Browser(BrowserEvent::BrowserPick)
+            | Target::Browser(BrowserEvent::BrowserSash)
+            | Target::Browser(BrowserEvent::BrowserFindField)
+            | Target::Browser(BrowserEvent::BrowserFindNext)
+            | Target::Browser(BrowserEvent::BrowserFindPrevious)
+            | Target::Browser(BrowserEvent::BrowserFindClose)
+            | Target::Browser(BrowserEvent::BrowserFindBar)
+            | Target::Browser(BrowserEvent::BrowserZoom)
+            | Target::Browser(BrowserEvent::BrowserClearOutside)
+            | Target::Browser(BrowserEvent::BrowserClearInside)
+            | Target::Browser(BrowserEvent::BrowserClearConfirm)
+            | Target::Browser(BrowserEvent::BrowserClearCancel)
+            | Target::Browser(BrowserEvent::BrowserNewTab)
+            | Target::Browser(BrowserEvent::BrowserLock)
+            | Target::Browser(BrowserEvent::BrowserTabsPrevious)
+            | Target::Browser(BrowserEvent::BrowserTabsNext)
+            | Target::Browser(BrowserEvent::BrowserDismiss)
+            | Target::Browser(BrowserEvent::BrowserCertBack)
+            | Target::Browser(BrowserEvent::BrowserCertProceed)
+            | Target::Browser(BrowserEvent::BrowserQuestionBar)
+            | Target::Browser(BrowserEvent::BrowserCapture)
+            | Target::Browser(BrowserEvent::BrowserAllow(_))
+            | Target::Browser(BrowserEvent::BrowserBlock(_))
+            | Target::Browser(BrowserEvent::BrowserTab(_))
+            | Target::Browser(BrowserEvent::BrowserTabClose(_))
+    )
 }
 
 impl WorkspaceState {
@@ -465,35 +430,31 @@ impl WorkspaceState {
         }
     }
 
-    /// Whether the browser is open.
-    pub fn browser_open(&self) -> bool {
-        self.browser.is_some()
-    }
-
     /// Carries out what pressing `id` of the browser does.
-    pub(crate) fn browser_pressed(mut self, id: FocusId) -> Self {
+    pub(crate) fn browser_pressed(mut self, id: Target) -> Self {
         if self.browser_tab_pressed(id) {
             return self;
         }
         match id {
-            BROWSER_CLOSE => return self.browser_closed(),
-            BROWSER_FIND_NEXT => {
+            Target::Browser(BrowserEvent::BrowserClose) => return self.browser_closed(),
+            Target::Browser(BrowserEvent::BrowserFindNext) => {
                 self.browser_find_stepped(false);
                 return self;
             }
-            BROWSER_FIND_PREVIOUS => {
+            Target::Browser(BrowserEvent::BrowserFindPrevious) => {
                 self.browser_find_stepped(true);
                 return self;
             }
-            BROWSER_FIND_CLOSE => {
+            Target::Browser(BrowserEvent::BrowserFindClose) => {
                 self.browser_find_closed();
                 return self;
             }
-            BROWSER_CLEAR_CONFIRM => {
+            Target::Browser(BrowserEvent::BrowserClearConfirm) => {
                 self.browser_clear_confirmed();
                 return self;
             }
-            BROWSER_CLEAR_CANCEL | BROWSER_CLEAR_OUTSIDE => {
+            Target::Browser(BrowserEvent::BrowserClearCancel)
+            | Target::Browser(BrowserEvent::BrowserClearOutside) => {
                 self.browser_clear_declined();
                 return self;
             }
@@ -507,23 +468,27 @@ impl WorkspaceState {
             return self;
         }
         match id {
-            TAB_BROWSER => self.tab = Tab::Browser,
-            BROWSER_BACK => browser.commands.push(Command::Back),
-            BROWSER_FORWARD => browser.commands.push(Command::Forward),
-            BROWSER_RELOAD => browser.commands.push(Command::Reload),
-            BROWSER_GO => {
+            Target::Browser(BrowserEvent::TabBrowser) => self.tab = Tab::Browser,
+            Target::Browser(BrowserEvent::BrowserBack) => browser.commands.push(Command::Back),
+            Target::Browser(BrowserEvent::BrowserForward) => {
+                browser.commands.push(Command::Forward)
+            }
+            Target::Browser(BrowserEvent::BrowserReload) => browser.commands.push(Command::Reload),
+            Target::Browser(BrowserEvent::BrowserGo) => {
                 let address = address_of(&browser.address.text());
                 browser.host = host;
                 browser.commands.push(Command::Load(address));
             }
-            BROWSER_ZOOM => browser.commands.push(Command::Zoom(ZoomStep::Reset)),
-            BROWSER_PICK => {
+            Target::Browser(BrowserEvent::BrowserZoom) => {
+                browser.commands.push(Command::Zoom(ZoomStep::Reset))
+            }
+            Target::Browser(BrowserEvent::BrowserPick) => {
                 browser.end_area();
                 let tab = &mut **browser;
                 tab.picking = !tab.picking;
                 tab.commands.push(Command::Pick(tab.picking));
             }
-            BROWSER_TOOLS => {
+            Target::Browser(BrowserEvent::BrowserTools) => {
                 browser.tools = !browser.tools;
                 let open = browser.tools;
                 browser.commands.push(if open {
@@ -701,64 +666,76 @@ impl WorkspaceState {
 #[track_caller]
 fn toolbar(browser: &Browser) {
     let zoomed = (browser.zoom - 1.0).abs() > 0.005;
-    row_arranged(
+    kit::row(
         Modifier::new()
             .fill_max_width()
             .height(TOOLBAR)
-            .draw_behind(theme::edge(
-                theme::Side::Bottom,
-                1.0,
-                theme::color(Role::Border),
-            ))
-            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .ruled(theme::Side::Bottom)
             .padding_xy(theme::sp(2), 0.0),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Center,
+        1,
         || {
-            Button::icon(phosphor::ARROW_LEFT, BROWSER_BACK).build();
-            Button::icon(phosphor::ARROW_RIGHT, BROWSER_FORWARD).build();
-            Button::icon(phosphor::ARROWS_CLOCKWISE, BROWSER_RELOAD).build();
-            column_arranged(
-                Modifier::new().weight(1.0),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    Input::new(&browser.address, BROWSER_ADDRESS)
-                        .size(Size::Sm)
-                        .placeholder("Search or enter an address")
-                        .modifier(Modifier::new().fill_max_width())
-                        .build();
-                },
-            );
+            Button::icon(
+                phosphor::ARROW_LEFT,
+                Target::Browser(BrowserEvent::BrowserBack),
+            )
+            .build();
+            Button::icon(
+                phosphor::ARROW_RIGHT,
+                Target::Browser(BrowserEvent::BrowserForward),
+            )
+            .build();
+            Button::icon(
+                phosphor::ARROWS_CLOCKWISE,
+                Target::Browser(BrowserEvent::BrowserReload),
+            )
+            .build();
+            kit::column(Modifier::new().weight(1.0), 0, || {
+                Input::new(
+                    &browser.address,
+                    Target::Browser(BrowserEvent::BrowserAddress),
+                )
+                .size(Size::Sm)
+                .placeholder("Search or enter an address")
+                .modifier(Modifier::new().fill_max_width())
+                .build();
+            });
             if zoomed {
-                Button::new(format!("{}%", (browser.zoom * 100.0).round()), BROWSER_ZOOM)
-                    .variant(Variant::Ghost)
-                    .size(Size::Sm)
-                    .build();
+                kit::small_button(
+                    format!("{}%", (browser.zoom * 100.0).round()),
+                    Target::Browser(BrowserEvent::BrowserZoom),
+                    Variant::Ghost,
+                )
+                .build();
             }
-            Button::icon(phosphor::SELECTION, BROWSER_PICK)
-                .variant(if browser.picking {
-                    Variant::Secondary
-                } else {
-                    Variant::Ghost
-                })
-                .build();
+            Button::icon(
+                phosphor::SELECTION,
+                Target::Browser(BrowserEvent::BrowserPick),
+            )
+            .variant(if browser.picking {
+                Variant::Secondary
+            } else {
+                Variant::Ghost
+            })
+            .build();
             let operations = crate::events::operations();
-            Button::icon(phosphor::CAMERA, BROWSER_CAPTURE)
-                .on_click(move || operations.open_browser_capture_menu())
-                .variant(if browser.picking_area {
-                    Variant::Secondary
-                } else {
-                    Variant::Ghost
-                })
-                .build();
+            Button::icon(
+                phosphor::CAMERA,
+                Target::Browser(BrowserEvent::BrowserCapture),
+            )
+            .on_click(move || operations.open_browser_capture_menu())
+            .variant(if browser.picking_area {
+                Variant::Secondary
+            } else {
+                Variant::Ghost
+            })
+            .build();
             Button::icon(
                 if browser.locked {
                     phosphor::LOCK_SIMPLE
                 } else {
                     phosphor::LOCK_SIMPLE_OPEN
                 },
-                BROWSER_LOCK,
+                Target::Browser(BrowserEvent::BrowserLock),
             )
             .variant(if browser.locked {
                 Variant::Secondary
@@ -775,23 +752,20 @@ fn toolbar(browser: &Browser) {
             })
             .build();
             let tools = browser.tools;
-            Button::icon(phosphor::SIDEBAR_SIMPLE, BROWSER_TOOLS)
-                .mark(move || panel_right(tools, 4.0, Role::Muted))
-                .build();
+            Button::icon(
+                phosphor::SIDEBAR_SIMPLE,
+                Target::Browser(BrowserEvent::BrowserTools),
+            )
+            .mark(move || panel_right(tools, 4.0, Role::Muted))
+            .build();
         },
     );
 }
 
 /// Emits the window `id` of `browser`, `wide` by `tall` logical pixels: the certificate the page is stopped at, the newest `shown` picture, or what the tab says instead of a page.
 #[track_caller]
-fn surface(
-    browser: &Browser,
-    id: FocusId,
-    shown: &Option<rustle::ImageData>,
-    wide: f32,
-    tall: f32,
-) {
-    if id == BROWSER_BODY
+fn surface(browser: &Browser, id: Target, shown: &Option<rustle::ImageData>, wide: f32, tall: f32) {
+    if id == Target::Browser(BrowserEvent::BrowserBody)
         && let Some(certificate) = browser.safety.certificate.as_ref()
     {
         certificate_page(certificate, wide, tall);
@@ -802,10 +776,10 @@ fn surface(
         .height(tall)
         .clip()
         .cursor(CursorIcon::Text)
-        .pressable_menu(id, reduce(id), {
+        .pressable_menu(id, send(Event::pressing(id)), {
             let operations = crate::events::operations();
             move || {
-                if id == BROWSER_BODY {
+                if id == Target::Browser(BrowserEvent::BrowserBody) {
                     operations.open_browser_menu();
                 } else {
                     operations.open_message_menu();
@@ -815,10 +789,12 @@ fn surface(
         .chain(crate::bounds::placed(id, Modifier::new()))
         .chain(crate::focus::keyboard_focus(id));
     match shown {
-        Some(shown) if browser.notice.is_none() || id != BROWSER_BODY => {
+        Some(shown)
+            if browser.notice.is_none() || id != Target::Browser(BrowserEvent::BrowserBody) =>
+        {
             rustle::image(body, shown, rustle::ContentScale::Crop)
         }
-        _ => column_arranged(body, Arrangement::Start, Alignment::Start, || {
+        _ => kit::column(body, 0, || {
             line(
                 browser.notice.as_deref().unwrap_or("Loading"),
                 12,
@@ -837,7 +813,11 @@ fn divider(tall: f32) {
             .width(1.0)
             .height(tall)
             .background(theme::color(Role::Border)),
-        || Sash::column(BROWSER_SASH).bare().build(),
+        || {
+            Sash::column(Target::Browser(BrowserEvent::BrowserSash))
+                .bare()
+                .build()
+        },
     );
 }
 
@@ -858,35 +838,45 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) {
         Some(tools) => ((width - tools - 1.0).max(0.0), tools + 1.0),
         None => (width, 0.0),
     };
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_width()
             .height(height)
             .background(theme::color(Role::Background)),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         || {
             tab_strip(browser, width);
             toolbar(browser);
             browser.safety.bar_nodes();
             rustle::stack_with(Modifier::new().fill_max_width().height(room), || {
-                row_arranged(
+                kit::row_top(
                     Modifier::new().fill_max_width().height(room),
-                    Arrangement::Start,
-                    Alignment::Start,
+                    0,
                     || match tools {
                         Some(tools) => {
-                            surface(browser, BROWSER_BODY, &browser.page, page_width, room);
+                            surface(
+                                browser,
+                                Target::Browser(BrowserEvent::BrowserBody),
+                                &browser.page,
+                                page_width,
+                                room,
+                            );
                             divider(room);
                             surface(
                                 browser,
-                                BROWSER_TOOLS_BODY,
+                                Target::Browser(BrowserEvent::BrowserToolsBody),
                                 &browser.tools_page,
                                 tools,
                                 room,
                             );
                         }
-                        None => surface(browser, BROWSER_BODY, &browser.page, width, room),
+                        None => surface(
+                            browser,
+                            Target::Browser(BrowserEvent::BrowserBody),
+                            &browser.page,
+                            width,
+                            room,
+                        ),
                     },
                 );
                 if let Some(search) = browser.search.as_ref() {

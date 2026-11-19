@@ -1,10 +1,17 @@
 //! A file open in the window: its lines, numbered, as they are in the folder or in the last commit, edited in place.
 
-use crate::events::reduce;
+use crate::areas::TerminalEvent;
+use crate::kit::{self, Frame};
+use crate::theme::Indicated;
+
+use crate::areas::EditorEvent;
+
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
 use crate::theme::sp;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, row_arranged};
 
 use std::ops::Range;
 
@@ -12,21 +19,16 @@ use pm_protocol::{HintKind, Severity};
 use pm_treesitter::{Highlight, Kind};
 use rustle::{CursorIcon, Modifier};
 
-use crate::Button;
-use crate::annotations::lens_mark;
 use crate::button::Variant;
-use crate::color_picker::COLOR_SWATCH_BASE;
-use crate::debug::{Dot, Gutter, breakpoint_mark};
+
+use crate::debug::{Dot, Gutter};
 use crate::events::Interactive;
 use crate::file_icon::file_icon;
-use crate::focus::FocusId;
 use crate::marked::{CaretLook, CaretShape, Mark, Paint, marked_field_line};
-use crate::open_files::{Contents, EDITOR_FIELD, EDITOR_SAVE, FILE_TAB_BASE, STRIP, Viewer};
+use crate::open_files::{Contents, STRIP, Viewer};
 use crate::parts::{glyph, line};
 use crate::preview::Rendering;
-use crate::size::Size;
 use crate::state::WorkspaceState;
-use crate::tasks::run_mark;
 use crate::text_lines::TextLines;
 use crate::theme::{Radius, Role, Tone};
 use pm_editor::{Document, EditorSettings, Hint, Lens, LineChange, Swatch};
@@ -270,7 +272,7 @@ fn change_bar(change: Option<LineChange>, height: f32) {
         Some(LineChange::Modified) => holder.background(theme::color(Role::Warning)),
         Some(LineChange::DeletedBefore) | None => holder,
     };
-    column_arranged(holder, Arrangement::Start, Alignment::Start, move || {
+    kit::column(holder, 0, move || {
         if matches!(change, Some(LineChange::DeletedBefore)) {
             rustle::spacer(
                 Modifier::new()
@@ -299,8 +301,10 @@ fn run_cell(file: usize, index: usize, gutter: &Gutter, height: f32) {
     let runs = gutter.runs.contains(&index);
     let cell = Modifier::new().width(RUN_CELL).height(height);
     let cell = if runs {
-        cell.cursor(CursorIcon::Pointer)
-            .control(run_mark(file, index), reduce(run_mark(file, index)))
+        cell.cursor(CursorIcon::Pointer).control(
+            Target::Editor(EditorEvent::Run { file, line: index }),
+            send(Event::Editor(EditorEvent::Run { file, line: index })),
+        )
     } else {
         cell
     };
@@ -318,15 +322,10 @@ pub(crate) fn breakpoint_cell(file: usize, index: usize, gutter: &Gutter, height
         breakpoint_only(file, index, gutter, height);
         return;
     }
-    row_arranged(
-        Modifier::new().height(height),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            run_cell(file, index, gutter, height);
-            breakpoint_only(file, index, gutter, height);
-        },
-    );
+    kit::row_top(Modifier::new().height(height), 0, || {
+        run_cell(file, index, gutter, height);
+        breakpoint_only(file, index, gutter, height);
+    });
 }
 
 /// Emits the cell before a line number that sets or clears the breakpoint on the line when pressed, and shows the breakpoint, or the arrow where the program is paused.
@@ -337,8 +336,8 @@ fn breakpoint_only(file: usize, index: usize, gutter: &Gutter, height: f32) {
         .height(height)
         .cursor(CursorIcon::Pointer)
         .control(
-            breakpoint_mark(file, index),
-            reduce(breakpoint_mark(file, index)),
+            Target::Editor(EditorEvent::Breakpoint { file, line: index }),
+            send(Event::Editor(EditorEvent::Breakpoint { file, line: index })),
         );
     let shown = (gutter.dot(index), gutter.paused == Some(index));
     row_arranged(
@@ -428,7 +427,7 @@ pub(crate) fn file_line(
     segments: Vec<Range<usize>>,
     beside: Beside<impl FnOnce()>,
     settings: &EditorSettings,
-    (owner, drawn): (FocusId, &TextLines),
+    (owner, drawn): (Target, &TextLines),
 ) {
     let Beside {
         blamed,
@@ -501,16 +500,15 @@ pub(crate) fn file_line(
     } else {
         Modifier::new().width(theme::sp(2))
     };
-    row_arranged(own.clip(), Arrangement::Start, Alignment::Start, || {
+    kit::row_top(own.clip(), 0, || {
         breakpoint();
         change_bar(
             document.line_change(index).filter(|_| settings.git_gutter),
             total,
         );
-        column_arranged(
+        kit::column(
             number_box.padding_each(0.0, 0.0, theme::sp(3), 0.0),
-            Arrangement::Start,
-            Alignment::Start,
+            0,
             || {
                 if lens_row {
                     rustle::spacer(Modifier::new().height(height));
@@ -524,25 +522,23 @@ pub(crate) fn file_line(
                             bulb_button(height);
                         }
                         if settings.line_numbers {
-                            rustle::basic_text(
+                            kit::text(
                                 Modifier::new(),
                                 number.to_string(),
                                 theme::code_style(font, 1.4)
                                     .color(theme::color(worst.map_or(number_tone, severity_role))),
-                                rustle::TextOverflow::Ellipsis,
                             );
                         }
                     },
                 );
             },
         );
-        column_arranged(
+        kit::column(
             Modifier::new()
                 .weight(1.0)
                 .clip()
                 .padding_xy(theme::sp(2), 0.0),
-            Arrangement::Start,
-            Alignment::Start,
+            0,
             || {
                 if lens_row {
                     run_lens_row(&run_lenses, lenses, height, font);
@@ -578,15 +574,12 @@ pub(crate) fn file_line(
                                 fold_chip(index);
                             }
                             if let Some(said) = blamed.clone() {
-                                rustle::basic_text(
+                                kit::text(
                                     Modifier::new()
                                         .padding_each(theme::sp(8), 0.0, 0.0, 0.0)
                                         .weight(1.0),
                                     said,
-                                    theme::text_style(font, 1.4)
-                                        .color(theme::color(Role::Subtle))
-                                        .max_lines(1),
-                                    rustle::TextOverflow::Ellipsis,
+                                    kit::line(font, Role::Subtle),
                                 );
                             }
                         },
@@ -617,7 +610,7 @@ fn segment_row(
     hints: &[&Hint],
     marks: &[Mark],
     settings: &EditorSettings,
-    (owner, drawn): (FocusId, &TextLines),
+    (owner, drawn): (Target, &TextLines),
     tail: impl FnOnce(),
 ) {
     let Segment {
@@ -644,74 +637,63 @@ fn segment_row(
     cuts.extend(standing.iter().map(|hint| hint.offset - line.start));
     cuts.push(segment.end);
     let pieces = cuts.len() - 1;
-    row_arranged(
-        Modifier::new().fill_max_width().height(height),
-        Arrangement::Start,
-        Alignment::Center,
-        || {
-            for (step, bounds) in cuts.windows(2).enumerate() {
-                let piece = bounds[0]..bounds[1];
-                let piece_absolute = line.start + piece.start..line.start + piece.end;
-                let ends_segment = step + 1 == pieces;
-                let mut piece_marks =
-                    marks_in(marks, &piece, first && step == 0, last && ends_segment);
-                let after_start = if step == 0 {
-                    piece_absolute.start <= caret
-                } else {
-                    piece_absolute.start < caret
-                };
-                let before_end = if ends_segment {
-                    caret < piece_absolute.end || (last && caret == piece_absolute.end)
-                } else {
-                    caret <= piece_absolute.end
-                };
-                let holds_caret = after_start && before_end;
-                if focused {
-                    if holds_caret {
-                        let at = caret - piece_absolute.start;
-                        piece_marks.push(Mark::new(at..at, Role::Text, Paint::Caret));
-                    }
-                    if let Some(range) = clipped(&document.field.selection(), &piece_absolute) {
-                        piece_marks.push(Mark::new(range, Role::Text, Paint::Selected));
-                    }
-                    if let Some(range) = clipped(&document.field.marked(), &piece_absolute) {
-                        piece_marks.push(Mark::new(range, Role::Text, Paint::Underline));
-                    }
+    kit::row(Modifier::new().fill_max_width().height(height), 0, || {
+        for (step, bounds) in cuts.windows(2).enumerate() {
+            let piece = bounds[0]..bounds[1];
+            let piece_absolute = line.start + piece.start..line.start + piece.end;
+            let ends_segment = step + 1 == pieces;
+            let mut piece_marks = marks_in(marks, &piece, first && step == 0, last && ends_segment);
+            let after_start = if step == 0 {
+                piece_absolute.start <= caret
+            } else {
+                piece_absolute.start < caret
+            };
+            let before_end = if ends_segment {
+                caret < piece_absolute.end || (last && caret == piece_absolute.end)
+            } else {
+                caret <= piece_absolute.end
+            };
+            let holds_caret = after_start && before_end;
+            if focused {
+                if holds_caret {
+                    let at = caret - piece_absolute.start;
+                    piece_marks.push(Mark::new(at..at, Role::Text, Paint::Caret));
                 }
-                marked_field_line(
-                    Modifier::new(),
-                    drawn,
-                    (owner, piece_absolute.start),
-                    &text_of[piece.clone()],
-                    theme::code_style(font, 1.4).color(theme::color(Role::Text)),
-                    piece_marks,
-                    caret_look(settings),
-                );
-                if let Some(hint) = standing.get(step) {
-                    hint_chip(hint, font);
+                if let Some(range) = clipped(&document.field.selection(), &piece_absolute) {
+                    piece_marks.push(Mark::new(range, Role::Text, Paint::Selected));
+                }
+                if let Some(range) = clipped(&document.field.marked(), &piece_absolute) {
+                    piece_marks.push(Mark::new(range, Role::Text, Paint::Underline));
                 }
             }
-            tail();
-        },
-    );
+            marked_field_line(
+                Modifier::new(),
+                drawn,
+                (owner, piece_absolute.start),
+                &text_of[piece.clone()],
+                theme::code_style(font, 1.4).color(theme::color(Role::Text)),
+                piece_marks,
+                caret_look(settings),
+            );
+            if let Some(hint) = standing.get(step) {
+                hint_chip(hint, font);
+            }
+        }
+        tail();
+    });
 }
 
 /// Emits the row above a line that holds the links which run the line's place, each the `index`th of the links of the file, then the lenses `given` by the language server.
 #[track_caller]
 fn run_lens_row(lenses: &[(usize, String)], given: &[pm_editor::Lens], height: f32, font: u32) {
-    row_arranged(
-        Modifier::new().height(height),
-        Arrangement::Start,
-        Alignment::Center,
-        || {
-            for (place, (index, label)) in lenses.iter().enumerate() {
-                run_lens_chip(*index, label, font, place == 0);
-            }
-            for (place, lens) in given.iter().enumerate() {
-                lens_chip(lens, font, lenses.is_empty() && place == 0);
-            }
-        },
-    );
+    kit::row(Modifier::new().height(height), 0, || {
+        for (place, (index, label)) in lenses.iter().enumerate() {
+            run_lens_chip(*index, label, font, place == 0);
+        }
+        for (place, lens) in given.iter().enumerate() {
+            lens_chip(lens, font, lenses.is_empty() && place == 0);
+        }
+    });
 }
 
 /// Emits the marker that says the language server offers changes on the line, which opens the list of them when pressed.
@@ -722,7 +704,7 @@ fn bulb_button(height: f32) {
             .width(16.0)
             .height(height)
             .cursor(CursorIcon::Pointer)
-            .control(crate::lightbulb::LIGHTBULB, {
+            .control(Target::Editor(EditorEvent::Lightbulb), {
                 let operations = crate::events::operations();
                 move || operations.show_code_actions()
             }),
@@ -741,16 +723,15 @@ fn hint_chip(hint: &Hint, font: u32) {
     }) = hint.swatch
     {
         let side = (font as f32 * 0.8).max(8.0);
-        row_arranged(
+        kit::row(
             Modifier::new()
                 .cursor(CursorIcon::Pointer)
-                .control(FocusId(COLOR_SWATCH_BASE + index as u64), {
+                .control(Target::Editor(EditorEvent::ColorSwatch(index)), {
                     let operations = crate::events::operations();
                     move || operations.open_color_picker(index)
                 })
                 .padding_each(0.0, 0.0, theme::sp(1.0), 0.0),
-            Arrangement::Start,
-            Alignment::Center,
+            0,
             || {
                 rustle::spacer(Modifier::new().width(side).height(side).background_rounded(
                     theme::color(Tone::rgb(red, green, blue).alpha(f32::from(alpha) / 255.0)),
@@ -769,17 +750,15 @@ fn hint_chip(hint: &Hint, font: u32) {
     } else {
         Modifier::new()
     };
-    row_arranged(
+    kit::row(
         own.background_rounded(theme::color(Role::Surface), Radius::Sm.px())
             .padding_xy(theme::sp(1.0), 0.0),
-        Arrangement::Start,
-        Alignment::Center,
+        0,
         || {
-            rustle::basic_text(
+            kit::text(
                 Modifier::new(),
                 &hint.label,
                 theme::mono_style((font - 1).max(8), 1.2).color(theme::color(tone)),
-                rustle::TextOverflow::Ellipsis,
             );
         },
     );
@@ -796,30 +775,24 @@ fn chip_padding(own: Modifier, first: bool) -> Modifier {
 fn run_lens_chip(index: usize, label: &str, font: u32, first: bool) {
     let own = Modifier::new()
         .height(theme::sp(4))
-        .interaction_background(
-            (theme::InteractionTones::new()
+        .indicated(
+            theme::InteractionTones::new()
                 .hover(Role::SurfaceHover)
-                .radius(Radius::Sm))
-            .colors(),
+                .radius(Radius::Sm),
+            theme::Focused::Rustle,
         )
         .cursor(CursorIcon::Pointer)
         .control(
-            crate::tasks::run_lens_mark(index),
-            reduce(crate::tasks::run_lens_mark(index)),
+            Target::Editor(EditorEvent::RunLens(index)),
+            send(Event::Editor(EditorEvent::RunLens(index))),
         );
-    row_arranged(
-        chip_padding(own, first),
-        Arrangement::Start,
-        Alignment::Center,
-        || {
-            rustle::basic_text(
-                Modifier::new(),
-                label,
-                theme::text_style((font - 1).max(8), 1.2).color(theme::color(Role::Muted)),
-                rustle::TextOverflow::Ellipsis,
-            );
-        },
-    );
+    kit::row(chip_padding(own, first), 0, || {
+        kit::text(
+            Modifier::new(),
+            label,
+            theme::text_style((font - 1).max(8), 1.2).color(theme::color(Role::Muted)),
+        );
+    });
 }
 
 /// Emits the text of `lens` on the row above its line, pressed to do what the server says when it can be.
@@ -827,69 +800,52 @@ fn run_lens_chip(index: usize, label: &str, font: u32, first: bool) {
 fn lens_chip(lens: &Lens, font: u32, first: bool) {
     let own = Modifier::new().height(theme::sp(4));
     let own = if lens.pressable {
-        own.interaction_background(
-            (theme::InteractionTones::new()
+        own.indicated(
+            theme::InteractionTones::new()
                 .hover(Role::SurfaceHover)
-                .radius(Radius::Sm))
-            .colors(),
+                .radius(Radius::Sm),
+            theme::Focused::Rustle,
         )
         .cursor(CursorIcon::Pointer)
-        .control(lens_mark(lens.index), reduce(lens_mark(lens.index)))
+        .control(
+            Target::Editor(EditorEvent::Lens(lens.index)),
+            send(Event::Editor(EditorEvent::Lens(lens.index))),
+        )
     } else {
         own
     };
-    row_arranged(
-        chip_padding(own, first),
-        Arrangement::Start,
-        Alignment::Center,
-        || {
-            rustle::basic_text(
-                Modifier::new(),
-                &lens.title,
-                theme::text_style((font - 1).max(8), 1.2).color(theme::color(Role::Subtle)),
-                rustle::TextOverflow::Ellipsis,
-            );
-        },
-    );
+    kit::row(chip_padding(own, first), 0, || {
+        kit::text(
+            Modifier::new(),
+            &lens.title,
+            theme::text_style((font - 1).max(8), 1.2).color(theme::color(Role::Subtle)),
+        );
+    });
 }
-
-/// The first of the marks standing for folded lines, each following it by the index of the line it is on.
-pub const FOLD_BASE: u64 = 7_500_000;
-
-/// One past the last mark standing for folded lines.
-pub const FOLD_END: u64 = 8_500_000;
 
 /// Emits the mark after the line at `index` standing for the lines folded away after it, which unfolds them when pressed.
 #[track_caller]
 fn fold_chip(index: usize) {
-    row_arranged(
+    kit::row(
         Modifier::new()
             .padding_each(theme::sp(2), 0.0, 0.0, 0.0)
             .height(theme::sp(4))
-            .interaction_background(
+            .indicated(
                 theme::InteractionTones::new()
                     .idle(Role::SurfaceActive)
                     .hover(Role::SurfaceHover)
-                    .radius(Radius::Sm)
-                    .colors(),
+                    .radius(Radius::Sm),
+                theme::Focused::Rustle,
             )
             .cursor(CursorIcon::Pointer)
             .control(
-                FocusId(FOLD_BASE + index as u64),
-                reduce(FocusId(FOLD_BASE + index as u64)),
+                Target::Editor(EditorEvent::CodeFold(index)),
+                send(Event::Editor(EditorEvent::CodeFold(index))),
             )
             .padding_xy(theme::sp(1.5), 0.0),
-        Arrangement::Start,
-        Alignment::Center,
+        0,
         || line("⋯", 11, 1.2, Role::Muted),
     );
-}
-
-/// The line whose folded lines the mark `id` stands for.
-pub fn fold_of(id: FocusId) -> Option<usize> {
-    (FOLD_BASE..FOLD_END)
-        .contains(&id.0)
-        .then(|| (id.0 - FOLD_BASE) as usize)
 }
 
 /// How many lines on either side of those shown are looked through for the indentation a blank line takes.
@@ -940,7 +896,7 @@ struct Look<'a> {
     /// How many characters a row holds when lines wrap.
     columns: Option<usize>,
     /// The field whose caret and selection the lines hold.
-    owner: FocusId,
+    owner: Target,
     /// Where the lines tell they were drawn.
     drawn: &'a TextLines,
     /// The open file the lines are of, which names its marks.
@@ -1004,12 +960,11 @@ fn shown_line(document: &Document, index: usize, pair: &[Range<usize>], look: &L
 /// Emits the line under the last one shown of a file that was cut short, saying the rest is not shown.
 #[track_caller]
 fn truncated_note() {
-    column_arranged(
+    kit::column(
         Modifier::new()
             .padding_xy(theme::sp(4), 0.0)
             .padding_xy(0.0, theme::sp(2)),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         || {
             line("The rest of the file is not shown.", 12, 1.4, Role::Subtle);
         },
@@ -1163,13 +1118,12 @@ fn tallies(document: &Document) {
     if words.is_empty() {
         return;
     }
-    row_arranged(
+    kit::row(
         Modifier::new().cursor(CursorIcon::Pointer).control(
-            crate::state::BOTTOM_PROBLEMS_COUNT,
-            reduce(crate::state::BOTTOM_PROBLEMS_COUNT),
+            Target::Terminal(TerminalEvent::BottomProblemsCount),
+            send(Event::Terminal(TerminalEvent::BottomProblemsCount)),
         ),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
+        2,
         move || {
             for (said, role) in words {
                 line(said, 11, 1.4, role);
@@ -1181,73 +1135,56 @@ fn tallies(document: &Document) {
 /// Emits the strip above the file: its icon and name, and, while it is the file shown, `live`, the switch between its source and its rendering and the button that writes it when it has changes to write.
 #[track_caller]
 fn strip(viewer: &Viewer, live: bool) {
-    let path_kind = theme::mono_style(13, 1.4)
-        .color(theme::color(Role::Text))
-        .max_lines(1);
-    let crumbs_kind = theme::mono_style(12, 1.4)
-        .color(theme::color(Role::Muted))
-        .max_lines(1);
+    let path_kind = kit::code(13, Role::Text);
+    let crumbs_kind = kit::code(12, Role::Muted);
     let crumbs = match &viewer.contents {
         Contents::Text(document) => breadcrumbs(document),
         _ => None,
     };
-    row_arranged(
+    kit::row(
         Modifier::new()
             .fill_max_width()
             .height(theme::sp(10))
-            .draw_behind(theme::edge(
-                theme::Side::Bottom,
-                1.0,
-                theme::color(Role::Border),
-            ))
-            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .ruled(theme::Side::Bottom)
             .padding_xy(theme::sp(4), 0.0),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
+        2,
         || {
-            row_arranged(
-                Modifier::new().weight(1.0),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Center,
-                || {
-                    rustle::stack_with(Modifier::new().weight_with(sp(4), false).clip(), || {
-                        file_icon(&viewer.path, 4.0)
-                    });
-                    rustle::basic_text(
+            kit::row(Modifier::new().weight(1.0), 2, || {
+                rustle::stack_with(Modifier::new().weight_with(sp(4), false).clip(), || {
+                    file_icon(&viewer.path, 4.0)
+                });
+                kit::text(
+                    Modifier::new().weight_with(
+                        rustle::layout_text(&viewer.path, &path_kind, None)
+                            .size()
+                            .width,
+                        false,
+                    ),
+                    &viewer.path,
+                    path_kind,
+                );
+                if viewer.head {
+                    line("HEAD", 11, 1.4, Role::Muted);
+                }
+                if let Contents::Text(document) = &viewer.contents
+                    && document.field.is_read_only()
+                    && !viewer.head
+                {
+                    line("Read only", 11, 1.4, Role::Muted);
+                }
+                if let Some(crumbs) = crumbs {
+                    kit::text(
                         Modifier::new().weight_with(
-                            rustle::layout_text(&viewer.path, &path_kind, None)
+                            rustle::layout_text(&crumbs, &crumbs_kind, None)
                                 .size()
                                 .width,
                             false,
                         ),
-                        &viewer.path,
-                        path_kind,
-                        rustle::TextOverflow::Ellipsis,
+                        crumbs,
+                        crumbs_kind,
                     );
-                    if viewer.head {
-                        line("HEAD", 11, 1.4, Role::Muted);
-                    }
-                    if let Contents::Text(document) = &viewer.contents
-                        && document.field.is_read_only()
-                        && !viewer.head
-                    {
-                        line("Read only", 11, 1.4, Role::Muted);
-                    }
-                    if let Some(crumbs) = crumbs {
-                        rustle::basic_text(
-                            Modifier::new().weight_with(
-                                rustle::layout_text(&crumbs, &crumbs_kind, None)
-                                    .size()
-                                    .width,
-                                false,
-                            ),
-                            crumbs,
-                            crumbs_kind,
-                            rustle::TextOverflow::Ellipsis,
-                        );
-                    }
-                },
-            );
+                }
+            });
             rustle::spacer(Modifier::new());
             crate::preview::dimensions(viewer);
             if let Contents::Text(document) = &viewer.contents
@@ -1264,10 +1201,12 @@ fn strip(viewer: &Viewer, live: bool) {
             }
             crate::preview::switch(viewer);
             if viewer.is_dirty() {
-                Button::new("Save", EDITOR_SAVE)
-                    .variant(Variant::Secondary)
-                    .size(Size::Sm)
-                    .build();
+                kit::small_button(
+                    "Save",
+                    Target::Editor(EditorEvent::EditorSave),
+                    Variant::Secondary,
+                )
+                .build();
             }
         },
     );
@@ -1300,9 +1239,9 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
     };
     let live = state.shown_viewer().is_some() && state.git.shown == Some(index);
     let owner = if live {
-        EDITOR_FIELD
+        Target::Editor(EditorEvent::EditorField)
     } else {
-        FocusId(FILE_TAB_BASE + index as u64)
+        Target::Editor(EditorEvent::FileTab(index))
     };
     let found = if live {
         state.find_marks()
@@ -1337,12 +1276,12 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
     };
     let pressed = Modifier::new()
         .cursor(CursorIcon::Text)
-        .chain(if owner == crate::open_files::EDITOR_FIELD {
+        .chain(if owner == Target::Editor(EditorEvent::EditorField) {
             Modifier::new()
         } else {
             crate::focus::focus_target(owner)
         })
-        .pressable_menu(owner, reduce(owner), {
+        .pressable_menu(owner, send(Event::pressing(owner)), {
             let operations = crate::events::operations();
             move || {
                 if live {
@@ -1356,23 +1295,21 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
         _ if !source => {
             crate::preview::rendered(viewer, &state.figures, (width, height));
         }
-        Contents::Loading => note("Reading the file."),
-        Contents::Message(message) => note(message),
+        Contents::Loading => crate::preview::note("Reading the file."),
+        Contents::Message(message) => crate::preview::note(message),
         Contents::Picture(_) | Contents::Text(_) => {}
     };
-    column_arranged(
+    kit::column(
         Modifier::new()
             .weight(1.0)
             .background(theme::color(Role::Background)),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         || {
             strip(viewer, live);
             crate::language_offer::offer(state, viewer);
-            row_arranged(
+            kit::row_top(
                 Modifier::new().fill_max_width().weight(1.0).clip(),
-                Arrangement::Start,
-                Alignment::Start,
+                0,
                 || {
                     rustle::stack_with(
                         Modifier::new().fill_max_height().weight(1.0).clip(),
@@ -1381,7 +1318,9 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
                             let area = if live {
                                 state
                                     .code_bounds
-                                    .track(area.chain(crate::focus::keyboard_focus(EDITOR_FIELD)))
+                                    .track(area.chain(crate::focus::keyboard_focus(
+                                        Target::Editor(EditorEvent::EditorField),
+                                    )))
                             } else {
                                 area
                             };
@@ -1393,11 +1332,10 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
                                     &look,
                                     lines_height,
                                 ),
-                                None => column_arranged(
+                                None => kit::column(
                                     area.vertical_scroll(viewer.scroll.scroll())
                                         .fill_max_width(),
-                                    Arrangement::Start,
-                                    Alignment::Start,
+                                    0,
                                     body,
                                 ),
                             }
@@ -1448,21 +1386,6 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
     );
 }
 
-/// Emits a line saying `message` where the file's lines would be.
-#[track_caller]
-fn note(message: &str) {
-    column_arranged(
-        Modifier::new()
-            .padding_xy(theme::sp(4), 0.0)
-            .padding_xy(0.0, theme::sp(4)),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            line(message, 13, 1.4, Role::Subtle);
-        },
-    );
-}
-
 /// How the caret of `document` is drawn: as the mode of modal editing says while it is on and the file is the one being edited, and as the reader chose otherwise.
 fn modal_shape(state: &WorkspaceState, document: &Document, live: bool) -> pm_editor::CursorShape {
     use pm_editor::CursorShape;
@@ -1480,41 +1403,32 @@ fn modal_shape(state: &WorkspaceState, document: &Document, live: bool) -> pm_ed
 #[track_caller]
 fn vim_bar(status: &crate::vim::VimStatus) {
     let kind = theme::mono_style(12, 1.4);
-    row_arranged(
+    kit::row(
         Modifier::new()
             .fill_max_width()
             .height(theme::sp(6))
             .background(theme::color(Role::Surface))
-            .draw_behind(theme::edge(
-                theme::Side::Top,
-                1.0,
-                theme::color(Role::Border),
-            ))
-            .padding_each(0.0, 1.0, 0.0, 0.0)
+            .ruled(theme::Side::Top)
             .padding_xy(theme::sp(3), 0.0),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Center,
+        3,
         || {
-            rustle::basic_text(
+            kit::text(
                 Modifier::new(),
                 status.mode,
                 kind.color(theme::color(Role::Text)),
-                rustle::TextOverflow::Ellipsis,
             );
             if let Some(pending) = &status.pending {
-                rustle::basic_text(
+                kit::text(
                     Modifier::new().weight(1.0),
                     pending,
                     kind.color(theme::color(Role::Muted)).max_lines(1),
-                    rustle::TextOverflow::Ellipsis,
                 );
             }
             if let Some(register) = status.recording {
-                rustle::basic_text(
+                kit::text(
                     Modifier::new(),
                     format!("recording @{register}"),
                     kind.color(theme::color(Role::Danger)),
-                    rustle::TextOverflow::Ellipsis,
                 );
             }
         },

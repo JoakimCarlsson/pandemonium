@@ -1,8 +1,12 @@
 //! The conversation with an agent: its messages and the prompt box.
 
-use crate::events::reduce;
+use crate::areas::ChatEvent;
+use crate::kit::{self, Frame};
+
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, column_arranged};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
 use rustle::{Icon, phosphor};
 
@@ -12,20 +16,13 @@ use crate::activity::activity;
 use crate::button::Variant;
 use crate::composer::composer;
 use crate::events::Interactive;
-use crate::exhibit::{
-    EXHIBIT_COPY_BASE, EXHIBIT_OPEN_BASE, ExhibitCard, PREVIEW_OFFER_BASE, exhibit_button,
-};
-use crate::focus::FocusId;
+use crate::exhibit::ExhibitCard;
 use crate::inquiry::{answered, inquiry};
 use crate::parts::{clipped, glyph, line};
 use crate::queued::queued;
 use crate::sample::{Session, Side, Status};
 use crate::sidebar::status_icon;
-use crate::size::Size;
-use crate::state::{
-    COPY_BASE, DETAILS_BASE, FORK_BASE, KEEP_FILES, LINK_BASE, LINKS_PER_PIECE, LINKS_PER_REPLY,
-    RESTORE_BASE, RESTORE_FILES, REWIND_BASE, TURN_BASE, TURN_CHANGES_BASE, WorkspaceState,
-};
+use crate::state::WorkspaceState;
 use crate::steps::{question, steps};
 use crate::theme::{Radius, Role, sp};
 
@@ -45,47 +42,36 @@ fn paragraph(content: &str, tone: Role, width: f32) {
     let kind = theme::text_style(14, 1.57).color(theme::color(tone));
     let room = width.max(32.0);
     let lines = rustle::wrap_at_spaces(content, &kind, room);
-    column_arranged(
-        Modifier::new(),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            for run in lines.split(|part| part.end == part.start) {
-                match (run.first(), run.last()) {
-                    (Some(first), Some(last)) => rustle::text_styled(
-                        Modifier::new().width_in(0.0, room),
-                        content[first.start..last.end].trim_end_matches('\n'),
-                        kind,
-                    ),
-                    _ => rustle::spacer(Modifier::new().height(theme::sp(3))),
-                }
+    kit::column(Modifier::new(), 0, || {
+        for run in lines.split(|part| part.end == part.start) {
+            match (run.first(), run.last()) {
+                (Some(first), Some(last)) => rustle::text_styled(
+                    Modifier::new().width_in(0.0, room),
+                    content[first.start..last.end].trim_end_matches('\n'),
+                    kind,
+                ),
+                _ => rustle::spacer(Modifier::new().height(theme::sp(3))),
             }
-        },
-    );
+        }
+    });
 }
 
 /// Emits one line of `content` in `pixels` tall type in `tone`, cut short at the edge of the box it
 /// sits in.
 #[track_caller]
 fn chat_line(content: impl Into<String>, pixels: u32, tone: Role) {
-    rustle::text_styled(
-        Modifier::new(),
-        content,
-        theme::text_style(pixels, 1.4)
-            .color(theme::color(tone))
-            .max_lines(1),
-    );
+    rustle::text_styled(Modifier::new(), content, kit::line(pixels, tone));
 }
 
 /// Emits a button that shows under a message while the pointer is over it or it has focus, showing `icon`, saying what it does with `tooltip` and answering to `id`, switched off while `disabled`.
 #[track_caller]
-fn message_action(icon: Icon, tooltip: &str, id: u64, disabled: bool) {
-    Button::icon(icon, FocusId(id))
+fn message_action(icon: Icon, tooltip: &str, id: Target, disabled: bool) {
+    Button::icon(icon, id)
         .disabled(disabled)
         .tone(Role::Subtle)
         .modifier(
             Modifier::new()
-                .interaction_focused(crate::focus::is_held(FocusId(id)))
+                .interaction_focused(crate::focus::is_held(id))
                 .draw_with_content_interactive(shown_on_group_hover),
         )
         .tooltip(tooltip)
@@ -95,22 +81,16 @@ fn message_action(icon: Icon, tooltip: &str, id: u64, disabled: bool) {
 /// Emits the offer to put the files back as they were before a message of the reader's, in place of the buttons under it.
 #[track_caller]
 fn restore_offer() {
-    row_arranged(
-        Modifier::new().align(BoxAlignment::BottomEnd),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
-        || {
-            chat_line("Restore files to before this turn?", 12, Role::Muted);
-            Button::new("Restore", RESTORE_FILES)
-                .variant(Variant::Destructive)
-                .size(Size::Sm)
-                .build();
-            Button::new("Cancel", KEEP_FILES)
-                .variant(Variant::Ghost)
-                .size(Size::Sm)
-                .build();
-        },
-    );
+    kit::row(Modifier::new().align(BoxAlignment::BottomEnd), 2, || {
+        chat_line("Restore files to before this turn?", 12, Role::Muted);
+        kit::small_button(
+            "Restore",
+            Target::Chat(ChatEvent::RestoreFiles),
+            Variant::Destructive,
+        )
+        .build();
+        kit::small_button("Cancel", Target::Chat(ChatEvent::KeepFiles), Variant::Ghost).build();
+    });
 }
 
 /// Emits a message the reader wrote, at `index` of `session`: a filled bubble at the right, with buttons under it to show what the turn changed, to put the files back as they were before it and to write it again.
@@ -120,22 +100,20 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
     let working = session.status == Status::Working;
     let restoring = state.restoring == Some(index);
     let (typed, elements) = crate::elements::split(&message.text);
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_width()
             .interaction_group()
             .message_area(index),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Start,
+        1,
         || {
-            column_arranged(
+            kit::column(
                 Modifier::new()
                     .align(BoxAlignment::BottomEnd)
                     .background_rounded(theme::color(Role::SurfaceHover), Radius::Xl2.px())
                     .padding_xy(theme::sp(4), 0.0)
                     .padding_xy(0.0, theme::sp(2.5)),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Start,
+                2,
                 || {
                     if !message.attachments.is_empty() {
                         crate::composer::sent_files(state, &message.attachments);
@@ -151,33 +129,28 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
             if restoring {
                 restore_offer();
             } else {
-                row_arranged(
-                    Modifier::new().align(BoxAlignment::BottomEnd),
-                    Arrangement::SpacedBy(sp(1)),
-                    Alignment::Center,
-                    || {
-                        if message.checkpoint {
-                            message_action(
-                                phosphor::GIT_DIFF,
-                                "Show what this turn changed",
-                                TURN_CHANGES_BASE + index as u64,
-                                false,
-                            );
-                            message_action(
-                                phosphor::CLOCK_COUNTER_CLOCKWISE,
-                                "Restore files to before this turn",
-                                RESTORE_BASE + index as u64,
-                                working,
-                            );
-                        }
+                kit::row(Modifier::new().align(BoxAlignment::BottomEnd), 1, || {
+                    if message.checkpoint {
                         message_action(
-                            phosphor::ARROW_COUNTER_CLOCKWISE,
-                            "Rewind conversation to before this message · edit and resend",
-                            REWIND_BASE + index as u64,
+                            phosphor::GIT_DIFF,
+                            "Show what this turn changed",
+                            Target::Chat(ChatEvent::TurnChanges(index)),
+                            false,
+                        );
+                        message_action(
+                            phosphor::CLOCK_COUNTER_CLOCKWISE,
+                            "Restore files to before this turn",
+                            Target::Chat(ChatEvent::Restore(index)),
                             working,
                         );
-                    },
-                );
+                    }
+                    message_action(
+                        phosphor::ARROW_COUNTER_CLOCKWISE,
+                        "Rewind conversation to before this message · edit and resend",
+                        Target::Chat(ChatEvent::Rewind(index)),
+                        working,
+                    );
+                });
             }
         },
     );
@@ -204,27 +177,20 @@ fn side_note(side: &Side, content: &str, index: usize, width: f32) {
         Side::Fallback { .. } => (phosphor::LIGHTNING, "Switched to a backup model", None),
     };
     let inner = width - 34.0;
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_width()
             .interaction_group()
             .message_area(index)
-            .border(1.0, theme::color(Role::Border), Radius::Xl.px())
-            .padding(1.0)
+            .outlined(Radius::Xl)
             .padding_xy(theme::sp(4), 0.0)
             .padding_xy(0.0, theme::sp(3)),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Start,
+        2,
         || {
-            row_arranged(
-                Modifier::new(),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Center,
-                || {
-                    glyph(icon, 3.5, Role::Subtle);
-                    chat_line(heading, 12, Role::Subtle);
-                },
-            );
+            kit::row(Modifier::new(), 2, || {
+                glyph(icon, 3.5, Role::Subtle);
+                chat_line(heading, 12, Role::Subtle);
+            });
             if let Some(question) = asked {
                 paragraph(question, Role::Muted, inner);
             }
@@ -247,9 +213,21 @@ fn exhibit_card(
 ) {
     let offer = state.preview_offer();
     ExhibitCard::new(exhibit, &state.figures, width)
-        .open(exhibit_button(EXHIBIT_OPEN_BASE, index, number))
-        .copy(exhibit_button(EXHIBIT_COPY_BASE, index, number))
-        .offer(&offer, exhibit_button(PREVIEW_OFFER_BASE, index, number))
+        .open(Target::Chat(ChatEvent::ExhibitOpen {
+            message: index,
+            number,
+        }))
+        .copy(Target::Chat(ChatEvent::ExhibitCopy {
+            message: index,
+            number,
+        }))
+        .offer(
+            &offer,
+            Target::Chat(ChatEvent::PreviewOffer {
+                message: index,
+                number,
+            }),
+        )
         .build();
 }
 
@@ -283,63 +261,56 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
         let count = (from..to)
             .filter(|position| !crate::steps::is_inside_card(&message.steps, *position))
             .count();
-        column_arranged(
-            Modifier::new(),
-            Arrangement::SpacedBy(sp(1)),
-            Alignment::Start,
-            || {
-                row_arranged(
-                    Modifier::new()
-                        .align(BoxAlignment::TopStart)
-                        .height(theme::sp(7))
-                        .cursor(CursorIcon::Pointer)
-                        .control(
-                            FocusId(TURN_BASE + index as u64),
-                            reduce(FocusId(TURN_BASE + index as u64)),
-                        ),
-                    Arrangement::SpacedBy(sp(1.5)),
-                    Alignment::Center,
-                    || {
-                        glyph(
-                            if open {
-                                phosphor::CARET_DOWN
-                            } else {
-                                phosphor::CARET_RIGHT
-                            },
-                            3.5,
-                            Role::Subtle,
-                        );
-                        line(
-                            format!(
-                                "{label} · {count} step{}",
-                                if count == 1 { "" } else { "s" }
-                            ),
-                            12,
-                            1.4,
-                            Role::Subtle,
-                        );
-                    },
-                );
-                if open {
-                    steps(
-                        &message.steps,
-                        from..to,
-                        index,
-                        |position| page.is_some_and(|open| held.contains(&(open, index, position))),
-                        &root,
-                        width,
+        kit::column(Modifier::new(), 1, || {
+            kit::row(
+                Modifier::new()
+                    .align(BoxAlignment::TopStart)
+                    .height(theme::sp(7))
+                    .cursor(CursorIcon::Pointer)
+                    .control(
+                        Target::Chat(ChatEvent::Turn(index)),
+                        send(Event::Chat(ChatEvent::Turn(index))),
+                    ),
+                1.5,
+                || {
+                    glyph(
+                        if open {
+                            phosphor::CARET_DOWN
+                        } else {
+                            phosphor::CARET_RIGHT
+                        },
+                        3.5,
+                        Role::Subtle,
                     );
-                }
-            },
-        );
+                    line(
+                        format!(
+                            "{label} · {count} step{}",
+                            if count == 1 { "" } else { "s" }
+                        ),
+                        12,
+                        1.4,
+                        Role::Subtle,
+                    );
+                },
+            );
+            if open {
+                steps(
+                    &message.steps,
+                    from..to,
+                    index,
+                    |position| page.is_some_and(|open| held.contains(&(open, index, position))),
+                    &root,
+                    width,
+                );
+            }
+        });
     };
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_width()
             .interaction_group()
             .message_area(index),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Start,
+        3,
         || {
             let mut shown = 0;
             let mut recorded = 0;
@@ -379,12 +350,18 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                     .map(|place| place - base)
                     .collect();
                 Markdown::new(piece, width)
-                    .details(DETAILS_BASE + (index * 1000 + base) as u64, unfolded)
-                    .links(
-                        LINK_BASE
-                            + index as u64 * LINKS_PER_REPLY
-                            + number as u64 * LINKS_PER_PIECE,
+                    .details(
+                        Target::Chat(ChatEvent::Details {
+                            message: index,
+                            place: base,
+                        }),
+                        unfolded,
                     )
+                    .links(Target::Chat(ChatEvent::Link {
+                        message: index,
+                        piece: number,
+                        link: 0,
+                    }))
                     .figures(&state.figures, None)
                     .build();
             }
@@ -403,55 +380,49 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                 answered(answers, width);
             }
             if !message.bullets.is_empty() {
-                column_arranged(
-                    Modifier::new(),
-                    Arrangement::SpacedBy(sp(1.5)),
-                    Alignment::Start,
-                    || {
-                        for bullet in &message.bullets {
-                            row_arranged(
-                                Modifier::new(),
-                                Arrangement::SpacedBy(sp(2.5)),
-                                Alignment::Start,
-                                || {
-                                    rustle::spacer(
-                                        Modifier::new()
-                                            .padding_each(0.0, theme::sp(2.5), 0.0, 0.0)
-                                            .size(theme::sp(1), theme::sp(1))
-                                            .background_rounded(
-                                                theme::color(Role::Subtle),
-                                                Radius::Full.px(),
-                                            ),
-                                    );
-                                    paragraph(bullet, Role::Muted, width - 14.0);
-                                },
+                kit::column(Modifier::new(), 1.5, || {
+                    for bullet in &message.bullets {
+                        kit::row_top(Modifier::new(), 2.5, || {
+                            rustle::spacer(
+                                Modifier::new()
+                                    .padding_each(0.0, theme::sp(2.5), 0.0, 0.0)
+                                    .size(theme::sp(1), theme::sp(1))
+                                    .background_rounded(
+                                        theme::color(Role::Subtle),
+                                        Radius::Full.px(),
+                                    ),
                             );
-                        }
-                    },
-                );
+                            paragraph(bullet, Role::Muted, width - 14.0);
+                        });
+                    }
+                });
             }
             let copy = !message.text.is_empty();
             let writing = session.status == Status::Working && index + 1 == session.messages.len();
             let fork = session.turn_of(index) > 0;
             if copy || fork {
-                row_arranged(
+                kit::row(
                     Modifier::new().align(BoxAlignment::TopStart).padding_each(
                         0.0,
                         -sp(1.0),
                         0.0,
                         0.0,
                     ),
-                    Arrangement::SpacedBy(sp(1)),
-                    Alignment::Center,
+                    1,
                     || {
                         if copy {
-                            message_action(phosphor::COPY, "Copy", COPY_BASE + index as u64, false);
+                            message_action(
+                                phosphor::COPY,
+                                "Copy",
+                                Target::Chat(ChatEvent::Copy(index)),
+                                false,
+                            );
                         }
                         if fork {
                             message_action(
                                 phosphor::GIT_FORK,
                                 "Branch from this reply · new session · shared current files",
-                                FORK_BASE + index as u64,
+                                Target::Chat(ChatEvent::Fork(index)),
                                 writing,
                             );
                         }
@@ -461,15 +432,10 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
             if message.steps.is_empty()
                 && let Some(duration) = message.duration.as_deref().filter(|took| !took.is_empty())
             {
-                row_arranged(
-                    Modifier::new(),
-                    Arrangement::SpacedBy(sp(2)),
-                    Alignment::Center,
-                    || {
-                        glyph(phosphor::TIMER, 3.5, Role::Subtle);
-                        chat_line(duration, 12, Role::Subtle);
-                    },
-                );
+                kit::row(Modifier::new(), 2, || {
+                    glyph(phosphor::TIMER, 3.5, Role::Subtle);
+                    chat_line(duration, 12, Role::Subtle);
+                });
             }
         },
     );
@@ -491,36 +457,28 @@ fn header(state: &WorkspaceState, session: &Session) {
         Some(model) => format!("{agent} · {model}"),
         None => agent.clone(),
     };
-    row_arranged(
+    kit::row(
         Modifier::new()
             .fill_max_width()
             .height(theme::sp(10))
-            .draw_behind(theme::edge(
-                theme::Side::Bottom,
-                1.0,
-                theme::color(Role::Border),
-            ))
-            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .ruled(theme::Side::Bottom)
             .padding_xy(theme::sp(5), 0.0),
-        Arrangement::SpacedBy(sp(3)),
-        Alignment::Center,
+        3,
         || {
             status_icon(session.shown());
             clipped(&session.title, 14, Role::Text);
             if !session.branch.is_empty() {
-                row_arranged(
+                kit::row(
                     Modifier::new()
                         .background_rounded(theme::color(Role::Surface), Radius::Md.px())
                         .padding_xy(theme::sp(2), 0.0),
-                    Arrangement::SpacedBy(sp(1)),
-                    Alignment::Center,
+                    1,
                     || {
                         glyph(phosphor::GIT_FORK, 3.0, Role::Muted);
-                        rustle::basic_text(
+                        kit::text(
                             Modifier::new(),
                             &session.branch,
                             theme::mono_style(11, 1.6).color(theme::color(Role::Muted)),
-                            rustle::TextOverflow::Ellipsis,
                         );
                     },
                 );
@@ -535,64 +493,57 @@ fn header(state: &WorkspaceState, session: &Session) {
 #[track_caller]
 pub fn chat(state: &WorkspaceState, session: &Session, width: f32, above: f32) {
     let text_width = width.min(COLUMN) - GUTTER * 2.0;
-    column_arranged(
-        Modifier::new().weight(1.0),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            header(state, session);
-            crate::pull_request_bar::bar(session);
-            conversation_text(state, || {
-                conversation(state, session, Modifier::new().fill_max_size(), text_width)
-            });
-            column_arranged(
-                Modifier::new()
-                    .fill_max_width()
-                    .wrap_content_height(BoxAlignment::TopStart, true)
-                    .padding_each(0.0, 0.0, 0.0, theme::sp(5)),
-                Arrangement::Start,
-                Alignment::Center,
-                || {
-                    column_arranged(
-                        Modifier::new()
-                            .width_in(0.0, COLUMN)
-                            .fill_max_width()
-                            .padding_xy(theme::sp(6), 0.0),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            queued(state, session, text_width);
-                            if let Some(draft) = session.inquiry.as_ref() {
-                                column_arranged(
-                                    Modifier::new()
-                                        .padding_each(0.0, 0.0, 0.0, theme::sp(2))
-                                        .fill_max_width(),
-                                    Arrangement::Start,
-                                    Alignment::Start,
-                                    || {
-                                        inquiry(
-                                            draft,
-                                            &state.figures,
-                                            &state.preview_offer(),
-                                            text_width,
-                                        )
-                                    },
-                                );
-                            }
-                            activity(state, session, text_width);
-                            composer(
-                                state,
-                                "Reply to the agent, or type / for commands",
-                                Some(session),
-                                2,
-                                above,
+    kit::column(Modifier::new().weight(1.0), 0, || {
+        header(state, session);
+        crate::pull_request_bar::bar(session);
+        conversation_text(state, || {
+            conversation(state, session, Modifier::new().fill_max_size(), text_width)
+        });
+        column_arranged(
+            Modifier::new()
+                .fill_max_width()
+                .wrap_content_height(BoxAlignment::TopStart, true)
+                .padding_each(0.0, 0.0, 0.0, theme::sp(5)),
+            Arrangement::Start,
+            Alignment::Center,
+            || {
+                kit::column(
+                    Modifier::new()
+                        .width_in(0.0, COLUMN)
+                        .fill_max_width()
+                        .padding_xy(theme::sp(6), 0.0),
+                    0,
+                    || {
+                        queued(state, session, text_width);
+                        if let Some(draft) = session.inquiry.as_ref() {
+                            kit::column(
+                                Modifier::new()
+                                    .padding_each(0.0, 0.0, 0.0, theme::sp(2))
+                                    .fill_max_width(),
+                                0,
+                                || {
+                                    inquiry(
+                                        draft,
+                                        &state.figures,
+                                        &state.preview_offer(),
+                                        text_width,
+                                    )
+                                },
                             );
-                        },
-                    );
-                },
-            );
-        },
-    );
+                        }
+                        activity(state, session, text_width);
+                        composer(
+                            state,
+                            "Reply to the agent, or type / for commands",
+                            Some(session),
+                            2,
+                            above,
+                        );
+                    },
+                );
+            },
+        );
+    });
 }
 
 /// Emits `content`, the conversation's list, as the selectable text of the conversation: a
@@ -658,14 +609,13 @@ fn conversation(state: &WorkspaceState, session: &Session, modifier: Modifier, w
         |index| (page, newest_first(index)),
         |index| {
             rustle::stack_with(Modifier::new().fill_max_width(), || {
-                column_arranged(
+                kit::column(
                     Modifier::new()
                         .align(BoxAlignment::TopCenter)
                         .width_in(0.0, COLUMN)
                         .fill_max_width()
                         .padding_xy(theme::sp(6), 0.0),
-                    Arrangement::Start,
-                    Alignment::Start,
+                    0,
                     || entry(state, session, newest_first(index), width),
                 );
             });
@@ -704,15 +654,10 @@ fn working(session: &Session) {
     } else {
         "Thinking…"
     };
-    row_arranged(
-        Modifier::new(),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
-        || {
-            status_icon(session.shown());
-            line(label, 13, 1.4, Role::Muted);
-        },
-    );
+    kit::row(Modifier::new(), 2, || {
+        status_icon(session.shown());
+        line(label, 13, 1.4, Role::Muted);
+    });
 }
 
 /// Everything outside a message that what it emits depends on, so a message is composed
@@ -816,7 +761,7 @@ mod tests {
     use rustle::Rect;
 
     use crate::bounds::Places;
-    use crate::message_menu::message_of_area;
+
     use crate::state::WorkspaceState;
     use crate::tagged::{interface, tagged_in};
 
@@ -869,7 +814,10 @@ mod tests {
                 .places
                 .shown()
                 .into_iter()
-                .filter_map(|(id, rect)| Some((message_of_area(id)?, rect)))
+                .filter_map(|(id, rect)| match id {
+                    Target::Chat(ChatEvent::MessageArea(index)) => Some((index, rect)),
+                    _ => None,
+                })
                 .collect();
             shown.sort_by_key(|(index, _)| *index);
             shown

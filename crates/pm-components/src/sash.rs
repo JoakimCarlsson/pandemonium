@@ -1,29 +1,17 @@
 //! The handles on the edges between panels, dragged to change how big a panel is, and the sizes they set.
 
-use crate::events::reduce;
+use crate::areas::{BrowserEvent, GitEvent, WindowEvent};
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
 use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::theme::Role;
 
-use crate::git_controls::GRAPH_SASH;
 use crate::state::WorkspaceState;
 use crate::{graph, plan, review, sidebar, terminal};
-
-/// The handle on the right edge of the sidebar.
-pub const SIDEBAR_SASH: FocusId = FocusId(7090);
-
-/// The handle on the left edge of the review panel.
-pub const REVIEW_SASH: FocusId = FocusId(7091);
-
-/// The handle on the left edge of the plan panel.
-pub const PLAN_SASH: FocusId = FocusId(7092);
-
-/// The handle on the top edge of the terminal dock.
-pub const TERMINAL_SASH: FocusId = FocusId(7093);
 
 /// How thick a handle is, in logical pixels.
 const THICKNESS: f32 = 6.0;
@@ -66,7 +54,7 @@ pub enum Layout {
 #[derive(Clone, Debug)]
 pub struct Sash {
     /// The element the handle is.
-    id: FocusId,
+    id: Target,
     /// Which way it lies.
     layout: Layout,
     /// Where its middle line starts in the window, and how long it is, when it floats over an edge.
@@ -81,7 +69,7 @@ pub struct Sash {
 
 impl Sash {
     /// An upright handle `id`, dragged left and right.
-    pub fn column(id: FocusId) -> Self {
+    pub fn column(id: Target) -> Self {
         Self {
             id,
             layout: Layout::Column,
@@ -93,7 +81,7 @@ impl Sash {
     }
 
     /// A flat handle `id`, dragged up and down.
-    pub fn row(id: FocusId) -> Self {
+    pub fn row(id: Target) -> Self {
         Self {
             id,
             layout: Layout::Row,
@@ -163,7 +151,7 @@ impl Sash {
             .z_index(10)
             .interaction_group()
             .cursor(cursor)
-            .control(self.id, reduce(self.id))
+            .control(self.id, send(Event::pressing(self.id)))
             .chain(crate::events::sash_drag(self.id));
         let (arrangement, alignment) = self
             .arranged
@@ -204,49 +192,55 @@ impl WorkspaceState {
     }
 
     /// How big the panel the handle `id` resizes is now, in a window `window` logical pixels wide and tall, and which way the handle is pulled to grow it.
-    pub fn sash(&self, id: FocusId, window: (f32, f32)) -> Option<(f32, Grows)> {
+    pub fn sash(&self, id: Target, window: (f32, f32)) -> Option<(f32, Grows)> {
         match id {
-            SIDEBAR_SASH => Some((self.sidebar_width, Grows::Right)),
-            REVIEW_SASH => Some((self.review_width, Grows::Left)),
-            PLAN_SASH => Some((
+            Target::Window(WindowEvent::SidebarSash) => Some((self.sidebar_width, Grows::Right)),
+            Target::Window(WindowEvent::ReviewSash) => Some((self.review_width, Grows::Left)),
+            Target::Window(WindowEvent::PlanSash) => Some((
                 plan::width_in(self, window.0 - self.sidebar_room() - self.review_width),
                 Grows::Left,
             )),
-            TERMINAL_SASH => Some((
+            Target::Window(WindowEvent::TerminalSash) => Some((
                 terminal::height(self, window.1 - crate::title_bar::TITLE_BAR_HEIGHT),
                 Grows::Up,
             )),
-            GRAPH_SASH => Some((self.git.graph_height, Grows::Up)),
-            crate::browser::BROWSER_SASH => self
+            Target::Git(GitEvent::GraphSash) => Some((self.git.graph_height, Grows::Up)),
+            Target::Browser(BrowserEvent::BrowserSash) => self
                 .browser
                 .as_ref()
                 .map(|browser| (browser.tools_width, Grows::Left)),
-            _ => crate::panes::split_sash_of(id).and_then(|index| self.split_sash(index, window)),
+            Target::Window(WindowEvent::SplitSash(index)) => self.split_sash(index, window),
+            _ => None,
         }
     }
 
     /// The state with the panel the handle `id` resizes made `size` logical pixels big, within what that panel allows in a window `window` logical pixels wide and tall.
-    pub fn with_sash_size(mut self, id: FocusId, size: f32, window: (f32, f32)) -> Self {
+    pub fn with_sash_size(mut self, id: Target, size: f32, window: (f32, f32)) -> Self {
         match id {
-            SIDEBAR_SASH => self.sidebar_width = size.clamp(sidebar::WIDTHS.0, sidebar::WIDTHS.1),
-            REVIEW_SASH => self.review_width = size.clamp(review::WIDTHS.0, review::WIDTHS.1),
-            PLAN_SASH => self.plan_width = size.clamp(plan::WIDTHS.0, plan::WIDTHS.1),
-            TERMINAL_SASH => {
+            Target::Window(WindowEvent::SidebarSash) => {
+                self.sidebar_width = size.clamp(sidebar::WIDTHS.0, sidebar::WIDTHS.1)
+            }
+            Target::Window(WindowEvent::ReviewSash) => {
+                self.review_width = size.clamp(review::WIDTHS.0, review::WIDTHS.1)
+            }
+            Target::Window(WindowEvent::PlanSash) => {
+                self.plan_width = size.clamp(plan::WIDTHS.0, plan::WIDTHS.1)
+            }
+            Target::Window(WindowEvent::TerminalSash) => {
                 self.terminal_maximized = false;
                 let page = window.1 - crate::title_bar::TITLE_BAR_HEIGHT;
                 self.terminal_height = size.clamp(terminal::HEIGHTS.0, terminal::tallest(page));
             }
-            GRAPH_SASH => self.git.graph_height = size.clamp(graph::HEIGHTS.0, graph::HEIGHTS.1),
-            crate::browser::BROWSER_SASH => {
+            Target::Git(GitEvent::GraphSash) => {
+                self.git.graph_height = size.clamp(graph::HEIGHTS.0, graph::HEIGHTS.1)
+            }
+            Target::Browser(BrowserEvent::BrowserSash) => {
                 if let Some(browser) = self.browser.as_mut() {
                     browser.tools_width = size.clamp(crate::browser::TOOLS_LEAST, window.0);
                 }
             }
-            _ => {
-                if let Some(index) = crate::panes::split_sash_of(id) {
-                    self.resize_split(index, size, window);
-                }
-            }
+            Target::Window(WindowEvent::SplitSash(index)) => self.resize_split(index, size, window),
+            _ => {}
         }
         self
     }

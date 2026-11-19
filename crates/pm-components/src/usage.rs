@@ -1,11 +1,11 @@
 //! The rings in the prompt box that show how full the conversation's context is and how much of the account's allowance is used, and the words they say when the pointer rests on them.
 
 use crate::theme;
+use crate::theme::Indicated;
 use pm_harness::{Limit, LimitUnit, Limits, Usage};
 use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
-use crate::sample::Session;
 use crate::theme::{Radius, Role, Tone};
 
 /// How wide the ring of a context that has no allowance beside it is, in logical pixels.
@@ -202,12 +202,6 @@ pub fn tooltip(limits: &Limits) -> Option<String> {
     (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
-/// Emits the rings that show how full the context is and how much of the account's allowance is used, with the figures as their tooltip, once there is anything to show; returns whether it emitted them.
-#[track_caller]
-pub fn usage_rings(session: &Session) -> bool {
-    rings_of(session.context.as_ref(), session.limits.as_ref())
-}
-
 /// Emits the rings for `context` and `limits`, which are whatever is known so far, with the figures as their tooltip; emits nothing when neither is known. Returns whether it emitted them.
 #[track_caller]
 pub fn rings_of(context: Option<&Usage>, limits: Option<&Limits>) -> bool {
@@ -230,11 +224,11 @@ pub fn rings_of(context: Option<&Usage>, limits: Option<&Limits>) -> bool {
             Modifier::new()
                 .width(32.0)
                 .height(32.0)
-                .interaction_background(
-                    (theme::InteractionTones::new()
+                .indicated(
+                    theme::InteractionTones::new()
                         .hover(Role::SurfaceHover)
-                        .radius(Radius::Full))
-                    .colors(),
+                        .radius(Radius::Full),
+                    theme::Focused::Rustle,
                 )
                 .cursor(CursorIcon::Default),
             Arrangement::Center,

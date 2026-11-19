@@ -4,11 +4,10 @@
 //! select all and copy outside a text field, and the menu over a message that
 //! copies or selects all.
 
-use pm_components::assist::HOVER_CARD;
-use pm_components::focus::FocusId;
-use pm_components::message_menu::{
-    MESSAGE_MENU_COPY, MESSAGE_MENU_SELECT_ALL, is_message_menu_item,
-};
+use pm_components::areas::{EditorEvent, MenuEvent};
+use pm_components::events::Event;
+use pm_components::message_menu::is_message_menu_item;
+use pm_components::target::Target;
 use pm_field::Edit;
 use pm_pages::Screen;
 use rustle::{Key, KeyEvent, SelectionPoint};
@@ -39,7 +38,7 @@ impl App {
         if !in_conversation {
             self.chat_selection().clear();
         }
-        if self.pressed_on != Some(HOVER_CARD) {
+        if self.pressed_on != Some(Target::Editor(EditorEvent::HoverCard)) {
             self.model.read(Screen::hover_selection).clear();
         }
     }
@@ -121,14 +120,14 @@ impl App {
     }
 
     /// Carries out the row `row` of the menu over a message, and closes the menu.
-    pub(super) fn message_menu_action(&mut self, row: FocusId) {
+    pub(super) fn message_menu_action(&mut self, row: Target) {
         match row {
-            MESSAGE_MENU_COPY => self.copy_selection(),
-            MESSAGE_MENU_SELECT_ALL => self.select_all_text(),
+            Target::Menu(MenuEvent::MessageMenuCopy) => self.copy_selection(),
+            Target::Menu(MenuEvent::MessageMenuSelectAll) => self.select_all_text(),
             _ => {}
         }
         self.model
-            .update(|state| *state = std::mem::take(state).after(row));
+            .update(|state| *state = std::mem::take(state).handle(Event::pressing(row)));
         self.deliver();
     }
 }

@@ -1,7 +1,8 @@
 //! The pictures a markdown source shows: diagrams written as fenced mermaid code, formulas written in TeX and images it names, each drawn or fetched into pixels and kept under a key.
 
-use crate::events::reduce;
-use crate::theme;
+use crate::events::{Event, send};
+use crate::kit;
+use crate::target::Target;
 use rustle::{Alignment, row_arranged};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -11,7 +12,6 @@ use pm_markdown::{Block, Image};
 use rustle::{Arrangement, CursorIcon, FlowOptions, Modifier};
 
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::preview::linked_path;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::theme::{Role, sp};
@@ -66,7 +66,7 @@ pub fn is_diagram(language: &str) -> bool {
 }
 
 /// `value` hashed into the key a figure is kept under.
-fn key_of(value: impl Hash) -> u64 {
+pub(crate) fn key_of(value: impl Hash) -> u64 {
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);
     hasher.finish()
@@ -246,7 +246,7 @@ pub(crate) fn images_node(
     centered: bool,
     figures: Option<&Figures>,
     key: impl Fn(&Image) -> u64,
-    (links, pixels, width): (Option<u64>, u32, f32),
+    (links, pixels, width): (Option<Target>, u32, f32),
 ) {
     let arrangement = if centered {
         Arrangement::Center
@@ -263,8 +263,8 @@ pub(crate) fn images_node(
                 let modifier = match (links, image.target) {
                     (Some(base), target) if target > 0 => {
                         Modifier::new().cursor(CursorIcon::Pointer).control(
-                            FocusId(base + u64::from(target) - 1),
-                            reduce(FocusId(base + u64::from(target) - 1)),
+                            base.offset(usize::from(target) - 1),
+                            send(Event::pressing(base.offset(usize::from(target) - 1))),
                         )
                     }
                     _ => Modifier::new(),
@@ -275,13 +275,10 @@ pub(crate) fn images_node(
                         drawn(modifier, drawing, across, down);
                     }
                     _ if image.alt.is_empty() => {}
-                    _ => rustle::basic_text(
+                    _ => kit::text(
                         modifier,
                         &image.alt,
-                        theme::text_style(pixels.saturating_sub(1), 1.4)
-                            .color(theme::color(Role::Subtle))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
+                        kit::line(pixels.saturating_sub(1), Role::Subtle),
                     ),
                 }
             }

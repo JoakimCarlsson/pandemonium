@@ -1,7 +1,9 @@
 //! What an agent puts in front of the reader to look at: the card of a diagram or a prototype it showed in the conversation, and the picture of a document it wrote, a prototype or the mockup of an answer, which the window has rendered sealed from the network.
 
-use crate::focus::FocusId;
+use crate::areas::ChatEvent;
 use crate::icons::icon_with;
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
 use crate::theme::{Radius, Role, sp};
 use pm_harness::{Exhibit, ExhibitKind};
@@ -14,27 +16,8 @@ use crate::figures::{Drawing, Figures, Wanted, diagram_key, diagram_node, protot
 use crate::inquiry::{Marks, marks_in};
 use crate::parts::{clipped, glyph, line};
 use crate::settings_catalog::Setting;
-use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::{Button, Markdown};
-
-/// The first of the buttons that open a prototype in the browser pane; the exhibit numbered `n` of the message at `m` is `EXHIBIT_OPEN_BASE + m * EXHIBITS_PER_MESSAGE + n`.
-pub const EXHIBIT_OPEN_BASE: u64 = 9_100_000_000_000;
-
-/// The first of the buttons that copy the source of an exhibit, numbered as the ones that open it are.
-pub const EXHIBIT_COPY_BASE: u64 = 9_200_000_000_000;
-
-/// How many exhibits one message may have before the next message's numbering begins.
-pub const EXHIBITS_PER_MESSAGE: u64 = 1000;
-
-/// The first of the buttons that install or turn on the embedded browser from the placeholder of a prototype's picture, numbered as the ones that open the prototype are.
-pub const PREVIEW_OFFER_BASE: u64 = 9_300_000_000_000;
-
-/// The first of the buttons that install or turn on the embedded browser from the placeholder of a mockup's picture; the answer at `i` is `MOCKUP_OFFER_BASE + i`.
-pub const MOCKUP_OFFER_BASE: u64 = 9_400_000_000_000;
-
-/// The number after the last a button that installs or turns on the embedded browser may have.
-const PREVIEW_OFFER_END: u64 = 9_500_000_000_000;
 
 /// The viewport a prototype is rendered at for its card, in CSS pixels.
 pub const EXHIBIT_VIEWPORT: (u32, u32) = (1024, 640);
@@ -185,20 +168,15 @@ impl Offer {
 
     /// Emits what the placeholder shows for the offer in the room `form` stands for, its button answering to `id`: the line and a labelled button with its icon where words fit, the labelled button alone where only that does, and an icon alone in the narrowest; a running download has its line, or only the icon, in place of a button.
     #[track_caller]
-    fn shown(&self, id: FocusId, form: Marks) {
+    fn shown(&self, id: Target, form: Marks) {
         let tone = match self {
             Self::Failed(_) | Self::Update(Some(_)) => Role::Danger,
             _ => Role::Subtle,
         };
         let hint = self.hint();
         let button = self.button().map(|(label, icon)| match form {
-            Marks::Words => Button::new(label, id)
-                .variant(Variant::Outline)
-                .size(Size::Sm)
-                .with_icon(icon),
-            Marks::Icons => Button::new(label, id)
-                .variant(Variant::Outline)
-                .size(Size::Sm),
+            Marks::Words => kit::small_button(label, id, Variant::Outline).with_icon(icon),
+            Marks::Icons => kit::small_button(label, id, Variant::Outline),
             Marks::Hidden => Button::icon(icon, id),
         });
         let spelled = form == Marks::Words || (form == Marks::Icons && button.is_none());
@@ -231,12 +209,10 @@ impl Offer {
 
 /// Emits what a preview that could not be rendered shows in the room `form` stands for: why, cut short where it does not fit and whole on hover, over a button answering to `id` that renders it again; the button alone where words do not fit.
 #[track_caller]
-fn failure(reason: &str, id: FocusId, form: Marks) {
+fn failure(reason: &str, id: Target, form: Marks) {
     let button = match form {
         Marks::Hidden => Button::icon(phosphor::ARROWS_CLOCKWISE, id),
-        _ => Button::new(RETRY_LABEL, id)
-            .variant(Variant::Outline)
-            .size(Size::Sm)
+        _ => kit::small_button(RETRY_LABEL, id, Variant::Outline)
             .with_icon(phosphor::ARROWS_CLOCKWISE),
     };
     let hint = format!("{reason} · press to render it again");
@@ -266,14 +242,7 @@ fn caption(words: &str, tone: Role, modifier: Modifier) {
         Alignment::Center,
         || {
             glyph(phosphor::GLOBE, 3.5, tone);
-            rustle::basic_text(
-                Modifier::new(),
-                words,
-                theme::text_style(12, 1.4)
-                    .color(theme::color(tone))
-                    .max_lines(1),
-                rustle::TextOverflow::Ellipsis,
-            );
+            kit::text(Modifier::new(), words, kit::line(12, tone));
         },
     );
 }
@@ -332,7 +301,7 @@ pub(crate) struct Preview<'a> {
     /// How wide the picture is, in logical pixels.
     width: f32,
     /// What the box offers while the embedded browser is missing, and what its button answers to.
-    offer: Option<(&'a Offer, FocusId)>,
+    offer: Option<(&'a Offer, Target)>,
     /// What the caller puts around the box.
     modifier: Modifier,
     /// How the box spreads what it holds and places it across, when the caller chose.
@@ -357,7 +326,7 @@ impl<'a> Preview<'a> {
     }
 
     /// The preview offering `offer`, with a button answering to `id`, in place of a picture that waits for the embedded browser.
-    pub(crate) fn offer(mut self, offer: &'a Offer, id: FocusId) -> Self {
+    pub(crate) fn offer(mut self, offer: &'a Offer, id: Target) -> Self {
         self.offer = Some((offer, id));
         self
     }
@@ -371,8 +340,7 @@ impl<'a> Preview<'a> {
                 .width(width)
                 .height(height)
                 .background_rounded(theme::color(Role::Background), Radius::Lg.px())
-                .border(1.0, theme::color(Role::Border), Radius::Lg.px())
-                .padding(1.0)
+                .outlined(Radius::Lg)
                 .clip()
         };
         let (arrangement, alignment) = self
@@ -423,15 +391,10 @@ impl<'a> Preview<'a> {
                         } else if let Some((_, id)) = retried {
                             failure(words, id, marks_in(width));
                         } else {
-                            row_arranged(
-                                Modifier::new().padding_xy(theme::sp(3), 0.0),
-                                Arrangement::SpacedBy(sp(1.5)),
-                                Alignment::Center,
-                                || {
-                                    glyph(phosphor::GLOBE, 3.5, Role::Subtle);
-                                    line(words, 12, 1.4, Role::Subtle);
-                                },
-                            );
+                            kit::row(Modifier::new().padding_xy(theme::sp(3), 0.0), 1.5, || {
+                                glyph(phosphor::GLOBE, 3.5, Role::Subtle);
+                                line(words, 12, 1.4, Role::Subtle);
+                            });
                         }
                     },
                 );
@@ -449,11 +412,11 @@ pub struct ExhibitCard<'a> {
     /// How wide the card is, in logical pixels.
     width: f32,
     /// What the button that opens a prototype in the browser pane answers to, when the card has one.
-    open: Option<FocusId>,
+    open: Option<Target>,
     /// What the button that copies the exhibit's source answers to, when the card has one.
-    copy: Option<FocusId>,
+    copy: Option<Target>,
     /// What the placeholder of a prototype's picture offers while the embedded browser is missing, and what its button answers to.
-    offer: Option<(&'a Offer, FocusId)>,
+    offer: Option<(&'a Offer, Target)>,
     /// What the caller puts around the card.
     modifier: Modifier,
     /// The padding the caller chose in place of the card's own, when it did.
@@ -479,19 +442,19 @@ impl<'a> ExhibitCard<'a> {
     }
 
     /// The card with a button answering to `id` that opens a prototype, live, in the browser pane; a diagram has no such button.
-    pub fn open(mut self, id: FocusId) -> Self {
+    pub fn open(mut self, id: Target) -> Self {
         self.open = Some(id);
         self
     }
 
     /// The card with a button answering to `id` that copies the exhibit's source.
-    pub fn copy(mut self, id: FocusId) -> Self {
+    pub fn copy(mut self, id: Target) -> Self {
         self.copy = Some(id);
         self
     }
 
     /// The card offering `offer`, with a button answering to `id`, where the picture of a prototype waits for the embedded browser.
-    pub fn offer(mut self, offer: &'a Offer, id: FocusId) -> Self {
+    pub fn offer(mut self, offer: &'a Offer, id: Target) -> Self {
         self.offer = Some((offer, id));
         self
     }
@@ -531,41 +494,27 @@ impl<'a> ExhibitCard<'a> {
         let opens = self
             .open
             .filter(|_| self.exhibit.kind == ExhibitKind::Prototype);
-        row_arranged(
-            Modifier::new().fill_max_width(),
-            Arrangement::SpacedBy(sp(2)),
-            Alignment::Center,
-            || {
-                glyph(icon, 3.5, Role::Subtle);
-                clipped(title, 13, Role::Text);
-                rustle::basic_text(
-                    Modifier::new(),
-                    kind,
-                    theme::text_style(12, 1.4)
-                        .color(theme::color(Role::Subtle))
-                        .max_lines(1),
-                    rustle::TextOverflow::Ellipsis,
-                );
-                if let Some(id) = self.copy {
-                    Button::icon(phosphor::COPY, id)
-                        .tooltip("Copy source")
-                        .build();
-                }
-                if let Some(id) = opens {
-                    Button::new("Open", id)
-                        .variant(Variant::Outline)
-                        .size(Size::Sm)
-                        .with_icon(phosphor::ARROWS_OUT_SIMPLE)
-                        .disabled(outdated)
-                        .tooltip(if outdated {
-                            OPEN_NEEDS_UPDATE
-                        } else {
-                            "Open live in the browser pane · sealed from the network"
-                        })
-                        .build();
-                }
-            },
-        );
+        kit::row(Modifier::new().fill_max_width(), 2, || {
+            glyph(icon, 3.5, Role::Subtle);
+            clipped(title, 13, Role::Text);
+            kit::text(Modifier::new(), kind, kit::line(12, Role::Subtle));
+            if let Some(id) = self.copy {
+                Button::icon(phosphor::COPY, id)
+                    .tooltip("Copy source")
+                    .build();
+            }
+            if let Some(id) = opens {
+                kit::small_button("Open", id, Variant::Outline)
+                    .with_icon(phosphor::ARROWS_OUT_SIMPLE)
+                    .disabled(outdated)
+                    .tooltip(if outdated {
+                        OPEN_NEEDS_UPDATE
+                    } else {
+                        "Open live in the browser pane · sealed from the network"
+                    })
+                    .build();
+            }
+        });
     }
 
     /// Emits what the card shows of a diagram: the drawing once it arrived, its source as code until then, and the source with why it could not be drawn when it could not.
@@ -574,15 +523,10 @@ impl<'a> ExhibitCard<'a> {
         let source = fenced(&self.exhibit.content);
         match self.figures.get(&diagram_key(&self.exhibit.content)) {
             Some(Ok(drawing)) => diagram_node(drawing, inner),
-            Some(Err(reason)) => column_arranged(
-                Modifier::new(),
-                Arrangement::SpacedBy(sp(1.5)),
-                Alignment::Start,
-                || {
-                    Markdown::new(&source, inner).build();
-                    crate::parts::paragraph(reason, 12, 1.4, Role::Danger, inner);
-                },
-            ),
+            Some(Err(reason)) => kit::column(Modifier::new(), 1.5, || {
+                Markdown::new(&source, inner).build();
+                crate::parts::paragraph(reason, 12, 1.4, Role::Danger, inner);
+            }),
             None => Markdown::new(&source, inner).build(),
         }
     }
@@ -613,10 +557,7 @@ impl<'a> ExhibitCard<'a> {
                 .padding_xy(theme::sp(4), 0.0)
                 .padding_xy(0.0, theme::sp(3))
         });
-        let own = Modifier::new()
-            .border(1.0, theme::color(Role::Border), Radius::Xl.px())
-            .padding(1.0)
-            .chain(padding);
+        let own = Modifier::new().outlined(Radius::Xl).chain(padding);
         let (arrangement, alignment) = self
             .arranged
             .unwrap_or((Arrangement::SpacedBy(sp(2.5)), Alignment::Start));
@@ -632,23 +573,9 @@ impl<'a> ExhibitCard<'a> {
     }
 }
 
-/// The exhibit a button numbered `offset` past a base belongs to: the place of its message and its number among the message's exhibits.
-fn exhibit_place(offset: u64) -> (usize, usize) {
-    (
-        (offset / EXHIBITS_PER_MESSAGE) as usize,
-        (offset % EXHIBITS_PER_MESSAGE) as usize,
-    )
-}
-
-/// What the button of the exhibit numbered `number` of the message at `message` answers to, counted from `base`.
-pub fn exhibit_button(base: u64, message: usize, number: usize) -> FocusId {
-    FocusId(base + message as u64 * EXHIBITS_PER_MESSAGE + number as u64 % EXHIBITS_PER_MESSAGE)
-}
-
 impl WorkspaceState {
-    /// The exhibit of the open session a button numbered `offset` past a base belongs to, if there is one.
-    fn exhibit_at(&self, offset: u64) -> Option<&Exhibit> {
-        let (message, number) = exhibit_place(offset);
+    /// The exhibit numbered `number` of the message at `message` of the open session, if there is one.
+    fn exhibit_at(&self, message: usize, number: usize) -> Option<&Exhibit> {
         self.open()?
             .messages
             .get(message)?
@@ -658,33 +585,36 @@ impl WorkspaceState {
     }
 
     /// What pressing the button `id` does when it is one of an exhibit's of the open session, or one that installs or turns on the embedded browser, and whether it was: a prototype opens live in a tab of the session's browser, sealed from the network, and a source is put on the clipboard.
-    pub(crate) fn press_exhibit(&mut self, id: FocusId) -> bool {
-        let FocusId(number) = id;
-        if (PREVIEW_OFFER_BASE..PREVIEW_OFFER_END).contains(&number) {
-            self.press_preview_offer();
-            return true;
+    pub(crate) fn press_exhibit(&mut self, id: Target) -> bool {
+        match id {
+            Target::Chat(ChatEvent::PreviewOffer { .. })
+            | Target::Chat(ChatEvent::MockupOffer(_)) => {
+                self.press_preview_offer();
+                true
+            }
+            Target::Chat(ChatEvent::ExhibitOpen { message, number }) => {
+                let opened = self
+                    .exhibit_at(message, number)
+                    .filter(|exhibit| exhibit.kind == ExhibitKind::Prototype)
+                    .map(|exhibit| (exhibit.title.clone(), exhibit.content.clone()));
+                let Some((title, html)) = opened else {
+                    return false;
+                };
+                self.open_sealed_document(&title, &html);
+                true
+            }
+            Target::Chat(ChatEvent::ExhibitCopy { message, number }) => {
+                let Some(text) = self
+                    .exhibit_at(message, number)
+                    .map(|exhibit| exhibit.content.clone())
+                else {
+                    return false;
+                };
+                self.outbox.push(Outgoing::Copy { text });
+                true
+            }
+            _ => false,
         }
-        let span = EXHIBIT_COPY_BASE - EXHIBIT_OPEN_BASE;
-        let opened = number
-            .checked_sub(EXHIBIT_OPEN_BASE)
-            .filter(|offset| *offset < span)
-            .and_then(|offset| self.exhibit_at(offset))
-            .filter(|exhibit| exhibit.kind == ExhibitKind::Prototype)
-            .map(|exhibit| (exhibit.title.clone(), exhibit.content.clone()));
-        if let Some((title, html)) = opened {
-            self.open_sealed_document(&title, &html);
-            return true;
-        }
-        let copied = number
-            .checked_sub(EXHIBIT_COPY_BASE)
-            .filter(|offset| *offset < span)
-            .and_then(|offset| self.exhibit_at(offset))
-            .map(|exhibit| exhibit.content.clone());
-        if let Some(text) = copied {
-            self.outbox.push(Outgoing::Copy { text });
-            return true;
-        }
-        false
     }
 
     /// Opens the document `html`, which an agent wrote, live in a tab of the browser of the session shown, called `title`: its scripts run, the network is denied to it, and agents can neither see nor drive the tab.
@@ -926,13 +856,13 @@ mod tests {
             Event::Show(exhibit("call-1", ExhibitKind::Prototype, "<p>hi</p>")),
         );
         let message = state.sessions[open].messages.len() - 1;
-        assert!(!state.press_exhibit(exhibit_button(EXHIBIT_OPEN_BASE, message, 7)));
-        assert!(state.press_exhibit(exhibit_button(EXHIBIT_COPY_BASE, message, 0)));
+        assert!(!state.press_exhibit(Target::Chat(ChatEvent::ExhibitOpen { message, number: 7 })));
+        assert!(state.press_exhibit(Target::Chat(ChatEvent::ExhibitCopy { message, number: 0 })));
         assert!(state.outbox.iter().any(|asked| matches!(
             asked,
             Outgoing::Copy { text } if text == "<p>hi</p>"
         )));
-        assert!(state.press_exhibit(exhibit_button(EXHIBIT_OPEN_BASE, message, 0)));
+        assert!(state.press_exhibit(Target::Chat(ChatEvent::ExhibitOpen { message, number: 0 })));
         let browser = state.browser.as_ref().unwrap();
         let sealed = browser.sealed.as_ref().unwrap();
         assert_eq!(sealed.title, "Login flow");
@@ -1047,7 +977,10 @@ mod tests {
         let mut state = opened();
         state.window.general.embedded_browser = true;
         state.set_browser_helper(outdated);
-        assert!(state.press_exhibit(FocusId(PREVIEW_OFFER_BASE)));
+        assert!(state.press_exhibit(Target::Chat(ChatEvent::PreviewOffer {
+            message: 0,
+            number: 0
+        })));
         assert!(state.take_browser_install_asked());
         let tabs = state
             .browser
@@ -1077,7 +1010,10 @@ mod tests {
         let asked = state.take_preview_requests();
         assert_eq!(asked.len(), 1);
         state = state.with_figure(asked[0].key, Err("The browser stopped.".to_owned()));
-        assert!(state.press_exhibit(FocusId(PREVIEW_OFFER_BASE)));
+        assert!(state.press_exhibit(Target::Chat(ChatEvent::PreviewOffer {
+            message: 0,
+            number: 0
+        })));
         assert_eq!(state.take_preview_requests(), asked);
         state = state.with_figure(asked[0].key, Err(PREVIEW_NEEDS_UPDATE.to_owned()));
         state.retry_previews();
@@ -1089,16 +1025,22 @@ mod tests {
     fn pressing_the_offer_turns_the_browser_on_and_asks_for_the_download() {
         let mut state = opened();
         state.window.general.embedded_browser = false;
-        assert!(state.press_exhibit(FocusId(PREVIEW_OFFER_BASE)));
+        assert!(state.press_exhibit(Target::Chat(ChatEvent::PreviewOffer {
+            message: 0,
+            number: 0
+        })));
         assert!(!state.window.general.embedded_browser);
         assert!(!state.take_browser_install_asked());
         state.set_browser_helper(helper(true));
-        assert!(state.press_exhibit(FocusId(MOCKUP_OFFER_BASE + 2)));
+        assert!(state.press_exhibit(Target::Chat(ChatEvent::MockupOffer(2))));
         assert!(state.window.general.embedded_browser);
         assert!(!state.take_browser_install_asked());
         state.window.general.embedded_browser = false;
         state.set_browser_helper(helper(false));
-        assert!(state.press_exhibit(exhibit_button(PREVIEW_OFFER_BASE, 3, 1)));
+        assert!(state.press_exhibit(Target::Chat(ChatEvent::PreviewOffer {
+            message: 3,
+            number: 1
+        })));
         assert!(state.window.general.embedded_browser);
         assert!(state.take_browser_install_asked());
         assert!(!state.browser_install_asked());
@@ -1106,7 +1048,10 @@ mod tests {
             failed: Some("no network".to_owned()),
             ..helper(false)
         });
-        assert!(state.press_exhibit(FocusId(PREVIEW_OFFER_BASE)));
+        assert!(state.press_exhibit(Target::Chat(ChatEvent::PreviewOffer {
+            message: 0,
+            number: 0
+        })));
         assert!(state.window.general.embedded_browser);
         assert!(state.take_browser_install_asked());
     }

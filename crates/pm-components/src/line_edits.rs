@@ -1,19 +1,9 @@
 //! The keys that work on whole lines and on the selection of the file shown: commenting, indenting, moving, duplicating and deleting lines, growing and shrinking the selection along the syntax tree, going to the next problem and to a line by its number.
 
-use crate::focus::FocusId;
 use pm_editor::{Case, Document, LineOrder};
 use pm_field::{Edit, Motion};
 
 use crate::state::WorkspaceState;
-
-/// The field the number of the line to go to is typed in.
-pub const GO_TO_LINE: FocusId = FocusId(7_401_910);
-
-/// Hands in the number of the line to go to.
-pub const GO_TO_LINE_SUBMIT: FocusId = FocusId(7_401_911);
-
-/// The box the number of the line to go to is typed in, which keeps a press on it from counting as outside.
-pub const GO_TO_LINE_BOX: FocusId = FocusId(7_401_912);
 
 /// What is done to the lines or the selection of the file shown.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

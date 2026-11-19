@@ -1,52 +1,11 @@
 //! Tasks as the workspace holds them: what the project can be built, tested and run with, the last one run, the toolchains installed on its machine, and what the reader does with them.
 
-use crate::focus::FocusId;
 use pm_protocol::{Task, ToolchainInfo};
 use rustle::TextFieldState;
 
 use crate::listing::{Items, Listing};
 use crate::quick_choices::Choosing;
 use crate::state::{Outgoing, WorkspaceState};
-
-/// The first of the marks in the gutter that run a place of a file; each file shown has [`RUN_LINES`] after its own base.
-pub const RUN_BASE: u64 = 6_000_000_000_000;
-
-/// The first of the marks of the links at the ends of lines that run a place with one task of its language; each follows the base by its place in the list of links of the file shown.
-pub const RUN_LENS_BASE: u64 = 8_700_000;
-
-/// One past the last mark of those links.
-pub const RUN_LENS_END: u64 = 8_800_000;
-
-/// The mark of the link at `index` of the links of the file shown.
-pub fn run_lens_mark(index: usize) -> FocusId {
-    FocusId(RUN_LENS_BASE + index as u64)
-}
-
-/// The place in the list of links of the file shown that the mark `id` is.
-pub fn run_lens_of(id: FocusId) -> Option<usize> {
-    (RUN_LENS_BASE..RUN_LENS_END)
-        .contains(&id.0)
-        .then(|| (id.0 - RUN_LENS_BASE) as usize)
-}
-
-/// How many lines one file has room for among the run marks of the gutter.
-pub const RUN_LINES: u64 = 1_000_000;
-
-/// How many files have room among the run marks of the gutter.
-const RUN_FILES: u64 = 1000;
-
-/// The mark in the gutter of the line `line` of the open file at `file` that runs the place that starts there.
-pub fn run_mark(file: usize, line: usize) -> FocusId {
-    FocusId(RUN_BASE + file as u64 * RUN_LINES + line as u64)
-}
-
-/// The open file and the line the gutter run mark `id` is on.
-pub fn run_of(id: FocusId) -> Option<(usize, usize)> {
-    let offset =
-        id.0.checked_sub(RUN_BASE)
-            .filter(|offset| *offset < RUN_FILES * RUN_LINES)?;
-    Some(((offset / RUN_LINES) as usize, (offset % RUN_LINES) as usize))
-}
 
 /// What was last run, which running it again does as it was done.
 #[derive(Clone, Debug, PartialEq)]

@@ -52,17 +52,6 @@ pub struct DiffLine {
     pub text: String,
 }
 
-/// How a changed file came to differ from the last commit.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Fate {
-    /// The file is new.
-    Added,
-    /// The file is gone.
-    Deleted,
-    /// The file has other contents.
-    Modified,
-}
-
 /// Lines of one side of a diff that a comment is about.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Range {
@@ -274,31 +263,6 @@ impl Change {
     pub fn removed(&self) -> usize {
         self.counts
             .map_or_else(|| self.count(Kind::Remove), |(_, removed)| removed)
-    }
-
-    /// Whether the file is new, gone or has other contents, as its first hunk says.
-    pub fn fate(&self) -> Fate {
-        if !self.loaded {
-            return if self.is_created() {
-                Fate::Added
-            } else if self.mark() == "D" {
-                Fate::Deleted
-            } else {
-                Fate::Modified
-            };
-        }
-        let header = self
-            .diff
-            .first()
-            .filter(|line| line.kind == Kind::Hunk)
-            .map_or("", |line| line.text.as_str());
-        if header.starts_with("@@ -0,0 ") {
-            Fate::Added
-        } else if header.contains(" +0,0 @@") {
-            Fate::Deleted
-        } else {
-            Fate::Modified
-        }
     }
 
     /// The directory the file is in, or nothing when it is at the root.

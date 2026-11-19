@@ -1,55 +1,34 @@
 //! What floats over the file shown while code is written in it: the list of completions at the caret and the card saying what is known about a place.
 
-use crate::events::reduce;
+use crate::areas::EditorEvent;
+use crate::events::{Event, send};
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
+use crate::theme::Indicated;
+use crate::theme::ShadowLayers;
 use pm_protocol::CompletionKind;
 use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::marked::{CaretLook, Mark, Paint, marked_line};
 use crate::popups::at_window;
 use crate::theme::{Radius, Role, Tone, sp};
 
-use crate::color_picker::{
-    COLOR_BOX, COLOR_FORMAT_BASE, COLOR_FORMATS_SHOWN, COLOR_HEX, ColorPicking,
-};
+use crate::color_picker::{COLOR_FORMATS_SHOWN, ColorPicking};
 use crate::editor::COMPLETIONS_SHOWN;
 use crate::input::Input;
-use crate::line_edits::{GO_TO_LINE, GO_TO_LINE_BOX, GoingTo};
-use crate::listing::{
-    Items, LISTING_BODY, LISTING_FILTER, LISTING_ROW_BASE, LISTING_SHOWN, LISTING_WIDTH, Listing,
-};
+use crate::line_edits::GoingTo;
+use crate::listing::{Items, LISTING_SHOWN, LISTING_WIDTH, Listing};
 use crate::markdown::Markdown;
-use crate::navigate::{RENAME_BOX, RENAME_SYMBOL, Renaming};
+use crate::navigate::Renaming;
 use crate::parts::{glyph, line};
 use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::viewer::severity_role;
 use pm_editor::{Completions, HoverCard};
-
-/// The list of completions itself, which keeps a press on it from counting as outside.
-pub const COMPLETION_BODY: FocusId = FocusId(7_200_000);
-
-/// The card about a place, which keeps the pointer resting on it from counting as leaving the place.
-pub const HOVER_CARD: FocusId = FocusId(7_199_999);
-
-/// The first of the links of the card about a place; each stretch of prose has a hundred after its own base, the stretches following one another.
-pub const HOVER_LINK_BASE: u64 = 7_190_000;
-
-/// One past the last of the links of the card about a place.
-pub const HOVER_LINK_END: u64 = 7_199_000;
-
-/// How many links one stretch of prose of the card has room for.
-const LINKS_PER_PROSE: u64 = 100;
-
-/// The first of the rows of the list of completions; the rest follow it.
-pub const COMPLETION_ROW_BASE: u64 = 7_200_001;
-
-/// One past the last row of the list of completions.
-pub const COMPLETION_ROW_END: u64 = 7_300_000;
 
 /// How wide the list of completions is, in logical pixels.
 const LIST_WIDTH: f32 = 420.0;
@@ -74,7 +53,7 @@ const CARD_TEXT: f32 = CARD_WIDTH - 26.0;
 
 /// The shadow under what floats over the file: soft, to lift it off the code.
 /// Each layer is `(x, y, blur, spread, alpha)`.
-const SHADOW: [(f32, f32, f32, f32, f32); 1] = [(0.0, 8.0, 28.0, 0.0, 0.3)];
+const SHADOW: [rustle::Shadow; 1] = [crate::theme::box_shadow(0.0, 8.0, 28.0, 0.0, 0.3)];
 
 /// The letter and colour that mark a completion of `kind`.
 fn kind_mark(kind: CompletionKind) -> (&'static str, Role) {
@@ -99,7 +78,7 @@ fn kind_mark(kind: CompletionKind) -> (&'static str, Role) {
 fn floating(
     at: (f32, f32),
     size: Modifier,
-    target: Option<FocusId>,
+    target: Option<Target>,
     padding: Modifier,
     arrangement: Arrangement,
     content: impl FnOnce(),
@@ -114,19 +93,17 @@ fn floating(
 #[track_caller]
 fn framed(
     size: Modifier,
-    target: Option<FocusId>,
+    target: Option<Target>,
     padding: Modifier,
     arrangement: Arrangement,
     content: impl FnOnce(),
 ) {
     let own = size
-        .draw_behind(theme::shadows(&SHADOW, Radius::Md))
-        .background_rounded(theme::color(Role::Surface), Radius::Md.px())
-        .border(1.0, theme::color(Role::Border), Radius::Md.px())
-        .padding(1.0)
+        .shadow_layers(&SHADOW, Radius::Md.px())
+        .panel(Radius::Md)
         .clip();
     let own = match target {
-        Some(id) => own.control(id, reduce(id)),
+        Some(id) => own.control(id, send(Event::pressing(id))),
         None => own,
     };
     column_arranged(own.chain(padding), arrangement, Alignment::Start, content);
@@ -135,18 +112,13 @@ fn framed(
 /// Emits `content` in a box that takes the room left in its row and cuts it off at its edge.
 #[track_caller]
 fn clipped_box(content: impl FnOnce()) {
-    column_arranged(
-        Modifier::new().weight(1.0).clip(),
-        Arrangement::Start,
-        Alignment::Start,
-        content,
-    );
+    kit::column(Modifier::new().weight(1.0).clip(), 0, content);
 }
 
 /// Emits the row of the list of completions at `place`, for `item`, filled while it is `picked`.
 #[track_caller]
 fn completion_row(place: usize, item: &pm_protocol::Completion, picked: bool) {
-    let id = FocusId(COMPLETION_ROW_BASE + place as u64);
+    let id = Target::Editor(EditorEvent::CompletionRow(place));
     let (letter, tone) = kind_mark(item.kind);
     let looks = theme::InteractionTones::new()
         .hover(Role::SurfaceHover)
@@ -156,55 +128,41 @@ fn completion_row(place: usize, item: &pm_protocol::Completion, picked: bool) {
     } else {
         looks
     };
-    row_arranged(
+    kit::row(
         Modifier::new()
             .fill_max_width()
             .height(theme::sp(6))
-            .interaction_focused(crate::focus::is_held(id))
-            .interaction_background((looks).colors())
+            .indicated(looks, theme::Focused::Held(crate::focus::is_held(id)))
             .cursor(CursorIcon::Pointer)
-            .control(id, reduce(id))
+            .control(id, send(Event::pressing(id)))
             .padding_xy(theme::sp(1.5), 0.0),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
+        2,
         || {
             row_arranged(
                 Modifier::new().size(theme::sp(4), theme::sp(4)),
                 Arrangement::Center,
                 Alignment::Center,
                 || {
-                    rustle::basic_text(
+                    kit::text(
                         Modifier::new(),
                         letter,
                         theme::code_style(11, 1.2).color(theme::color(tone)),
-                        rustle::TextOverflow::Ellipsis,
                     )
                 },
             );
             clipped_box(|| {
-                rustle::basic_text(
+                kit::text(
                     Modifier::new(),
                     item.label.clone(),
                     theme::code_style(12, 1.4).color(theme::color(Role::Text)),
-                    rustle::TextOverflow::Ellipsis,
                 )
             });
             if let Some(detail) = &item.detail {
                 let short: String = detail.chars().take(48).collect();
-                column_arranged(
+                kit::column(
                     Modifier::new().width_in(0.0, LIST_WIDTH * 0.45).clip(),
-                    Arrangement::Start,
-                    Alignment::Start,
-                    || {
-                        rustle::basic_text(
-                            Modifier::new(),
-                            short,
-                            theme::mono_style(11, 1.4)
-                                .color(theme::color(Role::Subtle))
-                                .max_lines(1),
-                            rustle::TextOverflow::Ellipsis,
-                        )
-                    },
+                    0,
+                    || kit::text(Modifier::new(), short, kit::code(11, Role::Subtle)),
                 );
             }
         },
@@ -224,7 +182,7 @@ fn completion_list(completion: &Completions) {
     floating(
         completion.at,
         Modifier::new().width(LIST_WIDTH),
-        Some(COMPLETION_BODY),
+        Some(Target::Editor(EditorEvent::CompletionBody)),
         Modifier::new().padding(theme::sp(1)),
         Arrangement::Start,
         || {
@@ -284,14 +242,9 @@ fn completion_docs(completion: &Completions, shown: bool, language: Option<&str>
             for piece in pieces(said, DOCS_LINES) {
                 match piece {
                     Piece::Code(fence, body) => {
-                        column_arranged(
-                            Modifier::new().clip(),
-                            Arrangement::Start,
-                            Alignment::Start,
-                            || {
-                                code_lines(&body, &fence, language, width);
-                            },
-                        );
+                        kit::column(Modifier::new().clip(), 0, || {
+                            code_lines(&body, &fence, language, width);
+                        });
                     }
                     Piece::Prose(text) => Markdown::new(&text, width)
                         .size(12)
@@ -369,19 +322,22 @@ fn pieces(said: &str, most: usize) -> Vec<Piece> {
 }
 
 /// The address of the link of the card that says `said` that `id` names, when it names one.
-pub fn hover_link(said: &str, id: FocusId) -> Option<String> {
-    let offset =
-        id.0.checked_sub(HOVER_LINK_BASE)
-            .filter(|_| id.0 < HOVER_LINK_END)?;
-    let (stretch, link) = (offset / LINKS_PER_PROSE, offset % LINKS_PER_PROSE);
+pub fn hover_link(said: &str, id: Target) -> Option<String> {
+    let Target::Editor(EditorEvent::HoverLink {
+        prose: stretch,
+        link,
+    }) = id
+    else {
+        return None;
+    };
     let prose = pieces(said, CARD_LINES)
         .into_iter()
         .filter_map(|piece| match piece {
             Piece::Prose(text) => Some(text),
             _ => None,
         })
-        .nth(stretch as usize)?;
-    pm_markdown::links(&prose).into_iter().nth(link as usize)
+        .nth(stretch)?;
+    pm_markdown::links(&prose).into_iter().nth(link)
 }
 
 /// Emits the lines of `body`, code written in the language `language` or else `fallback`, each coloured by that language's grammar when it is loaded and wrapped at `width` logical pixels.
@@ -438,7 +394,7 @@ fn hover_card(
     let body = move || {
         framed(
             Modifier::new().width(CARD_WIDTH),
-            Some(HOVER_CARD),
+            Some(Target::Editor(EditorEvent::HoverCard)),
             Modifier::new(),
             Arrangement::Start,
             || {
@@ -452,12 +408,9 @@ fn hover_card(
                         .padding_xy(0.0, theme::sp(2.5)),
                     selection,
                     || {
-                        column_arranged(
-                            Modifier::new().fill_max_width(),
-                            Arrangement::SpacedBy(sp(2)),
-                            Alignment::Start,
-                            || card_parts(card, language),
-                        )
+                        kit::column(Modifier::new().fill_max_width(), 2, || {
+                            card_parts(card, language)
+                        })
                     },
                 );
             },
@@ -488,29 +441,24 @@ fn card_parts(card: &HoverCard, language: Option<&str>) {
             .unwrap_or_default();
         let mut lines = diagnostic.message.lines();
         let first = lines.next().unwrap_or_default();
-        column_arranged(
-            Modifier::new(),
-            Arrangement::Start,
-            Alignment::Start,
-            || {
+        kit::column(Modifier::new(), 0, || {
+            rustle::text_styled(
+                Modifier::new(),
+                format!("{source}{first}"),
+                theme::text_style(12, 1.5)
+                    .color(theme::color(severity_role(diagnostic.severity)))
+                    .max_lines(1),
+            );
+            for rest in lines.take(4) {
                 rustle::text_styled(
                     Modifier::new(),
-                    format!("{source}{first}"),
+                    rest,
                     theme::text_style(12, 1.5)
-                        .color(theme::color(severity_role(diagnostic.severity)))
+                        .color(theme::color(Role::Muted))
                         .max_lines(1),
                 );
-                for rest in lines.take(4) {
-                    rustle::text_styled(
-                        Modifier::new(),
-                        rest,
-                        theme::text_style(12, 1.5)
-                            .color(theme::color(Role::Muted))
-                            .max_lines(1),
-                    );
-                }
-            },
-        );
+            }
+        });
     }
     if let Some(said) = &card.text {
         if !card.diagnostics.is_empty() {
@@ -520,21 +468,19 @@ fn card_parts(card: &HoverCard, language: Option<&str>) {
         for piece in pieces(said, CARD_LINES) {
             match piece {
                 Piece::Code(fence, body) => {
-                    column_arranged(
-                        Modifier::new().clip(),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            code_lines(&body, &fence, language, CARD_TEXT);
-                        },
-                    );
+                    kit::column(Modifier::new().clip(), 0, || {
+                        code_lines(&body, &fence, language, CARD_TEXT);
+                    });
                 }
                 Piece::Prose(text) => {
                     prose += 1;
                     Markdown::new(&text, CARD_TEXT)
                         .size(12)
                         .tone(Role::Muted)
-                        .links(HOVER_LINK_BASE + (prose - 1) * LINKS_PER_PROSE)
+                        .links(Target::Editor(EditorEvent::HoverLink {
+                            prose: prose - 1,
+                            link: 0,
+                        }))
                         .build();
                 }
                 Piece::Rule => rule(),
@@ -630,29 +576,19 @@ fn signature_card(signature: &pm_protocol::Signature, at: (f32, f32)) {
             .padding_xy(0.0, theme::sp(1)),
         Arrangement::SpacedBy(sp(0.5)),
         || {
-            column_arranged(
-                Modifier::new().clip(),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    marked_line(
-                        Modifier::new(),
-                        &words,
-                        theme::code_style(12, 1.5).color(theme::color(Role::Text)),
-                        marks,
-                        CaretLook::default(),
-                    );
-                },
-            );
-            if let Some(said) = first_line {
-                column_arranged(
-                    Modifier::new().clip(),
-                    Arrangement::Start,
-                    Alignment::Start,
-                    || {
-                        line(said, 11, 1.4, Role::Muted);
-                    },
+            kit::column(Modifier::new().clip(), 0, || {
+                marked_line(
+                    Modifier::new(),
+                    &words,
+                    theme::code_style(12, 1.5).color(theme::color(Role::Text)),
+                    marks,
+                    CaretLook::default(),
                 );
+            });
+            if let Some(said) = first_line {
+                kit::column(Modifier::new().clip(), 0, || {
+                    line(said, 11, 1.4, Role::Muted);
+                });
             }
         },
     );
@@ -664,11 +600,11 @@ fn go_to_line_box(going: &GoingTo, lines: usize) {
     floating(
         going.at,
         Modifier::new().width(260.0),
-        Some(GO_TO_LINE_BOX),
+        Some(Target::Editor(EditorEvent::GoToLineBox)),
         Modifier::new().padding(theme::sp(1.5)),
         Arrangement::SpacedBy(sp(1)),
         || {
-            Input::new(&going.field, GO_TO_LINE)
+            Input::new(&going.field, Target::Editor(EditorEvent::GoToLine))
                 .modifier(Modifier::new().fill_max_width())
                 .size(Size::Sm)
                 .placeholder("Line number")
@@ -689,24 +625,16 @@ fn cell(content: impl Into<String>, pixels: u32, tone: Role, code: bool) {
     let kind = theme::text_style(pixels, 1.4).color(theme::color(tone));
     let kind = if code { theme::in_mono(kind) } else { kind };
     let content = content.into();
-    clipped_box(move || {
-        rustle::basic_text(
-            Modifier::new(),
-            content,
-            kind,
-            rustle::TextOverflow::Ellipsis,
-        )
-    });
+    clipped_box(move || kit::text(Modifier::new(), content, kind));
 }
 
 /// Emits a line of the list over the file that keeps its own width, `content` in `pixels` and `tone`.
 #[track_caller]
 fn tag(content: impl Into<String>, pixels: u32, tone: Role) {
     let content = content.into();
-    column_arranged(
+    kit::column(
         Modifier::new().width_in(0.0, LISTING_WIDTH * 0.5).clip(),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         move || line(content, pixels, 1.4, tone),
     );
 }
@@ -796,14 +724,9 @@ pub(crate) fn listing_cells(items: &Items, index: usize) {
                 return;
             };
             rustle::spacer(Modifier::new().width(item.depth.min(8) as f32 * 14.0));
-            column_arranged(
-                Modifier::new().width(52.0).clip(),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    line(item.context.clone(), 11, 1.4, Role::SyntaxKeyword);
-                },
-            );
+            kit::column(Modifier::new().width(52.0).clip(), 0, || {
+                line(item.context.clone(), 11, 1.4, Role::SyntaxKeyword);
+            });
             cell(item.name.clone(), 12, Role::Text, true);
         }
         Items::Places { locations, .. } | Items::Search { locations, .. } => {
@@ -917,20 +840,19 @@ fn listing_panel(listing: &Listing) {
     floating(
         listing.at,
         Modifier::new().width(LISTING_WIDTH),
-        Some(LISTING_BODY),
+        Some(Target::Editor(EditorEvent::ListingBody)),
         Modifier::new().padding(theme::sp(1)),
         Arrangement::Start,
         || {
             if let Some((filter, hint)) = filter {
-                column_arranged(
+                kit::column(
                     Modifier::new()
                         .fill_max_width()
                         .padding_xy(theme::sp(0.5), 0.0)
                         .padding_xy(0.0, theme::sp(0.5)),
-                    Arrangement::Start,
-                    Alignment::Start,
+                    0,
                     || {
-                        Input::new(filter, LISTING_FILTER)
+                        Input::new(filter, Target::Editor(EditorEvent::ListingFilter))
                             .modifier(Modifier::new().fill_max_width())
                             .size(Size::Sm)
                             .placeholder(hint)
@@ -938,13 +860,12 @@ fn listing_panel(listing: &Listing) {
                     },
                 );
             }
-            row_arranged(
+            kit::row(
                 Modifier::new()
                     .fill_max_width()
                     .height(theme::sp(7))
                     .padding_xy(theme::sp(1.5), 0.0),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Center,
+                2,
                 || {
                     cell(listing.items.title(), 12, Role::Text, false);
                     if count > 0 {
@@ -953,12 +874,11 @@ fn listing_panel(listing: &Listing) {
                 },
             );
             if let Some(said) = status {
-                column_arranged(
+                kit::column(
                     Modifier::new()
                         .padding_xy(theme::sp(1.5), 0.0)
                         .padding_xy(0.0, theme::sp(1)),
-                    Arrangement::Start,
-                    Alignment::Start,
+                    0,
                     || {
                         line(said, 12, 1.4, Role::Muted);
                     },
@@ -966,7 +886,7 @@ fn listing_panel(listing: &Listing) {
             }
             let end = count.min(first + LISTING_SHOWN);
             for (place, index) in shown.iter().copied().enumerate().take(end).skip(first) {
-                let id = FocusId(LISTING_ROW_BASE + place as u64);
+                let id = Target::Editor(EditorEvent::ListingRow(place));
                 let looks = theme::InteractionTones::new()
                     .hover(Role::SurfaceHover)
                     .radius(Radius::Sm);
@@ -975,20 +895,18 @@ fn listing_panel(listing: &Listing) {
                 } else {
                     looks
                 };
-                row_arranged(
+                kit::row(
                     Modifier::new()
                         .fill_max_width()
                         .height(theme::sp(6.5))
-                        .interaction_focused(crate::focus::is_held(id))
-                        .interaction_background((looks).colors())
+                        .indicated(looks, theme::Focused::Held(crate::focus::is_held(id)))
                         .cursor(CursorIcon::Pointer)
                         .control(id, {
                             let operations = crate::events::operations();
                             move || operations.take_listing(Some(place))
                         })
                         .padding_xy(theme::sp(1.5), 0.0),
-                    Arrangement::SpacedBy(sp(3)),
-                    Alignment::Center,
+                    3,
                     || listing_cells(&listing.items, index),
                 );
             }
@@ -1007,11 +925,11 @@ fn rename_box(renaming: &Renaming) {
     floating(
         renaming.at,
         Modifier::new().width(320.0),
-        Some(RENAME_BOX),
+        Some(Target::Editor(EditorEvent::RenameBox)),
         Modifier::new().padding(theme::sp(1.5)),
         Arrangement::SpacedBy(sp(1)),
         || {
-            Input::new(&renaming.field, RENAME_SYMBOL)
+            Input::new(&renaming.field, Target::Editor(EditorEvent::RenameSymbol))
                 .modifier(Modifier::new().fill_max_width())
                 .size(Size::Sm)
                 .invalid(renaming.problem.is_some())
@@ -1046,74 +964,56 @@ fn color_box(picking: &ColorPicking) {
     floating(
         picking.at,
         Modifier::new().width(260.0),
-        Some(COLOR_BOX),
+        Some(Target::Editor(EditorEvent::ColorBox)),
         Modifier::new().padding(theme::sp(1.5)),
         Arrangement::SpacedBy(sp(1)),
         || {
-            row_arranged(
-                Modifier::new().fill_max_width(),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Center,
-                || {
-                    rustle::spacer(
-                        Modifier::new()
-                            .size(theme::sp(7), theme::sp(7))
-                            .background_rounded(
-                                theme::color(
-                                    Tone::rgb(red, green, blue).alpha(f32::from(alpha) / 255.0),
-                                ),
-                                Radius::Sm.px(),
-                            )
-                            .border(1.0, theme::color(Role::Border), Radius::Sm.px())
-                            .padding(1.0),
-                    );
-                    Input::new(&picking.hex, COLOR_HEX)
-                        .size(Size::Sm)
-                        .invalid(crate::color_picker::color_of(&picking.hex.text()).is_none())
-                        .modifier(Modifier::new().weight(1.0))
-                        .build();
-                },
-            );
+            kit::row(Modifier::new().fill_max_width(), 2, || {
+                rustle::spacer(
+                    Modifier::new()
+                        .size(theme::sp(7), theme::sp(7))
+                        .background_rounded(
+                            theme::color(
+                                Tone::rgb(red, green, blue).alpha(f32::from(alpha) / 255.0),
+                            ),
+                            Radius::Sm.px(),
+                        )
+                        .outlined(Radius::Sm),
+                );
+                Input::new(&picking.hex, Target::Editor(EditorEvent::ColorHex))
+                    .size(Size::Sm)
+                    .invalid(crate::color_picker::color_of(&picking.hex.text()).is_none())
+                    .modifier(Modifier::new().weight(1.0))
+                    .build();
+            });
             if let Some(said) = status {
-                column_arranged(
+                kit::column(
                     Modifier::new()
                         .padding_xy(theme::sp(1.5), 0.0)
                         .padding_xy(0.0, theme::sp(1)),
-                    Arrangement::Start,
-                    Alignment::Start,
+                    0,
                     || {
                         line(said, 11, 1.4, Role::Subtle);
                     },
                 );
             }
             for (place, format) in picking.formats.iter().take(COLOR_FORMATS_SHOWN).enumerate() {
-                let id = FocusId(COLOR_FORMAT_BASE + place as u64);
-                row_arranged(
+                let id = Target::Editor(EditorEvent::ColorFormat(place));
+                kit::row(
                     Modifier::new()
                         .fill_max_width()
                         .height(theme::sp(6.5))
-                        .interaction_focused(crate::focus::is_held(id))
-                        .interaction_background(
-                            (theme::InteractionTones::new()
+                        .indicated(
+                            theme::InteractionTones::new()
                                 .hover(Role::SurfaceHover)
-                                .radius(Radius::Sm))
-                            .colors(),
+                                .radius(Radius::Sm),
+                            theme::Focused::Held(crate::focus::is_held(id)),
                         )
                         .cursor(CursorIcon::Pointer)
-                        .control(id, reduce(id))
+                        .control(id, send(Event::pressing(id)))
                         .padding_xy(theme::sp(1.5), 0.0),
-                    Arrangement::Start,
-                    Alignment::Center,
-                    || {
-                        rustle::basic_text(
-                            Modifier::new(),
-                            &format.label,
-                            theme::mono_style(13, 1.4)
-                                .color(theme::color(Role::Text))
-                                .max_lines(1),
-                            rustle::TextOverflow::Ellipsis,
-                        )
-                    },
+                    0,
+                    || kit::text(Modifier::new(), &format.label, kit::code(13, Role::Text)),
                 );
             }
             line(

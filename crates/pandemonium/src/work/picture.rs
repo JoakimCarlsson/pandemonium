@@ -1,58 +1,17 @@
-//! Pictures of open files turned into pixels away from the window: picture files decoded from their bytes and vector pictures drawn from their text.
+//! Pictures of open files turned into pixels away from the window: picture files decoded from their bytes and vector pictures drawn from their text with the interface's fonts.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, LazyLock};
 
 use pm_components::figures::Drawing;
 use pm_components::preview::VECTOR_DENSITY;
 use pm_components::theme::Role;
-use rustle::ImageData;
+use rustle::{ImageData, SvgPainter};
 
 /// The longest side a picture is drawn or kept at, in pixels, so its texture fits any GPU.
 const LONGEST_SIDE: u32 = 4096;
 
 /// The shortest a vector picture's longest side is drawn at, in pixels, so a small icon is shown large enough to see.
 const SHORTEST_VECTOR_SIDE: f32 = 512.0;
-
-/// The families tried, first found first, for text a picture sets in a sans-serif face.
-const SANS_SERIF: [&str; 7] = [
-    "Inter",
-    "Noto Sans",
-    "DejaVu Sans",
-    "Liberation Sans",
-    "Cantarell",
-    "Helvetica",
-    "Arial",
-];
-
-/// The families tried, first found first, for text a picture sets in a monospaced face.
-const MONOSPACE: [&str; 5] = [
-    "JetBrains Mono",
-    "Noto Sans Mono",
-    "DejaVu Sans Mono",
-    "Liberation Mono",
-    "Menlo",
-];
-
-/// The fonts of this machine, loaded once, so the text in a picture is drawn.
-static FONTS: LazyLock<Arc<resvg::usvg::fontdb::Database>> = LazyLock::new(|| {
-    let mut fonts = resvg::usvg::fontdb::Database::new();
-    fonts.load_system_fonts();
-    let installed = |wanted: &str| {
-        fonts
-            .faces()
-            .any(|face| face.families.iter().any(|(name, _)| name == wanted))
-    };
-    let sans = SANS_SERIF.into_iter().find(|family| installed(family));
-    let mono = MONOSPACE.into_iter().find(|family| installed(family));
-    if let Some(family) = sans {
-        fonts.set_sans_serif_family(family);
-    }
-    if let Some(family) = mono {
-        fonts.set_monospace_family(family);
-    }
-    Arc::new(fonts)
-});
 
 /// The colours diagrams and formulas are drawn in, taken from the theme the window is drawn in.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -132,36 +91,54 @@ pub(crate) fn draw(text: &str) -> Result<ImageData, String> {
 }
 
 /// The vector picture `text` holds, drawn at the density of a drawn vector picture and its longest side no shorter than `shortest` pixels, or why it could not be drawn.
+///
+/// # Errors
+///
+/// A message saying the text is not a vector picture, or that it has no size to draw.
 fn draw_sized(text: &str, shortest: f32) -> Result<ImageData, String> {
-    let options = resvg::usvg::Options {
-        fontdb: Arc::clone(&FONTS),
-        ..resvg::usvg::Options::default()
-    };
-    let tree = resvg::usvg::Tree::from_str(text, &options)
+    let painter = SvgPainter::from_str(text)
         .map_err(|error| format!("This picture could not be drawn: {error}"))?;
-    let size = tree.size();
-    let longest = size.width().max(size.height()).max(1.0);
+    let (natural_width, natural_height) = painter.intrinsic_size();
+    let longest = natural_width.max(natural_height).max(1.0);
     let side = (longest * VECTOR_DENSITY).clamp(shortest, LONGEST_SIDE as f32);
     let scale = side / longest;
-    let width = (size.width() * scale).round().max(1.0) as u32;
-    let height = (size.height() * scale).round().max(1.0) as u32;
-    let mut canvas = resvg::tiny_skia::Pixmap::new(width, height)
-        .ok_or_else(|| "This picture has no size to draw.".to_owned())?;
-    resvg::render(
-        &tree,
-        resvg::tiny_skia::Transform::from_scale(scale, scale),
-        &mut canvas.as_mut(),
-    );
-    let pixels = canvas
-        .pixels()
-        .iter()
-        .flat_map(|pixel| {
-            let color = pixel.demultiply();
-            [color.red(), color.green(), color.blue(), color.alpha()]
+    let width = (natural_width * scale).round().max(1.0) as u32;
+    let height = (natural_height * scale).round().max(1.0) as u32;
+    let framed = SvgPainter::from_str(&framed(
+        text,
+        width,
+        height,
+        scale,
+        (natural_width, natural_height),
+    ))
+    .map_err(|error| format!("This picture could not be drawn: {error}"))?;
+    framed
+        .rasterize(width, height)
+        .ok_or_else(|| "This picture has no size to draw.".to_owned())
+}
+
+/// A vector picture `width` by `height` pixels at `scale` pixels a unit that holds the
+/// picture `text`, `natural` units in size, at its top left: drawn at those pixels, the
+/// picture is scaled alike across and down, and what does not fill a whole pixel is cut off
+/// at the right and bottom edges or left empty there.
+fn framed(text: &str, width: u32, height: u32, scale: f32, natural: (f32, f32)) -> String {
+    let encoded: String = text
+        .bytes()
+        .map(|byte| {
+            if byte.is_ascii_alphanumeric() {
+                char::from(byte).to_string()
+            } else {
+                format!("%{byte:02X}")
+            }
         })
         .collect();
-    ImageData::from_rgba(width, height, pixels)
-        .ok_or_else(|| "This picture has no pixels to show.".to_owned())
+    format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="{}" height="{}"><image width="{}" height="{}" preserveAspectRatio="none" xlink:href="data:image/svg+xml,{encoded}"/></svg>"#,
+        width as f32 / scale,
+        height as f32 / scale,
+        natural.0,
+        natural.1,
+    )
 }
 
 /// Whether `bytes` hold a vector picture's text rather than the pixels of a picture.
@@ -221,4 +198,36 @@ pub(crate) fn formula(source: &str, palette: &Palette) -> Result<Drawing, String
         picture,
         density: VECTOR_DENSITY,
     })
+}
+
+#[cfg(test)]
+/// Checks that vector pictures are drawn with their text.
+mod tests {
+    use super::figure;
+
+    /// A badge with the words `ci` and `passing` on it.
+    const LABELLED: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="88" height="20"><rect width="88" height="20" rx="3" fill="#555"/><rect x="34" width="54" height="20" rx="3" fill="#4c1"/><text x="6" y="14" fill="#fff" font-family="sans-serif" font-size="11">ci</text><text x="40" y="14" fill="#fff" font-family="sans-serif" font-size="11">passing</text></svg>"##;
+
+    /// The same badge without its words.
+    const BLANK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="88" height="20"><rect width="88" height="20" rx="3" fill="#555"/><rect x="34" width="54" height="20" rx="3" fill="#4c1"/></svg>"##;
+
+    /// The text of a vector picture is set with the interface's fonts once the interface has them.
+    #[test]
+    fn vector_picture_text_is_drawn() {
+        let _interface = rustle::Embedded::without_renderer(|| {}, || {});
+        let labelled = figure(LABELLED.as_bytes(), false).expect("the badge is drawn");
+        let blank = figure(BLANK.as_bytes(), false).expect("the blank badge is drawn");
+        assert_eq!(
+            (labelled.picture.width(), labelled.picture.height()),
+            (blank.picture.width(), blank.picture.height())
+        );
+        let lettered = labelled
+            .picture
+            .pixels()
+            .chunks(4)
+            .zip(blank.picture.pixels().chunks(4))
+            .filter(|(with, without)| with != without)
+            .count();
+        assert!(lettered > 20, "only {lettered} pixels show the words");
+    }
 }

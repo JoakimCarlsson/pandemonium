@@ -58,23 +58,15 @@ impl Timings {
         self.enabled.then(Instant::now)
     }
 
-    /// Adds one successful frame and periodically reports percentile timings.
-    pub(super) fn frame(
-        &mut self,
-        started: Option<Instant>,
-        painted: Option<Instant>,
-        presented: bool,
-    ) {
-        let (Some(started), Some(painted)) = (started, painted) else {
-            return;
-        };
-        if !presented {
+    /// Adds one frame rustle drew, which took `timing` to build and to submit, and
+    /// periodically reports percentile timings.
+    pub(super) fn frame(&mut self, timing: rustle::FrameTiming) {
+        if !self.enabled {
             return;
         }
         let now = Instant::now();
-        self.scene
-            .push(milliseconds(painted.duration_since(started)));
-        self.render.push(milliseconds(now.duration_since(painted)));
+        self.scene.push(milliseconds(timing.scene));
+        self.render.push(milliseconds(timing.render));
         if let Some(pointer) = self.pointer.take() {
             self.response
                 .push(milliseconds(now.duration_since(pointer)));

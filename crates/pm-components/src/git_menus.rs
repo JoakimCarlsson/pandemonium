@@ -1,19 +1,21 @@
 //! The menus of the source control panel: on changed files, under the commit button, over the panel's own actions, on the graph's references and on a commit.
 
-use crate::focus::FocusId;
+use crate::areas::SidebarEvent;
+use crate::areas::TreeEvent;
+
+use crate::areas::GitEvent;
+
+use crate::events::Event;
+use crate::target::Target;
 
 use crate::Menu;
 use crate::branch_tasks::BranchTask;
-use crate::git_controls::BRANCH_BUTTON;
 use crate::git_prompts::{Prompt, StashAction};
-use crate::state::{ADD_PROJECT, Outgoing, WorkspaceState};
+use crate::state::{Outgoing, WorkspaceState};
 use crate::tree_actions::TreeTarget;
 
 /// How wide the menus of source control are, in style units, so that the longest row, such as the one that discards changes to many files, keeps its padding.
 const MENU_WIDTH: f32 = 68.0;
-
-/// The first of the rows of the menu that is open; the rest follow it.
-pub const MENU_ROW_BASE: u64 = 9000;
 
 /// How tall the menu on changed files is, in logical pixels, to keep it inside the window.
 pub const CHANGE_MENU_HEIGHT: f32 = 11.0 * 32.0 + 4.0 * 9.0 + 10.0;
@@ -177,8 +179,9 @@ fn row_if(label: impl Into<String>, command: Command, enabled: bool) -> Entry {
 
 impl WorkspaceState {
     /// Whether `id` names a row of the menu that is open.
-    pub fn is_menu_row(&self, id: FocusId) -> bool {
-        (self.git.menu.is_some() && id.0.checked_sub(MENU_ROW_BASE).is_some_and(|row| row < 40))
+    pub fn is_menu_row(&self, id: Target) -> bool {
+        (self.git.menu.is_some()
+            && matches!(id, Target::Git(GitEvent::GitMenuRow(row)) if row < 40))
             || self.settings_menu_row(id)
             || self.is_tab_menu_row(id)
             || self.is_terminal_menu_row(id)
@@ -512,7 +515,7 @@ impl WorkspaceState {
                     menu = menu.item(
                         &label,
                         None,
-                        FocusId(MENU_ROW_BASE + position),
+                        Target::Git(GitEvent::GitMenuRow(position as usize)),
                         command.is_none(),
                     );
                     position += 1;
@@ -694,10 +697,12 @@ impl WorkspaceState {
             Command::ForcePush => self.remote("force_push", "Force pushing…"),
             Command::Fetch => self.remote("fetch", "Fetching…"),
             Command::Clone => {
-                *self = std::mem::replace(self, WorkspaceState::new(&[])).after(ADD_PROJECT);
+                *self = std::mem::replace(self, WorkspaceState::new(&[]))
+                    .handle(Event::Sidebar(SidebarEvent::AddProject));
             }
             Command::Checkout => {
-                *self = std::mem::replace(self, WorkspaceState::new(&[])).after(BRANCH_BUTTON);
+                *self = std::mem::replace(self, WorkspaceState::new(&[]))
+                    .handle(Event::Git(GitEvent::BranchButton));
             }
             Command::Refresh => {
                 if let Some(session) = self.review_index() {
@@ -737,10 +742,10 @@ impl WorkspaceState {
             Command::TreeRename => self.tree_rename(),
             Command::TreeDelete => self.tree_delete(),
             Command::TreeCollapse => {
-                self.press_tree(crate::tree_actions::TREE_COLLAPSE);
+                self.press_tree(Target::Tree(TreeEvent::TreeCollapse));
             }
             Command::TreeRefresh => {
-                self.press_tree(crate::tree_actions::TREE_REFRESH);
+                self.press_tree(Target::Tree(TreeEvent::TreeRefresh));
             }
             Command::CopyHash => {
                 if let MenuKind::History(row) = kind

@@ -1,6 +1,8 @@
 //! Long inputs keep keyboard navigation and composition, and show at most their
 //! most lines however long their text, at any font scale.
 
+use crate::areas::ChatEvent;
+use crate::target::Target;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -20,7 +22,7 @@ struct Shown {
 
 /// Lays out a multiline input editing `field` in a small window with keyboard focus.
 fn show(field: &TextFieldState) -> Shown {
-    let id = FocusId(999);
+    let id = Target::Chat(ChatEvent::Choice(999));
     let heights: Rc<RefCell<Vec<f32>>> = Rc::default();
     let (field, told) = (field.clone(), Rc::clone(&heights));
     let mut ui = Embedded::without_renderer(

@@ -1,21 +1,21 @@
 //! The debug tab of the dock: the controls over a program being debugged, its stack, its variables and watches, and its console.
 
-use crate::events::reduce;
+use crate::areas::DebugEvent;
+use crate::button::Variant;
+use crate::events::{Event, send};
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
+use crate::theme::Indicated;
 use crate::theme::sp;
 use pm_protocol::{DebugCategory, DebugView, Standing};
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, column_arranged};
 use rustle::{BoxAlignment, CursorIcon, Modifier};
 use rustle::{Icon, phosphor};
 
 use crate::Button;
-use crate::debug::{
-    DEBUG_CONSOLE_FIELD, DEBUG_CONTINUE, DEBUG_FRAME_BASE, DEBUG_PAUSE, DEBUG_ROWS, DEBUG_START,
-    DEBUG_STEP_IN, DEBUG_STEP_OUT, DEBUG_STEP_OVER, DEBUG_STOP, DEBUG_VARIABLE_BASE,
-    DEBUG_WATCH_FIELD, DEBUG_WATCH_REMOVE_BASE, Run, variable_rows,
-};
+use crate::debug::{DEBUG_ROWS, Run, variable_rows};
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::icons::icon;
 use crate::input::Input;
 use crate::size::Size;
@@ -36,18 +36,10 @@ fn standing_words(view: &DebugView) -> String {
     }
 }
 
-/// The type of a line of the tab: `pixels` tall with a line height of 1.4 times that, in `tone`, cut short at the edge of its box.
-fn small(pixels: u32, tone: impl Into<Tone>) -> rustle::TextStyle {
-    theme::text_style(pixels, 1.4)
-        .color(theme::color(tone))
-        .max_lines(1)
-}
-
 /// Emits one icon button of the controls: `icon` answering to `id`, explained by `tip`, pressable while `enabled`.
 #[track_caller]
-fn control(icon: Icon, id: FocusId, tip: &'static str, enabled: bool) {
+fn control(icon: Icon, id: Target, tip: &'static str, enabled: bool) {
     Button::icon(icon, id)
-        .size(Size::Sm)
         .disabled(!enabled)
         .tooltip(tip)
         .build();
@@ -59,55 +51,62 @@ fn controls(run: &Run) {
     let view = &run.view;
     let paused = view.standing == Standing::Stopped;
     let live = view.standing != Standing::Ended;
-    row_arranged(
+    kit::row(
         Modifier::new()
             .fill_max_width()
             .height(theme::sp(9))
-            .draw_behind(theme::edge(
-                theme::Side::Bottom,
-                1.0,
-                theme::color(Role::Border),
-            ))
-            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .ruled(theme::Side::Bottom)
             .padding_xy(theme::sp(3), 0.0),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Center,
+        1,
         || {
             if paused || !live {
-                control(phosphor::SKIP_FORWARD, DEBUG_CONTINUE, "Continue", paused);
+                control(
+                    phosphor::SKIP_FORWARD,
+                    Target::Debug(DebugEvent::DebugContinue),
+                    "Continue",
+                    paused,
+                );
             } else {
                 control(
                     phosphor::PAUSE,
-                    DEBUG_PAUSE,
+                    Target::Debug(DebugEvent::DebugPause),
                     "Pause",
                     view.standing == Standing::Running,
                 );
             }
             control(
                 phosphor::ARROW_ARC_RIGHT,
-                DEBUG_STEP_OVER,
+                Target::Debug(DebugEvent::DebugStepOver),
                 "Step over",
                 paused,
             );
             control(
                 phosphor::ARROW_LINE_DOWN,
-                DEBUG_STEP_IN,
+                Target::Debug(DebugEvent::DebugStepIn),
                 "Step into",
                 paused,
             );
-            control(phosphor::ARROW_LINE_UP, DEBUG_STEP_OUT, "Step out", paused);
-            control(phosphor::STOP, DEBUG_STOP, "Stop", live);
-            rustle::basic_text(
+            control(
+                phosphor::ARROW_LINE_UP,
+                Target::Debug(DebugEvent::DebugStepOut),
+                "Step out",
+                paused,
+            );
+            control(
+                phosphor::STOP,
+                Target::Debug(DebugEvent::DebugStop),
+                "Stop",
+                live,
+            );
+            kit::text(
                 Modifier::new().padding_each(theme::sp(2), 0.0, 0.0, 0.0),
                 view.label.clone(),
-                small(12, Role::Muted),
-                rustle::TextOverflow::Ellipsis,
+                kit::line(12, Role::Muted),
             );
-            rustle::basic_text(
+            kit::text(
                 Modifier::new().padding_each(theme::sp(2), 0.0, 0.0, 0.0),
                 standing_words(view),
-                small(12, Role::Subtle),
-                rustle::TextOverflow::Ellipsis,
+                kit::line(12, Role::Subtle),
             );
         },
     );
@@ -120,54 +119,37 @@ fn section(title: &str, width: Option<f32>, body: impl FnOnce()) {
         Some(width) => Modifier::new().fill_max_height().width(width),
         None => Modifier::new().fill_max_height().weight(1.0),
     };
-    column_arranged(
-        size.draw_behind(theme::edge(
-            theme::Side::Left,
-            1.0,
-            theme::color(Role::Border),
-        ))
-        .padding_each(1.0, 0.0, 0.0, 0.0),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            row_arranged(
-                Modifier::new()
-                    .height(theme::sp(7))
-                    .padding_xy(theme::sp(3), 0.0),
-                Arrangement::Start,
-                Alignment::Center,
-                || {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        title,
-                        small(11, Role::Subtle),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                },
-            );
-            body();
-        },
-    );
+    kit::column(size.ruled(theme::Side::Left), 0, || {
+        kit::row(
+            Modifier::new()
+                .height(theme::sp(7))
+                .padding_xy(theme::sp(3), 0.0),
+            0,
+            || {
+                kit::text(Modifier::new(), title, kit::line(11, Role::Subtle));
+            },
+        );
+        body();
+    });
 }
 
 /// Emits a box scrolled as `scrolled` says, holding the rows `content` emits.
 #[track_caller]
 fn rows_box(scrolled: &rustle::ScrollState, content: impl FnOnce()) {
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_width()
             .weight(1.0)
             .vertical_scroll(scrolled)
             .fill_max_width(),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         content,
     );
 }
 
 /// Emits one row of a list holding what `content` emits, pressed as `id` when it is given one, marked while `selected`.
 #[track_caller]
-fn list_row(id: Option<FocusId>, selected: bool, content: impl FnOnce()) {
+fn list_row(id: Option<Target>, selected: bool, content: impl FnOnce()) {
     let mut own = Modifier::new().fill_max_width().height(theme::sp(6));
     own = match id {
         Some(id) => {
@@ -177,20 +159,15 @@ fn list_row(id: Option<FocusId>, selected: bool, content: impl FnOnce()) {
             } else {
                 looks
             };
-            own.interaction_background(looks.colors())
+            own.indicated(looks, theme::Focused::Rustle)
                 .clip()
                 .cursor(CursorIcon::Pointer)
-                .control(id, reduce(id))
+                .control(id, send(Event::pressing(id)))
         }
         None if selected => own.background(theme::color(Role::SurfaceSelected)).clip(),
         None => own.clip(),
     };
-    row_arranged(
-        own.padding_xy(theme::sp(3), 0.0),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
-        content,
-    );
+    kit::row(own.padding_xy(theme::sp(3), 0.0), 2, content);
 }
 
 /// Emits the stack of the paused thread, the frame being looked at marked.
@@ -206,16 +183,11 @@ fn stack(state: &WorkspaceState, run: &Run) {
                     "Not paused"
                 };
                 list_row(None, false, || {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        said,
-                        small(12, Role::Subtle),
-                        rustle::TextOverflow::Ellipsis,
-                    )
+                    kit::text(Modifier::new(), said, kit::line(12, Role::Subtle))
                 });
                 return;
             }
-            for (index, frame) in view.frames.iter().take(DEBUG_ROWS as usize).enumerate() {
+            for (index, frame) in view.frames.iter().take(DEBUG_ROWS).enumerate() {
                 let place = frame
                     .path
                     .as_ref()
@@ -224,24 +196,18 @@ fn stack(state: &WorkspaceState, run: &Run) {
                     .unwrap_or_default();
                 rustle::key(index, || {
                     list_row(
-                        Some(FocusId(DEBUG_FRAME_BASE + index as u64)),
+                        Some(Target::Debug(DebugEvent::DebugFrame(index))),
                         view.frame == Some(frame.id),
                         || {
-                            rustle::basic_text(
+                            kit::text(
                                 Modifier::new(),
                                 frame.name.clone(),
-                                small(12, Role::Text)
+                                kit::line(12, Role::Text)
                                     .font_family(theme::mono())
                                     .ligatures(theme::code_ligatures())
                                     .max_lines(1),
-                                rustle::TextOverflow::Ellipsis,
                             );
-                            rustle::basic_text(
-                                Modifier::new(),
-                                place,
-                                small(12, Role::Subtle),
-                                rustle::TextOverflow::Ellipsis,
-                            );
+                            kit::text(Modifier::new(), place, kit::line(12, Role::Subtle));
                         },
                     );
                 });
@@ -253,7 +219,7 @@ fn stack(state: &WorkspaceState, run: &Run) {
 /// Emits one variable or scope, the row at `index`, indented by its depth, with a chevron when it has members.
 #[track_caller]
 fn variable_row(index: usize, entry: &crate::debug::VariableRow) {
-    let id = (entry.reference != 0).then_some(FocusId(DEBUG_VARIABLE_BASE + index as u64));
+    let id = (entry.reference != 0).then_some(Target::Debug(DebugEvent::DebugVariable(index)));
     let entry = entry.clone();
     list_row(id, false, move || {
         rustle::with_constraints(Modifier::new().fill_max_width(), move |room| {
@@ -275,14 +241,14 @@ fn variable_parts(entry: &crate::debug::VariableRow, room: f32) {
     } else {
         Role::Text.into()
     };
-    let name_kind = small(12, tone)
+    let name_kind = kit::line(12, tone)
         .font_family(theme::mono())
         .ligatures(theme::code_ligatures());
-    let equals_kind = small(12, Role::Subtle);
-    let value_kind = small(12, Role::SyntaxString)
+    let equals_kind = kit::line(12, Role::Subtle);
+    let value_kind = kit::line(12, Role::SyntaxString)
         .font_family(theme::mono())
         .ligatures(theme::code_ligatures());
-    let type_kind = small(11, Role::Subtle);
+    let type_kind = kit::line(11, Role::Subtle);
     let indent = entry.depth as f32 * 12.0;
     let typed = entry.kind.as_deref().map_or(0.0, |kind| {
         rustle::layout_text(kind, &type_kind, None)
@@ -317,73 +283,51 @@ fn variable_parts(entry: &crate::debug::VariableRow, room: f32) {
     } else {
         1.0
     };
-    row_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
-        || {
-            rustle::spacer(Modifier::new().width(indent));
-            if entry.reference != 0 {
-                rustle::stack_aligned(
-                    Modifier::new().size(VARIABLE_CHEVRON * kept, VARIABLE_CHEVRON),
-                    BoxAlignment::Center,
-                    || {
-                        icon(
-                            if entry.unfolded {
-                                phosphor::CARET_DOWN
-                            } else {
-                                phosphor::CARET_RIGHT
-                            },
-                            3.0 * kept,
-                            Role::Muted,
-                        );
-                    },
-                );
-            } else {
-                rustle::spacer(Modifier::new().width(VARIABLE_CHEVRON));
-            }
-            rustle::basic_text(
-                Modifier::new(),
-                entry.name.clone(),
-                name_kind,
-                rustle::TextOverflow::Ellipsis,
+    kit::row(Modifier::new().fill_max_width(), 2, || {
+        rustle::spacer(Modifier::new().width(indent));
+        if entry.reference != 0 {
+            rustle::stack_aligned(
+                Modifier::new().size(VARIABLE_CHEVRON * kept, VARIABLE_CHEVRON),
+                BoxAlignment::Center,
+                || {
+                    icon(
+                        if entry.unfolded {
+                            phosphor::CARET_DOWN
+                        } else {
+                            phosphor::CARET_RIGHT
+                        },
+                        3.0 * kept,
+                        Role::Muted,
+                    );
+                },
             );
-            if !entry.value.is_empty() {
-                rustle::basic_text(
-                    Modifier::new(),
-                    "=",
-                    equals_kind,
-                    rustle::TextOverflow::Ellipsis,
-                );
-                rustle::basic_text(
-                    Modifier::new().weight(1.0),
-                    entry.value.clone(),
-                    value_kind,
-                    rustle::TextOverflow::Ellipsis,
-                );
-            }
-            if let Some(kind) = &entry.kind {
-                rustle::basic_text(
-                    Modifier::new().width_in(0.0, typed * kept),
-                    kind.clone(),
-                    type_kind,
-                    rustle::TextOverflow::Ellipsis,
-                );
-            }
-        },
-    );
+        } else {
+            rustle::spacer(Modifier::new().width(VARIABLE_CHEVRON));
+        }
+        kit::text(Modifier::new(), entry.name.clone(), name_kind);
+        if !entry.value.is_empty() {
+            kit::text(Modifier::new(), "=", equals_kind);
+            kit::text(Modifier::new().weight(1.0), entry.value.clone(), value_kind);
+        }
+        if let Some(kind) = &entry.kind {
+            kit::text(
+                Modifier::new().width_in(0.0, typed * kept),
+                kind.clone(),
+                type_kind,
+            );
+        }
+    });
 }
 
 /// Emits a field, padded as the tab's fields are, from what `field` emits.
 #[track_caller]
 fn field_box(field: impl FnOnce()) {
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_width()
             .padding_xy(theme::sp(2), 0.0)
             .padding_xy(0.0, theme::sp(1)),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         field,
     );
 }
@@ -397,39 +341,26 @@ fn variables(state: &WorkspaceState, run: &Run) {
         rows_box(&state.debug.variables_scroll, || {
             if rows.is_empty() {
                 list_row(None, false, || {
-                    rustle::basic_text(
+                    kit::text(
                         Modifier::new(),
                         "Nothing to show",
-                        small(12, Role::Subtle),
-                        rustle::TextOverflow::Ellipsis,
+                        kit::line(12, Role::Subtle),
                     )
                 });
             }
-            for (index, entry) in rows.iter().take(DEBUG_ROWS as usize).enumerate() {
+            for (index, entry) in rows.iter().take(DEBUG_ROWS).enumerate() {
                 rustle::key(index, || variable_row(index, entry));
             }
-            row_arranged(
+            kit::row(
                 Modifier::new()
                     .height(theme::sp(6))
                     .padding_xy(theme::sp(3), 0.0),
-                Arrangement::Start,
-                Alignment::Center,
+                0,
                 || {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        "Watch",
-                        small(11, Role::Subtle),
-                        rustle::TextOverflow::Ellipsis,
-                    );
+                    kit::text(Modifier::new(), "Watch", kit::line(11, Role::Subtle));
                 },
             );
-            for (index, expression) in state
-                .debug
-                .watches
-                .iter()
-                .take(DEBUG_ROWS as usize)
-                .enumerate()
-            {
+            for (index, expression) in state.debug.watches.iter().take(DEBUG_ROWS).enumerate() {
                 let shown = match view
                     .watched
                     .iter()
@@ -443,39 +374,37 @@ fn variables(state: &WorkspaceState, run: &Run) {
                 };
                 rustle::key(("watch", index), || {
                     list_row(None, false, || {
-                        rustle::basic_text(
+                        kit::text(
                             Modifier::new(),
                             expression.clone(),
-                            small(12, Role::Text)
+                            kit::line(12, Role::Text)
                                 .font_family(theme::mono())
                                 .ligatures(theme::code_ligatures()),
-                            rustle::TextOverflow::Ellipsis,
                         );
-                        rustle::basic_text(
-                            Modifier::new(),
-                            "=",
-                            small(12, Role::Subtle),
-                            rustle::TextOverflow::Ellipsis,
-                        );
-                        rustle::basic_text(
+                        kit::text(Modifier::new(), "=", kit::line(12, Role::Subtle));
+                        kit::text(
                             Modifier::new().weight(1.0),
                             shown.0,
-                            small(12, shown.1)
+                            kit::line(12, shown.1)
                                 .font_family(theme::mono())
                                 .ligatures(theme::code_ligatures()),
-                            rustle::TextOverflow::Ellipsis,
                         );
-                        Button::icon(phosphor::X, FocusId(DEBUG_WATCH_REMOVE_BASE + index as u64))
-                            .size(Size::Sm)
-                            .build();
+                        Button::icon(
+                            phosphor::X,
+                            Target::Debug(DebugEvent::DebugWatchRemove(index)),
+                        )
+                        .build();
                     });
                 });
             }
             field_box(|| {
-                Input::new(&state.debug.watch, DEBUG_WATCH_FIELD)
-                    .size(Size::Sm)
-                    .placeholder("Add an expression to watch")
-                    .build();
+                Input::new(
+                    &state.debug.watch,
+                    Target::Debug(DebugEvent::DebugWatchField),
+                )
+                .size(Size::Sm)
+                .placeholder("Add an expression to watch")
+                .build();
             });
         });
     });
@@ -496,41 +425,37 @@ fn console_tone(category: DebugCategory) -> Role {
 #[track_caller]
 fn console(state: &WorkspaceState, run: &Run) {
     section("Console", None, || {
-        column_arranged(
-            Modifier::new().fill_max_width().weight(1.0),
-            Arrangement::Start,
-            Alignment::Start,
-            || {
-                column_arranged(
-                    Modifier::new()
-                        .fill_max_width()
-                        .weight(1.0)
-                        .vertical_scroll_with(&state.debug.console_back, true)
-                        .fill_max_width()
-                        .padding_xy(theme::sp(3), 0.0),
-                    Arrangement::Start,
-                    Alignment::Start,
-                    || {
-                        for entry in &run.view.lines {
-                            rustle::basic_text(
-                                Modifier::new(),
-                                entry.text.clone(),
-                                theme::code_style(12, 1.4)
-                                    .color(theme::color(console_tone(entry.category)))
-                                    .max_lines(1),
-                                rustle::TextOverflow::Ellipsis,
-                            );
-                        }
-                    },
-                );
-                field_box(|| {
-                    Input::new(&state.debug.console, DEBUG_CONSOLE_FIELD)
-                        .size(Size::Sm)
-                        .placeholder("Evaluate an expression")
-                        .build();
-                });
-            },
-        );
+        kit::column(Modifier::new().fill_max_width().weight(1.0), 0, || {
+            kit::column(
+                Modifier::new()
+                    .fill_max_width()
+                    .weight(1.0)
+                    .vertical_scroll_with(&state.debug.console_back, true)
+                    .fill_max_width()
+                    .padding_xy(theme::sp(3), 0.0),
+                0,
+                || {
+                    for entry in &run.view.lines {
+                        kit::text(
+                            Modifier::new(),
+                            entry.text.clone(),
+                            theme::code_style(12, 1.4)
+                                .color(theme::color(console_tone(entry.category)))
+                                .max_lines(1),
+                        );
+                    }
+                },
+            );
+            field_box(|| {
+                Input::new(
+                    &state.debug.console,
+                    Target::Debug(DebugEvent::DebugConsoleField),
+                )
+                .size(Size::Sm)
+                .placeholder("Evaluate an expression")
+                .build();
+            });
+        });
     });
 }
 
@@ -547,15 +472,13 @@ fn idle(state: &WorkspaceState) {
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         || {
-            rustle::basic_text(
-                Modifier::new(),
-                said,
-                small(13, Role::Subtle),
-                rustle::TextOverflow::Ellipsis,
-            );
-            Button::new("Start debugging", DEBUG_START)
-                .size(Size::Sm)
-                .build();
+            kit::text(Modifier::new(), said, kit::line(13, Role::Subtle));
+            kit::small_button(
+                "Start debugging",
+                Target::Debug(DebugEvent::DebugStart),
+                Variant::Default,
+            )
+            .build();
         },
     );
 }
@@ -564,24 +487,14 @@ fn idle(state: &WorkspaceState) {
 #[track_caller]
 pub fn debug_tab(state: &WorkspaceState) {
     match &state.debug.run {
-        Some(run) => column_arranged(
-            Modifier::new().fill_max_width().weight(1.0),
-            Arrangement::Start,
-            Alignment::Start,
-            || {
-                controls(run);
-                row_arranged(
-                    Modifier::new().fill_max_width().weight(1.0),
-                    Arrangement::Start,
-                    Alignment::Start,
-                    || {
-                        stack(state, run);
-                        variables(state, run);
-                        console(state, run);
-                    },
-                );
-            },
-        ),
+        Some(run) => kit::column(Modifier::new().fill_max_width().weight(1.0), 0, || {
+            controls(run);
+            kit::row_top(Modifier::new().fill_max_width().weight(1.0), 0, || {
+                stack(state, run);
+                variables(state, run);
+                console(state, run);
+            });
+        }),
         None => idle(state),
     }
 }

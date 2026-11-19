@@ -1,92 +1,26 @@
 //! The settings window: the sections of settings down its left side and the one chosen on its right, filling a window of its own.
 
-use crate::events::reduce;
+use crate::areas::SettingsEvent;
+use crate::kit::{self, Frame};
+use crate::theme::Indicated;
+
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
 use rustle::{Icon, phosphor};
 
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::theme::{Radius, Role};
 
 use crate::input::Input;
 use crate::parts::{clipped, glyph, line};
-use crate::settings_ids::{SECTIONS, SETTINGS_END, SETTINGS_START, SINGLES};
+use crate::settings_rows::SECTIONS;
 use crate::settings_servers;
 use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::tile::Tile;
-
-/// Closes the settings window.
-pub const SETTINGS_CLOSE: FocusId = SINGLES.at(2);
-
-/// Opens the form for adding a server to the list showing.
-pub const SETTINGS_ADD: FocusId = SINGLES.at(3);
-
-/// Keeps what the form holds.
-pub const SETTINGS_SAVE: FocusId = SINGLES.at(4);
-
-/// Puts the form away without keeping it.
-pub const SETTINGS_CANCEL: FocusId = SINGLES.at(5);
-
-/// The box the form's name is written in.
-pub const SETTINGS_NAME: FocusId = SINGLES.at(6);
-
-/// The box the form's command or address is written in.
-pub const SETTINGS_TARGET: FocusId = SINGLES.at(7);
-
-/// The box the form's environment is written in.
-pub const SETTINGS_ENV: FocusId = SINGLES.at(8);
-
-/// The box the list showing is searched with.
-pub const SETTINGS_SEARCH: FocusId = SINGLES.at(30);
-
-/// Searches the registry for the words in the search box, which is what Enter in the box does.
-pub const SETTINGS_SEARCH_GO: FocusId = SINGLES.at(31);
-
-/// Folds the list of what is installed away, or shows it again.
-pub const SETTINGS_TOGGLE_INSTALLED: FocusId = SINGLES.at(32);
-
-/// Folds the list of what the registry offers away, or shows it again.
-pub const SETTINGS_TOGGLE_AVAILABLE: FocusId = SINGLES.at(33);
-
-/// Switches the server the open menu is over on or off.
-pub const SETTINGS_MENU_TOGGLE: FocusId = SINGLES.at(50);
-
-/// Opens the form for the server the open menu is over.
-pub const SETTINGS_MENU_EDIT: FocusId = SINGLES.at(51);
-
-/// Copies the configuration of the server the open menu is over.
-pub const SETTINGS_MENU_COPY: FocusId = SINGLES.at(52);
-
-/// Opens the page of the publisher of the server the open menu is over.
-pub const SETTINGS_MENU_WEBSITE: FocusId = SINGLES.at(53);
-
-/// Takes the server the open menu is over away.
-pub const SETTINGS_MENU_REMOVE: FocusId = SINGLES.at(54);
-
-/// Opens the page that explains tool servers.
-pub const SETTINGS_DOCS: FocusId = SINGLES.at(55);
-
-/// The box every setting is searched with.
-pub const SETTINGS_FIND: FocusId = SINGLES.at(60);
-
-/// The box the open list of choices is narrowed with.
-pub const SETTINGS_PICK_FILTER: FocusId = SINGLES.at(61);
-
-/// The box the keymap's actions are searched with.
-pub const SETTINGS_KEYMAP_FIND: FocusId = SINGLES.at(62);
-
-/// Empties the box every setting is searched with.
-pub const SETTINGS_FIND_CLEAR: FocusId = SINGLES.at(63);
-
-/// Opens the page of the newest release.
-pub const SETTINGS_RELEASE: FocusId = SINGLES.at(64);
-
-/// Picks the first row of the open list of choices, which is what Enter in the box narrowing it does.
-pub const SETTINGS_PICK_FIRST: FocusId = SINGLES.at(67);
 
 /// How far the settings stand in from either side of the right of the window, in logical pixels.
 const PAGE_INSET: f32 = 32.0;
@@ -307,16 +241,16 @@ impl Section {
     }
 
     /// The name of pressing its row in the list.
-    pub fn id(self) -> FocusId {
+    pub fn id(self) -> Target {
         let position = Self::ALL
             .iter()
             .position(|section| *section == self)
             .unwrap_or_default();
-        SECTIONS.at(position as u64)
+        SECTIONS.at(position)
     }
 
     /// The section whose row in the list `id` names, when it names one.
-    fn of(id: FocusId) -> Option<Self> {
+    fn of(id: Target) -> Option<Self> {
         SECTIONS
             .index_of(id)
             .and_then(|index| Self::ALL.get(index).copied())
@@ -324,9 +258,73 @@ impl Section {
 }
 
 /// Whether `id` names something of the window.
-pub fn is_settings(id: FocusId) -> bool {
-    let FocusId(number) = id;
-    (SETTINGS_START..SETTINGS_END).contains(&number)
+pub fn is_settings(id: Target) -> bool {
+    matches!(id, Target::Settings(SettingsEvent::SettingsRow(..)))
+        || matches!(
+            id,
+            Target::Settings(SettingsEvent::SlotsScopeUser)
+                | Target::Settings(SettingsEvent::SlotsScopeProject)
+                | Target::Settings(SettingsEvent::SlotNewName)
+                | Target::Settings(SettingsEvent::SlotAdd)
+                | Target::Settings(SettingsEvent::PresetName)
+                | Target::Settings(SettingsEvent::PresetSave)
+                | Target::Settings(SettingsEvent::SlotsProvider)
+                | Target::Settings(SettingsEvent::CategoryNewName)
+                | Target::Settings(SettingsEvent::CategoryAdd)
+                | Target::Settings(SettingsEvent::PromptReplace)
+                | Target::Settings(SettingsEvent::PromptAppend)
+                | Target::Settings(SettingsEvent::DraftNew)
+                | Target::Settings(SettingsEvent::DraftName)
+                | Target::Settings(SettingsEvent::DraftDescription)
+                | Target::Settings(SettingsEvent::DraftCreate)
+                | Target::Settings(SettingsEvent::DraftCancel)
+                | Target::Settings(SettingsEvent::SettingsClose)
+                | Target::Settings(SettingsEvent::SettingsAdd)
+                | Target::Settings(SettingsEvent::SettingsSave)
+                | Target::Settings(SettingsEvent::SettingsCancel)
+                | Target::Settings(SettingsEvent::SettingsName)
+                | Target::Settings(SettingsEvent::SettingsTarget)
+                | Target::Settings(SettingsEvent::SettingsEnv)
+                | Target::Settings(SettingsEvent::SettingsSearch)
+                | Target::Settings(SettingsEvent::SettingsSearchGo)
+                | Target::Settings(SettingsEvent::SettingsToggleInstalled)
+                | Target::Settings(SettingsEvent::SettingsToggleAvailable)
+                | Target::Settings(SettingsEvent::SettingsMenuToggle)
+                | Target::Settings(SettingsEvent::SettingsMenuEdit)
+                | Target::Settings(SettingsEvent::SettingsMenuCopy)
+                | Target::Settings(SettingsEvent::SettingsMenuWebsite)
+                | Target::Settings(SettingsEvent::SettingsMenuRemove)
+                | Target::Settings(SettingsEvent::SettingsDocs)
+                | Target::Settings(SettingsEvent::SettingsFind)
+                | Target::Settings(SettingsEvent::SettingsPickFilter)
+                | Target::Settings(SettingsEvent::SettingsKeymapFind)
+                | Target::Settings(SettingsEvent::SettingsFindClear)
+                | Target::Settings(SettingsEvent::SettingsRelease)
+                | Target::Settings(SettingsEvent::SettingsPickFirst)
+                | Target::Settings(SettingsEvent::MachineAdd)
+                | Target::Settings(SettingsEvent::MachineSave)
+                | Target::Settings(SettingsEvent::MachineCancel)
+                | Target::Settings(SettingsEvent::MachineName)
+                | Target::Settings(SettingsEvent::MachineAddress)
+                | Target::Settings(SettingsEvent::MachineToken)
+                | Target::Settings(SettingsEvent::ModelAdd)
+                | Target::Settings(SettingsEvent::ModelSave)
+                | Target::Settings(SettingsEvent::ModelCancel)
+                | Target::Settings(SettingsEvent::ModelName)
+                | Target::Settings(SettingsEvent::ModelUrl)
+                | Target::Settings(SettingsEvent::ModelKey)
+                | Target::Settings(SettingsEvent::ModelKeyEnv)
+                | Target::Settings(SettingsEvent::ModelList)
+                | Target::Settings(SettingsEvent::ModelFind)
+                | Target::Settings(SettingsEvent::ModelWireChat)
+                | Target::Settings(SettingsEvent::ModelWireResponses)
+                | Target::Settings(SettingsEvent::KeyField)
+                | Target::Settings(SettingsEvent::KeySave)
+                | Target::Settings(SettingsEvent::KeyCancel)
+                | Target::Settings(SettingsEvent::NameField)
+                | Target::Settings(SettingsEvent::NameSave)
+                | Target::Settings(SettingsEvent::NameCancel)
+        )
 }
 
 impl WorkspaceState {
@@ -380,38 +378,54 @@ impl WorkspaceState {
     }
 
     /// The state after something of the settings window was pressed: `action` is the name of what.
-    pub(crate) fn settings_pressed(mut self, action: FocusId) -> Self {
+    pub(crate) fn settings_pressed(mut self, action: Target) -> Self {
         match action {
-            SETTINGS_CLOSE if self.settings_page.picker.is_some() => {
+            Target::Settings(SettingsEvent::SettingsClose)
+                if self.settings_page.picker.is_some() =>
+            {
                 self.settings_page.picker = None;
             }
-            SETTINGS_CLOSE if self.settings_page.slots.picking.is_some() => {
+            Target::Settings(SettingsEvent::SettingsClose)
+                if self.settings_page.slots.picking.is_some() =>
+            {
                 self.settings_page.slots.picking = None;
             }
-            SETTINGS_CLOSE if self.settings_servers.form.is_some() => {
+            Target::Settings(SettingsEvent::SettingsClose)
+                if self.settings_servers.form.is_some() =>
+            {
                 self.settings_servers.form = None;
             }
-            SETTINGS_CLOSE if self.settings_servers.key_form.is_some() => {
+            Target::Settings(SettingsEvent::SettingsClose)
+                if self.settings_servers.key_form.is_some() =>
+            {
                 self.settings_servers.key_form = None;
             }
-            SETTINGS_CLOSE if self.settings_servers.name_form.is_some() => {
+            Target::Settings(SettingsEvent::SettingsClose)
+                if self.settings_servers.name_form.is_some() =>
+            {
                 self.settings_servers.name_form = None;
             }
-            SETTINGS_CLOSE if self.settings_page.models.form.is_some() => {
+            Target::Settings(SettingsEvent::SettingsClose)
+                if self.settings_page.models.form.is_some() =>
+            {
                 self.settings_page.models.form = None;
             }
-            SETTINGS_CLOSE if self.settings_page.server_form.is_some() => {
+            Target::Settings(SettingsEvent::SettingsClose)
+                if self.settings_page.server_form.is_some() =>
+            {
                 self.settings_page.server_form = None;
             }
-            SETTINGS_CLOSE if self.settings_page.library.draft.is_some() => {
+            Target::Settings(SettingsEvent::SettingsClose)
+                if self.settings_page.library.draft.is_some() =>
+            {
                 self.settings_page.library.draft = None;
             }
-            SETTINGS_CLOSE => return self.without_settings(),
-            SETTINGS_RELEASE => {
+            Target::Settings(SettingsEvent::SettingsClose) => return self.without_settings(),
+            Target::Settings(SettingsEvent::SettingsRelease) => {
                 self.open_release();
                 return self.without_settings();
             }
-            SETTINGS_FIND_CLEAR => {
+            Target::Settings(SettingsEvent::SettingsFindClear) => {
                 self.settings_page.find = rustle::TextFieldState::default();
                 self.settings_servers.scroll.jump_to(0.0);
             }
@@ -498,12 +512,11 @@ pub fn settings(state: &WorkspaceState, width: f32) -> bool {
     } else {
         section
     };
-    row_arranged(
+    kit::row_top(
         Modifier::new()
             .fill_max_size()
             .background(theme::color(Role::Surface)),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         || {
             navigation(state, section, folded, navigation_width);
             content(state, showing, width - navigation_width - 2.0 * PAGE_INSET);
@@ -516,39 +529,31 @@ pub fn settings(state: &WorkspaceState, width: f32) -> bool {
 #[track_caller]
 fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32) {
     let searching = state.settings_searching();
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_height()
             .width(width)
-            .draw_behind(theme::edge(
-                theme::Side::Right,
-                1.0,
-                theme::color(Role::Border),
-            ))
-            .padding_each(0.0, 0.0, 1.0, 0.0)
+            .ruled(theme::Side::Right)
             .padding(theme::sp(3)),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Start,
+        1,
         || {
-            row_arranged(
+            kit::row(
                 Modifier::new()
                     .height(theme::sp(9))
                     .padding_xy(theme::sp(2), 0.0),
-                Arrangement::Start,
-                Alignment::Center,
+                0,
                 || {
                     line("Settings", 13, 1.4, Role::Subtle);
                 },
             );
             find(state, searching);
-            column_arranged(
+            kit::column(
                 Modifier::new()
                     .fill_max_width()
                     .weight(1.0)
                     .vertical_scroll(&state.settings_page.nav_scroll)
                     .fill_max_width(),
-                Arrangement::SpacedBy(sp(1)),
-                Alignment::Start,
+                1,
                 || {
                     for section in
                         Section::ALL
@@ -577,31 +582,37 @@ fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32
 /// Emits the box searching settings, with the button clearing it while `searching`.
 #[track_caller]
 fn find(state: &WorkspaceState, searching: bool) {
-    row_arranged(
+    kit::row(
         Modifier::new()
             .fill_max_width()
             .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Center,
+        1,
         || {
-            Input::search(&state.settings_page.find, SETTINGS_FIND)
-                .size(Size::Sm)
-                .placeholder("Search settings")
-                .modifier(Modifier::new().weight(1.0))
-                .build();
+            Input::search(
+                &state.settings_page.find,
+                Target::Settings(SettingsEvent::SettingsFind),
+            )
+            .size(Size::Sm)
+            .placeholder("Search settings")
+            .modifier(Modifier::new().weight(1.0))
+            .build();
             if searching {
                 row_arranged(
                     Modifier::new()
                         .size(theme::sp(6), theme::sp(6))
-                        .interaction_focused(crate::focus::is_held(SETTINGS_FIND_CLEAR))
-                        .interaction_background(
-                            (theme::InteractionTones::new()
+                        .indicated(
+                            theme::InteractionTones::new()
                                 .hover(Role::SurfaceHover)
-                                .radius(Radius::Sm))
-                            .colors(),
+                                .radius(Radius::Sm),
+                            theme::Focused::Held(crate::focus::is_held(Target::Settings(
+                                SettingsEvent::SettingsFindClear,
+                            ))),
                         )
                         .cursor(CursorIcon::Pointer)
-                        .control(SETTINGS_FIND_CLEAR, reduce(SETTINGS_FIND_CLEAR)),
+                        .control(
+                            Target::Settings(SettingsEvent::SettingsFindClear),
+                            send(Event::Settings(SettingsEvent::SettingsFindClear)),
+                        ),
                     Arrangement::Center,
                     Alignment::Center,
                     || glyph(phosphor::X, 3.5, Role::Muted),
@@ -649,22 +660,20 @@ fn entry(section: Section, showing: bool, folded: bool, count: Option<usize>) {
 /// Emits the settings of `section` under its title, with `room` logical pixels across for them.
 #[track_caller]
 fn content(state: &WorkspaceState, section: Section, room: f32) {
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_height()
             .weight(1.0)
             .background(theme::color(Role::Background)),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         || {
-            row_arranged(
+            kit::row(
                 Modifier::new()
                     .padding_each(theme::sp(8), 0.0, 0.0, 0.0)
                     .padding_each(0.0, 0.0, theme::sp(8), 0.0)
                     .padding_each(0.0, theme::sp(6), 0.0, 0.0)
                     .padding_each(0.0, 0.0, 0.0, theme::sp(4)),
-                Arrangement::Start,
-                Alignment::Center,
+                0,
                 || settings_servers::page_title(section),
             );
             settings_servers::body(state, section, room);
@@ -680,7 +689,7 @@ mod tests {
 
     use super::*;
     use crate::settings_catalog::{LISTS, OPEN_LIST, Setting};
-    use crate::settings_ids::{KEY_SETS, LIST_ADDS, LIST_FIELDS, PICKS};
+    use crate::settings_rows::{KEY_SETS, LIST_ADDS, LIST_FIELDS, PICKS};
     use crate::settings_values::Control;
     use crate::state::Outgoing;
 
@@ -705,7 +714,7 @@ mod tests {
         let state = open_on(Section::Appearance)
             .with_fonts(families, Vec::new())
             .settings_pressed(Setting::InterfaceFont.id(OPEN_LIST).unwrap());
-        let mut state = state.typed(SETTINGS_PICK_FILTER, needle);
+        let mut state = state.typed(Target::Settings(SettingsEvent::SettingsPickFilter), needle);
         state.take_outbox();
         state
     }
@@ -737,8 +746,8 @@ mod tests {
     #[test]
     fn enter_in_the_filter_picks_the_first_match() {
         let state = fonts_narrowed_to("family 0042");
-        let submit = WorkspaceState::submit_of(SETTINGS_PICK_FILTER);
-        assert_eq!(submit, SETTINGS_PICK_FIRST);
+        let submit = WorkspaceState::submit_of(Target::Settings(SettingsEvent::SettingsPickFilter));
+        assert_eq!(submit, Target::Settings(SettingsEvent::SettingsPickFirst));
         let state = state.settings_pressed(submit);
         assert_eq!(state.window.appearance.interface_font, "Family 0042");
         assert_eq!(state.settings_page.picker, None);
@@ -750,11 +759,11 @@ mod tests {
         let binding = "g h => Hover";
         assert!(crate::vim::binding_reads(binding));
         let place = Setting::VimBindings.list_place().unwrap();
-        let field = LIST_FIELDS.at(place as u64);
+        let field = LIST_FIELDS.at(place);
         let include = open_on(Section::Editor).machine.git.worktree_include;
         let state = open_on(Section::Editor).typed(field, binding);
         let add = WorkspaceState::submit_of(field);
-        assert_eq!(add, LIST_ADDS.at(place as u64));
+        assert_eq!(add, LIST_ADDS.at(place));
         let state = state.settings_pressed(add);
         assert!(state.editor.vim_bindings.iter().any(|held| held == binding));
         assert_eq!(state.machine.git.worktree_include, include);
@@ -768,13 +777,14 @@ mod tests {
     /// Escape on the form for a new customization puts the form away and keeps the window open.
     #[test]
     fn escape_on_the_draft_form_closes_only_the_form() {
-        let state = open_on(Section::Skills).settings_pressed(crate::settings_drafts::DRAFT_NEW);
+        let state =
+            open_on(Section::Skills).settings_pressed(Target::Settings(SettingsEvent::DraftNew));
         assert!(state.settings_page.library.draft.is_some());
-        let state = state.settings_pressed(SETTINGS_CLOSE);
+        let state = state.settings_pressed(Target::Settings(SettingsEvent::SettingsClose));
         assert!(state.settings_page.library.draft.is_none());
         assert_eq!(state.settings, Some(Section::Skills));
         let state = state
-            .settings_pressed(crate::settings_drafts::DRAFT_NEW)
+            .settings_pressed(Target::Settings(SettingsEvent::DraftNew))
             .without_settings();
         assert!(state.settings_page.library.draft.is_none());
     }
@@ -783,7 +793,7 @@ mod tests {
     #[test]
     fn changing_section_puts_forms_away() {
         let state = open_on(Section::Servers)
-            .settings_pressed(crate::settings_machines::MACHINE_ADD)
+            .settings_pressed(Target::Settings(SettingsEvent::MachineAdd))
             .settings_pressed(Section::AgentServers.id())
             .settings_pressed(KEY_SETS.at(0));
         assert!(state.settings_page.server_form.is_none());

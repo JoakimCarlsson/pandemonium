@@ -3,13 +3,16 @@
 //! sent, a popover previews it, and in the message the screenshots go as attached pictures and the
 //! console as a fenced block that everything the page said is set off inside.
 
+use crate::areas::ComposerEvent;
+use crate::kit;
+
 use crate::events::Interactive;
-use crate::events::reduce;
-use crate::focus::FocusId;
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
 use crate::theme::{Radius, Role, sp};
 use rustle::Modifier;
-use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
+use rustle::{FlowOptions, flow_row_with};
 use rustle::{Icon, phosphor};
 
 use crate::button::Variant;
@@ -17,14 +20,8 @@ use crate::elements::{code, fence, one_line, section, words};
 use crate::parts::line;
 use crate::popover::anchored;
 use crate::size::Size;
-use crate::state::{MENU_BODY, Picker, WorkspaceState};
+use crate::state::{Picker, WorkspaceState};
 use crate::{Button, Popover};
-
-/// The first of the chips that open a capture's popover; the rest follow it.
-pub const CAPTURE_BASE: u64 = 7_432_000;
-
-/// The first of the buttons that take a capture off the prompt; the rest follow it.
-pub const CAPTURE_REMOVE_BASE: u64 = 7_433_000;
 
 /// How many captures the prompt holds at most.
 pub const MOST_CAPTURES: usize = 10;
@@ -212,16 +209,18 @@ fn picture_card(state: &WorkspaceState, shot: &Shot) {
 fn popover(capture: &Capture, state: &WorkspaceState) {
     Popover::new()
         .width(WIDTH)
-        .modifier(Modifier::new().control(MENU_BODY, reduce(MENU_BODY)))
+        .modifier(Modifier::new().control(
+            Target::Composer(ComposerEvent::MenuBody),
+            send(Event::Composer(ComposerEvent::MenuBody)),
+        ))
         .build_with(|| {
-            column_arranged(
+            kit::column(
                 Modifier::new()
                     .fill_max_width()
                     .height_in(0.0, sp(HEIGHT / 4.0))
                     .vertical_scroll(&state.menu_scroll)
                     .fill_max_width(),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Start,
+                2,
                 || {
                     cards(capture, state);
                 },
@@ -254,16 +253,11 @@ fn cards(capture: &Capture, state: &WorkspaceState) {
             if capture.lines.is_empty() {
                 line("The console was empty.", 12, 1.4, Role::Muted);
             } else {
-                column_arranged(
-                    Modifier::new(),
-                    Arrangement::SpacedBy(sp(1)),
-                    Alignment::Start,
-                    || {
-                        for text in &capture.lines {
-                            words(text, true, Role::Text, CARD_TEXT);
-                        }
-                    },
-                );
+                kit::column(Modifier::new(), 1, || {
+                    for text in &capture.lines {
+                        words(text, true, Role::Text, CARD_TEXT);
+                    }
+                });
             }
         });
     }
@@ -291,7 +285,7 @@ pub fn chips(state: &WorkspaceState) {
                 FlowOptions::new(sp(2), sp(2)),
                 || {
                     for (index, capture) in state.captures.iter().enumerate() {
-                        rustle::key(CAPTURE_BASE + index as u64, || {
+                        rustle::key(Target::Composer(ComposerEvent::Capture(index)), || {
                             pill(index, capture, open.is_some_and(|(held, _)| held == index));
                         });
                     }
@@ -305,20 +299,26 @@ pub fn chips(state: &WorkspaceState) {
 /// Emits the chip of the capture at `index`: a button that opens its popover, filled while `selected`, and one that takes it off.
 #[track_caller]
 fn pill(index: usize, capture: &Capture, selected: bool) {
-    row_arranged(
+    kit::row(
         Modifier::new()
             .background_rounded(theme::color(Role::SurfaceHover), Radius::Lg.px())
             .padding_each(0.0, 0.0, theme::sp(1), 0.0),
-        Arrangement::SpacedBy(sp(0.5)),
-        Alignment::Center,
+        0.5,
         || {
-            Button::new(capture.label(), FocusId(CAPTURE_BASE + index as u64))
-                .variant(Variant::Ghost)
-                .size(Size::Xs)
-                .with_icon(capture.icon())
-                .selected(selected)
-                .build();
-            Button::icon(phosphor::X, FocusId(CAPTURE_REMOVE_BASE + index as u64)).build();
+            Button::new(
+                capture.label(),
+                Target::Composer(ComposerEvent::Capture(index)),
+            )
+            .variant(Variant::Ghost)
+            .size(Size::Xs)
+            .with_icon(capture.icon())
+            .selected(selected)
+            .build();
+            Button::icon(
+                phosphor::X,
+                Target::Composer(ComposerEvent::CaptureRemove(index)),
+            )
+            .build();
         },
     );
 }

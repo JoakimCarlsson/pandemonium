@@ -1,10 +1,10 @@
 //! The stepper: stops along a line, the current one marked, as a track to press or as a bar that counts.
 
 use crate::events::Interactive;
-use crate::events::reduce;
-use crate::focus::FocusId;
+use crate::events::{Event, send};
+use crate::kit;
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use crate::theme::{Radius, Role};
 use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
@@ -31,8 +31,8 @@ pub struct Stepper {
     stops: usize,
     /// The stop that is current, if one is.
     current: Option<usize>,
-    /// The name of the first stop; the rest follow it.
-    first: u64,
+    /// The target of the first stop; the rest follow it as [`Target::offset`] counts them.
+    first: Target,
     /// How it looks.
     variant: Variant,
     /// What the caller puts around its box.
@@ -40,8 +40,8 @@ pub struct Stepper {
 }
 
 impl Stepper {
-    /// A stepper of `stops` stops, the first answering to `first` and the rest to the names after it.
-    pub fn new(stops: usize, first: u64) -> Self {
+    /// A stepper of `stops` stops, the first answering to `first` and the rest to the targets after it, as [`Target::offset`] counts them.
+    pub fn new(stops: usize, first: Target) -> Self {
         Self {
             stops,
             current: None,
@@ -93,12 +93,12 @@ impl Stepper {
             Alignment::Center,
             move || {
                 for position in 0..stops {
-                    let id = FocusId(first + position as u64);
+                    let id = first.offset(position);
                     row_arranged(
                         Modifier::new()
                             .size(theme::sp(4), theme::sp(4))
                             .cursor(CursorIcon::Pointer)
-                            .control(id, reduce(id)),
+                            .control(id, send(Event::pressing(id))),
                         Arrangement::Center,
                         Alignment::Center,
                         move || {
@@ -133,38 +133,28 @@ impl Stepper {
     fn bar(self) {
         let at = self.current.unwrap_or(0);
         let stops = self.stops;
-        row_arranged(
-            self.modifier,
-            Arrangement::SpacedBy(sp(3)),
-            Alignment::Center,
-            move || {
-                row_arranged(
-                    Modifier::new(),
-                    Arrangement::SpacedBy(sp(2)),
-                    Alignment::Center,
-                    move || {
-                        for candidate in 0..stops {
-                            let tone = if candidate <= at {
-                                Role::Text
-                            } else {
-                                Role::SurfaceActive
-                            };
-                            rustle::spacer(
-                                Modifier::new()
-                                    .width(theme::sp(8))
-                                    .height(theme::sp(1.5))
-                                    .background_rounded(theme::color(tone), Radius::Full.px()),
-                            );
-                        }
-                    },
-                );
-                line(
-                    format!("Step {} of {}", at + 1, stops),
-                    12,
-                    1.4,
-                    Role::Subtle,
-                );
-            },
-        );
+        kit::row(self.modifier, 3, move || {
+            kit::row(Modifier::new(), 2, move || {
+                for candidate in 0..stops {
+                    let tone = if candidate <= at {
+                        Role::Text
+                    } else {
+                        Role::SurfaceActive
+                    };
+                    rustle::spacer(
+                        Modifier::new()
+                            .width(theme::sp(8))
+                            .height(theme::sp(1.5))
+                            .background_rounded(theme::color(tone), Radius::Full.px()),
+                    );
+                }
+            });
+            line(
+                format!("Step {} of {}", at + 1, stops),
+                12,
+                1.4,
+                Role::Subtle,
+            );
+        });
     }
 }

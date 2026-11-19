@@ -41,10 +41,10 @@ impl WorkspaceState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::arrange::SESSION_MENU_READ;
-    use crate::focus::FocusId;
+    use crate::areas::MenuEvent;
+    use crate::areas::SidebarEvent;
     use crate::sample::{Session, Status};
-    use crate::state::{Page, SESSION_BASE};
+    use crate::state::Page;
     use pm_harness::{Event, Permission};
 
     /// A fresh session whose server events can be replayed deterministically.
@@ -131,33 +131,34 @@ mod tests {
         state.page = Page::Session(0);
         state = state
             .with_session_menu(0, (0.0, 0.0))
-            .after(SESSION_MENU_READ);
+            .handle(crate::events::Event::Menu(MenuEvent::SessionMenuRead));
         state.observe_conversation(true, true, true);
         assert!(state.sessions[0].unread());
         state.page = Page::Project(0);
         state.observe_conversation(false, false, true);
-        state = state.after(FocusId(SESSION_BASE));
+        state = state.handle(crate::events::Event::Sidebar(SidebarEvent::Session(0)));
         state.observe_conversation(true, true, true);
         assert!(!state.sessions[0].unread());
         state = state
             .with_session_menu(0, (0.0, 0.0))
-            .after(SESSION_MENU_READ);
+            .handle(crate::events::Event::Menu(MenuEvent::SessionMenuRead));
         assert!(state.sessions[0].unread());
         state = state
             .with_session_menu(0, (0.0, 0.0))
-            .after(SESSION_MENU_READ);
+            .handle(crate::events::Event::Menu(MenuEvent::SessionMenuRead));
         assert!(!state.sessions[0].unread());
     }
 
     /// Returning to a session restores its scroll position rather than acknowledging unseen updates.
     #[test]
     fn switching_sessions_preserves_scrollback() {
-        let mut state = WorkspaceState::sample().after(FocusId(SESSION_BASE));
+        let mut state = WorkspaceState::sample()
+            .handle(crate::events::Event::Sidebar(SidebarEvent::Session(0)));
         state.chat_list.scroll().jump_to(200.0);
         state.follow_scrolls();
         state = state
-            .after(FocusId(SESSION_BASE + 1))
-            .after(FocusId(SESSION_BASE));
+            .handle(crate::events::Event::Sidebar(SidebarEvent::Session(1)))
+            .handle(crate::events::Event::Sidebar(SidebarEvent::Session(0)));
         assert_eq!(state.chat_list.scroll().offset(), 200.0);
     }
 

@@ -1,5 +1,6 @@
 //! The work behind the screen: asking the servers to run the agents and the git operations, and taking in what they answer.
 
+use pm_components::events::Event;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -9,11 +10,9 @@ use crate::model::Model;
 use pm_client::{Client, Incoming};
 use pm_components::adder::{Found, Kind};
 use pm_components::figures::Drawing;
-use pm_components::focus::FocusId;
 use pm_components::git_controls::GRAPH_LIMIT;
-use pm_components::state::SESSION_BASE;
 use pm_components::tree_actions::EntryChange;
-use pm_harness::{Discovery, Event};
+use pm_harness::{Discovery, Event as HarnessEvent};
 use pm_pages::{Outgoing, Screen, WorkspaceState};
 use pm_protocol::{Attachment, Login, Request, Response, Target};
 use rustle::ImageData;
@@ -461,7 +460,7 @@ pub struct Work {
     /// The sessions, by position, that were closed while the server was still starting them, so the worktree is removed once it reports having made one.
     cancelled: HashSet<usize>,
     /// What agents did before their session was known by position, each with its number.
-    early: HashMap<(Host, u64), Vec<(u64, Event)>>,
+    early: HashMap<(Host, u64), Vec<(u64, HarnessEvent)>>,
     /// Whether this window can run the browser's tools, which each server is told as it connects.
     browser_available: bool,
     /// The browser tool calls agents made that the window has not taken yet, each with the machine, the call and the tool with its arguments.
@@ -2006,7 +2005,8 @@ impl Work {
                 for session in starting {
                     let line = format!("{text}\n");
                     model.update(|screen| {
-                        *screen = std::mem::take(screen).heard(session, Event::Thought(line));
+                        *screen =
+                            std::mem::take(screen).heard(session, HarnessEvent::Thought(line));
                     });
                 }
             }
@@ -2022,7 +2022,8 @@ impl Work {
                     if let Pending::Start(session) = pending {
                         let reason = reason.clone();
                         model.update(|screen| {
-                            *screen = std::mem::take(screen).heard(session, Event::Failed(reason));
+                            *screen =
+                                std::mem::take(screen).heard(session, HarnessEvent::Failed(reason));
                         });
                     }
                 }
@@ -2061,7 +2062,7 @@ impl Work {
     }
 
     /// Passes what the agent of the session numbered `number` on `host` did on to the screen.
-    fn heard(&mut self, model: &Model, host: &Host, number: u64, seq: u64, event: Event) {
+    fn heard(&mut self, model: &Model, host: &Host, number: u64, seq: u64, event: HarnessEvent) {
         let key = (host.clone(), number);
         let live = seq > self.history.get(&key).copied().unwrap_or(0);
         if self.forgotten.contains(&key) {
@@ -2073,14 +2074,14 @@ impl Work {
         };
         let files_moved = matches!(
             event,
-            Event::Finished(_)
-                | Event::SignedOut { .. }
-                | Event::Failed(_)
-                | Event::Restored { .. }
-                | Event::Undone { .. }
+            HarnessEvent::Finished(_)
+                | HarnessEvent::SignedOut { .. }
+                | HarnessEvent::Failed(_)
+                | HarnessEvent::Restored { .. }
+                | HarnessEvent::Undone { .. }
         );
-        let finished = live && matches!(event, Event::Finished(_));
-        if live && let Event::ToolSignIn(address) = &event {
+        let finished = live && matches!(event, HarnessEvent::Finished(_));
+        if live && let HarnessEvent::ToolSignIn(address) = &event {
             open_sign_in(address);
         }
         model.update(|screen| screen.hear_in_place(session, event));
@@ -2436,7 +2437,8 @@ impl Work {
                 }
                 Response::Failed { message } if !self.cancelled.contains(&session) => {
                     model.update(|screen| {
-                        *screen = std::mem::take(screen).heard(session, Event::Failed(message));
+                        *screen =
+                            std::mem::take(screen).heard(session, HarnessEvent::Failed(message));
                     });
                 }
                 Response::Failed { .. } => {
@@ -2738,8 +2740,12 @@ impl Work {
                     let branched = sessions.first().map(|info| (host.clone(), info.session));
                     self.adopt(model, host, sessions);
                     if let Some(position) = branched.and_then(|key| self.positions.get(&key)) {
-                        let open = FocusId(SESSION_BASE + *position as u64);
-                        model.update(|screen| *screen = std::mem::take(screen).after(open));
+                        let open = pm_components::target::Target::Sidebar(
+                            pm_components::areas::SidebarEvent::Session(*position),
+                        );
+                        model.update(|screen| {
+                            *screen = std::mem::take(screen).handle(Event::pressing(open))
+                        });
                     }
                 }
                 _ => {

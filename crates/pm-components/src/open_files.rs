@@ -1,26 +1,14 @@
 //! The files open in the window beside the conversation: one tab each, a file looked at in a tab that the next one replaces, and kept once it is changed.
 
+use crate::areas::EditorEvent;
+use crate::target::Target;
 use pm_field::Edit;
-
-use crate::focus::FocusId;
 
 use crate::git_prompts::Prompt;
 use crate::panes::Item;
-use crate::preview::{PREVIEW_LINK_BASE, PREVIEW_LINKS, PREVIEW_SHOW, Rendering, SOURCE_SHOW};
+use crate::preview::Rendering;
 use crate::state::{Outgoing, Page, Tab, WorkspaceState};
 use pm_editor::Document;
-
-/// The text of the file being edited.
-pub const EDITOR_FIELD: FocusId = FocusId(7083);
-
-/// Writes the file being edited to the folder.
-pub const EDITOR_SAVE: FocusId = FocusId(7084);
-
-/// The first of the tabs of the open files; the rest follow it.
-pub const FILE_TAB_BASE: u64 = 4_000_000;
-
-/// The first of the buttons that close a file's tab; the rest follow it.
-pub const FILE_CLOSE_BASE: u64 = 4_100_000;
 
 /// How tall the strip above the lines is, in logical pixels.
 pub const STRIP: f32 = 40.0;
@@ -367,11 +355,13 @@ impl WorkspaceState {
     }
 
     /// The state after the file shown is kept open because the reader pressed its tab or its row twice in quick succession, which is how a file looked at is kept without changing it.
-    pub fn with_file_kept(mut self, id: FocusId) -> Self {
-        let tab =
-            id.0.checked_sub(FILE_TAB_BASE)
-                .filter(|index| *index < self.git.viewers.len() as u64)
-                .map(|index| index as usize);
+    pub fn with_file_kept(mut self, id: Target) -> Self {
+        let tab = match id {
+            Target::Editor(EditorEvent::FileTab(index)) if index < self.git.viewers.len() => {
+                Some(index)
+            }
+            _ => None,
+        };
         let row = (self.tree_row_of(id).is_some_and(|target| !target.folder))
             .then_some(self.git.shown)
             .flatten();
@@ -679,24 +669,19 @@ impl WorkspaceState {
     }
 
     /// Carries out `action` if it is a tab of an open file, a button of one or the file's own keys, and says whether it was.
-    pub(crate) fn press_files(&mut self, action: FocusId) -> bool {
-        let count = self.git.viewers.len() as u64;
-        if let Some(index) = action
-            .0
-            .checked_sub(FILE_TAB_BASE)
-            .filter(|index| *index < count)
+    pub(crate) fn press_files(&mut self, action: Target) -> bool {
+        let count = self.git.viewers.len();
+        if let Target::Editor(EditorEvent::FileTab(index)) = action
+            && index < count
         {
-            self.git.shown = Some(index as usize);
+            self.git.shown = Some(index);
             self.tab = Tab::File;
             self.ask_shown_figures();
             return true;
         }
-        if let Some(index) = action
-            .0
-            .checked_sub(FILE_CLOSE_BASE)
-            .filter(|index| *index < count)
+        if let Target::Editor(EditorEvent::FileClose(index)) = action
+            && index < count
         {
-            let index = index as usize;
             if self.git.viewers[index].pinned {
                 self.git.viewers[index].pinned = false;
             } else {
@@ -704,19 +689,15 @@ impl WorkspaceState {
             }
             return true;
         }
-        if let Some(place) = action
-            .0
-            .checked_sub(PREVIEW_LINK_BASE)
-            .filter(|place| *place < PREVIEW_LINKS)
-        {
-            self.follow_preview_link(place as usize);
+        if let Target::Editor(EditorEvent::PreviewLink(place)) = action {
+            self.follow_preview_link(place);
             return true;
         }
         match action {
-            PREVIEW_SHOW => self.show_source(false),
-            SOURCE_SHOW => self.show_source(true),
-            EDITOR_SAVE => self.format_then_save(true, None),
-            EDITOR_FIELD => {}
+            Target::Editor(EditorEvent::PreviewShow) => self.show_source(false),
+            Target::Editor(EditorEvent::SourceShow) => self.show_source(true),
+            Target::Editor(EditorEvent::EditorSave) => self.format_then_save(true, None),
+            Target::Editor(EditorEvent::EditorField) => {}
             _ if self.offer_pressed(action) => {}
             _ => return false,
         }

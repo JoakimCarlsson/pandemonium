@@ -1,11 +1,13 @@
 //! Coverage for moving entries of the tree by dragging and by the keyboard, and for bringing files in from outside.
 
+use crate::areas::DiffEvent;
+
 use super::*;
-use crate::state::REVIEW_FILES;
+use crate::events::Event;
 
 /// The sample workspace on the Files tab with a small tree listed.
 fn listed() -> WorkspaceState {
-    let state = WorkspaceState::sample().after(REVIEW_FILES);
+    let state = WorkspaceState::sample().handle(Event::Diff(DiffEvent::ReviewFiles));
     let key = state.files_of.clone().unwrap_or_default();
     let paths = [
         "Cargo.toml",

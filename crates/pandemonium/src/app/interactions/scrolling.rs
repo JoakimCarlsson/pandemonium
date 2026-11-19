@@ -1,7 +1,8 @@
 //! Scrolling: the wheel over a box and over a box inside another, holding
 //! and dragging a scrollbar, and the conversation keeping to its end.
 
-use pm_components::state::PROMPT;
+use pm_components::areas::ComposerEvent;
+use pm_components::target::Target;
 use pm_pages::Screen;
 
 use crate::app::headless::Rig;
@@ -86,7 +87,7 @@ fn the_wheel_scrolls_the_innermost_box() {
     let mut rig = Rig::shot(Shot::ComposerLong);
     let chat = back(&rig).0;
     let prompt = prompt_offset(&rig);
-    let at = rig.center(PROMPT);
+    let at = rig.center(Target::Composer(ComposerEvent::Prompt));
     rig.move_to(at);
     rig.wheel(60.0);
     assert!(prompt_offset(&rig) > prompt);

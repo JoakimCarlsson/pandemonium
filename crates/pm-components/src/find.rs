@@ -1,9 +1,15 @@
 //! Finding and replacing text in the file shown: the bar over its top right corner, what it looks for, and the matches it steps through.
 
-use crate::events::reduce;
+use crate::areas::EditorEvent;
+use crate::kit::{self, Frame};
+use crate::theme::Indicated;
+use crate::theme::ShadowLayers;
+
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{Alignment, Arrangement, row_arranged};
 use std::ops::Range;
 
 use pm_editor::{Document, Query};
@@ -13,53 +19,13 @@ use rustle::{BoxAlignment, CursorIcon, Modifier};
 
 use crate::button::{Button, Variant};
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::input::Input;
 use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::theme::{Radius, Role, sp};
 
-/// The field the text looked for is typed in.
-pub const FIND_FIELD: FocusId = FocusId(7_402_100);
-
-/// The field the replacement is typed in.
-pub const REPLACE_FIELD: FocusId = FocusId(7_402_101);
-
-/// Selects the next match.
-pub const FIND_NEXT: FocusId = FocusId(7_402_102);
-
-/// Selects the match before.
-pub const FIND_PREVIOUS: FocusId = FocusId(7_402_103);
-
-/// Closes the bar.
-pub const FIND_CLOSE: FocusId = FocusId(7_402_104);
-
-/// Switches matching case on and off.
-pub const FIND_CASE: FocusId = FocusId(7_402_105);
-
-/// Switches matching whole words on and off.
-pub const FIND_WORD: FocusId = FocusId(7_402_106);
-
-/// Switches reading the text as a regular expression on and off.
-pub const FIND_REGEX: FocusId = FocusId(7_402_107);
-
-/// Replaces the selected match.
-pub const REPLACE_ONE: FocusId = FocusId(7_402_108);
-
-/// Replaces every match.
-pub const REPLACE_ALL: FocusId = FocusId(7_402_109);
-
-/// The bar itself, which keeps a press on it from counting as outside.
-pub const FIND_BAR: FocusId = FocusId(7_402_110);
-
-/// Shows and hides the row for replacing.
-pub const FIND_TOGGLE_REPLACE: FocusId = FocusId(7_402_111);
-
-/// Limits finding to the lines that were selected, and lifts the limit again.
-pub const FIND_IN_SELECTION: FocusId = FocusId(7_402_112);
-
 /// The shadow under the bar: each layer's `(x, y, blur, spread, alpha)`.
-pub(crate) const SHADOW: [(f32, f32, f32, f32, f32); 1] = [(0.0, 8.0, 28.0, 0.0, 0.3)];
+pub(crate) const SHADOW: [rustle::Shadow; 1] = [crate::theme::box_shadow(0.0, 8.0, 28.0, 0.0, 0.3)];
 
 /// The stretches a query finds, or why it cannot be used.
 type Matches = Result<Vec<Range<usize>>, String>;
@@ -102,8 +68,23 @@ impl Finding {
 }
 
 /// Whether `id` is one of the fields or buttons of the bar.
-pub fn is_find_part(id: FocusId) -> bool {
-    (FIND_FIELD.0..=FIND_IN_SELECTION.0).contains(&id.0)
+pub fn is_find_part(id: Target) -> bool {
+    matches!(
+        id,
+        Target::Editor(EditorEvent::FindField)
+            | Target::Editor(EditorEvent::ReplaceField)
+            | Target::Editor(EditorEvent::FindNext)
+            | Target::Editor(EditorEvent::FindPrevious)
+            | Target::Editor(EditorEvent::FindClose)
+            | Target::Editor(EditorEvent::FindCase)
+            | Target::Editor(EditorEvent::FindWord)
+            | Target::Editor(EditorEvent::FindRegex)
+            | Target::Editor(EditorEvent::ReplaceOne)
+            | Target::Editor(EditorEvent::ReplaceAll)
+            | Target::Editor(EditorEvent::FindBar)
+            | Target::Editor(EditorEvent::FindToggleReplace)
+            | Target::Editor(EditorEvent::FindInSelection)
+    )
 }
 
 impl WorkspaceState {
@@ -225,14 +206,16 @@ impl WorkspaceState {
     }
 
     /// Switches one of the ways of matching, the one `which` names, on or off, and selects the first match from the selection on.
-    pub fn find_toggled(mut self, which: FocusId) -> Self {
+    pub fn find_toggled(mut self, which: Target) -> Self {
         if let Some(finding) = self.finding.as_mut() {
             match which {
-                FIND_CASE => finding.case = !finding.case,
-                FIND_WORD => finding.word = !finding.word,
-                FIND_REGEX => finding.regex = !finding.regex,
-                FIND_TOGGLE_REPLACE => finding.replacing = !finding.replacing,
-                FIND_IN_SELECTION => return self.find_scope_toggled(),
+                Target::Editor(EditorEvent::FindCase) => finding.case = !finding.case,
+                Target::Editor(EditorEvent::FindWord) => finding.word = !finding.word,
+                Target::Editor(EditorEvent::FindRegex) => finding.regex = !finding.regex,
+                Target::Editor(EditorEvent::FindToggleReplace) => {
+                    finding.replacing = !finding.replacing
+                }
+                Target::Editor(EditorEvent::FindInSelection) => return self.find_scope_toggled(),
                 _ => {}
             }
         }
@@ -306,16 +289,18 @@ impl WorkspaceState {
     }
 
     /// Carries out what pressing the part `id` of the bar does.
-    pub(crate) fn find_pressed(self, id: FocusId) -> Self {
+    pub(crate) fn find_pressed(self, id: Target) -> Self {
         match id {
-            FIND_NEXT => self.find_stepped(false),
-            FIND_PREVIOUS => self.find_stepped(true),
-            FIND_CLOSE => self.find_closed(),
-            FIND_CASE | FIND_WORD | FIND_REGEX | FIND_TOGGLE_REPLACE | FIND_IN_SELECTION => {
-                self.find_toggled(id)
-            }
-            REPLACE_ONE => self.replaced_one(),
-            REPLACE_ALL => self.replaced_all(),
+            Target::Editor(EditorEvent::FindNext) => self.find_stepped(false),
+            Target::Editor(EditorEvent::FindPrevious) => self.find_stepped(true),
+            Target::Editor(EditorEvent::FindClose) => self.find_closed(),
+            Target::Editor(EditorEvent::FindCase)
+            | Target::Editor(EditorEvent::FindWord)
+            | Target::Editor(EditorEvent::FindRegex)
+            | Target::Editor(EditorEvent::FindToggleReplace)
+            | Target::Editor(EditorEvent::FindInSelection) => self.find_toggled(id),
+            Target::Editor(EditorEvent::ReplaceOne) => self.replaced_one(),
+            Target::Editor(EditorEvent::ReplaceAll) => self.replaced_all(),
             _ => self,
         }
     }
@@ -334,7 +319,7 @@ impl WorkspaceState {
 
 /// Emits a switch of the bar, `label` in the font for code, lit when `on`, answering to `id`.
 #[track_caller]
-pub(crate) fn switch(label: &str, id: FocusId, on: bool) {
+pub(crate) fn switch(label: &str, id: Target, on: bool) {
     let looks = if on {
         theme::InteractionTones::new().idle(Role::SurfaceActive)
     } else {
@@ -345,18 +330,19 @@ pub(crate) fn switch(label: &str, id: FocusId, on: bool) {
     let mut own = Modifier::new()
         .width(theme::sp(6.5))
         .height(theme::sp(6))
-        .interaction_focused(crate::focus::is_held(id))
-        .interaction_background((looks).colors());
+        .indicated(looks, theme::Focused::Held(crate::focus::is_held(id)));
     if on {
         own = own
             .border(1.0, theme::color(Role::Accent), Radius::Sm.px())
             .padding(1.0);
     }
-    let own = own.cursor(CursorIcon::Pointer).control(id, reduce(id));
+    let own = own
+        .cursor(CursorIcon::Pointer)
+        .control(id, send(Event::pressing(id)));
     let kind =
         theme::mono_style(11, 1.2).color(theme::color(if on { Role::Text } else { Role::Subtle }));
     row_arranged(own, Arrangement::Center, Alignment::Center, || {
-        rustle::basic_text(Modifier::new(), label, kind, rustle::TextOverflow::Ellipsis);
+        kit::text(Modifier::new(), label, kind);
     });
 }
 
@@ -389,74 +375,76 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
         phosphor::CARET_RIGHT
     };
     let read_only = document.field.is_read_only();
-    column_arranged(
+    kit::column(
         Modifier::new()
             .wrap_content_width(BoxAlignment::TopEnd, true)
             .align(BoxAlignment::TopEnd)
             .offset(-sp(6), sp(2))
             .z_index(40)
-            .draw_behind(theme::shadows(&SHADOW, Radius::Md))
-            .background_rounded(theme::color(Role::Surface), Radius::Md.px())
-            .border(1.0, theme::color(Role::Border), Radius::Md.px())
-            .padding(1.0)
-            .control(FIND_BAR, reduce(FIND_BAR))
+            .shadow_layers(&SHADOW, Radius::Md.px())
+            .panel(Radius::Md)
+            .control(
+                Target::Editor(EditorEvent::FindBar),
+                send(Event::Editor(EditorEvent::FindBar)),
+            )
             .padding(theme::sp(1)),
-        Arrangement::SpacedBy(sp(1)),
-        Alignment::Start,
+        1,
         || {
-            row_arranged(
-                Modifier::new(),
-                Arrangement::SpacedBy(sp(1)),
-                Alignment::Center,
-                || {
-                    Button::icon(toggle, FIND_TOGGLE_REPLACE).build();
-                    Input::new(&finding.query, FIND_FIELD)
-                        .size(Size::Sm)
-                        .placeholder("Find")
-                        .invalid(found.is_err())
-                        .modifier(Modifier::new().width(194.0))
-                        .build();
-                    switch("Aa", FIND_CASE, finding.case);
-                    switch("ab", FIND_WORD, finding.word);
-                    switch(".*", FIND_REGEX, finding.regex);
-                    switch("sel", FIND_IN_SELECTION, finding.scoped);
-                    rustle::basic_text(
-                        Modifier::new().width(84.0).padding_xy(theme::sp(1), 0.0),
-                        said,
-                        theme::text_style(11, 1.4)
-                            .color(theme::color(tone))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                    Button::icon(phosphor::ARROW_UP, FIND_PREVIOUS).build();
-                    Button::icon(phosphor::ARROW_DOWN, FIND_NEXT).build();
-                    Button::icon(phosphor::X, FIND_CLOSE).build();
-                },
-            );
-            if finding.replacing {
-                row_arranged(
-                    Modifier::new(),
-                    Arrangement::SpacedBy(sp(1)),
-                    Alignment::Center,
-                    || {
-                        rustle::spacer(Modifier::new().width(theme::sp(7)));
-                        Input::new(&finding.replacement, REPLACE_FIELD)
-                            .size(Size::Sm)
-                            .placeholder("Replace")
-                            .modifier(Modifier::new().width(194.0))
-                            .build();
-                        Button::new("Replace", REPLACE_ONE)
-                            .variant(Variant::Ghost)
-                            .size(Size::Sm)
-                            .disabled(read_only)
-                            .build();
-                        Button::new("Replace all", REPLACE_ALL)
-                            .variant(Variant::Ghost)
-                            .size(Size::Sm)
-                            .disabled(read_only)
-                            .build();
-                    },
+            kit::row(Modifier::new(), 1, || {
+                Button::icon(toggle, Target::Editor(EditorEvent::FindToggleReplace)).build();
+                Input::new(&finding.query, Target::Editor(EditorEvent::FindField))
+                    .size(Size::Sm)
+                    .placeholder("Find")
+                    .invalid(found.is_err())
+                    .modifier(Modifier::new().width(194.0))
+                    .build();
+                switch("Aa", Target::Editor(EditorEvent::FindCase), finding.case);
+                switch("ab", Target::Editor(EditorEvent::FindWord), finding.word);
+                switch(".*", Target::Editor(EditorEvent::FindRegex), finding.regex);
+                switch(
+                    "sel",
+                    Target::Editor(EditorEvent::FindInSelection),
+                    finding.scoped,
                 );
+                kit::text(
+                    Modifier::new().width(84.0).padding_xy(theme::sp(1), 0.0),
+                    said,
+                    kit::line(11, tone),
+                );
+                Button::icon(
+                    phosphor::ARROW_UP,
+                    Target::Editor(EditorEvent::FindPrevious),
+                )
+                .build();
+                Button::icon(phosphor::ARROW_DOWN, Target::Editor(EditorEvent::FindNext)).build();
+                Button::icon(phosphor::X, Target::Editor(EditorEvent::FindClose)).build();
+            });
+            if finding.replacing {
+                kit::row(Modifier::new(), 1, || {
+                    rustle::spacer(Modifier::new().width(theme::sp(7)));
+                    Input::new(
+                        &finding.replacement,
+                        Target::Editor(EditorEvent::ReplaceField),
+                    )
+                    .size(Size::Sm)
+                    .placeholder("Replace")
+                    .modifier(Modifier::new().width(194.0))
+                    .build();
+                    kit::small_button(
+                        "Replace",
+                        Target::Editor(EditorEvent::ReplaceOne),
+                        Variant::Ghost,
+                    )
+                    .disabled(read_only)
+                    .build();
+                    kit::small_button(
+                        "Replace all",
+                        Target::Editor(EditorEvent::ReplaceAll),
+                        Variant::Ghost,
+                    )
+                    .disabled(read_only)
+                    .build();
+                });
             }
         },
     );

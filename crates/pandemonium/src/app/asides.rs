@@ -2,19 +2,21 @@
 //! folder picker's: each is opened while what it shows is open and closed
 //! with it, and is drawn from the same state as the main window.
 
+use pm_components::areas::DialogEvent;
+use pm_components::areas::SidebarEvent;
+
+use pm_components::events::Event;
+use pm_components::target::Target;
 use std::rc::Rc;
 
-use pm_components::focus::FocusId;
-use pm_components::folder_picker::{PICKER_FIELD, is_picker};
+use pm_components::folder_picker::is_picker;
 
 use super::pointer::PointerState;
 use pm_components::settings::is_settings;
-use pm_components::state::SETTINGS;
 use pm_pages::Screen;
 use rustle::WindowOptions;
 
 use super::App;
-use super::host::Input;
 use super::port::Port;
 
 /// Which of the windows beside the main one.
@@ -91,7 +93,7 @@ impl Aside {
     }
 
     /// Whether `id` names something of the window.
-    pub(super) fn owns(self, id: FocusId) -> bool {
+    pub(super) fn owns(self, id: Target) -> bool {
         match self {
             Self::Settings => is_settings(id),
             Self::Picker => is_picker(id),
@@ -105,7 +107,7 @@ impl Aside {
 }
 
 /// Whether `id` names something of any window beside the main one.
-pub(super) fn is_aside(id: FocusId) -> bool {
+pub(super) fn is_aside(id: Target) -> bool {
     Aside::ALL.iter().any(|aside| aside.owns(id))
 }
 
@@ -115,7 +117,7 @@ pub(super) struct Surface {
     /// The window, once rustle opened it.
     window: Option<Rc<dyn Port>>,
     /// The controls the pointer is over in the window, the one it came over last at the end.
-    hovered: Vec<FocusId>,
+    hovered: Vec<Target>,
     /// The pointer as the window's events so far left it.
     pointer: PointerState,
 }
@@ -142,9 +144,6 @@ impl App {
             let showing = self.surface_of(aside).is_some();
             match (open, showing, self.shell.port_of(aside)) {
                 (true, false, Some(window)) => {
-                    if let Some(native) = window.native() {
-                        super::host::enable_ime(&*native);
-                    }
                     *self.surface_of(aside) = Some(Surface {
                         window: Some(window),
                         hovered: Vec::new(),
@@ -173,7 +172,7 @@ impl App {
         if serial.is_none() {
             return;
         }
-        self.focus.focus(PICKER_FIELD);
+        self.focus.focus(Target::Dialog(DialogEvent::PickerField));
         self.recompose = true;
         if let Some(window) = self.window_of(Aside::Picker) {
             window.set_minimized(false);
@@ -186,29 +185,8 @@ impl App {
     pub(super) fn open_settings(&mut self) {
         match self.window_of(Aside::Settings) {
             Some(window) => window.focus_window(),
-            None if self.on_aside.is_none() => self.after(SETTINGS),
+            None if self.on_aside.is_none() => self.handle(Event::Sidebar(SidebarEvent::Settings)),
             None => {}
-        }
-    }
-
-    /// Carries out `event` of the window of `aside`: closing it closes what it
-    /// shows, taking the keyboard leaves any field of another window, and the
-    /// rest is handled as the main window's events are, against the window's
-    /// own frame and pointer.
-    pub(super) fn aside_input(&mut self, aside: Aside, input: Input) {
-        match input {
-            Input::Close => {
-                self.model
-                    .update(|state| *state = aside.closed(std::mem::take(state)));
-            }
-            Input::Focused(true) => {
-                if self.focus.current().is_some_and(|id| !aside.owns(id)) {
-                    self.focus.clear();
-                }
-            }
-            input => {
-                self.in_aside(aside, |app| app.handle_input(input));
-            }
         }
     }
 

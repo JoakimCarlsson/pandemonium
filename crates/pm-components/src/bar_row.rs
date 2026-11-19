@@ -1,9 +1,8 @@
 //! The bar row: a name with a figure beside it and a bar under them, as long as the row's share of the longest.
 
+use crate::kit;
 use crate::theme;
-use crate::theme::sp;
 use rustle::Modifier;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::theme::{Role, Tone};
 
@@ -101,39 +100,24 @@ impl BarRow {
             modifier,
             ..
         } = self;
-        column_arranged(
-            modifier.chain(Modifier::new().width(width)),
-            Arrangement::SpacedBy(sp(1)),
-            Alignment::Start,
-            move || {
-                row_arranged(
-                    Modifier::new().fill_max_width(),
-                    Arrangement::SpacedBy(sp(3)),
-                    Alignment::Center,
-                    || {
-                        column_arranged(
-                            Modifier::new().weight(1.0).clip(),
-                            Arrangement::Start,
-                            Alignment::Start,
-                            || {
-                                line(label, 13, 1.4, Role::Text);
-                            },
-                        );
-                        line(value, 13, 1.4, Role::Text);
-                    },
-                );
-                if let Some(detail) = detail {
-                    line(detail, 12, 1.4, Role::Muted);
-                }
-                let share = filled / width.max(f32::EPSILON);
-                rustle::linear_progress_indicator_with(
-                    move || share,
-                    Modifier::new().width(width).height(BAR_HEIGHT),
-                    theme::color(tone),
-                    theme::color(Role::SurfaceHover),
-                );
-            },
-        );
+        kit::column(modifier.chain(Modifier::new().width(width)), 1, move || {
+            kit::row(Modifier::new().fill_max_width(), 3, || {
+                kit::column(Modifier::new().weight(1.0).clip(), 0, || {
+                    line(label, 13, 1.4, Role::Text);
+                });
+                line(value, 13, 1.4, Role::Text);
+            });
+            if let Some(detail) = detail {
+                line(detail, 12, 1.4, Role::Muted);
+            }
+            let share = filled / width.max(f32::EPSILON);
+            rustle::linear_progress_indicator_with(
+                move || share,
+                Modifier::new().width(width).height(BAR_HEIGHT),
+                theme::color(tone),
+                theme::color(Role::SurfaceHover),
+            );
+        });
     }
 }
 

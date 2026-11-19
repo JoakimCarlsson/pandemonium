@@ -1,39 +1,18 @@
 //! The questions the source control panel asks before it does something that cannot be taken back, and the lists it asks a choice from.
 
-use crate::focus::FocusId;
+use crate::areas::GitEvent;
+use crate::kit;
+use crate::target::Target;
 use crate::theme;
 use crate::theme::Role;
-use crate::theme::sp;
 use rustle::Modifier;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::button::Variant;
 use crate::parts::{line, wrap};
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::tree_actions::{EntryChange, TreeTarget, name_of};
-use crate::{Button, Input, Modal};
-
-/// The dimmed window behind a question.
-pub const PROMPT_OUTSIDE: FocusId = FocusId(7015);
-
-/// The panel of a question.
-pub const PROMPT_INSIDE: FocusId = FocusId(7016);
-
-/// Does what the question asks.
-pub const PROMPT_CONFIRM: FocusId = FocusId(7017);
-
-/// Does not.
-pub const PROMPT_CANCEL: FocusId = FocusId(7018);
-
-/// The box a session is renamed in.
-pub const RENAME_FIELD: FocusId = FocusId(7085);
-
-/// The box a stash is named in.
-pub const STASH_FIELD: FocusId = FocusId(7075);
-
-/// The first of the rows of a list of stashes; the rest follow it.
-pub const PROMPT_ROW_BASE: u64 = 8750;
+use crate::{Input, Modal};
 
 /// How many stashes a list shows.
 const STASH_ROWS: usize = 12;
@@ -129,23 +108,23 @@ impl WorkspaceState {
     }
 
     /// Carries out `action` if it presses a question or one of its rows, and says whether it did.
-    pub(crate) fn press_prompt(&mut self, action: FocusId) -> bool {
+    pub(crate) fn press_prompt(&mut self, action: Target) -> bool {
         if self.press_branch_task(action) {
             return true;
         }
         match action {
-            PROMPT_INSIDE | STASH_FIELD => {}
-            PROMPT_CANCEL | PROMPT_OUTSIDE => self.git.prompt = None,
-            PROMPT_CONFIRM => self.confirm_prompt(),
+            Target::Git(GitEvent::PromptInside) | Target::Git(GitEvent::StashField) => {}
+            Target::Git(GitEvent::PromptCancel) | Target::Git(GitEvent::PromptOutside) => {
+                self.git.prompt = None
+            }
+            Target::Git(GitEvent::PromptConfirm) => self.confirm_prompt(),
             _ => {
-                let Some(row) = action
-                    .0
-                    .checked_sub(PROMPT_ROW_BASE)
-                    .map(|row| row as usize)
-                    .filter(|row| *row < STASH_ROWS)
-                else {
+                let Target::Git(GitEvent::StashRow(row)) = action else {
                     return false;
                 };
+                if row >= STASH_ROWS {
+                    return false;
+                }
                 self.choose_stash(row);
             }
         }
@@ -261,34 +240,25 @@ impl WorkspaceState {
     }
 }
 
-/// Emits a button of a question, saying `label`.
-#[track_caller]
-fn button(label: &str, id: FocusId, variant: Variant) {
-    Button::new(label, id)
-        .variant(variant)
-        .size(Size::Sm)
-        .build();
-}
-
 /// What a question answers to: the dimmed window behind it, its panel, and the buttons that say yes and no.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct QuestionIds {
     /// The dimmed window behind the question.
-    pub outside: FocusId,
+    pub outside: Target,
     /// The panel of the question.
-    pub inside: FocusId,
+    pub inside: Target,
     /// The button that says yes.
-    pub confirm: FocusId,
+    pub confirm: Target,
     /// The button that says no.
-    pub cancel: FocusId,
+    pub cancel: Target,
 }
 
 /// The names of the questions of the source control panel.
 const GIT_QUESTION: QuestionIds = QuestionIds {
-    outside: PROMPT_OUTSIDE,
-    inside: PROMPT_INSIDE,
-    confirm: PROMPT_CONFIRM,
-    cancel: PROMPT_CANCEL,
+    outside: Target::Git(GitEvent::PromptOutside),
+    inside: Target::Git(GitEvent::PromptInside),
+    confirm: Target::Git(GitEvent::PromptConfirm),
+    cancel: Target::Git(GitEvent::PromptCancel),
 };
 
 /// Emits a question of the source control panel: a title, the words that explain it, and the button that says yes beside the one that says no.
@@ -297,29 +267,20 @@ fn question(title: String, words: &str, confirm: &str, variant: Variant) {
     question_of(GIT_QUESTION, title, words, confirm, variant);
 }
 
-/// The type a question's title is set in.
-fn title_type() -> rustle::TextStyle {
-    theme::text_style(15, 1.4)
-        .font_weight(rustle::FontWeight::MEDIUM)
-        .color(theme::color(Role::Text))
-        .max_lines(1)
-}
-
 /// Emits the row of a question's buttons, pushed to its right end: the one that says no, then `confirm` when there is one.
 #[track_caller]
-fn buttons(cancel: FocusId, confirm: Option<(&str, FocusId, Variant)>) {
-    row_arranged(
+fn buttons(cancel: Target, confirm: Option<(&str, Target, Variant)>) {
+    kit::row(
         Modifier::new()
             .fill_max_width()
             .padding_xy(theme::sp(5), 0.0)
             .padding_each(0.0, 0.0, 0.0, theme::sp(5)),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
+        2,
         || {
             rustle::spacer(rustle::Modifier::new().weight(1.0));
-            button("Cancel", cancel, Variant::Ghost);
+            kit::small_button("Cancel", cancel, Variant::Ghost).build();
             if let Some((words, id, variant)) = confirm {
-                button(words, id, variant);
+                kit::small_button(words, id, variant).build();
             }
         },
     );
@@ -337,24 +298,14 @@ pub(crate) fn question_of(
     Modal::new(ids.outside, ids.inside)
         .width(WIDTH)
         .build_with(|| {
-            column_arranged(
-                Modifier::new().padding(theme::sp(5)),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Start,
-                || {
-                    for title in wrap(&title, 15, WIDTH - 40.0) {
-                        rustle::basic_text(
-                            Modifier::new(),
-                            title,
-                            title_type(),
-                            rustle::TextOverflow::Ellipsis,
-                        );
-                    }
-                    for words in wrap(words, 13, WIDTH - 40.0) {
-                        line(words, 13, 1.5, Role::Muted);
-                    }
-                },
-            );
+            kit::column(Modifier::new().padding(theme::sp(5)), 2, || {
+                for title in wrap(&title, 15, WIDTH - 40.0) {
+                    kit::text(Modifier::new(), title, kit::strong(15, Role::Text));
+                }
+                for words in wrap(words, 13, WIDTH - 40.0) {
+                    line(words, 13, 1.5, Role::Muted);
+                }
+            });
             buttons(ids.cancel, Some((confirm, ids.confirm, variant)));
         });
 }
@@ -364,92 +315,86 @@ pub(crate) fn question_of(
 fn naming_box(
     title: &str,
     field: &rustle::TextFieldState,
-    id: FocusId,
+    id: Target,
     placeholder: &str,
     confirm: &str,
 ) {
-    Modal::new(PROMPT_OUTSIDE, PROMPT_INSIDE)
-        .width(WIDTH)
-        .build_with(|| {
-            column_arranged(
-                Modifier::new().fill_max_width().padding(theme::sp(5)),
-                Arrangement::SpacedBy(sp(3)),
-                Alignment::Start,
-                || {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        title,
-                        title_type(),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                    Input::new(field, id)
-                        .modifier(Modifier::new().fill_max_width())
-                        .placeholder(placeholder)
-                        .size(Size::Md)
-                        .build();
-                },
-            );
-            buttons(
-                PROMPT_CANCEL,
-                Some((confirm, PROMPT_CONFIRM, Variant::Default)),
-            );
-        });
+    Modal::new(
+        Target::Git(GitEvent::PromptOutside),
+        Target::Git(GitEvent::PromptInside),
+    )
+    .width(WIDTH)
+    .build_with(|| {
+        kit::column(
+            Modifier::new().fill_max_width().padding(theme::sp(5)),
+            3,
+            || {
+                kit::text(Modifier::new(), title, kit::strong(15, Role::Text));
+                Input::new(field, id)
+                    .modifier(Modifier::new().fill_max_width())
+                    .placeholder(placeholder)
+                    .size(Size::Md)
+                    .build();
+            },
+        );
+        buttons(
+            Target::Git(GitEvent::PromptCancel),
+            Some((
+                confirm,
+                Target::Git(GitEvent::PromptConfirm),
+                Variant::Default,
+            )),
+        );
+    });
 }
 
 /// Emits the list of stashes to `action` one of, with the button that leaves it.
 #[track_caller]
 fn stash_list(state: &WorkspaceState, action: StashAction) {
-    Modal::new(PROMPT_OUTSIDE, PROMPT_INSIDE)
-        .width(WIDTH)
-        .build_with(|| {
-            column_arranged(
-                Modifier::new().fill_max_width().padding(theme::sp(3)),
-                Arrangement::SpacedBy(sp(1)),
-                Alignment::Start,
-                || {
-                    column_arranged(
+    Modal::new(
+        Target::Git(GitEvent::PromptOutside),
+        Target::Git(GitEvent::PromptInside),
+    )
+    .width(WIDTH)
+    .build_with(|| {
+        kit::column(
+            Modifier::new().fill_max_width().padding(theme::sp(3)),
+            1,
+            || {
+                kit::column(
+                    Modifier::new().padding_xy(theme::sp(2), 0.0).padding_each(
+                        0.0,
+                        0.0,
+                        0.0,
+                        theme::sp(2),
+                    ),
+                    0,
+                    || kit::text(Modifier::new(), action.title(), kit::strong(15, Role::Text)),
+                );
+                if state.git.stashes.is_empty() {
+                    kit::column(
                         Modifier::new().padding_xy(theme::sp(2), 0.0).padding_each(
                             0.0,
                             0.0,
                             0.0,
                             theme::sp(2),
                         ),
-                        Arrangement::Start,
-                        Alignment::Start,
-                        || {
-                            rustle::basic_text(
-                                Modifier::new(),
-                                action.title(),
-                                title_type(),
-                                rustle::TextOverflow::Ellipsis,
-                            )
-                        },
+                        0,
+                        || line("There are no stashes.", 13, 1.4, Role::Subtle),
                     );
-                    if state.git.stashes.is_empty() {
-                        column_arranged(
-                            Modifier::new().padding_xy(theme::sp(2), 0.0).padding_each(
-                                0.0,
-                                0.0,
-                                0.0,
-                                theme::sp(2),
-                            ),
-                            Arrangement::Start,
-                            Alignment::Start,
-                            || line("There are no stashes.", 13, 1.4, Role::Subtle),
-                        );
-                    }
-                    for (position, stash) in state.git.stashes.iter().take(STASH_ROWS).enumerate() {
-                        crate::popover::row(
-                            &format!("stash@{{{}}}", stash.index),
-                            &stash.message,
-                            false,
-                            FocusId(PROMPT_ROW_BASE + position as u64),
-                        );
-                    }
-                },
-            );
-            buttons(PROMPT_CANCEL, None);
-        });
+                }
+                for (position, stash) in state.git.stashes.iter().take(STASH_ROWS).enumerate() {
+                    crate::popover::row(
+                        &format!("stash@{{{}}}", stash.index),
+                        &stash.message,
+                        false,
+                        Target::Git(GitEvent::StashRow(position)),
+                    );
+                }
+            },
+        );
+        buttons(Target::Git(GitEvent::PromptCancel), None);
+    });
 }
 
 /// Emits the question or list open.
@@ -508,14 +453,14 @@ pub fn prompt(state: &WorkspaceState, open: &Prompt) {
         Prompt::StashMessage => naming_box(
             "Stash changes",
             &state.git.stash_message,
-            STASH_FIELD,
+            Target::Git(GitEvent::StashField),
             "Message (optional)",
             "Stash",
         ),
         Prompt::Rename(_) => naming_box(
             "Rename session",
             &state.git.rename,
-            RENAME_FIELD,
+            Target::Git(GitEvent::RenameField),
             "Title",
             "Rename",
         ),

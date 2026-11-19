@@ -17,8 +17,10 @@
 - Build interface elements as rustle composables and rustle widgets themed
   through rustle's theme (`pm-components/src/theme` provides it), with plain
   rustle modifiers, text styles and interaction support and the existing
-  component APIs; the binary hosts them with `rustle::Host`. Use winit and
-  wgpu, through rustle, for portability.
+  component APIs; the binary runs them in rustle's own event loop
+  (`rustle::run_with`, with `rustle::window` for the windows beside the main
+  one) and reads the windows only through rustle's API, never winit itself.
+  Use wgpu, through rustle, for portability.
 - Give each operation one implementation. Reuse the same path for session
   creation, project resolution and worktree teardown wherever it is called.
 - When a control is repeated or needed by a second page, extract it into

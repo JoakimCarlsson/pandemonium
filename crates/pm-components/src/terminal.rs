@@ -1,10 +1,14 @@
 //! The terminal dock under the session: tabs of shells above the window of the one showing.
 
-use crate::events::reduce;
+use crate::areas::DebugEvent;
+use crate::areas::TerminalEvent;
+use crate::kit::{self, Frame};
+use crate::theme::Indicated;
+
+use crate::events::{Event, send};
+use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use std::hash::{Hash, Hasher};
 
@@ -15,13 +19,9 @@ use rustle::{CursorIcon, Modifier};
 use crate::Button;
 use crate::dock::{BottomTab, TerminalTab};
 use crate::events::Interactive;
-use crate::focus::FocusId;
 use crate::parts::{glyph, line, spacer};
 use crate::sample::Session;
-use crate::state::{
-    BOTTOM_PROBLEMS, BOTTOM_TERMINAL, MAXIMIZE_TERMINAL, NEW_TERMINAL, TERMINAL, TERMINAL_BODY,
-    TERMINAL_CLOSE_BASE, TERMINAL_TAB_BASE, WorkspaceState,
-};
+use crate::state::WorkspaceState;
 use crate::theme::{Radius, Role, Side, Tone};
 
 /// How tall the dock is until it is dragged taller or shorter, in logical pixels.
@@ -116,57 +116,46 @@ const SHELL_LIST_WIDTH: f32 = 160.0;
 pub fn terminal(state: &WorkspaceState, session: &Session, width: f32, page: f32) {
     let shown = state.bottom_tab();
     let (errors, warnings) = crate::problems_panel::tally(state);
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_width()
             .height(height(state, page))
             .background(theme::color(Role::Background))
-            .draw_behind(theme::edge(
-                theme::Side::Top,
-                1.0,
-                theme::color(Role::Border),
-            ))
-            .padding_each(0.0, 1.0, 0.0, 0.0),
-        Arrangement::Start,
-        Alignment::Start,
+            .ruled(theme::Side::Top),
+        0,
         || {
-            row_arranged(
+            kit::row(
                 Modifier::new()
                     .fill_max_width()
                     .height(theme::sp(10))
-                    .draw_behind(theme::edge(
-                        theme::Side::Bottom,
-                        1.0,
-                        theme::color(Role::Border),
-                    ))
-                    .padding_each(0.0, 0.0, 0.0, 1.0)
+                    .ruled(theme::Side::Bottom)
                     .padding_xy(theme::sp(2), 0.0),
-                Arrangement::SpacedBy(sp(1)),
-                Alignment::Center,
+                1,
                 || {
                     pane_tab(
                         "Problems",
                         Some(errors + warnings).filter(|count| *count > 0),
                         shown == BottomTab::Problems,
-                        BOTTOM_PROBLEMS,
+                        Target::Terminal(TerminalEvent::BottomProblems),
                     );
                     if state.debug_docked() {
                         pane_tab(
                             "Debug Console",
                             None,
                             shown == BottomTab::Debug,
-                            crate::debug::DEBUG_TAB,
+                            Target::Debug(DebugEvent::DebugTab),
                         );
                     }
                     pane_tab(
                         "Terminal",
                         None,
                         shown == BottomTab::Terminal,
-                        BOTTOM_TERMINAL,
+                        Target::Terminal(TerminalEvent::BottomTerminal),
                     );
                     spacer();
                     if shown == BottomTab::Terminal {
-                        Button::icon(phosphor::PLUS, NEW_TERMINAL).build();
+                        Button::icon(phosphor::PLUS, Target::Terminal(TerminalEvent::NewTerminal))
+                            .build();
                     }
                     Button::icon(
                         if state.terminal_maximized {
@@ -174,10 +163,10 @@ pub fn terminal(state: &WorkspaceState, session: &Session, width: f32, page: f32
                         } else {
                             phosphor::ARROWS_OUT_SIMPLE
                         },
-                        MAXIMIZE_TERMINAL,
+                        Target::Terminal(TerminalEvent::MaximizeTerminal),
                     )
                     .build();
-                    Button::icon(phosphor::X, TERMINAL).build();
+                    Button::icon(phosphor::X, Target::Terminal(TerminalEvent::Terminal)).build();
                 },
             );
             match shown {
@@ -191,17 +180,12 @@ pub fn terminal(state: &WorkspaceState, session: &Session, width: f32, page: f32
                         } else {
                             width
                         };
-                        row_arranged(
-                            Modifier::new().fill_max_width().weight(1.0),
-                            Arrangement::Start,
-                            Alignment::Start,
-                            || {
-                                window(tab, room - 2.0 * PADDING_X, Look::of(state));
-                                if listed {
-                                    shell_list(session);
-                                }
-                            },
-                        );
+                        kit::row_top(Modifier::new().fill_max_width().weight(1.0), 0, || {
+                            window(tab, room - 2.0 * PADDING_X, Look::of(state));
+                            if listed {
+                                shell_list(session);
+                            }
+                        });
                     }
                 }
             }
@@ -211,7 +195,7 @@ pub fn terminal(state: &WorkspaceState, session: &Session, width: f32, page: f32
 
 /// Emits a tab of the dock named `label`, filled while it is the one showing, with how many things it holds when it holds any.
 #[track_caller]
-fn pane_tab(label: &str, count: Option<usize>, shown: bool, id: FocusId) {
+fn pane_tab(label: &str, count: Option<usize>, shown: bool, id: Target) {
     let tone = if shown { Role::Text } else { Role::Muted };
     let looks = if shown {
         theme::InteractionTones::new().idle(Role::SurfaceSelected)
@@ -219,25 +203,22 @@ fn pane_tab(label: &str, count: Option<usize>, shown: bool, id: FocusId) {
         theme::InteractionTones::new().hover(Role::SurfaceHover)
     }
     .radius(Radius::Lg);
-    row_arranged(
+    kit::row(
         Modifier::new()
             .height(theme::sp(8))
-            .interaction_focused(crate::focus::is_held(id))
-            .interaction_background((looks).colors())
+            .indicated(looks, theme::Focused::Held(crate::focus::is_held(id)))
             .cursor(CursorIcon::Pointer)
-            .control(id, reduce(id))
+            .control(id, send(Event::pressing(id)))
             .padding_xy(theme::sp(3), 0.0),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
+        2,
         || {
             line(label, 13, 1.4, tone);
             if let Some(count) = count {
-                row_arranged(
+                kit::row(
                     Modifier::new()
                         .background_rounded(theme::color(Role::Accent), Radius::Lg.px())
                         .padding_xy(theme::sp(1.5), 0.0),
-                    Arrangement::Start,
-                    Alignment::Center,
+                    0,
                     || line(count.to_string(), 11, 1.3, Role::OnAccent),
                 );
             }
@@ -248,19 +229,13 @@ fn pane_tab(label: &str, count: Option<usize>, shown: bool, id: FocusId) {
 /// Emits the shells of `session` as a list at the right of the dock, the one showing marked, each with the button that ends it.
 #[track_caller]
 fn shell_list(session: &Session) {
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_height()
             .width(SHELL_LIST_WIDTH)
-            .draw_behind(theme::edge(
-                theme::Side::Left,
-                1.0,
-                theme::color(Role::Border),
-            ))
-            .padding_each(1.0, 0.0, 0.0, 0.0)
+            .ruled(theme::Side::Left)
             .clip(),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         || {
             for (index, tab) in session.terminals.iter().enumerate() {
                 rustle::key(index, || {
@@ -280,32 +255,34 @@ fn shell_row(index: usize, tab: &TerminalTab, shown: bool) {
     } else {
         theme::InteractionTones::new().hover(Role::SurfaceHover)
     };
-    let select = FocusId(TERMINAL_TAB_BASE + index as u64);
-    row_arranged(
+    let select = Target::Terminal(TerminalEvent::TerminalTab(index));
+    kit::row(
         Modifier::new()
             .fill_max_width()
             .height(theme::sp(7))
-            .interaction_background(looks.colors())
+            .indicated(looks, theme::Focused::Rustle)
             .padding_each(0.0, 0.0, theme::sp(1), 0.0),
-        Arrangement::SpacedBy(sp(2)),
-        Alignment::Center,
+        2,
         || {
-            row_arranged(
+            kit::row(
                 Modifier::new()
                     .weight(1.0)
                     .height(theme::sp(7))
                     .clip()
                     .cursor(CursorIcon::Pointer)
-                    .control(select, reduce(select))
+                    .control(select, send(Event::pressing(select)))
                     .padding_each(theme::sp(3), 0.0, 0.0, 0.0),
-                Arrangement::SpacedBy(sp(2)),
-                Alignment::Center,
+                2,
                 || {
                     glyph(phosphor::TERMINAL, 3.5, tone);
                     line(tab.name(), 13, 1.4, tone);
                 },
             );
-            Button::icon(phosphor::X, FocusId(TERMINAL_CLOSE_BASE + index as u64)).build();
+            Button::icon(
+                phosphor::X,
+                Target::Terminal(TerminalEvent::TerminalClose(index)),
+            )
+            .build();
         },
     );
 }
@@ -329,22 +306,30 @@ fn window(tab: &TerminalTab, width: f32, look: Look) {
     )
         .hash(&mut hasher);
     let key = hasher.finish();
-    column_arranged(
+    kit::column(
         Modifier::new()
             .fill_max_height()
             .weight(1.0)
             .background(theme::color(Role::Background))
             .clip()
             .cursor(CursorIcon::Text)
-            .pressable_menu(TERMINAL_BODY, reduce(TERMINAL_BODY), {
-                let operations = crate::events::operations();
-                move || operations.open_terminal_menu()
-            })
-            .chain(crate::bounds::placed(TERMINAL_BODY, Modifier::new()))
-            .chain(crate::focus::keyboard_focus(TERMINAL_BODY))
+            .pressable_menu(
+                Target::Terminal(TerminalEvent::TerminalBody),
+                send(Event::Terminal(TerminalEvent::TerminalBody)),
+                {
+                    let operations = crate::events::operations();
+                    move || operations.open_terminal_menu()
+                },
+            )
+            .chain(crate::bounds::placed(
+                Target::Terminal(TerminalEvent::TerminalBody),
+                Modifier::new(),
+            ))
+            .chain(crate::focus::keyboard_focus(Target::Terminal(
+                TerminalEvent::TerminalBody,
+            )))
             .padding_xy(PADDING_X, PADDING_Y),
-        Arrangement::Start,
-        Alignment::Start,
+        0,
         move || {
             rustle::key(key, || {
                 rustle::skippable((key, width.to_bits()), || {
@@ -378,29 +363,24 @@ fn lines(emulator: &Emulator, back: usize, composing: &str, link: Option<&Link>,
     let first = emulator.first_line(back);
     let cursor = emulator.cursor(back);
     let selection = emulator.selection().map(|marked| marked.ordered());
-    column_arranged(
-        Modifier::new(),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            for row in 0..emulator.rows() {
-                let at_cursor = cursor
-                    .filter(|(line, _)| *line == row)
-                    .map(|(_, column)| column);
-                let marked = selection.and_then(|range| marked_columns(range, first + row));
-                let linked = link.and_then(|link| linked_columns(link, first + row));
-                rustle::key(row, || {
-                    line_of(
-                        emulator.line(row, back),
-                        at_cursor,
-                        Marks { marked, linked },
-                        composing,
-                        look,
-                    )
-                });
-            }
-        },
-    );
+    kit::column(Modifier::new(), 0, || {
+        for row in 0..emulator.rows() {
+            let at_cursor = cursor
+                .filter(|(line, _)| *line == row)
+                .map(|(_, column)| column);
+            let marked = selection.and_then(|range| marked_columns(range, first + row));
+            let linked = link.and_then(|link| linked_columns(link, first + row));
+            rustle::key(row, || {
+                line_of(
+                    emulator.line(row, back),
+                    at_cursor,
+                    Marks { marked, linked },
+                    composing,
+                    look,
+                )
+            });
+        }
+    });
 }
 
 /// The columns of line `line` that the selection from `start` to `end` covers, when it covers any.
@@ -449,56 +429,50 @@ fn line_of(
         })
         .max(cursor.map_or(0, |column| column + 1))
         .min(cells.len());
-    row_arranged(
-        Modifier::new().height(look.font * LEADING),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            let mut run: Option<(Run, String)> = None;
-            for (column, cell) in cells[..end].iter().enumerate() {
-                let shared = Run {
-                    fg: cell.fg,
-                    bg: cell.bg,
-                    flags: cell.flags,
-                    selected: marked.is_some_and(|(from, to)| column >= from && column <= to),
-                    cursor: cursor == Some(column),
-                    linked: linked.is_some_and(|(from, to)| column >= from && column <= to),
-                };
-                let character = if cell.flags.has(Flags::HIDDEN) {
-                    ' '
-                } else {
-                    cell.ch
-                };
-                match &mut run {
-                    Some((held, content)) if *held == shared && !shared.cursor => {
-                        content.push(character)
+    kit::row_top(Modifier::new().height(look.font * LEADING), 0, || {
+        let mut run: Option<(Run, String)> = None;
+        for (column, cell) in cells[..end].iter().enumerate() {
+            let shared = Run {
+                fg: cell.fg,
+                bg: cell.bg,
+                flags: cell.flags,
+                selected: marked.is_some_and(|(from, to)| column >= from && column <= to),
+                cursor: cursor == Some(column),
+                linked: linked.is_some_and(|(from, to)| column >= from && column <= to),
+            };
+            let character = if cell.flags.has(Flags::HIDDEN) {
+                ' '
+            } else {
+                cell.ch
+            };
+            match &mut run {
+                Some((held, content)) if *held == shared && !shared.cursor => {
+                    content.push(character)
+                }
+                _ => {
+                    if let Some((held, content)) = run.take() {
+                        run_node(held, content, look);
                     }
-                    _ => {
-                        if let Some((held, content)) = run.take() {
-                            run_node(held, content, look);
-                        }
-                        if shared.cursor && !composing.is_empty() {
-                            composing_node(composing, look.font);
-                        }
-                        run = Some((shared, character.to_string()));
+                    if shared.cursor && !composing.is_empty() {
+                        composing_node(composing, look.font);
                     }
+                    run = Some((shared, character.to_string()));
                 }
             }
-            if let Some((held, content)) = run {
-                run_node(held, content, look);
-            }
-        },
-    );
+        }
+        if let Some((held, content)) = run {
+            run_node(held, content, look);
+        }
+    });
 }
 
 /// Emits `composing`, text an input method has not committed yet, underlined in the default colours, `font` logical pixels tall.
 #[track_caller]
 fn composing_node(composing: &str, font: f32) {
-    rustle::basic_text(
+    kit::text(
         Modifier::new(),
         composing,
         cell_type(font).color(theme::color(Role::Text)).underline(),
-        rustle::TextOverflow::Ellipsis,
     );
 }
 
@@ -559,69 +533,39 @@ fn run_node(look: Run, content: String, drawn: Look) {
             rustle::Size::new(1.0, line),
         ));
         let (modifier, ink) = cursor_cell(modifier, ink, drawn.cursor);
-        rustle::basic_text(
-            modifier,
-            content,
-            kind.color(theme::color(ink)),
-            rustle::TextOverflow::Ellipsis,
-        );
+        kit::text(modifier, content, kind.color(theme::color(ink)));
         return;
     }
-    rustle::basic_text(
-        modifier,
-        content,
-        kind.color(theme::color(ink)),
-        rustle::TextOverflow::Ellipsis,
-    );
-}
-
-/// Fills a block cursor's cell in `idle`, or in `focused` while the window holds the keyboard.
-fn block_cursor(
-    idle: rustle::Color,
-    focused: rustle::Color,
-) -> impl Fn(&mut rustle::Canvas, rustle::Interaction) + 'static {
-    move |canvas, interaction| {
-        let fill = if interaction.focused { focused } else { idle };
-        canvas.rect(0.0, 0.0, canvas.width(), canvas.height(), fill);
-    }
+    kit::text(modifier, content, kind.color(theme::color(ink)));
 }
 
 /// `modifier`, of the cell under the cursor, with the cursor drawn as `shape` says: subtle, and in the text colour while the window holds the keyboard; and the ink its character takes instead of `ink`.
 fn cursor_cell(modifier: Modifier, ink: Tone, shape: TerminalCursor) -> (Modifier, Tone) {
-    let modifier = modifier.interaction_focused(crate::focus::is_held(TERMINAL_BODY));
+    let cursor = if crate::focus::is_held(Target::Terminal(TerminalEvent::TerminalBody)) {
+        theme::color(Role::Text)
+    } else {
+        theme::color(Role::Subtle)
+    };
     match shape {
         TerminalCursor::Block => (
-            modifier.draw_behind_interactive(block_cursor(
-                theme::color(Role::Subtle),
-                theme::color(Role::Text),
-            )),
+            modifier.draw_behind(move |canvas| {
+                canvas.rect(0.0, 0.0, canvas.width(), canvas.height(), cursor);
+            }),
             Role::Background.into(),
         ),
         TerminalCursor::Bar => (
-            cursor_edge(modifier, Side::Left).padding_each(2.0, 0.0, 0.0, 0.0),
+            modifier
+                .draw_behind(theme::edge(Side::Left, 2.0, cursor))
+                .padding_each(2.0, 0.0, 0.0, 0.0),
             ink,
         ),
         TerminalCursor::Underline => (
-            cursor_edge(modifier, Side::Bottom).padding_each(0.0, 0.0, 0.0, 2.0),
+            modifier
+                .draw_behind(theme::edge(Side::Bottom, 2.0, cursor))
+                .padding_each(0.0, 0.0, 0.0, 2.0),
             ink,
         ),
     }
-}
-
-/// `modifier` with a line two pixels thick along its `side`, subtle, and in the text colour while the window holds the keyboard.
-fn cursor_edge(modifier: Modifier, side: Side) -> Modifier {
-    let (idle, focused) = (
-        crate::theme::color(Role::Subtle),
-        crate::theme::color(Role::Text),
-    );
-    modifier.draw_behind_interactive(move |canvas, interaction| {
-        let color = if interaction.focused { focused } else { idle };
-        let (width, height) = (canvas.width(), canvas.height());
-        match side {
-            Side::Bottom => canvas.rect(0.0, height - 2.0, width, 2.0, color),
-            _ => canvas.rect(0.0, 0.0, 2.0, height, color),
-        }
-    })
 }
 
 /// The line of the window and the column that the point `x`, `y` logical pixels from the top left of the window of a shell is over, kept inside a window of `columns` by `rows`.

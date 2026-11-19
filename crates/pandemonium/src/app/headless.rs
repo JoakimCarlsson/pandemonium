@@ -1,26 +1,27 @@
 //! The app with no window: its interface laid out by rustle's embedded
-//! interface instead of the windows of a [`rustle::Host`], its windows and
-//! clipboard stood in for by ones that keep what was asked of them, and a
-//! rig that feeds it input the way the event loop does, through the same
-//! interface and the same handling of each event.
+//! interface instead of rustle's windows, the main window's composition and each
+//! window's beside it composed from the same views the windows show, its
+//! windows and clipboard stood in for by ones that keep what was asked of
+//! them, and a rig that feeds each interface input the way rustle's event loop
+//! does, so the roots hand the app its part of every event as they do in a
+//! window, and wakes the app as the loop does when it comes to rest.
 
-use std::cell::{Cell, Ref, RefCell};
+use pm_components::target::Target;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
-use pm_components::focus::FocusId;
 use pm_components::state::WorkspaceState;
+use pm_components::tagged::{Tagged, focus_order, tagged_in};
 use pm_pages::Screen;
 use rustle::{Clipboard, ClipboardImage, Embedded, Offset, PixelRounding, PointerButton, Rect};
 use rustle::{Key, KeyEvent, Modifiers};
-use winit::event::MouseButton;
-use winit::window::Window;
 
 use super::App;
 use super::asides::Aside;
-use super::host::{Input, Shared, aside_size, aside_view, main_view, slot};
+use super::host::{Shared, aside_view, main_view, slot};
 use super::port::Port;
 use crate::work::Work;
 
@@ -44,8 +45,6 @@ pub(super) struct StandIn {
     pub(super) moved: Cell<u32>,
     /// The edges the pointer was let resize it by, in order.
     pub(super) resized: RefCell<Vec<rustle::ResizeEdge>>,
-    /// Where the input method was last told the caret is.
-    pub(super) ime_area: Cell<Option<(f32, f32, f32, f32)>>,
 }
 
 impl StandIn {
@@ -60,22 +59,11 @@ impl StandIn {
             attention: Cell::new(0),
             moved: Cell::new(0),
             resized: RefCell::new(Vec::new()),
-            ime_area: Cell::new(None),
         }
     }
 }
 
 impl Port for StandIn {
-    /// None: there is no native window.
-    fn native(&self) -> Option<Arc<dyn Window>> {
-        None
-    }
-
-    /// One: a logical pixel is a physical one.
-    fn scale(&self) -> f32 {
-        1.0
-    }
-
     /// The size it keeps.
     fn logical_size(&self) -> (f32, f32) {
         self.size.get()
@@ -125,11 +113,6 @@ impl Port for StandIn {
     /// Records the edge the pointer was let resize it by.
     fn drag_resize(&self, edge: rustle::ResizeEdge) {
         self.resized.borrow_mut().push(edge);
-    }
-
-    /// Keeps where the input method was told the caret is.
-    fn set_ime_area(&self, area: (f32, f32, f32, f32)) {
-        self.ime_area.set(Some(area));
     }
 }
 
@@ -186,12 +169,17 @@ pub(super) struct Screens {
 }
 
 /// An interface laid out with no window, of `root`, at whole logical pixels, its frames
-/// timed by `clock`.
-fn embedded(root: impl FnMut() + 'static, clock: &Rc<Cell<Duration>>) -> Embedded {
+/// timed by `clock`, `size` logical pixels across.
+fn embedded(
+    root: impl FnMut() + 'static,
+    clock: &Rc<Cell<Duration>>,
+    size: (f32, f32),
+) -> Embedded {
     let mut ui = Embedded::without_renderer(root, || {});
     ui.set_pixel_rounding(PixelRounding::Logical);
     let time = Rc::clone(clock);
     ui.set_clock(move || time.get());
+    resize(&mut ui, size);
     ui
 }
 
@@ -205,37 +193,10 @@ fn resize(ui: &mut Embedded, size: (f32, f32)) {
 }
 
 impl Screens {
-    /// The interfaces of what `shared` holds, the main window `size` across.
-    fn new(shared: &Shared, size: (f32, f32)) -> Self {
-        let main_shared = shared.clone();
-        let clock = Rc::new(Cell::new(Duration::ZERO));
-        let mut main = embedded(move || main_view(&main_shared), &clock);
-        resize(&mut main, size);
-        Self {
-            clock,
-            spent: rustle::UpdateTiming::default(),
-            main,
-            asides: [None, None],
-            ports: [
-                Rc::new(StandIn::new(size)),
-                Rc::new(StandIn::new(Aside::Settings.opening_size())),
-                Rc::new(StandIn::new(Aside::Picker.opening_size())),
-            ],
-        }
-    }
-
-    /// Composes every interface again at the next wake.
-    pub(super) fn invalidate(&mut self) {
-        self.main.invalidate();
-        for ui in self.asides.iter_mut().flatten() {
-            ui.invalidate();
-        }
-    }
-
     /// Opens and closes the interface of each window beside the main one as
-    /// `shared` says, and composes and lays out each.
-    pub(super) fn wake(&mut self, shared: &Shared) {
-        resize(&mut self.main, shared.size_of(None));
+    /// `shared` says, and composes and lays out each, as rustle's loop does once
+    /// state changed.
+    fn update(&mut self, shared: &Shared) {
         self.main.update();
         let timing = self.main.update_timing();
         self.spent.compose += timing.compose;
@@ -250,25 +211,13 @@ impl Screens {
             let clock = &self.clock;
             let ui = held.get_or_insert_with(|| {
                 let aside_shared = shared.clone();
-                embedded(move || aside_view(&aside_shared, aside), clock)
+                embedded(
+                    move || aside_view(&aside_shared, aside),
+                    clock,
+                    aside.opening_size(),
+                )
             });
-            resize(ui, aside_size(shared, aside));
             ui.update();
-        }
-    }
-
-    /// The stand-in of the window of `aside`, while it is open.
-    pub(super) fn port_of(&self, aside: Aside) -> Option<Rc<dyn Port>> {
-        self.asides[slot(aside)].as_ref()?;
-        Some(Rc::clone(&self.ports[slot(aside) + 1]) as Rc<dyn Port>)
-    }
-
-    /// Where the interface of the main window, or of `aside`'s, wants an input
-    /// method's candidates: the caret of what has its focus.
-    pub(super) fn ime_area(&self, aside: Option<Aside>) -> Option<rustle::Rect> {
-        match aside {
-            None => self.main.ime_area(),
-            Some(aside) => self.asides[slot(aside)].as_ref()?.ime_area(),
         }
     }
 
@@ -284,14 +233,17 @@ impl Screens {
 /// The size of the main window's frame the rig opens it at, as the snapshots are.
 pub(super) const SIZE: (f32, f32) = (1280.0, 800.0);
 
-/// The app running headless, fed input the way the event loop feeds it:
-/// each event goes to the interface of its window first, then to the app.
+/// The app running headless, fed input the way rustle's event loop feeds it:
+/// each event goes to the interface of its window, whose root hands the app its
+/// part of it, and the app is woken as the loop wakes it when it comes to rest.
 pub(super) struct Rig {
     /// The app, shared with the handlers its interface runs.
     pub(super) app: Rc<RefCell<App>>,
     /// The headless interfaces, held apart from the app so they can handle
     /// an event while the app is free for the handlers it runs.
-    screens: Rc<RefCell<Option<Screens>>>,
+    screens: Screens,
+    /// What the roots of the windows read.
+    shared: Shared,
     /// The clipboard the app reads and writes.
     pub(super) clipboard: Memory,
     /// The modifier keys held.
@@ -306,24 +258,37 @@ impl Rig {
         let Screen::Workspace(held) = &screen;
         let window_settings = held.window.clone();
         let editor = held.editor.clone();
-        let mut app = App::assemble(screen, work, window_settings, editor, None);
+        let mut app = App::assemble(screen, work, window_settings, editor, Arc::new(|| {}));
         let band = pm_components::shadow_margin();
         let outer = (size.0 + 2.0 * band, size.1 + 2.0 * band);
         app.shell.set_size(None, outer);
-        let screens = Screens::new(&app.shell.shared, outer);
-        app.window = Some(Rc::clone(&screens.ports[0]) as Rc<dyn Port>);
-        *app.shell.headless_ports.borrow_mut() = Some(screens.ports.clone());
-        *app.shell.headless.borrow_mut() = Some(screens);
-        let screens = Rc::clone(&app.shell.headless);
+        let ports = [
+            Rc::new(StandIn::new(outer)),
+            Rc::new(StandIn::new(Aside::Settings.opening_size())),
+            Rc::new(StandIn::new(Aside::Picker.opening_size())),
+        ];
+        app.window = Some(Rc::clone(&ports[0]) as Rc<dyn Port>);
+        *app.shell.headless_ports.borrow_mut() = Some(ports.clone());
         let clipboard = Memory::default();
         rustle::set_clipboard(Rc::new(clipboard.clone()));
         app.apply_appearance();
         app.recompose = true;
+        let shared = app.shell.shared.clone();
         let app = Rc::new(RefCell::new(app));
-        app.borrow().shell.shared.attach(&app);
+        shared.attach(&app);
+        let clock = Rc::new(Cell::new(Duration::ZERO));
+        let main_shared = shared.clone();
+        let main = embedded(move || main_view(&main_shared), &clock, outer);
         let mut rig = Self {
             app,
-            screens,
+            screens: Screens {
+                main,
+                asides: [None, None],
+                ports,
+                clock,
+                spent: rustle::UpdateTiming::default(),
+            },
+            shared,
             clipboard,
             modifiers: Modifiers::default(),
         };
@@ -339,11 +304,7 @@ impl Rig {
     /// The time the main window's interface spent composing and laying out
     /// since this was last asked, which it starts counting again from zero.
     pub(super) fn take_spent(&mut self) -> rustle::UpdateTiming {
-        self.screens
-            .borrow_mut()
-            .as_mut()
-            .map(|screens| std::mem::take(&mut screens.spent))
-            .unwrap_or_default()
+        std::mem::take(&mut self.screens.spent)
     }
 
     /// Hands the open session's agent event `event` to the screen, as the
@@ -356,13 +317,27 @@ impl Rig {
         self.settle();
     }
 
-    /// Lets the event loop come to rest, as it does after every turn, twice
-    /// so what the first turn asked for is composed.
+    /// Composes and lays out every interface for what changed, as rustle's loop does.
+    fn update(&mut self) {
+        self.screens.update(&self.shared);
+    }
+
+    /// Lets the loop come to rest, as it does after every turn: the app is woken, as
+    /// rustle's external handler wakes it, and every interface composed for what that
+    /// changed, telling the app a frame was drawn; twice, so what the first turn asked
+    /// for is composed and followed.
     pub(super) fn settle(&mut self) {
         for _ in 0..2 {
-            let _ = self.app.borrow_mut().come_to_rest();
-            self.app.borrow_mut().shell.wake();
+            self.app.borrow_mut().on_wake();
+            self.update();
+            self.app.borrow_mut().frame_composed();
         }
+    }
+
+    /// Whether the app last said it quits, closing the main window, as it says to the
+    /// effect that closes it.
+    pub(super) fn quits(&self) -> bool {
+        self.shared.quits()
     }
 
     /// Moves the app's clock on by `ms` milliseconds, for what waits on time
@@ -379,25 +354,16 @@ impl Rig {
         }
         app.recompose = true;
         drop(app);
-        if let Some(screens) = self.screens.borrow().as_ref() {
-            screens.clock.set(screens.clock.get() + by);
-        }
+        self.screens.clock.set(self.screens.clock.get() + by);
         self.settle();
     }
 
-    /// Hands `input` of the main window, or of `aside`'s, to its interface
-    /// through `feed`, then to the app, and lets the loop come to rest.
-    fn send(&mut self, aside: Option<Aside>, input: Input, feed: impl FnOnce(&mut Embedded)) {
-        self.app.borrow_mut().note_typing();
-        if let Some(ui) = self
-            .screens
-            .borrow_mut()
-            .as_mut()
-            .and_then(|screens| screens.ui(aside))
-        {
+    /// Hands what `feed` does to the interface of the main window, or of `aside`'s, whose
+    /// root hands the app its part of the event, then lets the loop come to rest.
+    fn feed(&mut self, aside: Option<Aside>, feed: impl FnOnce(&mut Embedded)) {
+        if let Some(ui) = self.screens.ui(aside) {
             feed(ui);
         }
-        self.app.borrow_mut().after_interface(aside, input);
         self.settle();
     }
 
@@ -421,14 +387,14 @@ impl Rig {
     /// Moves the pointer to `at` in the main window, or in `aside`'s.
     pub(super) fn move_in(&mut self, aside: Option<Aside>, at: (f32, f32)) {
         let at = Self::outer(aside, at);
-        self.send(aside, Input::Moved(at), |ui| {
+        self.feed(aside, |ui| {
             ui.pointer_moved(Offset::new(at.0, at.1));
         });
     }
 
     /// Takes the pointer out of the main window.
     pub(super) fn leave(&mut self) {
-        self.send(None, Input::Left, |ui| ui.pointer_left());
+        self.feed(None, Embedded::pointer_left);
     }
 
     /// Presses `button` at `at` in the main window, or in `aside`'s, or lets
@@ -436,24 +402,14 @@ impl Rig {
     pub(super) fn button_in(
         &mut self,
         aside: Option<Aside>,
-        button: MouseButton,
+        button: PointerButton,
         pressed: bool,
         at: (f32, f32),
     ) {
         let at = Self::outer(aside, at);
-        let pointer = match button {
-            MouseButton::Right => Some(PointerButton::Secondary),
-            MouseButton::Middle => Some(PointerButton::Middle),
-            MouseButton::Left => Some(PointerButton::Primary),
-            MouseButton::Back => Some(PointerButton::Back),
-            MouseButton::Forward => Some(PointerButton::Forward),
-            _ => None,
-        };
-        self.send(aside, Input::Button(button, pressed, at), |ui| {
+        self.feed(aside, |ui| {
             ui.pointer_moved(Offset::new(at.0, at.1));
-            if let Some(pointer) = pointer {
-                ui.pointer_button(pointer, pressed);
-            }
+            ui.pointer_button(button, pressed);
         });
     }
 
@@ -466,22 +422,22 @@ impl Rig {
     /// lets go of the primary button there.
     pub(super) fn click_in(&mut self, aside: Option<Aside>, at: (f32, f32)) {
         self.move_in(aside, at);
-        self.button_in(aside, MouseButton::Left, true, at);
-        self.button_in(aside, MouseButton::Left, false, at);
+        self.button_in(aside, PointerButton::Primary, true, at);
+        self.button_in(aside, PointerButton::Primary, false, at);
     }
 
     /// Presses and lets go of the secondary button at `at` in the main window.
     pub(super) fn right_click(&mut self, at: (f32, f32)) {
         self.move_to(at);
-        self.button_in(None, MouseButton::Right, true, at);
-        self.button_in(None, MouseButton::Right, false, at);
+        self.button_in(None, PointerButton::Secondary, true, at);
+        self.button_in(None, PointerButton::Secondary, false, at);
     }
 
     /// Presses the primary button at `from` in the main window, moves to
     /// `to` in `steps` steps holding it, and lets it go there.
     pub(super) fn drag(&mut self, from: (f32, f32), to: (f32, f32), steps: u32) {
         self.move_to(from);
-        self.button_in(None, MouseButton::Left, true, from);
+        self.button_in(None, PointerButton::Primary, true, from);
         for step in 1..=steps.max(1) {
             let part = step as f32 / steps.max(1) as f32;
             let at = (
@@ -490,23 +446,20 @@ impl Rig {
             );
             self.move_to(at);
         }
-        self.button_in(None, MouseButton::Left, false, to);
+        self.button_in(None, PointerButton::Primary, false, to);
     }
 
     /// Turns the wheel where the pointer is in the main window so the content moves `down` logical pixels up.
     pub(super) fn wheel(&mut self, down: f32) {
-        self.send(None, Input::Wheel(0.0, -down), |ui| {
+        self.feed(None, |ui| {
             ui.wheel(Offset::new(0.0, -down));
         });
     }
 
-    /// Holds `modifiers` down from now on, in every window.
+    /// Holds `modifiers` down from now on, in the main window.
     pub(super) fn hold(&mut self, modifiers: Modifiers) {
         self.modifiers = modifiers;
-        let held = modifiers;
-        self.send(None, Input::Modifiers(modifiers), |ui| {
-            ui.set_modifiers(held)
-        });
+        self.feed(None, |ui| ui.set_modifiers(modifiers));
     }
 
     /// Presses and lets go of `key` in the main window with the modifiers held.
@@ -522,7 +475,7 @@ impl Rig {
                 pressed,
                 ..KeyEvent::press(key.clone(), self.modifiers)
             };
-            self.send(aside, Input::Key(pressed), |ui| {
+            self.feed(aside, |ui| {
                 ui.key_event(event);
             });
         }
@@ -553,16 +506,20 @@ impl Rig {
 
     /// Lets an input method show `text` as being composed in the main window.
     pub(super) fn preedit(&mut self, text: &str) {
-        let held = text.to_owned();
-        self.send(None, Input::Preedit(held), |ui| ui.preedit(text, None));
+        self.feed(None, |ui| ui.preedit(text, None));
     }
 
     /// Lets an input method commit `text` in the main window.
     pub(super) fn commit(&mut self, text: &str) {
-        let held = text.to_owned();
-        self.send(None, Input::Commit(held), |ui| {
+        self.feed(None, |ui| {
             ui.commit(text);
         });
+    }
+
+    /// Where the main window's interface tells the input method the caret is, in the
+    /// window's logical pixels.
+    pub(super) fn ime_area(&self) -> Option<Rect> {
+        self.screens.main.ime_area()
     }
 
     /// Holds a drag of files from another application at `at` in the main window, as the
@@ -590,31 +547,16 @@ impl Rig {
         });
     }
 
-    /// Hands what `feed` does to the interface of the main window, or of `aside`'s, for an
-    /// event of the window the app does not act on itself, then composes what its lambdas
-    /// changed and lets the loop come to rest, as the event loop does for such an event.
-    fn feed(&mut self, aside: Option<Aside>, feed: impl FnOnce(&mut Embedded)) {
-        if let Some(ui) = self
-            .screens
-            .borrow_mut()
-            .as_mut()
-            .and_then(|screens| screens.ui(aside))
-        {
-            feed(ui);
-        }
-        {
-            let mut app = self.app.borrow_mut();
-            if std::mem::take(&mut app.claimed).acted || app.shell.take_deferred() {
-                app.recompose = true;
-                app.flush();
+    /// The desktop asks the main window, or `aside`'s, to close, as rustle asks the main
+    /// window's close handler and calls the `on_close_request` of a window beside it.
+    pub(super) fn close(&mut self, aside: Option<Aside>) {
+        match aside {
+            None => {
+                self.app.borrow_mut().main_close_requested();
             }
+            Some(aside) => self.app.borrow_mut().aside_close_requested(aside),
         }
         self.settle();
-    }
-
-    /// The desktop asks the main window, or `aside`'s, to close.
-    pub(super) fn close(&mut self, aside: Option<Aside>) {
-        self.send(aside, Input::Close, |_| {});
     }
 
     /// The desktop resizes the main window's frame to `size`, and the window
@@ -623,10 +565,14 @@ impl Rig {
         let band = pm_components::shadow_margin();
         let outer = (size.0 + 2.0 * band, size.1 + 2.0 * band);
         self.window().size.set(outer);
-        self.send(None, Input::Resized(outer), |_| {});
-        let mut app = self.app.borrow_mut();
-        app.recompose = true;
-        app.flush();
+        resize(&mut self.screens.main, outer);
+        self.settle();
+        {
+            let mut app = self.app.borrow_mut();
+            app.recompose = true;
+            app.flush();
+        }
+        self.update();
     }
 
     /// Where the caret before character `index` of the text `content`, as the
@@ -634,8 +580,7 @@ impl Rig {
     /// coordinates of the window's frame. Found from the text drawn last that
     /// says exactly `content`, laid out as it was drawn.
     pub(super) fn caret_in_text(&self, content: &str, index: usize) -> Option<(f32, f32)> {
-        let screens = self.screens();
-        let commands = screens.main.commands();
+        let commands = self.screens.main.commands();
         let (x, y, style, width) = commands.iter().rev().find_map(|command| match command {
             rustle::DrawCommand::Text {
                 x,
@@ -679,31 +624,24 @@ impl Rig {
 
     /// The stand-in of the main window.
     pub(super) fn window(&self) -> Rc<StandIn> {
-        Rc::clone(&self.screens().ports[0])
+        Rc::clone(&self.screens.ports[0])
     }
 
     /// The stand-in of `aside`'s window.
     pub(super) fn aside_window(&self, aside: Aside) -> Rc<StandIn> {
-        Rc::clone(&self.screens().ports[slot(aside) + 1])
-    }
-
-    /// The headless interfaces.
-    fn screens(&self) -> Ref<'_, Screens> {
-        Ref::map(self.screens.borrow(), |screens| {
-            screens.as_ref().expect("the rig runs headless")
-        })
+        Rc::clone(&self.screens.ports[slot(aside) + 1])
     }
 
     /// Whether the window of `aside` is open.
     pub(super) fn aside_open(&self, aside: Aside) -> bool {
-        self.screens().asides[slot(aside)].is_some()
+        self.screens.asides[slot(aside)].is_some()
     }
 
     /// The controls and areas the last frame of the main window, or of `aside`'s, laid
-    /// out, named for tests by their [`FocusId`] tags, in paint order, in the coordinates of
+    /// out, named for tests by their [`Target`] tags, in paint order, in the coordinates of
     /// the window's frame: Compose's `onAllNodes` filtered to tagged nodes.
     pub(super) fn tagged_in(&self, aside: Option<Aside>) -> Vec<Tagged> {
-        let screens = self.screens();
+        let screens = &self.screens;
         let ui = match aside {
             None => &screens.main,
             Some(aside) => match screens.asides[slot(aside)].as_ref() {
@@ -712,24 +650,7 @@ impl Rig {
             },
         };
         let band = Self::outer(aside, (0.0, 0.0)).0;
-        let inside = |rect: Rect| {
-            Rect::new(
-                Offset::new(rect.origin.x - band, rect.origin.y - band),
-                rect.size,
-            )
-        };
-        ui.tagged_nodes()
-            .iter()
-            .filter_map(|node| {
-                let id = node.tag.strip_prefix("control-")?.parse().ok()?;
-                Some(Tagged {
-                    id: FocusId(id),
-                    bounds: inside(node.bounds),
-                    visible: inside(node.visible),
-                    focusable: node.focusable,
-                })
-            })
-            .collect()
+        tagged_in(ui, -band, -band)
     }
 
     /// The controls and areas the last frame of the main window laid out, in paint order.
@@ -739,32 +660,19 @@ impl Rig {
 
     /// The first control or area named `id` the last frame of the main window, or of
     /// `aside`'s, laid out: Compose's `onNodeWithTag`.
-    pub(super) fn node_in(&self, aside: Option<Aside>, id: FocusId) -> Option<Tagged> {
+    pub(super) fn node_in(&self, aside: Option<Aside>, id: Target) -> Option<Tagged> {
         self.tagged_in(aside).into_iter().find(|node| node.id == id)
     }
 
     /// The part of what `id` names in the main window that can be seen, if it was laid out.
-    pub(super) fn region(&self, id: FocusId) -> Option<Rect> {
+    pub(super) fn region(&self, id: Target) -> Option<Rect> {
         self.node_in(None, id).map(|node| node.visible)
     }
 
     /// The controls of the main window, or of `aside`'s, in the order Tab walks them: the
     /// order their focus targets were painted in.
-    pub(super) fn focus_order_in(&self, aside: Option<Aside>) -> Vec<FocusId> {
-        let mut order: Vec<(usize, FocusId)> = self
-            .tagged_in(aside)
-            .into_iter()
-            .filter_map(|node| Some((node.focusable?, node.id)))
-            .collect();
-        order.sort_by_key(|(index, _)| *index);
-        order.dedup_by_key(|(index, _)| *index);
-        let mut ids: Vec<FocusId> = Vec::new();
-        for (_, id) in order {
-            if !ids.contains(&id) {
-                ids.push(id);
-            }
-        }
-        ids
+    pub(super) fn focus_order_in(&self, aside: Option<Aside>) -> Vec<Target> {
+        focus_order(&self.tagged_in(aside))
     }
 
     /// The middle of what `id` names in the main window.
@@ -772,7 +680,7 @@ impl Rig {
     /// # Panics
     ///
     /// When the last frame laid out nothing by that name.
-    pub(super) fn center(&self, id: FocusId) -> (f32, f32) {
+    pub(super) fn center(&self, id: Target) -> (f32, f32) {
         self.center_in(None, id)
     }
 
@@ -781,7 +689,7 @@ impl Rig {
     /// # Panics
     ///
     /// When the window's last frame laid out nothing by that name.
-    pub(super) fn aside_center(&self, aside: Aside, id: FocusId) -> (f32, f32) {
+    pub(super) fn aside_center(&self, aside: Aside, id: Target) -> (f32, f32) {
         self.center_in(Some(aside), id)
     }
 
@@ -791,7 +699,7 @@ impl Rig {
     /// # Panics
     ///
     /// When the window's last frame laid out nothing by that name.
-    fn center_in(&self, aside: Option<Aside>, id: FocusId) -> (f32, f32) {
+    fn center_in(&self, aside: Option<Aside>, id: Target) -> (f32, f32) {
         let rect = self
             .node_in(aside, id)
             .unwrap_or_else(|| panic!("nothing laid out as {id:?}"))
@@ -803,18 +711,18 @@ impl Rig {
     }
 
     /// Clicks the middle of what `id` names in the main window.
-    pub(super) fn click_on(&mut self, id: FocusId) {
+    pub(super) fn click_on(&mut self, id: Target) {
         let at = self.center(id);
         self.click(at);
     }
 
     /// Whether the last frame of the main window laid out what `id` names.
-    pub(super) fn drawn(&self, id: FocusId) -> bool {
+    pub(super) fn drawn(&self, id: Target) -> bool {
         self.node_in(None, id).is_some()
     }
 
     /// What has the keyboard.
-    pub(super) fn focused(&self) -> Option<FocusId> {
+    pub(super) fn focused(&self) -> Option<Target> {
         self.app.borrow().focus.current()
     }
 
@@ -841,7 +749,7 @@ impl Rig {
     /// Where the last frame of the main window, or of `aside`'s, drew text
     /// holding `words`, in its frame's coordinates.
     pub(super) fn text_at(&self, aside: Option<Aside>, words: &str) -> Option<(f32, f32)> {
-        let screens = self.screens();
+        let screens = &self.screens;
         let ui = match aside {
             None => &screens.main,
             Some(aside) => screens.asides[slot(aside)].as_ref()?,
@@ -880,19 +788,6 @@ impl Rig {
     /// The pointer shape the main window shows.
     pub(super) fn cursor(&self) -> rustle::CursorIcon {
         let decided = self.app.borrow().shell.shared.cursor();
-        decided.unwrap_or_else(|| self.screens().main.cursor())
+        decided.unwrap_or_else(|| self.screens.main.cursor())
     }
-}
-
-/// A control or area a frame laid out, found by the tag its [`FocusId`] gave it.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct Tagged {
-    /// What names it.
-    pub(super) id: FocusId,
-    /// Where it was laid out, in the coordinates of its window's frame.
-    pub(super) bounds: Rect,
-    /// The part of it that can be seen; empty when it is scrolled or clipped away.
-    pub(super) visible: Rect,
-    /// Its place among the window's focus targets, which is the order Tab walks.
-    pub(super) focusable: Option<usize>,
 }

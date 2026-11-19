@@ -3,19 +3,8 @@
 use pm_protocol::{CodeAction, FileEdit, Location, Position, Seek};
 use rustle::TextFieldState;
 
-use crate::focus::FocusId;
-
 use crate::listing::{Items, Listing};
 use crate::state::{Outgoing, WorkspaceState};
-
-/// The field the new name of the thing at the caret is typed in.
-pub const RENAME_SYMBOL: FocusId = FocusId(7_401_900);
-
-/// Hands in the new name typed.
-pub const RENAME_SYMBOL_SUBMIT: FocusId = FocusId(7_401_901);
-
-/// The box the new name is typed in, which keeps a press on it from counting as outside.
-pub const RENAME_BOX: FocusId = FocusId(7_401_902);
 
 /// The thing at the caret being given a new name.
 #[derive(Clone, Debug, PartialEq)]

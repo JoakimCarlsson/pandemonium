@@ -1,8 +1,8 @@
 //! What a conversation has cost, as the strip above it shows it: the total in dollars, and for each model what it cost and how many tokens it took when the pointer rests on the total.
 
+use crate::kit;
 use crate::theme::Role;
 use pm_harness::{ModelSpend, Spent};
-use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
 use crate::parts::line;
@@ -85,12 +85,9 @@ pub fn cost_of(session: &Session) {
     };
     let words = label(spent);
     crate::tooltip::with_tooltip(tooltip(spent), || {
-        row_arranged(
-            Modifier::new().cursor(CursorIcon::Default),
-            Arrangement::Start,
-            Alignment::Center,
-            move || line(words, 12, 1.4, Role::Subtle),
-        );
+        kit::row(Modifier::new().cursor(CursorIcon::Default), 0, move || {
+            line(words, 12, 1.4, Role::Subtle)
+        });
     });
 }
 

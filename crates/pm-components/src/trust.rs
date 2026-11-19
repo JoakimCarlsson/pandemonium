@@ -1,30 +1,21 @@
 //! The card above the prompt box that asks the reader to trust the project a session works in, listing what the agent goes without until they do.
 
+use crate::areas::ChatEvent;
+use crate::kit::{self, Frame};
+use crate::target::Target;
 use crate::theme;
 use crate::theme::sp;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
+use rustle::{Alignment, Arrangement, FlowOptions, flow_row_with, row_arranged};
 
 use std::path::Path;
 
-use crate::Button;
 use crate::button::Variant;
-use crate::focus::FocusId;
 use crate::parts::{glyph, line, paragraph};
-use crate::size::Size;
 use crate::state::{Outgoing, Page, WorkspaceState};
 use crate::theme::{Radius, Role};
 use pm_harness::{Input, Skipped, Standing, TrustRequest, Verdict};
 use rustle::Modifier;
-
-/// Trusts the project for good, for every session of its repository.
-pub const TRUST_ALWAYS: FocusId = FocusId(7120);
-
-/// Trusts the project for the conversation of this session only.
-pub const TRUST_SESSION: FocusId = FocusId(7121);
-
-/// Records that the project is not trusted.
-pub const TRUST_DECLINE: FocusId = FocusId(7122);
 
 /// What the card's padding and border take from its width, in logical pixels.
 const CARD_INSET: f32 = 34.0;
@@ -126,55 +117,29 @@ fn item(skipped: &Skipped, root: &Path, filed: bool, width: f32) {
         .color(theme::color(Role::Subtle))
         .max_lines(1);
     if skipped.kind != Input::Hook {
-        row_arranged(
-            Modifier::new().fill_max_width(),
-            Arrangement::SpacedBy(sp(2)),
-            Alignment::Center,
-            move || {
-                rustle::basic_text(
-                    Modifier::new(),
-                    named,
-                    theme::text_style(12, 1.5)
-                        .color(theme::color(Role::Text))
-                        .max_lines(1),
-                    rustle::TextOverflow::Ellipsis,
-                );
-                if let Some(file) = beside {
-                    rustle::basic_text(
-                        Modifier::new().weight(1.0),
-                        file,
-                        file_type,
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                }
-            },
-        );
+        kit::row(Modifier::new().fill_max_width(), 2, move || {
+            kit::text(
+                Modifier::new(),
+                named,
+                theme::text_style(12, 1.5)
+                    .color(theme::color(Role::Text))
+                    .max_lines(1),
+            );
+            if let Some(file) = beside {
+                kit::text(Modifier::new().weight(1.0), file, file_type);
+            }
+        });
         return;
     }
     let mono = theme::mono_style(12, 1.5).color(theme::color(Role::Text));
-    column_arranged(
-        Modifier::new(),
-        Arrangement::Start,
-        Alignment::Start,
-        move || {
-            for piece in rustle::wrap_at_spaces(&named, &mono, width) {
-                rustle::basic_text(
-                    Modifier::new(),
-                    &named[piece.start..piece.end],
-                    mono,
-                    rustle::TextOverflow::Ellipsis,
-                );
-            }
-            if let Some(file) = beside {
-                rustle::basic_text(
-                    Modifier::new(),
-                    file,
-                    file_type,
-                    rustle::TextOverflow::Ellipsis,
-                );
-            }
-        },
-    );
+    kit::column(Modifier::new(), 0, move || {
+        for piece in rustle::wrap_at_spaces(&named, &mono, width) {
+            kit::text(Modifier::new(), &named[piece.start..piece.end], mono);
+        }
+        if let Some(file) = beside {
+            kit::text(Modifier::new(), file, file_type);
+        }
+    });
 }
 
 /// Emits the group of `request`'s skipped inputs of `kind`, `width` logical pixels wide, or nothing when it skipped none; hooks are marked in the warning colour, since they run commands. When more than one input of the group comes from the same file, as hooks usually do, the file is named once beside the group's heading.
@@ -199,61 +164,38 @@ fn group(request: &TrustRequest, kind: Input, width: f32) {
             .iter()
             .all(|skipped| skipped.path == of_kind[0].path);
     let file = filed.then(|| from_root(&of_kind[0].path, &request.root));
-    column_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::SpacedBy(sp(0.5)),
-        Alignment::Start,
-        || {
-            row_arranged(
-                Modifier::new().fill_max_width(),
-                Arrangement::SpacedBy(sp(1.5)),
-                Alignment::Center,
-                || {
-                    if kind == Input::Hook {
-                        glyph(phosphor::TERMINAL, 3.5, Role::Warning);
-                        rustle::basic_text(
-                            Modifier::new(),
-                            format!("{title} · run commands"),
-                            theme::text_style(12, 1.4)
-                                .color(theme::color(Role::Warning))
-                                .max_lines(1),
-                            rustle::TextOverflow::Ellipsis,
-                        );
-                    } else {
-                        rustle::basic_text(
-                            Modifier::new(),
-                            title,
-                            theme::text_style(12, 1.4)
-                                .color(theme::color(Role::Muted))
-                                .max_lines(1),
-                            rustle::TextOverflow::Ellipsis,
-                        );
-                    }
-                    if let Some(file) = file {
-                        rustle::basic_text(
-                            Modifier::new().weight(1.0),
-                            file,
-                            theme::mono_style(11, 1.4)
-                                .color(theme::color(Role::Subtle))
-                                .max_lines(1),
-                            rustle::TextOverflow::Ellipsis,
-                        );
-                    }
-                },
-            );
-            for skipped in &of_kind[..shown] {
-                item(skipped, &request.root, filed, width);
+    kit::column(Modifier::new().fill_max_width(), 0.5, || {
+        kit::row(Modifier::new().fill_max_width(), 1.5, || {
+            if kind == Input::Hook {
+                glyph(phosphor::TERMINAL, 3.5, Role::Warning);
+                kit::text(
+                    Modifier::new(),
+                    format!("{title} · run commands"),
+                    kit::line(12, Role::Warning),
+                );
+            } else {
+                kit::text(Modifier::new(), title, kit::line(12, Role::Muted));
             }
-            if of_kind.len() > shown {
-                line(
-                    format!("and {} more", of_kind.len() - shown),
-                    12,
-                    1.4,
-                    Role::Subtle,
+            if let Some(file) = file {
+                kit::text(
+                    Modifier::new().weight(1.0),
+                    file,
+                    kit::code(11, Role::Subtle),
                 );
             }
-        },
-    );
+        });
+        for skipped in &of_kind[..shown] {
+            item(skipped, &request.root, filed, width);
+        }
+        if of_kind.len() > shown {
+            line(
+                format!("and {} more", of_kind.len() - shown),
+                12,
+                1.4,
+                Role::Subtle,
+            );
+        }
+    });
 }
 
 /// Emits the buttons that answer the request, the refusal first and the boldest last, at the end of the line and wrapping when they do not fit one line.
@@ -271,15 +213,23 @@ fn choices(width: f32) {
                     .item_alignment(Alignment::Center),
                 || {
                     for (label, id, variant) in [
-                        ("Don't trust", TRUST_DECLINE, Variant::Ghost),
-                        ("This session only", TRUST_SESSION, Variant::Outline),
-                        ("Trust", TRUST_ALWAYS, Variant::Default),
+                        (
+                            "Don't trust",
+                            Target::Chat(ChatEvent::TrustDecline),
+                            Variant::Ghost,
+                        ),
+                        (
+                            "This session only",
+                            Target::Chat(ChatEvent::TrustSession),
+                            Variant::Outline,
+                        ),
+                        (
+                            "Trust",
+                            Target::Chat(ChatEvent::TrustAlways),
+                            Variant::Default,
+                        ),
                     ] {
-                        Button::new(label, id)
-                            .variant(variant)
-                            .size(Size::Sm)
-                            .wrapped(width)
-                            .build();
+                        kit::small_button(label, id, variant).wrapped(width).build();
                     }
                 },
             );
@@ -294,82 +244,49 @@ pub fn card(request: &TrustRequest, width: f32) {
     let (title, said) = words(request);
     let title_type = theme::text_style(13, 1.4).color(theme::color(Role::Text));
     let own = Modifier::new()
-        .background_rounded(theme::color(Role::Surface), Radius::Xl.px())
-        .border(1.0, theme::color(Role::Border), Radius::Xl.px())
-        .padding(1.0)
+        .panel(Radius::Xl)
         .padding_xy(theme::sp(4), 0.0)
         .padding_xy(0.0, theme::sp(3));
-    column_arranged(
-        own,
-        Arrangement::SpacedBy(sp(2.5)),
-        Alignment::Start,
-        || {
-            row_arranged(
-                Modifier::new().fill_max_width(),
-                Arrangement::SpacedBy(sp(1.5)),
-                Alignment::Center,
-                || {
-                    glyph(phosphor::LOCK_SIMPLE, 3.5, Role::Muted);
-                    rustle::basic_text(
-                        Modifier::new(),
-                        "Project trust",
-                        theme::text_style(12, 1.4)
-                            .color(theme::color(Role::Muted))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                    rustle::basic_text(
-                        Modifier::new().weight(1.0),
-                        request.root.display().to_string(),
-                        theme::mono_style(11, 1.4)
-                            .color(theme::color(Role::Subtle))
-                            .max_lines(1),
-                        rustle::TextOverflow::Ellipsis,
-                    );
-                },
+    kit::column(own, 2.5, || {
+        kit::row(Modifier::new().fill_max_width(), 1.5, || {
+            glyph(phosphor::LOCK_SIMPLE, 3.5, Role::Muted);
+            kit::text(Modifier::new(), "Project trust", kit::line(12, Role::Muted));
+            kit::text(
+                Modifier::new().weight(1.0),
+                request.root.display().to_string(),
+                kit::code(11, Role::Subtle),
             );
-            column_arranged(
-                Modifier::new(),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    for piece in rustle::wrap_at_spaces(&title, &title_type, inner) {
-                        rustle::basic_text(
-                            Modifier::new(),
-                            &title[piece.start..piece.end],
-                            title_type,
-                            rustle::TextOverflow::Ellipsis,
-                        );
-                    }
-                },
-            );
-            paragraph(&said, 12, 1.5, Role::Muted, inner);
-            column_arranged(
-                Modifier::new()
-                    .fill_max_width()
-                    .background_rounded(theme::color(Role::Background), Radius::Lg.px())
-                    .padding_xy(theme::sp(3), 0.0)
-                    .padding_xy(0.0, theme::sp(2.5)),
-                Arrangement::SpacedBy(sp(2.5)),
-                Alignment::Start,
-                || {
-                    for kind in KINDS {
-                        group(request, kind, inner - LIST_INSET);
-                    }
-                },
-            );
-            choices(inner);
-        },
-    );
+        });
+        kit::column(Modifier::new(), 0, || {
+            for piece in rustle::wrap_at_spaces(&title, &title_type, inner) {
+                kit::text(Modifier::new(), &title[piece.start..piece.end], title_type);
+            }
+        });
+        paragraph(&said, 12, 1.5, Role::Muted, inner);
+        kit::column(
+            Modifier::new()
+                .fill_max_width()
+                .background_rounded(theme::color(Role::Background), Radius::Lg.px())
+                .padding_xy(theme::sp(3), 0.0)
+                .padding_xy(0.0, theme::sp(2.5)),
+            2.5,
+            || {
+                for kind in KINDS {
+                    group(request, kind, inner - LIST_INSET);
+                }
+            },
+        );
+        choices(inner);
+    });
 }
 
 impl WorkspaceState {
     /// Handles a press on the trust card's buttons, answering the open session's request and taking it off the card at once; false when `action` is not one of them.
-    pub(crate) fn trust_pressed(&mut self, action: FocusId) -> bool {
+    pub(crate) fn trust_pressed(&mut self, action: Target) -> bool {
         let verdict = match action {
-            TRUST_ALWAYS => Verdict::Always,
-            TRUST_SESSION => Verdict::Allow,
-            TRUST_DECLINE => Verdict::Reject,
+            Target::Chat(ChatEvent::TrustAlways) => Verdict::Always,
+            Target::Chat(ChatEvent::TrustSession) => Verdict::Allow,
+            Target::Chat(ChatEvent::TrustDecline) => Verdict::Reject,
             _ => return false,
         };
         let Page::Session(open) = self.page else {

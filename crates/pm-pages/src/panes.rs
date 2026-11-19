@@ -1,8 +1,15 @@
 //! The main area of a page cut into panes: each pane's strip of tabs above the tab it shows, the handles between panes, and, while a tab is dragged, where it would land.
 
+use pm_components::areas::WindowEvent;
+use pm_components::areas::{
+    BrowserEvent, ChatEvent, DialogEvent, DiffEvent, EditorEvent, SearchEvent,
+};
+use pm_components::theme::Indicated;
+use pm_components::theme::ShadowLayers;
+
 use pm_components::events::Interactive;
-use pm_components::events::reduce;
-use pm_components::focus::FocusId;
+use pm_components::events::{Event, send};
+use pm_components::target::Target;
 use pm_components::theme;
 use pm_components::theme::sp;
 use pm_components::theme::{Radius, Role, Side};
@@ -13,21 +20,18 @@ use std::rc::Rc;
 
 use pm_components::Menu;
 use pm_components::Size;
-use pm_components::browser::{self, BROWSER_CLOSE, TAB_BROWSER};
+use pm_components::browser;
 use pm_components::button::Variant;
-use pm_components::excerpts::{self, EXCERPTS_CLOSE, Source, TAB_EXCERPTS};
+use pm_components::excerpts::{self, Source};
 use pm_components::file_icon::file_icon;
-use pm_components::open_files::{FILE_CLOSE_BASE, FILE_TAB_BASE, Viewer};
-use pm_components::panes::{
-    Area, Axis, Group, Item, Layout, PANE_BASE, PANE_MENU, PANE_PUT_BASE, Placed, SPLIT_DOWN,
-    SPLIT_LEFT, SPLIT_RIGHT, SPLIT_UP,
-};
+use pm_components::open_files::Viewer;
+use pm_components::panes::{Area, Axis, Group, Item, Layout, Placed};
 use pm_components::parts::{glyph, line, spacer};
 use pm_components::revision::region;
 use pm_components::sash::Sash;
-use pm_components::state::{Page, TAB_CHAT, TAB_DIFF, WorkspaceState};
+use pm_components::state::{Page, WorkspaceState};
 use pm_components::title_bar::TITLE_BAR_HEIGHT;
-use pm_components::update_dialog::{TAB_UPDATE, UPDATE_CLOSE};
+
 use pm_components::{Button, Changes, Conflict, chat, diff, overview, terminal, viewer, welcome};
 
 /// How much of a window's height the conversation keeps for something other than the room above the prompt box, in logical pixels.
@@ -51,7 +55,7 @@ fn fill_top_rounded(canvas: &mut Canvas, color: rustle::Color) {
 }
 
 /// The box of a tab answering to `id`: rounded at the top, filled while it is the one its pane shows and while the pointer is on it otherwise, with its padding; as wide as what it holds, running past the end of a strip too narrow for it. A secondary press runs `on_context` when the tab has a menu.
-fn tab_modifier(shown: bool, id: FocusId, on_context: Option<Rc<dyn Fn()>>) -> Modifier {
+fn tab_modifier(shown: bool, id: Target, on_context: Option<Rc<dyn Fn()>>) -> Modifier {
     let surface = pm_components::theme::color(Role::Surface);
     let hover = pm_components::theme::color(Role::SurfaceHover);
     Modifier::new()
@@ -69,12 +73,12 @@ fn tab_modifier(shown: bool, id: FocusId, on_context: Option<Rc<dyn Fn()>>) -> M
             Some(on_context) => Modifier::new().control_menu(
                 id,
                 {
-                    let pressed = reduce(id);
+                    let pressed = send(Event::pressing(id));
                     move |_| pressed()
                 },
                 move || on_context(),
             ),
-            None => Modifier::new().control(id, reduce(id)),
+            None => Modifier::new().control(id, send(Event::pressing(id))),
         })
         .padding_xy(theme::sp(3), 0.0)
 }
@@ -86,7 +90,7 @@ fn tab_tone(shown: bool) -> Role {
 
 /// Emits one tab of a pane's strip answering to `id`: a glyph and a label, filled while it is the one shown, then `extra`.
 #[track_caller]
-fn tab_with(icon: Icon, label: &str, id: FocusId, shown: bool, extra: impl FnOnce()) {
+fn tab_with(icon: Icon, label: &str, id: Target, shown: bool, extra: impl FnOnce()) {
     let tone = tab_tone(shown);
     row_arranged(
         tab_modifier(shown, id, None),
@@ -102,13 +106,13 @@ fn tab_with(icon: Icon, label: &str, id: FocusId, shown: bool, extra: impl FnOnc
 
 /// Emits one tab of a pane's strip: a glyph and a label, filled while it is the one shown.
 #[track_caller]
-fn tab(icon: Icon, label: &str, id: FocusId, shown: bool) {
+fn tab(icon: Icon, label: &str, id: Target, shown: bool) {
     tab_with(icon, label, id, shown, || {});
 }
 
 /// Emits the small button closing a tab, answering to `id`, showing `icon`.
 #[track_caller]
-fn close_button(icon: Icon, id: FocusId) {
+fn close_button(icon: Icon, id: Target) {
     Button::icon(icon, id).size(Size::Sm).build();
 }
 
@@ -127,7 +131,7 @@ fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) {
         .max_lines(1);
     let kind = if viewer.preview { kind.italic() } else { kind };
     row_arranged(
-        tab_modifier(shown, FocusId(FILE_TAB_BASE + index as u64), {
+        tab_modifier(shown, Target::Editor(EditorEvent::FileTab(index)), {
             let operations = pm_components::events::operations();
             Some(Rc::new(move || operations.open_tab_menu(index)))
         }),
@@ -154,7 +158,7 @@ fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) {
                 } else {
                     phosphor::X
                 },
-                FocusId(FILE_CLOSE_BASE + index as u64),
+                Target::Editor(EditorEvent::FileClose(index)),
             );
         },
     );
@@ -169,10 +173,10 @@ fn excerpts_tab(state: &WorkspaceState, shown: bool) {
     tab_with(
         excerpts.icon(),
         &excerpts.title(),
-        TAB_EXCERPTS,
+        Target::Search(SearchEvent::TabExcerpts),
         shown,
         || {
-            close_button(phosphor::X, EXCERPTS_CLOSE);
+            close_button(phosphor::X, Target::Search(SearchEvent::ExcerptsClose));
         },
     );
 }
@@ -188,22 +192,34 @@ fn browser_tab(state: &WorkspaceState, shown: bool) {
     } else {
         browser.title.as_str()
     };
-    tab_with(phosphor::GLOBE, title, TAB_BROWSER, shown, || {
-        close_button(phosphor::X, BROWSER_CLOSE);
-    });
+    tab_with(
+        phosphor::GLOBE,
+        title,
+        Target::Browser(BrowserEvent::TabBrowser),
+        shown,
+        || {
+            close_button(phosphor::X, Target::Browser(BrowserEvent::BrowserClose));
+        },
+    );
 }
 
 /// Emits the tab of the release notes, filled while `shown`.
 #[track_caller]
 fn update_tab(shown: bool) {
-    tab_with(phosphor::ARROW_DOWN, "Update", TAB_UPDATE, shown, || {
-        close_button(phosphor::X, UPDATE_CLOSE);
-    });
+    tab_with(
+        phosphor::ARROW_DOWN,
+        "Update",
+        Target::Dialog(DialogEvent::TabUpdate),
+        shown,
+        || {
+            close_button(phosphor::X, Target::Dialog(DialogEvent::UpdateClose));
+        },
+    );
 }
 
 /// Emits a square button in the strip of tabs holding only `icon`, answering to `id`, filled while `on`, saying `hint` when the pointer rests on it and running `on_click` when clicked.
 #[track_caller]
-fn strip_button(icon: Icon, id: FocusId, on: bool, hint: &str, on_click: impl Fn() + 'static) {
+fn strip_button(icon: Icon, id: Target, on: bool, hint: &str, on_click: impl Fn() + 'static) {
     let looks = theme::InteractionTones::new()
         .hover(Role::SurfaceHover)
         .radius(Radius::Lg);
@@ -218,7 +234,7 @@ fn strip_button(icon: Icon, id: FocusId, on: bool, hint: &str, on_click: impl Fn
             Modifier::new()
                 .padding_each(0.0, 0.0, 0.0, theme::sp(1))
                 .size(theme::sp(8.0), theme::sp(8.0))
-                .interaction_background(looks.colors())
+                .indicated(looks, theme::Focused::Rustle)
                 .cursor(CursorIcon::Pointer)
                 .control(id, on_click),
             Arrangement::Center,
@@ -238,7 +254,7 @@ fn strip_buttons(state: &WorkspaceState) {
         || {
             strip_button(
                 phosphor::SQUARE_SPLIT_HORIZONTAL,
-                PANE_MENU,
+                Target::Window(WindowEvent::PaneMenu),
                 state.pane_menu.is_some(),
                 "Split pane",
                 {
@@ -254,10 +270,30 @@ fn strip_buttons(state: &WorkspaceState) {
 #[track_caller]
 pub(crate) fn pane_menu(at: (f32, f32)) {
     Menu::new(at.0, at.1)
-        .item("Split pane right", None, SPLIT_RIGHT, false)
-        .item("Split pane left", None, SPLIT_LEFT, false)
-        .item("Split pane up", None, SPLIT_UP, false)
-        .item("Split pane down", None, SPLIT_DOWN, false)
+        .item(
+            "Split pane right",
+            None,
+            Target::Window(WindowEvent::SplitRight),
+            false,
+        )
+        .item(
+            "Split pane left",
+            None,
+            Target::Window(WindowEvent::SplitLeft),
+            false,
+        )
+        .item(
+            "Split pane up",
+            None,
+            Target::Window(WindowEvent::SplitUp),
+            false,
+        )
+        .item(
+            "Split pane down",
+            None,
+            Target::Window(WindowEvent::SplitDown),
+            false,
+        )
         .build();
 }
 
@@ -302,9 +338,14 @@ fn item_tab(state: &WorkspaceState, item: &Item, shown: bool) {
     match item {
         Item::Page => {
             let (icon, label) = page_label(state);
-            tab(icon, &label, TAB_CHAT, shown);
+            tab(icon, &label, Target::Chat(ChatEvent::TabChat), shown);
         }
-        Item::Diff => tab(phosphor::GIT_DIFF, "Diff", TAB_DIFF, shown),
+        Item::Diff => tab(
+            phosphor::GIT_DIFF,
+            "Diff",
+            Target::Diff(DiffEvent::TabDiff),
+            shown,
+        ),
         Item::Excerpts => excerpts_tab(state, shown),
         Item::Browser => browser_tab(state, shown),
         Item::Update => update_tab(shown),
@@ -398,7 +439,7 @@ fn excerpts_item(state: &WorkspaceState, width: f32) {
 
 /// Emits a secondary button of an empty pane saying `words` beside `icon`, answering to `id`.
 #[track_caller]
-fn put_button(words: &str, icon: Icon, id: FocusId) {
+fn put_button(words: &str, icon: Icon, id: Target) {
     Button::new(words, id)
         .with_icon(icon)
         .variant(Variant::Secondary)
@@ -409,7 +450,7 @@ fn put_button(words: &str, icon: Icon, id: FocusId) {
 /// Emits what an empty pane at `index` offers: the page, the diff and the browser brought into it, the files shown to open one in it, and closing it.
 #[track_caller]
 fn empty_pane(state: &WorkspaceState, index: usize) {
-    let put = |kind: u64| FocusId(PANE_PUT_BASE + index as u64 * 5 + kind);
+    let put = |put: usize| Target::Window(WindowEvent::PanePut { pane: index, put });
     let (icon, label_text) = page_label(state);
     let changed = state
         .open()
@@ -456,11 +497,11 @@ fn pane(state: &WorkspaceState, placed: &Placed, toggle: bool, extra: f32) {
             .weight(1.0)
             .clip()
             .control(
-                FocusId(PANE_BASE + placed.index as u64),
-                reduce(FocusId(PANE_BASE + placed.index as u64)),
+                Target::Window(WindowEvent::Pane(placed.index)),
+                send(Event::Window(WindowEvent::Pane(placed.index))),
             )
             .chain(pm_components::bounds::placed(
-                FocusId(PANE_BASE + placed.index as u64),
+                Target::Window(WindowEvent::Pane(placed.index)),
                 Modifier::new(),
             )),
         Arrangement::Start,
@@ -572,7 +613,7 @@ fn drag_marks(state: &WorkspaceState, placed: &[Placed]) {
             Modifier::new()
                 .offset(drag.at.0 + 8.0, drag.at.1 + 8.0)
                 .z_index_unclipped(60)
-                .draw_behind(theme::shadows(&theme::MEDIUM_SHADOW, Radius::Md))
+                .shadow_layers(&theme::MEDIUM_SHADOW, Radius::Md.px())
                 .border(1.0, theme::color(Role::Border), Radius::Md.px())
                 .padding(1.0),
             || item_tab(state, &drag.item, true),
@@ -624,7 +665,7 @@ pub(crate) fn main_over(state: &WorkspaceState, window: (f32, f32)) {
     let panes = state.panes();
     let placed = panes.layout.placed(area);
     for seam in panes.layout.seams(area) {
-        rustle::key(seam.id.0, || match seam.axis {
+        rustle::key(seam.id, || match seam.axis {
             Axis::Row => Sash::column(seam.id).at(seam.at, seam.length).build(),
             Axis::Column => Sash::row(seam.id).at(seam.at, seam.length).build(),
         });
