@@ -9,7 +9,7 @@ use pm_field::{Edit, Motion};
 use pm_pages::Screen;
 use rustle::{Key, KeyEvent};
 
-use super::{App, DRAG_DISTANCE};
+use super::App;
 
 /// The file, version, caret, other end of the selection and number of problems that the marker beside the caret's line was asked about.
 pub(super) type BulbKey = (String, i32, usize, usize, usize);
@@ -26,6 +26,8 @@ pub(super) struct TextDrag {
     byte: usize,
     /// Whether the pointer has gone far enough from where it went down for this to be a drag and not a press.
     moving: bool,
+    /// How far the pointer has to move, in logical pixels, for this to be a drag: the touch slop of the view configuration in effect where the text was pressed.
+    touch_slop: f32,
 }
 
 impl App {
@@ -103,6 +105,7 @@ impl App {
             origin: at,
             byte,
             moving: false,
+            touch_slop: self.press_configuration.touch_slop,
         });
         picked
     }
@@ -112,7 +115,7 @@ impl App {
         let Some(mut drag) = self.text_drag else {
             return;
         };
-        if !drag.moving && (x - drag.origin.0).hypot(y - drag.origin.1) < DRAG_DISTANCE {
+        if !drag.moving && (x - drag.origin.0).hypot(y - drag.origin.1) < drag.touch_slop {
             return;
         }
         drag.moving = true;

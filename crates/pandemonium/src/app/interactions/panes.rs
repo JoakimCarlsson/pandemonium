@@ -123,7 +123,7 @@ fn selected_code_drags_to_another_place() {
     let before = text(&rig);
     let word = before.find("LIMIT").expect("the word is in the file");
     rig.click_on(EDITOR_FIELD);
-    std::thread::sleep(crate::app::DOUBLE_CLICK);
+    std::thread::sleep(double_tap_timeout());
     let at = code_point(&rig, word + 2);
     rig.click(at);
     rig.click(at);
@@ -136,7 +136,7 @@ fn selected_code_drags_to_another_place() {
     let target = before
         .find("impl Session")
         .expect("the line is in the file");
-    std::thread::sleep(crate::app::DOUBLE_CLICK);
+    std::thread::sleep(double_tap_timeout());
     let to = code_point(&rig, target);
     rig.drag(at, to, 6);
     let after = text(&rig);
@@ -175,4 +175,9 @@ fn alt_shift_drag_selects_columns() {
             .map(|field| field.selected_all().lines().count())
     });
     assert_eq!(cursors, Some(3));
+}
+
+/// How long rustle waits after a press for another to count with it, so a press after this long starts a new row.
+fn double_tap_timeout() -> std::time::Duration {
+    std::time::Duration::from_millis(rustle::ViewConfiguration::default().double_tap_timeout_millis)
 }

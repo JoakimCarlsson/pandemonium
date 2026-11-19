@@ -87,7 +87,9 @@ fn slow_presses_on_the_title_bar_only_move() {
     let mut rig = Rig::shot(Shot::Workspace);
     let at = bare_title_bar(&rig);
     rig.click(at);
-    rig.wait(1000);
+    std::thread::sleep(std::time::Duration::from_millis(
+        rustle::ViewConfiguration::default().double_tap_timeout_millis,
+    ));
     rig.click(at);
     assert_eq!(rig.window().moved.get(), 2);
     assert!(!rig.window().maximized.get());

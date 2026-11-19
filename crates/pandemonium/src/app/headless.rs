@@ -363,17 +363,11 @@ impl Rig {
     }
 
     /// Moves the app's clock on by `ms` milliseconds, for what waits on time
-    /// such as tooltips, double presses and the card about a word of code,
+    /// such as tooltips and the card about a word of code,
     /// and comes to rest.
     pub(super) fn wait(&mut self, ms: u64) {
         let by = Duration::from_millis(ms);
         let mut app = self.app.borrow_mut();
-        if let Some(at) = app.title_press {
-            app.title_press = at.checked_sub(by);
-        }
-        if let Some((id, at)) = app.last_activation {
-            app.last_activation = at.checked_sub(by).map(|at| (id, at));
-        }
         if let Some((word, at)) = app.hover_rest {
             app.hover_rest = at.checked_sub(by).map(|at| (word, at));
         }

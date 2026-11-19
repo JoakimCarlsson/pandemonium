@@ -9,8 +9,8 @@ use pm_pages::{PROMPT, TERMINAL_BODY};
 use rustle::Rect;
 use rustle::{Key, KeyEvent};
 
+use super::App;
 use super::gesture::TerminalWindow;
-use super::{App, DOUBLE_CLICK};
 use crate::keys::{self, Clip};
 
 impl App {
@@ -254,7 +254,7 @@ impl App {
         let Some(cell) = self.absolute_terminal_cell(cell) else {
             return;
         };
-        let reach = Reach::of_clicks(self.clicks.press(TERMINAL_BODY, DOUBLE_CLICK));
+        let reach = Reach::of_clicks(u8::try_from(self.press_clicks).unwrap_or(u8::MAX));
         self.terminal_gesture
             .press(&mut TerminalWindow { model: &self.model }, cell, reach);
     }

@@ -71,7 +71,6 @@ pub(crate) fn write_png(
     content: impl Fn() + 'static,
 ) -> Result<(), Box<dyn std::error::Error>> {
     rustle_wgpu::set_legible_text(false);
-    rustle_wgpu::set_gamma_blending(true);
     icons::set_pixel_scale(shot.scale);
     let tokens = Tokens::new(&shot.family, shot.appearance);
     let focused = shot.focused;

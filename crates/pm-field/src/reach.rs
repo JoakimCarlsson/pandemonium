@@ -1,7 +1,5 @@
 //! How much a press takes at a time, and how a drag grows what it took.
 
-use std::time::{Duration, Instant};
-
 /// How much of a text a press takes: one click places a point, two take a
 /// word and three or more take a line, or the paragraph where text is laid
 /// out in blocks.
@@ -24,34 +22,6 @@ impl Reach {
             2 => Self::Word,
             _ => Self::Line,
         }
-    }
-}
-
-/// The last press, to tell whether the next one lands on the same target soon enough to count with it.
-#[derive(Clone, Copy, Debug)]
-pub struct Clicks<K> {
-    /// When and where the last press was and how many in a row it made.
-    last: Option<(Instant, K, u8)>,
-}
-
-impl<K> Default for Clicks<K> {
-    /// No press yet.
-    fn default() -> Self {
-        Self { last: None }
-    }
-}
-
-impl<K: PartialEq> Clicks<K> {
-    /// Notes a press on `target` and says how many in a row it makes: one more than the last when that was on `target` less than `within` ago, one otherwise.
-    pub fn press(&mut self, target: K, within: Duration) -> u8 {
-        let clicks = match &self.last {
-            Some((at, last, clicks)) if *last == target && at.elapsed() < within => {
-                clicks.saturating_add(1)
-            }
-            _ => 1,
-        };
-        self.last = Some((Instant::now(), target, clicks));
-        clicks
     }
 }
 

@@ -36,9 +36,6 @@ use super::App;
 /// How often the engine is given time to work while a page is open.
 pub(super) const PUMP: Duration = Duration::from_millis(4);
 
-/// How soon after a press another press counts as part of a double click.
-const DOUBLE_CLICK: Duration = Duration::from_millis(450);
-
 /// The engine and the pages it holds.
 #[derive(Default)]
 pub(super) struct Web {
@@ -576,7 +573,7 @@ impl App {
         }
     }
 
-    /// Sends a press or release of `button` into the page under the pointer, or into the one the press began in.
+    /// Sends a press or release of `button` into the page under the pointer, or into the one the press began in, with how many presses in a row it makes by rustle's default view configuration, as the window counts presses no area counts.
     pub(super) fn browser_button(&mut self, button: Button, pressed: bool) {
         let Some(at) = self.pointer.position else {
             return;
@@ -599,11 +596,13 @@ impl App {
             return;
         };
         let clicks = if pressed {
-            let near = |last: (i32, i32)| (last.0 - x).abs() < 5 && (last.1 - y).abs() < 5;
+            let configuration = rustle::ViewConfiguration::default();
+            let within = Duration::from_millis(configuration.double_tap_timeout_millis);
+            let near = |last: (i32, i32)| {
+                ((last.0 - x) as f32).hypot((last.1 - y) as f32) < configuration.touch_slop
+            };
             let count = match self.web.last_press {
-                Some((when, last, count)) if when.elapsed() < DOUBLE_CLICK && near(last) => {
-                    count + 1
-                }
+                Some((when, last, count)) if when.elapsed() < within && near(last) => count + 1,
                 _ => 1,
             };
             self.web.last_press = Some((Instant::now(), (x, y), count));

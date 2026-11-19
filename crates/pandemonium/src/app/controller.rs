@@ -88,12 +88,20 @@ impl Operations for Controller {
         self.with(|app| app.update(change));
     }
 
-    /// Takes the press, and keeps the control pressed so the app's handling
-    /// of the press does not look for another.
-    fn pressed(&self, id: FocusId, area: rustle::Rect) {
+    /// Takes the press, the `clicks`-th in a row by `configuration`, and keeps the control
+    /// pressed so the app's handling of the press does not look for another.
+    fn pressed(
+        &self,
+        id: FocusId,
+        area: rustle::Rect,
+        clicks: u32,
+        configuration: rustle::ViewConfiguration,
+    ) {
         self.with(|app| {
             app.claimed.press = Some(id);
             app.anchor = Some((id, area));
+            app.press_clicks = clicks;
+            app.press_configuration = configuration;
             app.press(id);
         });
     }

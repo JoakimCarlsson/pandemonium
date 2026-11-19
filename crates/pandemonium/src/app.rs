@@ -29,7 +29,7 @@ use pm_components::{
     EDITOR_MENU_HEIGHT, EditorCommand, MENU_COPY, MENU_CUT, MENU_PASTE, MENU_REDO, MENU_SELECT_ALL,
     MENU_UNDO, is_menu_item,
 };
-use pm_field::{Clicks, Edit, Gesture, Reach};
+use pm_field::{Edit, Gesture, Reach};
 use pm_pages::{PROMPT, Screen, TERMINAL_BODY};
 use rustle::{Key, KeyEvent, Modifiers};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoopProxy};
@@ -87,12 +87,6 @@ const MIN_SAVED: f32 = 320.0;
 
 /// How far one notch of a mouse wheel scrolls, in logical pixels.
 const WHEEL_LINE: f32 = 48.0;
-
-/// How soon after one press in a field a second one counts as a double click.
-const DOUBLE_CLICK: Duration = Duration::from_millis(400);
-
-/// How far the pointer has to move, in logical pixels, with text held down for it to be a drag.
-const DRAG_DISTANCE: f32 = 6.0;
 
 /// The file the editor's settings are kept in.
 const EDITOR_SETTINGS: &str = "editor-settings.json";
@@ -168,8 +162,6 @@ pub struct App {
     copied: Option<(String, String, bool)>,
     /// The byte of the file a press with Alt and Shift held began at, while the button is held, so dragging selects a rectangle of text.
     column_press: Option<usize>,
-    /// The last press that landed in a field, selectable text or the shell, for counting double and triple clicks.
-    clicks: Clicks<FocusId>,
     /// The field or shell showing what an input method is composing, while it composes something.
     composing_in: Option<FocusId>,
     /// The project paths last written to disk, so only changes are written.
@@ -219,10 +211,10 @@ pub struct App {
     naming: bool,
     /// What held keyboard focus when the event loop last came to rest, for telling the screen which text field the reader left.
     focus_before: Option<FocusId>,
-    /// The last press that activated a control, for noticing a file pressed twice.
-    last_activation: Option<(FocusId, Instant)>,
-    /// When the title bar was last pressed, for noticing it pressed twice.
-    title_press: Option<Instant>,
+    /// How many presses in a row the last press of a control made, as rustle counted them.
+    press_clicks: u32,
+    /// The view configuration in effect where the last pressed control was composed.
+    press_configuration: rustle::ViewConfiguration,
     /// The edge of the window the pointer showed it resizes, when it did.
     edge_cursor: Option<winit::window::ResizeDirection>,
     /// Whether the window's own close button asked it to close and nothing is left to ask first.
@@ -384,7 +376,6 @@ impl App {
             field_gesture: Gesture::default(),
             column_press: None,
             copied: None,
-            clicks: Clicks::default(),
             composing_in: None,
             saved: None,
             refocus: None,
@@ -409,8 +400,8 @@ impl App {
             autofocused: false,
             naming: false,
             focus_before: None,
-            last_activation: None,
-            title_press: None,
+            press_clicks: 1,
+            press_configuration: rustle::ViewConfiguration::default(),
             edge_cursor: None,
             closing: false,
             focus_filter: false,
@@ -596,14 +587,10 @@ impl App {
         }
     }
 
-    /// Counts a click on the control `id`: a click that comes soon after another on the
-    /// same control keeps the file its tab or row shows open.
+    /// Counts a click on the control `id`: a click whose press was the second or later in a
+    /// row keeps the file its tab or row shows open.
     fn note_click(&mut self, id: FocusId) {
-        let again = self
-            .last_activation
-            .is_some_and(|(last, at)| last == id && at.elapsed() < DOUBLE_CLICK);
-        self.last_activation = Some((id, Instant::now()));
-        if again {
+        if self.press_clicks >= 2 {
             self.model
                 .update(|state| *state = std::mem::take(state).with_file_kept(id));
         }
@@ -986,6 +973,7 @@ impl App {
                 if self.model.read(Screen::scrollbar_held) {
                     self.pressed_on = None;
                 } else if self.claimed.press.is_none() {
+                    self.press_clicks = 1;
                     self.press_at(None);
                 }
             }
@@ -1434,7 +1422,7 @@ impl App {
             self.edit_field(id, Edit::AddSelection(offset, offset));
             return;
         }
-        let reach = Reach::of_clicks(self.clicks.press(id, DOUBLE_CLICK));
+        let reach = Reach::of_clicks(u8::try_from(self.press_clicks).unwrap_or(u8::MAX));
         if id == EDITOR_FIELD
             && reach == Reach::Point
             && !self.modifiers.shift

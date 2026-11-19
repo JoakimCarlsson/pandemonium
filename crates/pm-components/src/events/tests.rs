@@ -33,7 +33,7 @@ impl Operations for Recording {
     fn update(&self, _: Change) {}
 
     /// Keeps the control pressed.
-    fn pressed(&self, id: FocusId, _: Rect) {
+    fn pressed(&self, id: FocusId, _: Rect, _: u32, _: rustle::ViewConfiguration) {
         self.pressed.borrow_mut().push(id);
     }
 

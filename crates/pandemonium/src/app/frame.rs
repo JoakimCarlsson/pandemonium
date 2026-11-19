@@ -1,14 +1,12 @@
 //! The frame of the main window, drawn by the window itself: moving it by its title bar, maximizing it with a second press there, resizing it by the edges its views lay over it, and the buttons that minimize, maximize and close it.
 
-use std::time::Instant;
-
 use pm_components::SHADOW_MARGIN;
 use pm_components::title_bar::FRAMELESS;
 use pm_pages::Screen;
 use rustle::ResizeEdge;
 use winit::window::ResizeDirection;
 
-use super::{App, DOUBLE_CLICK};
+use super::App;
 
 /// The edge winit resizes a window by for the edge rustle names.
 fn direction_of(edge: ResizeEdge) -> ResizeDirection {
@@ -68,14 +66,9 @@ impl App {
         let Some(window) = self.window.clone() else {
             return false;
         };
-        let again = self
-            .title_press
-            .is_some_and(|at| at.elapsed() < DOUBLE_CLICK);
-        if again {
-            self.title_press = None;
+        if self.press_clicks == 2 {
             window.set_maximized(!window.is_maximized());
         } else {
-            self.title_press = Some(Instant::now());
             window.drag_window();
         }
         true

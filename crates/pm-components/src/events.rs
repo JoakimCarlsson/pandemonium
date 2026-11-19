@@ -22,7 +22,8 @@ use std::rc::Rc;
 
 use rustle::{
     CompositionLocal, DragAndDropEvent, DragAndDropTarget, DragAndDropTransferData, Key, KeyEvent,
-    Modifier, Modifiers, Offset, PointerButton, PointerPhase, Rect, ResizeEdge,
+    LOCAL_VIEW_CONFIGURATION, Modifier, Modifiers, Offset, PointerButton, PointerPhase, Rect,
+    ResizeEdge, ViewConfiguration,
 };
 
 use crate::browser_menu::BrowserCommand;
@@ -42,10 +43,12 @@ pub type Change = Box<dyn FnOnce(WorkspaceState) -> WorkspaceState>;
 pub trait Operations {
     /// Changes the workspace with `change`, then does what the change asks of the app.
     fn update(&self, change: Change);
-    /// The primary button went down on the control `id`, laid out at `area` in the window:
-    /// the app follows the press (fields take the keyboard, a handle takes hold of the
-    /// pointer, a menu opened from the control hangs from `area`).
-    fn pressed(&self, id: FocusId, area: Rect);
+    /// The primary button went down on the control `id`, laid out at `area` in the window,
+    /// making `clicks` presses in a row as rustle counted them by `configuration`, the view
+    /// configuration in effect where the control was composed: the app follows the press
+    /// (fields take the keyboard, a handle takes hold of the pointer, a menu opened from the
+    /// control hangs from `area`).
+    fn pressed(&self, id: FocusId, area: Rect, clicks: u32, configuration: ViewConfiguration);
     /// The primary button came up on the control `id` it went down on, laid out at `area`.
     /// Returns whether the click counts, which it does not after the press dragged something
     /// or was taken by a handle; a click that counts gives the keyboard to the field or page
@@ -149,7 +152,7 @@ impl Operations for Unattended {
     fn update(&self, _: Change) {}
 
     /// Does nothing.
-    fn pressed(&self, _: FocusId, _: Rect) {}
+    fn pressed(&self, _: FocusId, _: Rect, _: u32, _: ViewConfiguration) {}
 
     /// Lets no click count.
     fn click_lands(&self, _: FocusId, _: Rect) -> bool {
@@ -494,7 +497,8 @@ fn message_menu() -> Rc<dyn Fn()> {
 /// The modifier that names the area `id` for tests, tells the app where the pointer and the
 /// presses are on it and runs its lambdas: a primary press is reported, and `on_click` runs
 /// with the modifier keys held when the button came up on the area it went down on and
-/// the app let the click count; the pointer coming over it or leaving it is reported, and
+/// the app let the click count, the press telling how many in a row it makes by the view
+/// configuration in effect here; the pointer coming over it or leaving it is reported, and
 /// a drag of it when the app [carries](Operations::carries) it. A secondary press runs
 /// `on_context`, as a composable's `onContextMenu` lambda.
 fn reporting(id: FocusId, on_click: Rc<dyn Fn(Modifiers)>, on_context: Rc<dyn Fn()>) -> Modifier {
@@ -502,6 +506,7 @@ fn reporting(id: FocusId, on_click: Rc<dyn Fn(Modifiers)>, on_context: Rc<dyn Fn
     let (hover, carry) = (Rc::clone(&operations), Rc::clone(&operations));
     let area: Rc<Cell<Rect>> = Rc::default();
     let placed = Rc::clone(&area);
+    let configuration = LOCAL_VIEW_CONFIGURATION.current();
     Modifier::new()
         .test_tag(id.tag())
         .drag_and_drop_source(move |_| {
@@ -512,7 +517,9 @@ fn reporting(id: FocusId, on_click: Rc<dyn Fn(Modifiers)>, on_context: Rc<dyn Fn
         .on_globally_positioned(move |rect| placed.set(rect))
         .on_hover(move |over| hover.hovered(id, over))
         .on_pointer_button(PointerButton::Primary, move |event| match event.phase {
-            PointerPhase::Press => operations.pressed(id, area.get()),
+            PointerPhase::Press => {
+                operations.pressed(id, area.get(), event.click_count, configuration);
+            }
             PointerPhase::Click => {
                 if operations.click_lands(id, area.get()) {
                     on_click(event.modifiers);

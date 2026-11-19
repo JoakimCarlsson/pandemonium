@@ -3,7 +3,7 @@
 //! [`Modifier::draw_behind`](rustle::Modifier::draw_behind), as Compose draws
 //! them in `drawBehind`.
 
-use rustle::{Canvas, Color, ShadowFalloff};
+use rustle::{Canvas, Color};
 
 use super::Radius;
 
@@ -63,14 +63,14 @@ pub const MEDIUM_SHADOW: [ShadowLayer; 2] =
 pub const FLOATING_SHADOW: [ShadowLayer; 1] = [(0.0, 12.0, 40.0, 0.0, 0.35)];
 
 /// Draws `layers` of shadow behind an area with corners rounded by `radius`,
-/// each fading smoothly over [`SHADOW_SOFTNESS`] times its blur.
+/// each rustle's Gaussian shadow blurred over [`SHADOW_SOFTNESS`] times its blur.
 pub fn shadows(layers: &'static [ShadowLayer], radius: Radius) -> impl Fn(&mut Canvas) + 'static {
     let corner = radius.px();
     move |canvas| {
         let (width, height) = (canvas.width(), canvas.height());
         for (x, y, blur, spread, alpha) in layers {
             let shade = Color::rgba(0, 0, 0, (alpha * 255.0).round() as u8);
-            canvas.shadow_with_falloff(
+            canvas.shadow(
                 x - spread,
                 y - spread,
                 width + 2.0 * spread,
@@ -78,7 +78,6 @@ pub fn shadows(layers: &'static [ShadowLayer], radius: Radius) -> impl Fn(&mut C
                 (corner + spread).max(0.0),
                 blur * SHADOW_SOFTNESS,
                 shade,
-                ShadowFalloff::SmoothStep,
             );
         }
     }
