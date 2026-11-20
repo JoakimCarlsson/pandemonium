@@ -1,21 +1,20 @@
 //! The keymap page of the settings panel: the preset the keys start from, every action with its keys, and the reader's own keys recorded over the preset's.
 
 use crate::areas::SettingsEvent;
-use crate::events::{Event, send};
-use crate::kit::{self, Frame};
+use crate::kit;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
 use pm_editor::{Action, shown};
-use rustle::{CursorIcon, Modifier};
+use rustle::Modifier;
 
-use crate::events::Interactive;
 use crate::theme::{Radius, Role};
 
 use crate::input::Input;
 use crate::parts::line;
 use crate::settings_catalog::Setting;
 use crate::settings_rows::{KEYMAP_CONTROLS, PER_ACTION};
+use crate::settings_servers::boxed;
 use crate::state::WorkspaceState;
 
 /// What a control of an action does.
@@ -29,28 +28,20 @@ enum Part {
     Clear,
 }
 
+/// Every control of an action, in the order of their places among the action's controls.
+const PARTS: [Part; 3] = [Part::Record, Part::Reset, Part::Clear];
+
 /// The name of the control `part` of `action`, or nothing when the keymap page has no room for the action.
 fn id_of(action: Action, part: Part) -> Option<Target> {
     let place = Action::ALL.iter().position(|held| *held == action)?;
-    let offset = match part {
-        Part::Record => 0,
-        Part::Reset => 1,
-        Part::Clear => 2,
-    };
+    let offset = PARTS.iter().position(|held| *held == part)?;
     KEYMAP_CONTROLS.cell(place, offset, PER_ACTION)
 }
 
 /// The action and the control of it that `id` names.
 fn control_of(id: Target) -> Option<(Action, Part)> {
     let (place, offset) = KEYMAP_CONTROLS.cell_of(id, PER_ACTION)?;
-    let action = *Action::ALL.get(place)?;
-    let part = match offset {
-        0 => Part::Record,
-        1 => Part::Reset,
-        2 => Part::Clear,
-        _ => return None,
-    };
-    Some((action, part))
+    Some((*Action::ALL.get(place)?, *PARTS.get(offset)?))
 }
 
 impl WorkspaceState {
@@ -98,16 +89,6 @@ impl WorkspaceState {
     }
 }
 
-/// `own`, the modifier of a control, answering to `id` and showing it can be pressed, or as it is when it has no name.
-fn pressable(own: Modifier, id: Option<Target>) -> Modifier {
-    match id {
-        Some(id) => own
-            .cursor(CursorIcon::Pointer)
-            .control(id, send(Event::pressing(id))),
-        None => own,
-    }
-}
-
 /// Emits a small button of a row saying `words`, answering to `id`.
 #[track_caller]
 fn small(words: &str, id: Option<Target>) {
@@ -117,13 +98,14 @@ fn small(words: &str, id: Option<Target>) {
             .radius(Radius::Sm),
         theme::Focused::Rustle,
     );
-    kit::row(pressable(own, id).padding_xy(theme::sp(2), 0.0), 0, || {
-        line(words, 11, 1.4, Role::Muted)
-    });
+    kit::row(
+        kit::pressable(own, id).padding_xy(theme::sp(2), 0.0),
+        0,
+        || line(words, 11, 1.4, Role::Muted),
+    );
 }
 
 /// Emits the keys of `action`, each as a key cap, or what recording asks for while it records, answering to `id`.
-#[track_caller]
 fn caps(keys: &[String], recording: Option<&[String]>, id: Option<Target>) {
     let edge = if recording.is_some() {
         Role::Accent
@@ -137,7 +119,7 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: Option<Target>) {
         .padding(1.0);
     let code = kit::code(12, Role::Text);
     kit::row(
-        pressable(own, id).padding_xy(theme::sp(1.5), 0.0),
+        kit::pressable(own, id).padding_xy(theme::sp(1.5), 0.0),
         1,
         move || {
             if let Some(so_far) = recording {
@@ -172,17 +154,6 @@ fn found(action: Action, keys: &[String], needle: &str) -> bool {
         })
 }
 
-/// Emits the box the actions are searched with.
-#[track_caller]
-fn search_box(state: &WorkspaceState) {
-    Input::search(
-        &state.settings_page.keymap_find,
-        Target::Settings(SettingsEvent::SettingsKeymapFind),
-    )
-    .placeholder("Search actions by name or keys")
-    .build();
-}
-
 /// One action the search found, with what its row shows.
 struct Found<'a> {
     /// The action.
@@ -203,7 +174,12 @@ pub(crate) fn rows(state: &WorkspaceState, room: f32) {
     let keymap = state.editor.keymap();
     let needle = state.settings_page.keymap_find.text().trim().to_lowercase();
     crate::settings_pages::setting_row(state, Setting::BaseKeymap, room);
-    search_box(state);
+    Input::search(
+        &state.settings_page.keymap_find,
+        Target::Settings(SettingsEvent::SettingsKeymapFind),
+    )
+    .placeholder("Search actions by name or keys")
+    .build();
     let groups = [
         "Window",
         "Session",
@@ -217,39 +193,34 @@ pub(crate) fn rows(state: &WorkspaceState, room: f32) {
         "File",
         "Terminal",
     ];
-    let ordered = groups.iter().flat_map(|wanted| {
-        Action::ALL
+    let mut any = false;
+    for group in groups {
+        let mut members = Vec::new();
+        for action in Action::ALL
             .into_iter()
-            .filter(move |action| action.group() == *wanted)
-    });
-    let mut sections: Vec<(&str, Vec<Found>)> = Vec::new();
-    for action in ordered {
-        let keys = keymap.keys_of(action);
-        if !found(action, &keys, &needle) {
-            continue;
+            .filter(|action| action.group() == group)
+        {
+            let keys = keymap.keys_of(action);
+            if !found(action, &keys, &needle) {
+                continue;
+            }
+            let clashes: Vec<&'static str> = keys
+                .iter()
+                .flat_map(|binding| keymap.clashes(action, binding))
+                .map(Action::title)
+                .collect();
+            members.push(Found {
+                action,
+                keys,
+                own: state.editor.keys.contains_key(action.key()),
+                clashes,
+                recording: (state.recording == Some(action)).then_some(state.recorded.as_slice()),
+            });
         }
-        let own = state.editor.keys.contains_key(action.key());
-        let clashes: Vec<&'static str> = keys
-            .iter()
-            .flat_map(|binding| keymap.clashes(action, binding))
-            .map(Action::title)
-            .collect();
-        let recording = (state.recording == Some(action)).then_some(state.recorded.as_slice());
-        let entry = Found {
-            action,
-            keys,
-            own,
-            clashes,
-            recording,
-        };
-        match sections.last_mut() {
-            Some((group, members)) if *group == action.group() => members.push(entry),
-            _ => sections.push((action.group(), vec![entry])),
+        if !members.is_empty() {
+            any = true;
+            section(group, &members);
         }
-    }
-    let any = !sections.is_empty();
-    for (group, members) in &sections {
-        section(group, members);
     }
     if !any {
         line("No action matches.", 13, 1.5, Role::Muted);
@@ -261,31 +232,18 @@ pub(crate) fn rows(state: &WorkspaceState, room: f32) {
 #[track_caller]
 fn section(group: &str, members: &[Found]) {
     kit::text(Modifier::new(), group, kit::strong(13, Role::Text));
-    let last = members.len().saturating_sub(1);
-    kit::column(
-        Modifier::new().fill_max_width().panel(Radius::Lg),
-        0,
-        || {
-            for (place, entry) in members.iter().enumerate() {
-                rustle::key(place, || action_row(entry, place < last));
-            }
-        },
-    );
+    boxed(|| {
+        for (place, entry) in members.iter().enumerate() {
+            rustle::key(place, || action_row(entry));
+        }
+    });
 }
 
-/// Emits the row of `entry`: its title and clashes, then its keys and the controls that reset or clear them; ruled below when `ruled`.
-#[track_caller]
-fn action_row(entry: &Found, ruled: bool) {
+/// Emits the row of `entry`: its title and clashes, then its keys and the controls that reset or clear them.
+fn action_row(entry: &Found) {
     let action = entry.action;
-    let own = Modifier::new().fill_max_width();
-    let own = if ruled {
-        own.ruled(theme::Side::Bottom)
-    } else {
-        own
-    };
     kit::row(
-        own.padding_xy(theme::sp(4), 0.0)
-            .padding_xy(0.0, theme::sp(2)),
+        Modifier::new().padding_xy(theme::sp(4), theme::sp(2)),
         6,
         || {
             kit::column(Modifier::new().weight(1.0), 0.5, || {

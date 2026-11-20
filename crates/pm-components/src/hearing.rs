@@ -45,7 +45,7 @@ impl Session {
                 from,
                 to,
                 reason,
-            } => self.fell_back(Side::Fallback { slot, from, to }, &reason),
+            } => self.beside(Message::note(Side::Fallback { slot, from, to }, &reason)),
             Event::Commands(commands) => self.commands = commands,
             Event::Used(usage) => self.context = Some(usage),
             Event::Spent(spent) => self.spent = Some(spent),
@@ -124,31 +124,17 @@ impl Session {
                 question,
                 answer,
                 failed,
-            } => self.aside(question, &answer, failed),
+            } => self.beside(Message::note(Side::Aside { question, failed }, &answer)),
             Event::HandedOff { prompt, .. } => self.handed_off(&prompt),
         }
     }
 
-    /// Notes the agent's `answer` to `question`, asked on the side, or why there is none when it `failed`, beside the conversation: before the reply being written, if any, so that the reply stays whole.
-    fn aside(&mut self, question: String, answer: &str, failed: bool) {
-        self.beside(Message::note(Side::Aside { question, failed }, answer));
-    }
-
     /// Puts `note` beside the conversation: before the reply being written, if any, so that the reply stays whole.
     fn beside(&mut self, note: Message) {
-        let writing = self
-            .messages
-            .last()
-            .is_some_and(|last| !last.from_user && last.duration.is_none());
-        match writing {
+        match self.writing() {
             true => self.messages.insert(self.messages.len() - 1, note),
             false => self.messages.push(note),
         }
-    }
-
-    /// Notes that the turn moved to a backup model, `side` saying which, for `reason`, beside the conversation.
-    fn fell_back(&mut self, side: Side, reason: &str) {
-        self.beside(Message::note(side, reason));
     }
 
     /// Marks where the conversation was handed over to a new one, which starts with `prompt`: the reply that wrote the prompt ends, with the calls it still showed running settled unless they go on past the turn, and the new turn's reply follows the mark.
@@ -165,8 +151,7 @@ impl Session {
                     && tool.state == ToolState::Running
                     && !carried.contains(&tool.id)
                 {
-                    tool.state = ToolState::Done;
-                    tool.seconds = Some(tool.started.elapsed().as_secs());
+                    settle(tool, ToolState::Done);
                 }
             }
         }
@@ -178,8 +163,7 @@ impl Session {
         self.shells.clear();
         for tool in self.tools_mut() {
             if tool.state == ToolState::Running {
-                tool.state = ToolState::Failed;
-                tool.seconds = Some(tool.started.elapsed().as_secs());
+                settle(tool, ToolState::Failed);
             }
         }
     }
@@ -205,8 +189,7 @@ impl Session {
         for tool in self.tools_mut() {
             let started_it = tool.id == background.id || call.as_deref() == Some(&tool.id);
             if started_it && tool.state == ToolState::Running {
-                tool.state = ToolState::Done;
-                tool.seconds = Some(tool.started.elapsed().as_secs());
+                settle(tool, ToolState::Done);
             }
         }
     }
@@ -236,8 +219,7 @@ impl Session {
                 tool.cost = cost;
             }
             if !running && tool.outlasts_the_turn() && tool.state == ToolState::Running {
-                tool.state = ToolState::Done;
-                tool.seconds = Some(tool.started.elapsed().as_secs());
+                settle(tool, ToolState::Done);
                 settled = Some(tool.id.clone());
             }
             tool.stop = running.then(|| crate::sample::Stop {
@@ -304,8 +286,7 @@ impl Session {
         let kept = self.outlasting();
         for tool in self.tools_mut() {
             if tool.state == ToolState::Running && !kept.contains(&tool.id) {
-                tool.state = ToolState::Failed;
-                tool.seconds = Some(tool.started.elapsed().as_secs());
+                settle(tool, ToolState::Failed);
             }
         }
     }
@@ -326,8 +307,7 @@ impl Session {
         let beneath = self.with_descendants(vec![id.to_owned()]);
         for tool in self.tools_mut() {
             if tool.id != id && beneath.contains(&tool.id) && tool.state == ToolState::Running {
-                tool.state = state;
-                tool.seconds = Some(tool.started.elapsed().as_secs());
+                settle(tool, state);
             }
         }
     }
@@ -356,21 +336,24 @@ impl Session {
     /// Says that `count` files were put back as they were before the reader's turn `turn`, counted from nought.
     fn files_restored(&mut self, turn: u64, count: usize) {
         let files = if count == 1 { "file" } else { "files" };
-        let mut note = Message::reply(&format!(
+        self.note(&format!(
             "Restored {count} {files} to how they were before turn {}.",
             turn + 1
         ));
-        note.duration = Some(String::new());
-        self.messages.push(note);
     }
 
     /// Says that what the reader's turn `turn`, counted from nought, changed was taken back out of `count` files.
     fn turn_undone(&mut self, turn: u64, count: usize) {
         let files = if count == 1 { "file" } else { "files" };
-        let mut note = Message::reply(&format!(
+        self.note(&format!(
             "Undid what turn {} changed in {count} {files}.",
             turn + 1
         ));
+    }
+
+    /// Adds `text` as a finished reply of its own, between turns.
+    fn note(&mut self, text: &str) {
+        let mut note = Message::reply(text);
         note.duration = Some(String::new());
         self.messages.push(note);
     }
@@ -380,22 +363,11 @@ impl Session {
         let notice = format!(
             "A tool server asks you to sign in. Its sign-in page opens in your browser; if it did not, open {address}"
         );
-        let writing = self
-            .messages
-            .last()
-            .is_some_and(|last| !last.from_user && last.duration.is_none());
-        if writing {
-            let separator = if self.reply().text.is_empty() {
-                ""
-            } else {
-                "\n\n"
-            };
-            self.say(&format!("{separator}{notice}"));
-            return;
+        if self.writing() {
+            self.say_apart(&notice);
+        } else {
+            self.note(&notice);
         }
-        let mut note = Message::reply(&notice);
-        note.duration = Some(String::new());
-        self.messages.push(note);
     }
 
     /// Adds the turn a reader handed the agent, unless this window handed it and already shows it, and notes whether its files were kept.
@@ -430,16 +402,29 @@ impl Session {
         }
     }
 
+    /// Whether the agent is writing a reply: the last message is the agent's and its turn goes on.
+    fn writing(&self) -> bool {
+        self.messages
+            .last()
+            .is_some_and(|last| !last.from_user && last.duration.is_none())
+    }
+
     /// The reply the agent is writing: the last message while it is the agent's and its turn goes on.
     fn reply(&mut self) -> &mut Message {
-        let writing = self
-            .messages
-            .last()
-            .is_some_and(|last| !last.from_user && last.duration.is_none());
-        if !writing {
+        if !self.writing() {
             self.messages.push(Message::reply(""));
         }
         self.messages.last_mut().expect("a reply was just pushed")
+    }
+
+    /// Adds `text` to the reply being written as a paragraph of its own, unless the reply is empty.
+    fn say_apart(&mut self, text: &str) {
+        let separator = if self.reply().text.is_empty() {
+            ""
+        } else {
+            "\n\n"
+        };
+        self.say(&format!("{separator}{text}"));
     }
 
     /// Adds `text` to the reply being written, in a paragraph of its own when a step came between.
@@ -518,7 +503,7 @@ impl Session {
                 let outlives_call = held.outlasts_the_turn() && held.is_working_agent();
                 if let Some(state) = tool.state.filter(|_| !carrying && !outlives_call) {
                     if held.state == ToolState::Running && state != ToolState::Running {
-                        held.seconds = Some(held.started.elapsed().as_secs());
+                        settle(held, state);
                         ended = Some(state);
                     }
                     held.state = state;
@@ -595,18 +580,12 @@ impl Session {
             .take()
             .map(|started| worked(started.elapsed().as_secs()));
         if let Some(reason) = &error {
-            let separator = if self.reply().text.is_empty() {
-                ""
-            } else {
-                "\n\n"
-            };
-            self.say(&format!("{separator}Something went wrong: {reason}"));
+            self.say_apart(&format!("Something went wrong: {reason}"));
         }
         let carried = self.carried_on();
         for tool in self.tools_mut() {
             if tool.state == ToolState::Running && !carried.contains(&tool.id) {
-                tool.state = ended;
-                tool.seconds = Some(tool.started.elapsed().as_secs());
+                settle(tool, ended);
             }
         }
         if let Some(reply) = self
@@ -621,6 +600,12 @@ impl Session {
         self.latest_error = error.is_some();
         self.status = Status::Idle;
     }
+}
+
+/// Ends `tool`, which was running, in `state`, noting how long it ran.
+fn settle(tool: &mut ToolUse, state: ToolState) {
+    tool.state = state;
+    tool.seconds = Some(tool.started.elapsed().as_secs());
 }
 
 /// What `subagent` says it runs as, for its row: the work category it was started in and the model it asks, the model alone when it was started without a category, or nothing when it says neither.

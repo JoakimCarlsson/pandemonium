@@ -39,19 +39,11 @@ pub fn panel(state: &WorkspaceState, source: &str, width: f32) {
             .ruled(theme::Side::Left),
         0,
         || {
-            kit::row(
-                Modifier::new()
-                    .fill_max_width()
-                    .height(theme::sp(12))
-                    .ruled(theme::Side::Bottom)
-                    .padding_xy(theme::sp(4), 0.0),
-                2,
-                || {
-                    line("Plan", 13, 1.4, Role::Muted);
-                    spacer();
-                    Button::icon(phosphor::X, Target::Chat(ChatEvent::ClosePlan)).build();
-                },
-            );
+            kit::bar(12, 4, 2, || {
+                line("Plan", 13, 1.4, Role::Muted);
+                spacer();
+                Button::icon(phosphor::X, Target::Chat(ChatEvent::ClosePlan)).build();
+            });
             kit::column(
                 Modifier::new()
                     .fill_max_width()
@@ -59,8 +51,7 @@ pub fn panel(state: &WorkspaceState, source: &str, width: f32) {
                     .clip()
                     .vertical_scroll(&state.plan_scroll)
                     .fill_max_width()
-                    .padding_xy(theme::sp(4), 0.0)
-                    .padding_xy(0.0, theme::sp(4)),
+                    .padding_xy(theme::sp(4), theme::sp(4)),
                 0,
                 || {
                     Markdown::new(source, width - 33.0).build();
@@ -73,16 +64,11 @@ pub fn panel(state: &WorkspaceState, source: &str, width: f32) {
 /// Emits the button answering with the choice at `index`, bold for the one that goes ahead without asking again.
 #[track_caller]
 fn answer(index: usize, name: &str, verdict: &Verdict) {
-    kit::small_button(
+    kit::action(
         name,
         Target::Chat(ChatEvent::Choice(index)),
-        match verdict {
-            Verdict::Reject => Variant::Ghost,
-            Verdict::Allow => Variant::Outline,
-            Verdict::Always => Variant::Default,
-        },
-    )
-    .build();
+        crate::steps::variant_of(verdict),
+    );
 }
 
 /// Emits the card that stands in for the prompt box while the plan in `ask` waits for a decision; emits nothing when `ask` proposes none.
@@ -96,8 +82,7 @@ pub fn proposal(ask: &Permission) -> bool {
     kit::column(
         Modifier::new()
             .panel(Radius::Xl)
-            .padding_xy(theme::sp(4), 0.0)
-            .padding_xy(0.0, theme::sp(3)),
+            .padding_xy(theme::sp(4), theme::sp(3)),
         2,
         || {
             kit::row(Modifier::new().fill_max_width(), 0, || {
@@ -106,12 +91,11 @@ pub fn proposal(ask: &Permission) -> bool {
                     "The agent proposed a plan",
                     kit::line(14, Role::Text),
                 );
-                kit::small_button(
+                kit::action(
                     "Open plan",
                     Target::Chat(ChatEvent::OpenPlan),
                     Variant::Ghost,
-                )
-                .build();
+                );
             });
             flow_row_with(
                 Modifier::new().fill_max_width(),
@@ -126,8 +110,7 @@ pub fn proposal(ask: &Permission) -> bool {
                     {
                         answer(index, "Reject", &Verdict::Reject);
                     }
-                    kit::small_button("Revise…", Target::Chat(ChatEvent::Revise), Variant::Ghost)
-                        .build();
+                    kit::action("Revise…", Target::Chat(ChatEvent::Revise), Variant::Ghost);
                     spacer();
                     for (index, choice) in ask
                         .choices

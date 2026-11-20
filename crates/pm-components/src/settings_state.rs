@@ -141,17 +141,11 @@ impl WorkspaceState {
             .fields
             .retain(|setting, _| setting.keeper() != Keeper::Machine);
         self.fill_fields();
-        if let Some(agent) = self
-            .machine
-            .agents
-            .default_agent
-            .as_deref()
-            .and_then(|id| self.agent_position(id))
-            && self.sessions.is_empty()
-        {
-            self.agent = agent;
-        }
         if self.sessions.is_empty() {
+            let default = self.machine.agents.default_agent.as_deref();
+            if let Some(agent) = default.and_then(|id| self.agent_position(id)) {
+                self.agent = agent;
+            }
             self.keep_startable_agent();
         }
         self.apply_indentation();

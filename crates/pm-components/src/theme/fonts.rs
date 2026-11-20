@@ -4,7 +4,7 @@
 pub type Stack = &'static [&'static str];
 
 /// The font stacks of a theme.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Fonts {
     /// The interface typeface.
     pub sans: Stack,

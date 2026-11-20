@@ -41,27 +41,27 @@ impl Bounds {
     /// answers nothing again.
     #[track_caller]
     pub fn track(&self, modifier: Modifier) -> Modifier {
-        let gone = self.0.clone();
-        rustle::disposable_effect((), move || move || gone.shown.set(None));
-        let seen = self.0.clone();
-        modifier.on_globally_positioned(move |rect| {
-            seen.shown.set(Some(rect));
-            seen.last.set(Some(rect));
-        })
+        modifier.on_globally_positioned(self.told())
     }
 
     /// Like [`track`](Self::track), telling the part of the area the clips around it leave
     /// visible, an empty rectangle while it is scrolled or clipped out of sight: for areas the
     /// app finds under a point.
-    #[track_caller]
     pub fn track_visible(&self, modifier: Modifier) -> Modifier {
+        modifier.on_placed_visible(self.told())
+    }
+
+    /// What tells these bounds where their area is drawn, forgetting it once the call leaves
+    /// the composition.
+    #[track_caller]
+    fn told(&self) -> impl Fn(Rect) + 'static {
         let gone = self.0.clone();
         rustle::disposable_effect((), move || move || gone.shown.set(None));
         let seen = self.0.clone();
-        modifier.on_placed_visible(move |rect| {
+        move |rect| {
             seen.shown.set(Some(rect));
             seen.last.set(Some(rect));
-        })
+        }
     }
 }
 

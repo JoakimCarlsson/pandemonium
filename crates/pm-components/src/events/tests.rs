@@ -4,18 +4,11 @@
 use crate::areas::WindowEvent;
 use crate::target::Target;
 use std::cell::{Cell, RefCell};
-use std::path::PathBuf;
 use std::rc::Rc;
 
-use rustle::{
-    Embedded, Key, KeyEvent, Modifier, Modifiers, Offset, PointerButton, Rect, ResizeEdge,
-};
+use rustle::{Embedded, Key, KeyEvent, Modifier, Modifiers, Offset, PointerButton, Rect};
 
 use super::{Change, Interactive, Operations, activates, provide};
-use crate::browser_menu::BrowserCommand;
-use crate::git_menus::MenuKind;
-use crate::terminal_menu::TerminalCommand;
-use crate::tree_actions::TreeTarget;
 
 /// Operations that let every click count and keep what the views asked of them.
 #[derive(Default)]
@@ -39,133 +32,6 @@ impl Operations for Recording {
     fn click_lands(&self, _: Target, _: Rect) -> bool {
         true
     }
-
-    /// Takes nothing.
-    fn key(&self, _: &KeyEvent) -> bool {
-        false
-    }
-
-    /// Does nothing.
-    fn files_held(&self, _: Option<(f32, f32)>) {}
-
-    /// Does nothing.
-    fn files_dropped(&self, _: Vec<PathBuf>, _: (f32, f32)) {}
-
-    /// Does nothing.
-    fn hovered(&self, _: Target, _: bool) {}
-
-    /// Does nothing.
-    fn sash_dragged(&self, _: Target, _: (f32, f32)) {}
-
-    /// Does nothing.
-    fn sash_released(&self) {}
-
-    /// Does nothing.
-    fn minimap_dragged(&self, _: f32, _: f32) {}
-
-    /// Does nothing.
-    fn dismiss_requested(&self) {}
-
-    /// Carries nothing.
-    fn carries(&self, _: Target) -> bool {
-        false
-    }
-
-    /// Does nothing.
-    fn carry_started(&self, _: Target, _: (f32, f32)) {}
-
-    /// Does nothing.
-    fn carry_moved(&self, _: (f32, f32)) {}
-
-    /// Does nothing.
-    fn carry_ended(&self, _: Modifiers) {}
-
-    /// Does nothing.
-    fn comment_dragged(&self, _: Target) {}
-
-    /// Does nothing.
-    fn comment_drag_ended(&self) {}
-
-    /// Does nothing.
-    fn edge_pressed(&self, _: ResizeEdge) {}
-
-    /// Does nothing.
-    fn minimize_window(&self) {}
-
-    /// Does nothing.
-    fn toggle_maximized(&self) {}
-
-    /// Does nothing.
-    fn close_window(&self) {}
-
-    /// Does nothing.
-    fn open_command_palette(&self) {}
-
-    /// Does nothing.
-    fn show_code_actions(&self) {}
-
-    /// Does nothing.
-    fn navigate(&self, _: isize) {}
-
-    /// Does nothing.
-    fn take_listing(&self, _: Option<usize>) {}
-
-    /// Does nothing.
-    fn open_color_picker(&self, _: usize) {}
-
-    /// Does nothing.
-    fn field_menu_picked(&self, _: Target) {}
-
-    /// Does nothing.
-    fn message_menu_picked(&self, _: Target) {}
-
-    /// Does nothing.
-    fn open_browser_capture_menu(&self) {}
-
-    /// Does nothing.
-    fn browser_menu_command(&self, _: BrowserCommand) {}
-
-    /// Does nothing.
-    fn terminal_command(&self, _: TerminalCommand) {}
-
-    /// Does nothing.
-    fn attach(&self) {}
-
-    /// Does nothing.
-    fn open_settings_menu(&self, _: usize) {}
-
-    /// Does nothing.
-    fn open_project_menu(&self, _: usize) {}
-
-    /// Does nothing.
-    fn open_git_menu(&self, _: MenuKind, _: Option<Target>) {}
-
-    /// Does nothing.
-    fn open_pane_menu(&self) {}
-
-    /// Does nothing.
-    fn open_session_menu(&self, _: usize) {}
-
-    /// Does nothing.
-    fn open_change_menu(&self, _: usize) {}
-
-    /// Does nothing.
-    fn open_folder_change_menu(&self, _: usize) {}
-
-    /// Does nothing.
-    fn open_tab_menu(&self, _: usize) {}
-
-    /// Does nothing.
-    fn open_tree_menu(&self, _: TreeTarget) {}
-
-    /// Does nothing.
-    fn open_field_menu(&self, _: Target) {}
-
-    /// Does nothing.
-    fn open_terminal_menu(&self) {}
-
-    /// Does nothing.
-    fn open_browser_menu(&self) {}
 
     /// Counts the menu asked for.
     fn open_message_menu(&self) {

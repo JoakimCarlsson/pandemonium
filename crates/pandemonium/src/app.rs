@@ -36,7 +36,7 @@ use pm_components::theme::{Appearance, ThemeFamily};
 use pm_components::tree_actions::{TREE_MENU_HEIGHT, TreeTarget};
 use pm_components::{EDITOR_MENU_HEIGHT, EditorCommand, is_menu_item};
 use pm_field::{Edit, Gesture, Reach};
-use pm_pages::Screen;
+use pm_pages::{Screen, WorkspaceState};
 use rustle::{Key, KeyEvent, Modifiers};
 
 mod asides;
@@ -281,8 +281,11 @@ impl App {
             .as_deref()
             .map_or_else(Screen::default, Screen::opened)
             .with_agent_list(agents.clone())
-            .with_choices(choices.clone())
-            .with_accounts(logins, in_use);
+            .in_workspace(|state| {
+                state
+                    .with_choices(choices.clone())
+                    .with_accounts(logins, in_use)
+            });
         let screen = agents
             .iter()
             .enumerate()
@@ -294,7 +297,7 @@ impl App {
                 ))
                 .and_then(|text| pm_harness::Discovery::from_text(&text))
                 {
-                    Some(found) => screen.with_discovery(index, found),
+                    Some(found) => screen.in_workspace(|state| state.with_discovery(index, found)),
                     None => screen,
                 },
             );
@@ -324,10 +327,12 @@ impl App {
             &window_settings.appearance.interface_font,
             &window_settings.appearance.code_font,
         );
-        let screen = screen
-            .with_editor_settings(editor.clone())
-            .with_window_settings(window_settings.clone())
-            .with_fonts(all_fonts, mono_fonts);
+        let screen = screen.in_workspace(|state| {
+            state
+                .with_editor_settings(editor.clone())
+                .with_window_settings(window_settings.clone())
+                .with_fonts(all_fonts, mono_fonts)
+        });
         let mut app = Self::assemble(screen, work, window_settings, editor, wake);
         app.window = Some(Rc::new(port::NativePort::new(rustle::WindowHandle::MAIN)));
         let saved_size = Self::saved_size();
@@ -491,8 +496,7 @@ impl App {
             if state.conversation_observation_pending(visible, at_end, focused))
         });
         if pending {
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 state.observe_conversation(visible, at_end, focused);
             });
         }
@@ -508,12 +512,10 @@ impl App {
             return;
         };
         if self.model.read(Screen::code_height) != Some(height) {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).with_code_height(height));
+            self.model.change(|state| state.with_code_height(height));
         }
-        if self.model.read(Screen::names_in_view_wanted) {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).annotations_requested());
+        if self.model.read(|screen| screen.names_in_view_wanted()) {
+            self.model.change(|state| state.annotations_requested());
             self.deliver();
         }
         let Some(font) = self.model.read(|screen| {
@@ -536,8 +538,7 @@ impl App {
             (held_width - width).abs() > 0.5 || (held_cell - cell).abs() > 0.01
         });
         if differs {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).with_code_view(width, cell));
+            self.model.change(|state| state.with_code_view(width, cell));
         }
     }
 
@@ -598,8 +599,9 @@ impl App {
     /// row keeps the file its tab or row shows open.
     fn note_click(&mut self, id: Target) {
         if self.press_clicks >= 2 {
-            self.model
-                .update(|state| *state = std::mem::take(state).with_file_kept(id));
+            self.model.update(|state| {
+                *state = std::mem::take(state).in_workspace(|state| state.with_file_kept(id))
+            });
         }
     }
 
@@ -675,8 +677,7 @@ impl App {
             self.appearance == Appearance::Dark,
         );
         if self.work.set_palette(palette) {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).without_figures());
+            self.model.change(|state| state.without_figures());
         }
         let fonts = (settings.interface_font.clone(), settings.code_font.clone());
         if fonts != self.fonts_applied {
@@ -837,7 +838,8 @@ impl App {
             .read(|screen| screen.text_field(id).map(rustle::TextFieldState::text));
         if now.is_some_and(|now| now != before) {
             self.model.update(|state| {
-                *state = std::mem::take(state).handle(Event::Field(FieldEvent::Changed(id)))
+                *state = std::mem::take(state)
+                    .in_workspace(|state| state.handle(Event::Field(FieldEvent::Changed(id))))
             });
         }
     }
@@ -930,11 +932,9 @@ impl App {
         }
         if let Some((id, size, grows)) = self.sash_drag {
             self.model.resize(|state| {
-                *state = std::mem::take(state).with_sash_size(
-                    id,
-                    size + grows.by((0.0, 0.0), by),
-                    window,
-                )
+                *state = std::mem::take(state).in_workspace(|state| {
+                    state.with_sash_size(id, size + grows.by((0.0, 0.0), by), window)
+                })
             });
         }
     }
@@ -942,8 +942,9 @@ impl App {
     /// Scrolls the file shown so its view is centred on the point of the minimap `down`
     /// logical pixels from its top, of its `height`.
     pub(super) fn minimap_dragged(&mut self, down: f32, height: f32) {
-        self.model
-            .update(|state| *state = std::mem::take(state).minimap_pressed(down, height));
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.minimap_pressed(down, height))
+        });
     }
 
     /// Goes to the line kept at the top of the file shown that the press is on, `on`, and says whether it is on one.
@@ -951,8 +952,9 @@ impl App {
         let Some(Target::Editor(EditorEvent::Sticky(above))) = on else {
             return false;
         };
-        self.model
-            .update(|state| *state = std::mem::take(state).sticky_pressed(above));
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.sticky_pressed(above))
+        });
         true
     }
 
@@ -965,7 +967,8 @@ impl App {
             return false;
         };
         self.model.update(|state| {
-            *state = std::mem::take(state).lens_pressed(index, (at.0, at.1 + 12.0))
+            *state = std::mem::take(state)
+                .in_workspace(|state| state.lens_pressed(index, (at.0, at.1 + 12.0)))
         });
         true
     }
@@ -1056,8 +1059,9 @@ impl App {
         if self.pressed_on != Some(Target::Tree(TreeEvent::EntryField))
             && self.model.read(|screen| screen.is_naming())
         {
-            self.model
-                .update(|state| *state = std::mem::take(state).without_naming());
+            self.model.update(|state| {
+                *state = std::mem::take(state).in_workspace(|state| state.without_naming())
+            });
         }
         if self.focus.current() != self.pressed_on {
             self.focus.clear();
@@ -1067,7 +1071,7 @@ impl App {
                 .update(|state| *state = std::mem::take(state).without_picker());
         }
         if let Some(id) = self.pressed_on
-            && Screen::is_field(id)
+            && WorkspaceState::is_field(id)
         {
             self.press_in_field(id);
         }
@@ -1095,12 +1099,14 @@ impl App {
                     || self.model.read(|screen| screen.is_menu_row(id))
             })
         {
-            self.model
-                .update(|state| *state = std::mem::take(state).without_menu());
+            self.model.update(|state| {
+                *state = std::mem::take(state).in_workspace(|state| state.without_menu())
+            });
         }
         if self.model.read(|screen| screen.menu().is_some()) && !on.is_some_and(is_menu_item) {
-            self.model
-                .update(|state| *state = std::mem::take(state).without_menu());
+            self.model.update(|state| {
+                *state = std::mem::take(state).in_workspace(|state| state.without_menu())
+            });
         }
         if on.is_none() && self.model.read(|screen| screen.picker_open()) {
             self.model
@@ -1112,8 +1118,9 @@ impl App {
     /// handles the release, counts: when the press began on it and was not the start of a
     /// drag. A click that counts gives the keyboard to the field, shell or page it is on.
     pub(super) fn click_lands(&mut self, id: Target) -> bool {
-        let dragging =
-            self.project_dragging || self.pane_dragging || self.model.read(Screen::tree_dragging);
+        let dragging = self.project_dragging
+            || self.pane_dragging
+            || self.model.read(|screen| screen.tree_dragging());
         if dragging || self.pressed_on != Some(id) {
             return false;
         }
@@ -1126,7 +1133,7 @@ impl App {
     /// Gives the keyboard to `id` when it is a field, the shell or a page, which a click on
     /// it does.
     fn take_keyboard_on_click(&mut self, id: Target) {
-        if Screen::is_field(id)
+        if WorkspaceState::is_field(id)
             || id == Target::Terminal(TerminalEvent::TerminalBody)
             || id == Target::Browser(BrowserEvent::BrowserBody)
             || id == Target::Browser(BrowserEvent::BrowserToolsBody)
@@ -1148,8 +1155,9 @@ impl App {
         let Some(open) = self.model.read(|screen| screen.menu()) else {
             return;
         };
-        self.model
-            .update(|state| *state = std::mem::take(state).without_menu());
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.without_menu())
+        });
         let field = open.field;
         self.focus.focus(field);
         let text = self.model.read(|screen| screen.text_field(field).cloned());
@@ -1177,7 +1185,8 @@ impl App {
             return;
         };
         self.model.update(|state| {
-            *state = std::mem::take(state).with_settings_menu(index, (x - 190.0, y + 14.0))
+            *state = std::mem::take(state)
+                .in_workspace(|state| state.with_settings_menu(index, (x - 190.0, y + 14.0)))
         });
     }
 
@@ -1193,8 +1202,9 @@ impl App {
                 .min(height - pm_components::tab_menu::TAB_MENU_HEIGHT - 8.0)
                 .max(0.0),
         );
-        self.model
-            .update(|state| *state = std::mem::take(state).with_tab_menu(index, at));
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.with_tab_menu(index, at))
+        });
     }
 
     /// Opens the menu of the project at `project`, just under the pointer.
@@ -1205,7 +1215,7 @@ impl App {
         self.model.update(|state| {
             *state = state
                 .clone()
-                .with_project_menu(project, (x - 8.0, y + 12.0))
+                .in_workspace(|state| state.with_project_menu(project, (x - 8.0, y + 12.0)))
         });
     }
 
@@ -1225,7 +1235,7 @@ impl App {
             return;
         };
         self.model.update(|state| {
-            *state = std::mem::take(state).with_change_menu(index, at);
+            *state = std::mem::take(state).in_workspace(|state| state.with_change_menu(index, at));
         });
     }
 
@@ -1235,7 +1245,8 @@ impl App {
             return;
         };
         self.model.update(|state| {
-            *state = std::mem::take(state).with_folder_change_menu(position, at);
+            *state = std::mem::take(state)
+                .in_workspace(|state| state.with_folder_change_menu(position, at));
         });
     }
 
@@ -1245,7 +1256,7 @@ impl App {
             return;
         };
         self.model.update(|state| {
-            *state = std::mem::take(state).with_tree_menu(target, at);
+            *state = std::mem::take(state).in_workspace(|state| state.with_tree_menu(target, at));
         });
     }
 
@@ -1276,8 +1287,9 @@ impl App {
                 _ => (x - 190.0, y + 14.0),
             }
         };
-        self.model
-            .update(|state| *state = std::mem::take(state).with_git_menu(kind, at));
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.with_git_menu(kind, at))
+        });
     }
 
     /// Opens the menu of the session at `session`, just under the pointer.
@@ -1288,7 +1300,7 @@ impl App {
         self.model.update(|state| {
             *state = state
                 .clone()
-                .with_session_menu(session, (x - 8.0, y + 12.0))
+                .in_workspace(|state| state.with_session_menu(session, (x - 8.0, y + 12.0)))
         });
     }
 
@@ -1307,8 +1319,9 @@ impl App {
                 .filter(|project| *project != from)
                 .unwrap_or(current)
         });
-        self.model
-            .update(|state| *state = std::mem::take(state).dragged_over(from, over, at));
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.dragged_over(from, over, at))
+        });
     }
 
     /// Follows a press and drag on the number of the line `id` of a diff: the press starts
@@ -1316,16 +1329,18 @@ impl App {
     /// under the pointer.
     pub(super) fn comment_dragged(&mut self, id: Target) {
         if !self.model.read(|screen| screen.comment_dragging()) {
-            self.model
-                .update(|state| *state = std::mem::take(state).comment_drag_begun(id));
+            self.model.update(|state| {
+                *state = std::mem::take(state).in_workspace(|state| state.comment_drag_begun(id))
+            });
             return;
         }
         if let Some(id) = self
             .under_pointer()
             .filter(|id| matches!(id, Target::Diff(DiffEvent::Gutter { .. })))
         {
-            self.model
-                .update(|state| *state = std::mem::take(state).comment_drag_extended(id));
+            self.model.update(|state| {
+                *state = std::mem::take(state).in_workspace(|state| state.comment_drag_extended(id))
+            });
         }
     }
 
@@ -1334,8 +1349,9 @@ impl App {
         if !self.model.read(|screen| screen.comment_dragging()) {
             return;
         }
-        self.model
-            .update(|state| *state = std::mem::take(state).comment_drag_ended());
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.comment_drag_ended())
+        });
         self.focus.focus(Target::Diff(DiffEvent::CommentField));
     }
 
@@ -1346,7 +1362,7 @@ impl App {
             return false;
         }
         self.model
-            .update(|state| *state = std::mem::take(state).dropped());
+            .update(|state| *state = std::mem::take(state).in_workspace(|state| state.dropped()));
         self.persist();
         self.deliver();
         true
@@ -1360,8 +1376,9 @@ impl App {
         };
         if Screen::is_text_field(id) {
             self.focus.focus(id);
-            self.model
-                .update(|state| *state = std::mem::take(state).with_menu(id, (x, y)));
+            self.model.update(|state| {
+                *state = std::mem::take(state).in_workspace(|state| state.with_menu(id, (x, y)))
+            });
             return;
         }
         let Some(offset) = self.code_lines().offset_in(id, x, y) else {
@@ -1387,8 +1404,9 @@ impl App {
         } else {
             (x, y)
         };
-        self.model
-            .update(|state| *state = std::mem::take(state).with_menu(id, (x, y)));
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.with_menu(id, (x, y)))
+        });
     }
 
     /// Takes a press on the lines of a file in the excerpts that is not the one being edited: the file becomes the one edited and its caret goes where the pointer is.
@@ -1400,8 +1418,7 @@ impl App {
             return;
         };
         let offset = self.code_lines().offset_in(id, x, y);
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).excerpt_file_shown(index));
+        self.model.change(|state| state.excerpt_file_shown(index));
         self.pressed_on = Some(Target::Editor(EditorEvent::EditorField));
         self.focus.focus(Target::Editor(EditorEvent::EditorField));
         if let Some(offset) = offset {
@@ -1493,9 +1510,8 @@ impl App {
             return;
         };
         if let Some(from) = self.column_press {
-            self.model.update(|screen| {
-                *screen = std::mem::take(screen).lines_edited(LineEdit::ColumnDrag(from, byte))
-            });
+            self.model
+                .change(|state| state.lines_edited(LineEdit::ColumnDrag(from, byte)));
             self.show_editor_caret();
             return;
         }
@@ -1612,8 +1628,9 @@ impl App {
         };
         let before = looks(self);
         self.model.update(|state| {
-            *state =
-                std::mem::take(state).handle(Event::Field(FieldEvent::Edited { field: id, edit }))
+            *state = std::mem::take(state).in_workspace(|state| {
+                state.handle(Event::Field(FieldEvent::Edited { field: id, edit }))
+            })
         });
         if id == Target::Editor(EditorEvent::EditorField) && looks(self) != before {
             self.show_editor_caret();
@@ -1626,9 +1643,13 @@ impl App {
         if focused == self.focus_before {
             return;
         }
-        if let Some(left) = self.focus_before.filter(|id| Screen::saves_on_leaving(*id)) {
+        if let Some(left) = self
+            .focus_before
+            .filter(|id| WorkspaceState::saves_on_leaving(*id))
+        {
             self.model.update(|state| {
-                *state = std::mem::take(state).handle(Event::Field(FieldEvent::Left(left)))
+                *state = std::mem::take(state)
+                    .in_workspace(|state| state.handle(Event::Field(FieldEvent::Left(left))))
             });
         }
         self.focus_before = focused;
@@ -1642,8 +1663,9 @@ impl App {
             .map(|view| view.size.height + STRIP);
         let window = self.window.as_ref().map(|_| self.window_size().1 - TABS);
         if let Some(height) = drawn.or(window) {
-            self.model
-                .update(|state| *state = std::mem::take(state).with_caret_shown(height));
+            self.model.update(|state| {
+                *state = std::mem::take(state).in_workspace(|state| state.with_caret_shown(height))
+            });
         }
     }
 
@@ -1676,7 +1698,7 @@ impl App {
                 let mut indentation = String::new();
                 let mut selected = selected;
                 if id == Target::Editor(EditorEvent::EditorField)
-                    && let Some((lines, indent)) = self.model.read(Screen::editor_copied)
+                    && let Some((lines, indent)) = self.model.read(|screen| screen.editor_copied())
                 {
                     indentation = indent;
                     if selected.is_empty()
@@ -1697,9 +1719,8 @@ impl App {
                 }
                 if action == Clip::Cut {
                     if whole_lines {
-                        self.model.update(|screen| {
-                            *screen = std::mem::take(screen).lines_edited(LineEdit::Delete)
-                        });
+                        self.model
+                            .change(|state| state.lines_edited(LineEdit::Delete));
                         self.show_editor_caret();
                     } else {
                         self.edit_field(id, Edit::Backspace);
@@ -1733,7 +1754,7 @@ impl App {
         match action {
             Clip::Copy | Clip::Cut => {
                 let selected = field.selected_text();
-                if Screen::is_secure(id) || selected.is_empty() {
+                if WorkspaceState::is_secure(id) || selected.is_empty() {
                     return;
                 }
                 if let Some(clipboard) = self.clipboard() {
@@ -1753,7 +1774,7 @@ impl App {
                 let Some(pasted) = self.clipboard().and_then(|clipboard| clipboard.text()) else {
                     return;
                 };
-                let multiline = Screen::is_multiline(id);
+                let multiline = WorkspaceState::is_multiline(id);
                 let pasted: String = pasted
                     .chars()
                     .filter(|c| !c.is_control() || (multiline && (*c == '\n' || *c == '\t')))
@@ -1786,8 +1807,7 @@ impl App {
 
     /// Moves `delta` pages or views along the ones visited, towards the past when negative.
     pub(super) fn navigate(&mut self, delta: isize) {
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).navigated(delta));
+        self.model.change(|state| state.navigated(delta));
     }
 
     /// Carries out a key aimed at the list a row was last pressed in, and says whether it was one: the key that selects everything picks every row, and the project's files take the keys that cut, copy, paste, rename and delete.
@@ -1795,7 +1815,7 @@ impl App {
         let Some(id) = self.list_pressed else {
             return false;
         };
-        if self.focus.current().is_some_and(Screen::is_field) {
+        if self.focus.current().is_some_and(WorkspaceState::is_field) {
             return false;
         }
         if self.model.read(|screen| screen.tree_row_of(id).is_some()) && self.tree_key(event) {
@@ -1804,14 +1824,12 @@ impl App {
         if !matches!(keys::edit(event), Some(Edit::SelectAll)) {
             return false;
         }
-        self.model.update(|screen| {
-            let tree = screen.tree_row_of(id).is_some();
-            let taken = std::mem::take(screen);
-            *screen = if tree {
-                taken.tree_all_picked()
+        self.model.change(|state| {
+            if state.tree_row_of(id).is_some() {
+                state.tree_all_picked()
             } else {
-                taken.changes_all_picked()
-            };
+                state.changes_all_picked()
+            }
         });
         true
     }
@@ -1886,7 +1904,7 @@ impl App {
             Key::Character(_)
                 if let Some(digit) =
                     keys::character(event).and_then(|typed| typed.to_digit(10))
-                    && !self.focus.current().is_some_and(Screen::is_field)
+                    && !self.focus.current().is_some_and(WorkspaceState::is_field)
                     && let Some(id) = self
                         .model
                         .read(|screen| screen.inquiry_hotkey(digit as usize)) =>
@@ -1894,25 +1912,29 @@ impl App {
                 self.handle(Event::pressing(id));
             }
             Key::Tab if event.modifiers.shift && self.in_prompt() => {
-                self.model
-                    .update(|state| *state = std::mem::take(state).mode_cycled());
+                self.model.update(|state| {
+                    *state = std::mem::take(state).in_workspace(|state| state.mode_cycled())
+                });
                 self.persist();
                 self.deliver();
             }
             Key::Tab if self.in_prompt() && self.model.read(|screen| screen.slash_open()) => {
-                self.model
-                    .update(|state| *state = std::mem::take(state).slash_taken());
+                self.model.update(|state| {
+                    *state = std::mem::take(state).in_workspace(|state| state.slash_taken())
+                });
             }
             Key::ArrowUp | Key::ArrowDown
                 if self.in_prompt() && self.model.read(|screen| screen.slash_open()) =>
             {
                 let delta = if event.key == Key::ArrowUp { -1 } else { 1 };
-                self.model
-                    .update(|state| *state = std::mem::take(state).slash_moved(delta));
+                self.model.update(|state| {
+                    *state = std::mem::take(state).in_workspace(|state| state.slash_moved(delta))
+                });
             }
             Key::Enter if self.in_prompt() && self.model.read(|screen| screen.slash_open()) => {
-                self.model
-                    .update(|state| *state = std::mem::take(state).slash_taken());
+                self.model.update(|state| {
+                    *state = std::mem::take(state).in_workspace(|state| state.slash_taken())
+                });
             }
             Key::Escape if self.model.read(|screen| screen.review_overlay_open()) => {
                 self.handle(Event::Git(GitEvent::ReviewDismiss))
@@ -1922,16 +1944,18 @@ impl App {
             }
             Key::Escape if self.text_drag.is_some() => self.drag_text_cancelled(),
             Key::Escape if self.model.read(|screen| screen.menu().is_some()) => {
-                self.model
-                    .update(|state| *state = std::mem::take(state).without_menu());
+                self.model.update(|state| {
+                    *state = std::mem::take(state).in_workspace(|state| state.without_menu())
+                });
             }
             Key::Escape if self.model.read(|screen| screen.picker_open()) => {
                 self.model
                     .update(|state| *state = std::mem::take(state).without_picker());
             }
             Key::Escape if self.model.read(|screen| screen.is_naming()) => {
-                self.model
-                    .update(|state| *state = std::mem::take(state).without_naming());
+                self.model.update(|state| {
+                    *state = std::mem::take(state).in_workspace(|state| state.without_naming())
+                });
                 self.focus.clear();
             }
             Key::Escape => self.focus.clear(),
@@ -1946,7 +1970,7 @@ impl App {
     fn focused_key(&mut self, event: &KeyEvent) -> bool {
         match self.focus.current() {
             Some(id) if Screen::is_text_field(id) => self.text_field_key(id, event),
-            Some(id) if Screen::is_field(id) => {
+            Some(id) if WorkspaceState::is_field(id) => {
                 let multiline = self
                     .model
                     .read(|screen| screen.field(id).is_some_and(pm_field::Field::is_multiline));
@@ -1957,11 +1981,11 @@ impl App {
                     self.edit_field(id, Edit::Insert('\n'));
                 } else if event.key == Key::Enter
                     && hurried
-                    && let Some(submit) = Screen::hurried_submit_of(id)
+                    && let Some(submit) = WorkspaceState::hurried_submit_of(id)
                 {
                     self.submit(submit);
                 } else if event.key == Key::Enter {
-                    self.submit(Screen::submit_of(id));
+                    self.submit(WorkspaceState::submit_of(id));
                 } else if multiline && matches!(event.key, Key::ArrowUp | Key::ArrowDown) {
                     self.move_vertically(id, if event.key == Key::ArrowUp { -1 } else { 1 }, shift);
                 } else if multiline && matches!(event.key, Key::Home | Key::End) {
@@ -1989,16 +2013,16 @@ impl App {
         let shift = event.modifiers.shift;
         let hurried = event.modifiers.ctrl || event.modifiers.meta;
         let breaks = shift || (Screen::enter_breaks_line(id) && !hurried);
-        if event.key == Key::Enter && breaks && Screen::is_multiline(id) {
+        if event.key == Key::Enter && breaks && WorkspaceState::is_multiline(id) {
             false
         } else if event.key == Key::Enter
             && hurried
-            && let Some(submit) = Screen::hurried_submit_of(id)
+            && let Some(submit) = WorkspaceState::hurried_submit_of(id)
         {
             self.submit(submit);
             true
         } else if event.key == Key::Enter {
-            self.submit(Screen::submit_of(id));
+            self.submit(WorkspaceState::submit_of(id));
             true
         } else if let Some(action) = keys::clip(event) {
             self.clip(id, action);

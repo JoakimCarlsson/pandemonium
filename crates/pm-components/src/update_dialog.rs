@@ -4,7 +4,7 @@ use crate::Markdown;
 use crate::areas::DialogEvent;
 use crate::button::Variant;
 use crate::kit;
-use crate::parts::{line, spacer, wrap};
+use crate::parts::{line, spacer, title, wrap};
 use crate::state::{Outgoing, WorkspaceState};
 use crate::target::Target;
 use crate::theme;
@@ -112,7 +112,7 @@ impl WorkspaceState {
                     version,
                 });
             }
-            Target::Dialog(DialogEvent::UpdateClose) | Target::Dialog(DialogEvent::UpdateLater) => {
+            Target::Dialog(DialogEvent::UpdateClose | DialogEvent::UpdateLater) => {
                 self.close_release()
             }
             _ => return false,
@@ -174,14 +174,7 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
                     .padding_xy(0.0, theme::sp(8)),
                 3,
                 || {
-                    kit::text(
-                        Modifier::new(),
-                        name,
-                        theme::text_style(22, 1.3)
-                            .font_weight(rustle::FontWeight::MEDIUM)
-                            .color(theme::color(Role::Text))
-                            .max_lines(1),
-                    );
+                    title(name, 22, 1.3);
                     line(format!("This is {RUNNING}{date}."), 13, 1.4, Role::Muted);
                     if let Some(notes) = body {
                         rustle::column_with(
@@ -194,7 +187,7 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
                             || Markdown::new(notes, text_width).build(),
                         );
                     } else {
-                        rustle::spacer(Modifier::new().weight(1.0));
+                        spacer();
                     }
                     if let Some(said) = said {
                         kit::column(Modifier::new(), 0, || {
@@ -204,28 +197,20 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
                         });
                     }
                     kit::row(Modifier::new().fill_max_width(), 2, || {
-                        kit::small_button(
-                            "View on GitHub",
-                            Target::Dialog(DialogEvent::UpdatePage),
-                            Variant::Ghost,
-                        )
-                        .build();
+                        let page = Target::Dialog(DialogEvent::UpdatePage);
+                        kit::action("View on GitHub", page, Variant::Ghost);
                         spacer();
                         if !installing {
-                            kit::small_button(
-                                if busy { "Cancel" } else { "Later" },
+                            let later = if busy { "Cancel" } else { "Later" };
+                            kit::action(
+                                later,
                                 Target::Dialog(DialogEvent::UpdateLater),
                                 Variant::Ghost,
-                            )
-                            .build();
+                            );
                         }
                         if !busy && blocker.is_none() {
-                            kit::small_button(
-                                "Update and Restart",
-                                Target::Dialog(DialogEvent::UpdateNow),
-                                Variant::Default,
-                            )
-                            .build();
+                            let now = Target::Dialog(DialogEvent::UpdateNow);
+                            kit::action("Update and Restart", now, Variant::Default);
                         }
                     });
                 },

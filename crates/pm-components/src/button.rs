@@ -9,27 +9,14 @@ use crate::theme::Indicated;
 use crate::theme::sp;
 use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{Icon, phosphor};
-use std::fmt;
-use std::rc::Rc;
 
 use crate::events::{Interactive, OnClick};
 use crate::icons::icon;
 use crate::icons::{spinner, spinning_icon};
-use crate::theme::{Radius, Role, Tone};
+use crate::theme::{Radius, Role};
 use rustle::{BorderStroke, Color, CursorIcon, Modifier, Shape};
 
 use crate::size::Size;
-
-/// Content drawn before a button's words in place of an icon: a closure that emits it.
-#[derive(Clone)]
-struct Mark(Rc<dyn Fn()>);
-
-impl fmt::Debug for Mark {
-    /// Writes a placeholder, since the content is a closure.
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("Mark(..)")
-    }
-}
 
 /// How a button looks, which says what it is for.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -74,7 +61,7 @@ pub struct Button {
     /// The icon before the words, or alone.
     icon: Option<Icon>,
     /// What is drawn before the words in place of an icon, if anything.
-    mark: Option<Mark>,
+    mark: Option<OnClick>,
     /// The icon after the words, if any.
     trailing: Option<Icon>,
     /// How it looks.
@@ -103,8 +90,6 @@ pub struct Button {
     lines: Vec<String>,
     /// What the caller puts around the button's box, outside its own.
     modifier: Modifier,
-    /// The padding that replaces the button's own, when the caller gave one.
-    inner: Option<Modifier>,
     /// How the button lays out what it holds, in place of its own, when the caller gave one.
     arranged: Option<(Arrangement, Alignment)>,
     /// The words shown over the button once the pointer rests on it, if any.
@@ -135,7 +120,6 @@ impl Button {
             reach: Reach::Content,
             lines: Vec::new(),
             modifier: Modifier::new(),
-            inner: None,
             arranged: None,
             tooltip: None,
             on_click: None,
@@ -154,25 +138,9 @@ impl Button {
         Self {
             label: None,
             icon: Some(icon),
-            mark: None,
-            trailing: None,
             variant: Variant::Ghost,
             size: Size::Sm,
-            id,
-            disabled: false,
-            round: false,
-            monospace: false,
-            spinning: false,
-            selected: false,
-            tone: None,
-            resting: None,
-            reach: Reach::Content,
-            lines: Vec::new(),
-            modifier: Modifier::new(),
-            inner: None,
-            arranged: None,
-            tooltip: None,
-            on_click: None,
+            ..Self::new("", id)
         }
     }
 
@@ -214,7 +182,7 @@ impl Button {
 
     /// The button with what `mark` emits before its words in place of an icon.
     pub fn mark(mut self, mark: impl Fn() + 'static) -> Self {
-        self.mark = Some(Mark(Rc::new(mark)));
+        self.mark = Some(OnClick::new(mark));
         self
     }
 
@@ -280,12 +248,6 @@ impl Button {
     /// The button with `modifier` put around its box, outside its own: sizes, growth, margins, placement.
     pub fn modifier(mut self, modifier: Modifier) -> Self {
         self.modifier = self.modifier.chain(modifier);
-        self
-    }
-
-    /// The button with `modifier` in place of its own padding, innermost on its box.
-    pub fn inner(mut self, modifier: Modifier) -> Self {
-        self.inner = Some(modifier);
         self
     }
 
@@ -378,13 +340,10 @@ impl Button {
             theme::FocusRing { width: 2.0, radius },
             theme::Focused::Held(crate::focus::is_held(self.id)),
         );
-        inside = match (self.inner, self.label.is_some(), several) {
-            (Some(inner), _, _) => inside.chain(inner),
-            (None, true, true) => inside
-                .padding_xy(theme::sp(side), 0.0)
-                .padding_xy(0.0, theme::sp(1.5)),
-            (None, true, false) => inside.padding_xy(theme::sp(side), 0.0),
-            (None, false, _) => inside,
+        inside = match (self.label.is_some(), several) {
+            (true, true) => inside.padding_xy(theme::sp(side), theme::sp(1.5)),
+            (true, false) => inside.padding_xy(theme::sp(side), 0.0),
+            (false, _) => inside,
         };
         let (arrangement, alignment) = self.arranged.unwrap_or(if spread && self.label.is_some() {
             (Arrangement::SpacedBy(sp(2)), Alignment::Center)
@@ -426,7 +385,7 @@ impl Button {
             move || {
                 row_arranged(inside, arrangement, alignment, move || {
                     if let Some(mark) = mark {
-                        (mark.0)();
+                        mark.lambda()();
                     } else if let Some(name) = leading {
                         Self::glyph(name, ink, spins_first);
                     }
@@ -476,37 +435,30 @@ impl Button {
 
     /// The fill of the button at rest and, while it is on, under the pointer and pressed, with its corners `radius` round.
     fn looks(&self, radius: Radius) -> theme::InteractionTones {
-        let (resting, hovered, pressed): (Option<Tone>, Option<Tone>, Option<Tone>) =
-            match self.variant {
-                Variant::Default => (
-                    Some(Role::Accent.into()),
-                    Some(Role::AccentHover.into()),
-                    Some(Tone::from(Role::Accent).alpha(0.8)),
-                ),
-                Variant::Secondary => (
-                    Some(Role::SurfaceHover.into()),
-                    Some(Role::SurfaceActive.into()),
-                    Some(Role::SurfaceSelected.into()),
-                ),
-                Variant::Destructive => (
-                    Some(Role::Danger.into()),
-                    Some(Tone::from(Role::Danger).alpha(0.9)),
-                    Some(Tone::from(Role::Danger).alpha(0.8)),
-                ),
-                Variant::Outline | Variant::Ghost => (
-                    None,
-                    Some(Role::SurfaceHover.into()),
-                    Some(Role::SurfaceActive.into()),
-                ),
-                Variant::Field => (
-                    Some(Role::Surface.into()),
-                    Some(Role::SurfaceHover.into()),
-                    Some(Role::SurfaceActive.into()),
-                ),
-                Variant::Link => (None, None, None),
-            };
+        use Role as R;
+        let on = |role: Role| Some(Color::from(role));
+        let (resting, hovered, pressed) = match self.variant {
+            Variant::Default => (
+                on(R::Accent),
+                on(R::AccentHover),
+                Some(R::Accent.alpha(0.8)),
+            ),
+            Variant::Secondary => (
+                on(R::SurfaceHover),
+                on(R::SurfaceActive),
+                on(R::SurfaceSelected),
+            ),
+            Variant::Destructive => (
+                on(R::Danger),
+                Some(R::Danger.alpha(0.9)),
+                Some(R::Danger.alpha(0.8)),
+            ),
+            Variant::Outline | Variant::Ghost => (None, on(R::SurfaceHover), on(R::SurfaceActive)),
+            Variant::Field => (on(R::Surface), on(R::SurfaceHover), on(R::SurfaceActive)),
+            Variant::Link => (None, None, None),
+        };
         let resting = match (self.variant, self.selected) {
-            _ if self.resting.is_some() => self.resting.map(Tone::from),
+            _ if self.resting.is_some() => self.resting.map(Color::from),
             (Variant::Field, _) => resting,
             (_, true) => Some(Role::SurfaceSelected.into()),
             _ => resting,

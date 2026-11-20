@@ -214,18 +214,12 @@ impl WorkspaceState {
 
     /// Presses the lens at `index` of the list the language server gave for the file shown, what it points to being listed at `at`.
     pub fn lens_pressed(mut self, index: usize, at: (f32, f32)) -> Self {
-        let Some(session) = self.review_index() else {
-            return self;
-        };
-        let Some(path) = self.shown_viewer().map(|viewer| viewer.path.clone()) else {
-            return self;
-        };
-        let Some(title) = self
-            .shown_document()
-            .and_then(|document| document.lens_titled(index).map(str::to_owned))
+        let Some((session, path, document)) =
+            self.asking(|document| document.lens_titled(index).is_some())
         else {
             return self;
         };
+        let title = document.lens_titled(index).unwrap_or_default().to_owned();
         self.listing = Some(Listing::waiting(
             session,
             Items::Places {

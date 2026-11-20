@@ -252,7 +252,6 @@ fn bar(modifier: Modifier, content: impl FnOnce()) {
 }
 
 /// Emits the bar that says which page asks for what, and has the buttons that allow or refuse it, with `modifier` around it; `waiting` more questions come after it, and Allow is faint and inert until `ready`.
-#[track_caller]
 fn question_bar(modifier: Modifier, asked: &Question, waiting: usize, ready: bool) {
     let mut words = format!(
         "{} wants to use your {}",
@@ -264,12 +263,11 @@ fn question_bar(modifier: Modifier, asked: &Question, waiting: usize, ready: boo
     }
     bar(modifier, || {
         clipped(words, 13, Role::Text);
-        kit::small_button(
+        kit::action(
             "Block",
             Target::Browser(BrowserEvent::BrowserBlock(asked.id)),
             Variant::Outline,
-        )
-        .build();
+        );
         kit::small_button(
             "Allow",
             Target::Browser(BrowserEvent::BrowserAllow(asked.id)),
@@ -285,7 +283,6 @@ fn question_bar(modifier: Modifier, asked: &Question, waiting: usize, ready: boo
 }
 
 /// Emits the bar that says where the last download was saved, or that it could not be.
-#[track_caller]
 fn download_bar(download: &Download) {
     let words = match download.saving {
         Saving::Started => format!("Downloading {} to your Downloads folder", download.name),
@@ -347,12 +344,8 @@ fn detail(name: &str, value: &str, mono: bool) {
 }
 
 /// Emits the page that stands in for a site whose certificate is not trusted, `width` by `height` logical pixels: what is wrong with the certificate and the buttons that go back or, deliberately, go on.
-#[track_caller]
 pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) {
-    let host = certificate
-        .url
-        .split_once("://")
-        .map_or(certificate.url.as_str(), |(_, rest)| rest)
+    let host = host_of(&certificate.url)
         .split(['/', '?', '#'])
         .next()
         .unwrap_or_default();
@@ -417,16 +410,14 @@ pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) {
                     kit::row(Modifier::new(), 2, || {
                         Button::new("Go back", Target::Browser(BrowserEvent::BrowserCertBack))
                             .build();
+                        let button =
+                            Button::new(proceed, Target::Browser(BrowserEvent::BrowserCertProceed));
                         if certificate.confirming {
-                            Button::new(proceed, Target::Browser(BrowserEvent::BrowserCertProceed))
-                                .variant(Variant::Destructive)
-                                .build();
+                            button.variant(Variant::Destructive)
                         } else {
-                            Button::new(proceed, Target::Browser(BrowserEvent::BrowserCertProceed))
-                                .variant(Variant::Outline)
-                                .tone(Role::Danger)
-                                .build();
+                            button.variant(Variant::Outline).tone(Role::Danger)
                         }
+                        .build();
                     });
                     paragraph(
                         if certificate.confirming {

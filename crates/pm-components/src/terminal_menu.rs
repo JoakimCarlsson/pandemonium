@@ -71,11 +71,6 @@ impl TerminalCommand {
             .into_iter()
             .find(|command| command.action() == action)
     }
-
-    /// What its row says.
-    fn label(self) -> &'static str {
-        self.action().title()
-    }
 }
 
 /// The menu open over the window of the shell showing, and where.
@@ -150,7 +145,7 @@ impl WorkspaceState {
 pub fn terminal_menu(open: TerminalMenu, keymap: &Keymap) {
     let row = |menu: Menu, command: TerminalCommand, on: bool| {
         let keys = keymap.label(command.action());
-        menu.item(command.label(), keys.as_deref(), command.id(), !on)
+        menu.item(command.action().title(), keys.as_deref(), command.id(), !on)
     };
     let operations = crate::events::operations();
     let menu = Menu::new(open.at.0, open.at.1)

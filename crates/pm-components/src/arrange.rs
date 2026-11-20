@@ -119,13 +119,12 @@ impl WorkspaceState {
                 }
                 self
             }
-            Target::Menu(MenuEvent::SessionMenuCopyPath) => {
-                let text = held.directory.clone();
-                self.outbox.push(Outgoing::Copy { text });
-                self
-            }
-            Target::Menu(MenuEvent::SessionMenuCopyBranch) => {
-                let text = held.branch.clone();
+            Target::Menu(MenuEvent::SessionMenuCopyPath | MenuEvent::SessionMenuCopyBranch) => {
+                let text = if row == Target::Menu(MenuEvent::SessionMenuCopyPath) {
+                    held.directory.clone()
+                } else {
+                    held.branch.clone()
+                };
                 self.outbox.push(Outgoing::Copy { text });
                 self
             }
@@ -146,21 +145,11 @@ impl WorkspaceState {
                 }
                 self
             }
-            _ => self.close_after_asking(open.session),
-        }
-    }
-
-    /// The state with the session at `session` closed, which for a chat archives it and keeps its scratch folder, or, when its worktree has changes that are not committed, the reader asked first.
-    fn close_after_asking(mut self, session: usize) -> Self {
-        let uncommitted = self
-            .sessions
-            .get(session)
-            .is_some_and(|held| held.base.is_some() && !held.changes.is_empty());
-        if uncommitted {
-            self.ask(Prompt::Close(session));
-            self
-        } else {
-            self.closed_session(session, true, false)
+            _ if held.base.is_some() && !held.changes.is_empty() => {
+                self.ask(Prompt::Close(open.session));
+                self
+            }
+            _ => self.closed_session(open.session, true, false),
         }
     }
 

@@ -11,7 +11,6 @@ use rustle::Modifier;
 use crate::Input;
 use crate::events::Interactive;
 
-use crate::parts::line;
 use crate::popover::{Popover, row};
 use crate::size::Size;
 use crate::state::WorkspaceState;
@@ -44,12 +43,12 @@ pub fn branch_menu(state: &WorkspaceState) {
             ))
             .build_with(|| {
                 kit::column(
-                    Modifier::new()
-                        .fill_max_width()
-                        .padding_each(0.0, theme::sp(1), 0.0, 0.0)
-                        .padding_each(theme::sp(1), 0.0, 0.0, 0.0)
-                        .padding_each(0.0, 0.0, theme::sp(1), 0.0)
-                        .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
+                    Modifier::new().fill_max_width().padding_each(
+                        theme::sp(1),
+                        theme::sp(1),
+                        theme::sp(1),
+                        theme::sp(2),
+                    ),
                     0,
                     || {
                         Input::new(&git.filter, Target::Git(GitEvent::BranchFilter))
@@ -68,15 +67,7 @@ pub fn branch_menu(state: &WorkspaceState) {
                     );
                 }
                 if matching.is_empty() && typed.is_empty() {
-                    kit::column(
-                        Modifier::new()
-                            .padding_xy(theme::sp(2.5), 0.0)
-                            .padding_xy(0.0, theme::sp(1.5)),
-                        0,
-                        || {
-                            line("No branches.", 13, 1.4, Role::Subtle);
-                        },
-                    );
+                    kit::note(2.5, 1.5, "No branches.", 13, Role::Subtle);
                 }
                 if !typed.is_empty() && !git.exists() {
                     kit::column(

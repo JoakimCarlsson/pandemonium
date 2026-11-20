@@ -2,6 +2,7 @@
 
 use crate::events::Interactive;
 use crate::events::{Event, OnClick, send};
+use crate::kit;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
@@ -15,7 +16,7 @@ use std::rc::Rc;
 /// A tile being described: what it answers to, how tall it is and whether it is selected.
 ///
 /// Build it with [`Tile::new`], change it with the methods that follow, and
-/// emit it with [`Tile::build`] or [`Tile::build_with`]; the caller gives what
+/// emit it with [`Tile::build_with`]; the caller gives what
 /// it holds and the room around it.
 #[derive(Clone, Debug)]
 pub struct Tile {
@@ -102,12 +103,6 @@ impl Tile {
         }
     }
 
-    /// The tile running `on_click` when clicked, or activated from the keyboard, in place of
-    /// handing the press to the workspace's reducer.
-    pub fn on_click(self, on_click: impl Fn() + 'static) -> Self {
-        self.on_pick(move |_| on_click())
-    }
-
     /// The tile running `on_pick` with the modifier keys held when clicked, or activated
     /// from the keyboard, for a row the reader picks several of with Shift or Control.
     pub fn on_pick(mut self, on_pick: impl Fn(Modifiers) + 'static) -> Self {
@@ -166,13 +161,9 @@ impl Tile {
     /// Emits the tile holding `content`: it fills under the pointer unless it is selected, and darker while pressed.
     #[track_caller]
     pub fn build_with(self, content: impl FnOnce()) {
-        let looks = if self.selected {
-            theme::InteractionTones::new().idle(Role::SurfaceSelected)
-        } else {
-            theme::InteractionTones::new().hover(Role::SurfaceHover)
-        }
-        .active(Role::SurfaceActive)
-        .radius(self.radius);
+        let looks = kit::selectable(self.selected)
+            .active(Role::SurfaceActive)
+            .radius(self.radius);
         let reacting = self.reacting();
         let modifier = self.modifier.chain(
             Modifier::new()
@@ -189,11 +180,5 @@ impl Tile {
             self.alignment,
             content,
         );
-    }
-
-    /// Emits the tile holding nothing.
-    #[track_caller]
-    pub fn build(self) {
-        self.build_with(|| {});
     }
 }

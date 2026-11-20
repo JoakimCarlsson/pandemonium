@@ -4,18 +4,17 @@ use crate::areas::SettingsEvent;
 use crate::kit::{self, Frame};
 use crate::theme::Indicated;
 
-use crate::events::{Event, send};
 use crate::target::Target;
 use crate::theme;
+use rustle::Modifier;
 use rustle::{Alignment, Arrangement, row_arranged};
-use rustle::{CursorIcon, Modifier};
 use rustle::{Icon, phosphor};
 
-use crate::events::Interactive;
 use crate::theme::{Radius, Role};
 
 use crate::input::Input;
 use crate::parts::{clipped, glyph, line};
+use crate::settings_editor::PAGES;
 use crate::settings_rows::SECTIONS;
 use crate::settings_servers;
 use crate::size::Size;
@@ -33,6 +32,16 @@ const NARROW_NAVIGATION: f32 = 184.0;
 
 /// How wide the window is at most for the list of sections to be narrow, in logical pixels.
 const NARROW_WINDOW: f32 = 760.0;
+
+/// The pages inside Agents that are not lists of what agents are given, in the order the list and the overview show them.
+pub(crate) const AGENT_PAGES: [Section; 6] = [
+    Section::AgentServers,
+    Section::McpServers,
+    Section::ModelServers,
+    Section::ModelSlots,
+    Section::Orchestration,
+    Section::Usage,
+];
 
 /// A group of settings, named down the left side of the window; some sit inside another.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -138,7 +147,7 @@ impl Section {
     pub(crate) fn title(self) -> &'static str {
         match self {
             Self::General => "General",
-            Self::Appearance => "Appearance",
+            Self::Appearance | Self::EditorAppearance => "Appearance",
             Self::Languages => "Languages",
             Self::Terminal => "Terminal",
             Self::Browser => "Browser",
@@ -147,14 +156,13 @@ impl Section {
             Self::Servers => "Servers",
             Self::Results => "Search Results",
             Self::Editor => "Editor",
-            Self::EditorAppearance => "Appearance",
             Self::EditorEditing => "Editing",
             Self::EditorSaving => "Saving",
             Self::EditorIntelligence => "Code Intelligence",
             Self::EditorSearch => "Search & Scrolling",
             Self::EditorVim => "Vim",
             Self::Keymap => "Keymap",
-            Self::Agents => "Agents",
+            Self::Agents | Self::AgentDefinitions => "Agents",
             Self::AgentServers => "Agents and accounts",
             Self::McpServers => "MCP Servers",
             Self::ModelServers => "Model Servers",
@@ -164,7 +172,6 @@ impl Section {
             Self::Customizations => "Overview",
             Self::Skills => "Skills",
             Self::Instructions => "Instructions",
-            Self::AgentDefinitions => "Agents",
             Self::Hooks => "Hooks",
             Self::Tools => "Tools",
         }
@@ -179,64 +186,26 @@ impl Section {
             Self::Terminal => phosphor::TERMINAL,
             Self::Browser => phosphor::GLOBE,
             Self::Git | Self::Worktrees => phosphor::GIT_BRANCH,
-            Self::Servers => phosphor::PLUG,
-            Self::Editor
-            | Self::EditorAppearance
-            | Self::EditorEditing
-            | Self::EditorSaving
-            | Self::EditorIntelligence
-            | Self::EditorSearch
-            | Self::EditorVim => phosphor::CODE,
+            Self::Servers | Self::McpServers => phosphor::PLUG,
             Self::Keymap => phosphor::COMMAND,
-            Self::Agents => phosphor::SPARKLE,
             Self::AgentServers => phosphor::FOLDER,
-            Self::McpServers => phosphor::PLUG,
             Self::ModelServers => phosphor::LIGHTNING,
-            Self::ModelSlots => phosphor::SPARKLE,
             Self::Orchestration => phosphor::SLIDERS_HORIZONTAL,
             Self::Usage => phosphor::TIMER,
-            Self::Customizations
-            | Self::Skills
-            | Self::Instructions
-            | Self::AgentDefinitions
-            | Self::Hooks
-            | Self::Tools => phosphor::SPARKLE,
+            _ if self == Self::Editor || PAGES.contains(&self) => phosphor::CODE,
+            _ => phosphor::SPARKLE,
         }
     }
 
     /// The section it sits inside, if it sits inside one.
     pub(crate) fn parent(self) -> Option<Section> {
         match self {
-            Self::AgentServers
-            | Self::McpServers
-            | Self::ModelServers
-            | Self::ModelSlots
-            | Self::Orchestration
-            | Self::Usage
-            | Self::Customizations
-            | Self::Skills
-            | Self::Instructions
-            | Self::AgentDefinitions
-            | Self::Hooks
-            | Self::Tools => Some(Self::Agents),
-            Self::EditorAppearance
-            | Self::EditorEditing
-            | Self::EditorSaving
-            | Self::EditorIntelligence
-            | Self::EditorSearch
-            | Self::EditorVim => Some(Self::Editor),
             Self::Worktrees => Some(Self::Git),
-            Self::General
-            | Self::Appearance
-            | Self::Languages
-            | Self::Terminal
-            | Self::Browser
-            | Self::Git
-            | Self::Servers
-            | Self::Results
-            | Self::Agents
-            | Self::Editor
-            | Self::Keymap => None,
+            _ if PAGES.contains(&self) => Some(Self::Editor),
+            _ if AGENT_PAGES.contains(&self) || crate::settings_library::lists(self) => {
+                Some(Self::Agents)
+            }
+            _ => None,
         }
     }
 
@@ -257,74 +226,22 @@ impl Section {
     }
 }
 
-/// Whether `id` names something of the window.
+/// Whether `id` names something of the window: anything of the settings area but the extensions page and the previews it opens.
 pub fn is_settings(id: Target) -> bool {
-    matches!(id, Target::Settings(SettingsEvent::SettingsRow(..)))
-        || matches!(
-            id,
-            Target::Settings(SettingsEvent::SlotsScopeUser)
-                | Target::Settings(SettingsEvent::SlotsScopeProject)
-                | Target::Settings(SettingsEvent::SlotNewName)
-                | Target::Settings(SettingsEvent::SlotAdd)
-                | Target::Settings(SettingsEvent::PresetName)
-                | Target::Settings(SettingsEvent::PresetSave)
-                | Target::Settings(SettingsEvent::SlotsProvider)
-                | Target::Settings(SettingsEvent::CategoryNewName)
-                | Target::Settings(SettingsEvent::CategoryAdd)
-                | Target::Settings(SettingsEvent::PromptReplace)
-                | Target::Settings(SettingsEvent::PromptAppend)
-                | Target::Settings(SettingsEvent::DraftNew)
-                | Target::Settings(SettingsEvent::DraftName)
-                | Target::Settings(SettingsEvent::DraftDescription)
-                | Target::Settings(SettingsEvent::DraftCreate)
-                | Target::Settings(SettingsEvent::DraftCancel)
-                | Target::Settings(SettingsEvent::SettingsClose)
-                | Target::Settings(SettingsEvent::SettingsAdd)
-                | Target::Settings(SettingsEvent::SettingsSave)
-                | Target::Settings(SettingsEvent::SettingsCancel)
-                | Target::Settings(SettingsEvent::SettingsName)
-                | Target::Settings(SettingsEvent::SettingsTarget)
-                | Target::Settings(SettingsEvent::SettingsEnv)
-                | Target::Settings(SettingsEvent::SettingsSearch)
-                | Target::Settings(SettingsEvent::SettingsSearchGo)
-                | Target::Settings(SettingsEvent::SettingsToggleInstalled)
-                | Target::Settings(SettingsEvent::SettingsToggleAvailable)
-                | Target::Settings(SettingsEvent::SettingsMenuToggle)
-                | Target::Settings(SettingsEvent::SettingsMenuEdit)
-                | Target::Settings(SettingsEvent::SettingsMenuCopy)
-                | Target::Settings(SettingsEvent::SettingsMenuWebsite)
-                | Target::Settings(SettingsEvent::SettingsMenuRemove)
-                | Target::Settings(SettingsEvent::SettingsDocs)
-                | Target::Settings(SettingsEvent::SettingsFind)
-                | Target::Settings(SettingsEvent::SettingsPickFilter)
-                | Target::Settings(SettingsEvent::SettingsKeymapFind)
-                | Target::Settings(SettingsEvent::SettingsFindClear)
-                | Target::Settings(SettingsEvent::SettingsRelease)
-                | Target::Settings(SettingsEvent::SettingsPickFirst)
-                | Target::Settings(SettingsEvent::MachineAdd)
-                | Target::Settings(SettingsEvent::MachineSave)
-                | Target::Settings(SettingsEvent::MachineCancel)
-                | Target::Settings(SettingsEvent::MachineName)
-                | Target::Settings(SettingsEvent::MachineAddress)
-                | Target::Settings(SettingsEvent::MachineToken)
-                | Target::Settings(SettingsEvent::ModelAdd)
-                | Target::Settings(SettingsEvent::ModelSave)
-                | Target::Settings(SettingsEvent::ModelCancel)
-                | Target::Settings(SettingsEvent::ModelName)
-                | Target::Settings(SettingsEvent::ModelUrl)
-                | Target::Settings(SettingsEvent::ModelKey)
-                | Target::Settings(SettingsEvent::ModelKeyEnv)
-                | Target::Settings(SettingsEvent::ModelList)
-                | Target::Settings(SettingsEvent::ModelFind)
-                | Target::Settings(SettingsEvent::ModelWireChat)
-                | Target::Settings(SettingsEvent::ModelWireResponses)
-                | Target::Settings(SettingsEvent::KeyField)
-                | Target::Settings(SettingsEvent::KeySave)
-                | Target::Settings(SettingsEvent::KeyCancel)
-                | Target::Settings(SettingsEvent::NameField)
-                | Target::Settings(SettingsEvent::NameSave)
-                | Target::Settings(SettingsEvent::NameCancel)
+    matches!(
+        id,
+        Target::Settings(event) if !matches!(
+            event,
+            SettingsEvent::Extensions
+                | SettingsEvent::ExtensionsSearch
+                | SettingsEvent::InstallExtension
+                | SettingsEvent::PreviewCancel
+                | SettingsEvent::PreviewInstall
+                | SettingsEvent::PreviewGrant(..)
+                | SettingsEvent::ExtensionRow(..)
+                | SettingsEvent::ExtensionGrant { .. }
         )
+    )
 }
 
 impl WorkspaceState {
@@ -366,61 +283,18 @@ impl WorkspaceState {
     /// Closes settings, whatever form they had open.
     pub(crate) fn close_settings(&mut self) {
         self.settings = None;
-        self.settings_servers.form = None;
-        self.settings_servers.key_form = None;
-        self.settings_servers.name_form = None;
-        self.settings_page.server_form = None;
-        self.settings_page.models.form = None;
-        self.settings_page.slots.picking = None;
-        self.settings_page.library.draft = None;
-        self.settings_page.picker = None;
+        while self.put_away_innermost() {}
         self.recording = None;
     }
 
     /// The state after something of the settings window was pressed: `action` is the name of what.
     pub(crate) fn settings_pressed(mut self, action: Target) -> Self {
         match action {
-            Target::Settings(SettingsEvent::SettingsClose)
-                if self.settings_page.picker.is_some() =>
-            {
-                self.settings_page.picker = None;
+            Target::Settings(SettingsEvent::SettingsClose) => {
+                if !self.put_away_innermost() {
+                    return self.without_settings();
+                }
             }
-            Target::Settings(SettingsEvent::SettingsClose)
-                if self.settings_page.slots.picking.is_some() =>
-            {
-                self.settings_page.slots.picking = None;
-            }
-            Target::Settings(SettingsEvent::SettingsClose)
-                if self.settings_servers.form.is_some() =>
-            {
-                self.settings_servers.form = None;
-            }
-            Target::Settings(SettingsEvent::SettingsClose)
-                if self.settings_servers.key_form.is_some() =>
-            {
-                self.settings_servers.key_form = None;
-            }
-            Target::Settings(SettingsEvent::SettingsClose)
-                if self.settings_servers.name_form.is_some() =>
-            {
-                self.settings_servers.name_form = None;
-            }
-            Target::Settings(SettingsEvent::SettingsClose)
-                if self.settings_page.models.form.is_some() =>
-            {
-                self.settings_page.models.form = None;
-            }
-            Target::Settings(SettingsEvent::SettingsClose)
-                if self.settings_page.server_form.is_some() =>
-            {
-                self.settings_page.server_form = None;
-            }
-            Target::Settings(SettingsEvent::SettingsClose)
-                if self.settings_page.library.draft.is_some() =>
-            {
-                self.settings_page.library.draft = None;
-            }
-            Target::Settings(SettingsEvent::SettingsClose) => return self.without_settings(),
             Target::Settings(SettingsEvent::SettingsRelease) => {
                 self.open_release();
                 return self.without_settings();
@@ -452,6 +326,19 @@ impl WorkspaceState {
         self
     }
 
+    /// Puts away the list, picker or form open over the page, the first of them open in the order Escape closes them; says whether one was open.
+    pub(crate) fn put_away_innermost(&mut self) -> bool {
+        let (page, servers) = (&mut self.settings_page, &mut self.settings_servers);
+        page.picker.take().is_some()
+            || page.slots.picking.take().is_some()
+            || servers.form.take().is_some()
+            || servers.key_form.take().is_some()
+            || servers.name_form.take().is_some()
+            || page.models.form.take().is_some()
+            || page.server_form.take().is_some()
+            || page.library.draft.take().is_some()
+    }
+
     /// Shows `section`, whose row in the list was pressed; pressing Agents while it shows folds the sections inside it away or shows them.
     fn section_pressed(&mut self, section: Section) {
         if section == Section::Agents {
@@ -460,8 +347,6 @@ impl WorkspaceState {
         }
         self.settings = Some(section);
         self.settings_page.find = rustle::TextFieldState::default();
-        self.settings_page.picker = None;
-        self.settings_page.slots.picking = None;
         self.recording = None;
         self.section_changed();
         if section == Section::ModelServers {
@@ -488,15 +373,6 @@ impl WorkspaceState {
     }
 }
 
-/// How wide the list of sections is in a window `width` logical pixels across.
-fn navigation_width(width: f32) -> f32 {
-    if width <= NARROW_WINDOW {
-        NARROW_NAVIGATION
-    } else {
-        NAVIGATION_WIDTH
-    }
-}
-
 /// Emits what fills the settings window, `width` logical pixels across, when settings are open.
 ///
 /// Returns whether settings are open, and so whether anything was emitted.
@@ -506,7 +382,11 @@ pub fn settings(state: &WorkspaceState, width: f32) -> bool {
         return false;
     };
     let folded = state.settings_servers.folded;
-    let navigation_width = navigation_width(width);
+    let navigation_width = if width <= NARROW_WINDOW {
+        NARROW_NAVIGATION
+    } else {
+        NAVIGATION_WIDTH
+    };
     let showing = if state.settings_searching() {
         Section::Results
     } else {
@@ -597,22 +477,15 @@ fn find(state: &WorkspaceState, searching: bool) {
             .modifier(Modifier::new().weight(1.0))
             .build();
             if searching {
+                let clear = Target::Settings(SettingsEvent::SettingsFindClear);
+                let own = Modifier::new().size(theme::sp(6), theme::sp(6)).indicated(
+                    theme::InteractionTones::new()
+                        .hover(Role::SurfaceHover)
+                        .radius(Radius::Sm),
+                    theme::Focused::Held(crate::focus::is_held(clear)),
+                );
                 row_arranged(
-                    Modifier::new()
-                        .size(theme::sp(6), theme::sp(6))
-                        .indicated(
-                            theme::InteractionTones::new()
-                                .hover(Role::SurfaceHover)
-                                .radius(Radius::Sm),
-                            theme::Focused::Held(crate::focus::is_held(Target::Settings(
-                                SettingsEvent::SettingsFindClear,
-                            ))),
-                        )
-                        .cursor(CursorIcon::Pointer)
-                        .control(
-                            Target::Settings(SettingsEvent::SettingsFindClear),
-                            send(Event::Settings(SettingsEvent::SettingsFindClear)),
-                        ),
+                    kit::pressable(own, Some(clear)),
                     Arrangement::Center,
                     Alignment::Center,
                     || glyph(phosphor::X, 3.5, Role::Muted),
@@ -631,22 +504,10 @@ fn entry(section: Section, showing: bool, folded: bool, count: Option<usize>) {
     Tile::new(section.id())
         .selected(showing)
         .modifier(Modifier::new().fill_max_width())
-        .inner(
-            Modifier::new()
-                .padding_each(theme::sp(left), 0.0, 0.0, 0.0)
-                .padding_each(0.0, 0.0, theme::sp(2), 0.0),
-        )
+        .inner(Modifier::new().padding_each(theme::sp(left), 0.0, theme::sp(2), 0.0))
         .build_with(|| {
             match section {
-                Section::Agents => glyph(
-                    if folded {
-                        phosphor::CARET_RIGHT
-                    } else {
-                        phosphor::CARET_DOWN
-                    },
-                    4.0,
-                    tone,
-                ),
+                Section::Agents => glyph(kit::chevron(!folded), 4.0, tone),
                 _ if nested => {}
                 _ => glyph(section.icon(), 4.0, tone),
             }
@@ -668,11 +529,12 @@ fn content(state: &WorkspaceState, section: Section, room: f32) {
         0,
         || {
             kit::row(
-                Modifier::new()
-                    .padding_each(theme::sp(8), 0.0, 0.0, 0.0)
-                    .padding_each(0.0, 0.0, theme::sp(8), 0.0)
-                    .padding_each(0.0, theme::sp(6), 0.0, 0.0)
-                    .padding_each(0.0, 0.0, 0.0, theme::sp(4)),
+                Modifier::new().padding_each(
+                    theme::sp(8),
+                    theme::sp(6),
+                    theme::sp(8),
+                    theme::sp(4),
+                ),
                 0,
                 || settings_servers::page_title(section),
             );

@@ -61,8 +61,7 @@ pub fn welcome(state: &WorkspaceState, above: f32) {
         column_arranged(
             Modifier::new()
                 .fill_max_size()
-                .padding_xy(theme::sp(6), 0.0)
-                .padding_xy(0.0, theme::sp(10)),
+                .padding_xy(theme::sp(6), theme::sp(10)),
             Arrangement::Center,
             Alignment::Center,
             || {

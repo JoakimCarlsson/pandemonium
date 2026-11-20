@@ -16,20 +16,32 @@ fn is_file(viewer: &Viewer, path: &str) -> bool {
     viewer.path == path && !viewer.head
 }
 
-/// The text of `viewer`, when it holds text.
-fn document_of(viewer: &mut Viewer) -> Option<&mut Document> {
-    match &mut viewer.contents {
-        Contents::Text(document) => Some(document),
-        _ => None,
-    }
-}
-
 impl WorkspaceState {
     /// The session the file shown belongs to, by position, and the file shown.
     fn shown_mut(&mut self) -> Option<(usize, &mut Viewer)> {
         let session = self.review_index()?;
         let index = self.git.shown?;
         Some((session, self.git.viewers.get_mut(index)?))
+    }
+
+    /// The text of the file shown, to change, when it holds text and the review panel is about a session.
+    fn shown_document_mut(&mut self) -> Option<&mut Document> {
+        self.shown_mut()
+            .and_then(|(_, viewer)| viewer.document_mut())
+    }
+
+    /// The places of the sessions on `host` that `wanted` keeps.
+    fn sessions_on(
+        &self,
+        host: &Option<String>,
+        wanted: impl Fn(&crate::sample::Session) -> bool,
+    ) -> Vec<usize> {
+        self.sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, session)| wanted(session) && self.is_on(session, host))
+            .map(|(place, _)| place)
+            .collect()
     }
 
     /// Every open file of every session, whether its tab is showing or kept aside, with the session it belongs to.
@@ -50,7 +62,7 @@ impl WorkspaceState {
         self.every_viewer()
             .into_iter()
             .find(|(owner, viewer)| *owner == session && is_file(viewer, path))
-            .and_then(|(_, viewer)| document_of(viewer))
+            .and_then(|(_, viewer)| viewer.document_mut())
     }
 
     /// Takes in what the server said the file at `path` of the session at `session` is written in: parses it when the grammar is loaded and asks for the grammar when it is not, and opens it for the language server when it can be edited.
@@ -70,7 +82,7 @@ impl WorkspaceState {
             .every_viewer()
             .into_iter()
             .find(|(owner, viewer)| *owner == session && viewer.path == path && viewer.head == head)
-            && let Some(document) = document_of(viewer)
+            && let Some(document) = viewer.document_mut()
         {
             document.language = Some(language.clone());
             match pm_treesitter::registry::called(&language) {
@@ -112,22 +124,13 @@ impl WorkspaceState {
         languages: &[pm_protocol::ExtensionInfo],
     ) -> Self {
         crate::file_icon::learn_languages(host, languages);
-        let owners: Vec<usize> = self
-            .sessions
-            .iter()
-            .enumerate()
-            .filter(|(_, session)| self.is_on(session, host))
-            .map(|(place, _)| place)
-            .collect();
+        let owners = self.sessions_on(host, |_| true);
         let waiting: Vec<(usize, String, bool, String)> = self
             .every_viewer()
             .into_iter()
             .filter(|(session, _)| owners.contains(session))
             .filter_map(|(session, viewer)| {
-                let Contents::Text(document) = &viewer.contents else {
-                    return None;
-                };
-                if document.language.is_some() {
+                if viewer.document()?.language.is_some() {
                     return None;
                 }
                 let suffix = viewer.path.rsplit_once('.')?.1.to_ascii_lowercase();
@@ -158,7 +161,7 @@ impl WorkspaceState {
             return self;
         };
         for (_, viewer) in self.every_viewer() {
-            let Some(document) = document_of(viewer) else {
+            let Some(document) = viewer.document_mut() else {
                 continue;
             };
             document.repaint();
@@ -175,20 +178,14 @@ impl WorkspaceState {
 
     /// Opens again for its language server every open file of a project on `host` that the server was told of, as the connection to that server was made again and the server may have started afresh.
     pub fn reopen_documents(mut self, host: &Option<String>) -> Self {
-        let owners: Vec<usize> = self
-            .sessions
-            .iter()
-            .enumerate()
-            .filter(|(_, session)| self.is_on(session, host))
-            .map(|(place, _)| place)
-            .collect();
+        let owners = self.sessions_on(host, |_| true);
         let reopened: Vec<Outgoing> = self
             .every_viewer()
             .into_iter()
             .filter(|(session, viewer)| owners.contains(session) && !viewer.head)
             .filter_map(|(session, viewer)| {
                 let path = viewer.path.clone();
-                let document = document_of(viewer).filter(|document| document.synced)?;
+                let document = viewer.document_mut().filter(|document| document.synced)?;
                 Some(Outgoing::OpenDocument {
                     session,
                     path,
@@ -254,13 +251,7 @@ impl WorkspaceState {
         path: &str,
         diagnostics: Vec<Diagnostic>,
     ) -> Self {
-        let sessions: Vec<usize> = self
-            .sessions
-            .iter()
-            .enumerate()
-            .filter(|(_, session)| session.directory == directory && self.is_on(session, host))
-            .map(|(place, _)| place)
-            .collect();
+        let sessions = self.sessions_on(host, |session| session.directory == directory);
         if self.terminal {
             self.ask_problems();
         }
@@ -274,10 +265,7 @@ impl WorkspaceState {
 
     /// Tells the language server the file at `path` of the session at `session` is closed, when it was told the file is open.
     pub(crate) fn close_document(&mut self, session: usize, viewer: &Viewer) {
-        if let Contents::Text(document) = &viewer.contents
-            && document.synced
-            && !viewer.head
-        {
+        if viewer.document().is_some_and(|document| document.synced) && !viewer.head {
             self.outbox.push(Outgoing::CloseDocument {
                 session,
                 path: viewer.path.clone(),
@@ -294,24 +282,19 @@ impl WorkspaceState {
         if viewer.rendering().is_some() {
             return;
         }
-        let place = match &viewer.contents {
-            Contents::Text(document) => Some((
+        let place = viewer.document().map(|document| {
+            let start = document
+                .field
+                .selection()
+                .map_or(document.field.caret(), |r| r.start);
+            (
                 viewer.path.clone(),
                 document.lines(),
-                document.line_of(
-                    document
-                        .field
-                        .selection()
-                        .map_or(document.field.caret(), |r| r.start),
-                ),
-            )),
-            _ => None,
-        };
+                document.line_of(start),
+            )
+        });
         let told = edit_viewer(session, viewer, edit, &settings);
-        let lines_after = match &viewer.contents {
-            Contents::Text(document) => document.lines(),
-            _ => 0,
-        };
+        let lines_after = viewer.document().map_or(0, Document::lines);
         self.outbox.extend(told);
         if let Some((path, lines_before, at)) = place {
             self.excerpts_followed(&path, at, lines_after as isize - lines_before as isize);
@@ -332,7 +315,8 @@ impl WorkspaceState {
             .into_iter()
             .find(|(owner, viewer)| *owner == session && is_file(viewer, path))
         {
-            let edits = document_of(viewer)
+            let edits = viewer
+                .document_mut()
                 .map(|document| document.change_edits(changes))
                 .unwrap_or_default();
             for edit in edits {
@@ -343,10 +327,32 @@ impl WorkspaceState {
     }
 
     /// Makes `edits` to the file shown, one after another.
-    pub(crate) fn file_edits(&mut self, edits: Vec<Edit>) {
+    pub(crate) fn file_edits(&mut self, edits: impl IntoIterator<Item = Edit>) {
         for edit in edits {
             self.file_edited(edit);
         }
+    }
+
+    /// Makes the edits `make` finds for the text of the file shown, when it shows text.
+    pub(crate) fn edit_shown<I: IntoIterator<Item = Edit>>(
+        &mut self,
+        make: impl FnOnce(&Document) -> I,
+    ) {
+        let edits: Vec<Edit> = self
+            .shown_document()
+            .map(make)
+            .into_iter()
+            .flatten()
+            .collect();
+        self.file_edits(edits);
+    }
+
+    /// Whether the file shown is the one at `path` of the session at `session`, as it is in the folder.
+    pub(crate) fn shows_file(&self, session: usize, path: &str) -> bool {
+        self.review_index() == Some(session)
+            && self
+                .shown_viewer()
+                .is_some_and(|viewer| is_file(viewer, path))
     }
 
     /// Breaks the line at the caret of the file shown, indenting the new line as the language says: one level deeper inside a block opened on the line, and the closing of that block put on a line of its own.
@@ -355,29 +361,19 @@ impl WorkspaceState {
             self.editor.auto_indent,
             self.editor.extend_comment_on_newline,
         );
-        let edits = self
-            .shown_document()
-            .map(|document| {
-                if document.field.has_others() {
-                    vec![Edit::Insert('\n')]
-                } else {
-                    document.newline_edits_with(indent, comments)
-                }
-            })
-            .unwrap_or_default();
-        self.file_edits(edits);
+        self.edit_shown(|document| {
+            if document.field.has_others() {
+                vec![Edit::Insert('\n')]
+            } else {
+                document.newline_edits_with(indent, comments)
+            }
+        });
         self
     }
 
     /// Types one level of indentation at the caret of the file shown.
     pub fn editor_indent(mut self) -> Self {
-        let Some(unit) = self
-            .shown_document()
-            .map(|document| document.editing.unit(1))
-        else {
-            return self;
-        };
-        self.file_edited(Edit::Paste(unit));
+        self.edit_shown(|document| Some(Edit::Paste(document.editing.unit(1))));
         self
     }
 
@@ -447,11 +443,7 @@ impl WorkspaceState {
             return self;
         }
         self.file_edited(Edit::Insert(character));
-        let edits = self
-            .shown_document()
-            .map(|document| document.outdent_edits(character))
-            .unwrap_or_default();
-        self.file_edits(edits);
+        self.edit_shown(|document| document.outdent_edits(character));
         self
     }
 
@@ -461,7 +453,7 @@ impl WorkspaceState {
             return self;
         };
         let path = viewer.path.clone();
-        let Some(document) = document_of(viewer).filter(|document| document.synced) else {
+        let Some(document) = viewer.document_mut().filter(|document| document.synced) else {
             return self;
         };
         let (version, position) = document.open_completion(at);
@@ -479,8 +471,7 @@ impl WorkspaceState {
 
     /// Notes where the list of completions hangs, in logical pixels of the window.
     pub fn with_completion_at(mut self, at: (f32, f32)) -> Self {
-        if let Some((_, viewer)) = self.shown_mut()
-            && let Some(document) = document_of(viewer)
+        if let Some(document) = self.shown_document_mut()
             && let Some(completion) = &mut document.completion
         {
             completion.at = at;
@@ -534,7 +525,7 @@ impl WorkspaceState {
         let mut asked = None;
         if let Some((session, viewer)) = self.shown_mut() {
             let path = viewer.path.clone();
-            if let Some(document) = document_of(viewer) {
+            if let Some(document) = viewer.document_mut() {
                 document.move_completion(delta);
                 asked = document
                     .completion_to_resolve()
@@ -551,9 +542,7 @@ impl WorkspaceState {
 
     /// Closes the list of completions over the file shown.
     pub fn completion_closed(mut self) -> Self {
-        if let Some((_, viewer)) = self.shown_mut()
-            && let Some(document) = document_of(viewer)
-        {
+        if let Some(document) = self.shown_document_mut() {
             document.completion = None;
         }
         self
@@ -565,7 +554,7 @@ impl WorkspaceState {
             .shown_document()
             .and_then(|document| document.completion_edits(row));
         self = self.completion_closed();
-        self.file_edits(edits.unwrap_or_default());
+        self.file_edits(edits.into_iter().flatten());
         self.completion_closed()
     }
 
@@ -576,7 +565,7 @@ impl WorkspaceState {
         };
         let path = viewer.path.clone();
         let card_scroll = viewer.hover_scroll.clone();
-        let Some(document) = document_of(viewer) else {
+        let Some(document) = viewer.document_mut() else {
             return self;
         };
         if document
@@ -647,7 +636,8 @@ impl WorkspaceState {
             return;
         };
         let path = viewer.path.clone();
-        let asking = document_of(viewer)
+        let asking = viewer
+            .document_mut()
             .filter(|document| document.synced && !document.field.is_read_only())
             .map(|document| {
                 let span = range.map(|range| {
@@ -700,18 +690,10 @@ impl WorkspaceState {
         edits: Vec<pm_protocol::TextChange>,
         save: bool,
     ) -> Self {
-        let current = self.review_index() == Some(session)
-            && self
-                .shown_viewer()
-                .is_some_and(|viewer| viewer.path == path && !viewer.head);
-        if !current {
+        if !self.shows_file(session, path) {
             return self;
         }
-        let edits = self
-            .shown_document()
-            .map(|document| document.format_edits(version, edits))
-            .unwrap_or_default();
-        self.file_edits(edits);
+        self.edit_shown(|document| document.format_edits(version, edits));
         if save {
             self.save_file();
         }
@@ -720,9 +702,7 @@ impl WorkspaceState {
 
     /// Notes the word of the file shown that the pointer is on while Ctrl is held, the stretch `reach`, or that there is none.
     pub fn with_reach(mut self, reach: Option<std::ops::Range<usize>>) -> Self {
-        if let Some((_, viewer)) = self.shown_mut()
-            && let Some(document) = document_of(viewer)
-        {
+        if let Some(document) = self.shown_document_mut() {
             document.reach = reach;
         }
         self
@@ -748,31 +728,20 @@ impl WorkspaceState {
         {
             self.git.shown = Some(index);
             self.tab = crate::state::Tab::File;
-            if let Some(viewer) = self.git.viewers.get_mut(index) {
-                viewer.hidden = false;
-                let scroll = viewer.scroll.clone();
-                match document_of(viewer) {
-                    Some(document) => {
-                        crate::open_files::jump(
-                            document,
-                            location.span.start,
-                            &scroll,
-                            row,
-                            columns,
-                        );
-                    }
-                    None => viewer.jump = Some(location.span.start),
+            let viewer = &mut self.git.viewers[index];
+            viewer.hidden = false;
+            let scroll = viewer.scroll.clone();
+            match viewer.document_mut() {
+                Some(document) => {
+                    crate::open_files::jump(document, location.span.start, &scroll, row, columns)
                 }
+                None => viewer.jump = Some(location.span.start),
             }
             return self;
         }
         if location.inside {
             self.open_viewer(location.path.clone(), false);
-            if let Some(viewer) = self
-                .git
-                .shown
-                .and_then(|index| self.git.viewers.get_mut(index))
-            {
+            if let Some(viewer) = self.chosen_viewer_mut() {
                 viewer.jump = Some(location.span.start);
             }
             return self;
@@ -783,32 +752,15 @@ impl WorkspaceState {
         let mut document = Document::new(&text, true, false);
         let scroll = rustle::LazyListState::default();
         crate::open_files::jump(&mut document, location.span.start, &scroll, row, columns);
-        let viewer = crate::open_files::Viewer {
-            path: location.path.clone(),
-            head: false,
-            contents: Contents::Text(Box::new(document)),
+        let viewer = Viewer {
             scroll,
-            hover_scroll: rustle::ScrollState::default(),
-            preview: true,
-            left: None,
-            jump: None,
-            pinned: false,
-            source: false,
-            drawn: None,
-            hidden: false,
+            ..Viewer::new(
+                location.path.clone(),
+                false,
+                Contents::Text(Box::new(document)),
+            )
         };
-        let index = match self.git.viewers.iter().position(|held| held.preview) {
-            Some(index) => {
-                let replaced = std::mem::replace(&mut self.git.viewers[index], viewer);
-                self.close_document(session, &replaced);
-                index
-            }
-            None => {
-                self.git.viewers.push(viewer);
-                self.git.viewers.len() - 1
-            }
-        };
-        self.git.shown = Some(index);
+        self.git.shown = Some(self.take_preview_tab(session, viewer).0);
         self.tab = crate::state::Tab::File;
         self.took_language(session, &location.path, false, location.language);
         self
@@ -816,9 +768,7 @@ impl WorkspaceState {
 
     /// Takes away what is said about a place of the file shown.
     pub fn hover_closed(mut self) -> Self {
-        if let Some((_, viewer)) = self.shown_mut()
-            && let Some(document) = document_of(viewer)
-        {
+        if let Some(document) = self.shown_document_mut() {
             document.hover = None;
         }
         self

@@ -251,18 +251,34 @@ fn path_score(path: &str, typed: &str) -> Option<(u8, usize, usize)> {
     if !narrows_to(path, typed) {
         return None;
     }
-    let name = path.rsplit('/').next().unwrap_or(path).to_lowercase();
-    let typed = typed.to_lowercase();
-    let rank = if name.starts_with(&typed) {
-        0
-    } else if name.contains(&typed) {
-        1
-    } else if narrows_to(&name, &typed) {
-        2
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let rank = title_rank(name, &typed.to_lowercase(), || true)?;
+    Some((rank, name.to_lowercase().len(), path.len()))
+}
+
+/// How well `title` matches `typed`, already lowered, ignoring case: 0 when it starts with it, 1 when it holds it, 2 when it holds its letters in order, 3 when `otherwise` says it matches, and nothing when none of these hold.
+fn title_rank(title: &str, typed: &str, otherwise: impl FnOnce() -> bool) -> Option<u8> {
+    let title = title.to_lowercase();
+    if title.starts_with(typed) {
+        Some(0)
+    } else if title.contains(typed) {
+        Some(1)
+    } else if narrows_to(&title, typed) {
+        Some(2)
     } else {
-        3
-    };
-    Some((rank, name.len(), path.len()))
+        otherwise().then_some(3)
+    }
+}
+
+/// The places of `items` that `key` scores, best first and, among equals, in the order they are listed; `key` is given each item's place and the item, and scores nothing for one that does not match.
+fn ranked<T, K: Ord>(items: &[T], key: impl Fn(usize, &T) -> Option<K>) -> Vec<usize> {
+    let mut scored: Vec<(K, usize)> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(place, item)| key(place, item).map(|score| (score, place)))
+        .collect();
+    scored.sort();
+    scored.into_iter().map(|(_, place)| place).collect()
 }
 
 /// The files of `paths` that match `typed`, with how many of them lead as `recent`, those opened lately, the latest first; the rest best first, at most a limit of them.
@@ -285,17 +301,9 @@ fn matching_recent_files(paths: &[String], typed: &str, recent: &[String]) -> (V
 /// The files of `paths` that match `typed`, best first, at most a limit of them.
 fn matching_files(paths: &[String], typed: &str) -> Vec<usize> {
     let typed = typed.trim();
-    let mut scored: Vec<((u8, usize, usize), usize)> = paths
-        .iter()
-        .enumerate()
-        .filter_map(|(place, path)| path_score(path, typed).map(|score| (score, place)))
-        .collect();
-    scored.sort();
-    scored
-        .into_iter()
-        .take(MOST_FILES)
-        .map(|(_, place)| place)
-        .collect()
+    let mut matched = ranked(paths, |_, path| path_score(path, typed));
+    matched.truncate(MOST_FILES);
+    matched
 }
 
 /// The commands of `commands` whose titles match `typed`, with how many of them lead as `recent`, those used lately, the latest first; the rest best first: a title starting with it, then one holding it, then one holding its letters in order, each in the order the commands are listed.
@@ -306,87 +314,63 @@ fn matching_commands(
 ) -> (Vec<usize>, usize) {
     let typed = typed.trim().to_lowercase();
     let rank = |action: Action| {
-        let title = action.palette_title().to_lowercase();
-        if title.starts_with(&typed) {
-            Some(0)
-        } else if title.contains(&typed) {
-            Some(1)
-        } else if narrows_to(&title, &typed) {
-            Some(2)
-        } else if every_word_known(&title, action.keywords(), &typed) {
-            Some(3)
-        } else {
-            None
-        }
+        let title = action.palette_title();
+        title_rank(&title, &typed, || {
+            every_word_known(&title, action.keywords(), &typed)
+        })
     };
     let used: Vec<usize> = recent
         .iter()
         .filter(|action| rank(**action).is_some())
         .filter_map(|action| commands.iter().position(|(held, _)| held == action))
         .collect();
-    let mut scored: Vec<(u8, usize)> = commands
-        .iter()
-        .enumerate()
-        .filter(|(place, _)| !used.contains(place))
-        .filter_map(|(place, (action, _))| rank(*action).map(|rank| (rank, place)))
-        .collect();
-    scored.sort();
+    let rest = ranked(commands, |place, (action, _)| {
+        rank(*action).filter(|_| !used.contains(&place))
+    });
     let count = used.len();
-    let matched = used
-        .into_iter()
-        .chain(scored.into_iter().map(|(_, place)| place))
-        .collect();
-    (matched, count)
+    (used.into_iter().chain(rest).collect(), count)
 }
 
 /// The places of `extras` whose titles match `typed`, best first: a title starting with it, then one holding it, then one holding its letters in order, each in the order the commands are listed.
 fn matching_extras(extras: &[(Option<String>, ExtensionCommand)], typed: &str) -> Vec<usize> {
     let typed = typed.trim().to_lowercase();
-    let mut scored: Vec<(u8, usize)> = extras
-        .iter()
-        .enumerate()
-        .filter_map(|(place, (_, command))| {
-            let title = command.title.to_lowercase();
-            let rank = if title.starts_with(&typed) {
-                0
-            } else if title.contains(&typed) {
-                1
-            } else if narrows_to(&title, &typed) {
-                2
-            } else {
-                return None;
-            };
-            Some((rank, place))
-        })
-        .collect();
-    scored.sort();
-    scored.into_iter().map(|(_, place)| place).collect()
+    ranked(extras, |_, (_, command)| {
+        title_rank(&command.title, &typed, || false)
+    })
 }
 
 /// The places of `tasks` whose names or commands match `typed`, best first: a name starting with it, then one holding it, then one holding its letters in order, then a command holding it, each in the order the tasks are listed; all of them when nothing is typed.
 fn matching_tasks(tasks: &[Task], typed: &str) -> Vec<usize> {
     let typed = typed.trim().to_lowercase();
-    let mut scored: Vec<(u8, usize)> = tasks
-        .iter()
-        .enumerate()
-        .filter_map(|(place, task)| {
-            let title = task_title(task).to_lowercase();
-            let rank = if title.starts_with(&typed) {
-                0
-            } else if title.contains(&typed) {
-                1
-            } else if narrows_to(&title, &typed) {
-                2
-            } else if task.command.to_lowercase().contains(&typed) {
-                3
-            } else {
-                return None;
-            };
-            Some((rank, place))
+    ranked(tasks, |_, task| {
+        title_rank(&task_title(task), &typed, || {
+            task.command.to_lowercase().contains(&typed)
         })
-        .collect();
-    scored.sort();
-    scored.into_iter().map(|(_, place)| place).collect()
+    })
+}
+
+/// The places of `commands`, then of `tasks` and of `extras` counted on after them, that match `typed`, with how many of them lead as `recent`, as [`matching_commands`], [`matching_tasks`] and [`matching_extras`] order each.
+fn matching_everything(
+    commands: &[(Action, Option<String>)],
+    tasks: &[Task],
+    extras: &[(Option<String>, ExtensionCommand)],
+    typed: &str,
+    recent: &[Action],
+) -> (Vec<usize>, usize) {
+    let (mut matched, count) = matching_commands(commands, typed, recent);
+    let offset = commands.len();
+    matched.extend(
+        matching_tasks(tasks, typed)
+            .into_iter()
+            .map(|place| offset + place),
+    );
+    let offset = offset + tasks.len();
+    matched.extend(
+        matching_extras(extras, typed)
+            .into_iter()
+            .map(|place| offset + place),
+    );
+    (matched, count)
 }
 
 /// What the list of commands calls `task`.
@@ -406,28 +390,10 @@ pub enum Destination {
 /// The places of `sessions` whose names or what is said beside them match `typed`, the sessions before the projects and each best first: a name starting with it, then one holding it, then one holding its letters in order, then what is said beside it that does, each in the order they are listed.
 fn matching_sessions(sessions: &[(Destination, String, String)], typed: &str) -> Vec<usize> {
     let typed = typed.trim().to_lowercase();
-    let mut scored: Vec<(bool, u8, usize)> = sessions
-        .iter()
-        .enumerate()
-        .filter_map(|(place, (destination, title, beside))| {
-            let title = title.to_lowercase();
-            let rank = if title.starts_with(&typed) {
-                0
-            } else if title.contains(&typed) {
-                1
-            } else if narrows_to(&title, &typed) {
-                2
-            } else if narrows_to(&beside.to_lowercase(), &typed) {
-                3
-            } else {
-                return None;
-            };
-            let project = matches!(destination, Destination::Project(_));
-            Some((project, rank, place))
-        })
-        .collect();
-    scored.sort();
-    scored.into_iter().map(|(.., place)| place).collect()
+    ranked(sessions, |_, (destination, title, beside)| {
+        let rank = title_rank(title, &typed, || narrows_to(beside, &typed))?;
+        Some((matches!(destination, Destination::Project(_)), rank))
+    })
 }
 
 /// The choices of `choices` whose names or what is said beside them match `typed`, best first: a name starting with it, then one holding it, then one holding its letters in order, then what is said beside it that does, each in the order they are listed; the `?` of the help is not matched.
@@ -436,27 +402,9 @@ pub(crate) fn matching_choices(
     typed: &str,
 ) -> Vec<usize> {
     let typed = typed.trim_start_matches('?').trim().to_lowercase();
-    let mut scored: Vec<(u8, usize)> = choices
-        .iter()
-        .enumerate()
-        .filter_map(|(place, choice)| {
-            let label = choice.label.to_lowercase();
-            let rank = if label.starts_with(&typed) {
-                0
-            } else if label.contains(&typed) {
-                1
-            } else if narrows_to(&label, &typed) {
-                2
-            } else if narrows_to(&choice.detail.to_lowercase(), &typed) {
-                3
-            } else {
-                return None;
-            };
-            Some((rank, place))
-        })
-        .collect();
-    scored.sort();
-    scored.into_iter().map(|(_, place)| place).collect()
+    ranked(choices, |_, choice| {
+        title_rank(&choice.label, &typed, || narrows_to(&choice.detail, &typed))
+    })
 }
 
 /// The line `typed` names among `lines`, counted from one, when it is a number of one of them.
@@ -528,7 +476,6 @@ impl Items {
     /// The rows shown, each as its place among the items held: all of them, but for an outline narrowed by what is typed.
     pub fn rows(&self) -> Vec<usize> {
         match self {
-            Self::Places { locations, .. } => (0..locations.len()).collect(),
             Self::Actions { offered, .. } => (0..offered.len()).collect(),
             Self::History {
                 commits, versions, ..
@@ -546,9 +493,9 @@ impl Items {
             Self::Line { lines, .. } => line_named(&self.query(), *lines)
                 .map(|_| vec![0])
                 .unwrap_or_default(),
-            Self::Symbols { locations, .. } | Self::Search { locations, .. } => {
-                (0..locations.len()).collect()
-            }
+            Self::Places { locations, .. }
+            | Self::Symbols { locations, .. }
+            | Self::Search { locations, .. } => (0..locations.len()).collect(),
         }
     }
 
@@ -828,20 +775,10 @@ impl WorkspaceState {
                     .filter(|action| coding || action.everywhere())
                     .map(|action| (action, keymap.label(action)))
                     .collect();
-                let (mut matched, recent) =
-                    matching_commands(&commands, &query, &self.recent_commands);
                 let tasks = self.tasks.tasks.clone();
-                matched.extend(
-                    matching_tasks(&tasks, &query)
-                        .into_iter()
-                        .map(|place| commands.len() + place),
-                );
                 let extras = self.extension_commands();
-                matched.extend(
-                    matching_extras(&extras, &query)
-                        .into_iter()
-                        .map(|place| commands.len() + tasks.len() + place),
-                );
+                let (matched, recent) =
+                    matching_everything(&commands, &tasks, &extras, &query, &self.recent_commands);
                 if session.is_some() {
                     self.tasks_asked();
                 }
@@ -1054,20 +991,7 @@ impl WorkspaceState {
                 matched,
                 recent: count,
                 ..
-            } => {
-                (*matched, *count) = matching_commands(commands, &query, &recent);
-                let offset = commands.len();
-                matched.extend(
-                    matching_tasks(tasks, &query)
-                        .into_iter()
-                        .map(|place| offset + place),
-                );
-                matched.extend(
-                    matching_extras(extras, &query)
-                        .into_iter()
-                        .map(|place| offset + tasks.len() + place),
-                );
-            }
+            } => (*matched, *count) = matching_everything(commands, tasks, extras, &query, &recent),
             Items::Symbols { path, .. } if !path.is_empty() => {
                 let request = Outgoing::WorkspaceSymbols {
                     session,
@@ -1140,12 +1064,12 @@ impl WorkspaceState {
                 self.file_edited(Edit::Place(item.name_start, false));
                 self
             }
-            Items::Symbols { locations, .. } | Items::Search { locations, .. } => {
-                match locations.into_iter().nth(index) {
-                    Some(location) => self.go_to_location(session, location),
-                    None => self,
-                }
-            }
+            Items::Symbols { locations, .. }
+            | Items::Search { locations, .. }
+            | Items::Places { locations, .. } => match locations.into_iter().nth(index) {
+                Some(location) => self.go_to_location(session, location),
+                None => self,
+            },
             Items::Files {
                 paths,
                 compare: Some(active),
@@ -1161,10 +1085,6 @@ impl WorkspaceState {
                 }
                 self
             }
-            Items::Places { locations, .. } => match locations.into_iter().nth(index) {
-                Some(location) => self.go_to_location(session, location),
-                None => self,
-            },
             Items::Commands {
                 commands, tasks, ..
             } => {

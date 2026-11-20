@@ -80,7 +80,7 @@ impl WorkspaceState {
         self.vim.share_clipboard(sharing.into());
         if !self.editor.vim_mode {
             for (_, viewer) in self.every_viewer() {
-                if let crate::open_files::Contents::Text(document) = &mut viewer.contents {
+                if let Some(document) = viewer.document_mut() {
                     document.vim_reset();
                 }
             }
@@ -180,13 +180,10 @@ impl WorkspaceState {
     fn vim_scrolled_to(&mut self, placement: Placement, rows: usize) {
         let row = self.editor.row_height();
         let columns = self.wrap_columns();
-        let Some(index) = self.git.shown else {
+        let Some(viewer) = self.chosen_viewer_mut() else {
             return;
         };
-        let Some(viewer) = self.git.viewers.get_mut(index) else {
-            return;
-        };
-        let crate::open_files::Contents::Text(document) = &viewer.contents else {
+        let Some(document) = viewer.document() else {
             return;
         };
         let line = document.line_of(document.field.caret());
@@ -207,11 +204,7 @@ impl WorkspaceState {
     /// Scrolls the view by `lines`, down when positive.
     fn vim_scrolled_by(&mut self, lines: isize) {
         let (row, columns) = (self.editor.row_height(), self.wrap_columns());
-        if let Some(viewer) = self
-            .git
-            .shown
-            .and_then(|index| self.git.viewers.get_mut(index))
-        {
+        if let Some(viewer) = self.chosen_viewer_mut() {
             let top = viewer.top_row(columns, row);
             viewer.scroll_to_row((top + lines as f32).max(0.0), columns, row);
         }

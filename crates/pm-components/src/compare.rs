@@ -32,43 +32,24 @@ fn name_of(path: &str) -> &str {
 pub(crate) fn compare_lines(old: &str, new: &str, ignore_whitespace: bool) -> Vec<DiffLine> {
     let old_lines: Vec<&str> = old.lines().collect();
     let new_lines: Vec<&str> = new.lines().collect();
-    let old_keys: Vec<String> = old_lines
-        .iter()
-        .map(|line| key_of(line, ignore_whitespace))
-        .collect();
-    let new_keys: Vec<String> = new_lines
-        .iter()
-        .map(|line| key_of(line, ignore_whitespace))
-        .collect();
+    let keys = |lines: &[&str]| -> Vec<String> {
+        lines
+            .iter()
+            .map(|line| key_of(line, ignore_whitespace))
+            .collect()
+    };
+    let (old_keys, new_keys) = (keys(&old_lines), keys(&new_lines));
     let operations = similar::capture_diff_slices(similar::Algorithm::Myers, &old_keys, &new_keys);
     let line = |kind, text: &str| DiffLine {
         kind,
         text: text.to_owned(),
     };
-    let start = |range: &std::ops::Range<usize>| {
-        if range.is_empty() {
-            range.start
-        } else {
-            range.start + 1
-        }
-    };
     let mut lines = Vec::new();
     for group in similar::group_diff_ops(operations, CONTEXT) {
-        let (Some(first), Some(last)) = (group.first(), group.last()) else {
+        let Some(header) = crate::changes::hunk_header(&group) else {
             continue;
         };
-        let old_range = first.old_range().start..last.old_range().end;
-        let new_range = first.new_range().start..last.new_range().end;
-        lines.push(line(
-            Kind::Hunk,
-            &format!(
-                "@@ -{},{} +{},{} @@",
-                start(&old_range),
-                old_range.len(),
-                start(&new_range),
-                new_range.len()
-            ),
-        ));
+        lines.push(header);
         for operation in &group {
             let (removed, added) = (operation.old_range(), operation.new_range());
             match operation.tag() {
@@ -77,15 +58,7 @@ pub(crate) fn compare_lines(old: &str, new: &str, ignore_whitespace: bool) -> Ve
                         .iter()
                         .map(|text| line(Kind::Context, text)),
                 ),
-                similar::DiffTag::Delete => lines.extend(
-                    old_lines[removed]
-                        .iter()
-                        .map(|text| line(Kind::Remove, text)),
-                ),
-                similar::DiffTag::Insert => {
-                    lines.extend(new_lines[added].iter().map(|text| line(Kind::Add, text)));
-                }
-                similar::DiffTag::Replace => {
+                _ => {
                     lines.extend(
                         old_lines[removed]
                             .iter()

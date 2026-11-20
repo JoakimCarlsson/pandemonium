@@ -185,7 +185,7 @@ impl Work {
             }
             (Pending::Toolchains(_), other) => {
                 let problem = Self::trouble_of(other);
-                model.update(|screen| *screen = std::mem::take(screen).listing_failed(problem));
+                model.change(|state| state.listing_failed(problem));
             }
             _ => {}
         }

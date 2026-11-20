@@ -62,23 +62,15 @@ pub fn with_tooltip_in(modifier: Modifier, words: impl Into<String>, content: im
     let words: String = words.into();
     tooltip_area(
         move || {
-            let kind = theme::text_style(12, 1.4);
-            kit::column(
-                Modifier::new()
-                    .panel(Radius::Sm)
-                    .padding_xy(theme::sp(1.5), 0.0)
-                    .padding_xy(0.0, theme::sp(0.75)),
-                0,
-                || {
-                    for line in words.lines() {
-                        kit::text(
-                            Modifier::new(),
-                            line.to_owned(),
-                            kind.color(theme::color(Role::Text)),
-                        );
-                    }
-                },
-            );
+            let kind = theme::text_style(12, 1.4).color(theme::color(Role::Text));
+            let inner = Modifier::new()
+                .panel(Radius::Sm)
+                .padding_xy(theme::sp(1.5), theme::sp(0.75));
+            kit::column(inner, 0, || {
+                for line in words.lines() {
+                    kit::text(Modifier::new(), line.to_owned(), kind);
+                }
+            });
         },
         modifier,
         LOCAL_TOOLTIP_DELAY.current(),

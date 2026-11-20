@@ -1725,9 +1725,7 @@ impl Work {
                 match item {
                     Incoming::UpdateProgress { received, total } => {
                         if host.is_none() {
-                            Self::in_workspace(model, |state| {
-                                state.with_update_progress(received, total)
-                            });
+                            model.change(|state| state.with_update_progress(received, total));
                         }
                     }
                     Incoming::Connected => {
@@ -1743,10 +1741,8 @@ impl Work {
                                 Pending::Nothing,
                             );
                         }
-                        model.update(|screen| {
-                            *screen = std::mem::take(screen).reopen_documents(&host);
-                        });
-                        Self::in_workspace(model, |state| state.host_reached(&host));
+                        model.change(|state| state.reopen_documents(&host));
+                        model.change(|state| state.host_reached(&host));
                     }
                     Incoming::Disconnected(reason) => {
                         eprintln!("the server on {host:?} is out of reach: {reason}");
@@ -1756,7 +1752,7 @@ impl Work {
                         model.update(|screen| {
                             *screen = std::mem::take(screen).with_git_working(false);
                         });
-                        Self::in_workspace(model, |state| state.host_lost(&host));
+                        model.change(|state| state.host_lost(&host));
                     }
                     Incoming::Response { id, response } => {
                         let pending = self
@@ -1797,12 +1793,7 @@ impl Work {
                                 .shells
                                 .get(&(host.clone(), terminal))
                                 .copied()
-                                .and_then(|tab| {
-                                    model.read(|screen| {
-                                        let Screen::Workspace(state) = screen;
-                                        state.session_of_terminal(tab)
-                                    })
-                                });
+                                .and_then(|tab| model.read(|state| state.session_of_terminal(tab)));
                             self.served.push((host.clone(), url, owner));
                         }
                     }
@@ -1843,13 +1834,8 @@ impl Work {
                         path,
                         diagnostics,
                         ..
-                    } => model.update(|screen| {
-                        *screen = std::mem::take(screen).with_diagnostics(
-                            &host,
-                            &directory,
-                            &path,
-                            diagnostics,
-                        );
+                    } => model.change(|state| {
+                        state.with_diagnostics(&host, &directory, &path, diagnostics)
                     }),
                     Incoming::BrowserCall {
                         call,
@@ -1867,20 +1853,13 @@ impl Work {
                         self.folder_changed(model, &host, &directory);
                     }
                     Incoming::SignInCode { agent, url, code } => {
-                        Self::in_workspace(model, |state| {
-                            state.with_sign_in_code(&agent, url, code)
-                        });
+                        model.change(|state| state.with_sign_in_code(&agent, url, code));
                     }
                     Incoming::ExtensionsChanged(extensions) => {
                         self.ask_extension_assets(&host);
-                        model.update(|screen| {
-                            *screen =
-                                std::mem::take(screen).with_host_extensions(&host, &extensions);
-                        });
+                        model.change(|state| state.with_host_extensions(&host, &extensions));
                         if host.is_none() {
-                            model.update(|screen| {
-                                *screen = std::mem::take(screen).with_extensions(extensions);
-                            });
+                            model.change(|state| state.with_extensions(extensions));
                         }
                     }
                 }
@@ -1948,9 +1927,7 @@ impl Work {
         match job {
             Job::Previewed(path, picture) => {
                 if let Some(picture) = picture {
-                    model.update(|screen| {
-                        *screen = std::mem::take(screen).with_preview(&path, picture)
-                    });
+                    model.change(|state| state.with_preview(&path, picture));
                 }
             }
             Job::Pictured(session, path, head, read) => {
@@ -1986,7 +1963,7 @@ impl Work {
             }
             Job::Grammar(language, outcome) => self.grammar_compiled(model, &language, outcome),
             Job::Gathered(session, gathered) => self.import(model, session, gathered),
-            Job::Installed(outcome) => Self::in_workspace(model, |state| match outcome {
+            Job::Installed(outcome) => model.change(|state| match outcome {
                 Ok(()) => state.with_update_installed(),
                 Err(reason) => state.with_update_failed(reason),
             }),
@@ -2004,10 +1981,7 @@ impl Work {
                     .collect();
                 for session in starting {
                     let line = format!("{text}\n");
-                    model.update(|screen| {
-                        *screen =
-                            std::mem::take(screen).heard(session, HarnessEvent::Thought(line));
-                    });
+                    model.change(|state| state.heard(session, HarnessEvent::Thought(line)));
                 }
             }
             Job::Server(host, Err(reason)) => {
@@ -2021,10 +1995,7 @@ impl Work {
                 for (_, pending) in link.backlog {
                     if let Pending::Start(session) = pending {
                         let reason = reason.clone();
-                        model.update(|screen| {
-                            *screen =
-                                std::mem::take(screen).heard(session, HarnessEvent::Failed(reason));
-                        });
+                        model.change(|state| state.heard(session, HarnessEvent::Failed(reason)));
                     }
                 }
             }
@@ -2093,7 +2064,7 @@ impl Work {
             self.refresh(model, session);
         }
         if finished {
-            model.update(|screen| *screen = std::mem::take(screen).agent_finished(session));
+            model.change(|state| state.agent_finished(session));
         }
     }
 
@@ -2128,12 +2099,10 @@ impl Work {
                 if origin.is_none() && !found.settings.is_empty() {
                     let _ = pm_store::save_text(&format!("discovery-{id}"), &found.to_text());
                 }
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_discovery_of(origin, &id, found);
-                });
+                model.change(|state| state.with_discovery_of(origin, &id, found));
             }
             Pending::SignInSession => {
-                Self::in_workspace(model, WorkspaceState::sign_in_code_ended);
+                model.change(WorkspaceState::sign_in_code_ended);
                 if let Some(message) = failure {
                     eprintln!("sign-in failed: {message}");
                 }
@@ -2184,21 +2153,20 @@ impl Work {
                     product,
                     items,
                     withheld,
-                } => Self::in_workspace(model, |state| {
-                    state.with_library(project, agent, product, items, withheld)
-                }),
+                } => model
+                    .change(|state| state.with_library(project, agent, product, items, withheld)),
                 other => {
                     let reason = Self::trouble_of(other);
-                    Self::in_workspace(model, |state| state.with_library_failed(reason));
+                    model.change(|state| state.with_library_failed(reason));
                 }
             },
             Pending::Created(project) => match response {
-                Response::Created { path } => Self::in_workspace(model, |state| {
-                    state.with_customization_created(project, path)
-                }),
+                Response::Created { path } => {
+                    model.change(|state| state.with_customization_created(project, path))
+                }
                 other => {
                     let reason = Self::trouble_of(other);
-                    Self::in_workspace(model, |state| state.with_customization_failed(reason));
+                    model.change(|state| state.with_customization_failed(reason));
                 }
             },
             Pending::ToolSets(project, agent) => match response {
@@ -2206,12 +2174,11 @@ impl Work {
                     product,
                     sets,
                     withheld,
-                } => Self::in_workspace(model, |state| {
-                    state.with_tool_sets(project, agent, product, sets, withheld)
-                }),
+                } => model
+                    .change(|state| state.with_tool_sets(project, agent, product, sets, withheld)),
                 other => {
                     let reason = Self::trouble_of(other);
-                    Self::in_workspace(model, |state| state.with_library_failed(reason));
+                    model.change(|state| state.with_library_failed(reason));
                 }
             },
             Pending::Usage(host, days) => {
@@ -2219,17 +2186,17 @@ impl Work {
                     Response::UsageReport { report } => Ok(report),
                     other => Err(Self::trouble_of(other)),
                 };
-                Self::in_workspace(model, |state| state.with_usage_report(host, days, answer));
+                model.change(|state| state.with_usage_report(host, days, answer));
             }
             Pending::McpServers => {
                 if let Response::McpServers { servers } = response {
-                    Self::in_workspace(model, |state| state.with_mcp_servers(servers));
+                    model.change(|state| state.with_mcp_servers(servers));
                 }
             }
             Pending::ModelServers => match response {
                 Response::ModelServers { servers } => {
                     let mut agents = Vec::new();
-                    Self::in_workspace(model, |state| {
+                    model.change(|state| {
                         let state = state.with_model_servers(servers);
                         agents = state
                             .settings_servers
@@ -2243,17 +2210,17 @@ impl Work {
                 }
                 other => {
                     let reason = Self::trouble_of(other);
-                    Self::in_workspace(model, |state| state.with_model_servers_failed(reason));
+                    model.change(|state| state.with_model_servers_failed(reason));
                 }
             },
             Pending::ModelSlots => match response {
                 Response::ModelSlots { slots, presets } => {
                     let book = pm_harness::SlotBook { slots, presets };
-                    Self::in_workspace(model, |state| state.with_model_slots(book));
+                    model.change(|state| state.with_model_slots(book));
                 }
                 other => {
                     let reason = Self::trouble_of(other);
-                    Self::in_workspace(model, |state| state.with_model_slots_failed(reason));
+                    model.change(|state| state.with_model_slots_failed(reason));
                 }
             },
             Pending::FoundModels(ticket) => {
@@ -2265,14 +2232,14 @@ impl Work {
                     Response::FoundModels { models, .. } => Ok(models),
                     other => Err(Self::trouble_of(other)),
                 };
-                Self::in_workspace(model, |state| state.with_found_models(ticket, answer));
+                model.change(|state| state.with_found_models(ticket, answer));
             }
             Pending::Tools(query) => {
                 let answer = match response {
                     Response::ToolListings { listings } => Ok(listings),
                     other => Err(Self::trouble_of(other)),
                 };
-                Self::in_workspace(model, |state| state.with_tool_listings(&query, answer));
+                model.change(|state| state.with_tool_listings(&query, answer));
             }
             Pending::Owners => {
                 let listed = match response {
@@ -2290,7 +2257,7 @@ impl Work {
                         .collect()),
                     other => Err(Self::trouble_of(other)),
                 };
-                Self::in_workspace(model, |state| state.with_owners(listed));
+                model.change(|state| state.with_owners(listed));
             }
             Pending::Repositories(login) => {
                 let listed = match response {
@@ -2308,7 +2275,7 @@ impl Work {
                         .collect()),
                     other => Err(Self::trouble_of(other)),
                 };
-                Self::in_workspace(model, |state| state.with_repositories(&login, listed));
+                model.change(|state| state.with_repositories(&login, listed));
             }
             Pending::Folders(requested) => {
                 let listed = match response {
@@ -2321,14 +2288,14 @@ impl Work {
             }
             Pending::Added => match response {
                 Response::Directory { path } => {
-                    Self::in_workspace(model, |state| state.adder_landed(&path));
+                    model.change(|state| state.adder_landed(&path));
                     if let Some(paths) = model.read(Screen::project_paths) {
                         self.save_projects(paths);
                     }
                     self.relist();
                 }
                 Response::Failed { message } => {
-                    Self::in_workspace(model, |state| state.adder_failed(&message));
+                    model.change(|state| state.adder_failed(&message));
                 }
                 _ => {}
             },
@@ -2339,30 +2306,22 @@ impl Work {
                     ignored,
                 } = response
                 {
-                    model.update(|screen| {
-                        *screen = std::mem::take(screen).with_files(&key, paths, folders, ignored);
-                    });
+                    model.change(|state| state.with_files(&key, paths, folders, ignored));
                 }
             }
             Pending::Branches(project) => {
                 if let Response::Branches { names } = response {
-                    model.update(|screen| {
-                        *screen = std::mem::take(screen).with_branches(project, names)
-                    });
+                    model.change(|state| state.with_branches(project, names));
                 }
             }
             Pending::DevContainer(project) => {
                 if let Response::DevContainer { configured } = response {
-                    model.update(|screen| {
-                        *screen = std::mem::take(screen).with_devcontainer(project, configured)
-                    });
+                    model.change(|state| state.with_devcontainer(project, configured));
                 }
             }
             Pending::Submodules(project) => {
                 if let Response::Submodules { paths } = response {
-                    model.update(|screen| {
-                        *screen = std::mem::take(screen).with_submodules(project, paths)
-                    });
+                    model.change(|state| state.with_submodules(project, paths));
                 }
             }
             Pending::Allowance(agent, login) => {
@@ -2370,16 +2329,14 @@ impl Work {
                     Response::Allowance { limits } => limits.map(|allowance| allowance.0),
                     _ => None,
                 };
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_allowance(agent, login, limits);
-                });
+                model.change(|state| state.with_allowance(agent, login, limits));
             }
             Pending::Identity(agent, naming) => {
                 if let Response::Identity { default, selected } = response {
                     model.update(|screen| {
-                        *screen = screen
-                            .clone()
-                            .with_identity(agent, default, selected, naming);
+                        *screen = screen.clone().in_workspace(|state| {
+                            state.with_identity(agent, default, selected, naming)
+                        });
                     });
                 }
             }
@@ -2410,21 +2367,25 @@ impl Work {
                         client.watch(number, 0);
                     }
                     model.update(|screen| {
-                        *screen = std::mem::take(screen).worktree_ready(
-                            session,
-                            &directory,
-                            branch.as_deref(),
-                            head.as_deref(),
-                        );
+                        *screen = std::mem::take(screen).in_workspace(|state| {
+                            state.worktree_ready(
+                                session,
+                                &directory,
+                                branch.as_deref(),
+                                head.as_deref(),
+                            )
+                        });
                         let Screen::Workspace(state) = screen;
                         if let Some(held) = state.sessions.get_mut(session) {
                             held.tree = tree.clone();
                         }
                         for (path, reason) in &skipped {
-                            *screen = std::mem::take(screen).noted(
-                                session,
-                                &format!("Could not check out the submodule {path}: {reason}"),
-                            );
+                            *screen = std::mem::take(screen).in_workspace(|state| {
+                                state.noted(
+                                    session,
+                                    &format!("Could not check out the submodule {path}: {reason}"),
+                                )
+                            });
                         }
                     });
                     for (seq, event) in self
@@ -2436,10 +2397,7 @@ impl Work {
                     }
                 }
                 Response::Failed { message } if !self.cancelled.contains(&session) => {
-                    model.update(|screen| {
-                        *screen =
-                            std::mem::take(screen).heard(session, HarnessEvent::Failed(message));
-                    });
+                    model.change(|state| state.heard(session, HarnessEvent::Failed(message)));
                 }
                 Response::Failed { .. } => {
                     self.cancelled.remove(&session);
@@ -2455,18 +2413,16 @@ impl Work {
                 if let Some(position) = self.positions.get(&(host.clone(), number)).copied() {
                     let chat =
                         Self::session_of(model, position).is_some_and(|placement| placement.chat);
-                    model.update(|screen| {
-                        let taken = std::mem::take(screen);
-                        *screen = match response {
-                            Response::Done => taken.closed_elsewhere(position),
-                            Response::Uncommitted => taken.asking_to_close(position),
-                            Response::Failed { message } if chat => taken
-                                .noted(position, &format!("Could not close the chat: {message}")),
-                            Response::Failed { message } => {
-                                taken.git_failed(&format!("Could not close the session: {message}"))
-                            }
-                            _ => taken,
-                        };
+                    model.change(|state| match response {
+                        Response::Done => state.closed_session(position, false, false),
+                        Response::Uncommitted => state.asking_to_close(position),
+                        Response::Failed { message } if chat => {
+                            state.noted(position, &format!("Could not close the chat: {message}"))
+                        }
+                        Response::Failed { message } => {
+                            state.git_failed(&format!("Could not close the session: {message}"))
+                        }
+                        _ => state,
                     });
                 }
             }
@@ -2483,14 +2439,18 @@ impl Work {
                 {
                     model.update(|screen| {
                         *screen = std::mem::take(screen)
-                            .refreshed(session, &changes, commits)
-                            .checked_out(session, branch.as_deref(), head.as_deref())
-                            .tracked(session, branch.as_deref(), tracking, operation)
-                            .with_standings(session, repositories);
+                            .in_workspace(|state| state.refreshed(session, &changes, commits))
+                            .in_workspace(|state| {
+                                state.checked_out(session, branch.as_deref(), head.as_deref())
+                            })
+                            .in_workspace(|state| {
+                                state.tracked(session, branch.as_deref(), tracking, operation)
+                            })
+                            .in_workspace(|state| state.with_standings(session, repositories));
                     });
                 } else if let Some(message) = failure {
                     let reason = format!("Could not read the folder: {message}");
-                    model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
+                    model.change(|state| state.git_failed(&reason));
                 }
                 if self.read_again.remove(&session) {
                     self.refresh(model, session);
@@ -2506,8 +2466,8 @@ impl Work {
                     repository: _,
                 } = response
                 {
-                    model.update(|screen| {
-                        *screen = std::mem::take(screen).with_standing(
+                    model.change(|state| {
+                        state.with_standing(
                             session,
                             pm_components::lazy_diffs::Standing {
                                 branch,
@@ -2516,7 +2476,7 @@ impl Work {
                                 operation,
                                 repositories,
                             },
-                        );
+                        )
                     });
                 }
             }
@@ -2525,24 +2485,20 @@ impl Work {
                     Response::Diffs { files } => files,
                     _ => Vec::new(),
                 };
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_diffs(session, &asked, files);
-                });
+                model.change(|state| state.with_diffs(session, &asked, files));
             }
             Pending::Stage(session) => {
                 if let Some(message) = failure {
                     let reason = format!("Could not stage the files: {message}");
-                    model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
+                    model.change(|state| state.git_failed(&reason));
                 }
                 self.refresh(model, session);
             }
             Pending::Git(session, what) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).remote_done(session, None);
-                });
+                model.change(|state| state.remote_done(session, None));
                 if let Some(message) = failure {
                     let reason = format!("Could not {what}: {message}");
-                    model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
+                    model.change(|state| state.git_failed(&reason));
                 }
                 self.refresh(model, session);
             }
@@ -2550,29 +2506,25 @@ impl Work {
                 let failed = failure.is_some();
                 if let Some(message) = failure {
                     let reason = format!("Could not save {path}: {message}");
-                    model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
+                    model.change(|state| state.git_failed(&reason));
                 }
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_file_written(session, &path, failed);
-                });
+                model.change(|state| state.with_file_written(session, &path, failed));
                 self.refresh(model, session);
             }
             Pending::Entry(session, what) => {
                 if let Response::Edited { files } = response {
-                    model.update(|screen| {
-                        *screen = std::mem::take(screen).with_edited_files(session, files);
-                    });
+                    model.change(|state| state.with_edited_files(session, files));
                 } else if let Some(message) = failure {
                     let reason = format!("Could not {what}: {message}");
-                    model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
+                    model.change(|state| state.git_failed(&reason));
                 }
-                model.update(|screen| *screen = std::mem::take(screen).with_tree_stale());
+                model.change(|state| state.with_tree_stale());
                 self.refresh(model, session);
             }
             Pending::Imported(session) => {
                 if let Some(message) = failure {
                     let reason = format!("Could not bring it in: {message}");
-                    model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
+                    model.change(|state| state.git_failed(&reason));
                 }
                 let left = self
                     .importing
@@ -2580,7 +2532,7 @@ impl Work {
                     .map_or(0, |left| left.saturating_sub(1));
                 if left == 0 {
                     self.importing.remove(&session);
-                    model.update(|screen| *screen = std::mem::take(screen).with_tree_stale());
+                    model.change(|state| state.with_tree_stale());
                     self.refresh(model, session);
                 } else {
                     self.importing.insert(session, left);
@@ -2588,16 +2540,12 @@ impl Work {
             }
             Pending::SubmoduleHeads(session) => {
                 if let Response::SubmoduleHeads { heads } = response {
-                    model.update(|screen| {
-                        *screen = std::mem::take(screen).with_submodule_heads(session, heads);
-                    });
+                    model.change(|state| state.with_submodule_heads(session, heads));
                 }
             }
             Pending::SessionBranches(session) => {
                 if let Response::Branches { names } = response {
-                    model.update(|screen| {
-                        *screen = std::mem::take(screen).with_session_branches(session, names);
-                    });
+                    model.change(|state| state.with_session_branches(session, names));
                 }
             }
             Pending::ReadFile(session, path, head) => {
@@ -2650,12 +2598,10 @@ impl Work {
                 let failed = failure.is_some();
                 if let Some(message) = failure {
                     let reason = format!("The commit failed: {message}");
-                    model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
+                    model.change(|state| state.git_failed(&reason));
                 }
                 if failed || !push {
-                    model.update(|screen| {
-                        *screen = std::mem::take(screen).remote_done(session, None);
-                    });
+                    model.change(|state| state.remote_done(session, None));
                 }
                 self.refresh(model, session);
                 if push && !failed {
@@ -2671,16 +2617,12 @@ impl Work {
                 }
             }
             Pending::Remote(session) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).remote_done(session, failure);
-                });
+                model.change(|state| state.remote_done(session, failure));
                 self.refresh(model, session);
             }
             Pending::PullRequest(session) => {
                 if let Response::PullRequest { request, host } = response {
-                    model.update(|screen| {
-                        *screen = std::mem::take(screen).with_pull_request(session, request, host);
-                    });
+                    model.change(|state| state.with_pull_request(session, request, host));
                 }
             }
             Pending::PullRequestActed(session) => {
@@ -2693,9 +2635,7 @@ impl Work {
                 {
                     eprintln!("could not open the page to open a pull request on: {reason}");
                 }
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).pull_request_done(session, request, failure);
-                });
+                model.change(|state| state.pull_request_done(session, request, failure));
                 self.refresh(model, session);
             }
             Pending::BranchInfo(session, branch) => {
@@ -2716,23 +2656,17 @@ impl Work {
                         elsewhere,
                         follows,
                     };
-                    model.update(|screen| {
-                        *screen = std::mem::take(screen).with_branch_info(session, branch, info);
-                    });
+                    model.change(|state| state.with_branch_info(session, branch, info));
                 }
             }
             Pending::Stashes(session) => {
                 if let Response::Stashes { stashes } = response {
-                    model.update(|screen| {
-                        *screen = std::mem::take(screen).with_stashes(session, stashes);
-                    });
+                    model.change(|state| state.with_stashes(session, stashes));
                 }
             }
             Pending::Log(session) => {
                 if let Response::Log { commits } = response {
-                    model.update(|screen| {
-                        *screen = std::mem::take(screen).with_history(session, commits);
-                    });
+                    model.change(|state| state.with_history(session, commits));
                 }
             }
             Pending::Fork(session) => match response {
@@ -2743,9 +2677,7 @@ impl Work {
                         let open = pm_components::target::Target::Sidebar(
                             pm_components::areas::SidebarEvent::Session(*position),
                         );
-                        model.update(|screen| {
-                            *screen = std::mem::take(screen).handle(Event::pressing(open))
-                        });
+                        model.change(|state| state.handle(Event::pressing(open)));
                     }
                 }
                 _ => {
@@ -2753,7 +2685,7 @@ impl Work {
                         "Could not branch from this reply: {}",
                         failure.unwrap_or_else(|| "the server answered something else".to_owned())
                     );
-                    model.update(|screen| *screen = std::mem::take(screen).noted(session, &reason));
+                    model.change(|state| state.noted(session, &reason));
                 }
             },
             Pending::Grammar(_)
@@ -2816,7 +2748,7 @@ impl Work {
             Pending::Back(session, failing) => {
                 if let Some(message) = failure {
                     let reason = format!("{failing}: {message}");
-                    model.update(|screen| *screen = std::mem::take(screen).noted(session, &reason));
+                    model.change(|state| state.noted(session, &reason));
                 }
             }
         }
@@ -2900,8 +2832,7 @@ impl Work {
     /// Asks the server of the chat at `session` to continue it as a session in the project at `project`, in a worktree made from `base`, when the project is on the chat's machine; the session is called what the chat is.
     fn continue_chat(&mut self, model: &Model, session: usize, project: usize, base: String) {
         let placement = Self::session_of(model, session);
-        let repository = model.read(|screen| {
-            let Screen::Workspace(state) = screen;
+        let repository = model.read(|state| {
             let machine = placement.as_ref().map(|placement| &placement.host)?;
             state
                 .projects
@@ -2912,12 +2843,12 @@ impl Work {
         let (Some(placement), Some(repository), Some((host, number))) =
             (placement, repository, self.numbers.get(&session).cloned())
         else {
-            model.update(|screen| {
-                *screen = std::mem::take(screen).chat_continued(
+            model.change(|state| {
+                state.chat_continued(
                     session,
                     None,
                     Some("the chat or the project is not on a server"),
-                );
+                )
             });
             return;
         };
@@ -2951,9 +2882,7 @@ impl Work {
         };
         let session =
             number.and_then(|number| self.positions.get(&(host.clone(), number)).copied());
-        model.update(|screen| {
-            *screen = std::mem::take(screen).chat_continued(position, session, failure.as_deref());
-        });
+        model.change(|state| state.chat_continued(position, session, failure.as_deref()));
     }
 
     /// Adds the sessions of the server of `origin` that the window does not show yet, starts watching them, and takes in what their agents did before the window knew them.
@@ -2978,8 +2907,7 @@ impl Work {
                 .iter()
                 .find(|receipt| receipt.host == *origin && receipt.number == number)
             {
-                model.update(|screen| {
-                    let Screen::Workspace(state) = screen;
+                model.update(|state| {
                     let session = &mut state.sessions[position];
                     session.read_through = receipt.through;
                     session.marked_unread = receipt.marked;
@@ -2992,8 +2920,7 @@ impl Work {
                 .find(|saved| saved.host == *origin && saved.number == number)
             {
                 let (tabs, active, tools, width) = saved.tabs();
-                model.update(|screen| {
-                    let Screen::Workspace(state) = screen;
+                model.update(|state| {
                     state.restore_session_browser(position, &tabs, active, tools, width);
                 });
             }
@@ -3055,20 +2982,12 @@ impl Work {
         }
     }
 
-    /// Replaces the workspace with what `change` makes of it, while the workspace is showing.
-    fn in_workspace(model: &Model, change: impl FnOnce(WorkspaceState) -> WorkspaceState) {
-        model.update(|screen| {
-            let Screen::Workspace(state) = screen;
-            *state = change(std::mem::replace(state, WorkspaceState::new(&[])));
-        });
-    }
-
     /// Adds the projects another client added on this machine.
     fn projects_changed(model: &Model, paths: &[String]) {
         model.update(|screen| {
             let mut next = std::mem::take(screen);
             for path in paths {
-                next = next.with_project(path);
+                next = next.in_workspace(|state| state.with_project(path));
             }
             *screen = next;
         });
@@ -3076,8 +2995,7 @@ impl Work {
 
     /// Where the session at `session` works.
     fn session_of(model: &Model, session: usize) -> Option<Placement> {
-        model.read(|screen| {
-            let Screen::Workspace(state) = screen;
+        model.read(|state| {
             let held = state.sessions.get(session)?;
             let repository = match held.project {
                 Some(project) => state
@@ -3103,8 +3021,7 @@ impl Work {
 
     /// The branch the session at `session` has checked out, or nothing when it is at a bare commit or not known.
     fn branch_of(model: &Model, session: usize) -> Option<String> {
-        model.read(|screen| {
-            let Screen::Workspace(state) = screen;
+        model.read(|state| {
             state
                 .sessions
                 .get(session)
@@ -3152,7 +3069,7 @@ impl Work {
                 "Not everything was brought in: {}",
                 gathered.skipped.join("; ")
             );
-            model.update(|screen| *screen = std::mem::take(screen).git_failed(&reason));
+            model.change(|state| state.git_failed(&reason));
         }
         if Self::session_of(model, session).is_none() {
             return;
@@ -3176,7 +3093,7 @@ impl Work {
         if placement.chat {
             return;
         }
-        model.update(|screen| *screen = std::mem::take(screen).bases_wanted(session));
+        model.change(|state| state.bases_wanted(session));
         let inspecting = self.links.get(&placement.host).is_some_and(|link| {
             link.waiting
                 .values()

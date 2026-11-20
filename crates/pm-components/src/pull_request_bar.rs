@@ -54,7 +54,6 @@ fn unsupported(session: &Session) -> Option<&CodeHost> {
 }
 
 /// Emits the badge naming the pull request's number and how it stands, in the colour of that.
-#[track_caller]
 fn state_badge(number: u64, said: &str, tone: Role) {
     Badge::new(format!("#{number} {said}"))
         .tone(tone)
@@ -143,8 +142,8 @@ fn review(request: &PullRequestStatus) {
 
 /// Emits a small button saying `label` that does `id`, filled when it is the `main` thing to do, with `tooltip` when there is one.
 #[track_caller]
-fn action(label: &str, id: Target, main: bool, tooltip: Option<String>) {
-    let button = Button::new(label, id)
+fn action(label: &str, id: GitEvent, main: bool, tooltip: Option<String>) {
+    let button = Button::new(label, Target::Git(id))
         .variant(if main {
             Variant::Default
         } else {
@@ -162,66 +161,44 @@ fn action(label: &str, id: Target, main: bool, tooltip: Option<String>) {
 fn actions(session: &Session) {
     let ahead = session.tracking.upstream.is_none() || session.tracking.ahead > 0;
     if unsupported(session).is_some() {
-        action("Push", Target::Git(GitEvent::PullPush), true, None);
+        action("Push", GitEvent::PullPush, true, None);
         return;
     }
     let noun = title_case(noun(session));
     match &session.pull_request {
         None => {
-            action(
-                "Create Draft",
-                Target::Git(GitEvent::PullCreateDraft),
-                false,
-                None,
-            );
+            action("Create Draft", GitEvent::PullCreateDraft, false, None);
             action(
                 &format!("Create {noun}"),
-                Target::Git(GitEvent::PullCreate),
+                GitEvent::PullCreate,
                 true,
                 Some(format!("Push and Open a {noun}")),
             );
         }
         Some(request) if request.is_open() => {
             if ahead {
-                action("Push", Target::Git(GitEvent::PullPush), false, None);
+                action("Push", GitEvent::PullPush, false, None);
             }
+            let redraft = "Push and Redraft the Description";
             action(
                 "Update",
-                Target::Git(GitEvent::PullUpdate),
+                GitEvent::PullUpdate,
                 false,
-                Some("Push and Redraft the Description".to_owned()),
+                Some(redraft.to_owned()),
             );
-            if request.draft {
-                action(
-                    "Ready",
-                    Target::Git(GitEvent::PullReady),
-                    true,
-                    Some("Ready for Review".to_owned()),
-                );
+            let (label, id, tip) = if request.draft {
+                ("Ready", GitEvent::PullReady, "Ready for Review")
             } else {
-                action(
-                    "Merge",
-                    Target::Git(GitEvent::PullMerge),
-                    true,
-                    Some("Squash and Merge".to_owned()),
-                );
+                ("Merge", GitEvent::PullMerge, "Squash and Merge")
+            };
+            action(label, id, true, Some(tip.to_owned()));
+        }
+        Some(request) => {
+            action("Delete Branch", GitEvent::PullDeleteBranch, false, None);
+            if request.is_closed() {
+                action("Reopen", GitEvent::PullReopen, true, None);
             }
         }
-        Some(request) if request.is_closed() => {
-            action(
-                "Delete Branch",
-                Target::Git(GitEvent::PullDeleteBranch),
-                false,
-                None,
-            );
-            action("Reopen", Target::Git(GitEvent::PullReopen), true, None);
-        }
-        Some(_) => action(
-            "Delete Branch",
-            Target::Git(GitEvent::PullDeleteBranch),
-            false,
-            None,
-        ),
     }
 }
 
@@ -243,16 +220,6 @@ pub fn bar(session: &Session) {
         .padding_xy(theme::sp(5), 0.0);
     kit::row(modifier, 3, || {
         match (&session.pull_request, unsupported(session)) {
-            (_, Some(host)) => {
-                let said = if host.name.is_empty() {
-                    "This code host is not supported yet".to_owned()
-                } else {
-                    format!("{} is not supported yet", host.name)
-                };
-                glyph(phosphor::GIT_DIFF, 3.5, Role::Muted);
-                line(said, 12, 1.4, Role::Muted);
-                spacer();
-            }
             (Some(request), None) => {
                 let (said, tone) = standing(request);
                 let number = request.number;
@@ -267,14 +234,20 @@ pub fn bar(session: &Session) {
                     .build();
                 checks(request);
                 review(request);
-                spacer();
             }
-            (None, None) => {
+            (_, host) => {
+                let said = match host {
+                    Some(host) if host.name.is_empty() => {
+                        "This code host is not supported yet".to_owned()
+                    }
+                    Some(host) => format!("{} is not supported yet", host.name),
+                    None => format!("No {}", noun(session)),
+                };
                 glyph(phosphor::GIT_DIFF, 3.5, Role::Muted);
-                line(format!("No {}", noun(session)), 12, 1.4, Role::Muted);
-                spacer();
+                line(said, 12, 1.4, Role::Muted);
             }
         }
+        spacer();
         match session.pull_busy {
             Some(doing) => {
                 glyph(phosphor::CIRCLE_DASHED, 3.5, Role::Muted);

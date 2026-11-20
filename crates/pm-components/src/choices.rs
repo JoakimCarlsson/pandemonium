@@ -1058,10 +1058,13 @@ impl WorkspaceState {
             self.in_use.push((agent.to_owned(), id));
         }
         self.identities[self.agent] = None;
-        self.outbox.push(Outgoing::Accounts {
-            logins: self.logins.clone(),
-            in_use: self.in_use.clone(),
-        });
+        self.send_accounts();
+    }
+
+    /// Has the server keep the logins added and the one in use for each agent as they are now.
+    pub(crate) fn send_accounts(&mut self) {
+        let (logins, in_use) = (self.logins.clone(), self.in_use.clone());
+        self.outbox.push(Outgoing::Accounts { logins, in_use });
     }
 
     /// Has the open session run as the login `login`, or as the agent's own when there is none; nothing when no session is open.
@@ -1076,30 +1079,33 @@ impl WorkspaceState {
         }
     }
 
-    /// Adds a login for the agent at `agent`, makes it the one in use, and has the server sign it in.
-    pub(crate) fn add_account(&mut self, agent: usize) {
-        let Some(owner) = self.agent_id_at(agent) else {
-            return;
-        };
+    /// Adds a login of the agent `owner`, named for now as
+    /// [`Self::placeholder_name`] says and identified by the time it is added,
+    /// and returns its id.
+    pub(crate) fn new_login(&mut self, owner: String) -> String {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |since| since.as_millis());
         let id = format!("{stamp:x}");
         let name = self.placeholder_name(&owner);
+        self.logins.push((owner, id.clone(), name));
+        id
+    }
+
+    /// Adds a login for the agent at `agent`, makes it the one in use, and has the server sign it in.
+    pub(crate) fn add_account(&mut self, agent: usize) {
+        let Some(owner) = self.agent_id_at(agent) else {
+            return;
+        };
+        let id = self.new_login(owner.clone());
         self.in_use.retain(|(by, _)| *by != owner);
-        self.logins.push((owner.clone(), id.clone(), name));
         self.in_use.push((owner, id.clone()));
-        self.outbox.push(Outgoing::Accounts {
-            logins: self.logins.clone(),
-            in_use: self.in_use.clone(),
-        });
+        self.send_accounts();
         self.outbox.push(Outgoing::SignIn {
             agent,
             login: Some(id),
         });
-        if let Some(identity) = self.identities.get_mut(agent) {
-            *identity = None;
-        }
+        self.forget_identity(agent);
     }
 
     /// The name a new login of the agent `owner` has until its sign-in tells who it is: the lowest number free of the logins' own, counting the agent's default account as the first.
@@ -1129,15 +1135,10 @@ impl WorkspaceState {
                 session.login = None;
             }
         }
-        if let Some(agent) = self.agent_position(&owner)
-            && let Some(identity) = self.identities.get_mut(agent)
-        {
-            *identity = None;
+        if let Some(agent) = self.agent_position(&owner) {
+            self.forget_identity(agent);
         }
-        self.outbox.push(Outgoing::Accounts {
-            logins: self.logins.clone(),
-            in_use: self.in_use.clone(),
-        });
+        self.send_accounts();
     }
 
     /// Adds the sessions the server of `host` holds that belong to the projects here, and its chats, which belong to none, asks it for the submodules of those projects, and returns each one's position and the server's number for it.
@@ -1277,10 +1278,7 @@ impl WorkspaceState {
             .find(|(owner, id, name)| *owner == held && id == used && name.starts_with("Account "))
         {
             login.2 = who;
-            self.outbox.push(Outgoing::Accounts {
-                logins: self.logins.clone(),
-                in_use: self.in_use.clone(),
-            });
+            self.send_accounts();
         }
     }
 

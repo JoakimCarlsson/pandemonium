@@ -88,36 +88,33 @@ pub fn switch(viewer: &Viewer) {
     else {
         return;
     };
-    if !matches!(viewer.contents, Contents::Text(_)) {
+    if viewer.document().is_none() {
         return;
     }
     let shown = viewer.rendering() == Some(rendering);
     kit::row(Modifier::new(), 1, || {
-        Button::new("Preview", Target::Editor(EditorEvent::PreviewShow))
-            .variant(Variant::Ghost)
-            .size(Size::Xs)
-            .selected(shown)
-            .build();
-        Button::new("Source", Target::Editor(EditorEvent::SourceShow))
-            .variant(Variant::Ghost)
-            .size(Size::Xs)
-            .selected(!shown)
-            .build();
+        for (label, event, selected) in [
+            ("Preview", EditorEvent::PreviewShow, shown),
+            ("Source", EditorEvent::SourceShow, !shown),
+        ] {
+            rustle::key(label, || {
+                Button::new(label, Target::Editor(event))
+                    .variant(Variant::Ghost)
+                    .size(Size::Xs)
+                    .selected(selected)
+                    .build();
+            });
+        }
     });
 }
 
 /// Emits what the strip says about the picture of the file shown: how many pixels it has across and down.
-#[track_caller]
 pub fn dimensions(viewer: &Viewer) {
     let Contents::Picture(picture) = &viewer.contents else {
         return;
     };
-    line(
-        format!("{} × {}", picture.width(), picture.height()),
-        11,
-        1.4,
-        Role::Muted,
-    );
+    let said = format!("{} × {}", picture.width(), picture.height());
+    line(said, 11, 1.4, Role::Muted);
 }
 
 /// Emits the file shown rendered, its diagrams and images drawn as `figures` holds them, in a view `width` by `height` logical pixels, strip included; emits nothing when it is shown as its source.
@@ -147,15 +144,7 @@ pub fn rendered(viewer: &Viewer, figures: &Figures, (width, height): (f32, f32))
 /// Emits a line saying `message` where the rendering would be.
 #[track_caller]
 pub(crate) fn note(message: &str) {
-    kit::column(
-        Modifier::new()
-            .padding_xy(theme::sp(4), 0.0)
-            .padding_xy(0.0, theme::sp(4)),
-        0,
-        || {
-            line(message, 13, 1.4, Role::Subtle);
-        },
-    );
+    kit::note(4, 4, message, 13, Role::Subtle);
 }
 
 /// Emits the markdown `source` of the file at `path` laid out as a page in the middle of a view `width` logical pixels wide, its links pressable and its diagrams and images drawn as `figures` holds them.
@@ -198,8 +187,7 @@ fn framed(picture: &rustle::ImageData, density: f32, room: (f32, f32)) {
         || {
             rustle::image(
                 Modifier::new()
-                    .width(across * fit)
-                    .height(down * fit)
+                    .size(across * fit, down * fit)
                     .panel(Radius::Sm),
                 picture,
                 rustle::ContentScale::Crop,

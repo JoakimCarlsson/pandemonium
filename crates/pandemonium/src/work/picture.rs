@@ -28,8 +28,8 @@ impl Palette {
     /// The colours of `theme`, a dark one when `dark`.
     pub(crate) fn of(theme: &pm_components::theme::Theme, dark: bool) -> Self {
         let hex = |role: Role| {
-            let [red, green, blue, _] = pm_components::theme::Roles::role(theme, role).to_bytes();
-            format!("#{red:02x}{green:02x}{blue:02x}")
+            let color = theme.color(role);
+            format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b)
         };
         let variables = [
             ("background", Role::Background),
@@ -59,11 +59,11 @@ impl Palette {
         .into_iter()
         .map(|(name, role)| (name.to_owned(), hex(role)))
         .collect();
-        let [red, green, blue, _] = pm_components::theme::Roles::role(theme, Role::Text).to_bytes();
+        let text = theme.color(Role::Text);
         Self {
             dark,
             variables,
-            ink: [red, green, blue],
+            ink: [text.r, text.g, text.b],
         }
     }
 }

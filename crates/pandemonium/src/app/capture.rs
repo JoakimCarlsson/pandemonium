@@ -20,7 +20,7 @@ impl App {
             return;
         };
         self.model
-            .update(|screen| *screen = std::mem::take(screen).with_browser_capture_menu(at));
+            .change(|state| state.with_browser_capture_menu(at));
     }
 
     /// Takes in what the helper reported for the reader's additions to the prompt: each becomes a chip, with the pictures attached from the window's own folder, and the previews are started.
@@ -32,9 +32,8 @@ impl App {
                 .map(|capture| capture.files().cloned().collect())
                 .unwrap_or_default();
             let held = capture.is_some();
-            self.model.update(|screen| {
-                *screen = std::mem::take(screen).browser_captured(tab, capture.clone());
-            });
+            self.model
+                .change(|state| state.browser_captured(tab, capture.clone()));
             if !paths.is_empty() {
                 self.work.preview(paths);
             }

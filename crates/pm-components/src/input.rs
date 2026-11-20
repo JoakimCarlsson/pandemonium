@@ -13,7 +13,7 @@ use crate::kit;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
-use rustle::{Icon, phosphor};
+use rustle::{Color, Icon, phosphor};
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -28,7 +28,6 @@ use crate::events::Interactive;
 use crate::marked;
 use crate::parts::glyph;
 use crate::size::Size;
-use crate::theme::Tone;
 use crate::theme::{Radius, Role};
 
 /// How tall a line of a multiline input is as a share of its type size.
@@ -81,8 +80,6 @@ pub struct Input<'a> {
     size: Size,
     /// The glyph before the line, if any.
     leading: Option<Icon>,
-    /// Whether it is switched off.
-    disabled: bool,
     /// Whether what it holds is not acceptable.
     invalid: bool,
     /// How many lines tall a multiline box is at least.
@@ -93,8 +90,6 @@ pub struct Input<'a> {
     scroll: Option<&'a ScrollState>,
     /// What the caller puts around its box: sizes, growth, margins, placement.
     modifier: Modifier,
-    /// The padding that replaces the box's own, when the caller gave one.
-    inner: Option<Modifier>,
 }
 
 impl<'a> Input<'a> {
@@ -107,13 +102,11 @@ impl<'a> Input<'a> {
             variant: Variant::Default,
             size: Size::Md,
             leading: None,
-            disabled: false,
             invalid: false,
             rows: 1,
             secure: false,
             scroll: None,
             modifier: Modifier::new(),
-            inner: None,
         }
     }
 
@@ -167,13 +160,6 @@ impl<'a> Input<'a> {
         self
     }
 
-    /// The input switched off while `disabled` is true: drawn faint, and
-    /// neither taking focus nor answering a press.
-    pub fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
-        self
-    }
-
     /// The input outlined as holding something that is not acceptable.
     pub fn invalid(mut self, invalid: bool) -> Self {
         self.invalid = invalid;
@@ -187,12 +173,6 @@ impl<'a> Input<'a> {
         self
     }
 
-    /// The input with `modifier` in place of its own padding, innermost in its box.
-    pub fn inner(mut self, modifier: Modifier) -> Self {
-        self.inner = Some(modifier);
-        self
-    }
-
     /// Emits the input: a ring and a blinking caret while it holds keyboard
     /// focus, and the selection highlighted.
     #[track_caller]
@@ -201,8 +181,6 @@ impl<'a> Input<'a> {
             return self.build_multiline();
         }
         let (height, font) = match (self.variant, self.size) {
-            (Variant::Bordered, Size::Xs) => (7.0, 12),
-            (Variant::Bordered, Size::Sm) => (8.0, 12),
             (Variant::Bordered, Size::Md) => (9.0, 12),
             (Variant::Bordered, Size::Lg) => (10.0, 12),
             (_, Size::Xs) => (7.0, 12),
@@ -217,23 +195,22 @@ impl<'a> Input<'a> {
         if boxed {
             own = own.background_rounded(theme::color(Role::Surface), Radius::Lg.px());
         }
-        let (rest, focused, danger) = border_colors();
         let held = theme::Focused::Held(crate::focus::is_held(id));
         if boxed || invalid {
-            let outline = if invalid {
-                theme::FocusOutline {
-                    idle: danger,
-                    focused: danger,
-                    radius: Radius::Lg,
-                }
+            let (idle, focused) = if invalid {
+                (theme::role(Role::Danger), theme::role(Role::Danger))
             } else {
-                theme::FocusOutline {
-                    idle: rest,
-                    focused,
-                    radius: Radius::Lg,
-                }
+                (theme::role(Role::Border), theme::role(Role::Focused))
             };
-            own = own.indicated(outline, held);
+            let radius = Radius::Lg;
+            own = own.indicated(
+                theme::FocusOutline {
+                    idle,
+                    focused,
+                    radius,
+                },
+                held,
+            );
         }
         own = own.indicated(
             theme::FocusRing {
@@ -245,20 +222,7 @@ impl<'a> Input<'a> {
         if boxed || invalid {
             own = own.padding(1.0);
         }
-        own = if self.disabled {
-            own.alpha(0.4).cursor(CursorIcon::NotAllowed)
-        } else {
-            own.cursor(CursorIcon::Text)
-                .pressable_menu(id, send(Event::pressing(id)), {
-                    let operations = crate::events::operations();
-                    let field = id;
-                    move || operations.open_field_menu(field)
-                })
-        };
-        own = own.chain(
-            self.inner
-                .unwrap_or_else(|| Modifier::new().padding_xy(theme::sp(3), 0.0)),
-        );
+        own = editing(own, id).padding_xy(theme::sp(3), 0.0);
         let mut kind = theme::text_style(font, 1.4).color(theme::color(Role::Text));
         kind = if self.variant == Variant::Default {
             theme::in_mono(kind)
@@ -266,7 +230,7 @@ impl<'a> Input<'a> {
             kind.line_height(kind.font_size * 1.57)
         };
         let (field, placeholder, leading) = (self.field, self.placeholder, self.leading);
-        let (disabled, secure) = (self.disabled, self.secure);
+        let secure = self.secure;
         kit::row(self.modifier.chain(own), 2, move || {
             if let Some(icon) = leading {
                 glyph(icon, 4.0, Role::Muted);
@@ -277,7 +241,6 @@ impl<'a> Input<'a> {
                 kind,
                 placeholder,
                 lines: None,
-                disabled,
                 secure,
                 scroll: None,
             }
@@ -288,7 +251,6 @@ impl<'a> Input<'a> {
     /// Emits a multiline input: its wrapped lines in a column at least
     /// [`Input::rows`] lines tall, showing [`MAX_LINES`] at most and scrolled
     /// to keep the caret in view, the caret and selection placed in them.
-    #[track_caller]
     fn build_multiline(self) {
         let minimum = self.rows as f32 * LINE + PADDING;
         let text = FieldText {
@@ -297,29 +259,18 @@ impl<'a> Input<'a> {
             kind: typography().color(theme::color(Role::Text)),
             placeholder: self.placeholder,
             lines: Some(MAX_LINES),
-            disabled: self.disabled,
             secure: false,
             scroll: self.scroll,
         };
         let mut own = Modifier::new()
             .fill_max_width()
             .height_in(theme::sp(minimum / 4.0), f32::INFINITY);
-        own = if self.disabled {
-            own.alpha(0.4).cursor(CursorIcon::NotAllowed)
-        } else {
-            own.cursor(CursorIcon::Text)
-                .pressable_menu(self.id, send(Event::pressing(self.id)), {
-                    let operations = crate::events::operations();
-                    let field = self.id;
-                    move || operations.open_field_menu(field)
-                })
-        };
-        own = own.chain(self.inner.unwrap_or_else(|| {
-            Modifier::new()
-                .padding_each(0.0, theme::sp(3.5), 0.0, 0.0)
-                .padding_each(0.0, 0.0, 0.0, theme::sp(1))
-                .padding_xy(theme::sp(4), 0.0)
-        }));
+        own = editing(own, self.id).padding_each(
+            theme::sp(4),
+            theme::sp(3.5),
+            theme::sp(4),
+            theme::sp(1),
+        );
         kit::column(self.modifier.chain(own), 0, move || {
             text.build(Modifier::new().fill_max_width())
         });
@@ -339,8 +290,6 @@ struct FieldText<'a> {
     placeholder: &'a str,
     /// How many lines it shows at most before it scrolls, when it holds several.
     lines: Option<usize>,
-    /// Whether it takes neither focus nor typing.
-    disabled: bool,
     /// Whether its text is shown as dots and kept off the clipboard.
     secure: bool,
     /// The scroll state of its lines, when its owner holds it.
@@ -368,9 +317,9 @@ impl FieldText<'_> {
         let placeholder_style = rustle::TextStyle {
             wrap: rustle::TextWrap::None,
             max_lines: None,
-            ..kind.color(theme::color(Tone::from(Role::Subtle)))
+            ..kind.color(theme::color(Color::from(Role::Subtle)))
         };
-        let focus = crate::focus::follow_focus(id, !self.disabled);
+        let focus = crate::focus::follow_focus(id, true);
         let composing = focus
             .preedit()
             .is_some_and(|preedit| !preedit.text.is_empty());
@@ -405,7 +354,6 @@ impl FieldText<'_> {
         });
         let modifier = modifier.chain(crate::focus::reports_focus(id));
         let options = BasicTextFieldOptions {
-            disabled: self.disabled,
             text_style: Some(style),
             cursor_color: Some(style.color),
             line_limits: match self.lines {
@@ -479,13 +427,13 @@ fn context_press(
     })
 }
 
-/// The border colours of a boxed input at rest, focused and holding something not acceptable.
-fn border_colors() -> (rustle::Color, rustle::Color, rustle::Color) {
-    (
-        theme::role(Role::Border),
-        theme::role(Role::Focused),
-        theme::role(Role::Danger),
-    )
+/// `own` taking the presses of the input `id` with the text cursor, its secondary press opening the input's menu.
+fn editing(own: Modifier, id: Target) -> Modifier {
+    let operations = crate::events::operations();
+    own.cursor(CursorIcon::Text)
+        .pressable_menu(id, send(Event::pressing(id)), move || {
+            operations.open_field_menu(id)
+        })
 }
 
 #[cfg(test)]

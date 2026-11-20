@@ -121,7 +121,6 @@ fn close_button(icon: Icon, id: Target) {
 }
 
 /// Emits the tab of the open file at `index`: its icon and name, set slanted while the file is only being looked at, a dot while it has changes that are not saved, and a button that closes it.
-#[track_caller]
 fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) {
     let tone = tab_tone(shown);
     let name = viewer.path.rsplit('/').next().unwrap_or(&viewer.path);
@@ -169,7 +168,6 @@ fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) {
 }
 
 /// Emits the tab of the excerpts, when there are some: a glyph and what they are of, with a button that closes them.
-#[track_caller]
 fn excerpts_tab(state: &WorkspaceState, shown: bool) {
     let Some(excerpts) = state.excerpts.as_ref() else {
         return;
@@ -208,7 +206,6 @@ fn browser_tab(state: &WorkspaceState, shown: bool) {
 }
 
 /// Emits the tab of the release notes, filled while `shown`.
-#[track_caller]
 fn update_tab(shown: bool) {
     tab_with(
         phosphor::ARROW_DOWN,
@@ -222,7 +219,6 @@ fn update_tab(shown: bool) {
 }
 
 /// Emits a square button in the strip of tabs holding only `icon`, answering to `id`, filled while `on`, saying `hint` when the pointer rests on it and running `on_click` when clicked.
-#[track_caller]
 fn strip_button(icon: Icon, id: Target, on: bool, hint: &str, on_click: impl Fn() + 'static) {
     let looks = theme::InteractionTones::new()
         .hover(Role::SurfaceHover)
@@ -249,7 +245,6 @@ fn strip_button(icon: Icon, id: Target, on: bool, hint: &str, on_click: impl Fn(
 }
 
 /// Emits the buttons at the end of the strip of tabs: the one that opens the menu of panes.
-#[track_caller]
 fn strip_buttons(state: &WorkspaceState) {
     row_arranged(
         Modifier::new(),
@@ -400,7 +395,6 @@ pub(crate) fn starting_page(state: &WorkspaceState, height: f32) {
 }
 
 /// Emits what `item` shows in a pane `area` big, its views given `tall` logical pixels of height as they count it.
-#[track_caller]
 fn item_view(state: &WorkspaceState, item: &Item, area: Area, tall: f32) {
     let width = area.width;
     match (item, state.page, state.open()) {
@@ -432,7 +426,6 @@ fn item_view(state: &WorkspaceState, item: &Item, area: Area, tall: f32) {
 }
 
 /// Emits the excerpts shown in a pane `width` logical pixels wide: the resolver for a file in conflict, the view of changes for what a change set or a timeline holds, and the lines around the hits for a search.
-#[track_caller]
 fn excerpts_item(state: &WorkspaceState, width: f32) {
     match state.excerpts.as_ref().map(|excerpts| &excerpts.source) {
         Some(Source::Conflict(_)) => Conflict::new(state, width).build(),
@@ -452,7 +445,6 @@ fn put_button(words: &str, icon: Icon, id: Target) {
 }
 
 /// Emits what an empty pane at `index` offers: the page, the diff and the browser brought into it, the files shown to open one in it, and closing it.
-#[track_caller]
 fn empty_pane(state: &WorkspaceState, index: usize) {
     let put = |put: usize| Target::Window(WindowEvent::PanePut { pane: index, put });
     let (icon, label_text) = page_label(state);
@@ -593,7 +585,6 @@ fn laid(
 }
 
 /// Emits the highlight over the part of a pane a dragged tab would take, and the tab itself under the pointer, as boxes placed in the window's layer.
-#[track_caller]
 fn drag_marks(state: &WorkspaceState, placed: &[Placed]) {
     let Some(drag) = state.pane_drag.as_ref() else {
         return;
@@ -626,7 +617,6 @@ fn drag_marks(state: &WorkspaceState, placed: &[Placed]) {
 }
 
 /// Emits the main area of a page in a window `window` logical pixels wide and tall: its panes over the terminal dock while the dock shows.
-#[track_caller]
 pub(crate) fn main_area(state: &WorkspaceState, window: (f32, f32)) {
     let area = state.pane_area(window);
     let panes = state.panes();
@@ -663,7 +653,6 @@ pub(crate) fn main_area(state: &WorkspaceState, window: (f32, f32)) {
 }
 
 /// Emits, to lay over the whole window from its layer, the handles between the panes of the main area of a window `window` logical pixels wide and tall, and the marks of a tab being dragged.
-#[track_caller]
 pub(crate) fn main_over(state: &WorkspaceState, window: (f32, f32)) {
     let area = state.pane_area(window);
     let panes = state.panes();

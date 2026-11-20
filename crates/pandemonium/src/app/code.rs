@@ -119,12 +119,12 @@ impl App {
 
     /// Hangs the list of completions under the word it completes, or above it when it would run past the bottom of the window, as the last frame drew the word.
     pub(super) fn place_completion(&mut self) {
-        let Some((start, height)) = self.model.read(|screen| match screen {
-            Screen::Workspace(state) => state
+        let Some((start, height)) = self.model.read(|state| {
+            state
                 .shown_document()
                 .and_then(|document| document.completion.as_ref())
                 .filter(|completion| !completion.loading)
-                .map(|completion| (completion.start, list_height(completion))),
+                .map(|completion| (completion.start, list_height(completion)))
         }) else {
             return;
         };
@@ -137,17 +137,16 @@ impl App {
         } else {
             (x, below)
         };
-        let placed = self.model.read(|screen| match screen {
-            Screen::Workspace(state) => state
+        let placed = self.model.read(|state| {
+            state
                 .shown_document()
                 .and_then(|document| document.completion.as_ref())
                 .is_some_and(|completion| {
                     (completion.at.0 - at.0).abs() < 0.5 && (completion.at.1 - at.1).abs() < 0.5
-                }),
+                })
         });
         if !placed {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).with_completion_at(at));
+            self.model.change(|state| state.with_completion_at(at));
         }
     }
 
@@ -171,24 +170,19 @@ impl App {
         } else {
             (x, top + line + GAP)
         };
-        let placed = self.model.read(|screen| match screen {
-            Screen::Workspace(state) => {
-                (state.signature_at.0 - at.0).abs() < 0.5
-                    && (state.signature_at.1 - at.1).abs() < 0.5
-            }
+        let placed = self.model.read(|state| {
+            (state.signature_at.0 - at.0).abs() < 0.5 && (state.signature_at.1 - at.1).abs() < 0.5
         });
         if !placed {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).with_signature_at(at));
+            self.model.change(|state| state.with_signature_at(at));
         }
     }
 
     /// Saves the file shown once it has gone unchanged long enough with changes to save, when the editor saves by itself, and says when to look again while it has yet to.
     pub(super) fn editor_autosave_due(&mut self) -> Option<Instant> {
-        let waiting = self.model.read(|screen| {
-            let Screen::Workspace(state) = screen;
+        let waiting = self.model.read(|state| {
             let document = state.shown_document()?;
-            let dirty = state.editor.autosave && screen.shown_dirty();
+            let dirty = state.editor.autosave && state.shown_dirty();
             dirty.then(|| {
                 (
                     state
@@ -226,12 +220,10 @@ impl App {
             self.highlight_wait = None;
             return None;
         }
-        let here = self.model.read(|screen| match screen {
-            Screen::Workspace(state) => {
-                let path = state.shown_viewer()?.path.clone();
-                let document = state.shown_document()?;
-                Some((path, document.version, document.field.caret()))
-            }
+        let here = self.model.read(|state| {
+            let path = state.shown_viewer()?.path.clone();
+            let document = state.shown_document()?;
+            Some((path, document.version, document.field.caret()))
         })?;
         if self.highlighted.as_ref() == Some(&here) {
             self.highlight_wait = None;
@@ -251,8 +243,8 @@ impl App {
         }
         self.highlight_wait = None;
         self.highlighted = Some(here);
-        self.model.update(|screen| {
-            *screen = std::mem::take(screen)
+        self.model.change(|state| {
+            state
                 .highlights_requested()
                 .annotations_requested()
                 .folds_requested()
@@ -274,8 +266,7 @@ impl App {
             return;
         };
         let at = self.below(caret);
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).completion_requested(at));
+        self.model.change(|state| state.completion_requested(at));
     }
 
     /// Shows what is known about the place at the caret of the file shown.
@@ -288,8 +279,7 @@ impl App {
             return;
         };
         if let Some(at) = self.card_at(caret) {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).hover_requested(caret, at));
+            self.model.change(|state| state.hover_requested(caret, at));
         }
     }
 
@@ -373,25 +363,22 @@ impl App {
         };
         if let Some(seek) = seek {
             self.model
-                .update(|screen| *screen = std::mem::take(screen).seek_requested(caret, seek, at));
+                .change(|state| state.seek_requested(caret, seek, at));
             return;
         }
-        self.model.update(|screen| {
-            let taken = std::mem::take(screen);
-            *screen = match command {
-                EditorCommand::Rename => taken.rename_requested(caret, self.hung(caret, 72.0)),
-                EditorCommand::Format => taken.formatted_by_hand(),
-                EditorCommand::FormatSelection => taken.selection_formatted(),
-                EditorCommand::CodeActions => taken.code_actions_requested(at),
-                EditorCommand::CopyTrimmed => taken.copied_trimmed(),
-                EditorCommand::Reveal => taken.file_revealed(),
-                EditorCommand::OpenTerminal => taken.terminal_beside_file(),
-                EditorCommand::Permalink => taken.permalink_requested(),
-                EditorCommand::FileHistory => taken.file_history_requested(at),
-                _ => taken,
-            };
+        self.model.change(|state| match command {
+            EditorCommand::Rename => state.rename_requested(caret, self.hung(caret, 72.0)),
+            EditorCommand::Format => state.formatted_by_hand(),
+            EditorCommand::FormatSelection => state.selection_formatted(),
+            EditorCommand::CodeActions => state.code_actions_requested(at),
+            EditorCommand::CopyTrimmed => state.copied_trimmed(),
+            EditorCommand::Reveal => state.file_revealed(),
+            EditorCommand::OpenTerminal => state.terminal_beside_file(),
+            EditorCommand::Permalink => state.permalink_requested(),
+            EditorCommand::FileHistory => state.file_history_requested(at),
+            _ => state,
         });
-        if command == EditorCommand::Rename && self.model.read(Screen::renaming_open) {
+        if command == EditorCommand::Rename && self.model.read(|screen| screen.renaming_open()) {
             self.focus.focus(Target::Editor(EditorEvent::RenameSymbol));
         }
         if command == EditorCommand::OpenTerminal {
@@ -453,15 +440,14 @@ impl App {
 
     /// Takes a press of keys while keys are recorded for an action on the keymap page: Escape gives up, anything else becomes its keys. Says whether it took the press.
     pub(super) fn recording_key(&mut self, event: &KeyEvent) -> bool {
-        if !self.model.read(Screen::recording_keys) {
+        if !self.model.read(|screen| screen.recording_keys()) {
             self.recorded.clear();
             return false;
         }
         if event.key == Key::Escape {
             self.recorded.clear();
             self.record_deadline = None;
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).keys_recorded(None));
+            self.model.change(|state| state.keys_recorded(None));
             return true;
         }
         let Some(chord) = Self::chord_of(event) else {
@@ -473,8 +459,7 @@ impl App {
         } else {
             self.record_deadline = Some(Instant::now() + RECORD_PAUSE);
             let so_far = self.recorded.clone();
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).with_recorded(so_far));
+            self.model.change(|state| state.with_recorded(so_far));
         }
         true
     }
@@ -483,9 +468,8 @@ impl App {
     fn finish_recording(&mut self) {
         self.record_deadline = None;
         let binding = std::mem::take(&mut self.recorded).join(" ");
-        self.model.update(|screen| {
-            *screen = std::mem::take(screen).keys_recorded((!binding.is_empty()).then_some(binding))
-        });
+        self.model
+            .change(|state| state.keys_recorded((!binding.is_empty()).then_some(binding)));
         self.persist();
     }
 
@@ -555,18 +539,14 @@ impl App {
             else {
                 return false;
             };
-            self.model.update(|screen| {
-                *screen = std::mem::take(screen)
-                    .listing_closed()
-                    .extension_command_run(host, command)
-            });
+            self.model
+                .change(|state| state.listing_closed().extension_command_run(host, command));
             self.leave_listing();
             self.deliver();
             return true;
         };
-        self.model.update(|screen| {
-            *screen = std::mem::take(screen).listing_closed().command_used(action)
-        });
+        self.model
+            .change(|state| state.listing_closed().command_used(action));
         self.leave_listing();
         self.perform(action);
         true
@@ -587,7 +567,7 @@ impl App {
 
     /// Gives the keyboard to the field narrowing the list over the file once it is drawn, when one is open.
     fn focus_listing(&mut self) {
-        if self.model.read(Screen::listing_open) {
+        if self.model.read(|screen| screen.listing_open()) {
             self.focus_filter = true;
         }
     }
@@ -596,21 +576,19 @@ impl App {
     fn choose(&mut self, choosing: Choosing) {
         let at = self.across_top();
         self.model
-            .update(|screen| *screen = std::mem::take(screen).choices_requested(choosing, at));
+            .change(|state| state.choices_requested(choosing, at));
         self.focus_listing();
     }
 
     /// Presses the row `row` of the menu of the session shown.
     fn session_command(&mut self, row: Target) {
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).session_command(row));
+        self.model.change(|state| state.session_command(row));
         self.deliver();
     }
 
     /// Carries out `command` on the tab shown, as its menu does.
     fn tab_command(&mut self, command: TabCommand) {
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).shown_tab_command(command));
+        self.model.change(|state| state.shown_tab_command(command));
         self.deliver();
     }
 
@@ -696,8 +674,7 @@ impl App {
             _ => None,
         };
         if let Some(what) = edit {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).lines_edited(what));
+            self.model.change(|state| state.lines_edited(what));
             self.show_editor_caret();
             return;
         }
@@ -708,69 +685,58 @@ impl App {
                 let at = self
                     .editor_caret()
                     .map_or((48.0, 96.0), |caret| self.hung(caret, LISTING_HEIGHT));
-                self.model.update(|screen| {
-                    let taken = std::mem::take(screen);
-                    *screen = if action == Action::FixAll {
-                        taken.fix_all_requested(at)
+                self.model.change(|state| {
+                    if action == Action::FixAll {
+                        state.fix_all_requested(at)
                     } else {
-                        taken.organize_imports_requested(at)
-                    };
+                        state.organize_imports_requested(at)
+                    }
                 });
                 self.deliver();
             }
-            Action::SignatureHelp => self
-                .model
-                .update(|screen| *screen = std::mem::take(screen).signature_requested()),
+            Action::SignatureHelp => self.model.change(|state| state.signature_requested()),
             Action::GoBack => self.navigate(-1),
             Action::GoForward => self.navigate(1),
             Action::Find | Action::Replace => {
                 let replacing = action == Action::Replace;
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).find_opened(replacing));
+                self.model.change(|state| state.find_opened(replacing));
                 self.focus.focus(Target::Editor(EditorEvent::FindField));
                 self.show_editor_caret();
             }
             Action::ToggleFindInSelection => {
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).find_scope_toggled());
+                self.model.change(|state| state.find_scope_toggled());
                 self.focus.focus(Target::Editor(EditorEvent::FindField));
                 self.show_editor_caret();
             }
             Action::FindNext | Action::FindPrevious => {
                 let back = action == Action::FindPrevious;
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).find_stepped(back));
+                self.model.change(|state| state.find_stepped(back));
                 self.show_editor_caret();
             }
             Action::GoToLine => {
                 let at = self
                     .editor_caret()
                     .map_or((48.0, 96.0), |caret| self.hung(caret, 72.0));
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).go_to_line_requested(at));
+                self.model.change(|state| state.go_to_line_requested(at));
                 self.focus.focus(Target::Editor(EditorEvent::GoToLine));
             }
             Action::Outline => {
                 let at = self.across_top();
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).outline_requested(at));
+                self.model.change(|state| state.outline_requested(at));
                 self.focus_listing();
             }
             Action::ProjectSymbols => {
                 let at = self.across_top();
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).symbols_requested(at));
+                self.model.change(|state| state.symbols_requested(at));
                 self.focus_listing();
             }
             Action::FileFinder => {
                 let at = self.across_top();
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).file_finder_requested(at));
+                self.model.change(|state| state.file_finder_requested(at));
                 self.focus_listing();
             }
             Action::SearchProject => {
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).project_search_opened());
+                self.model.change(|state| state.project_search_opened());
                 self.focus
                     .focus(Target::Search(SearchEvent::ProjectSearchField));
             }
@@ -840,32 +806,28 @@ impl App {
                     .and_then(|clipboard| clipboard.text())
                     .unwrap_or_default();
                 self.model
-                    .update(|screen| *screen = std::mem::take(screen).compare_with_clipboard(text));
+                    .change(|state| state.compare_with_clipboard(text));
             }
             Action::CompareWithSaved => {
-                self.model.update(|screen| {
-                    *screen = std::mem::take(screen).compare_with_saved_requested()
-                });
+                self.model
+                    .change(|state| state.compare_with_saved_requested());
                 self.deliver();
             }
             Action::CompareWithFile => {
                 let at = self.across_top();
-                self.model.update(|screen| {
-                    *screen = std::mem::take(screen).compare_with_file_requested(at)
-                });
+                self.model
+                    .change(|state| state.compare_with_file_requested(at));
                 self.focus_listing();
             }
             Action::CommandPalette => {
                 let at = self.across_top();
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).commands_requested(at));
+                self.model.change(|state| state.commands_requested(at));
                 self.focus_listing();
             }
             Action::OpenSettings => self.open_settings(),
             Action::GoToSession => {
                 let at = self.across_top();
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).sessions_requested(at));
+                self.model.change(|state| state.sessions_requested(at));
                 self.focus_listing();
             }
             Action::NewSession => {
@@ -897,9 +859,8 @@ impl App {
                     "mode"
                 };
                 let at = self.across_top();
-                self.model.update(|screen| {
-                    *screen = std::mem::take(screen).agent_category_requested(category, at)
-                });
+                self.model
+                    .change(|state| state.agent_category_requested(category, at));
                 self.focus_listing();
             }
             Action::ChangeAgentSetting => self.choose(Choosing::AgentSetting),
@@ -910,28 +871,22 @@ impl App {
             Action::ForkConversation => self.choose(Choosing::Fork),
             Action::RestoreFiles => self.choose(Choosing::Restore),
             Action::RetryReply => {
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).retry_requested());
+                self.model.change(|state| state.retry_requested());
                 self.deliver();
             }
             Action::StartFresh => {
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).fresh_requested());
+                self.model.change(|state| state.fresh_requested());
                 self.deliver();
             }
             Action::HandOffConversation => {
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).handoff_requested());
+                self.model.change(|state| state.handoff_requested());
                 self.focus.focus(Target::Composer(ComposerEvent::Prompt));
             }
             Action::AskOnTheSide => {
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).btw_requested());
+                self.model.change(|state| state.btw_requested());
                 self.focus.focus(Target::Composer(ComposerEvent::Prompt));
             }
-            Action::CycleMode => self
-                .model
-                .update(|screen| *screen = std::mem::take(screen).mode_cycled()),
+            Action::CycleMode => self.model.change(|state| state.mode_cycled()),
             Action::AllowRequest | Action::AlwaysAllowRequest | Action::RejectRequest => {
                 let verdict = match action {
                     Action::AllowRequest => Verdict::Allow,
@@ -960,12 +915,10 @@ impl App {
             Action::FocusPrompt => self.focus.focus(Target::Composer(ComposerEvent::Prompt)),
             Action::NextTab | Action::PreviousTab => {
                 let delta = if action == Action::NextTab { 1 } else { -1 };
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).tab_stepped(delta));
+                self.model.change(|state| state.tab_stepped(delta));
             }
             Action::ReopenTab => {
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).tab_reopened());
+                self.model.change(|state| state.tab_reopened());
                 self.deliver();
             }
             Action::CloseTab => self.tab_command(TabCommand::Close),
@@ -988,8 +941,7 @@ impl App {
                 } else {
                     -1
                 };
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).pane_stepped(delta));
+                self.model.change(|state| state.pane_stepped(delta));
             }
             Action::ToggleTheme => {
                 let mode = if self.appearance == Appearance::Dark {
@@ -997,8 +949,7 @@ impl App {
                 } else {
                     ThemeMode::Dark
                 };
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).with_theme_mode(mode));
+                self.model.change(|state| state.with_theme_mode(mode));
             }
             Action::ZoomIn | Action::ZoomOut | Action::ResetZoom => {
                 let steps = match action {
@@ -1006,8 +957,7 @@ impl App {
                     Action::ZoomOut => Some(-1),
                     _ => None,
                 };
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).zoomed(steps));
+                self.model.change(|state| state.zoomed(steps));
             }
             Action::CopyPermalink => self.editor_command(EditorCommand::Permalink),
             Action::FileHistory => self.editor_command(EditorCommand::FileHistory),
@@ -1039,8 +989,7 @@ impl App {
             | Action::ToggleGraph
             | Action::CloneRepository
             | Action::RefreshSourceControl => {
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).source_control(action));
+                self.model.change(|state| state.source_control(action));
                 self.deliver();
             }
             _ => {}
@@ -1057,8 +1006,8 @@ impl App {
         {
             return false;
         }
-        self.model.update(|screen| {
-            *screen = std::mem::take(screen)
+        self.model.change(|state| {
+            state
                 .rename_closed()
                 .go_to_line_closed()
                 .color_picker_closed()
@@ -1071,7 +1020,7 @@ impl App {
     pub(super) fn listing_key(&mut self, event: &KeyEvent) -> bool {
         let focused = self.focus.current();
         let held = focused == Some(Target::Editor(EditorEvent::ListingFilter)) || focused.is_none();
-        if !held || !self.model.read(Screen::listing_open) {
+        if !held || !self.model.read(|screen| screen.listing_open()) {
             return false;
         }
         let page = QUICK_SHOWN as isize - 1;
@@ -1081,16 +1030,14 @@ impl App {
             Key::PageUp => -page,
             Key::PageDown => page,
             Key::Escape => {
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).listing_closed());
+                self.model.change(|state| state.listing_closed());
                 self.focus_filter = false;
                 self.leave_listing();
                 return true;
             }
             _ => return false,
         };
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).listing_moved(delta));
+        self.model.change(|state| state.listing_moved(delta));
         true
     }
 
@@ -1111,15 +1058,13 @@ impl App {
             _ => None,
         };
         if let Some(which) = toggled {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).find_toggled(which));
+            self.model.change(|state| state.find_toggled(which));
             self.show_editor_caret();
             return true;
         }
         match event.key {
             Key::Escape => {
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).find_closed());
+                self.model.change(|state| state.find_closed());
                 self.focus.focus(Target::Editor(EditorEvent::EditorField));
             }
             Key::Enter
@@ -1127,14 +1072,12 @@ impl App {
                     && command
                     && modifiers.alt =>
             {
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).replaced_all());
+                self.model.change(|state| state.replaced_all());
             }
             Key::Enter
                 if focused == Some(Target::Editor(EditorEvent::FindField)) && modifiers.shift =>
             {
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).find_stepped(true));
+                self.model.change(|state| state.find_stepped(true));
             }
             _ => return false,
         }
@@ -1163,17 +1106,15 @@ impl App {
                 || id == Target::Editor(EditorEvent::ListingFilter)
                 || matches!(id, Target::Editor(EditorEvent::ListingRow(_)))
         });
-        if !on_listing && self.model.read(Screen::listing_open) {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).listing_closed());
+        if !on_listing && self.model.read(|screen| screen.listing_open()) {
+            self.model.change(|state| state.listing_closed());
         }
         let on_box = on.is_some_and(|id| {
             id == Target::Editor(EditorEvent::RenameSymbol)
                 || id == Target::Editor(EditorEvent::RenameBox)
         });
-        if !on_box && self.model.read(Screen::renaming_open) {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).rename_closed());
+        if !on_box && self.model.read(|screen| screen.renaming_open()) {
+            self.model.change(|state| state.rename_closed());
         }
         let on_color_box = on.is_some_and(|id| {
             id == Target::Editor(EditorEvent::ColorHex)
@@ -1184,17 +1125,15 @@ impl App {
                         | Target::Editor(EditorEvent::ColorSwatch(_))
                 )
         });
-        if !on_color_box && self.model.read(Screen::color_picker_open) {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).color_picker_closed());
+        if !on_color_box && self.model.read(|screen| screen.color_picker_open()) {
+            self.model.change(|state| state.color_picker_closed());
         }
         let on_line_box = on.is_some_and(|id| {
             id == Target::Editor(EditorEvent::GoToLine)
                 || id == Target::Editor(EditorEvent::GoToLineBox)
         });
-        if !on_line_box && self.model.read(Screen::going_to_open) {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).go_to_line_closed());
+        if !on_line_box && self.model.read(|screen| screen.going_to_open()) {
+            self.model.change(|state| state.go_to_line_closed());
         }
     }
 
@@ -1202,16 +1141,16 @@ impl App {
     pub(super) fn settle_rename_focus(&mut self) {
         let focused = self.focus.current();
         let closed = (focused == Some(Target::Editor(EditorEvent::RenameSymbol))
-            && !self.model.read(Screen::renaming_open))
+            && !self.model.read(|screen| screen.renaming_open()))
             || (focused == Some(Target::Editor(EditorEvent::GoToLine))
-                && !self.model.read(Screen::going_to_open))
+                && !self.model.read(|screen| screen.going_to_open()))
             || (focused == Some(Target::Editor(EditorEvent::ColorHex))
-                && !self.model.read(Screen::color_picker_open))
+                && !self.model.read(|screen| screen.color_picker_open()))
             || ((focused == Some(Target::Editor(EditorEvent::FindField))
                 || focused == Some(Target::Editor(EditorEvent::ReplaceField)))
-                && !self.model.read(Screen::find_open))
+                && !self.model.read(|screen| screen.find_open()))
             || (focused == Some(Target::Editor(EditorEvent::ListingFilter))
-                && !self.model.read(Screen::listing_open));
+                && !self.model.read(|screen| screen.listing_open()));
         if closed {
             self.focus.focus(Target::Editor(EditorEvent::EditorField));
             self.show_editor_caret();
@@ -1225,20 +1164,18 @@ impl App {
         }
         let modifiers = event.modifiers;
         let command = modifiers.ctrl || modifiers.meta;
-        let spanning = self.model.read(Screen::selection_spans_lines);
+        let spanning = self.model.read(|screen| screen.selection_spans_lines());
         if event.key == Key::Tab
             && modifiers.shift
             && !command
-            && self.model.read(Screen::snippet_active)
+            && self.model.read(|screen| screen.snippet_active())
         {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).snippet_back());
+            self.model.change(|state| state.snippet_back());
             self.show_editor_caret();
             return true;
         }
         if let Some(what) = Self::line_edit_of(event, spanning) {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).lines_edited(what));
+            self.model.change(|state| state.lines_edited(what));
             self.show_editor_caret();
             return true;
         }
@@ -1261,10 +1198,10 @@ impl App {
         if listing {
             let changed = |screen: Screen| -> Option<Screen> {
                 match event.key {
-                    Key::ArrowUp => Some(screen.listing_moved(-1)),
-                    Key::ArrowDown => Some(screen.listing_moved(1)),
-                    Key::Enter => Some(screen.listing_taken()),
-                    Key::Escape => Some(screen.listing_closed()),
+                    Key::ArrowUp => Some(screen.in_workspace(|state| state.listing_moved(-1))),
+                    Key::ArrowDown => Some(screen.in_workspace(|state| state.listing_moved(1))),
+                    Key::Enter => Some(screen.in_workspace(|state| state.listing_taken(None))),
+                    Key::Escape => Some(screen.in_workspace(|state| state.listing_closed())),
                     _ => None,
                 }
             };
@@ -1279,37 +1216,49 @@ impl App {
                 self.show_editor_caret();
                 return true;
             }
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).listing_closed());
+            self.model.change(|state| state.listing_closed());
         }
         let next = |screen: Screen| -> Option<Screen> {
             match event.key {
-                Key::ArrowUp if completing => Some(screen.completion_moved(-1)),
-                Key::ArrowDown if completing => Some(screen.completion_moved(1)),
+                Key::ArrowUp if completing => {
+                    Some(screen.in_workspace(|state| state.completion_moved(-1)))
+                }
+                Key::ArrowDown if completing => {
+                    Some(screen.in_workspace(|state| state.completion_moved(1)))
+                }
                 Key::Enter | Key::Tab if completing && !modifiers.shift => {
-                    Some(screen.completion_taken())
+                    Some(screen.in_workspace(|state| state.completion_taken(None)))
                 }
-                Key::Escape if completing => Some(screen.completion_closed()),
-                Key::Escape if signing => Some(screen.signature_closed()),
-                Key::Escape if snippeting => Some(screen.snippet_ended()),
-                Key::Escape if finding => Some(screen.find_closed()),
-                Key::Escape if several => Some(screen.lines_edited(LineEdit::OnlyCaret)),
-                Key::Escape if hovering => Some(screen.hover_closed()),
+                Key::Escape if completing => {
+                    Some(screen.in_workspace(|state| state.completion_closed()))
+                }
+                Key::Escape if signing => {
+                    Some(screen.in_workspace(|state| state.signature_closed()))
+                }
+                Key::Escape if snippeting => {
+                    Some(screen.in_workspace(|state| state.snippet_ended()))
+                }
+                Key::Escape if finding => Some(screen.in_workspace(|state| state.find_closed())),
+                Key::Escape if several => {
+                    Some(screen.in_workspace(|state| state.lines_edited(LineEdit::OnlyCaret)))
+                }
+                Key::Escape if hovering => Some(screen.in_workspace(|state| state.hover_closed())),
                 Key::Enter if !command && !modifiers.shift && !modifiers.alt => {
-                    Some(screen.editor_newline())
+                    Some(screen.in_workspace(|state| state.editor_newline()))
                 }
-                Key::Tab if !modifiers.shift && !command => Some(screen.editor_tab()),
+                Key::Tab if !modifiers.shift && !command => {
+                    Some(screen.in_workspace(|state| state.editor_tab()))
+                }
                 _ => match keys::edit(event) {
                     Some(Edit::Insert(character)) if !command => {
-                        Some(screen.editor_typed(character))
+                        Some(screen.in_workspace(|state| state.editor_typed(character)))
                     }
                     _ => None,
                 },
             }
         };
         if hovering && event.key != Key::Escape {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).hover_closed());
+            self.model.change(|state| state.hover_closed());
         }
         let mut taken = false;
         self.model.update(|screen| {
@@ -1346,17 +1295,16 @@ impl App {
         let stretch = self.word_under(over, x, y);
         self.reach(self.reach_under(over, x, y).filter(|_| self.modifiers.ctrl));
         let word = stretch.map(|stretch| stretch.start);
-        let shown = self.model.read(|screen| match screen {
-            Screen::Workspace(state) => state
+        let shown = self.model.read(|state| {
+            state
                 .shown_document()
                 .and_then(|document| document.hover.as_ref())
-                .map(|card| card.offset),
+                .map(|card| card.offset)
         });
         let left = shown.is_some_and(|offset| word != Some(offset));
         if left && std::mem::take(&mut self.hover_entered) {
             self.hover_leaving = None;
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).hover_closed());
+            self.model.change(|state| state.hover_closed());
         } else {
             self.hover_leaving = left.then(|| self.hover_leaving.unwrap_or_else(Instant::now));
         }
@@ -1425,32 +1373,31 @@ impl App {
         };
         let at = self.hung(offset, 150.0);
         self.model
-            .update(|screen| *screen = std::mem::take(screen).color_picker_requested(index, at));
+            .change(|state| state.color_picker_requested(index, at));
         self.deliver();
-        if self.model.read(Screen::color_picker_open) {
+        if self.model.read(|screen| screen.color_picker_open()) {
             self.focus.focus(Target::Editor(EditorEvent::ColorHex));
         }
     }
 
     /// Underlines `stretch` of the file shown as what a press takes to its definition, or nothing, when that differs from what is underlined.
     fn reach(&mut self, stretch: Option<std::ops::Range<usize>>) {
-        let held = self.model.read(|screen| match screen {
-            Screen::Workspace(state) => state
+        let held = self.model.read(|state| {
+            state
                 .shown_document()
-                .and_then(|document| document.reach.clone()),
+                .and_then(|document| document.reach.clone())
         });
         if held != stretch {
-            self.model
-                .update(|screen| *screen = std::mem::take(screen).with_reach(stretch));
+            self.model.change(|state| state.with_reach(stretch));
         }
     }
 
     /// Whether a word of the file shown is underlined as what a press takes to its definition.
     pub(super) fn reaching(&self) -> bool {
-        self.model.read(|screen| match screen {
-            Screen::Workspace(state) => state
+        self.model.read(|state| {
+            state
                 .shown_document()
-                .is_some_and(|document| document.reach.is_some()),
+                .is_some_and(|document| document.reach.is_some())
         })
     }
 
@@ -1473,11 +1420,8 @@ impl App {
             return false;
         };
         if let Some((_, target)) = self.link_under_point(self.under_pointer(), x, y) {
-            self.model.update(|screen| {
-                *screen = std::mem::take(screen)
-                    .with_reach(None)
-                    .link_followed(target)
-            });
+            self.model
+                .change(|state| state.with_reach(None).link_followed(target));
             self.deliver();
             return true;
         }
@@ -1485,12 +1429,10 @@ impl App {
             return false;
         };
         let at = self.hung(stretch.start, LISTING_HEIGHT);
-        self.model.update(|screen| {
-            *screen = std::mem::take(screen).with_reach(None).seek_requested(
-                stretch.start,
-                Seek::Definition,
-                at,
-            )
+        self.model.change(|state| {
+            state
+                .with_reach(None)
+                .seek_requested(stretch.start, Seek::Definition, at)
         });
         self.deliver();
         true
@@ -1504,8 +1446,7 @@ impl App {
             let due = left + HOVER_GRACE;
             if now >= due {
                 self.hover_leaving = None;
-                self.model
-                    .update(|screen| *screen = std::mem::take(screen).hover_closed());
+                self.model.change(|state| state.hover_closed());
             } else {
                 next = Some(due);
             }
@@ -1516,9 +1457,7 @@ impl App {
                 self.hover_rest = None;
                 self.hover_leaving = None;
                 if let Some(at) = self.card_at(start) {
-                    self.model.update(|screen| {
-                        *screen = std::mem::take(screen).hover_requested(start, at)
-                    });
+                    self.model.change(|state| state.hover_requested(start, at));
                 }
             } else {
                 next = Some(next.map_or(due, |held| held.min(due)));

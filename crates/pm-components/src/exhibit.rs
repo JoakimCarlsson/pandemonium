@@ -181,29 +181,24 @@ impl Offer {
         });
         let spelled = form == Marks::Words || (form == Marks::Icons && button.is_none());
         let lone = !spelled && button.is_none();
-        column_arranged(
-            Modifier::new().fill_max_width(),
-            Arrangement::SpacedByAligned(sp(2), Alignment::Center),
-            Alignment::Center,
-            || {
-                if spelled {
-                    let words = self.words();
-                    crate::tooltip::with_tooltip_in(
-                        Modifier::new().fill_max_width(),
-                        hint.clone(),
-                        || caption(words, tone, Modifier::new()),
-                    );
-                }
-                if let Some(button) = button {
-                    button.tooltip(hint.clone()).build();
-                }
-                if lone {
-                    crate::tooltip::with_tooltip(hint.clone(), || {
-                        icon_with(Modifier::new(), phosphor::GLOBE, sp(3.5), tone);
-                    });
-                }
-            },
-        );
+        centred(|| {
+            if spelled {
+                let words = self.words();
+                crate::tooltip::with_tooltip_in(
+                    Modifier::new().fill_max_width(),
+                    hint.clone(),
+                    || caption(words, tone),
+                );
+            }
+            if let Some(button) = button {
+                button.tooltip(hint.clone()).build();
+            }
+            if lone {
+                crate::tooltip::with_tooltip(hint.clone(), || {
+                    icon_with(Modifier::new(), phosphor::GLOBE, sp(3.5), tone);
+                });
+            }
+        });
     }
 }
 
@@ -216,28 +211,34 @@ fn failure(reason: &str, id: Target, form: Marks) {
             .with_icon(phosphor::ARROWS_CLOCKWISE),
     };
     let hint = format!("{reason} · press to render it again");
+    centred(|| {
+        if form == Marks::Words {
+            crate::tooltip::with_tooltip_in(Modifier::new().fill_max_width(), hint.clone(), || {
+                caption(reason, Role::Danger)
+            });
+        }
+        button.tooltip(hint).build();
+    });
+}
+
+/// Emits what `content` emits in a column across the placeholder, two theme steps apart and centred both ways.
+#[track_caller]
+fn centred(content: impl FnOnce()) {
     column_arranged(
         Modifier::new().fill_max_width(),
         Arrangement::SpacedByAligned(sp(2), Alignment::Center),
         Alignment::Center,
-        || {
-            if form == Marks::Words {
-                crate::tooltip::with_tooltip_in(
-                    Modifier::new().fill_max_width(),
-                    hint.clone(),
-                    || caption(reason, Role::Danger, Modifier::new()),
-                );
-            }
-            button.tooltip(hint).build();
-        },
+        content,
     );
 }
 
-/// Emits the line a placeholder says, `words` in `tone` after the globe, cut short where the placeholder is narrower than it, with `modifier` put around its box.
+/// Emits the line a placeholder says, `words` in `tone` after the globe, cut short where the placeholder is narrower than it.
 #[track_caller]
-fn caption(words: &str, tone: Role, modifier: Modifier) {
+fn caption(words: &str, tone: Role) {
     row_arranged(
-        modifier.fill_max_width().padding_xy(theme::sp(3), 0.0),
+        Modifier::new()
+            .fill_max_width()
+            .padding_xy(theme::sp(3), 0.0),
         Arrangement::SpacedByAligned(sp(1.5), Alignment::Center),
         Alignment::Center,
         || {
@@ -302,10 +303,6 @@ pub(crate) struct Preview<'a> {
     width: f32,
     /// What the box offers while the embedded browser is missing, and what its button answers to.
     offer: Option<(&'a Offer, Target)>,
-    /// What the caller puts around the box.
-    modifier: Modifier,
-    /// How the box spreads what it holds and places it across, when the caller chose.
-    arranged: Option<(Arrangement, Alignment)>,
 }
 
 impl<'a> Preview<'a> {
@@ -320,8 +317,6 @@ impl<'a> Preview<'a> {
             viewport,
             width,
             offer: None,
-            modifier: Modifier::new(),
-            arranged: None,
         }
     }
 
@@ -335,37 +330,23 @@ impl<'a> Preview<'a> {
     #[track_caller]
     pub(crate) fn build(self) {
         let width = self.width.max(1.0).floor();
-        let own = |height: f32| {
+        let backing = |height: f32| {
             Modifier::new()
                 .width(width)
                 .height(height)
                 .background_rounded(theme::color(Role::Background), Radius::Lg.px())
-                .outlined(Radius::Lg)
-                .clip()
         };
-        let (arrangement, alignment) = self
-            .arranged
-            .unwrap_or((Arrangement::Center, Alignment::Center));
         match self.figure {
             Some(Ok(drawing)) => {
                 let (across, down) = drawing.size();
                 let height = (width * down / across.max(1.0)).round().max(1.0);
-                rustle::stack_with(
-                    self.modifier.chain(
-                        Modifier::new()
-                            .width(width)
-                            .height(height)
-                            .background_rounded(theme::color(Role::Background), Radius::Lg.px())
-                            .clip(),
-                    ),
-                    || {
-                        rustle::image(
-                            Modifier::new().width(width).height(height),
-                            &drawing.picture,
-                            rustle::ContentScale::Crop,
-                        );
-                    },
-                );
+                rustle::stack_with(backing(height).clip(), || {
+                    rustle::image(
+                        Modifier::new().width(width).height(height),
+                        &drawing.picture,
+                        rustle::ContentScale::Crop,
+                    );
+                });
             }
             other => {
                 let (across, down) = self.viewport;
@@ -382,9 +363,9 @@ impl<'a> Preview<'a> {
                     .offer
                     .filter(|(offer, _)| !waits && other.is_some() && **offer == Offer::Nothing);
                 row_arranged(
-                    self.modifier.chain(own(height)),
-                    arrangement,
-                    alignment,
+                    backing(height).outlined(Radius::Lg).clip(),
+                    Arrangement::Center,
+                    Alignment::Center,
                     || {
                         if let Some((offer, id)) = offered {
                             offer.shown(id, marks_in(width));
@@ -417,12 +398,6 @@ pub struct ExhibitCard<'a> {
     copy: Option<Target>,
     /// What the placeholder of a prototype's picture offers while the embedded browser is missing, and what its button answers to.
     offer: Option<(&'a Offer, Target)>,
-    /// What the caller puts around the card.
-    modifier: Modifier,
-    /// The padding the caller chose in place of the card's own, when it did.
-    inner: Option<Modifier>,
-    /// How the card spreads its heading and body and places them across, when the caller chose.
-    arranged: Option<(Arrangement, Alignment)>,
 }
 
 impl<'a> ExhibitCard<'a> {
@@ -435,9 +410,6 @@ impl<'a> ExhibitCard<'a> {
             open: None,
             copy: None,
             offer: None,
-            modifier: Modifier::new(),
-            inner: None,
-            arranged: None,
         }
     }
 
@@ -456,24 +428,6 @@ impl<'a> ExhibitCard<'a> {
     /// The card offering `offer`, with a button answering to `id`, where the picture of a prototype waits for the embedded browser.
     pub fn offer(mut self, offer: &'a Offer, id: Target) -> Self {
         self.offer = Some((offer, id));
-        self
-    }
-
-    /// The card with `modifier` put around its box, outside its own border and padding.
-    pub fn modifier(mut self, modifier: Modifier) -> Self {
-        self.modifier = self.modifier.chain(modifier);
-        self
-    }
-
-    /// The card with `modifier` in place of its own padding, inside its border.
-    pub fn inner(mut self, modifier: Modifier) -> Self {
-        self.inner = Some(modifier);
-        self
-    }
-
-    /// The card spreading its children by `arrangement` and placing them across by `alignment` in place of its own.
-    pub fn arranged(mut self, arrangement: Arrangement, alignment: Alignment) -> Self {
-        self.arranged = Some((arrangement, alignment));
         self
     }
 
@@ -552,19 +506,11 @@ impl<'a> ExhibitCard<'a> {
     #[track_caller]
     pub fn build(self) {
         let inner = (self.width - CARD_INSET).max(64.0);
-        let padding = self.inner.clone().unwrap_or_else(|| {
+        kit::column(
             Modifier::new()
-                .padding_xy(theme::sp(4), 0.0)
-                .padding_xy(0.0, theme::sp(3))
-        });
-        let own = Modifier::new().outlined(Radius::Xl).chain(padding);
-        let (arrangement, alignment) = self
-            .arranged
-            .unwrap_or((Arrangement::SpacedBy(sp(2.5)), Alignment::Start));
-        column_arranged(
-            self.modifier.clone().chain(own),
-            arrangement,
-            alignment,
+                .outlined(Radius::Xl)
+                .padding_xy(theme::sp(4), theme::sp(3)),
+            2.5,
             || {
                 self.heading();
                 self.body(inner);

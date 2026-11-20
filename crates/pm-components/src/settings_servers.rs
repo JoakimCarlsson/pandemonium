@@ -1,7 +1,6 @@
 //! The pages of the settings panel that list servers: the agents that can be started and the tool servers every agent is started with, each with the ones added, a form to add or change one, and what the public registry offers.
 
 use crate::areas::SettingsEvent;
-use crate::events::{Event, send};
 use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
@@ -9,15 +8,15 @@ use pm_protocol::{McpServer, ToolListing};
 use rustle::TextFieldState;
 use rustle::phosphor;
 use rustle::{Alignment, Arrangement, row_arranged};
-use rustle::{BoxAlignment, CursorIcon, Modifier};
+use rustle::{BoxAlignment, Modifier};
 
 use crate::agent_list::AgentEntry;
 use crate::button::Variant;
-use crate::events::Interactive;
 use crate::input::Input;
 use crate::menu::Menu;
 use crate::parts::{glyph, line, wrap};
 use crate::settings::Section;
+use crate::settings_machines::labelled;
 use crate::settings_row::switch;
 use crate::settings_rows::{INSTALLS, SERVER_MORES, SERVER_SWITCHES};
 use crate::size::Size;
@@ -32,6 +31,15 @@ const PARAGRAPH_WIDTH: f32 = 600.0;
 
 /// The page that explains tool servers.
 const TOOL_SERVERS_DOCS: &str = "https://modelcontextprotocol.io/";
+
+/// The rows of the menu of a server.
+const MENU_ROWS: [Target; 5] = [
+    Target::Settings(SettingsEvent::SettingsMenuToggle),
+    Target::Settings(SettingsEvent::SettingsMenuEdit),
+    Target::Settings(SettingsEvent::SettingsMenuCopy),
+    Target::Settings(SettingsEvent::SettingsMenuWebsite),
+    Target::Settings(SettingsEvent::SettingsMenuRemove),
+];
 
 /// What a registry last answered: the entries, whether it is being asked, and why it could not answer.
 #[derive(Clone, Debug, PartialEq)]
@@ -208,13 +216,8 @@ impl WorkspaceState {
 
     /// Puts away what belongs to the section that was showing, its forms and boxes, and has the tool registry offer its well known servers again if a search had narrowed them.
     pub(crate) fn section_changed(&mut self) {
-        self.settings_servers.form = None;
-        self.settings_servers.key_form = None;
-        self.settings_servers.name_form = None;
+        while self.put_away_innermost() {}
         self.settings_servers.menu = None;
-        self.settings_page.server_form = None;
-        self.settings_page.models.form = None;
-        self.settings_page.library.draft = None;
         self.settings_servers.scroll.jump_to(0.0);
         self.settings_servers.search = TextFieldState::default();
         if !self.settings_servers.searched.is_empty() {
@@ -227,6 +230,13 @@ impl WorkspaceState {
         self.settings_servers.searched = query.clone();
         self.settings_servers.listings.loading = true;
         self.outbox.push(Outgoing::SearchTools { query });
+    }
+
+    /// Has the server keep the tool servers as the page holds them.
+    fn keep_tools(&mut self) {
+        self.outbox.push(Outgoing::SaveMcpServers(
+            self.settings_servers.tools.clone(),
+        ));
     }
 
     /// The state after `action`, which names a button of a server list or its form, was pressed.
@@ -254,11 +264,7 @@ impl WorkspaceState {
             Target::Settings(SettingsEvent::SettingsDocs) => self.outbox.push(Outgoing::Open {
                 address: TOOL_SERVERS_DOCS.to_owned(),
             }),
-            Target::Settings(SettingsEvent::SettingsMenuToggle)
-            | Target::Settings(SettingsEvent::SettingsMenuEdit)
-            | Target::Settings(SettingsEvent::SettingsMenuCopy)
-            | Target::Settings(SettingsEvent::SettingsMenuWebsite)
-            | Target::Settings(SettingsEvent::SettingsMenuRemove) => self.menu_pressed(action),
+            _ if MENU_ROWS.contains(&action) => self.menu_pressed(action),
             _ => {}
         }
         self
@@ -266,18 +272,14 @@ impl WorkspaceState {
 
     /// A form holding the `index`-th server of the list showing, if there is one.
     fn form_for(&self, index: usize) -> Option<ServerForm> {
-        match self.settings? {
-            Section::McpServers => {
-                let tool = self.settings_servers.tools.get(index)?;
-                Some(ServerForm::holding(
-                    Some(index),
-                    &tool.name,
-                    &tool.target,
-                    &tool.env,
-                ))
-            }
-            _ => None,
-        }
+        let tool = (self.settings? == Section::McpServers)
+            .then(|| self.settings_servers.tools.get(index))??;
+        Some(ServerForm::holding(
+            Some(index),
+            &tool.name,
+            &tool.target,
+            &tool.env,
+        ))
     }
 
     /// Keeps what the form holds in the list showing, and has the server keep the list.
@@ -300,17 +302,9 @@ impl WorkspaceState {
                 servers[index].target = target;
                 servers[index].env = env;
             }
-            None => servers.push(McpServer {
-                name,
-                target,
-                env,
-                description: form.description,
-                website: form.website,
-                enabled: true,
-                extension: None,
-            }),
+            None => servers.push(tool(name, target, env, form.description, form.website)),
         }
-        self.outbox.push(Outgoing::SaveMcpServers(servers.clone()));
+        self.keep_tools();
     }
 
     /// Installs the `index`-th entry the tool registry offers: a tool server is kept at once unless it has to be asked for something, in which case its form opens filled in.
@@ -328,18 +322,14 @@ impl WorkspaceState {
             self.settings_servers.form = Some(form);
             return;
         }
-        self.settings_servers.tools.push(McpServer {
-            name: offered.name,
-            target: offered.target,
-            env: offered.env,
-            description: offered.description,
-            website: offered.website,
-            enabled: true,
-            extension: None,
-        });
-        self.outbox.push(Outgoing::SaveMcpServers(
-            self.settings_servers.tools.clone(),
+        self.settings_servers.tools.push(tool(
+            offered.name,
+            offered.target,
+            offered.env,
+            offered.description,
+            offered.website,
         ));
+        self.keep_tools();
     }
 
     /// The state with the menu of the `index`-th server of the list showing open at `at`.
@@ -350,15 +340,7 @@ impl WorkspaceState {
 
     /// Whether `id` names a row of the menu of a server that is open.
     pub(crate) fn settings_menu_row(&self, id: Target) -> bool {
-        self.settings_servers.menu.is_some()
-            && [
-                Target::Settings(SettingsEvent::SettingsMenuToggle),
-                Target::Settings(SettingsEvent::SettingsMenuEdit),
-                Target::Settings(SettingsEvent::SettingsMenuCopy),
-                Target::Settings(SettingsEvent::SettingsMenuWebsite),
-                Target::Settings(SettingsEvent::SettingsMenuRemove),
-            ]
-            .contains(&id)
+        self.settings_servers.menu.is_some() && MENU_ROWS.contains(&id)
     }
 
     /// Switches the `index`-th tool server on or off and has the server keep the list; one an extension brings is left as it is, as it has no switch.
@@ -370,9 +352,7 @@ impl WorkspaceState {
             .filter(|tool| tool.extension.is_none())
         {
             tool.enabled = !tool.enabled;
-            self.outbox.push(Outgoing::SaveMcpServers(
-                self.settings_servers.tools.clone(),
-            ));
+            self.keep_tools();
         }
     }
 
@@ -408,20 +388,14 @@ impl WorkspaceState {
     /// Takes the `index`-th server out of the list showing, and has the server keep the list.
     fn remove_server(&mut self, index: usize) {
         self.settings_servers.form = None;
-        match self.settings {
-            Some(Section::McpServers)
-                if self
-                    .settings_servers
-                    .tools
-                    .get(index)
-                    .is_some_and(|tool| tool.extension.is_none()) =>
-            {
-                self.settings_servers.tools.remove(index);
-                self.outbox.push(Outgoing::SaveMcpServers(
-                    self.settings_servers.tools.clone(),
-                ));
-            }
-            _ => {}
+        let removable = self
+            .settings_servers
+            .tools
+            .get(index)
+            .is_some_and(|tool| tool.extension.is_none());
+        if self.settings == Some(Section::McpServers) && removable {
+            self.settings_servers.tools.remove(index);
+            self.keep_tools();
         }
     }
 
@@ -440,8 +414,27 @@ impl WorkspaceState {
     }
 
     /// What the search box holds, in lower case.
-    fn needle(&self) -> String {
+    pub(crate) fn needle(&self) -> String {
         self.settings_servers.search.text().trim().to_lowercase()
+    }
+}
+
+/// A tool server called `name`, started with `target` and `env`, saying what it is for and where its publisher describes it, switched on.
+fn tool(
+    name: String,
+    target: String,
+    env: Vec<(String, String)>,
+    description: String,
+    website: String,
+) -> McpServer {
+    McpServer {
+        name,
+        target,
+        env,
+        description,
+        website,
+        enabled: true,
+        extension: None,
     }
 }
 
@@ -469,7 +462,6 @@ fn configuration_of(tool: &McpServer) -> String {
 }
 
 /// Emits the menu of a server of the list showing, when one is open.
-#[track_caller]
 pub fn server_menu(state: &WorkspaceState) {
     if let Some(menu) = server_menu_of(state) {
         menu.build();
@@ -479,74 +471,50 @@ pub fn server_menu(state: &WorkspaceState) {
 /// The menu of a server of the list showing, described, when one is open.
 fn server_menu_of(state: &WorkspaceState) -> Option<Menu> {
     let open = state.settings_servers.menu?;
-    let menu = Menu::new(open.at.0, open.at.1);
-    Some(match state.settings? {
+    let entries: Vec<Option<(&str, SettingsEvent, bool)>> = match state.settings? {
         Section::McpServers => {
             let tool = state.settings_servers.tools.get(open.index)?;
+            let shared = [
+                Some((
+                    "Copy Configuration (JSON)",
+                    SettingsEvent::SettingsMenuCopy,
+                    false,
+                )),
+                Some((
+                    "Open Website",
+                    SettingsEvent::SettingsMenuWebsite,
+                    tool.website.is_empty(),
+                )),
+            ];
             if tool.extension.is_some() {
-                return Some(
-                    menu.item(
-                        "Copy Configuration (JSON)",
-                        None,
-                        Target::Settings(SettingsEvent::SettingsMenuCopy),
-                        false,
-                    )
-                    .item(
-                        "Open Website",
-                        None,
-                        Target::Settings(SettingsEvent::SettingsMenuWebsite),
-                        tool.website.is_empty(),
-                    ),
-                );
+                shared.to_vec()
+            } else {
+                let toggle = if tool.enabled { "Disable" } else { "Enable" };
+                [
+                    Some((toggle, SettingsEvent::SettingsMenuToggle, false)),
+                    Some(("Edit…", SettingsEvent::SettingsMenuEdit, false)),
+                    None,
+                ]
+                .into_iter()
+                .chain(shared)
+                .chain([
+                    None,
+                    Some(("Uninstall", SettingsEvent::SettingsMenuRemove, false)),
+                ])
+                .collect()
             }
-            menu.item(
-                if tool.enabled { "Disable" } else { "Enable" },
-                None,
-                Target::Settings(SettingsEvent::SettingsMenuToggle),
-                false,
-            )
-            .item(
-                "Edit…",
-                None,
-                Target::Settings(SettingsEvent::SettingsMenuEdit),
-                false,
-            )
-            .separator()
-            .item(
-                "Copy Configuration (JSON)",
-                None,
-                Target::Settings(SettingsEvent::SettingsMenuCopy),
-                false,
-            )
-            .item(
-                "Open Website",
-                None,
-                Target::Settings(SettingsEvent::SettingsMenuWebsite),
-                tool.website.is_empty(),
-            )
-            .separator()
-            .item(
-                "Uninstall",
-                None,
-                Target::Settings(SettingsEvent::SettingsMenuRemove),
-                false,
-            )
         }
-        _ => menu
-            .item(
-                "Edit…",
-                None,
-                Target::Settings(SettingsEvent::SettingsMenuEdit),
-                false,
-            )
-            .separator()
-            .item(
-                "Remove",
-                None,
-                Target::Settings(SettingsEvent::SettingsMenuRemove),
-                false,
-            ),
-    })
+        _ => vec![
+            Some(("Edit…", SettingsEvent::SettingsMenuEdit, false)),
+            None,
+            Some(("Remove", SettingsEvent::SettingsMenuRemove, false)),
+        ],
+    };
+    let menu = Menu::new(open.at.0, open.at.1);
+    Some(entries.into_iter().fold(menu, |menu, entry| match entry {
+        Some((label, event, off)) => menu.item(label, None, Target::Settings(event), off),
+        None => menu.separator(),
+    }))
 }
 
 /// Whether `id` names a box of the pages.
@@ -585,13 +553,6 @@ fn summary(section: Section) -> &'static str {
         Section::Worktrees => {
             "How the server names the branches of sessions, where it makes their worktrees and what it copies into them."
         }
-        Section::Editor
-        | Section::EditorAppearance
-        | Section::EditorEditing
-        | Section::EditorSaving
-        | Section::EditorIntelligence
-        | Section::EditorSearch
-        | Section::EditorVim => crate::settings_editor::summary(section),
         Section::Agents => {
             "Tailor how agents work in your projects: what new sessions start with, what happens when an agent finishes, the agents that can be started and the tools they are given."
         }
@@ -608,19 +569,16 @@ fn summary(section: Section) -> &'static str {
         Section::Servers => {
             "The servers the window works with: the one on this machine, and ones reached at their address, over ssh, inside WSL or a dev container, or through a tunnel."
         }
-        Section::Customizations
-        | Section::Skills
-        | Section::Instructions
-        | Section::AgentDefinitions
-        | Section::Hooks
-        | Section::Tools => crate::settings_library::summary(section),
-        Section::Results => "",
+        _ if section == Section::Editor || crate::settings_editor::PAGES.contains(&section) => {
+            crate::settings_editor::summary(section)
+        }
+        _ => crate::settings_library::summary(section),
     }
 }
 
-/// The type of the title of a list or a row: `pixels` tall, medium weight, in `tone`, cut short at the edge of its box.
-fn title_type(pixels: u32, tone: Role) -> rustle::TextStyle {
-    kit::strong(pixels, tone)
+/// The tone of the name of a row: the text role while what it names is `on`, quieter while it is not.
+pub(crate) fn name_tone(on: bool) -> Role {
+    if on { Role::Text } else { Role::Muted }
 }
 
 /// Emits the words `content` breaks into, one line under another, in no more than `room` logical pixels across.
@@ -634,7 +592,6 @@ pub(crate) fn paragraph(content: &str, room: f32) {
 }
 
 /// Emits the breadcrumb over the title of `section`'s page, and the title.
-#[track_caller]
 pub(crate) fn page_title(section: Section) {
     kit::column(Modifier::new(), 1, || {
         if let Some(parent) = section.parent() {
@@ -660,8 +617,7 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) {
             .clip()
             .vertical_scroll(&state.settings_servers.scroll)
             .fill_max_width()
-            .padding_xy(theme::sp(8), 0.0)
-            .padding_each(0.0, 0.0, 0.0, theme::sp(6)),
+            .padding_each(theme::sp(8), 0.0, theme::sp(8), theme::sp(6)),
         0,
         || {
             kit::column(Modifier::new().fill_max_width(), 4, || {
@@ -672,88 +628,58 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) {
 }
 
 /// Emits what the page of `section` holds, one part under another, `room` logical pixels across.
-#[track_caller]
 fn section_content(state: &WorkspaceState, section: Section, room: f32) {
-    let about = || paragraph(summary(section), room);
+    use crate::settings_pages::page_rows;
     match section {
         Section::Results => crate::settings_pages::results(state, room),
-        Section::General => {
-            about();
-            crate::settings_pages::page_rows(state, section, room);
-            release_note(state, room);
-        }
-        Section::Browser => {
-            about();
-            crate::settings_pages::page_rows(state, section, room);
-            if let Some(said) = state.settings_page.browser.as_deref() {
-                wrapped_note(said, room);
-            }
-        }
-        Section::Appearance | Section::Terminal | Section::Git | Section::Worktrees => {
-            about();
-            crate::settings_pages::page_rows(state, section, room);
-        }
-        Section::Editor => {
-            about();
-            for page in crate::settings_editor::PAGES {
-                crate::settings_pages::group(page.title(), || {
-                    crate::settings_pages::page_rows(state, page, room);
-                });
-            }
-        }
-        Section::EditorAppearance
-        | Section::EditorEditing
-        | Section::EditorSaving
-        | Section::EditorIntelligence
-        | Section::EditorSearch
-        | Section::EditorVim => {
-            about();
-            crate::settings_pages::page_rows(state, section, room);
-        }
-        Section::Languages => {
-            about();
-            crate::settings_languages::body(state, room);
-        }
-        Section::Keymap => {
-            about();
-            crate::settings_keymap::rows(state, room);
-        }
-        Section::Agents => {
-            about();
-            crate::settings_pages::page_rows(state, section, room);
-            kit::text(Modifier::new(), "Explore", title_type(15, Role::Text));
-            for part in [
-                Section::AgentServers,
-                Section::McpServers,
-                Section::ModelServers,
-                Section::ModelSlots,
-                Section::Orchestration,
-                Section::Usage,
-            ] {
-                card(part, count_of(state, part));
-            }
-        }
-        Section::Servers => {
-            about();
-            crate::settings_machines::body(state, room);
-        }
         Section::AgentServers => crate::settings_agents::body(state, || {}, room),
-        Section::McpServers => list(state, section, room),
+        Section::McpServers => list(state, room),
         Section::ModelServers => crate::settings_models::body(state, || {}, room),
         Section::ModelSlots => crate::settings_slots::body(state, || {}, room),
         Section::Orchestration => crate::settings_orchestration::body(state, || {}, room),
         Section::Usage => crate::settings_usage::body(state, || {}, room),
-        Section::Customizations
-        | Section::Skills
-        | Section::Instructions
-        | Section::AgentDefinitions
-        | Section::Hooks
-        | Section::Tools => crate::settings_library::body(state, section, || {}, room),
+        _ if crate::settings_library::lists(section) => {
+            crate::settings_library::body(state, section, || {}, room)
+        }
+        _ => {
+            paragraph(summary(section), room);
+            match section {
+                Section::Editor => {
+                    for page in crate::settings_editor::PAGES {
+                        crate::settings_pages::group(page.title(), || {
+                            page_rows(state, page, room);
+                        });
+                    }
+                }
+                Section::Languages => crate::settings_languages::body(state, room),
+                Section::Keymap => crate::settings_keymap::rows(state, room),
+                Section::Servers => crate::settings_machines::body(state, room),
+                _ => page_rows(state, section, room),
+            }
+            match section {
+                Section::General => release_note(state, room),
+                Section::Browser => {
+                    if let Some(said) = state.settings_page.browser.as_deref() {
+                        wrapped_note(said, room);
+                    }
+                }
+                Section::Agents => explore(state),
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Emits the overview of the Agents page: a card for each page inside it, with how much is set in it.
+#[track_caller]
+fn explore(state: &WorkspaceState) {
+    kit::text(Modifier::new(), "Explore", kit::strong(15, Role::Text));
+    for part in crate::settings::AGENT_PAGES {
+        card(part, count_of(state, part));
     }
 }
 
 /// Emits what looking for a newer release on the channel followed found, beside the version running, once it was looked for; with the button that opens its page when one is newer.
-#[track_caller]
 fn release_note(state: &WorkspaceState, room: f32) {
     let running = crate::update::RUNNING;
     let Some(release) = state.settings_page.release.as_ref() else {
@@ -772,12 +698,11 @@ fn release_note(state: &WorkspaceState, room: f32) {
             wrapped_note(&said, (room - 160.0).max(120.0));
         });
         if newer {
-            kit::small_button(
+            kit::action(
                 "Open Release Page",
                 Target::Settings(SettingsEvent::SettingsRelease),
                 Variant::Outline,
-            )
-            .build();
+            );
         }
     });
 }
@@ -845,73 +770,81 @@ pub(crate) fn card(section: Section, count: String) {
         .alignment(Alignment::Start)
         .build_with(|| {
             kit::column(Modifier::new().weight(1.0), 1, || {
-                row_arranged(
-                    Modifier::new().fill_max_width(),
-                    Arrangement::SpaceBetween,
-                    Alignment::Center,
-                    || {
-                        kit::text(Modifier::new(), section.title(), title_type(14, Role::Text));
-                        line(count, 12, 1.4, Role::Muted);
-                    },
-                );
-                line(about, 12, 1.4, Role::Muted);
+                spread(|| {
+                    kit::text(
+                        Modifier::new(),
+                        section.title(),
+                        kit::strong(14, Role::Text),
+                    );
+                    note(&count);
+                });
+                note(about);
             });
         });
 }
 
-/// Emits a row of a boxed list: what `content` emits side by side, with room around it.
+/// Emits a row of a boxed list: what `content` emits side by side, three theme steps apart, with three theme steps of room around it and `inset` theme steps before it.
 #[track_caller]
-pub(crate) fn flat_row(content: impl FnOnce()) {
+pub(crate) fn flat_row(inset: u32, content: impl FnOnce()) {
     kit::row(
-        Modifier::new()
-            .padding_xy(theme::sp(3), 0.0)
-            .padding_xy(0.0, theme::sp(3)),
+        Modifier::new().padding_each(theme::sp(inset), theme::sp(3), theme::sp(3), theme::sp(3)),
         3,
         content,
     );
 }
 
-/// Emits the page of one list, `room` logical pixels across: what it is for, the search box, the form while one is open, the servers that are installed and what the registry offers.
+/// Emits `content` in a row across its parent, its children pushed to both ends and centred across it: a heading and the button beside it.
 #[track_caller]
-fn list(state: &WorkspaceState, section: Section, room: f32) {
-    let settings = &state.settings_servers;
-    let form = settings.form.as_ref();
-    let adding = form.is_some_and(|form| form.index.is_none());
-    let needle = state.needle();
-    paragraph(summary(section), room);
-    if section == Section::McpServers {
-        kit::small_button(
-            "Learn more about MCP servers",
-            Target::Settings(SettingsEvent::SettingsDocs),
-            Variant::Ghost,
-        )
-        .modifier(Modifier::new().align(BoxAlignment::TopStart))
-        .build();
-    }
-    search_box(state, section);
-    if let (Some(form), true) = (form, adding) {
-        form_node(form, section);
-    }
-    let installed = installed_rows(state, &needle);
+pub(crate) fn spread(content: impl FnOnce()) {
     row_arranged(
         Modifier::new().fill_max_width(),
         Arrangement::SpaceBetween,
         Alignment::Center,
-        || {
-            heading(
-                "Installed",
-                installed.len(),
-                !settings.installed_folded,
-                Target::Settings(SettingsEvent::SettingsToggleInstalled),
-            );
-            kit::small_button(
-                "Add Server",
-                Target::Settings(SettingsEvent::SettingsAdd),
-                Variant::Outline,
-            )
-            .disabled(adding)
-            .build();
-        },
+        content,
+    );
+}
+
+/// Emits the words of a row of a list, taking the room its controls leave: `title` in `tone` followed by what `badges` emits, over what `under` emits.
+#[track_caller]
+pub(crate) fn titled(title: &str, tone: Role, badges: impl FnOnce(), under: impl FnOnce()) {
+    kit::column(Modifier::new().weight(1.0).clip(), 1, || {
+        kit::row(Modifier::new(), 2, || {
+            kit::text(Modifier::new(), title, kit::strong(13, tone));
+            badges();
+        });
+        under();
+    });
+}
+
+/// Emits the page of the tool servers, `room` logical pixels across: what it is for, the search box, the form while one is open, the servers that are installed and what the registry offers.
+#[track_caller]
+fn list(state: &WorkspaceState, room: f32) {
+    let settings = &state.settings_servers;
+    let form = settings.form.as_ref();
+    let adding = form.is_some_and(|form| form.index.is_none());
+    let needle = state.needle();
+    paragraph(summary(Section::McpServers), room);
+    kit::small_button(
+        "Learn more about MCP servers",
+        Target::Settings(SettingsEvent::SettingsDocs),
+        Variant::Ghost,
+    )
+    .modifier(Modifier::new().align(BoxAlignment::TopStart))
+    .build();
+    search_box(state, Section::McpServers);
+    if let (Some(form), true) = (form, adding) {
+        form_node(form);
+    }
+    let installed = installed_rows(state, &needle);
+    add_heading(
+        "Installed",
+        installed.len(),
+        Some((
+            !settings.installed_folded,
+            Target::Settings(SettingsEvent::SettingsToggleInstalled),
+        )),
+        Target::Settings(SettingsEvent::SettingsAdd),
+        adding,
     );
     if !settings.installed_folded {
         if installed.is_empty() {
@@ -919,11 +852,9 @@ fn list(state: &WorkspaceState, section: Section, room: f32) {
         } else {
             boxed(|| {
                 for shown in installed {
-                    let editing =
-                        form.is_some_and(|form| shown.place.is_some() && form.index == shown.place);
-                    match (editing, form) {
-                        (true, Some(form)) => form_node(form, section),
-                        _ => installed_row(shown),
+                    match form.filter(|form| form.index == Some(shown.place)) {
+                        Some(form) => form_node(form),
+                        None => installed_row(shown),
                     }
                 }
             });
@@ -933,8 +864,10 @@ fn list(state: &WorkspaceState, section: Section, room: f32) {
     heading(
         "Available",
         offers.rows.len(),
-        !settings.available_folded,
-        Target::Settings(SettingsEvent::SettingsToggleAvailable),
+        Some((
+            !settings.available_folded,
+            Target::Settings(SettingsEvent::SettingsToggleAvailable),
+        )),
     );
     wrapped_note(
         "Featured MCP servers from the marketplace. Search to find more.",
@@ -944,14 +877,7 @@ fn list(state: &WorkspaceState, section: Section, room: f32) {
         if !offers.rows.is_empty() {
             boxed(|| {
                 for shown in offers.rows {
-                    offer(
-                        shown.index,
-                        &shown.title,
-                        &shown.description,
-                        "",
-                        shown.action,
-                        shown.installed,
-                    );
+                    offer(shown);
                 }
             });
         }
@@ -965,10 +891,9 @@ fn list(state: &WorkspaceState, section: Section, room: f32) {
 #[track_caller]
 pub(crate) fn search_box(state: &WorkspaceState, section: Section) {
     let placeholder = match section {
-        Section::AgentServers => "Search agents",
+        Section::AgentServers | Section::AgentDefinitions => "Search agents",
         Section::Skills => "Search skills",
         Section::Instructions => "Search instructions",
-        Section::AgentDefinitions => "Search agents",
         Section::Hooks => "Search hooks",
         Section::Tools => "Search tools",
         _ => "Search MCP servers; Enter searches the registry",
@@ -982,23 +907,20 @@ pub(crate) fn search_box(state: &WorkspaceState, section: Section) {
     .build();
 }
 
-/// Emits the name of a list that opens and folds it, with how many rows it holds.
+/// Emits the name of a list with how many rows it holds; while `fold` holds whether the list is open and the toggle that opens and folds it, the name answers to the toggle after a chevron saying which it is.
 #[track_caller]
-fn heading(title: &str, count: usize, open: bool, toggle: Target) {
-    let chevron = if open {
-        phosphor::CARET_DOWN
-    } else {
-        phosphor::CARET_RIGHT
-    };
+fn heading(title: &str, count: usize, fold: Option<(bool, Target)>) {
     kit::row(
-        Modifier::new()
-            .height(theme::sp(9))
-            .cursor(CursorIcon::Pointer)
-            .control(toggle, send(Event::pressing(toggle))),
+        kit::pressable(
+            Modifier::new().height(theme::sp(9)),
+            fold.map(|(_, toggle)| toggle),
+        ),
         2,
         || {
-            glyph(chevron, 4.0, Role::Muted);
-            kit::text(Modifier::new(), title, title_type(15, Role::Text));
+            if let Some((open, _)) = fold {
+                glyph(kit::chevron(open), 4.0, Role::Muted);
+            }
+            kit::text(Modifier::new(), title, kit::strong(15, Role::Text));
             Badge::new(count.to_string()).build();
         },
     );
@@ -1007,9 +929,23 @@ fn heading(title: &str, count: usize, open: bool, toggle: Target) {
 /// Emits the name of a list that does not fold, with how many rows it holds.
 #[track_caller]
 pub(crate) fn heading_only(title: &str, count: usize) {
-    kit::row(Modifier::new().height(theme::sp(9)), 2, || {
-        kit::text(Modifier::new(), title, title_type(15, Role::Text));
-        Badge::new(count.to_string()).build();
+    heading(title, count, None);
+}
+
+/// Emits the name of a list as [`heading`] does, and at the other end the button `add` that opens the form adding a server, turned off while one is being added.
+#[track_caller]
+pub(crate) fn add_heading(
+    title: &str,
+    count: usize,
+    fold: Option<(bool, Target)>,
+    add: Target,
+    adding: bool,
+) {
+    spread(|| {
+        heading(title, count, fold);
+        kit::small_button("Add Server", add, Variant::Outline)
+            .disabled(adding)
+            .build();
     });
 }
 
@@ -1047,16 +983,14 @@ fn reach_of(target: &str, variables: usize) -> String {
 struct InstalledRow {
     /// What it is called.
     title: String,
-    /// How it stands, as small labels beside its name.
-    badges: Vec<(&'static str, Role)>,
     /// What it is for.
     description: String,
     /// What runs it, in the code font.
     detail: String,
-    /// Its place in the list of the ones that can be changed, when it can be.
-    place: Option<usize>,
-    /// Whether it is switched on, when it can be switched.
-    enabled: Option<bool>,
+    /// Its place in the list.
+    place: usize,
+    /// Whether it is switched on.
+    enabled: bool,
     /// Whether its switch is drawn; one an extension brings is switched with the extension, so it has none.
     switchable: bool,
 }
@@ -1076,11 +1010,6 @@ fn installed_rows(state: &WorkspaceState, needle: &str) -> Vec<InstalledRow> {
         .enumerate()
         .map(|(index, tool)| InstalledRow {
             title: tool.name.clone(),
-            badges: if tool.enabled {
-                Vec::new()
-            } else {
-                vec![("Disabled", Role::Subtle)]
-            },
             description: match &tool.extension {
                 Some(extension) => {
                     format!("From the {extension} extension. {}", tool.description)
@@ -1088,8 +1017,8 @@ fn installed_rows(state: &WorkspaceState, needle: &str) -> Vec<InstalledRow> {
                 None => tool.description.clone(),
             },
             detail: reach_of(&tool.target, tool.env.len()),
-            place: Some(index),
-            enabled: Some(tool.enabled),
+            place: index,
+            enabled: tool.enabled,
             switchable: tool.extension.is_none(),
         })
         .filter(matching)
@@ -1147,74 +1076,54 @@ fn offered_rows(state: &WorkspaceState) -> Offered {
     Offered { rows, status }
 }
 
-/// Emits one row of what a registry offers: its name over what it is, and the button that installs it, or says that it is installed; a row past the room for install buttons has none.
+/// Emits one row of what the registry offers: its name over what it is, and the button that installs it, or says that it is installed; a row past the room for install buttons has none.
 #[track_caller]
-fn offer(index: usize, title: &str, description: &str, how: &str, action: &str, installed: bool) {
-    let button = INSTALLS.id(index).map(|install| {
-        if installed {
-            kit::small_button("Installed", install, Variant::Outline).disabled(true)
-        } else {
-            kit::small_button(action, install, Variant::Default)
-        }
-    });
-    flat_row(|| {
-        kit::column(Modifier::new().weight(1.0).clip(), 1, || {
-            kit::text(Modifier::new(), title, title_type(13, Role::Text));
-            kit::text(Modifier::new(), description, kit::line(12, Role::Muted));
-        });
+fn offer(shown: OfferedRow) {
+    flat_row(3, || {
+        titled(&shown.title, Role::Text, || {}, || note(&shown.description));
         kit::row(Modifier::new(), 3, || {
-            if !how.is_empty() {
-                kit::text(
-                    Modifier::new(),
-                    how,
-                    theme::mono_style(11, 1.5)
-                        .color(theme::color(Role::Subtle))
-                        .max_lines(1),
-                );
-            }
-            if let Some(button) = button {
-                button.build();
+            if let Some(install) = INSTALLS.id(shown.index) {
+                if shown.installed {
+                    kit::small_button("Installed", install, Variant::Outline)
+                        .disabled(true)
+                        .build();
+                } else {
+                    kit::action(shown.action, install, Variant::Default);
+                }
             }
         });
     });
 }
 
-/// Emits one row of a list: a name with its labels over what it is for and what runs it, and, for a server that can be changed, its switch and menu.
-#[track_caller]
+/// Emits one row of the list: a name, marked when it is switched off, over what it is for and what runs it, with its switch and menu.
 fn installed_row(shown: InstalledRow) {
-    let dim = shown.enabled == Some(false);
-    flat_row(|| {
-        kit::column(Modifier::new().weight(1.0).clip(), 1, || {
-            kit::row(Modifier::new(), 2, || {
-                kit::text(
-                    Modifier::new(),
-                    shown.title.as_str(),
-                    title_type(13, if dim { Role::Muted } else { Role::Text }),
-                );
-                for (words, tone) in &shown.badges {
-                    Badge::new(*words).tone(*tone).build();
+    flat_row(3, || {
+        titled(
+            &shown.title,
+            name_tone(shown.enabled),
+            || {
+                if !shown.enabled {
+                    Badge::new("Disabled").tone(Role::Subtle).build();
                 }
-            });
-            if !shown.description.is_empty() {
+            },
+            || {
+                if !shown.description.is_empty() {
+                    note(&shown.description);
+                }
                 kit::text(
                     Modifier::new(),
-                    shown.description.as_str(),
-                    kit::line(12, Role::Muted),
+                    shown.detail.as_str(),
+                    kit::line(11, Role::Subtle),
                 );
-            }
-            kit::text(
-                Modifier::new(),
-                shown.detail.as_str(),
-                kit::line(11, Role::Subtle),
-            );
-        });
+            },
+        );
         kit::row(Modifier::new(), 2, || {
-            if let (Some(place), Some(on), true) = (shown.place, shown.enabled, shown.switchable) {
-                switch(on, SERVER_SWITCHES.id(place));
+            if shown.switchable {
+                switch(shown.enabled, SERVER_SWITCHES.id(shown.place));
             }
-            if let Some(more) = shown.place.and_then(|place| SERVER_MORES.id(place)) {
+            if let Some(more) = SERVER_MORES.id(shown.place) {
                 let operations = crate::events::operations();
-                let index = shown.place.unwrap_or_default();
+                let index = shown.place;
                 Button::icon(phosphor::DOTS_THREE, more)
                     .on_click(move || operations.open_settings_menu(index))
                     .build();
@@ -1225,15 +1134,7 @@ fn installed_row(shown: InstalledRow) {
 
 /// Emits the form: a labelled box for each part of a server, and the buttons that keep it or put it away.
 #[track_caller]
-fn form_node(form: &ServerForm, section: Section) {
-    let target = match section {
-        Section::AgentServers => "Command",
-        _ => "Command or address",
-    };
-    let environment = match section {
-        Section::AgentServers => "Environment (NAME=value, separated by spaces)",
-        _ => "Environment or headers (NAME=value, separated by spaces)",
-    };
+fn form_node(form: &ServerForm) {
     kit::column(
         Modifier::new()
             .fill_max_width()
@@ -1248,44 +1149,39 @@ fn form_node(form: &ServerForm, section: Section) {
                 "My server",
             );
             labelled(
-                target,
+                "Command or address",
                 &form.target,
                 Target::Settings(SettingsEvent::SettingsTarget),
                 "npx my-server",
             );
             labelled(
-                environment,
+                "Environment or headers (NAME=value, separated by spaces)",
                 &form.env,
                 Target::Settings(SettingsEvent::SettingsEnv),
                 "TOKEN=abc",
             );
-            kit::row(Modifier::new(), 2, || {
-                kit::small_button(
-                    "Save",
-                    Target::Settings(SettingsEvent::SettingsSave),
-                    Variant::Default,
-                )
-                .disabled(!form.complete())
-                .build();
-                kit::small_button(
-                    "Cancel",
-                    Target::Settings(SettingsEvent::SettingsCancel),
-                    Variant::Ghost,
-                )
-                .build();
-            });
+            kit::confirm_row(
+                "Save",
+                Target::Settings(SettingsEvent::SettingsSave),
+                form.complete(),
+                Target::Settings(SettingsEvent::SettingsCancel),
+            );
         },
     );
 }
 
-/// Emits a box under the words that say what is written in it.
+/// Emits the buttons that end a form, `cancel` then `save`, the second turned off unless the form is `ready`, two theme steps apart and set against the end of the box `modifier` makes.
 #[track_caller]
-fn labelled(words: &str, field: &TextFieldState, id: Target, placeholder: &str) {
-    kit::column(Modifier::new().fill_max_width(), 1, || {
-        line(words, 12, 1.4, Role::Muted);
-        Input::new(field, id)
-            .size(Size::Sm)
-            .placeholder(placeholder)
-            .build();
-    });
+pub(crate) fn form_buttons(modifier: Modifier, cancel: Target, save: Target, ready: bool) {
+    row_arranged(
+        modifier,
+        Arrangement::SpacedByAligned(theme::sp(2), Alignment::End),
+        Alignment::Center,
+        || {
+            kit::action("Cancel", cancel, Variant::Ghost);
+            kit::small_button("Save", save, Variant::Default)
+                .disabled(!ready)
+                .build();
+        },
+    );
 }

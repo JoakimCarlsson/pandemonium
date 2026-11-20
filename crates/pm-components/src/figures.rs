@@ -1,6 +1,5 @@
 //! The pictures a markdown source shows: diagrams written as fenced mermaid code, formulas written in TeX and images it names, each drawn or fetched into pixels and kept under a key.
 
-use crate::events::{Event, send};
 use crate::kit;
 use crate::target::Target;
 use rustle::{Alignment, row_arranged};
@@ -9,9 +8,8 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use pm_markdown::{Block, Image};
-use rustle::{Arrangement, CursorIcon, FlowOptions, Modifier};
+use rustle::{Arrangement, FlowOptions, Modifier};
 
-use crate::events::Interactive;
 use crate::preview::linked_path;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::theme::{Role, sp};
@@ -239,8 +237,18 @@ fn image_size(image: &Image, drawing: &Drawing, width: f32) -> (f32, f32) {
     (across * fit, down * fit)
 }
 
+/// The modifier of a run or an image that is the face of the link numbered `target` from one, which answers to the link's name counted from `links` when links can be pressed; an empty modifier for no link.
+pub(crate) fn link_press(links: Option<Target>, target: impl Into<usize>) -> Modifier {
+    match (links, target.into()) {
+        (Some(base), target) if target > 0 => {
+            let id = base.offset(target - 1);
+            kit::pressed(Modifier::new(), id)
+        }
+        _ => Modifier::new(),
+    }
+}
+
 /// Emits `images` side by side, wrapping onto more rows within `width` logical pixels and set in the middle when `centered`, each drawn as `figures` holds it under `key`, and its words in `pixels` tall type in its place until then; an image that is the face of a link answers to the link's name from `links` up.
-#[track_caller]
 pub(crate) fn images_node(
     images: &[Image],
     centered: bool,
@@ -260,15 +268,7 @@ pub(crate) fn images_node(
             .item_alignment(rustle::Alignment::End),
         || {
             for image in images {
-                let modifier = match (links, image.target) {
-                    (Some(base), target) if target > 0 => {
-                        Modifier::new().cursor(CursorIcon::Pointer).control(
-                            base.offset(usize::from(target) - 1),
-                            send(Event::pressing(base.offset(usize::from(target) - 1))),
-                        )
-                    }
-                    _ => Modifier::new(),
-                };
+                let modifier = link_press(links, image.target);
                 match figures.and_then(|figures| figures.get(&key(image))) {
                     Some(Ok(drawing)) => {
                         let (across, down) = image_size(image, drawing, width);

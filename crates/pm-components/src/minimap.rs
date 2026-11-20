@@ -3,16 +3,14 @@
 use crate::areas::EditorEvent;
 use crate::kit::{self, Frame};
 
-use crate::events::{Event, send};
 use crate::target::Target;
 use crate::theme;
 use pm_treesitter::Kind;
-use rustle::{CursorIcon, Modifier};
+use rustle::{Color, Modifier};
 
-use crate::events::Interactive;
 use crate::marked::{CaretLook, Mark, Paint, marked_line};
 use crate::state::WorkspaceState;
-use crate::theme::{Role, Tone};
+use crate::theme::Role;
 use crate::viewer::kind_role;
 use pm_editor::Document;
 
@@ -131,7 +129,7 @@ fn blocks(text: &str, spans: &[(std::ops::Range<usize>, Kind)], tab: usize) -> (
             .iter()
             .position(|held| *held != Some(role))
             .map_or(roles.len(), |gap| start + gap);
-        marks.push(Mark::new(start..end, Tone::Role(role, INK), Paint::Fill));
+        marks.push(Mark::new(start..end, role.alpha(INK), Paint::Fill));
         start = end;
     }
     (roles.len(), marks)
@@ -145,7 +143,7 @@ fn row_of(document: &Document, index: usize, spans: &[(std::ops::Range<usize>, K
     marked_line(
         Modifier::new().height(ROW),
         &" ".repeat(width),
-        theme::code_style(FONT, ROW / FONT).color(theme::color(Tone::Transparent)),
+        theme::code_style(FONT, ROW / FONT).color(theme::color(Color::TRANSPARENT)),
         marks,
         CaretLook::default(),
     );
@@ -175,12 +173,8 @@ pub(crate) fn minimap(
         .width(WIDTH)
         .fill_max_height()
         .ruled(theme::Side::Left)
-        .clip()
-        .cursor(CursorIcon::Pointer)
-        .control(
-            Target::Editor(EditorEvent::Minimap),
-            send(Event::Editor(EditorEvent::Minimap)),
-        )
+        .clip();
+    let own = kit::pressed(own, Target::Editor(EditorEvent::Minimap))
         .chain(crate::events::minimap_drag());
     rustle::stack_with(own, || {
         kit::column(
@@ -195,9 +189,8 @@ pub(crate) fn minimap(
         rustle::spacer(
             Modifier::new()
                 .offset(0.0, slider_top)
-                .width(WIDTH)
-                .height(size)
-                .background(theme::color(Tone::Role(Role::Muted, 0.2))),
+                .size(WIDTH, size)
+                .background(theme::color(Role::Muted.alpha(0.2))),
         );
     });
 }
@@ -207,13 +200,10 @@ impl WorkspaceState {
     pub fn minimap_pressed(mut self, y: f32, height: f32) -> Self {
         let row = self.editor.row_height();
         let columns = self.wrap_columns();
-        let Some(index) = self.git.shown else {
+        let Some(viewer) = self.chosen_viewer_mut() else {
             return self;
         };
-        let Some(viewer) = self.git.viewers.get_mut(index) else {
-            return self;
-        };
-        let crate::open_files::Contents::Text(document) = &viewer.contents else {
+        let Some(document) = viewer.document() else {
             return self;
         };
         let view = viewer.scroll.scroll().viewport_length();

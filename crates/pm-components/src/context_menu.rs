@@ -94,23 +94,17 @@ pub struct ContextMenu {
 
 /// Whether `id` names a row of the menu.
 pub fn is_menu_item(id: Target) -> bool {
-    [
-        Target::Menu(MenuEvent::MenuUndo),
-        Target::Menu(MenuEvent::MenuRedo),
-        Target::Menu(MenuEvent::MenuCut),
-        Target::Menu(MenuEvent::MenuCopy),
-        Target::Menu(MenuEvent::MenuPaste),
-        Target::Menu(MenuEvent::MenuSelectAll),
-    ]
-    .contains(&id)
-        || EditorCommand::of(id).is_some()
+    use MenuEvent::*;
+    matches!(
+        id,
+        Target::Menu(MenuUndo | MenuRedo | MenuCut | MenuCopy | MenuPaste | MenuSelectAll)
+    ) || EditorCommand::of(id).is_some()
 }
 
 /// How tall the menu over the file shown is, in logical pixels, to keep it inside the window.
 pub const EDITOR_MENU_HEIGHT: f32 = 18.0 * 26.0 + 3.0 * 9.0 + 10.0;
 
 /// Emits the menu over the file shown, opened at `open`: the language server's ways around the code when `coding`, what the selection allows, and the file's place on this machine when it is on this machine, `local`; `keymap` names the keys of each command.
-#[track_caller]
 pub fn editor_menu(
     field: &pm_field::Field,
     open: ContextMenu,
@@ -120,155 +114,55 @@ pub fn editor_menu(
 ) {
     let editable = !field.is_read_only();
     let selected = field.selection().is_some();
-    let command = |menu: Menu, label: &str, _: Option<&str>, which: EditorCommand, on: bool| {
+    let copies = field.can_copy();
+    let edits = coding && editable;
+    use EditorCommand as Do;
+    let command = |label: &'static str, which: EditorCommand, on, rule| {
         let keys = which.action().and_then(|action| keymap.label(action));
-        menu.item(label, keys.as_deref(), which.id(), !on)
+        (label, keys, which.id(), on, rule)
     };
-    let menu = Menu::new(open.at.0, open.at.1)
+    let plain = |label: &'static str, keys: &str, event, on, rule| {
+        (label, Some(keys.to_owned()), Target::Menu(event), on, rule)
+    };
+    Menu::new(open.at.0, open.at.1)
         .width(66.0)
         .row_height(6.5)
-        .on_pick(picked_in_field());
-    let menu = command(
-        menu,
-        "Go to Definition",
-        Some("F12"),
-        EditorCommand::Definition,
-        coding,
-    );
-    let menu = command(
-        menu,
-        "Go to Declaration",
-        None,
-        EditorCommand::Declaration,
-        coding,
-    );
-    let menu = command(
-        menu,
-        "Go to Type Definition",
-        Some("Ctrl+F12"),
-        EditorCommand::TypeDefinition,
-        coding,
-    );
-    let menu = command(
-        menu,
-        "Go to Implementation",
-        Some("Shift+F12"),
-        EditorCommand::Implementation,
-        coding,
-    );
-    let menu = command(
-        menu,
-        "Find All References",
-        Some("Alt+Shift+F12"),
-        EditorCommand::References,
-        coding,
-    );
-    let menu = command(
-        menu,
-        "Show Incoming Calls",
-        Some("Alt+Shift+H"),
-        EditorCommand::IncomingCalls,
-        coding,
-    );
-    let menu = command(
-        menu,
-        "Show Outgoing Calls",
-        None,
-        EditorCommand::OutgoingCalls,
-        coding,
-    );
-    let menu = command(
-        menu,
-        "Show Supertypes",
-        None,
-        EditorCommand::Supertypes,
-        coding,
-    );
-    let menu = command(menu, "Show Subtypes", None, EditorCommand::Subtypes, coding).separator();
-    let menu = command(
-        menu,
-        "Rename Symbol",
-        Some("F2"),
-        EditorCommand::Rename,
-        coding && editable,
-    );
-    let menu = command(
-        menu,
-        "Format Buffer",
-        Some("Alt+Shift+F"),
-        EditorCommand::Format,
-        coding && editable,
-    );
-    let menu = command(
-        menu,
-        "Format Selection",
-        Some("Ctrl+K Ctrl+F"),
-        EditorCommand::FormatSelection,
-        coding && editable && selected,
-    );
-    let menu = command(
-        menu,
-        "Show Code Actions",
-        Some("Ctrl+."),
-        EditorCommand::CodeActions,
-        coding && editable,
-    )
-    .separator()
-    .item(
-        "Cut",
-        Some("Ctrl+X"),
-        Target::Menu(MenuEvent::MenuCut),
-        !(editable && field.can_copy()),
-    )
-    .item(
-        "Copy",
-        Some("Ctrl+C"),
-        Target::Menu(MenuEvent::MenuCopy),
-        !field.can_copy(),
-    );
-    let menu = command(
-        menu,
-        "Copy and Trim",
-        None,
-        EditorCommand::CopyTrimmed,
-        field.can_copy(),
-    )
-    .item(
-        "Paste",
-        Some("Ctrl+V"),
-        Target::Menu(MenuEvent::MenuPaste),
-        !editable,
-    )
-    .separator();
-    let menu = command(
-        menu,
-        "Reveal in File Manager",
-        Some("Ctrl+K R"),
-        EditorCommand::Reveal,
-        local,
-    );
-    let menu = command(
-        menu,
-        "Open in Terminal",
-        None,
-        EditorCommand::OpenTerminal,
-        true,
-    );
-    let menu = command(
-        menu,
-        "Copy Permalink to Line",
-        None,
-        EditorCommand::Permalink,
-        true,
-    );
-    command(
-        menu,
-        "View File History",
-        None,
-        EditorCommand::FileHistory,
-        true,
-    )
-    .build();
+        .on_pick(picked_in_field())
+        .rows([
+            command("Go to Definition", Do::Definition, coding, false),
+            command("Go to Declaration", Do::Declaration, coding, false),
+            command("Go to Type Definition", Do::TypeDefinition, coding, false),
+            command("Go to Implementation", Do::Implementation, coding, false),
+            command("Find All References", Do::References, coding, false),
+            command("Show Incoming Calls", Do::IncomingCalls, coding, false),
+            command("Show Outgoing Calls", Do::OutgoingCalls, coding, false),
+            command("Show Supertypes", Do::Supertypes, coding, false),
+            command("Show Subtypes", Do::Subtypes, coding, true),
+            command("Rename Symbol", Do::Rename, edits, false),
+            command("Format Buffer", Do::Format, edits, false),
+            command(
+                "Format Selection",
+                Do::FormatSelection,
+                edits && selected,
+                false,
+            ),
+            command("Show Code Actions", Do::CodeActions, edits, true),
+            plain(
+                "Cut",
+                "Ctrl+X",
+                MenuEvent::MenuCut,
+                editable && copies,
+                false,
+            ),
+            plain("Copy", "Ctrl+C", MenuEvent::MenuCopy, copies, false),
+            command("Copy and Trim", Do::CopyTrimmed, copies, false),
+            plain("Paste", "Ctrl+V", MenuEvent::MenuPaste, editable, true),
+            command("Reveal in File Manager", Do::Reveal, local, false),
+            command("Open in Terminal", Do::OpenTerminal, true, false),
+            command("Copy Permalink to Line", Do::Permalink, true, false),
+            command("View File History", Do::FileHistory, true, false),
+        ])
+        .build();
 }
 
 /// What picking a row of a field's menu does: the app carries the row out on the field
@@ -284,45 +178,36 @@ fn picked_in_field() -> impl Fn(Target) + 'static {
 pub fn field_menu(field: &TextFieldState, open: ContextMenu, secure: bool) {
     let undo = field.undo_state();
     let copies = !secure && !field.selection().collapsed();
+    let rows = [
+        (
+            "Undo",
+            "Ctrl+Z",
+            MenuEvent::MenuUndo,
+            undo.can_undo(),
+            false,
+        ),
+        (
+            "Redo",
+            "Ctrl+Shift+Z",
+            MenuEvent::MenuRedo,
+            undo.can_redo(),
+            true,
+        ),
+        ("Cut", "Ctrl+X", MenuEvent::MenuCut, copies, false),
+        ("Copy", "Ctrl+C", MenuEvent::MenuCopy, copies, false),
+        ("Paste", "Ctrl+V", MenuEvent::MenuPaste, true, true),
+        (
+            "Select all",
+            "Ctrl+A",
+            MenuEvent::MenuSelectAll,
+            !field.text().is_empty(),
+            false,
+        ),
+    ];
     Menu::new(open.at.0, open.at.1)
         .on_pick(picked_in_field())
-        .item(
-            "Undo",
-            Some("Ctrl+Z"),
-            Target::Menu(MenuEvent::MenuUndo),
-            !undo.can_undo(),
-        )
-        .item(
-            "Redo",
-            Some("Ctrl+Shift+Z"),
-            Target::Menu(MenuEvent::MenuRedo),
-            !undo.can_redo(),
-        )
-        .separator()
-        .item(
-            "Cut",
-            Some("Ctrl+X"),
-            Target::Menu(MenuEvent::MenuCut),
-            !copies,
-        )
-        .item(
-            "Copy",
-            Some("Ctrl+C"),
-            Target::Menu(MenuEvent::MenuCopy),
-            !copies,
-        )
-        .item(
-            "Paste",
-            Some("Ctrl+V"),
-            Target::Menu(MenuEvent::MenuPaste),
-            false,
-        )
-        .separator()
-        .item(
-            "Select all",
-            Some("Ctrl+A"),
-            Target::Menu(MenuEvent::MenuSelectAll),
-            field.text().is_empty(),
-        )
+        .rows(rows.map(|(label, keys, event, on, rule)| {
+            (label, Some(keys.to_owned()), Target::Menu(event), on, rule)
+        }))
         .build();
 }

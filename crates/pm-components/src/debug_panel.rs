@@ -2,25 +2,23 @@
 
 use crate::areas::DebugEvent;
 use crate::button::Variant;
-use crate::events::{Event, send};
 use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
 use crate::theme::sp;
 use pm_protocol::{DebugCategory, DebugView, Standing};
-use rustle::{Alignment, Arrangement, column_arranged};
-use rustle::{BoxAlignment, CursorIcon, Modifier};
-use rustle::{Icon, phosphor};
+use rustle::phosphor;
+use rustle::{Alignment, Arrangement, Color, column_arranged};
+use rustle::{BoxAlignment, Modifier};
 
 use crate::Button;
 use crate::debug::{DEBUG_ROWS, Run, variable_rows};
-use crate::events::Interactive;
 use crate::icons::icon;
 use crate::input::Input;
 use crate::size::Size;
 use crate::state::WorkspaceState;
-use crate::theme::{Role, Tone};
+use crate::theme::Role;
 
 /// How wide the list of the stack is, in logical pixels.
 const STACK_WIDTH: f32 = 220.0;
@@ -36,79 +34,79 @@ fn standing_words(view: &DebugView) -> String {
     }
 }
 
-/// Emits one icon button of the controls: `icon` answering to `id`, explained by `tip`, pressable while `enabled`.
-#[track_caller]
-fn control(icon: Icon, id: Target, tip: &'static str, enabled: bool) {
-    Button::icon(icon, id)
-        .disabled(!enabled)
-        .tooltip(tip)
-        .build();
-}
-
 /// Emits the controls over the program: run on or pause, the three steps and stop, with what the program is doing beside them.
 #[track_caller]
 fn controls(run: &Run) {
     let view = &run.view;
     let paused = view.standing == Standing::Stopped;
     let live = view.standing != Standing::Ended;
-    kit::row(
-        Modifier::new()
-            .fill_max_width()
-            .height(theme::sp(9))
-            .ruled(theme::Side::Bottom)
-            .padding_xy(theme::sp(3), 0.0),
-        1,
-        || {
-            if paused || !live {
-                control(
-                    phosphor::SKIP_FORWARD,
-                    Target::Debug(DebugEvent::DebugContinue),
-                    "Continue",
-                    paused,
-                );
-            } else {
-                control(
-                    phosphor::PAUSE,
-                    Target::Debug(DebugEvent::DebugPause),
-                    "Pause",
-                    view.standing == Standing::Running,
-                );
-            }
-            control(
+    let resume = if paused || !live {
+        (
+            phosphor::SKIP_FORWARD,
+            DebugEvent::DebugContinue,
+            "Continue",
+            paused,
+        )
+    } else {
+        let running = view.standing == Standing::Running;
+        (phosphor::PAUSE, DebugEvent::DebugPause, "Pause", running)
+    };
+    kit::bar(9, 3, 1, || {
+        for (icon, event, tip, enabled) in [
+            resume,
+            (
                 phosphor::ARROW_ARC_RIGHT,
-                Target::Debug(DebugEvent::DebugStepOver),
+                DebugEvent::DebugStepOver,
                 "Step over",
                 paused,
-            );
-            control(
+            ),
+            (
                 phosphor::ARROW_LINE_DOWN,
-                Target::Debug(DebugEvent::DebugStepIn),
+                DebugEvent::DebugStepIn,
                 "Step into",
                 paused,
-            );
-            control(
+            ),
+            (
                 phosphor::ARROW_LINE_UP,
-                Target::Debug(DebugEvent::DebugStepOut),
+                DebugEvent::DebugStepOut,
                 "Step out",
                 paused,
-            );
-            control(
-                phosphor::STOP,
-                Target::Debug(DebugEvent::DebugStop),
-                "Stop",
-                live,
-            );
-            kit::text(
-                Modifier::new().padding_each(theme::sp(2), 0.0, 0.0, 0.0),
-                view.label.clone(),
-                kit::line(12, Role::Muted),
-            );
-            kit::text(
-                Modifier::new().padding_each(theme::sp(2), 0.0, 0.0, 0.0),
-                standing_words(view),
-                kit::line(12, Role::Subtle),
-            );
-        },
+            ),
+            (phosphor::STOP, DebugEvent::DebugStop, "Stop", live),
+        ] {
+            rustle::key(tip, || {
+                Button::icon(icon, Target::Debug(event))
+                    .disabled(!enabled)
+                    .tooltip(tip)
+                    .build();
+            });
+        }
+        for (said, role) in [
+            (view.label.clone(), Role::Muted),
+            (standing_words(view), Role::Subtle),
+        ] {
+            let own = Modifier::new().padding_each(theme::sp(2), 0.0, 0.0, 0.0);
+            kit::text(own, said, kit::line(12, role));
+        }
+    });
+}
+
+/// One line of code-like text 12 pixels tall in `tone`, in the mono family with the reader's ligatures.
+fn code_line(tone: impl Into<Color>) -> rustle::TextStyle {
+    kit::line(12, tone)
+        .font_family(theme::mono())
+        .ligatures(theme::code_ligatures())
+}
+
+/// Emits `title` over a list of the tab, in a row `height` theme steps tall.
+#[track_caller]
+fn heading(title: &str, height: f32) {
+    kit::row(
+        Modifier::new()
+            .height(theme::sp(height))
+            .padding_xy(theme::sp(3), 0.0),
+        0,
+        || kit::text(Modifier::new(), title, kit::line(11, Role::Subtle)),
     );
 }
 
@@ -120,15 +118,7 @@ fn section(title: &str, width: Option<f32>, body: impl FnOnce()) {
         None => Modifier::new().fill_max_height().weight(1.0),
     };
     kit::column(size.ruled(theme::Side::Left), 0, || {
-        kit::row(
-            Modifier::new()
-                .height(theme::sp(7))
-                .padding_xy(theme::sp(3), 0.0),
-            0,
-            || {
-                kit::text(Modifier::new(), title, kit::line(11, Role::Subtle));
-            },
-        );
+        heading(title, 7.0);
         body();
     });
 }
@@ -150,8 +140,8 @@ fn rows_box(scrolled: &rustle::ScrollState, content: impl FnOnce()) {
 /// Emits one row of a list holding what `content` emits, pressed as `id` when it is given one, marked while `selected`.
 #[track_caller]
 fn list_row(id: Option<Target>, selected: bool, content: impl FnOnce()) {
-    let mut own = Modifier::new().fill_max_width().height(theme::sp(6));
-    own = match id {
+    let own = Modifier::new().fill_max_width().height(theme::sp(6));
+    let own = match id {
         Some(id) => {
             let looks = theme::InteractionTones::new().hover(Role::SurfaceHover);
             let looks = if selected {
@@ -159,15 +149,20 @@ fn list_row(id: Option<Target>, selected: bool, content: impl FnOnce()) {
             } else {
                 looks
             };
-            own.indicated(looks, theme::Focused::Rustle)
-                .clip()
-                .cursor(CursorIcon::Pointer)
-                .control(id, send(Event::pressing(id)))
+            kit::pressed(own.indicated(looks, theme::Focused::Rustle).clip(), id)
         }
         None if selected => own.background(theme::color(Role::SurfaceSelected)).clip(),
         None => own.clip(),
     };
     kit::row(own.padding_xy(theme::sp(3), 0.0), 2, content);
+}
+
+/// Emits a row of a list that only says `said`, quietly.
+#[track_caller]
+fn note_row(said: &str) {
+    list_row(None, false, || {
+        kit::text(Modifier::new(), said, kit::line(12, Role::Subtle))
+    });
 }
 
 /// Emits the stack of the paused thread, the frame being looked at marked.
@@ -177,13 +172,10 @@ fn stack(state: &WorkspaceState, run: &Run) {
     section("Call stack", Some(STACK_WIDTH), || {
         rows_box(&state.debug.stack_scroll, || {
             if view.frames.is_empty() {
-                let said = if view.standing == Standing::Running {
+                note_row(if view.standing == Standing::Running {
                     "Running"
                 } else {
                     "Not paused"
-                };
-                list_row(None, false, || {
-                    kit::text(Modifier::new(), said, kit::line(12, Role::Subtle))
                 });
                 return;
             }
@@ -202,10 +194,7 @@ fn stack(state: &WorkspaceState, run: &Run) {
                             kit::text(
                                 Modifier::new(),
                                 frame.name.clone(),
-                                kit::line(12, Role::Text)
-                                    .font_family(theme::mono())
-                                    .ligatures(theme::code_ligatures())
-                                    .max_lines(1),
+                                code_line(Role::Text).max_lines(1),
                             );
                             kit::text(Modifier::new(), place, kit::line(12, Role::Subtle));
                         },
@@ -217,7 +206,6 @@ fn stack(state: &WorkspaceState, run: &Run) {
 }
 
 /// Emits one variable or scope, the row at `index`, indented by its depth, with a chevron when it has members.
-#[track_caller]
 fn variable_row(index: usize, entry: &crate::debug::VariableRow) {
     let id = (entry.reference != 0).then_some(Target::Debug(DebugEvent::DebugVariable(index)));
     let entry = entry.clone();
@@ -231,44 +219,32 @@ fn variable_row(index: usize, entry: &crate::debug::VariableRow) {
 /// How wide, in logical pixels, the chevron of a variable with members is.
 const VARIABLE_CHEVRON: f32 = 12.0;
 
+/// How wide `words` are set in `style`, in whole logical pixels.
+fn width_of(words: &str, style: &rustle::TextStyle) -> f32 {
+    rustle::layout_text(words, style, None).size().width.ceil()
+}
+
 /// Emits the parts of the row of `entry` in `room` logical pixels across: its indent, its chevron or the room of one, its name, and, when it holds one, `=` and its value, then its type.
 ///
 /// The value takes the room the others leave. When there is none, the chevron and the type give up the overflow in proportion to their widths, the chevron drawn smaller and the type cutting itself short, and the value has no room.
-#[track_caller]
 fn variable_parts(entry: &crate::debug::VariableRow, room: f32) {
-    let tone: Tone = if entry.value.is_empty() {
-        Role::Muted.into()
+    let tone = if entry.value.is_empty() {
+        Role::Muted
     } else {
-        Role::Text.into()
+        Role::Text
     };
-    let name_kind = kit::line(12, tone)
-        .font_family(theme::mono())
-        .ligatures(theme::code_ligatures());
+    let name_kind = code_line(tone);
     let equals_kind = kit::line(12, Role::Subtle);
-    let value_kind = kit::line(12, Role::SyntaxString)
-        .font_family(theme::mono())
-        .ligatures(theme::code_ligatures());
     let type_kind = kit::line(11, Role::Subtle);
     let indent = entry.depth as f32 * 12.0;
-    let typed = entry.kind.as_deref().map_or(0.0, |kind| {
-        rustle::layout_text(kind, &type_kind, None)
-            .size()
-            .width
-            .ceil()
-    });
-    let mut used = indent
-        + VARIABLE_CHEVRON
-        + rustle::layout_text(&entry.name, &name_kind, None)
-            .size()
-            .width
-            .ceil()
-        + typed;
+    let typed = entry
+        .kind
+        .as_deref()
+        .map_or(0.0, |kind| width_of(kind, &type_kind));
+    let mut used = indent + VARIABLE_CHEVRON + width_of(&entry.name, &name_kind) + typed;
     let mut parts = 3 + usize::from(entry.kind.is_some());
     if !entry.value.is_empty() {
-        used += rustle::layout_text("=", &equals_kind, None)
-            .size()
-            .width
-            .ceil();
+        used += width_of("=", &equals_kind);
         parts += 2;
     }
     used += sp(2) * (parts - 1) as f32;
@@ -289,17 +265,7 @@ fn variable_parts(entry: &crate::debug::VariableRow, room: f32) {
             rustle::stack_aligned(
                 Modifier::new().size(VARIABLE_CHEVRON * kept, VARIABLE_CHEVRON),
                 BoxAlignment::Center,
-                || {
-                    icon(
-                        if entry.unfolded {
-                            phosphor::CARET_DOWN
-                        } else {
-                            phosphor::CARET_RIGHT
-                        },
-                        3.0 * kept,
-                        Role::Muted,
-                    );
-                },
+                || icon(kit::chevron(entry.unfolded), 3.0 * kept, Role::Muted),
             );
         } else {
             rustle::spacer(Modifier::new().width(VARIABLE_CHEVRON));
@@ -307,6 +273,7 @@ fn variable_parts(entry: &crate::debug::VariableRow, room: f32) {
         kit::text(Modifier::new(), entry.name.clone(), name_kind);
         if !entry.value.is_empty() {
             kit::text(Modifier::new(), "=", equals_kind);
+            let value_kind = code_line(Role::SyntaxString);
             kit::text(Modifier::new().weight(1.0), entry.value.clone(), value_kind);
         }
         if let Some(kind) = &entry.kind {
@@ -319,16 +286,20 @@ fn variable_parts(entry: &crate::debug::VariableRow, room: f32) {
     });
 }
 
-/// Emits a field, padded as the tab's fields are, from what `field` emits.
+/// Emits the small field `id` of the tab over `held`, saying `placeholder` while empty, padded as the tab's fields are.
 #[track_caller]
-fn field_box(field: impl FnOnce()) {
+fn field(held: &rustle::TextFieldState, id: Target, placeholder: &str) {
     kit::column(
         Modifier::new()
             .fill_max_width()
-            .padding_xy(theme::sp(2), 0.0)
-            .padding_xy(0.0, theme::sp(1)),
+            .padding_xy(theme::sp(2), theme::sp(1)),
         0,
-        field,
+        || {
+            Input::new(held, id)
+                .size(Size::Sm)
+                .placeholder(placeholder)
+                .build();
+        },
     );
 }
 
@@ -340,26 +311,12 @@ fn variables(state: &WorkspaceState, run: &Run) {
     section("Variables", None, || {
         rows_box(&state.debug.variables_scroll, || {
             if rows.is_empty() {
-                list_row(None, false, || {
-                    kit::text(
-                        Modifier::new(),
-                        "Nothing to show",
-                        kit::line(12, Role::Subtle),
-                    )
-                });
+                note_row("Nothing to show");
             }
             for (index, entry) in rows.iter().take(DEBUG_ROWS).enumerate() {
                 rustle::key(index, || variable_row(index, entry));
             }
-            kit::row(
-                Modifier::new()
-                    .height(theme::sp(6))
-                    .padding_xy(theme::sp(3), 0.0),
-                0,
-                || {
-                    kit::text(Modifier::new(), "Watch", kit::line(11, Role::Subtle));
-                },
-            );
+            heading("Watch", 6.0);
             for (index, expression) in state.debug.watches.iter().take(DEBUG_ROWS).enumerate() {
                 let shown = match view
                     .watched
@@ -374,21 +331,9 @@ fn variables(state: &WorkspaceState, run: &Run) {
                 };
                 rustle::key(("watch", index), || {
                     list_row(None, false, || {
-                        kit::text(
-                            Modifier::new(),
-                            expression.clone(),
-                            kit::line(12, Role::Text)
-                                .font_family(theme::mono())
-                                .ligatures(theme::code_ligatures()),
-                        );
+                        kit::text(Modifier::new(), expression.clone(), code_line(Role::Text));
                         kit::text(Modifier::new(), "=", kit::line(12, Role::Subtle));
-                        kit::text(
-                            Modifier::new().weight(1.0),
-                            shown.0,
-                            kit::line(12, shown.1)
-                                .font_family(theme::mono())
-                                .ligatures(theme::code_ligatures()),
-                        );
+                        kit::text(Modifier::new().weight(1.0), shown.0, code_line(shown.1));
                         Button::icon(
                             phosphor::X,
                             Target::Debug(DebugEvent::DebugWatchRemove(index)),
@@ -397,15 +342,11 @@ fn variables(state: &WorkspaceState, run: &Run) {
                     });
                 });
             }
-            field_box(|| {
-                Input::new(
-                    &state.debug.watch,
-                    Target::Debug(DebugEvent::DebugWatchField),
-                )
-                .size(Size::Sm)
-                .placeholder("Add an expression to watch")
-                .build();
-            });
+            field(
+                &state.debug.watch,
+                Target::Debug(DebugEvent::DebugWatchField),
+                "Add an expression to watch",
+            );
         });
     });
 }
@@ -446,15 +387,11 @@ fn console(state: &WorkspaceState, run: &Run) {
                     }
                 },
             );
-            field_box(|| {
-                Input::new(
-                    &state.debug.console,
-                    Target::Debug(DebugEvent::DebugConsoleField),
-                )
-                .size(Size::Sm)
-                .placeholder("Evaluate an expression")
-                .build();
-            });
+            field(
+                &state.debug.console,
+                Target::Debug(DebugEvent::DebugConsoleField),
+                "Evaluate an expression",
+            );
         });
     });
 }
@@ -473,18 +410,16 @@ fn idle(state: &WorkspaceState) {
         Alignment::Center,
         || {
             kit::text(Modifier::new(), said, kit::line(13, Role::Subtle));
-            kit::small_button(
+            kit::action(
                 "Start debugging",
                 Target::Debug(DebugEvent::DebugStart),
                 Variant::Default,
-            )
-            .build();
+            );
         },
     );
 }
 
 /// Emits the body of the debug tab.
-#[track_caller]
 pub fn debug_tab(state: &WorkspaceState) {
     match &state.debug.run {
         Some(run) => kit::column(Modifier::new().fill_max_width().weight(1.0), 0, || {

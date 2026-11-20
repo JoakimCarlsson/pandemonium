@@ -4,18 +4,16 @@ use crate::areas::DiffEvent;
 use crate::kit::{self, Frame};
 use crate::theme::Indicated;
 
-use crate::events::{Event, send};
 use crate::target::Target;
 use crate::theme;
 use crate::theme::sp;
+use rustle::Modifier;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
-use rustle::{CursorIcon, Modifier};
+use rustle::{Alignment, Arrangement, Color, column_arranged, row_arranged};
 
-use crate::events::Interactive;
 use crate::icons::icon;
 use crate::marked::{CaretLook, Mark, marked_line};
-use crate::theme::{Radius, Role, Tone};
+use crate::theme::{Radius, Role};
 
 use crate::button::Variant;
 use crate::diff_syntax::{DiffColours, shown};
@@ -28,11 +26,6 @@ use crate::{Button, Input, Tally};
 
 /// How tall a line of a diff is, in logical pixels.
 const ROW: f32 = 20.0;
-
-/// How many pixels one logical pixel of the sizes below comes to: the rows, headers and notes are set in steps that follow the interface size, while the view and the scroll are counted in pixels.
-fn pixels() -> f32 {
-    crate::theme::step_scale()
-}
 
 /// The width of what is beside a pair of columns of code: the margins and rules of a file, in logical pixels.
 const SECTION_SIDES: f32 = 34.0;
@@ -71,43 +64,31 @@ fn numbered(diff: &[DiffLine]) -> Vec<Numbered<'_>> {
     let (mut old, mut new) = (1, 1);
     diff.iter()
         .enumerate()
-        .map(|(at, line)| match line.kind {
-            Kind::Hunk => {
-                (old, new) = starts(&line.text).unwrap_or((old, new));
-                Numbered {
-                    line,
-                    at,
-                    old: None,
-                    new: None,
+        .map(|(at, line)| {
+            let (old_number, new_number) = match line.kind {
+                Kind::Hunk => {
+                    (old, new) = starts(&line.text).unwrap_or((old, new));
+                    (None, None)
                 }
-            }
-            Kind::Add => {
-                new += 1;
-                Numbered {
-                    line,
-                    at,
-                    old: None,
-                    new: Some(new - 1),
+                Kind::Add => {
+                    new += 1;
+                    (None, Some(new - 1))
                 }
-            }
-            Kind::Remove => {
-                old += 1;
-                Numbered {
-                    line,
-                    at,
-                    old: Some(old - 1),
-                    new: None,
+                Kind::Remove => {
+                    old += 1;
+                    (Some(old - 1), None)
                 }
-            }
-            Kind::Context => {
-                old += 1;
-                new += 1;
-                Numbered {
-                    line,
-                    at,
-                    old: Some(old - 1),
-                    new: Some(new - 1),
+                Kind::Context => {
+                    old += 1;
+                    new += 1;
+                    (Some(old - 1), Some(new - 1))
                 }
+            };
+            Numbered {
+                line,
+                at,
+                old: old_number,
+                new: new_number,
             }
         })
         .collect()
@@ -162,7 +143,8 @@ fn rows(change: &Change) -> Vec<Row<'_>> {
 
 /// How many characters of code one side of a row holds on a line, in a view `width` wide.
 fn columns(width: f32) -> usize {
-    let side = (width - SECTION_SIDES * pixels()) / 2.0 - GUTTER_AND_PADDING * pixels();
+    let scale = theme::step_scale();
+    let side = (width - SECTION_SIDES * scale) / 2.0 - GUTTER_AND_PADDING * scale;
     let character = CODE_PIXELS * crate::theme::text_scale() * CODE_CHARACTER;
     ((side / character) as usize).max(8)
 }
@@ -193,7 +175,7 @@ fn pieces(shown: &str, columns: usize) -> Vec<std::ops::Range<usize>> {
 }
 
 /// The type the code of a diff is set in: 12 pixels tall, a line height of 1.4 times that, in the code font, in `tone`.
-fn code_type(tone: impl Into<Tone>) -> rustle::TextStyle {
+fn code_type(tone: impl Into<Color>) -> rustle::TextStyle {
     theme::mono_style(12, 1.4).color(theme::color(tone))
 }
 
@@ -201,12 +183,11 @@ fn code_type(tone: impl Into<Tone>) -> rustle::TextStyle {
 #[track_caller]
 pub fn diff_line(kind: Kind, content: &str, marks: Vec<Mark>) {
     let (marker, fill, tone) = match kind {
-        Kind::Hunk => (" ", Some(Tone::from(Role::Surface)), Role::Subtle),
+        Kind::Hunk => ("", Some(Color::from(Role::Surface)), Role::Subtle),
         Kind::Context => (" ", None, Role::Muted),
-        Kind::Add => ("+", Some(Tone::from(Role::Success).alpha(0.12)), Role::Text),
-        Kind::Remove => ("-", Some(Tone::from(Role::Danger).alpha(0.12)), Role::Text),
+        Kind::Add => ("+", Some(Role::Success.alpha(0.12)), Role::Text),
+        Kind::Remove => ("-", Some(Role::Danger.alpha(0.12)), Role::Text),
     };
-    let marker = if kind == Kind::Hunk { "" } else { marker };
     let mut own = Modifier::new().fill_max_width().height(theme::sp(5));
     if let Some(fill) = fill {
         own = own.background(theme::color(fill));
@@ -232,22 +213,22 @@ pub fn diff_line(kind: Kind, content: &str, marks: Vec<Mark>) {
 }
 
 /// The tint behind a line, the stronger one behind its number, and the colour of the number.
-fn tints(kind: Option<Kind>) -> (Option<Tone>, Option<Tone>, Role) {
+fn tints(kind: Option<Kind>) -> (Option<Color>, Option<Color>, Role) {
     match kind {
         Some(Kind::Add) => (
-            Some(Tone::from(Role::Success).alpha(0.12)),
-            Some(Tone::from(Role::Success).alpha(0.25)),
+            Some(Role::Success.alpha(0.12)),
+            Some(Role::Success.alpha(0.25)),
             Role::Success,
         ),
         Some(Kind::Remove) => (
-            Some(Tone::from(Role::Danger).alpha(0.12)),
-            Some(Tone::from(Role::Danger).alpha(0.25)),
+            Some(Role::Danger.alpha(0.12)),
+            Some(Role::Danger.alpha(0.25)),
             Role::Danger,
         ),
         Some(_) => (None, None, Role::Subtle),
         None => (
-            Some(Tone::from(Role::Surface).alpha(0.6)),
-            Some(Tone::from(Role::Surface).alpha(0.6)),
+            Some(Role::Surface.alpha(0.6)),
+            Some(Role::Surface.alpha(0.6)),
             Role::Subtle,
         ),
     }
@@ -265,9 +246,7 @@ fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<Target>) {
                 Some(tint) => looks.idle(tint),
                 None => looks,
             };
-            own.indicated(looks, theme::Focused::Rustle)
-                .cursor(CursorIcon::Pointer)
-                .control(id, send(Event::pressing(id)))
+            kit::pressed(own.indicated(looks, theme::Focused::Rustle), id)
                 .chain(crate::events::comment_drag(id))
         }
         None => match tint {
@@ -353,7 +332,7 @@ fn half(
     });
     let (fill, _, _) = tints(kind);
     let fill = if lit {
-        Some(Tone::from(Role::Accent).alpha(0.25))
+        Some(Role::Accent.alpha(0.25))
     } else {
         fill
     };
@@ -377,7 +356,6 @@ fn half(
 }
 
 /// Emits the row of a hunk header.
-#[track_caller]
 fn hunk_row(header: &str) {
     kit::row(
         Modifier::new()
@@ -410,7 +388,6 @@ fn row_height(row: &Row, columns: usize) -> usize {
 }
 
 /// Emits a diff row of the change at `change`, its code coloured as `colours` says.
-#[track_caller]
 fn diff_row(
     row_of: &Row,
     colours: &DiffColours,
@@ -427,24 +404,17 @@ fn diff_row(
                 .height(theme::sp(5.0 * lines as f32)),
             0,
             || {
-                half(
-                    old.as_ref(),
-                    colours,
-                    change,
-                    false,
-                    selected,
-                    columns,
-                    lines,
-                );
-                half(
-                    new.as_ref(),
-                    colours,
-                    change,
-                    true,
-                    selected,
-                    columns,
-                    lines,
-                );
+                for (entry, new) in [(old, false), (new, true)] {
+                    half(
+                        entry.as_ref(),
+                        colours,
+                        change,
+                        new,
+                        selected,
+                        columns,
+                        lines,
+                    );
+                }
             },
         ),
     }
@@ -500,31 +470,20 @@ fn comment_card(index: usize, comment: &Comment, width: f32) {
     let body = wrap(&comment.text, 13, width);
     under(comment.range, || {
         card(false, Arrangement::Start, || {
-            kit::row(
-                Modifier::new()
-                    .fill_max_width()
-                    .height(theme::sp(8))
-                    .ruled(theme::Side::Bottom)
-                    .padding_xy(theme::sp(3), 0.0),
-                2,
-                || {
-                    line(about, 12, 1.4, Role::Subtle);
-                    kit::column(
-                        Modifier::new()
-                            .outlined(Radius::Full)
-                            .padding_xy(theme::sp(2), 0.0),
-                        0,
-                        || line("Not sent", 11, 1.4, Role::Muted),
-                    );
-                    spacer();
-                    Button::icon(phosphor::X, Target::Diff(DiffEvent::CommentRemove(index)))
-                        .build();
-                },
-            );
+            kit::bar(8, 3, 2, || {
+                line(about, 12, 1.4, Role::Subtle);
+                kit::column(
+                    Modifier::new()
+                        .outlined(Radius::Full)
+                        .padding_xy(theme::sp(2), 0.0),
+                    0,
+                    || line("Not sent", 11, 1.4, Role::Muted),
+                );
+                spacer();
+                Button::icon(phosphor::X, Target::Diff(DiffEvent::CommentRemove(index))).build();
+            });
             kit::column(
-                Modifier::new()
-                    .padding_xy(theme::sp(3), 0.0)
-                    .padding_xy(0.0, theme::sp(2.5)),
+                Modifier::new().padding_xy(theme::sp(3), theme::sp(2.5)),
                 0,
                 || {
                     for text in &body {
@@ -537,7 +496,6 @@ fn comment_card(index: usize, comment: &Comment, width: f32) {
 }
 
 /// Emits the form for a comment on `target`: what it is about, a box to write it in, and the buttons to keep it or drop it.
-#[track_caller]
 fn comment_box(state: &WorkspaceState, target: CommentTarget) {
     let about = target
         .range
@@ -555,12 +513,11 @@ fn comment_box(state: &WorkspaceState, target: CommentTarget) {
                 .build();
             kit::row(Modifier::new().fill_max_width(), 2, || {
                 spacer();
-                kit::small_button(
+                kit::action(
                     "Cancel",
                     Target::Diff(DiffEvent::CommentCancel),
                     Variant::Ghost,
-                )
-                .build();
+                );
                 kit::small_button(
                     "Add comment",
                     Target::Diff(DiffEvent::CommentAdd),
@@ -574,7 +531,6 @@ fn comment_box(state: &WorkspaceState, target: CommentTarget) {
 }
 
 /// Emits the button that marks a file as read, or takes the mark off.
-#[track_caller]
 fn viewed_button(viewed: bool, id: Target) {
     Button::icon(phosphor::CHECK, id)
         .size(Size::Xs)
@@ -590,18 +546,12 @@ const HEADER_MARKS: [f32; 2] = [3.5, 4.0];
 /// Emits the parts of a file header that answer to its fold, in `room` logical pixels across: the chevron, open when `open`, the icon of the file `name` and `name` itself, then its `directory`.
 ///
 /// When they do not fit, the chevron and the icon give up their width, in proportion to it, as far as the overflow goes or until they have none; the name then takes what it needs of what is left, cut short at its edge, and the folder the rest, cut off at the header's edge.
-#[track_caller]
 fn heading_parts(name: &str, directory: &str, open: bool, room: f32) {
     let name_kind = kit::strong(13, Role::Text);
     let directory_kind = theme::mono_style(11, 1.4).color(theme::color(Role::Subtle));
-    let name_width = rustle::layout_text(name, &name_kind, None)
-        .size()
-        .width
-        .ceil();
-    let directory_width = rustle::layout_text(directory, &directory_kind, None)
-        .size()
-        .width
-        .ceil();
+    let width = |text: &str, kind| rustle::layout_text(text, kind, None).size().width.ceil();
+    let (name_width, directory_width) =
+        (width(name, &name_kind), width(directory, &directory_kind));
     let marks = sp(HEADER_MARKS[0] + HEADER_MARKS[1]);
     let gaps = sp(2) * 3.0;
     let over = (marks + name_width + directory_width + gaps - room).max(0.0);
@@ -611,15 +561,7 @@ fn heading_parts(name: &str, directory: &str, open: bool, room: f32) {
             Modifier::new().width(sp(HEADER_MARKS[0]) * kept).clip(),
             0,
             || {
-                icon(
-                    if open {
-                        phosphor::CARET_DOWN
-                    } else {
-                        phosphor::CARET_RIGHT
-                    },
-                    HEADER_MARKS[0],
-                    Role::Muted,
-                );
+                icon(kit::chevron(open), HEADER_MARKS[0], Role::Muted);
             },
         );
         kit::column(
@@ -635,7 +577,6 @@ fn heading_parts(name: &str, directory: &str, open: bool, room: f32) {
 }
 
 /// Emits the header of `change`, the change at `index`, unfolded when `open`, with the count of `notes` on it; when the header is too narrow the chevron and the file icon give up their room first, then the folder, which is cut off at the edge.
-#[track_caller]
 fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
     let mut own = Modifier::new()
         .fill_max_width()
@@ -646,14 +587,10 @@ fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
     }
     kit::row(own.padding_xy(theme::sp(3), 0.0), 2, || {
         kit::row(
-            Modifier::new()
-                .weight(1.0)
-                .clip()
-                .cursor(CursorIcon::Pointer)
-                .control(
-                    Target::Diff(DiffEvent::DiffFold(index)),
-                    send(Event::Diff(DiffEvent::DiffFold(index))),
-                ),
+            kit::pressed(
+                Modifier::new().weight(1.0).clip(),
+                Target::Diff(DiffEvent::DiffFold(index)),
+            ),
             2,
             || {
                 let name = change.name().to_owned();
@@ -874,8 +811,7 @@ impl Shown<'_> {
             Item::Reading(_) => kit::row_top(
                 Modifier::new()
                     .height(theme::sp(change.expected_rows() as f32 * ROW / 4.0))
-                    .padding_xy(theme::sp(3), 0.0)
-                    .padding_xy(0.0, theme::sp(2)),
+                    .padding_xy(theme::sp(3), theme::sp(2)),
                 0,
                 || line("Reading the diff…", 12, 1.4, Role::Subtle),
             ),
@@ -962,7 +898,11 @@ fn summary(session: &Session) {
             .height(theme::sp(10))
             .ruled(theme::Side::Bottom)
             .padding_xy(theme::sp(4), 0.0),
-        SummaryLayout { gap: sp(3) },
+        crate::graph::SplitLayout {
+            gap: sp(3),
+            split: 2,
+            fixed: &[1, 3],
+        },
         || {
             line(
                 format!("{count} file{} changed", if count == 1 { "" } else { "s" }),
@@ -987,73 +927,6 @@ fn summary(session: &Session) {
             .build();
         },
     );
-}
-
-/// How the summary strip lays out its four children: the count of files and the tally at the
-/// start, the count of files read and the send button at the end, `gap` apart and at least two
-/// gaps between the two groups.
-///
-/// When they do not fit, the two counts, which cut themselves short, give up the overflow in
-/// proportion to their widths; the tally and the button keep theirs.
-struct SummaryLayout {
-    /// The least room between neighbours, in logical pixels.
-    gap: f32,
-}
-
-impl rustle::Layout for SummaryLayout {
-    /// Measures the tally and the button at their own widths, the counts at their own widths or
-    /// their shares of what is left, and centres everything down the strip.
-    fn measure(
-        &self,
-        children: &mut rustle::Children,
-        constraints: rustle::Constraints,
-    ) -> rustle::LayoutResult {
-        let height = constraints.max_height;
-        let room = constraints.max_width;
-        let natural: Vec<f32> = (0..children.len())
-            .map(|index| children.max_intrinsic_width(index, height))
-            .collect();
-        let fixed = natural[1] + natural[3] + 4.0 * self.gap;
-        let wanted = natural[0] + natural[2];
-        let scale = if wanted > 0.0 {
-            ((room - fixed).max(0.0) / wanted).min(1.0)
-        } else {
-            1.0
-        };
-        let widths = [
-            natural[0] * scale,
-            natural[1],
-            natural[2] * scale,
-            natural[3],
-        ];
-        let lefts = [
-            0.0,
-            widths[0] + self.gap,
-            room - widths[3] - self.gap - widths[2],
-            room - widths[3],
-        ];
-        let positions = widths
-            .iter()
-            .zip(lefts)
-            .enumerate()
-            .map(|(index, (width, left))| {
-                let size = children.measure(
-                    index,
-                    rustle::Constraints {
-                        min_width: 0.0,
-                        max_width: *width,
-                        min_height: 0.0,
-                        max_height: height,
-                    },
-                );
-                rustle::Offset::new(left, (height - size.height) / 2.0)
-            })
-            .collect();
-        rustle::LayoutResult {
-            size: rustle::Size::new(room, height),
-            positions,
-        }
-    }
 }
 
 /// Emits the diff of `session` in a view `width` logical pixels wide: a summary strip, then a lazy list of the parts of each changed file, of which only those in or near the view are composed.

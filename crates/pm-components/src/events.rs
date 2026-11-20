@@ -104,7 +104,8 @@ pub type Change = Box<dyn FnOnce(WorkspaceState) -> WorkspaceState>;
 
 /// The app's state holder as the views see it: the operations the controls' lambdas call,
 /// and what the views report of the pointer. Positions are logical pixels from the
-/// window's top left.
+/// window's top left. Every operation but [`update`](Self::update) does nothing, or
+/// declines, unless the holder overrides it.
 pub trait Operations {
     /// Changes the workspace with `change`, then does what the change asks of the app.
     fn update(&self, change: Change);
@@ -118,15 +119,19 @@ pub trait Operations {
     /// configuration in effect where the control was composed: the app follows the press
     /// (fields take the keyboard, a handle takes hold of the pointer, a menu opened from the
     /// control hangs from `area`).
-    fn pressed(&self, id: Target, area: Rect, clicks: u32, configuration: ViewConfiguration);
+    fn pressed(&self, _id: Target, _area: Rect, _clicks: u32, _configuration: ViewConfiguration) {}
     /// The primary button came up on the control `id` it went down on, laid out at `area`.
     /// Returns whether the click counts, which it does not after the press dragged something
     /// or was taken by a handle; a click that counts gives the keyboard to the field or page
     /// it is on.
-    fn click_lands(&self, id: Target, area: Rect) -> bool;
+    fn click_lands(&self, _id: Target, _area: Rect) -> bool {
+        false
+    }
     /// A key went down or up in the window, before whatever holds rustle's focus sees it.
     /// Returns whether the holder took it, in which case nothing else in the window does.
-    fn key(&self, event: &KeyEvent) -> bool;
+    fn key(&self, _event: &KeyEvent) -> bool {
+        false
+    }
     /// The input method is composing `text` for the area `id` that takes text the holder
     /// handles itself, or stopped composing when `text` is empty.
     fn composing(&self, id: Target, text: String) {
@@ -146,91 +151,93 @@ pub trait Operations {
     }
     /// Files from another application are held over the window at `at`, or left it, or
     /// were let go elsewhere, when `at` is `None`.
-    fn files_held(&self, at: Option<(f32, f32)>);
+    fn files_held(&self, _at: Option<(f32, f32)>) {}
     /// Files from another application, at `paths`, were let go over the window at `at`.
-    fn files_dropped(&self, paths: Vec<PathBuf>, at: (f32, f32));
+    fn files_dropped(&self, _paths: Vec<PathBuf>, _at: (f32, f32)) {}
     /// The pointer came over the control `id`, or left it when not `over`.
-    fn hovered(&self, id: Target, over: bool);
+    fn hovered(&self, _id: Target, _over: bool) {}
     /// The handle `id` on the edge of a panel is dragged `by` logical pixels across and
     /// down from where the drag began.
-    fn sash_dragged(&self, id: Target, by: (f32, f32));
+    fn sash_dragged(&self, _id: Target, _by: (f32, f32)) {}
     /// The drag of a panel's handle ended.
-    fn sash_released(&self);
+    fn sash_released(&self) {}
     /// The minimap is pressed or dragged `down` logical pixels from its top, of its `height`.
-    fn minimap_dragged(&self, down: f32, height: f32);
+    fn minimap_dragged(&self, _down: f32, _height: f32) {}
     /// A press landed outside a popup that a press elsewhere closes: its
     /// `on_dismiss_request`. The holder closes what that press closes.
-    fn dismiss_requested(&self);
+    fn dismiss_requested(&self) {}
     /// Whether the control `id` can be dragged elsewhere in the window: a project's header,
     /// a pane's tab or a row of the project's files.
-    fn carries(&self, id: Target) -> bool;
+    fn carries(&self, _id: Target) -> bool {
+        false
+    }
     /// A drag of the control `id` started, the pointer at `at` in the window.
-    fn carry_started(&self, id: Target, at: (f32, f32));
+    fn carry_started(&self, _id: Target, _at: (f32, f32)) {}
     /// The pointer carrying a control moved to `at` in the window.
-    fn carry_moved(&self, at: (f32, f32));
+    fn carry_moved(&self, _at: (f32, f32)) {}
     /// The drag of a control ended where the pointer let go, with `modifiers` held.
-    fn carry_ended(&self, modifiers: Modifiers);
+    fn carry_ended(&self, _modifiers: Modifiers) {}
     /// The number of a line `id` of a diff is pressed, or the pointer dragged on from it.
-    fn comment_dragged(&self, id: Target);
+    fn comment_dragged(&self, _id: Target) {}
     /// The press or drag on the numbers of a diff's lines ended.
-    fn comment_drag_ended(&self);
+    fn comment_drag_ended(&self) {}
     /// The primary button went down on the edge or corner `edge` of the window's frame.
-    fn edge_pressed(&self, edge: ResizeEdge);
+    fn edge_pressed(&self, _edge: ResizeEdge) {}
     /// Makes the window an icon on the desktop's bar.
-    fn minimize_window(&self);
+    fn minimize_window(&self) {}
     /// Fills the screen with the window, or gives it back its size.
-    fn toggle_maximized(&self);
+    fn toggle_maximized(&self) {}
     /// Asks the window to close, as its close button does.
-    fn close_window(&self);
+    fn close_window(&self) {}
     /// Opens the list of commands over the file shown.
-    fn open_command_palette(&self);
+    fn open_command_palette(&self) {}
     /// Opens the list of the code actions at the caret of the file shown.
-    fn show_code_actions(&self);
+    fn show_code_actions(&self) {}
     /// Goes back (`-1`) or forward (`1`) through the places the reader went.
-    fn navigate(&self, delta: isize);
+    fn navigate(&self, _delta: isize) {}
     /// Takes the row `row` of the list over the file, or its picked row when `None`.
-    fn take_listing(&self, row: Option<usize>);
+    fn take_listing(&self, _row: Option<usize>) {}
     /// Opens the colour picker on the colour swatch `index` of the file shown.
-    fn open_color_picker(&self, index: usize);
+    fn open_color_picker(&self, _index: usize) {}
     /// Carries out the row `row` of the menu open over a field, and closes the menu.
-    fn field_menu_picked(&self, row: Target);
+    fn field_menu_picked(&self, _row: Target) {}
     /// Carries out the row `row` of the menu open over the conversation's text.
-    fn message_menu_picked(&self, row: Target);
+    fn message_menu_picked(&self, _row: Target) {}
     /// Opens the menu of what the page's capture button takes.
-    fn open_browser_capture_menu(&self);
+    fn open_browser_capture_menu(&self) {}
     /// Carries out `command` of the menu open over a web page.
-    fn browser_menu_command(&self, command: BrowserCommand);
+    fn browser_menu_command(&self, _command: BrowserCommand) {}
     /// Carries out `command` of the menu open over a shell.
-    fn terminal_command(&self, command: TerminalCommand);
+    fn terminal_command(&self, _command: TerminalCommand) {}
     /// Asks the desktop for files to attach to the prompt.
-    fn attach(&self);
+    fn attach(&self) {}
     /// Opens the menu of the server `index` of the settings, under the pointer.
-    fn open_settings_menu(&self, index: usize);
+    fn open_settings_menu(&self, _index: usize) {}
     /// Opens the menu of the project `project`, under the pointer.
-    fn open_project_menu(&self, project: usize);
+    fn open_project_menu(&self, _project: usize) {}
     /// Opens the menu `kind` of the changes, hanging from the control `trigger` when one
     /// opened it, or under the pointer.
-    fn open_git_menu(&self, kind: MenuKind, trigger: Option<Target>);
+    fn open_git_menu(&self, _kind: MenuKind, _trigger: Option<Target>) {}
     /// Opens the menu of the pane that has the keyboard.
-    fn open_pane_menu(&self);
+    fn open_pane_menu(&self) {}
     /// Opens the menu of the session `session`, under the pointer.
-    fn open_session_menu(&self, session: usize);
+    fn open_session_menu(&self, _session: usize) {}
     /// Opens the menu of the changed file `index`, under the pointer.
-    fn open_change_menu(&self, index: usize);
+    fn open_change_menu(&self, _index: usize) {}
     /// Opens the menu of the folder `position` of the changed files, under the pointer.
-    fn open_folder_change_menu(&self, position: usize);
+    fn open_folder_change_menu(&self, _position: usize) {}
     /// Opens the menu of the tab of the open file `index`, under the pointer.
-    fn open_tab_menu(&self, index: usize);
+    fn open_tab_menu(&self, _index: usize) {}
     /// Opens the menu of the row `target` of the project's files, under the pointer.
-    fn open_tree_menu(&self, target: TreeTarget);
+    fn open_tree_menu(&self, _target: TreeTarget) {}
     /// Opens the menu of the field `field` at the pointer.
-    fn open_field_menu(&self, field: Target);
+    fn open_field_menu(&self, _field: Target) {}
     /// Opens the menu of the shell showing.
-    fn open_terminal_menu(&self);
+    fn open_terminal_menu(&self) {}
     /// Opens the menu of the web page showing.
-    fn open_browser_menu(&self);
+    fn open_browser_menu(&self) {}
     /// Opens the menu of the conversation's text at the pointer.
-    fn open_message_menu(&self);
+    fn open_message_menu(&self) {}
 }
 
 /// The operations of views composed with no app behind them, such as a component's own
@@ -240,144 +247,6 @@ struct Unattended;
 impl Operations for Unattended {
     /// Does nothing.
     fn update(&self, _: Change) {}
-
-    /// Does nothing.
-    fn pressed(&self, _: Target, _: Rect, _: u32, _: ViewConfiguration) {}
-
-    /// Lets no click count.
-    fn click_lands(&self, _: Target, _: Rect) -> bool {
-        false
-    }
-
-    /// Takes nothing, so every key goes on to what holds focus.
-    fn key(&self, _: &KeyEvent) -> bool {
-        false
-    }
-
-    /// Does nothing.
-    fn files_held(&self, _: Option<(f32, f32)>) {}
-
-    /// Does nothing.
-    fn files_dropped(&self, _: Vec<PathBuf>, _: (f32, f32)) {}
-
-    /// Does nothing.
-    fn hovered(&self, _: Target, _: bool) {}
-
-    /// Does nothing.
-    fn sash_dragged(&self, _: Target, _: (f32, f32)) {}
-
-    /// Does nothing.
-    fn sash_released(&self) {}
-
-    /// Does nothing.
-    fn minimap_dragged(&self, _: f32, _: f32) {}
-
-    /// Does nothing.
-    fn dismiss_requested(&self) {}
-
-    /// Carries nothing.
-    fn carries(&self, _: Target) -> bool {
-        false
-    }
-
-    /// Does nothing.
-    fn carry_started(&self, _: Target, _: (f32, f32)) {}
-
-    /// Does nothing.
-    fn carry_moved(&self, _: (f32, f32)) {}
-
-    /// Does nothing.
-    fn carry_ended(&self, _: Modifiers) {}
-
-    /// Does nothing.
-    fn comment_dragged(&self, _: Target) {}
-
-    /// Does nothing.
-    fn comment_drag_ended(&self) {}
-
-    /// Does nothing.
-    fn edge_pressed(&self, _: ResizeEdge) {}
-
-    /// Does nothing.
-    fn minimize_window(&self) {}
-
-    /// Does nothing.
-    fn toggle_maximized(&self) {}
-
-    /// Does nothing.
-    fn close_window(&self) {}
-
-    /// Does nothing.
-    fn open_command_palette(&self) {}
-
-    /// Does nothing.
-    fn show_code_actions(&self) {}
-
-    /// Does nothing.
-    fn navigate(&self, _: isize) {}
-
-    /// Does nothing.
-    fn take_listing(&self, _: Option<usize>) {}
-
-    /// Does nothing.
-    fn open_color_picker(&self, _: usize) {}
-
-    /// Does nothing.
-    fn field_menu_picked(&self, _: Target) {}
-
-    /// Does nothing.
-    fn message_menu_picked(&self, _: Target) {}
-
-    /// Does nothing.
-    fn open_browser_capture_menu(&self) {}
-
-    /// Does nothing.
-    fn browser_menu_command(&self, _: BrowserCommand) {}
-
-    /// Does nothing.
-    fn terminal_command(&self, _: TerminalCommand) {}
-
-    /// Does nothing.
-    fn attach(&self) {}
-
-    /// Does nothing.
-    fn open_settings_menu(&self, _: usize) {}
-
-    /// Does nothing.
-    fn open_project_menu(&self, _: usize) {}
-
-    /// Does nothing.
-    fn open_git_menu(&self, _: MenuKind, _: Option<Target>) {}
-
-    /// Does nothing.
-    fn open_pane_menu(&self) {}
-
-    /// Does nothing.
-    fn open_session_menu(&self, _: usize) {}
-
-    /// Does nothing.
-    fn open_change_menu(&self, _: usize) {}
-
-    /// Does nothing.
-    fn open_folder_change_menu(&self, _: usize) {}
-
-    /// Does nothing.
-    fn open_tab_menu(&self, _: usize) {}
-
-    /// Does nothing.
-    fn open_tree_menu(&self, _: TreeTarget) {}
-
-    /// Does nothing.
-    fn open_field_menu(&self, _: Target) {}
-
-    /// Does nothing.
-    fn open_terminal_menu(&self) {}
-
-    /// Does nothing.
-    fn open_browser_menu(&self) {}
-
-    /// Does nothing.
-    fn open_message_menu(&self) {}
 }
 
 /// The operations as a composition local holds them: equal to others when both are the

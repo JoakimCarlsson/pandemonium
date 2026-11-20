@@ -53,24 +53,25 @@ impl PopupPositionProvider for Against {
     }
 }
 
-/// What a popup tells the app when a press lands outside it, when a press elsewhere closes
-/// it: the app works out what that press closes.
-fn dismiss_request(dismissed_elsewhere: bool) -> Option<Rc<dyn Fn()>> {
-    dismissed_elsewhere.then(|| {
+/// Emits `content` as a popup where `placed` puts it; when `dismissed_elsewhere`, a press
+/// outside it asks the app to work out what that press closes. Escape is the app's own key.
+#[track_caller]
+fn float(
+    placed: impl PopupPositionProvider + 'static,
+    dismissed_elsewhere: bool,
+    content: impl FnOnce(),
+) {
+    let dismiss = dismissed_elsewhere.then(|| {
         let operations = events::operations();
         Rc::new(move || operations.dismiss_requested()) as Rc<dyn Fn()>
-    })
-}
-
-/// How a popup of the app behaves: a press outside it asks the app to dismiss it when
-/// `dismissed_elsewhere`; Escape is the app's own key.
-fn properties(dismissed_elsewhere: bool) -> PopupProperties {
-    PopupProperties {
+    });
+    let properties = PopupProperties {
         focusable: false,
         dismiss_on_back_press: false,
         dismiss_on_click_outside: dismissed_elsewhere,
         clipping_enabled: true,
-    }
+    };
+    popup_with(placed, dismiss, properties, content);
 }
 
 /// Emits `trigger` in a box with `modifier` and, while `popover` is given, the popover as a
@@ -90,12 +91,7 @@ pub fn anchored(
     rustle::stack_with(modifier, move || {
         trigger();
         if let Some(popover) = popover {
-            popup_with(
-                Against { placement, gap },
-                dismiss_request(dismissed_elsewhere),
-                properties(dismissed_elsewhere),
-                popover,
-            );
+            float(Against { placement, gap }, dismissed_elsewhere, popover);
         }
     });
 }
@@ -107,10 +103,9 @@ pub fn anchored(
 /// press elsewhere closes: a menu opened where the pointer was.
 #[track_caller]
 pub fn at_window(x: f32, y: f32, dismissed_elsewhere: bool, content: impl FnOnce()) {
-    popup_with(
+    float(
         popup_position_provider_at_position(Offset::new(x, y), crate::shadow_margin()),
-        dismiss_request(dismissed_elsewhere),
-        properties(dismissed_elsewhere),
+        dismissed_elsewhere,
         content,
     );
 }
@@ -118,15 +113,13 @@ pub fn at_window(x: f32, y: f32, dismissed_elsewhere: bool, content: impl FnOnce
 /// Emits `content` as a popup placed `offset` logical pixels from the top left of the box it
 /// is declared in, over everything and kept inside the window. When `dismissed_elsewhere`,
 /// a press outside it asks the app to close what a press elsewhere closes.
-#[track_caller]
 pub fn in_box_at(offset: (f32, f32), dismissed_elsewhere: bool, content: impl FnOnce()) {
-    popup_with(
+    float(
         rustle::AlignmentOffsetPositionProvider {
             alignment: rustle::BoxAlignment::TopStart,
             offset: Offset::new(offset.0, offset.1),
         },
-        dismiss_request(dismissed_elsewhere),
-        properties(dismissed_elsewhere),
+        dismissed_elsewhere,
         content,
     );
 }

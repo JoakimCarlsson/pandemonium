@@ -8,9 +8,9 @@ use crate::target::Target;
 use crate::theme;
 use rustle::Modifier;
 use rustle::TextFieldState;
-use rustle::{Icon, phosphor};
+use rustle::{Color, Icon, phosphor};
 
-use crate::theme::{Radius, Role, Tone};
+use crate::theme::{Radius, Role};
 
 use crate::Button;
 use crate::button::Variant;
@@ -165,7 +165,7 @@ fn with_selection(typed: &str, original: &str) -> String {
 /// Emits the first `SHOWN_LINES` lines of `content` wrapped to `width` logical pixels, in `tone`, the last of them ended with an ellipsis when more of it is left out.
 #[track_caller]
 fn clamped(content: &str, tone: Role, width: f32) {
-    let tone: Tone = tone.into();
+    let tone: Color = tone.into();
     let kind = theme::text_style(TEXT_PIXELS, TEXT_LEADING);
     let lines = rustle::wrap_at_spaces(content, &kind, width.max(32.0));
     let cut = lines.len() > SHOWN_LINES;
@@ -208,6 +208,14 @@ pub(crate) fn icon_button(icon: Icon, tooltip: &str, id: Target) {
     Button::icon(icon, id).tooltip(tooltip).build();
 }
 
+/// Emits a small ghost button saying `label` with `icon`, answering to `id`: the actions of a waiting prompt's row.
+#[track_caller]
+fn ghost(label: &str, id: Target, icon: Icon) {
+    kit::small_button(label, id, Variant::Ghost)
+        .with_icon(icon)
+        .build();
+}
+
 /// Emits the box a row of a waiting prompt is drawn in, its contents aligned to the top, holding what `content` emits.
 #[track_caller]
 fn frame(content: impl FnOnce()) {
@@ -215,9 +223,7 @@ fn frame(content: impl FnOnce()) {
         Modifier::new()
             .fill_max_width()
             .panel(Radius::Lg)
-            .padding_each(theme::sp(3), 0.0, 0.0, 0.0)
-            .padding_each(0.0, 0.0, theme::sp(1), 0.0)
-            .padding_xy(0.0, theme::sp(1)),
+            .padding_each(theme::sp(3), theme::sp(1), theme::sp(1), theme::sp(1)),
         2,
         content,
     );
@@ -260,20 +266,16 @@ fn waiting(index: usize, queued: &Queued, width: f32) {
                 "Edit",
                 Target::Chat(ChatEvent::EditQueued(index)),
             );
-            kit::small_button(
+            ghost(
                 "Send now",
                 Target::Chat(ChatEvent::Hurry(index)),
-                Variant::Ghost,
-            )
-            .with_icon(phosphor::LIGHTNING)
-            .build();
-            kit::small_button(
+                phosphor::LIGHTNING,
+            );
+            ghost(
                 "Remove",
                 Target::Chat(ChatEvent::RemoveQueued(index)),
-                Variant::Ghost,
-            )
-            .with_icon(phosphor::TRASH)
-            .build();
+                phosphor::TRASH,
+            );
         });
     });
 }
@@ -285,13 +287,7 @@ fn editing(queued: &Queued, width: f32) {
     frame(|| {
         leading_glyph(phosphor::PENCIL_SIMPLE, Role::Accent);
         body(&queued.text, Role::Muted, room);
-        kit::small_button(
-            "Cancel",
-            Target::Chat(ChatEvent::QueuedCancel),
-            Variant::Ghost,
-        )
-        .with_icon(phosphor::X)
-        .build();
+        ghost("Cancel", Target::Chat(ChatEvent::QueuedCancel), phosphor::X);
     });
 }
 
@@ -327,17 +323,11 @@ pub fn queued(state: &WorkspaceState, session: &Session, width: f32) {
             }
             if hidden > 0 {
                 let prompts = if hidden == 1 { "prompt" } else { "prompts" };
+                let said = format!("+{hidden} more {prompts} waiting");
                 kit::row_top(
                     Modifier::new().padding_each(theme::sp(3), 0.0, 0.0, 0.0),
                     0,
-                    || {
-                        line(
-                            format!("+{hidden} more {prompts} waiting"),
-                            12,
-                            1.4,
-                            Role::Muted,
-                        )
-                    },
+                    || line(said, 12, 1.4, Role::Muted),
                 );
             }
         },

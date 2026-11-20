@@ -191,9 +191,9 @@ fn files_drag_into_folders() {
     rig.button_in(None, PointerButton::Primary, true, from);
     rig.move_to((from.0, from.1 - 20.0));
     rig.move_to(to);
-    assert!(rig.read(Screen::tree_dragging));
+    assert!(rig.read(|screen| screen.tree_dragging()));
     rig.key(rustle::Key::Escape);
-    assert!(!rig.read(Screen::tree_dragging));
+    assert!(!rig.read(|screen| screen.tree_dragging()));
     rig.button_in(None, PointerButton::Primary, false, to);
     let _ = rig.app.borrow_mut().work.asked();
     rig.drag(from, to, 8);
@@ -250,8 +250,7 @@ fn the_minimap_scrolls_the_file() {
         .region(Target::Editor(EditorEvent::Minimap))
         .expect("the minimap is drawn");
     let scrolled = |rig: &Rig| {
-        rig.read(|screen| {
-            let Screen::Workspace(state) = screen;
+        rig.read(|state| {
             state
                 .shown_viewer()
                 .map(|viewer| viewer.scroll.scroll().offset())

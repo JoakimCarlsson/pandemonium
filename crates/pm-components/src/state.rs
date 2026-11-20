@@ -3,7 +3,7 @@
 use crate::areas::SidebarEvent;
 use crate::areas::{
     BrowserEvent, ChatEvent, ComposerEvent, DebugEvent, DialogEvent, DiffEvent, EditorEvent,
-    GitEvent, MenuEvent, SearchEvent, SettingsEvent, TerminalEvent, TreeEvent, WindowEvent,
+    GitEvent, SearchEvent, SettingsEvent, TerminalEvent, TreeEvent, WindowEvent,
 };
 
 use crate::events::{Event, FieldEvent};
@@ -1414,11 +1414,12 @@ pub enum Picker {
 }
 
 /// Where new work is done.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Location {
     /// In a worktree of its own, on a new branch.
     Worktree,
     /// In the project's own folder.
+    #[default]
     Local,
 }
 
@@ -1436,13 +1437,14 @@ pub enum Activity {
 }
 
 /// What the main area shows.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Page {
     /// One session, by position.
     Session(usize),
     /// A prompt to start work in one project, by position.
     New(usize),
     /// A prompt to start a chat, which belongs to no project.
+    #[default]
     Chat,
     /// The overview of one project, by position: its sessions and its repository.
     Project(usize),
@@ -1453,9 +1455,10 @@ pub enum Page {
 }
 
 /// Which view of a session is showing.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Tab {
     /// The conversation with the agent.
+    #[default]
     Chat,
     /// The files the agent changed.
     Diff,
@@ -1470,9 +1473,10 @@ pub enum Tab {
 }
 
 /// What the review panel lists.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ReviewTab {
     /// The files the agent changed, to stage and commit.
+    #[default]
     Changes,
     /// Every file of the project.
     Files,
@@ -1511,7 +1515,7 @@ pub struct Asked {
 }
 
 /// Everything the workspace window shows and lets the reader change.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct WorkspaceState {
     /// The projects, in the order the sidebar lists them.
     pub projects: Vec<Project>,
@@ -1859,162 +1863,22 @@ impl WorkspaceState {
             projects,
             sessions,
             page,
-            tab: Tab::Chat,
             review: true,
-            git: GitControls::default(),
-            review_tab: ReviewTab::Changes,
-            project_search: crate::project_search::ProjectSearch::default(),
-            excerpts: None,
-            browser: None,
-            browser_scope: crate::browser_scope::NO_SCOPE,
-            browsers: crate::browser_scope::no_browsers(),
-            open_tree: std::collections::HashSet::new(),
-            closed_folders: std::collections::HashSet::new(),
-            closed_diffs: std::collections::HashSet::new(),
-            comment_target: None,
-            comment_text: TextFieldState::default(),
-            diff_list: rustle::LazyListState::default(),
-            diff_seen: 0.0,
-            diff_bounds: crate::bounds::Bounds::default(),
-            diff_anchor: None,
-            asking_diffs: std::collections::HashSet::new(),
-            tree_scroll: rustle::ScrollState::default(),
-            files_list: rustle::LazyListState::default(),
-            homed: None,
-            plan_open: false,
-            plan_scroll: rustle::ScrollState::default(),
-            subagents_scroll: rustle::ScrollState::default(),
-            overview_scroll: rustle::ScrollState::default(),
-            terminal: false,
-            terminal_maximized: false,
-            sidebar_open: true,
-            bottom: crate::dock::BottomTab::default(),
-            problems: Vec::new(),
-            problems_of: None,
-            problems_asked: None,
-            problems_scroll: rustle::ScrollState::default(),
-            problem_picked: None,
             terminal_height: crate::terminal::HEIGHT,
             terminal_size: crate::dock::FIRST_SIZE,
             next_terminal: 1,
-            agent: 0,
-            file: None,
-            prompt: prompt_field(""),
-            prompt_scroll: rustle::ScrollState::default(),
-            message: commit_field(),
-            history_search: TextFieldState::default(),
-            history_scroll: rustle::ScrollState::default(),
-            sidebar_scroll: 0.0,
-            new_in: None,
+            sidebar_open: true,
             sidebar_width: crate::sidebar::WIDTH,
             review_width: crate::review::WIDTH,
-            plan_width: 0.0,
-            adder: None,
-            folder_picker: None,
-            settings: None,
             settings_servers: crate::settings_servers::ServerSettings {
                 agents: builtin.clone(),
                 ..Default::default()
             },
-            menu: None,
-            restoring: None,
-            project_menu: None,
-            session_menu: None,
-            message_menu: None,
-            terminal_menu: None,
-            browser_menu: None,
-            project_drag: None,
-            outbox: Vec::new(),
-            asked: None,
-            files_owner: None,
-            file_stash: std::collections::HashMap::new(),
-            tab_stash: std::collections::HashMap::new(),
-            panes: crate::panes::Panes::default(),
-            pane_stash: std::collections::HashMap::new(),
-            search_stash: std::collections::HashMap::new(),
-            prompt_stash: std::collections::HashMap::new(),
-            pane_drag: None,
-            pane_menu: None,
-            chat_list: rustle::LazyListState::default(),
-            chat_bounds: crate::bounds::Bounds::default(),
-            code_bounds: crate::bounds::Bounds::default(),
-            code_lines: crate::text_lines::TextLines::default(),
-            chat_selection: rustle::SelectionState::new(),
-            hover_selection: rustle::SelectionState::new(),
-            places: crate::bounds::Places::default(),
-            picker: None,
             agent_settings: vec![Vec::new(); builtin.len()],
-            touched: Vec::new(),
-            choices: Vec::new(),
-            location: Location::Local,
-            container: false,
-            base: None,
-            branches: Vec::new(),
-            branches_of: None,
-            continuing: crate::continue_chat::Choice::default(),
-            activity: None,
             agent_commands: vec![Vec::new(); builtin.len()],
-            attachments: Vec::new(),
-            elements: Vec::new(),
-            captures: Vec::new(),
-            previews: std::collections::HashMap::new(),
-            figures: crate::figures::Figures::new(),
-            figures_asked: std::collections::HashSet::new(),
-            exhibits: crate::exhibit::Exhibits::default(),
-            discovery_host: None,
-            discovered_elsewhere: std::collections::HashMap::new(),
-            files: Vec::new(),
-            tree_folders: Vec::new(),
-            tree_ignored: std::collections::HashSet::new(),
-            files_of: None,
-            file_listings: Default::default(),
             identities: vec![None; builtin.len()],
             defaults: vec![None; builtin.len()],
-            allowances: Default::default(),
-            allowance_asked: Default::default(),
-            logins: Vec::new(),
-            in_use: Vec::new(),
-            menu_scroll: rustle::ScrollState::default(),
-            menu_filter: TextFieldState::default(),
-            slash: 0,
-            opened: Vec::new(),
-            unfolded: Vec::new(),
-            extensions: Vec::new(),
-            extensions_page: crate::extensions::ExtensionsPage::default(),
-            extension_assets: std::collections::BTreeMap::new(),
-            listing: None,
-            recent_commands: Vec::new(),
-            recent_files: Vec::new(),
-            closed_tabs: Vec::new(),
-            renaming: None,
-            color_picking: None,
-            vim: pm_vim::Vim::default(),
-            going_to: None,
-            editing_queued: None,
-            signature_at: (0.0, 0.0),
-            finding: None,
-            blame: None,
-            tab_menu: None,
-            editor: pm_editor::EditorSettings::default(),
-            editor_loaded: false,
-            code_view: None,
-            code_height: None,
-            quitting: false,
-            update_scroll: rustle::ScrollState::default(),
-            update_open: false,
-            update_run: crate::update_dialog::UpdateRun::Idle,
-            sign_in_code: None,
-            debug: crate::debug::DebugState::default(),
-            tasks: crate::tasks::TaskState::default(),
-            window: pm_config::WindowSettings::default(),
-            window_loaded: false,
-            machine: pm_protocol::MachineSettings::default(),
-            machine_loaded: false,
-            chat_on: None,
-            settings_page: crate::settings_state::SettingsPage::default(),
-            recording: None,
-            recorded: Vec::new(),
-            trail: crate::trail::Trail::default(),
+            ..Self::default()
         };
         state.sync_context();
         state
@@ -2108,21 +1972,21 @@ impl WorkspaceState {
     /// or typing in, editing or leaving a field.
     pub fn handle(self, event: Event) -> Self {
         match event {
-            Event::Sidebar(event) => self.sidebar_event(event),
-            Event::Chat(event) => self.chat_event(event),
-            Event::Composer(event) => self.composer_event(event),
-            Event::Diff(event) => self.diff_event(event),
-            Event::Tree(event) => self.tree_event(event),
-            Event::Editor(event) => self.editor_event(event),
-            Event::Search(event) => self.search_event(event),
-            Event::Git(event) => self.git_event(event),
-            Event::Terminal(event) => self.terminal_event(event),
-            Event::Debug(event) => self.debug_event(event),
-            Event::Browser(event) => self.browser_event(event),
-            Event::Settings(event) => self.settings_event(event),
-            Event::Menu(event) => self.menu_event(event),
-            Event::Dialog(event) => self.dialog_event(event),
-            Event::Window(event) => self.window_event(event),
+            Event::Sidebar(event) => self.pressed(Target::Sidebar(event)),
+            Event::Chat(event) => self.pressed(Target::Chat(event)),
+            Event::Composer(event) => self.pressed(Target::Composer(event)),
+            Event::Diff(event) => self.pressed(Target::Diff(event)),
+            Event::Tree(event) => self.pressed(Target::Tree(event)),
+            Event::Editor(event) => self.pressed(Target::Editor(event)),
+            Event::Search(event) => self.pressed(Target::Search(event)),
+            Event::Git(event) => self.pressed(Target::Git(event)),
+            Event::Terminal(event) => self.pressed(Target::Terminal(event)),
+            Event::Debug(event) => self.pressed(Target::Debug(event)),
+            Event::Browser(event) => self.pressed(Target::Browser(event)),
+            Event::Settings(event) => self.pressed(Target::Settings(event)),
+            Event::Menu(event) => self.pressed(Target::Menu(event)),
+            Event::Dialog(event) => self.pressed(Target::Dialog(event)),
+            Event::Window(event) => self.pressed(Target::Window(event)),
             Event::Field(FieldEvent::Changed(field)) => self.field_typed(field),
             Event::Field(FieldEvent::Typed { field, text }) => self.typed(field, &text),
             Event::Field(FieldEvent::Left(field)) => self.field_left(field),
@@ -2166,61 +2030,44 @@ impl WorkspaceState {
         if !self.settings_menu_row(action) {
             self.settings_servers.menu = None;
         }
-        if let Target::Editor(EditorEvent::CompletionRow(place)) = action {
-            return self.completion_taken(Some(place));
-        }
-        if action == Target::Editor(EditorEvent::CompletionBody)
-            || action == Target::Editor(EditorEvent::HoverCard)
-        {
-            return self;
-        }
-        if let Target::Editor(EditorEvent::Breakpoint { file, line }) = action {
-            self.toggle_breakpoint(file, line);
-            return self;
-        }
-        if let Target::Editor(EditorEvent::RunLens(index)) = action {
-            self.run_lens_pressed(index);
-            return self;
-        }
-        if let Target::Editor(EditorEvent::Run { file, line }) = action {
-            self.runnable_run(file, line);
-            return self;
-        }
-        if action == Target::Editor(EditorEvent::Lightbulb) {
-            return self;
-        }
-        if let Target::Editor(EditorEvent::CodeFold(line)) = action {
-            if let Some(document) = self.shown_text() {
-                document.unfold_line(line);
+        if let Target::Editor(event) = action {
+            match event {
+                EditorEvent::CompletionRow(place) => return self.completion_taken(Some(place)),
+                EditorEvent::CompletionBody
+                | EditorEvent::HoverCard
+                | EditorEvent::Lightbulb
+                | EditorEvent::ListingFilter
+                | EditorEvent::ListingBody
+                | EditorEvent::RenameBox
+                | EditorEvent::RenameSymbol
+                | EditorEvent::ColorBox
+                | EditorEvent::ColorHex => return self,
+                EditorEvent::Breakpoint { file, line } => {
+                    self.toggle_breakpoint(file, line);
+                    return self;
+                }
+                EditorEvent::RunLens(index) => {
+                    self.run_lens_pressed(index);
+                    return self;
+                }
+                EditorEvent::Run { file, line } => {
+                    self.runnable_run(file, line);
+                    return self;
+                }
+                EditorEvent::CodeFold(line) => {
+                    if let Some(document) = self.shown_text() {
+                        document.unfold_line(line);
+                    }
+                    return self;
+                }
+                EditorEvent::ListingRow(row) => return self.listing_taken(Some(row)),
+                EditorEvent::ListingPrompt => return self.listing_prompted(),
+                EditorEvent::ListingTake => return self.listing_taken(None),
+                EditorEvent::ColorHexSubmit => return self.color_format_taken(None),
+                EditorEvent::ColorFormat(row) => return self.color_format_taken(Some(row)),
+                EditorEvent::RenameSymbolSubmit => return self.rename_submitted(),
+                _ => {}
             }
-            return self;
-        }
-        if let Target::Editor(EditorEvent::ListingRow(row)) = action {
-            return self.listing_taken(Some(row));
-        }
-        if action == Target::Editor(EditorEvent::ListingPrompt) {
-            return self.listing_prompted();
-        }
-        if action == Target::Editor(EditorEvent::ListingTake) {
-            return self.listing_taken(None);
-        }
-        if action == Target::Editor(EditorEvent::ListingFilter)
-            || action == Target::Editor(EditorEvent::ListingBody)
-            || action == Target::Editor(EditorEvent::RenameBox)
-            || action == Target::Editor(EditorEvent::RenameSymbol)
-            || action == Target::Editor(EditorEvent::ColorBox)
-            || action == Target::Editor(EditorEvent::ColorHex)
-        {
-            return self;
-        }
-        if action == Target::Editor(EditorEvent::ColorHexSubmit) {
-            return self.color_format_taken(None);
-        }
-        if let Target::Editor(EditorEvent::ColorFormat(row)) = action {
-            return self.color_format_taken(Some(row));
-        }
-        if action == Target::Editor(EditorEvent::RenameSymbolSubmit) {
-            return self.rename_submitted();
         }
         if let Some(command) =
             crate::tab_menu::TabCommand::of(action).filter(|_| self.tab_menu.is_some())
@@ -2282,15 +2129,11 @@ impl WorkspaceState {
         match action {
             Target::Chat(ChatEvent::RestoreFiles) => self.restore(restoring),
             row if is_session_menu_item(row) => return self.session_menu_pressed(row),
-            Target::Menu(MenuEvent::MessageMenuCopy)
-            | Target::Menu(MenuEvent::MessageMenuCopyReply)
-            | Target::Menu(MenuEvent::MessageMenuCopyMarkdown)
-            | Target::Menu(MenuEvent::MessageMenuSelectAll) => {
-                return self.message_menu_pressed(action);
+            row if crate::message_menu::is_message_menu_item(row) => {
+                return self.message_menu_pressed(row);
             }
-            Target::Menu(MenuEvent::ProjectMenuNew)
-            | Target::Menu(MenuEvent::ProjectMenuRemove) => {
-                return self.project_menu_pressed(action);
+            row if crate::arrange::is_project_menu_item(row) => {
+                return self.project_menu_pressed(row);
             }
             Target::Sidebar(SidebarEvent::AddProject) => return self.with_adder(),
             Target::Sidebar(SidebarEvent::Settings) => return self.with_settings(),
@@ -2756,234 +2599,149 @@ impl WorkspaceState {
 
     /// The state after one of the rows or chips of a list, or a button of the parts that handle their own, was pressed.
     fn after_listed(&mut self, id: Target) {
-        if matches!(id, Target::Diff(DiffEvent::Gutter { .. })) {
-            return;
-        }
-        if self.press_exhibit(id) {
-            return;
-        }
-        if self.press_inquiry(id) {
-            return;
-        }
-        if self.press_terminal(id) {
-            return;
-        }
-        if self.press_debug(id) {
-            return;
-        }
-        if self.press_continue(id) {
-            return;
-        }
-        if self.press_subagent_stop(id) {
-            return;
-        }
-        if self.press_choice(id) {
-            return;
-        }
-        let position = |wanted: fn(usize) -> Target, count: usize| match id {
-            Target::Dialog(DialogEvent::AdderRow(index))
-            | Target::Sidebar(SidebarEvent::Project(index))
-            | Target::Sidebar(SidebarEvent::NewIn(index))
-            | Target::Sidebar(SidebarEvent::Session(index))
-            | Target::Sidebar(SidebarEvent::Agent(index))
-            | Target::Chat(ChatEvent::Choice(index))
-            | Target::Chat(ChatEvent::Hurry(index))
-            | Target::Chat(ChatEvent::RemoveQueued(index))
-            | Target::Chat(ChatEvent::EditQueued(index))
-            | Target::Chat(ChatEvent::Copy(index))
-            | Target::Chat(ChatEvent::Rewind(index))
-            | Target::Chat(ChatEvent::Fork(index))
-            | Target::Chat(ChatEvent::Restore(index))
-            | Target::Chat(ChatEvent::TurnChanges(index))
-            | Target::Chat(ChatEvent::Turn(index))
-            | Target::Tree(TreeEvent::Tree(index))
-            | Target::Diff(DiffEvent::ChangedFile(index))
-            | Target::Diff(DiffEvent::Stage(index))
-            | Target::Diff(DiffEvent::ChangeFolder(index))
-            | Target::Diff(DiffEvent::ChangeFolderStage(index))
-            | Target::Diff(DiffEvent::OpenArrow(index))
-            | Target::Diff(DiffEvent::DiffFold(index))
-            | Target::Diff(DiffEvent::CommentFile(index))
-            | Target::Diff(DiffEvent::CommentRemove(index))
-            | Target::Diff(DiffEvent::Viewed(index))
-                if index < count && id == wanted(index) =>
-            {
-                Some(index)
-            }
-            _ => None,
-        };
-        let rows = self.adder.as_ref().map_or(0, |open| open.count());
-        if let Some(index) = position(|index| Target::Dialog(DialogEvent::AdderRow(index)), rows) {
-            self.adder_chosen(index);
-        } else if let Some(index) = position(
-            |index| Target::Sidebar(SidebarEvent::Project(index)),
-            self.projects.len(),
-        ) {
-            self.page = Page::Project(index);
-            self.overview_scroll.jump_to(0.0);
-            self.rescope_browser();
-        } else if let Some(index) = position(
-            |index| Target::Sidebar(SidebarEvent::NewIn(index)),
-            self.projects.len(),
-        ) {
-            self.start_in(index, None);
-        } else if let Some((project, submodule)) = match id {
-            Target::Sidebar(SidebarEvent::NewInSubmodule(row)) => {
-                crate::sidebar::submodule_rows(self).into_iter().nth(row)
-            }
-            _ => None,
-        } {
-            self.start_in(project, Some(submodule));
-        } else if let Some(index) = position(
-            |index| Target::Sidebar(SidebarEvent::Session(index)),
-            self.sessions.len(),
-        ) {
-            self.sessions[index].closed = false;
-            if let Page::Session(before) = self.page
-                && before != index
-            {
-                self.tab_stash.insert(before, self.tab);
-            }
-            self.page = Page::Session(index);
-            self.tab = Tab::Chat;
-            self.file = None;
-            self.comment_target = None;
-            self.fresh_git();
-            self.chat_list
-                .scroll()
-                .jump_to(self.sessions[index].chat_back);
-            self.rescope_browser();
-        } else if let Some(index) = position(
-            |index| Target::Sidebar(SidebarEvent::Agent(index)),
-            self.agent_slots(),
-        ) {
-            self.agent = index;
-            self.ask_allowance(index, true);
-        } else if let Some(index) = position(
-            |index| Target::Chat(ChatEvent::Choice(index)),
-            self.choices(),
-        ) {
-            self.choose(index);
-        } else if let Some(index) = position(
-            |index| Target::Chat(ChatEvent::Hurry(index)),
-            self.queued_open(),
-        ) {
-            self.act_on_queued(index, false);
-        } else if let Some(index) = position(
-            |index| Target::Chat(ChatEvent::RemoveQueued(index)),
-            self.queued_open(),
-        ) {
-            self.act_on_queued(index, true);
-        } else if let Some(index) = position(
-            |index| Target::Chat(ChatEvent::EditQueued(index)),
-            self.queued_open(),
-        ) {
-            self.open_queued_edit(index);
-        } else if let Some(index) = position(
-            |index| Target::Chat(ChatEvent::Copy(index)),
-            self.messages_open(),
-        ) {
-            self.copy(index);
-        } else if let Some(index) = position(
-            |index| Target::Chat(ChatEvent::Rewind(index)),
-            self.messages_open(),
-        ) {
-            self.rewind(index);
-        } else if let Some(index) = position(
-            |index| Target::Chat(ChatEvent::Fork(index)),
-            self.messages_open(),
-        ) {
-            self.fork(index);
-        } else if let Some(index) = position(
-            |index| Target::Chat(ChatEvent::Restore(index)),
-            self.messages_open(),
-        ) {
-            self.restoring = Some(index);
-        } else if let Some(index) = position(
-            |index| Target::Chat(ChatEvent::TurnChanges(index)),
-            self.messages_open(),
-        ) {
-            self.turn_changes(index);
-        } else if let Some(index) = position(
-            |index| Target::Chat(ChatEvent::Turn(index)),
-            self.messages_open(),
-        ) {
-            self.toggle_turn(index);
-        } else if let Some(index) = position(
-            |index| Target::Tree(TreeEvent::Tree(index)),
-            self.files.len() + self.tree_folders.len(),
-        ) {
-            self.fold_tree_folder(index);
-        } else if let Target::Chat(ChatEvent::Link {
-            message,
-            piece,
-            link,
-        }) = id
+        if matches!(id, Target::Diff(DiffEvent::Gutter { .. }))
+            || self.press_exhibit(id)
+            || self.press_inquiry(id)
+            || self.press_terminal(id)
+            || self.press_debug(id)
+            || self.press_continue(id)
+            || self.press_subagent_stop(id)
+            || self.press_choice(id)
         {
-            self.open_link(message, piece, link);
-        } else if let Target::Chat(ChatEvent::Details { message, place }) = id {
-            self.toggle_details(message, place);
-        } else if let Target::Chat(ChatEvent::Step { message, position }) = id {
-            self.toggle_step(message, position);
-        } else if let Some(index) = position(
-            |index| Target::Diff(DiffEvent::ChangedFile(index)),
-            self.review_session()
-                .map_or(0, |session| session.changes.len()),
-        )
-        .filter(|index| {
-            self.review_session()
-                .is_some_and(|held| held.changes[*index].conflicted)
-        }) {
-            if self.open().is_some() {
-                self.open_change(index);
-            } else {
-                self.request_resolver(index);
+            return;
+        }
+        match id {
+            Target::Dialog(DialogEvent::AdderRow(index))
+                if index < self.adder.as_ref().map_or(0, |open| open.count()) =>
+            {
+                self.adder_chosen(index);
             }
-        } else if let Some(index) = position(
-            |index| Target::Diff(DiffEvent::ChangedFile(index)),
-            self.change_count(),
-        ) {
-            self.open_change(index);
-        } else if let Some(index) = position(
-            |index| Target::Diff(DiffEvent::Stage(index)),
-            self.change_count(),
-        ) {
-            self.stage_changes(&[index]);
-        } else if let Some(index) = position(
-            |index| Target::Diff(DiffEvent::ChangeFolder(index)),
-            self.change_folder_count(),
-        ) {
-            self.fold_change_folder(index);
-        } else if let Some(index) = position(
-            |index| Target::Diff(DiffEvent::ChangeFolderStage(index)),
-            self.change_folder_count(),
-        ) {
-            self.stage_change_folder(index);
-        } else if let Some(index) = position(
-            |index| Target::Diff(DiffEvent::OpenArrow(index)),
-            self.change_count(),
-        ) {
-            self.open_changed_file(index);
-        } else if let Some(index) = position(
-            |index| Target::Diff(DiffEvent::DiffFold(index)),
-            self.change_count(),
-        ) {
-            self.fold_diff(index);
-        } else if let Some(index) = position(
-            |index| Target::Diff(DiffEvent::CommentFile(index)),
-            self.change_count(),
-        ) {
-            self.start_comment(index, None, false);
-        } else if let Some(index) = position(
-            |index| Target::Diff(DiffEvent::CommentRemove(index)),
-            self.comment_count(),
-        ) {
-            self.remove_comment(index);
-        } else if let Some(index) = position(
-            |index| Target::Diff(DiffEvent::Viewed(index)),
-            self.change_count(),
-        ) {
-            self.change_at(index, |change| change.viewed = !change.viewed);
+            Target::Sidebar(SidebarEvent::Project(index)) if index < self.projects.len() => {
+                self.page = Page::Project(index);
+                self.overview_scroll.jump_to(0.0);
+                self.rescope_browser();
+            }
+            Target::Sidebar(SidebarEvent::NewIn(index)) if index < self.projects.len() => {
+                self.start_in(index, None);
+            }
+            Target::Sidebar(SidebarEvent::NewInSubmodule(row)) => {
+                if let Some((project, submodule)) =
+                    crate::sidebar::submodule_rows(self).into_iter().nth(row)
+                {
+                    self.start_in(project, Some(submodule));
+                }
+            }
+            Target::Sidebar(SidebarEvent::Session(index)) if index < self.sessions.len() => {
+                self.sessions[index].closed = false;
+                if let Page::Session(before) = self.page
+                    && before != index
+                {
+                    self.tab_stash.insert(before, self.tab);
+                }
+                self.page = Page::Session(index);
+                self.tab = Tab::Chat;
+                self.file = None;
+                self.comment_target = None;
+                self.fresh_git();
+                self.chat_list
+                    .scroll()
+                    .jump_to(self.sessions[index].chat_back);
+                self.rescope_browser();
+            }
+            Target::Sidebar(SidebarEvent::Agent(index)) if index < self.agent_slots() => {
+                self.agent = index;
+                self.ask_allowance(index, true);
+            }
+            Target::Chat(ChatEvent::Choice(index)) if index < self.choices() => self.choose(index),
+            Target::Chat(ChatEvent::Hurry(index)) if index < self.queued_open() => {
+                self.act_on_queued(index, false);
+            }
+            Target::Chat(ChatEvent::RemoveQueued(index)) if index < self.queued_open() => {
+                self.act_on_queued(index, true);
+            }
+            Target::Chat(ChatEvent::EditQueued(index)) if index < self.queued_open() => {
+                self.open_queued_edit(index);
+            }
+            Target::Chat(ChatEvent::Copy(index)) if index < self.messages_open() => {
+                self.copy(index)
+            }
+            Target::Chat(ChatEvent::Rewind(index)) if index < self.messages_open() => {
+                self.rewind(index);
+            }
+            Target::Chat(ChatEvent::Fork(index)) if index < self.messages_open() => {
+                self.fork(index)
+            }
+            Target::Chat(ChatEvent::Restore(index)) if index < self.messages_open() => {
+                self.restoring = Some(index);
+            }
+            Target::Chat(ChatEvent::TurnChanges(index)) if index < self.messages_open() => {
+                self.turn_changes(index);
+            }
+            Target::Chat(ChatEvent::Turn(index)) if index < self.messages_open() => {
+                self.toggle_turn(index);
+            }
+            Target::Tree(TreeEvent::Tree(index))
+                if index < self.files.len() + self.tree_folders.len() =>
+            {
+                self.fold_tree_folder(index);
+            }
+            Target::Chat(ChatEvent::Link {
+                message,
+                piece,
+                link,
+            }) => self.open_link(message, piece, link),
+            Target::Chat(ChatEvent::Details { message, place }) => {
+                if let Some(open) = self.open_index() {
+                    toggle_key(&mut self.unfolded, (open, message, place));
+                }
+            }
+            Target::Chat(ChatEvent::Step { message, position }) => {
+                if let Some(open) = self.open_index() {
+                    toggle_key(&mut self.opened, (open, message, position));
+                }
+            }
+            Target::Diff(DiffEvent::ChangedFile(index))
+                if self
+                    .review_session()
+                    .and_then(|session| session.changes.get(index))
+                    .is_some_and(|change| change.conflicted) =>
+            {
+                if self.open().is_some() {
+                    self.open_change(index);
+                } else {
+                    self.request_resolver(index);
+                }
+            }
+            Target::Diff(DiffEvent::ChangedFile(index)) if index < self.change_count() => {
+                self.open_change(index);
+            }
+            Target::Diff(DiffEvent::Stage(index)) if index < self.change_count() => {
+                self.stage_changes(&[index]);
+            }
+            Target::Diff(DiffEvent::ChangeFolder(index)) if index < self.change_folder_count() => {
+                self.fold_change_folder(index);
+            }
+            Target::Diff(DiffEvent::ChangeFolderStage(index))
+                if index < self.change_folder_count() =>
+            {
+                self.stage_change_folder(index);
+            }
+            Target::Diff(DiffEvent::OpenArrow(index)) if index < self.change_count() => {
+                self.open_changed_file(index);
+            }
+            Target::Diff(DiffEvent::DiffFold(index)) if index < self.change_count() => {
+                self.fold_diff(index);
+            }
+            Target::Diff(DiffEvent::CommentFile(index)) if index < self.change_count() => {
+                self.start_comment(index, None, false);
+            }
+            Target::Diff(DiffEvent::CommentRemove(index)) if index < self.comment_count() => {
+                self.remove_comment(index);
+            }
+            Target::Diff(DiffEvent::Viewed(index)) if index < self.change_count() => {
+                self.change_at(index, |change| change.viewed = !change.viewed);
+            }
+            _ => {}
         }
     }
 
@@ -3109,20 +2867,6 @@ impl WorkspaceState {
         }
     }
 
-    /// Opens or closes the detail of step `step` of the reply at `message` of the open session.
-    fn toggle_step(&mut self, message: usize, step: usize) {
-        let Page::Session(open) = self.page else {
-            return;
-        };
-        let key = (open, message, step);
-        match self.opened.iter().position(|held| *held == key) {
-            Some(at) => {
-                self.opened.remove(at);
-            }
-            None => self.opened.push(key),
-        }
-    }
-
     /// Stops the subagent whose stop button `id` is, one of the open session's that is still at work: asks its server to, and takes the button away until the server says how the subagent stands. Returns whether `id` is such a button.
     fn press_subagent_stop(&mut self, id: Target) -> bool {
         let Target::Chat(ChatEvent::SubagentStop {
@@ -3152,20 +2896,6 @@ impl WorkspaceState {
             });
         }
         true
-    }
-
-    /// Opens or closes fold-out `place` of the reply at `message` of the open session.
-    fn toggle_details(&mut self, message: usize, place: usize) {
-        let Page::Session(open) = self.page else {
-            return;
-        };
-        let key = (open, message, place);
-        match self.unfolded.iter().position(|held| *held == key) {
-            Some(at) => {
-                self.unfolded.remove(at);
-            }
-            None => self.unfolded.push(key),
-        }
     }
 
     /// The fold-outs open in the reply at `message` of the open session, by place.
@@ -3320,46 +3050,45 @@ impl WorkspaceState {
                 index
             }
             Page::New(project) if project >= self.projects.len() => return,
-            Page::New(project) => {
+            Page::New(_) | Page::Chat => {
                 let title: String = text.chars().take(40).collect();
-                let mut session = Session::started(&title, project, &text);
-                session.agent = self.agent;
-                session.login = self.login_for_new_work(self.agent).map(str::to_owned);
-                session.directory = self.projects[project]
-                    .directory()
-                    .to_string_lossy()
-                    .into_owned();
-                session.base = self.base_for_new_work();
-                session.in_container = self.container_for_new_work();
-                session.submodule = self.new_in.take();
-                session.directory = session.folder_in(&session.directory);
-                session.branch = if session.base.is_some() {
-                    String::new()
-                } else {
-                    self.branches.first().cloned().unwrap_or_default()
+                let project = match self.page {
+                    Page::New(project) => Some(project),
+                    _ => None,
                 };
-                session.messages[0].attachments = sent_files;
-                self.sessions.push(session);
-                self.pane_stash
-                    .insert(self.sessions.len() - 1, self.panes.clone());
-                self.hand_over_new_page(project, self.sessions.len() - 1);
-                self.page = Page::Session(self.sessions.len() - 1);
-                self.tab = Tab::Chat;
-                self.sessions.len() - 1
-            }
-            Page::Chat => {
-                let title: String = text.chars().take(40).collect();
-                let mut session = Session::started_chat(&title, self.chat_on.clone(), &text);
+                let mut session = match project {
+                    Some(project) => {
+                        let mut session = Session::started(&title, project, &text);
+                        session.directory = self.projects[project]
+                            .directory()
+                            .to_string_lossy()
+                            .into_owned();
+                        session.base = self.base_for_new_work();
+                        session.in_container = self.container_for_new_work();
+                        session.submodule = self.new_in.take();
+                        session.directory = session.folder_in(&session.directory);
+                        session.branch = if session.base.is_some() {
+                            String::new()
+                        } else {
+                            self.branches.first().cloned().unwrap_or_default()
+                        };
+                        session
+                    }
+                    None => Session::started_chat(&title, self.chat_on.clone(), &text),
+                };
                 session.agent = self.agent;
                 session.login = self.login_for_new_work(self.agent).map(str::to_owned);
                 session.messages[0].attachments = sent_files;
                 self.sessions.push(session);
-                self.pane_stash
-                    .insert(self.sessions.len() - 1, self.panes.clone());
-                self.hand_over_new_chat(self.sessions.len() - 1);
-                self.page = Page::Session(self.sessions.len() - 1);
+                let index = self.sessions.len() - 1;
+                self.pane_stash.insert(index, self.panes.clone());
+                match project {
+                    Some(project) => self.hand_over_new_page(project, index),
+                    None => self.hand_over_new_chat(index),
+                }
+                self.page = Page::Session(index);
                 self.tab = Tab::Chat;
-                self.sessions.len() - 1
+                index
             }
             Page::Project(_) | Page::History | Page::Extensions => return,
         };
@@ -3642,56 +3371,50 @@ impl WorkspaceState {
         self.select_change(index);
         self.request_resolver(index);
         self.tab = Tab::Diff;
-        if let Some(path) = self
-            .review_session()
-            .and_then(|session| session.changes.get(index))
-            .map(|change| change.path.clone())
-        {
+        if let Some(path) = self.change_path(index) {
             self.closed_diffs.remove(&path);
         }
-        self.diff_anchor = self
-            .review_index()
-            .zip(
-                self.review_session()
-                    .and_then(|session| session.changes.get(index)),
-            )
-            .map(|(session, change)| (session, change.path.clone()));
+        self.diff_anchor = self.review_index().zip(self.change_path(index));
         self.scroll_diff_to(0.0);
         self.pin_diff();
     }
 
     /// Folds the folder at `position` of the open session's changes, or unfolds it.
     fn fold_change_folder(&mut self, position: usize) {
-        let key = self.review_session().and_then(|session| {
-            crate::change_list::folder_table(&session.changes, self.git.repository.as_deref())
-                .get(position)
-                .map(|folder| crate::change_list::fold_key(folder.group, &folder.path))
-        });
-        if let Some(key) = key {
-            toggle(&mut self.closed_folders, key);
+        if let Some(folder) = self.change_folder(position) {
+            toggle(
+                &mut self.closed_folders,
+                crate::change_list::fold_key(folder.group, &folder.path),
+            );
         }
     }
 
     /// Stages everything under the folder at `position` of the open session's changes, or unstages it when all of it is staged.
     fn stage_change_folder(&mut self, position: usize) {
-        let files = self.review_session().and_then(|session| {
+        if let Some(folder) = self.change_folder(position) {
+            self.stage_changes(&folder.files);
+        }
+    }
+
+    /// The folder at `position` of the trees of the changed files the review panel lists.
+    fn change_folder(&self, position: usize) -> Option<crate::change_list::GroupFolder> {
+        self.review_session().and_then(|session| {
             crate::change_list::folder_table(&session.changes, self.git.repository.as_deref())
                 .into_iter()
                 .nth(position)
-                .map(|folder| folder.files)
-        });
-        if let Some(files) = files {
-            self.stage_changes(&files);
-        }
+        })
+    }
+
+    /// The path of the change at `index` of the session the review panel is about.
+    fn change_path(&self, index: usize) -> Option<String> {
+        self.review_session()
+            .and_then(|session| session.changes.get(index))
+            .map(|change| change.path.clone())
     }
 
     /// Folds the file at `index` of the diff, or unfolds it.
     fn fold_diff(&mut self, index: usize) {
-        if let Some(path) = self
-            .review_session()
-            .and_then(|session| session.changes.get(index))
-            .map(|change| change.path.clone())
-        {
+        if let Some(path) = self.change_path(index) {
             toggle(&mut self.closed_diffs, path);
         }
         self.pin_diff();
@@ -4028,6 +3751,16 @@ impl WorkspaceState {
 fn toggle(set: &mut std::collections::HashSet<String>, path: String) {
     if !set.remove(&path) {
         set.insert(path);
+    }
+}
+
+/// Takes `key` out of `list` when it is in it and puts it at the end when it is not.
+fn toggle_key(list: &mut Vec<(usize, usize, usize)>, key: (usize, usize, usize)) {
+    match list.iter().position(|held| *held == key) {
+        Some(at) => {
+            list.remove(at);
+        }
+        None => list.push(key),
     }
 }
 

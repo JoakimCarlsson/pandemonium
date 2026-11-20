@@ -5,19 +5,19 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
 use pm_protocol::{ExtensionIconTheme, ExtensionInfo};
-use rustle::{Modifier, SvgPainter};
+use rustle::{Color, Modifier, SvgPainter};
 
 use crate::icons::icon;
 use crate::icons::{artwork_with, icon_with};
-use crate::theme::{Role, Tone, sp};
+use crate::theme::{Role, sp};
 
 /// What an installed language says of the files whose names end as it reads.
 #[derive(Clone)]
 struct Known {
     /// The language, by its folder's name.
     language: String,
-    /// The icon and colour its files are shown with, when it has one.
-    icon: Option<(SvgPainter, Tone)>,
+    /// The icon its files are shown with, when it has one, and its own colour, or none for muted.
+    icon: Option<(SvgPainter, Option<Color>)>,
 }
 
 /// What the installed languages of one machine say of their files: by the ending of a file name, and by the whole names and name patterns that are read before an ending is.
@@ -35,19 +35,19 @@ type Learned = HashMap<Option<String>, Machine>;
 /// What was learned from the languages installed on the machines reached.
 static LEARNED: LazyLock<Mutex<Learned>> = LazyLock::new(Default::default);
 
-/// The icons the icon themes of each machine give the endings of file names: by machine, then by ending.
-type Themed = HashMap<Option<String>, HashMap<String, (SvgPainter, Tone)>>;
+/// The icons the icon themes of each machine give the endings of file names: by machine, then by ending, each with its own colour, or none for muted.
+type Themed = HashMap<Option<String>, HashMap<String, (SvgPainter, Option<Color>)>>;
 
 /// What was learned from the icon themes installed on the machines reached.
 static THEMED: LazyLock<Mutex<Themed>> = LazyLock::new(Default::default);
 
 /// The colour `hex`, written `#rrggbb`, names.
-fn colour_of(hex: &str) -> Option<Tone> {
+fn colour_of(hex: &str) -> Option<Color> {
     let digits = hex.strip_prefix('#')?;
     let value = u32::from_str_radix(digits, 16)
         .ok()
         .filter(|_| digits.len() == 6)?;
-    Some(Tone::rgb(
+    Some(Color::rgb(
         (value >> 16) as u8,
         (value >> 8) as u8,
         value as u8,
@@ -60,11 +60,7 @@ pub fn learn_languages(host: &Option<String>, extensions: &[ExtensionInfo]) {
     for extension in extensions.iter().filter(|extension| extension.installed) {
         let icon = extension.icon.as_ref().and_then(|source| {
             let svg = SvgPainter::from_str(source).ok()?;
-            let tone = extension
-                .color
-                .as_deref()
-                .and_then(colour_of)
-                .unwrap_or_else(|| Tone::from(Role::Muted));
+            let tone = extension.color.as_deref().and_then(colour_of);
             Some((svg, tone))
         });
         let known = Known {
@@ -94,11 +90,7 @@ pub fn learn_icon_themes(host: &Option<String>, themes: &[ExtensionIconTheme]) {
     let mut endings = HashMap::new();
     for theme in themes {
         for icon in &theme.icons {
-            let tone = icon
-                .color
-                .as_deref()
-                .and_then(colour_of)
-                .unwrap_or_else(|| Tone::from(Role::Muted));
+            let tone = icon.color.as_deref().and_then(colour_of);
             let Ok(svg) = SvgPainter::from_str(&icon.svg) else {
                 continue;
             };
@@ -140,7 +132,7 @@ pub fn file_language(path: &str) -> Option<String> {
 }
 
 /// The icon and colour of the file `path` names: its installed language's or its icon theme's artwork, or no artwork, meaning the plain file icon, in muted.
-pub fn file_kind(path: &str) -> (Option<SvgPainter>, Tone) {
+pub fn file_kind(path: &str) -> (Option<SvgPainter>, Color) {
     let suffix = suffix_of(path);
     let themed = THEMED.lock().ok().and_then(|themed| {
         themed
@@ -149,8 +141,8 @@ pub fn file_kind(path: &str) -> (Option<SvgPainter>, Tone) {
     });
     themed
         .or_else(|| learned_of(path, |known| known.icon.clone()))
-        .map_or((None, Tone::from(Role::Muted)), |(art, tone)| {
-            (Some(art), tone)
+        .map_or((None, Color::from(Role::Muted)), |(art, tone)| {
+            (Some(art), tone.unwrap_or_else(|| Color::from(Role::Muted)))
         })
 }
 
@@ -171,5 +163,5 @@ pub fn folder_icon(open: bool, steps: f32) {
     } else {
         phosphor::FOLDER
     };
-    icon(name, steps, Tone::rgb(0xd9, 0xa9, 0x5b));
+    icon(name, steps, Color::rgb(0xd9, 0xa9, 0x5b));
 }

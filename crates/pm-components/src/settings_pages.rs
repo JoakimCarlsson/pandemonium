@@ -39,19 +39,9 @@ const _: () = assert!(
     "the ranges of list controls have no room for every setting written as a list"
 );
 
-/// The box a line of `setting`'s list is typed in, when it is written as a list.
-fn list_field_id(setting: Setting) -> Option<Target> {
-    LIST_FIELDS.id(setting.list_place()?)
-}
-
 /// The button adding what is typed in `setting`'s box to its list, when it is written as a list.
 fn list_add_id(setting: Setting) -> Option<Target> {
     LIST_ADDS.id(setting.list_place()?)
-}
-
-/// The button removing the line at `line` of `setting`'s list, when it is written as a list and its buttons have room for the line.
-fn list_remove_id(setting: Setting, line: usize) -> Option<Target> {
-    LIST_REMOVES.cell(setting.list_place()?, line, LIST_LINES)
 }
 
 /// The setting written as a list whose control in `range` is `id`, when it is one.
@@ -289,18 +279,18 @@ pub(crate) fn setting_row(state: &WorkspaceState, setting: Setting, room: f32) {
             }
         }
         Control::List(lines) => {
-            let empty = TextFieldState::default();
             let field = state
                 .settings_page
                 .list_adds
                 .get(&setting)
                 .cloned()
-                .unwrap_or(empty);
-            match (list_field_id(setting), list_add_id(setting)) {
+                .unwrap_or_default();
+            let field_id = setting.list_place().and_then(|at| LIST_FIELDS.id(at));
+            match (field_id, list_add_id(setting)) {
                 (Some(field_id), Some(add)) => row.below(Some(move || {
                     list(
                         &lines,
-                        |line| list_remove_id(setting, line),
+                        |line| LIST_REMOVES.cell(setting.list_place()?, line, LIST_LINES),
                         (&field, field_id),
                         (add, setting.add_label()),
                         setting.add_placeholder(),

@@ -32,19 +32,13 @@ pub fn fallback_words(from: &str, to: &str, reason: &str) -> String {
 }
 
 /// Emits the notice that the rest of the turn asks `to` because `from` failed for `reason`: one muted line with a bolt before it.
-#[track_caller]
 pub fn fallback_notice(from: &str, to: &str, reason: &str) {
     let words = fallback_words(from, to, reason);
-    kit::row(
-        Modifier::new()
-            .padding_xy(theme::sp(1), 0.0)
-            .padding_xy(0.0, theme::sp(0.5)),
-        1.5,
-        move || {
-            glyph(phosphor::LIGHTNING, 3.5, Role::Warning);
-            clipped(words, 12, Role::Muted);
-        },
-    );
+    let padded = Modifier::new().padding_xy(theme::sp(1), theme::sp(0.5));
+    kit::row(padded, 1.5, move || {
+        glyph(phosphor::LIGHTNING, 3.5, Role::Warning);
+        clipped(words, 12, Role::Muted);
+    });
 }
 
 #[cfg(test)]

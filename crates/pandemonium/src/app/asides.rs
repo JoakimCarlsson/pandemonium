@@ -43,8 +43,8 @@ impl Aside {
     /// `screen` with what the window shows closed, which is what closing the window does.
     pub(super) fn closed(self, screen: Screen) -> Screen {
         match self {
-            Self::Settings => screen.without_settings(),
-            Self::Picker => screen.without_folder_picker(),
+            Self::Settings => screen.in_workspace(|state| state.without_settings()),
+            Self::Picker => screen.in_workspace(|state| state.without_folder_picker()),
         }
     }
 

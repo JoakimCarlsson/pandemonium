@@ -122,27 +122,21 @@ pub struct BrowserMenu {
 impl WorkspaceState {
     /// The state with the menu over the page open at `at`, and the other menus closed.
     pub fn with_browser_menu(self, at: (f32, f32)) -> Self {
-        if self.browser.is_none() {
-            return self;
-        }
-        let mut state = self.without_menu();
-        state.browser_menu = Some(BrowserMenu {
-            at,
-            captures_only: false,
-        });
-        state
+        self.with_browser_menu_of(at, false)
     }
 
     /// The state with the menu of what can be put into the prompt from the page open at `at`, and the other menus closed.
     pub fn with_browser_capture_menu(self, at: (f32, f32)) -> Self {
+        self.with_browser_menu_of(at, true)
+    }
+
+    /// The state with the menu over the page open at `at`, offering only what can be put into the prompt when `captures_only`, and the other menus closed.
+    fn with_browser_menu_of(self, at: (f32, f32), captures_only: bool) -> Self {
         if self.browser.is_none() {
             return self;
         }
         let mut state = self.without_menu();
-        state.browser_menu = Some(BrowserMenu {
-            at,
-            captures_only: true,
-        });
+        state.browser_menu = Some(BrowserMenu { at, captures_only });
         state
     }
 
@@ -206,23 +200,22 @@ pub fn browser_menu(open: BrowserMenu) {
         BrowserCommand::CAPTURES.into_iter().fold(menu, row).build();
         return;
     }
-    let menu = row(menu, BrowserCommand::Back);
-    let menu = row(menu, BrowserCommand::Forward);
-    let menu = row(menu, BrowserCommand::Reload);
-    let menu = row(menu, BrowserCommand::HardReload).separator();
-    let menu = row(menu, BrowserCommand::Cut);
-    let menu = row(menu, BrowserCommand::Copy);
-    let menu = row(menu, BrowserCommand::Paste);
-    let menu = row(menu, BrowserCommand::SelectAll).separator();
-    let menu = row(menu, BrowserCommand::Find).separator();
-    let menu = row(menu, BrowserCommand::ZoomIn);
-    let menu = row(menu, BrowserCommand::ZoomOut);
-    let menu = row(menu, BrowserCommand::ZoomReset).separator();
-    let menu = row(menu, BrowserCommand::OpenExternal);
-    let menu = row(menu, BrowserCommand::ClearData).separator();
-    let menu = row(menu, BrowserCommand::Inspect).separator();
-    let menu = row(menu, BrowserCommand::Screenshot);
-    let menu = row(menu, BrowserCommand::FullPage);
-    let menu = row(menu, BrowserCommand::Area);
-    row(menu, BrowserCommand::Console).build()
+    use BrowserCommand::*;
+    let groups: [&[BrowserCommand]; 7] = [
+        &[Back, Forward, Reload, HardReload],
+        &[Cut, Copy, Paste, SelectAll],
+        &[Find],
+        &[ZoomIn, ZoomOut, ZoomReset],
+        &[OpenExternal, ClearData],
+        &[Inspect],
+        &BrowserCommand::CAPTURES,
+    ];
+    groups
+        .into_iter()
+        .enumerate()
+        .fold(menu, |menu, (at, group)| {
+            let menu = if at == 0 { menu } else { menu.separator() };
+            group.iter().copied().fold(menu, row)
+        })
+        .build();
 }

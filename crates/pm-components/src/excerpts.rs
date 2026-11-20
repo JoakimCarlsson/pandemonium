@@ -17,7 +17,7 @@ use std::rc::Rc;
 
 use crate::events::Interactive;
 use crate::marked::{Mark, Paint};
-use crate::theme::{Role, Tone};
+use crate::theme::Role;
 use pm_protocol::Location;
 use rustle::{CursorIcon, Modifier};
 
@@ -205,18 +205,19 @@ fn blocks_of(lines: &[usize]) -> Vec<Block> {
 
 /// Whether `id` is something of the excerpts the state handles when it is pressed.
 pub fn is_excerpt_part(id: Target) -> bool {
-    id == Target::Search(SearchEvent::TabExcerpts)
-        || id == Target::Search(SearchEvent::ExcerptsClose)
-        || id == Target::Search(SearchEvent::ExcerptsRestore)
-        || id == Target::Search(SearchEvent::ExcerptsFoldAll)
-        || id == Target::Search(SearchEvent::ExcerptsUndoAll)
-        || matches!(
-            id,
-            Target::Search(SearchEvent::ExcerptsFile(_))
-                | Target::Search(SearchEvent::ExcerptOwner(_))
-                | Target::Search(SearchEvent::ExcerptUndo(_))
+    matches!(
+        id,
+        Target::Search(
+            SearchEvent::TabExcerpts
+                | SearchEvent::ExcerptsClose
+                | SearchEvent::ExcerptsRestore
+                | SearchEvent::ExcerptsFoldAll
+                | SearchEvent::ExcerptsUndoAll
+                | SearchEvent::ExcerptsFile(_)
+                | SearchEvent::ExcerptOwner(_)
+                | SearchEvent::ExcerptUndo(_)
         )
-        || crate::conflict::is_conflict_part(id)
+    ) || crate::conflict::is_conflict_part(id)
 }
 
 impl WorkspaceState {
@@ -349,33 +350,32 @@ impl WorkspaceState {
         if crate::conflict::is_conflict_part(id) {
             return self.conflict_pressed(id);
         }
-        if id == Target::Search(SearchEvent::TabExcerpts) {
-            self.tab = Tab::Excerpts;
-            return self;
-        }
-        if id == Target::Search(SearchEvent::ExcerptsClose) {
-            return self.excerpts_closed();
-        }
-        if id == Target::Search(SearchEvent::ExcerptsRestore) {
-            return self.timeline_restored();
-        }
-        if id == Target::Search(SearchEvent::ExcerptsFoldAll) {
-            self.excerpts_folded();
-            return self;
-        }
-        if id == Target::Search(SearchEvent::ExcerptsUndoAll) {
-            self.turn_undone(None);
-            return self;
-        }
-        if let Target::Search(SearchEvent::ExcerptUndo(turn)) = id {
-            self.turn_undone(Some(turn));
-            return self;
-        }
-        if let Some(index) = self.excerpt_owner_of(id) {
-            return self.excerpt_file_shown(index);
-        }
-        let Target::Search(SearchEvent::ExcerptsFile(place)) = id else {
-            return self;
+        let place = match id {
+            Target::Search(SearchEvent::TabExcerpts) => {
+                self.tab = Tab::Excerpts;
+                return self;
+            }
+            Target::Search(SearchEvent::ExcerptsClose) => return self.excerpts_closed(),
+            Target::Search(SearchEvent::ExcerptsRestore) => return self.timeline_restored(),
+            Target::Search(SearchEvent::ExcerptsFoldAll) => {
+                self.excerpts_folded();
+                return self;
+            }
+            Target::Search(SearchEvent::ExcerptsUndoAll) => {
+                self.turn_undone(None);
+                return self;
+            }
+            Target::Search(SearchEvent::ExcerptUndo(turn)) => {
+                self.turn_undone(Some(turn));
+                return self;
+            }
+            Target::Search(SearchEvent::ExcerptsFile(place)) => place,
+            _ => {
+                return match self.excerpt_owner_of(id) {
+                    Some(index) => self.excerpt_file_shown(index),
+                    None => self,
+                };
+            }
         };
         if self.excerpts.as_ref().is_some_and(Excerpts::folds) {
             self.excerpt_file_folded(place);
@@ -500,26 +500,14 @@ fn header(
         2,
         || {
             kit::row(
-                Modifier::new()
-                    .weight(1.0)
-                    .clip()
-                    .cursor(CursorIcon::Pointer)
-                    .control(
-                        Target::Search(SearchEvent::ExcerptsFile(position)),
-                        send(Event::Search(SearchEvent::ExcerptsFile(position))),
-                    ),
+                kit::pressed(
+                    Modifier::new().weight(1.0).clip(),
+                    Target::Search(SearchEvent::ExcerptsFile(position)),
+                ),
                 2,
                 || {
                     if excerpts.folds() {
-                        glyph(
-                            if file.closed {
-                                phosphor::CARET_RIGHT
-                            } else {
-                                phosphor::CARET_DOWN
-                            },
-                            3.5,
-                            Role::Muted,
-                        );
+                        glyph(kit::chevron(!file.closed), 3.5, Role::Muted);
                     }
                     file_icon(name, 4.0);
                     kit::text(Modifier::new(), name, kit::strong(13, Role::Text));
@@ -544,13 +532,7 @@ fn header(
                 }
                 _ => {
                     if let Some(mark) = file.mark {
-                        kit::text(
-                            Modifier::new(),
-                            mark,
-                            theme::text_style(11, 1.4)
-                                .color(theme::color(mark_tone(mark)))
-                                .max_lines(1),
-                        );
+                        kit::text(Modifier::new(), mark, kit::line(11, mark_tone(mark)));
                     }
                     Tally::new(file.tally.0, file.tally.1).size(11).build();
                     if matches!(excerpts.source, Source::Revision { turn: Some(_), .. }) {
@@ -577,7 +559,6 @@ fn mark_tone(mark: &str) -> Role {
 }
 
 /// Emits the button of the header of a timeline that puts the file back as it was in the state.
-#[track_caller]
 pub(crate) fn restore_button() {
     kit::small_button(
         "Restore this version",
@@ -640,7 +621,7 @@ fn removed_row(content: &str, settings: &pm_editor::EditorSettings) {
         Modifier::new()
             .fill_max_width()
             .height(height)
-            .background(theme::color(Tone::from(Role::Danger).alpha(0.12)))
+            .background(theme::color(Role::Danger.alpha(0.12)))
             .clip(),
         0,
         move || {
@@ -830,7 +811,7 @@ impl<'a> Drawing<'a> {
             kit::column(
                 Modifier::new()
                     .fill_max_width()
-                    .background(theme::color(Tone::from(Role::Success).alpha(0.12))),
+                    .background(theme::color(Role::Success.alpha(0.12))),
                 0,
                 shown,
             );
@@ -864,7 +845,6 @@ enum Entry {
 }
 
 /// Emits the lines of a file that is shown from its diff alone, as the rows of a diff, under its header.
-#[track_caller]
 fn diff_rows(file: &ExcerptFile) {
     let colours = crate::diff_syntax::DiffColours::of(
         &file.diff,
@@ -992,7 +972,6 @@ pub(crate) const fn header_height(size: Size) -> f32 {
 }
 
 /// Emits the lines a change took out of a file that is gone, drawn as taken out, with the space under them.
-#[track_caller]
 fn gone_block(block: &Block, settings: &pm_editor::EditorSettings) {
     kit::column(Modifier::new().fill_max_width(), 0, || {
         for text in block.removed.iter().flat_map(|(_, lines)| lines.iter()) {
@@ -1003,7 +982,6 @@ fn gone_block(block: &Block, settings: &pm_editor::EditorSettings) {
 }
 
 /// Emits the excerpts of a search.
-#[track_caller]
 pub fn excerpts_view(state: &WorkspaceState) {
     file_list(state, Size::default());
 }

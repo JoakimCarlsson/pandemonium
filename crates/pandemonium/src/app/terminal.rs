@@ -19,11 +19,7 @@ impl App {
     /// How tall the type of the shells is, in logical pixels, as the settings say.
     fn terminal_font(&self) -> f32 {
         self.model
-            .read(|screen| match screen {
-                pm_pages::Screen::Workspace(state) => {
-                    Some(pm_components::terminal::Look::of(state).font)
-                }
-            })
+            .read(|state| Some(pm_components::terminal::Look::of(state).font))
             .unwrap_or(13.0)
     }
 
@@ -154,8 +150,7 @@ impl App {
                 .is_some_and(|(_, bracketed)| bracketed);
             self.terminal_clip(Clip::Paste, bracketed);
         }
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).terminal_command(command));
+        self.model.change(|state| state.terminal_command(command));
         if command == TerminalCommand::AddToChat {
             self.focus.focus(Target::Composer(ComposerEvent::Prompt));
         } else {
@@ -175,8 +170,7 @@ impl App {
             (x - 8.0).min(width - 264.0).max(0.0),
             (y + 4.0).min(height - TERMINAL_MENU_HEIGHT - 8.0).max(0.0),
         );
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).with_terminal_menu(at));
+        self.model.change(|state| state.with_terminal_menu(at));
     }
 
     /// Copies what is marked in the shell showing, when the settings say to copy as soon as text is selected.

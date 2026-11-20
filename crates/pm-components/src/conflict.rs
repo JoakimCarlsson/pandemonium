@@ -4,20 +4,18 @@ use crate::areas::SearchEvent;
 use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
-use rustle::{Alignment, Arrangement, column_arranged};
+use rustle::Modifier;
 use std::ops::Range;
 
 use pm_field::Edit;
-use rustle::Modifier;
 
 use crate::Button;
 use crate::button::Variant;
 use crate::excerpts::{Block, Drawing, ExcerptFile, Source, block_gap};
 use crate::open_files::Contents;
 use crate::parts::{line, spacer};
-use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
-use crate::theme::{Radius, Role, Tone};
+use crate::theme::{Radius, Role};
 
 /// How tall the strip above the conflicts is, in logical pixels.
 const STRIP: f32 = 44.0;
@@ -77,7 +75,7 @@ impl Choice {
 }
 
 /// A place in a text where the two sides disagree, as the markers git wrote mark it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Region {
     /// Where its first marker starts and where its last marker's line ends, as byte offsets.
     pub span: Range<usize>,
@@ -130,15 +128,7 @@ pub fn regions_in(text: &str) -> Vec<Region> {
     let mut found = Vec::new();
     let mut part = Part::Outside;
     let mut started = (0, 0);
-    let mut open = Region {
-        span: 0..0,
-        line: 0,
-        ours: String::new(),
-        theirs: String::new(),
-        base: None,
-        ours_name: String::new(),
-        theirs_name: String::new(),
-    };
+    let mut open = Region::default();
     let mut offset = 0;
     for (number, whole) in text.split_inclusive('\n').enumerate() {
         let here = offset;
@@ -150,11 +140,8 @@ pub fn regions_in(text: &str) -> Vec<Region> {
             open = Region {
                 span: here..here,
                 line: number,
-                ours: String::new(),
-                theirs: String::new(),
-                base: None,
                 ours_name: name.to_owned(),
-                theirs_name: String::new(),
+                ..Region::default()
             };
             continue;
         }
@@ -217,22 +204,15 @@ pub enum Layout {
     Stacked,
 }
 
-/// The resolver being described: the room it has, how the sides lie and how big it is.
+/// The resolver being described: the state it is drawn from and how the sides lie.
 ///
-/// Build it with [`Conflict::new`], change it with the methods that follow,
-/// and emit it with [`Conflict::build`].
+/// Build it with [`Conflict::new`] and emit it with [`Conflict::build`].
 #[derive(Clone)]
 pub struct Conflict<'a> {
     /// The state the file and the sides are drawn from.
     state: &'a WorkspaceState,
     /// How the two sides of a conflict lie.
     layout: Layout,
-    /// How big it is.
-    size: Size,
-    /// What the caller puts around its box.
-    modifier: Modifier,
-    /// How its column lays out what it holds, when the caller changed it.
-    arranged: Option<(Arrangement, Alignment)>,
 }
 
 /// The conflict under `region`'s place among those of the text, as its card is drawn.
@@ -255,34 +235,7 @@ impl<'a> Conflict<'a> {
             } else {
                 Layout::Stacked
             },
-            size: Size::default(),
-            modifier: Modifier::new(),
-            arranged: None,
         }
-    }
-
-    /// The resolver with `modifier` put around its box, outside its own: sizes, weight, placement.
-    pub fn modifier(mut self, modifier: Modifier) -> Self {
-        self.modifier = self.modifier.chain(modifier);
-        self
-    }
-
-    /// The resolver spreading its children by `arrangement` and placing them across by `alignment` in place of its own.
-    pub fn arranged(mut self, arrangement: Arrangement, alignment: Alignment) -> Self {
-        self.arranged = Some((arrangement, alignment));
-        self
-    }
-
-    /// The resolver with the sides lying as `layout` says.
-    pub fn layout(mut self, layout: Layout) -> Self {
-        self.layout = layout;
-        self
-    }
-
-    /// The resolver `size` big.
-    pub fn size(mut self, size: Size) -> Self {
-        self.size = size;
-        self
     }
 
     /// How tall the lines of a side are shown, in lines, cut short at the most.
@@ -335,28 +288,24 @@ impl<'a> Conflict<'a> {
         };
         kit::column(own.clip(), 0, || {
             Self::line_row(LABEL, 2.0, || line(name, 11, 1.4, Role::Muted));
-            kit::column(
-                tinted.background(theme::color(Tone::from(tint).alpha(0.12))),
-                0,
-                || {
-                    for content in text_of.lines().take(MOST_LINES) {
-                        Self::line_row(row, 2.0, || {
-                            kit::text(
-                                Modifier::new().weight(1.0),
-                                crate::diff_syntax::shown(content),
-                                theme::code_style(font, 1.4)
-                                    .color(theme::color(Role::Text))
-                                    .max_lines(1),
-                            );
-                        });
-                    }
-                    if more > 0 {
-                        Self::line_row(row, 2.0, || {
-                            line(format!("… {more} more lines"), 11, 1.4, Role::Subtle);
-                        });
-                    }
-                },
-            );
+            kit::column(tinted.background(theme::color(tint.alpha(0.12))), 0, || {
+                for content in text_of.lines().take(MOST_LINES) {
+                    Self::line_row(row, 2.0, || {
+                        kit::text(
+                            Modifier::new().weight(1.0),
+                            crate::diff_syntax::shown(content),
+                            theme::code_style(font, 1.4)
+                                .color(theme::color(Role::Text))
+                                .max_lines(1),
+                        );
+                    });
+                }
+                if more > 0 {
+                    Self::line_row(row, 2.0, || {
+                        line(format!("… {more} more lines"), 11, 1.4, Role::Subtle);
+                    });
+                }
+            });
         });
     }
 
@@ -394,27 +343,12 @@ impl<'a> Conflict<'a> {
                 .clip(),
             0,
             || {
-                kit::row(
-                    Modifier::new()
-                        .fill_max_width()
-                        .height(LABEL)
-                        .background(theme::color(Role::Surface))
-                        .ruled(theme::Side::Bottom)
-                        .padding_xy(theme::sp(3), 0.0),
-                    0,
-                    || {
-                        kit::text(
-                            Modifier::new().weight(1.0),
-                            format!(
-                                "Conflict {} of {} · line {}",
-                                card.place + 1,
-                                card.count,
-                                region.line + 1
-                            ),
-                            kit::strong(12, Role::Text),
-                        );
-                    },
-                );
+                Self::label_bar(format!(
+                    "Conflict {} of {} · line {}",
+                    card.place + 1,
+                    card.count,
+                    region.line + 1
+                ));
                 self.sides(region, &ours, &theirs, row);
                 kit::row(
                     Modifier::new()
@@ -435,7 +369,6 @@ impl<'a> Conflict<'a> {
                             } else {
                                 Variant::Outline
                             })
-                            .size(self.size)
                             .build();
                         }
                     },
@@ -474,29 +407,31 @@ impl<'a> Conflict<'a> {
                     },
                 );
                 spacer();
-                Button::new(
-                    "Take all ours",
-                    Target::Search(SearchEvent::ConflictOursAll),
-                )
-                .variant(Variant::Ghost)
-                .size(self.size)
-                .disabled(resolver.ours.is_none())
-                .build();
-                Button::new(
-                    "Take all theirs",
-                    Target::Search(SearchEvent::ConflictTheirsAll),
-                )
-                .variant(Variant::Ghost)
-                .size(self.size)
-                .disabled(resolver.theirs.is_none())
-                .build();
-                Button::new(
-                    "Mark as resolved",
-                    Target::Search(SearchEvent::ConflictConclude),
-                )
-                .size(self.size)
-                .disabled(!loaded || left > 0)
-                .build();
+                for (label, id, variant, disabled) in [
+                    (
+                        "Take all ours",
+                        SearchEvent::ConflictOursAll,
+                        Variant::Ghost,
+                        resolver.ours.is_none(),
+                    ),
+                    (
+                        "Take all theirs",
+                        SearchEvent::ConflictTheirsAll,
+                        Variant::Ghost,
+                        resolver.theirs.is_none(),
+                    ),
+                    (
+                        "Mark as resolved",
+                        SearchEvent::ConflictConclude,
+                        Variant::Default,
+                        !loaded || left > 0,
+                    ),
+                ] {
+                    Button::new(label, Target::Search(id))
+                        .variant(variant)
+                        .disabled(disabled)
+                        .build();
+                }
             },
         );
     }
@@ -524,64 +459,56 @@ impl<'a> Conflict<'a> {
         let drawing = Drawing::new(state, None);
         let lines = index.map_or(0, |index| drawing.row_count(index, &whole) + 1);
         let count = regions.len() + 1 + lines;
-        let (arrangement, alignment) = self
-            .arranged
-            .unwrap_or((Arrangement::Start, Alignment::Start));
-        column_arranged(
-            self.modifier.clone().chain(Modifier::new().weight(1.0)),
-            arrangement,
-            alignment,
-            || {
-                self.strip(resolver, regions.len(), text_now.is_some());
-                kit::column(
-                    Modifier::new()
-                        .fill_max_width()
-                        .weight(1.0)
-                        .clip()
-                        .background(theme::color(Role::Background)),
-                    0,
-                    || {
-                        rustle::lazy_list_keyed(
-                            Modifier::new().fill_max_width().weight(1.0),
-                            &excerpts.scroll,
-                            count,
-                            |item| item,
-                            |item| {
-                                let after = item.saturating_sub(regions.len());
-                                match regions.get(item) {
-                                    Some(region) => kit::column(
-                                        Modifier::new().fill_max_width().padding(theme::sp(3)),
-                                        0,
-                                        || {
-                                            self.card(
-                                                &Card {
-                                                    region,
-                                                    place: item,
-                                                    count: regions.len(),
-                                                },
-                                                row,
-                                            );
-                                        },
-                                    ),
-                                    None if after == 0 => Self::result_label(),
-                                    None => match index {
-                                        Some(index) if after < lines => {
-                                            drawing.row(index, (usize::MAX, 0), &whole, after - 1);
-                                        }
-                                        _ => block_gap(),
+        kit::column(Modifier::new().weight(1.0), 0, || {
+            self.strip(resolver, regions.len(), text_now.is_some());
+            kit::column(
+                Modifier::new()
+                    .fill_max_width()
+                    .weight(1.0)
+                    .clip()
+                    .background(theme::color(Role::Background)),
+                0,
+                || {
+                    rustle::lazy_list_keyed(
+                        Modifier::new().fill_max_width().weight(1.0),
+                        &excerpts.scroll,
+                        count,
+                        |item| item,
+                        |item| {
+                            let after = item.saturating_sub(regions.len());
+                            match regions.get(item) {
+                                Some(region) => kit::column(
+                                    Modifier::new().fill_max_width().padding(theme::sp(3)),
+                                    0,
+                                    || {
+                                        self.card(
+                                            &Card {
+                                                region,
+                                                place: item,
+                                                count: regions.len(),
+                                            },
+                                            row,
+                                        );
                                     },
-                                }
-                            },
-                        );
-                    },
-                );
-            },
-        );
+                                ),
+                                None if after == 0 => Self::label_bar("Result"),
+                                None => match index {
+                                    Some(index) if after < lines => {
+                                        drawing.row(index, (usize::MAX, 0), &whole, after - 1);
+                                    }
+                                    _ => block_gap(),
+                                },
+                            }
+                        },
+                    );
+                },
+            );
+        });
     }
 
-    /// Emits the label over the result, the file edited in place.
+    /// Emits a bar `LABEL` pixels tall on the surface colour, ruled along its bottom, that says `words`: the head of a conflict's card and the label over the result.
     #[track_caller]
-    fn result_label() {
+    fn label_bar(words: impl Into<String>) {
         kit::row(
             Modifier::new()
                 .fill_max_width()
@@ -591,7 +518,11 @@ impl<'a> Conflict<'a> {
                 .padding_xy(theme::sp(3), 0.0),
             0,
             || {
-                kit::text(Modifier::new(), "Result", kit::strong(12, Role::Text));
+                kit::text(
+                    Modifier::new().weight(1.0),
+                    words,
+                    kit::strong(12, Role::Text),
+                );
             },
         );
     }

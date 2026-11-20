@@ -31,10 +31,12 @@ another client. The protocol is documented in `docs/protocol.md`; a change to
 One crate per layer, each depending only on the layers below it.
 
 - **Interface:** rustle composables and rustle widgets themed through
-  rustle's theme. `pm-components/src/theme` holds the theme values (roles,
-  palette, shipped and extension families, light and dark, oklch) and
-  provides them at each window root the way Compose builds a custom design
-  system: rustle's `theme(ColorScheme, Typography, Shapes, ..)` carries the
+  rustle's theme. Colours are `rustle::Color`, whose maths (Oklab `lerp`,
+  `copy`, `composite_over`, colour spaces) lives in rustle as Compose's
+  `Color` has it. `pm-components/src/theme` holds only the theme values
+  (roles, shipped and extension families, light and dark) and provides
+  them at each window root the way Compose builds a custom design system:
+  rustle's `theme(ColorScheme, Typography, Shapes, ..)` carries the
   roles Compose has a slot for, the type scale and the corners, rustle's
   `LOCAL_SCROLLBAR_STYLE` the scrollbar look, and one composition local the
   tokens rustle has no slot for (every role, syntax colours, font stacks).

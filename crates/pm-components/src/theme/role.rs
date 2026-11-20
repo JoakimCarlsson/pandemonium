@@ -1,10 +1,9 @@
 //! The roles a colour plays in a window, named for what they mean.
 //!
-//! A style that says `bg(Role::Surface)` does not say which colour that is:
-//! whoever paints it resolves the role against the theme in hand, so changing
-//! the theme changes every box without rebuilding any of them.
+//! A view names a role, not a colour: the role is read from the theme being
+//! composed with, so composing again with another theme recolours every view.
 
-use super::Srgba;
+use rustle::Color;
 
 /// What a colour is for.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -131,8 +130,19 @@ impl Role {
     }
 }
 
-/// Something that knows which colour each role is.
-pub trait Roles {
-    /// The colour `role` is painted in.
-    fn role(&self, role: Role) -> Srgba;
+impl Role {
+    /// The colour of this role in the theme being composed with, its opacity
+    /// scaled by `share`, from 0.0 to 1.0.
+    pub fn alpha(self, share: f32) -> Color {
+        let color = Color::from(self);
+        color.copy(color.alpha() * share)
+    }
+}
+
+impl From<Role> for Color {
+    /// The colour of `role` in the theme being composed with, as a design
+    /// system reads a colour from its composition local.
+    fn from(role: Role) -> Self {
+        super::role(role)
+    }
 }

@@ -5,17 +5,16 @@ use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
-use crate::theme::sp;
 use crate::theme::{Radius, Role};
 use pm_harness::{PresetInfo, SlotChange, SlotInfo, SlotScope, SlotSource};
 use rustle::Modifier;
 use rustle::TextFieldState;
-use rustle::{Alignment, Arrangement, FlowOptions, flow_row_with};
 use rustle::{Icon, phosphor};
 
 use crate::button::Variant;
 use crate::input::{self, Input};
 use crate::parts::line;
+use crate::settings_machines::labelled_box;
 use crate::settings_row::{PICKER_WIDTH, choices, picker, picker_list, picker_shown};
 use crate::settings_rows::{BACKUP_CONTROLS, PICKS, PRESET_CONTROLS, SLOT_CONTROLS};
 use crate::settings_servers::{boxed, heading_only, note, paragraph, wrapped_note};
@@ -606,10 +605,7 @@ impl WorkspaceState {
                 self.settings_page.slots.scope = SlotScope::Project
             }
             Target::Settings(SettingsEvent::SlotsProvider) => {
-                let page = &mut self.settings_page.slots;
-                page.picking =
-                    (page.picking != Some(SlotPicking::Provider)).then_some(SlotPicking::Provider);
-                self.settings_page.filter = TextFieldState::default();
+                self.toggle_list(SlotPicking::Provider)
             }
             Target::Settings(SettingsEvent::SlotAdd) => self.add_slot(),
             Target::Settings(SettingsEvent::CategoryAdd) => self.add_category(),
@@ -635,16 +631,8 @@ impl WorkspaceState {
         };
         let scope = self.settings_page.slots.scope;
         match column {
-            MODEL_COLUMN | BACKUP_COLUMN => {
-                let wanted = if column == MODEL_COLUMN {
-                    SlotPicking::Model(row)
-                } else {
-                    SlotPicking::Backup(row)
-                };
-                let page = &mut self.settings_page.slots;
-                page.picking = (page.picking != Some(wanted)).then_some(wanted);
-                self.settings_page.filter = TextFieldState::default();
-            }
+            MODEL_COLUMN => self.toggle_list(SlotPicking::Model(row)),
+            BACKUP_COLUMN => self.toggle_list(SlotPicking::Backup(row)),
             SUGGEST_COLUMN => {
                 if let Some(suggested) = slot.suggested.clone() {
                     self.set_slot(&slot, Some(suggested), slot.backups.clone());
@@ -734,14 +722,8 @@ impl WorkspaceState {
     /// Takes the model at `row` of the open list, as narrowed, for what `picking` is: the slot's model, keeping its effort, or a backup added after the others.
     fn pick_slot_model(&mut self, picking: SlotPicking, row: usize) {
         let options = self.slot_model_choices();
-        let shown = picker_shown(&options, &self.settings_page.filter);
-        self.settings_page.slots.picking = None;
-        self.settings_page.filter = TextFieldState::default();
-        let Some(chosen) = shown
-            .get(row)
-            .and_then(|place| options.get(*place))
-            .cloned()
-        else {
+        let place = self.close_list(&options, row);
+        let Some(chosen) = place.and_then(|place| options.get(place)).cloned() else {
             return;
         };
         let (SlotPicking::Model(index) | SlotPicking::Backup(index)) = picking else {
@@ -776,10 +758,7 @@ impl WorkspaceState {
     /// Shows the assignments of the provider at `row` of the provider list, as narrowed: all providers first, then each provider offered.
     fn pick_slot_provider(&mut self, row: usize) {
         let options = self.provider_choices();
-        let shown = picker_shown(&options, &self.settings_page.filter);
-        self.settings_page.slots.picking = None;
-        self.settings_page.filter = TextFieldState::default();
-        let Some(place) = shown.get(row).copied() else {
+        let Some(place) = self.close_list(&options, row) else {
             return;
         };
         self.settings_page.slots.view = match place.checked_sub(1) {
@@ -789,6 +768,21 @@ impl WorkspaceState {
                 None => return,
             },
         };
+    }
+
+    /// Opens the list `wanted` is, emptying the box that narrows lists, or closes it when it is the one open.
+    fn toggle_list(&mut self, wanted: SlotPicking) {
+        let page = &mut self.settings_page.slots;
+        page.picking = (page.picking != Some(wanted)).then_some(wanted);
+        self.settings_page.filter = TextFieldState::default();
+    }
+
+    /// Closes the open list of `options`, emptying the box that narrows it, and gives the place among them of the one at `row` of the list as it was narrowed.
+    fn close_list(&mut self, options: &[String], row: usize) -> Option<usize> {
+        let shown = picker_shown(options, &self.settings_page.filter);
+        self.settings_page.slots.picking = None;
+        self.settings_page.filter = TextFieldState::default();
+        shown.get(row).copied()
     }
 
     /// Has the assignment of `slot` for the provider viewed set to `model` and `backups` in the file changes go to.
@@ -913,14 +907,14 @@ fn open_list(state: &WorkspaceState, row: usize, kind: SlotPicking) {
         note("No signed-in agent or declared server of this provider has listed its models yet.");
         return;
     }
-    picker_list(
-        &options,
-        picked,
-        (
-            &state.settings_page.filter,
-            Target::Settings(SettingsEvent::SettingsPickFilter),
-        ),
-    );
+    open_picks(state, &options, picked);
+}
+
+/// Emits the open list of `options` under a row, `picked` marked, narrowed by the box of the settings window that narrows lists.
+#[track_caller]
+fn open_picks(state: &WorkspaceState, options: &[String], picked: Option<usize>) {
+    let filter = Target::Settings(SettingsEvent::SettingsPickFilter);
+    picker_list(options, picked, (&state.settings_page.filter, filter));
 }
 
 /// How wide the button that opens the list of backups to add is, in logical pixels.
@@ -938,7 +932,6 @@ fn backup_button(name: Icon, id: Option<Target>, disabled: bool) {
 }
 
 /// Emits one backup of a slot as a chip: its place counted from one, `backup` itself, and the buttons `ids` names to move it up, move it down and remove it, the first greyed out when `first` and the second when `last`.
-#[track_caller]
 fn backup_chip(place: usize, backup: &str, ids: [Option<Target>; 3], first: bool, last: bool) {
     kit::row(
         Modifier::new()
@@ -956,7 +949,6 @@ fn backup_chip(place: usize, backup: &str, ids: [Option<Target>; 3], first: bool
 }
 
 /// Emits the backups of the slot at `row`, in order, side by side, each with buttons that move it up and down and remove it, then the picker that adds one.
-#[track_caller]
 fn backups_node(state: &WorkspaceState, row: usize, slot: &SlotRow) {
     let cell = |place: usize, column: usize| {
         let index = row.checked_mul(MOST_BACKUPS)?.checked_add(place)?;
@@ -967,45 +959,31 @@ fn backups_node(state: &WorkspaceState, row: usize, slot: &SlotRow) {
     let last = slot.backups.len().saturating_sub(1);
     let open = state.settings_page.slots.picking == Some(SlotPicking::Backup(row));
     kit::column(Modifier::new().fill_max_width(), 1, || {
-        flow_row_with(
-            Modifier::new(),
-            FlowOptions::new(sp(2), sp(2)).item_alignment(Alignment::Center),
-            || {
-                line("Backups", 12, 1.4, Role::Muted);
-                for (place, backup) in slot.backups.iter().enumerate() {
-                    backup_chip(
-                        place,
-                        backup,
-                        [cell(place, 0), cell(place, 1), cell(place, 2)],
-                        place == 0,
-                        place == last,
-                    );
-                }
-                if let Some(id) = SLOT_CONTROLS.cell(row, BACKUP_COLUMN, SLOT_COLUMNS) {
-                    picker("Add backup", BACKUP_PICKER_WIDTH, id, open);
-                }
-            },
-        );
+        kit::flow(false, || {
+            line("Backups", 12, 1.4, Role::Muted);
+            for (place, backup) in slot.backups.iter().enumerate() {
+                backup_chip(
+                    place,
+                    backup,
+                    [cell(place, 0), cell(place, 1), cell(place, 2)],
+                    place == 0,
+                    place == last,
+                );
+            }
+            if let Some(id) = SLOT_CONTROLS.cell(row, BACKUP_COLUMN, SLOT_COLUMNS) {
+                picker("Add backup", BACKUP_PICKER_WIDTH, id, open);
+            }
+        });
         open_list(state, row, SlotPicking::Backup(row));
     });
 }
 
-/// Emits a box of a category under what it is called, the two as wide as the row: `label_text` above what `field` emits.
-#[track_caller]
-fn labelled(label_text: &str, field: impl FnOnce()) {
-    kit::column(Modifier::new().fill_max_width(), 1, || {
-        line(label_text, 12, 1.4, Role::Muted);
-        field();
-    });
-}
-
 /// Emits the boxes of the category at `row`: what it is for on one line, then what it adds to a subagent's system prompt on several.
-#[track_caller]
 fn notes_node(row: usize, notes: &SlotNotes) {
     let id = |column: usize| SLOT_CONTROLS.cell(row, column, SLOT_COLUMNS);
     kit::column(Modifier::new().fill_max_width(), 2, || {
         if let Some(id) = id(DESCRIPTION_COLUMN) {
-            labelled("Description", || {
+            labelled_box("Description", || {
                 Input::new(&notes.description, id)
                     .variant(input::Variant::Bordered)
                     .size(Size::Sm)
@@ -1014,7 +992,7 @@ fn notes_node(row: usize, notes: &SlotNotes) {
             });
         }
         if let Some(id) = id(PROMPT_COLUMN) {
-            labelled("Prompt addition", || {
+            labelled_box("Prompt addition", || {
                 kit::column(
                     Modifier::new()
                         .fill_max_width()
@@ -1042,16 +1020,7 @@ fn notes_node(row: usize, notes: &SlotNotes) {
     });
 }
 
-/// Emits the badge saying which file or variable the model of `slot` comes from, when it is not the conversation's own.
-#[track_caller]
-pub(crate) fn source_badge(slot: &SlotRow) {
-    if let Some(source) = slot.source.filter(|source| *source != SlotSource::Main) {
-        Badge::new(source_name(source)).build();
-    }
-}
-
 /// Emits the buttons of the slot at `row`, side by side, each only when it applies: one that takes its suggested model and one that clears it.
-#[track_caller]
 pub(crate) fn slot_actions(state: &WorkspaceState, row: usize, slot: &SlotRow) {
     let id = |column: usize| SLOT_CONTROLS.cell(row, column, SLOT_COLUMNS);
     let suggest = slot
@@ -1068,21 +1037,19 @@ pub(crate) fn slot_actions(state: &WorkspaceState, row: usize, slot: &SlotRow) {
     .flatten();
     kit::row(Modifier::new(), 1, || {
         if let Some((suggested, button)) = suggest {
-            kit::small_button(
+            kit::action(
                 format!("Use suggested: {suggested}"),
                 button,
                 Variant::Outline,
-            )
-            .build();
+            );
         }
         if let Some(button) = clear {
-            kit::small_button("Clear", button, Variant::Ghost).build();
+            kit::action("Clear", button, Variant::Ghost);
         }
     });
 }
 
 /// Emits the controls of the slot at `row`, with `room` logical pixels across for its boxes: its model with its effort, the list of models while it is open, its backups, and for a category its boxes.
-#[track_caller]
 pub(crate) fn slot_controls(state: &WorkspaceState, row: usize, slot: &SlotRow, room: f32) {
     let id = |column: usize| SLOT_CONTROLS.cell(row, column, SLOT_COLUMNS);
     let notes = state
@@ -1099,18 +1066,14 @@ pub(crate) fn slot_controls(state: &WorkspaceState, row: usize, slot: &SlotRow, 
     });
     let width = (PICKER_WIDTH * 1.4).min(room);
     kit::column(Modifier::new().fill_max_width(), 2, || {
-        flow_row_with(
-            Modifier::new(),
-            FlowOptions::new(sp(2), sp(2)).item_alignment(Alignment::Center),
-            || {
-                if let Some(button) = id(MODEL_COLUMN) {
-                    picker(&model_shown(slot), width, button, open);
-                }
-                if let Some(picked) = effort {
-                    choices(&EFFORT_NAMES, picked, |option| id(EFFORT_COLUMN + option));
-                }
-            },
-        );
+        kit::flow(false, || {
+            if let Some(button) = id(MODEL_COLUMN) {
+                picker(&model_shown(slot), width, button, open);
+            }
+            if let Some(picked) = effort {
+                choices(&EFFORT_NAMES, picked, |option| id(EFFORT_COLUMN + option));
+            }
+        });
         open_list(state, row, SlotPicking::Model(row));
         backups_node(state, row, slot);
         if let Some(notes) = notes {
@@ -1122,35 +1085,25 @@ pub(crate) fn slot_controls(state: &WorkspaceState, row: usize, slot: &SlotRow, 
 /// Emits the row of the slot at `row` on the models and orchestration pages, `room` logical pixels across: its name, where its model comes from and, for a job slot, what it is for, its suggestion and clear buttons, then its controls.
 #[track_caller]
 pub(crate) fn slot_row(state: &WorkspaceState, row: usize, slot: &SlotRow, room: f32) {
-    kit::column(
-        Modifier::new()
-            .padding_xy(theme::sp(3), 0.0)
-            .padding_xy(0.0, theme::sp(3)),
-        2,
-        || {
-            flow_row_with(
-                Modifier::new().fill_max_width(),
-                FlowOptions::new(sp(2), sp(2))
-                    .arrangement(Arrangement::SpaceBetween)
-                    .item_alignment(Alignment::Center),
-                || {
-                    kit::row(Modifier::new(), 2, || {
-                        kit::text(
-                            Modifier::new(),
-                            format!("@{}", slot.name),
-                            kit::strong(13, Role::Text),
-                        );
-                        source_badge(slot);
-                    });
-                    slot_actions(state, row, slot);
-                },
-            );
-            if !slot.category {
-                line(pm_harness::slot_purpose(&slot.name), 12, 1.4, Role::Muted);
-            }
-            slot_controls(state, row, slot, room - ROW_INSET);
-        },
-    );
+    kit::column(Modifier::new().padding(theme::sp(3)), 2, || {
+        kit::flow(true, || {
+            kit::row(Modifier::new(), 2, || {
+                kit::text(
+                    Modifier::new(),
+                    format!("@{}", slot.name),
+                    kit::strong(13, Role::Text),
+                );
+                if let Some(source) = slot.source.filter(|source| *source != SlotSource::Main) {
+                    Badge::new(source_name(source)).build();
+                }
+            });
+            slot_actions(state, row, slot);
+        });
+        if !slot.category {
+            line(pm_harness::slot_purpose(&slot.name), 12, 1.4, Role::Muted);
+        }
+        slot_controls(state, row, slot, room - ROW_INSET);
+    });
 }
 
 /// What `preset` sets, in a line: each slot's model, and the effort.
@@ -1182,37 +1135,30 @@ fn preset_summary(preset: &PresetInfo) -> String {
 }
 
 /// Emits the row of the preset at `row`: its name and what it sets, with its apply and delete buttons.
-#[track_caller]
 fn preset_row(row: usize, preset: &PresetInfo) {
     let id = |column: usize| PRESET_CONTROLS.cell(row, column, PRESET_COLUMNS);
-    kit::row(
-        Modifier::new()
-            .padding_xy(theme::sp(3), 0.0)
-            .padding_xy(0.0, theme::sp(3)),
-        3,
-        || {
-            kit::column(Modifier::new().weight(1.0), 0.5, || {
-                kit::text(
-                    Modifier::new(),
-                    preset.name.clone(),
-                    kit::strong(13, Role::Text),
-                );
-                kit::text(
-                    Modifier::new(),
-                    preset_summary(preset),
-                    kit::line(12, Role::Muted),
-                );
-            });
-            kit::row(Modifier::new(), 1, || {
-                if let Some(button) = id(0) {
-                    kit::small_button("Apply", button, Variant::Outline).build();
-                }
-                if let Some(button) = id(1) {
-                    kit::small_button("Delete", button, Variant::Ghost).build();
-                }
-            });
-        },
-    );
+    kit::row(Modifier::new().padding(theme::sp(3)), 3, || {
+        kit::column(Modifier::new().weight(1.0), 0.5, || {
+            kit::text(
+                Modifier::new(),
+                preset.name.clone(),
+                kit::strong(13, Role::Text),
+            );
+            kit::text(
+                Modifier::new(),
+                preset_summary(preset),
+                kit::line(12, Role::Muted),
+            );
+        });
+        kit::row(Modifier::new(), 1, || {
+            if let Some(button) = id(0) {
+                kit::action("Apply", button, Variant::Outline);
+            }
+            if let Some(button) = id(1) {
+                kit::action("Delete", button, Variant::Ghost);
+            }
+        });
+    });
 }
 
 /// Emits a box and the button beside it that hands in what is written in it.
@@ -1257,21 +1203,12 @@ pub(crate) fn scope_choice(state: &WorkspaceState) {
 #[track_caller]
 pub(crate) fn provider_choice(state: &WorkspaceState) {
     let open = state.settings_page.slots.picking == Some(SlotPicking::Provider);
-    flow_row_with(
-        Modifier::new(),
-        FlowOptions::new(sp(2), sp(2)).item_alignment(Alignment::Center),
-        || {
-            line("Provider", 12, 1.4, Role::Muted);
-            picker(
-                &state.provider_shown(),
-                PROVIDER_PICKER_WIDTH,
-                Target::Settings(SettingsEvent::SlotsProvider),
-                open,
-            );
-        },
-    );
+    kit::flow(false, || {
+        line("Provider", 12, 1.4, Role::Muted);
+        let id = Target::Settings(SettingsEvent::SlotsProvider);
+        picker(&state.provider_shown(), PROVIDER_PICKER_WIDTH, id, open);
+    });
     if open {
-        let options = state.provider_choices();
         let picked = match state.slot_provider() {
             None => Some(0),
             Some(viewed) => state
@@ -1280,14 +1217,7 @@ pub(crate) fn provider_choice(state: &WorkspaceState) {
                 .position(|(held, _)| *held == viewed)
                 .map(|place| place + 1),
         };
-        picker_list(
-            &options,
-            picked,
-            (
-                &state.settings_page.filter,
-                Target::Settings(SettingsEvent::SettingsPickFilter),
-            ),
-        );
+        open_picks(state, &state.provider_choices(), picked);
     }
 }
 
@@ -1308,16 +1238,10 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     paragraph(SUMMARY, room);
     provider_choice(state);
     error_note(state, room);
-    flow_row_with(
-        Modifier::new().fill_max_width(),
-        FlowOptions::new(sp(2), sp(2))
-            .arrangement(Arrangement::SpaceBetween)
-            .item_alignment(Alignment::Center),
-        || {
-            heading_only("Slots", rows.len());
-            scope_choice(state);
-        },
-    );
+    kit::flow(true, || {
+        heading_only("Slots", rows.len());
+        scope_choice(state);
+    });
     if rows.is_empty() {
         note("The agent has not told its slots yet.");
     } else {

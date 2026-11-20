@@ -13,20 +13,20 @@ use rustle::{
     PressInteraction, remember_mutable_interaction_source,
 };
 
-use super::{Radius, Role, Tone, color};
+use super::{Radius, Role, color};
 
-/// The fills of an area by its interaction state, as tones of the theme: at
-/// rest, under the pointer, pressed and focused, with its corner radius.
+/// The fills of an area by its interaction state: at rest, under the pointer,
+/// pressed and focused, with its corner radius.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct InteractionTones {
     /// The fill at rest.
-    idle: Option<Tone>,
+    idle: Option<Color>,
     /// The fill under the pointer.
-    hover: Option<Tone>,
+    hover: Option<Color>,
     /// The fill while pressed.
-    active: Option<Tone>,
+    active: Option<Color>,
     /// The fill while focused.
-    focus: Option<Tone>,
+    focus: Option<Color>,
     /// How round its corners are.
     radius: Radius,
 }
@@ -40,27 +40,27 @@ impl InteractionTones {
         }
     }
 
-    /// Filled with `tone` at rest.
-    pub fn idle(mut self, tone: impl Into<Tone>) -> Self {
-        self.idle = Some(tone.into());
+    /// Filled with `fill` at rest.
+    pub fn idle(mut self, fill: impl Into<Color>) -> Self {
+        self.idle = Some(fill.into());
         self
     }
 
-    /// Filled with `tone` under the pointer.
-    pub fn hover(mut self, tone: impl Into<Tone>) -> Self {
-        self.hover = Some(tone.into());
+    /// Filled with `fill` under the pointer.
+    pub fn hover(mut self, fill: impl Into<Color>) -> Self {
+        self.hover = Some(fill.into());
         self
     }
 
-    /// Filled with `tone` while pressed.
-    pub fn active(mut self, tone: impl Into<Tone>) -> Self {
-        self.active = Some(tone.into());
+    /// Filled with `fill` while pressed.
+    pub fn active(mut self, fill: impl Into<Color>) -> Self {
+        self.active = Some(fill.into());
         self
     }
 
-    /// Filled with `tone` while focused.
-    pub fn focus(mut self, tone: impl Into<Tone>) -> Self {
-        self.focus = Some(tone.into());
+    /// Filled with `fill` while focused.
+    pub fn focus(mut self, fill: impl Into<Color>) -> Self {
+        self.focus = Some(fill.into());
         self
     }
 
@@ -70,12 +70,12 @@ impl InteractionTones {
         self
     }
 
-    /// The colour of an area pressed, hovered and focused as they say, in the
-    /// theme being composed with: a state without a tone of its own takes the one
-    /// it falls back to, pressed to hovered, hovered to focused, focused to at
-    /// rest, and no tone at all is transparent.
+    /// The colour of an area pressed, hovered and focused as they say: a state
+    /// without a fill of its own takes the one it falls back to, pressed to
+    /// hovered, hovered to focused, focused to at rest, and no fill at all is
+    /// transparent.
     pub fn fill(&self, pressed: bool, hovered: bool, focused: bool) -> Color {
-        let resolved = |tone: Option<Tone>| tone.map_or(Color::TRANSPARENT, color);
+        let resolved = |fill: Option<Color>| fill.unwrap_or(Color::TRANSPARENT);
         let at_focus = self.focus.or(self.idle);
         let at_hover = self.hover.or(at_focus);
         if pressed {
@@ -293,7 +293,7 @@ fn set_focused(source: &MutableInteractionSource, focused: bool) {
 mod tests {
     use super::*;
 
-    /// A state without a tone of its own falls back as the old hover styles did: pressed to
+    /// A state without a fill of its own falls back as the old hover styles did: pressed to
     /// hovered, hovered to focused, focused to at rest, and nothing to transparent.
     #[test]
     fn states_without_a_tone_fall_back() {

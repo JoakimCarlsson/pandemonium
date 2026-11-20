@@ -7,7 +7,6 @@ use crate::theme;
 use pm_field::Edit;
 use rustle::Modifier;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged};
 
 use crate::Tally;
 use crate::button::Variant;
@@ -25,75 +24,22 @@ const STRIP: f32 = 40.0;
 /// How many lines of the file are kept around a change when a file is set against an older state.
 const CONTEXT: usize = 3;
 
-/// What the view is of, which says what the strip above the files offers.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Mode {
-    /// One file against a state it was saved in, with the button that restores that state.
-    Timeline,
-    /// The files a commit or a branch changed, as their diffs say.
-    #[default]
-    Revision,
-}
-
-/// The view of the changes being shown, being described: what it is of and how big it is.
+/// The view of the changes being shown, being described: the state it is drawn from.
 ///
-/// Build it with [`Changes::new`], change it with the methods that follow, and
-/// emit it with [`Changes::build`].
+/// Build it with [`Changes::new`] and emit it with [`Changes::build`].
 #[derive(Clone)]
 pub struct Changes<'a> {
     /// The state the files are drawn from.
     state: &'a WorkspaceState,
-    /// What it is of.
-    mode: Mode,
-    /// How big it is.
-    size: Size,
-    /// What the caller puts around its box.
-    modifier: Modifier,
-    /// How the column holding the strip and the files lays them out.
-    arranged: Option<(Arrangement, Alignment)>,
 }
 
 impl<'a> Changes<'a> {
     /// The view of the excerpts `state` holds, of what they are of.
     pub fn new(state: &'a WorkspaceState) -> Self {
-        let mode = match state.excerpts.as_ref().map(|excerpts| &excerpts.source) {
-            Some(Source::Timeline { .. }) => Mode::Timeline,
-            _ => Mode::Revision,
-        };
-        Self {
-            state,
-            mode,
-            size: Size::default(),
-            modifier: Modifier::new(),
-            arranged: None,
-        }
+        Self { state }
     }
 
-    /// The view as `mode` says.
-    pub fn mode(mut self, mode: Mode) -> Self {
-        self.mode = mode;
-        self
-    }
-
-    /// The view `size` big.
-    pub fn size(mut self, size: Size) -> Self {
-        self.size = size;
-        self
-    }
-
-    /// The view with `modifier` chained outside its own, for what the caller puts around it.
-    pub fn modifier(mut self, modifier: Modifier) -> Self {
-        self.modifier = self.modifier.chain(modifier);
-        self
-    }
-
-    /// The view spreading its children by `arrangement` and placing them across by `alignment` in place of its own.
-    pub fn arranged(mut self, arrangement: Arrangement, alignment: Alignment) -> Self {
-        self.arranged = Some((arrangement, alignment));
-        self
-    }
-
-    /// Emits the strip above the files: how many there are and how far the changes went, then what the mode offers.
+    /// Emits the strip above the files: how many there are and how far the changes went, then the button that restores the state a timeline sets the file against, or those that fold the files and take back the turn that made them.
     #[track_caller]
     fn strip(&self) {
         let Some(excerpts) = self.state.excerpts.as_ref() else {
@@ -107,8 +53,8 @@ impl<'a> Changes<'a> {
                 (added + file.tally.0, removed + file.tally.1)
             });
         let when = match &excerpts.source {
-            Source::Timeline { when, .. } => when.as_str(),
-            _ => "",
+            Source::Timeline { when, .. } => Some(when.as_str()),
+            _ => None,
         };
         let what = match &excerpts.source {
             Source::Revision { label, .. } => label.clone(),
@@ -116,7 +62,6 @@ impl<'a> Changes<'a> {
         };
         let undoes =
             matches!(&excerpts.source, Source::Revision { turn: Some(_), .. }) && count > 0;
-        let mode = self.mode;
         kit::row(
             Modifier::new()
                 .fill_max_width()
@@ -124,8 +69,8 @@ impl<'a> Changes<'a> {
                 .ruled(theme::Side::Bottom)
                 .padding_xy(theme::sp(4), 0.0),
             3,
-            move || match mode {
-                Mode::Timeline => {
+            move || {
+                if let Some(when) = when {
                     glyph(phosphor::CLOCK_COUNTER_CLOCKWISE, 3.5, Role::Muted);
                     line(
                         format!("Saved {when}, against the file as it is now"),
@@ -133,31 +78,30 @@ impl<'a> Changes<'a> {
                         1.4,
                         Role::Muted,
                     );
-                    Tally::new(added, removed).size(12).build();
-                    spacer();
-                    restore_button();
-                }
-                Mode::Revision => {
+                } else {
                     line(what, 12, 1.4, Role::Muted);
-                    Tally::new(added, removed).size(12).build();
-                    spacer();
-                    if undoes {
-                        kit::small_button(
-                            "Undo turn",
-                            Target::Search(SearchEvent::ExcerptsUndoAll),
-                            Variant::Ghost,
-                        )
-                        .with_icon(phosphor::ARROW_COUNTER_CLOCKWISE)
-                        .tooltip("Take everything this turn changed back out of the files")
-                        .build();
-                    }
+                }
+                Tally::new(added, removed).size(12).build();
+                spacer();
+                if when.is_some() {
+                    restore_button();
+                    return;
+                }
+                if undoes {
                     kit::small_button(
-                        "Fold all",
-                        Target::Search(SearchEvent::ExcerptsFoldAll),
+                        "Undo turn",
+                        Target::Search(SearchEvent::ExcerptsUndoAll),
                         Variant::Ghost,
                     )
+                    .with_icon(phosphor::ARROW_COUNTER_CLOCKWISE)
+                    .tooltip("Take everything this turn changed back out of the files")
                     .build();
                 }
+                kit::action(
+                    "Fold all",
+                    Target::Search(SearchEvent::ExcerptsFoldAll),
+                    Variant::Ghost,
+                );
             },
         );
     }
@@ -165,19 +109,10 @@ impl<'a> Changes<'a> {
     /// Emits the view: the strip, then every file with its lines.
     #[track_caller]
     pub fn build(self) {
-        let own = Modifier::new().weight(1.0);
-        let (arrangement, alignment) = self
-            .arranged
-            .unwrap_or((Arrangement::Start, Alignment::Start));
-        column_arranged(
-            self.modifier.clone().chain(own),
-            arrangement,
-            alignment,
-            || {
-                self.strip();
-                file_list(self.state, self.size);
-            },
-        );
+        kit::column(Modifier::new().weight(1.0), 0, || {
+            self.strip();
+            file_list(self.state, Size::default());
+        });
     }
 }
 
@@ -225,17 +160,12 @@ pub(crate) fn blocks_of_diff(diff: &[DiffLine]) -> Vec<Block> {
                     removed: Vec::new(),
                 });
             }
-            Kind::Context => {
+            Kind::Context | Kind::Add => {
                 flush(&mut current, &mut taken, next);
                 if let Some(block) = current.as_mut() {
-                    block.last = next;
-                }
-                next += 1;
-            }
-            Kind::Add => {
-                flush(&mut current, &mut taken, next);
-                if let Some(block) = current.as_mut() {
-                    block.hits.push(next);
+                    if entry.kind == Kind::Add {
+                        block.hits.push(next);
+                    }
                     block.last = next;
                 }
                 next += 1;
@@ -261,35 +191,40 @@ fn revision_file(change: &Change) -> ExcerptFile {
     }
 }
 
+/// The `@@` line that heads the hunk `group`, counting its lines from one in
+/// the old text and the new; none for an empty group.
+pub(crate) fn hunk_header(group: &[similar::DiffOp]) -> Option<DiffLine> {
+    let (first, last) = (group.first()?, group.last()?);
+    let old = first.old_range().start..last.old_range().end;
+    let new = first.new_range().start..last.new_range().end;
+    let start = |range: &std::ops::Range<usize>| {
+        if range.is_empty() {
+            range.start
+        } else {
+            range.start + 1
+        }
+    };
+    Some(DiffLine {
+        kind: Kind::Hunk,
+        text: format!(
+            "@@ -{},{} +{},{} @@",
+            start(&old),
+            old.len(),
+            start(&new),
+            new.len()
+        ),
+    })
+}
+
 /// The lines of the diff that turns `old` into `new`, with `CONTEXT` lines kept around each change, each hunk under its header.
 pub(crate) fn lines_between(old: &str, new: &str) -> Vec<DiffLine> {
     let diff = similar::TextDiff::from_lines(old, new);
     let mut lines = Vec::new();
     for group in diff.grouped_ops(CONTEXT) {
-        let (Some(first), Some(last)) = (group.first(), group.last()) else {
+        let Some(header) = hunk_header(&group) else {
             continue;
         };
-        let (old_range, new_range) = (
-            first.old_range().start..last.old_range().end,
-            first.new_range().start..last.new_range().end,
-        );
-        let start = |range: &std::ops::Range<usize>| {
-            if range.is_empty() {
-                range.start
-            } else {
-                range.start + 1
-            }
-        };
-        lines.push(DiffLine {
-            kind: Kind::Hunk,
-            text: format!(
-                "@@ -{},{} +{},{} @@",
-                start(&old_range),
-                old_range.len(),
-                start(&new_range),
-                new_range.len()
-            ),
-        });
+        lines.push(header);
         for operation in &group {
             for change in diff.iter_changes(operation) {
                 let kind = match change.tag() {

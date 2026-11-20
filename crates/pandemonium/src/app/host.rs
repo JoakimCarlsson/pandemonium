@@ -693,8 +693,7 @@ impl App {
             WindowHandle::MAIN.set_size(rustle::Size::new(width, height));
         }
         let (all, mono) = pm_components::theme::font_families();
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).with_fonts(all, mono));
+        self.model.change(|state| state.with_fonts(all, mono));
         self.recompose = true;
         crate::startup::mark("renderer-ready");
     }
@@ -746,16 +745,13 @@ impl App {
         if self.model.read(Screen::editor_settings_wanted) {
             let settings = self.saved_editor.clone();
             self.model
-                .update(|screen| *screen = std::mem::take(screen).with_editor_settings(settings));
+                .change(|state| state.with_editor_settings(settings));
         }
         if self.model.read(Screen::window_settings_wanted) {
             let settings = self.saved_window.clone();
             let (all, mono) = pm_components::theme::font_families();
-            self.model.update(|screen| {
-                *screen = std::mem::take(screen)
-                    .with_window_settings(settings)
-                    .with_fonts(all, mono);
-            });
+            self.model
+                .change(|state| state.with_window_settings(settings).with_fonts(all, mono));
             self.work.show_release(&self.model);
         }
         if self.model.read(Screen::has_outbox) {

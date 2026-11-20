@@ -10,7 +10,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use pm_pages::Screen;
+use pm_pages::{Screen, WorkspaceState};
 
 /// The screen as a rustle state, with a mark the app clears once it composed
 /// for a change. Every clone is a handle to the same screen.
@@ -51,6 +51,12 @@ impl Model {
         self.changed.set(true);
         self.generation.set(self.generation.get() + 1);
         self.revise();
+    }
+
+    /// Replaces the workspace the screen shows with what `change` makes of it,
+    /// as [`Model::update`] does.
+    pub fn change(&self, change: impl FnOnce(WorkspaceState) -> WorkspaceState) {
+        self.update(|screen| *screen = std::mem::take(screen).in_workspace(change));
     }
 
     /// Changes only the sizes of panels in the screen through `change`, marking it
@@ -96,9 +102,7 @@ mod tests {
         let other = model.clone();
         let changes = model.changes();
         assert!(!changes.get());
-        other.update(|screen| {
-            *screen = std::mem::take(screen).with_fonts(vec!["Inter".to_owned()], Vec::new());
-        });
+        other.change(|state| state.with_fonts(vec!["Inter".to_owned()], Vec::new()));
         assert!(changes.get());
         assert!(model.read(|screen| *screen != Screen::default()));
     }

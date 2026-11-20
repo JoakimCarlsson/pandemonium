@@ -6,7 +6,7 @@ use crate::target::Target;
 use crate::theme;
 use rustle::Modifier;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, row_arranged};
+use rustle::{Alignment, Arrangement, Color, row_arranged};
 
 use std::collections::HashSet;
 
@@ -15,7 +15,7 @@ use crate::file_icon::file_icon;
 use crate::parts::glyph;
 use crate::sample::{Change, Session};
 use crate::state::WorkspaceState;
-use crate::theme::{Radius, Role, Tone};
+use crate::theme::{Radius, Role};
 use crate::tile::Tile;
 use crate::tree::{Entry, Folder, Layout, build_stopping, folders};
 use crate::{Button, Checkbox, Tally};
@@ -76,17 +76,16 @@ pub fn members(changes: &[Change], group: Group, repository: Option<&str>) -> Ve
 }
 
 /// The colour the letter that says how `change` came to differ is written in.
-pub(crate) fn mark_color(letter: &str) -> Tone {
+pub(crate) fn mark_color(letter: &str) -> Color {
     match letter {
-        "A" | "U" => Tone::from(Role::Success),
-        "D" => Tone::from(Role::Subtle),
-        "C" => Tone::from(Role::Danger),
-        _ => Tone::rgb(0xe6, 0xc8, 0x4f),
+        "A" | "U" => Color::from(Role::Success),
+        "D" => Color::from(Role::Subtle),
+        "C" => Color::from(Role::Danger),
+        _ => Color::rgb(0xe6, 0xc8, 0x4f),
     }
 }
 
 /// Emits the box that says how much of a file is in the index.
-#[track_caller]
 fn staged_box(change: &Change, id: Target) {
     Checkbox::new(change.fully_staged(), id)
         .mixed(change.staged && change.unstaged)
@@ -102,12 +101,12 @@ fn heading(changes: &[Change], group: Group, repository: Option<&str>) {
         .filter(|&&index| changes[index].fully_staged())
         .count();
     row_arranged(
-        Modifier::new()
-            .fill_max_width()
-            .padding_each(theme::sp(3), 0.0, 0.0, 0.0)
-            .padding_each(0.0, 0.0, theme::sp(3), 0.0)
-            .padding_each(0.0, theme::sp(2), 0.0, 0.0)
-            .padding_each(0.0, 0.0, 0.0, theme::sp(1)),
+        Modifier::new().fill_max_width().padding_each(
+            theme::sp(3),
+            theme::sp(2),
+            theme::sp(3),
+            theme::sp(1),
+        ),
         Arrangement::SpaceBetween,
         Alignment::Center,
         || {
@@ -276,6 +275,16 @@ fn commit_count(moved: &pm_git::Moved) -> String {
     }
 }
 
+/// The tile of a row of the list answering to `id`, as wide as the list, what it holds set in `inset` steps from its start and three from its end.
+fn row_tile(id: Target, inset: f32) -> Tile {
+    Tile::new(id)
+        .modifier(Modifier::new().fill_max_width())
+        .height(6.5)
+        .gap(2.0)
+        .radius(Radius::Sm)
+        .inner(Modifier::new().padding_each(theme::sp(inset), 0.0, theme::sp(3), 0.0))
+}
+
 /// Emits the row of the file at `index`, `depth` levels down: how it changed, a button that opens it and the box that stages it.
 #[track_caller]
 fn file_row(state: &WorkspaceState, change: &Change, index: usize, name: &str, depth: usize) {
@@ -283,27 +292,13 @@ fn file_row(state: &WorkspaceState, change: &Change, index: usize, name: &str, d
     let tone = mark_color(letter);
     let operations = crate::events::operations();
     let id = Target::Diff(DiffEvent::ChangedFile(index));
-    Tile::new(id)
+    row_tile(id, 3.0 + depth as f32 * INDENT + FILE_OFFSET)
         .on_pick(crate::events::picking(id, move |state, how| {
             state.change_picked(index, how)
         }))
         .on_context(move || operations.open_change_menu(index))
-        .modifier(Modifier::new().fill_max_width())
         .selected(state.git.marked.contains(&index))
-        .height(6.5)
-        .gap(2.0)
-        .radius(Radius::Sm)
         .modifier(Modifier::new().clip())
-        .inner(
-            Modifier::new()
-                .padding_each(
-                    theme::sp(3.0 + depth as f32 * INDENT + FILE_OFFSET),
-                    0.0,
-                    0.0,
-                    0.0,
-                )
-                .padding_each(0.0, 0.0, theme::sp(3), 0.0),
-        )
         .build_with(|| {
             match &change.moved {
                 Some(_) => glyph(phosphor::GIT_BRANCH, 3.5, Role::Muted),
@@ -371,53 +366,39 @@ fn folder_row(
     let added = inside.iter().map(|&index| changes[index].added()).sum();
     let removed = inside.iter().map(|&index| changes[index].removed()).sum();
     let operations = crate::events::operations();
-    Tile::new(Target::Diff(DiffEvent::ChangeFolder(position)))
-        .on_context(move || operations.open_folder_change_menu(position))
-        .modifier(Modifier::new().fill_max_width())
-        .height(6.5)
-        .gap(2.0)
-        .radius(Radius::Sm)
-        .inner(
-            Modifier::new()
-                .padding_each(theme::sp(3.0 + depth as f32 * INDENT), 0.0, 0.0, 0.0)
-                .padding_each(0.0, 0.0, theme::sp(3), 0.0),
+    row_tile(
+        Target::Diff(DiffEvent::ChangeFolder(position)),
+        3.0 + depth as f32 * INDENT,
+    )
+    .on_context(move || operations.open_folder_change_menu(position))
+    .build_with(|| {
+        glyph(kit::chevron(open), 3.5, Role::Muted);
+        Checkbox::new(
+            !inside.is_empty() && staged == inside.len(),
+            Target::Diff(DiffEvent::ChangeFolderStage(position)),
         )
-        .build_with(|| {
-            glyph(
-                if open {
-                    phosphor::CARET_DOWN
-                } else {
-                    phosphor::CARET_RIGHT
-                },
-                3.5,
-                Role::Muted,
-            );
-            Checkbox::new(
-                !inside.is_empty() && staged == inside.len(),
-                Target::Diff(DiffEvent::ChangeFolderStage(position)),
-            )
-            .mixed(partly && staged < inside.len())
-            .build();
-            if stops(changes, None).contains(&folder.path.as_str()) {
-                glyph(phosphor::GIT_BRANCH, 3.5, Role::Muted);
-            }
+        .mixed(partly && staged < inside.len())
+        .build();
+        if stops(changes, None).contains(&folder.path.as_str()) {
+            glyph(phosphor::GIT_BRANCH, 3.5, Role::Muted);
+        }
+        kit::text(
+            Modifier::new().weight(1.0),
+            &folder.name,
+            kit::line(13, Role::Text),
+        );
+        if let Some(standing) = standings
+            .iter()
+            .find(|standing| standing.path == folder.path)
+        {
             kit::text(
-                Modifier::new().weight(1.0),
-                &folder.name,
-                kit::line(13, Role::Text),
+                Modifier::new(),
+                standing_label(standing),
+                kit::code(11, Role::Subtle),
             );
-            if let Some(standing) = standings
-                .iter()
-                .find(|standing| standing.path == folder.path)
-            {
-                kit::text(
-                    Modifier::new(),
-                    standing_label(standing),
-                    kit::code(11, Role::Subtle),
-                );
-            }
-            Tally::new(added, removed).size(11).build();
-        });
+        }
+        Tally::new(added, removed).size(11).build();
+    });
 }
 
 /// Emits the rows of `entries` and of everything in their open folders, `depth` levels down; `counter` numbers the folders across the groups as [`folder_table`] does.

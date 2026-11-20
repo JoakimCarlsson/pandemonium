@@ -1,7 +1,6 @@
 //! Searching the text of every file of the project from the review panel: the box the search is typed in, the ways of matching and the hits, grouped by file.
 
 use crate::areas::SearchEvent;
-use crate::events::{Event, send};
 use crate::kit;
 use crate::target::Target;
 use crate::theme;
@@ -11,12 +10,11 @@ use rustle::phosphor;
 use std::collections::HashSet;
 use std::ops::Range;
 
-use crate::events::Interactive;
 use crate::theme::Role;
 use pm_editor::Query;
 use pm_protocol::Location;
+use rustle::Modifier;
 use rustle::TextFieldState;
-use rustle::{CursorIcon, Modifier};
 
 use crate::file_icon::file_icon;
 use crate::find::switch;
@@ -141,27 +139,18 @@ fn grouped(locations: Vec<Location>) -> Vec<Group> {
 impl WorkspaceState {
     /// Shows the search in the review panel, looking for what is selected in the file shown when that is part of one line, and asks again when the box holds something that was not searched for yet.
     pub fn project_search_opened(mut self) -> Self {
-        let selected = self
-            .shown_document()
-            .map(|document| document.field.selected().to_owned())
-            .filter(|selected| !selected.is_empty() && !selected.contains('\n'))
-            .filter(|_| self.editor.seed_search_from_selection);
+        let selected = self.selection_to_seek();
         self.review = true;
         self.show_review_tab(ReviewTab::Search);
         if let Some(selected) = selected {
             self.project_search.query = TextFieldState::new(selected);
         }
         self.project_search.query.select_all();
-        self.project_searched()
+        self.project_search_typed()
     }
 
-    /// The state after the reader changed the text looked for: the server is asked for its hits.
-    pub fn project_search_typed(self) -> Self {
-        self.project_searched()
-    }
-
-    /// Asks the server for the hits of what is typed, or empties the list when nothing is.
-    fn project_searched(mut self) -> Self {
+    /// The state after the reader changed the text looked for: the server is asked for its hits, or the list is emptied when nothing is typed.
+    pub fn project_search_typed(mut self) -> Self {
         let session = self.review_index();
         let search = &mut self.project_search;
         let text = search.query.text().to_owned();
@@ -225,45 +214,47 @@ impl WorkspaceState {
 
     /// Carries out what pressing the part `id` of the search does.
     pub(crate) fn project_search_pressed(mut self, id: Target) -> Self {
-        match id {
-            Target::Search(SearchEvent::ReviewSearch) => return self.project_search_opened(),
-            Target::Search(SearchEvent::ProjectSearchExcerpts) => return self.excerpts_opened(),
-            Target::Search(SearchEvent::ProjectSearchGo) => {
-                self.project_search.asked = None;
-                return self.project_searched();
-            }
-            Target::Search(SearchEvent::ProjectSearchCase) => {
-                self.project_search.case ^= true;
-                return self.project_searched();
-            }
-            Target::Search(SearchEvent::ProjectSearchRegex) => {
-                self.project_search.regex ^= true;
-                return self.project_searched();
-            }
-            Target::Search(SearchEvent::ProjectSearchClear) => {
-                self.project_search.query = TextFieldState::new("");
-                return self.project_searched();
-            }
-            _ => {}
-        }
-        if let Target::Search(SearchEvent::SearchGroup(place)) = id {
-            if let Some(path) = self
-                .project_search
-                .groups
-                .get(place)
-                .map(|g| g.path.clone())
-                && !self.project_search.folded.remove(&path)
-            {
-                self.project_search.folded.insert(path);
-            }
-            return self;
-        }
-        let Target::Search(SearchEvent::SearchHit(offset)) = id else {
+        let Target::Search(event) = id else {
             return self;
         };
-        let location = self.project_search.hit(offset).cloned();
-        match (self.review_index(), location) {
-            (Some(session), Some(location)) => self.go_to_location(session, location),
+        match event {
+            SearchEvent::ReviewSearch => self.project_search_opened(),
+            SearchEvent::ProjectSearchExcerpts => self.excerpts_opened(),
+            SearchEvent::ProjectSearchGo => {
+                self.project_search.asked = None;
+                self.project_search_typed()
+            }
+            SearchEvent::ProjectSearchCase => {
+                self.project_search.case ^= true;
+                self.project_search_typed()
+            }
+            SearchEvent::ProjectSearchRegex => {
+                self.project_search.regex ^= true;
+                self.project_search_typed()
+            }
+            SearchEvent::ProjectSearchClear => {
+                self.project_search.query = TextFieldState::new("");
+                self.project_search_typed()
+            }
+            SearchEvent::SearchGroup(place) => {
+                if let Some(path) = self
+                    .project_search
+                    .groups
+                    .get(place)
+                    .map(|g| g.path.clone())
+                    && !self.project_search.folded.remove(&path)
+                {
+                    self.project_search.folded.insert(path);
+                }
+                self
+            }
+            SearchEvent::SearchHit(offset) => {
+                let location = self.project_search.hit(offset).cloned();
+                match (self.review_index(), location) {
+                    (Some(session), Some(location)) => self.go_to_location(session, location),
+                    _ => self,
+                }
+            }
             _ => self,
         }
     }
@@ -297,23 +288,29 @@ fn windowed(line: &str, found: Option<Range<usize>>) -> (String, String, String)
     )
 }
 
-/// Emits the row for one hit: the line it is on, with the match marked, and the number of the line.
+/// A row of the list across the panel, lit under the pointer, made the control `id` that sends its press.
 #[track_caller]
-fn hit_row(index: usize, location: &Location, matcher: &Query) {
-    let text = location.line.as_deref().unwrap_or_default();
-    let (before, found, after) = windowed(text, matcher.first_in(text));
-    let id = Target::Search(SearchEvent::SearchHit(index));
-    let modifier = Modifier::new()
+fn pressed_row(id: Target) -> Modifier {
+    let own = Modifier::new()
         .fill_max_width()
         .height(theme::sp(6))
         .indicated(
             theme::InteractionTones::new().hover(Role::SurfaceHover),
             theme::Focused::Held(crate::focus::is_held(id)),
-        )
-        .cursor(CursorIcon::Pointer)
-        .control(id, send(Event::pressing(id)))
-        .padding_each(theme::sp(9), 0.0, 0.0, 0.0)
-        .padding_each(0.0, 0.0, theme::sp(3), 0.0);
+        );
+    kit::pressed(own, id)
+}
+
+/// Emits the row for one hit: the line it is on, with the match marked, and the number of the line.
+fn hit_row(index: usize, location: &Location, matcher: &Query) {
+    let text = location.line.as_deref().unwrap_or_default();
+    let (before, found, after) = windowed(text, matcher.first_in(text));
+    let modifier = pressed_row(Target::Search(SearchEvent::SearchHit(index))).padding_each(
+        theme::sp(9),
+        0.0,
+        theme::sp(3),
+        0.0,
+    );
     let code = theme::mono_style(12, 1.4);
     kit::row(modifier, 2, || {
         kit::row(Modifier::new().weight(1.0).clip(), 0, || {
@@ -344,26 +341,12 @@ fn hit_row(index: usize, location: &Location, matcher: &Query) {
 }
 
 /// Emits the row that names a file and folds its hits.
-#[track_caller]
 fn group_row(place: usize, group: &Group, folded: bool) {
     let name = group.path.rsplit('/').next().unwrap_or(&group.path);
     let folder = group.path.strip_suffix(name).unwrap_or_default();
-    let chevron = if folded {
-        phosphor::CARET_RIGHT
-    } else {
-        phosphor::CARET_DOWN
-    };
-    let id = Target::Search(SearchEvent::SearchGroup(place));
-    let modifier = Modifier::new()
-        .fill_max_width()
-        .height(theme::sp(6))
-        .indicated(
-            theme::InteractionTones::new().hover(Role::SurfaceHover),
-            theme::Focused::Held(crate::focus::is_held(id)),
-        )
-        .cursor(CursorIcon::Pointer)
-        .control(id, send(Event::pressing(id)))
-        .padding_xy(theme::sp(3), 0.0);
+    let modifier =
+        pressed_row(Target::Search(SearchEvent::SearchGroup(place))).padding_xy(theme::sp(3), 0.0);
+    let chevron = kit::chevron(!folded);
     kit::row(modifier, 1.5, || {
         glyph(chevron, 3.5, Role::Muted);
         file_icon(name, 4.0);
@@ -415,8 +398,7 @@ pub fn panel(state: &WorkspaceState) {
         kit::column(
             Modifier::new()
                 .fill_max_width()
-                .padding_xy(theme::sp(3), 0.0)
-                .padding_xy(0.0, theme::sp(2)),
+                .padding_xy(theme::sp(3), theme::sp(2)),
             1.5,
             || {
                 kit::row(Modifier::new().fill_max_width(), 1, || {

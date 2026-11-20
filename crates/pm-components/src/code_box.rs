@@ -75,8 +75,7 @@ impl<'a> CodeBox<'a> {
     #[track_caller]
     pub fn build(self) {
         let own = Modifier::new()
-            .padding_each(0.0, theme::sp(self.margin), 0.0, 0.0)
-            .padding_each(0.0, 0.0, 0.0, theme::sp(self.margin))
+            .padding_xy(0.0, theme::sp(self.margin))
             .height_in(0.0, crate::theme::sp(self.height / 4.0))
             .background_rounded(theme::color(Role::Background), Radius::Lg.px())
             .outlined(Radius::Lg)

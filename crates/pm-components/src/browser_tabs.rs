@@ -358,11 +358,7 @@ impl WorkspaceState {
     /// Opens the browser if it is not open, then a tab, shown, on the document `html` sealed from the network and called `title`; the tab is locked against agents. Gives the tab's number, or nothing when there are too many tabs.
     pub fn browser_sealed_tab_opened(&mut self, title: &str, html: &str) -> Option<u32> {
         let id = self.browser_tab_opened(SEALED_ADDRESS, None, false, true)?;
-        if let Some(tab) = self
-            .browser
-            .as_mut()
-            .and_then(|browser| browser.tab_mut(id))
-        {
+        if let Some(tab) = self.browser_tab(id) {
             tab.title = title.to_owned();
             tab.locked = true;
             tab.sealed = Some(SealedPage {
@@ -377,10 +373,7 @@ impl WorkspaceState {
 
     /// Makes the tab numbered `id` an ordinary tab again, as when the reader sends it to an address: it no longer shows a sealed document and is no longer locked for it.
     pub fn browser_tab_unsealed(&mut self, id: u32) {
-        if let Some(tab) = self
-            .browser
-            .as_mut()
-            .and_then(|browser| browser.tab_mut(id))
+        if let Some(tab) = self.browser_tab(id)
             && tab.sealed.take().is_some()
         {
             tab.locked = false;
@@ -389,16 +382,14 @@ impl WorkspaceState {
 
     /// Closes the tab numbered `id`, and the browser with it when it was the last; says whether there was such a tab.
     pub fn browser_tab_closed(&mut self, id: u32) -> bool {
-        let Some(browser) = self.browser.as_mut() else {
+        let Some(index) = self
+            .browser
+            .as_ref()
+            .and_then(|browser| browser.tab_index(id))
+        else {
             return false;
         };
-        let Some(index) = browser.tab_index(id) else {
-            return false;
-        };
-        if browser.close_tab(index) {
-            self.browser_dropped();
-        }
-        true
+        self.browser_tab_pressed(Target::Browser(BrowserEvent::BrowserTabClose(index)))
     }
 
     /// Carries out pressing a target of the tab strip or the lock, and says whether `id` was one.
@@ -451,8 +442,16 @@ impl WorkspaceState {
     }
 }
 
-/// Emits the strip of tabs, `width` logical pixels wide: a chip for each tab that fits, buttons to scroll when not all do, and the one that opens a new tab.
+/// Emits the extra small button showing `icon` that scrolls the strip of tabs as `id` says, greyed out while `disabled`.
 #[track_caller]
+fn scroll_button(icon: rustle::Icon, id: BrowserEvent, disabled: bool) {
+    Button::icon(icon, Target::Browser(id))
+        .size(Size::Xs)
+        .disabled(disabled)
+        .build();
+}
+
+/// Emits the strip of tabs, `width` logical pixels wide: a chip for each tab that fits, buttons to scroll when not all do, and the one that opens a new tab.
 pub fn tab_strip(browser: &Browser, width: f32) {
     let (shown, each) = browser.strip_window(width);
     let scrolls = shown.len() < browser.tabs.len();
@@ -467,13 +466,11 @@ pub fn tab_strip(browser: &Browser, width: f32) {
         1,
         || {
             if scrolls {
-                Button::icon(
+                scroll_button(
                     phosphor::ARROW_LEFT,
-                    Target::Browser(BrowserEvent::BrowserTabsPrevious),
-                )
-                .size(Size::Xs)
-                .disabled(shown.start == 0)
-                .build();
+                    BrowserEvent::BrowserTabsPrevious,
+                    shown.start == 0,
+                );
             }
             for index in shown.clone() {
                 let tab = &browser.tabs[index];
@@ -501,13 +498,11 @@ pub fn tab_strip(browser: &Browser, width: f32) {
                 });
             }
             if scrolls {
-                Button::icon(
+                scroll_button(
                     phosphor::ARROW_RIGHT,
-                    Target::Browser(BrowserEvent::BrowserTabsNext),
-                )
-                .size(Size::Xs)
-                .disabled(shown.end == browser.tabs.len())
-                .build();
+                    BrowserEvent::BrowserTabsNext,
+                    shown.end == browser.tabs.len(),
+                );
             }
             Button::icon(phosphor::PLUS, Target::Browser(BrowserEvent::BrowserNewTab)).build();
         },

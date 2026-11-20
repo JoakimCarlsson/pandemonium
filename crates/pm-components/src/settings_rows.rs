@@ -12,79 +12,90 @@ use serde::{Deserialize, Serialize};
 
 use crate::target::Target;
 
-/// A list of controls the settings window repeats once per row.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-pub enum SettingsList {
+/// Declares [`SettingsList`] with each of `$list`, documented by its `$doc`, and beside each the [`Rows`] of that list as the constant `$rows`, with room for `$len` rows and the same documentation.
+macro_rules! lists {
+    ($($(#[$doc:meta])* $list:ident => $rows:ident, $len:expr;)*) => {
+        /// A list of controls the settings window repeats once per row.
+        #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+        pub enum SettingsList {
+            $($(#[$doc])* $list,)*
+        }
+
+        $($(#[$doc])* pub const $rows: Rows = Rows::new(SettingsList::$list, $len);)*
+    };
+}
+
+lists! {
     /// The choices of how the server in the servers page's form is reached.
-    MachineReaches,
+    MachineReaches => MACHINE_REACHES, 16;
     /// The choices of where a new customization goes.
-    DraftScopes,
+    DraftScopes => DRAFT_SCOPES, 16;
     /// The sections down the left side, in the order of `Section::ALL`.
-    Sections,
+    Sections => SECTIONS, 64;
     /// The controls of every setting, [`PER_SETTING`] for each, in the order of `Setting::ALL`.
-    SettingControls,
+    SettingControls => SETTING_CONTROLS, 256 * PER_SETTING as u64;
     /// The controls of every action of the keymap, [`PER_ACTION`] for each, in the order of `Action::ALL`.
-    KeymapControls,
+    KeymapControls => KEYMAP_CONTROLS, 1024 * PER_ACTION as u64;
     /// The rows of the open list of choices of a setting, by their place among the rows shown.
-    Picks,
+    Picks => PICKS, 64;
     /// The boxes a line of a setting written as a list is typed in, one for each such setting.
-    ListFields,
+    ListFields => LIST_FIELDS, 16;
     /// The buttons adding what is typed in a box of [`LIST_FIELDS`] to its list, one for each setting written as a list.
-    ListAdds,
+    ListAdds => LIST_ADDS, 16;
     /// The buttons removing a line of a list, [`LIST_LINES`] for each setting written as a list.
-    ListRemoves,
+    ListRemoves => LIST_REMOVES, 8 * LIST_LINES as u64;
     /// The buttons opening the form for a known server of the servers page.
-    MachineEdits,
+    MachineEdits => MACHINE_EDITS, 1000;
     /// The buttons taking a known server out of the servers page.
-    MachineRemoves,
+    MachineRemoves => MACHINE_REMOVES, 1000;
     /// The buttons installing or removing a language, in the order the languages page lists them.
-    LanguageRows,
+    LanguageRows => LANGUAGE_ROWS, 4000;
     /// The switches offering an agent for new sessions, by the agent's position.
-    AgentSwitches,
+    AgentSwitches => AGENT_SWITCHES, 500;
     /// The buttons opening the box for an agent's API key, by the agent's position.
-    KeySets,
+    KeySets => KEY_SETS, 500;
     /// The buttons forgetting an agent's saved API key, by the agent's position.
-    KeyRemoves,
+    KeyRemoves => KEY_REMOVES, 500;
     /// The buttons signing an agent's default account in, by the agent's position.
-    SignIns,
+    SignIns => SIGN_INS, 500;
     /// The buttons adding an account to an agent, by the agent's position.
-    AccountAdds,
+    AccountAdds => ACCOUNT_ADDS, 500;
     /// The buttons removing an added account, by the account's place among every agent's added accounts.
-    AccountRemoves,
+    AccountRemoves => ACCOUNT_REMOVES, 2000;
     /// The switches turning a tool server on or off, by its place in the list.
-    ServerSwitches,
+    ServerSwitches => SERVER_SWITCHES, 1000;
     /// The buttons opening the menu of a tool server, by its place in the list.
-    ServerMores,
+    ServerMores => SERVER_MORES, 1000;
     /// The buttons installing what the tool registry offers, by its place among the offers.
-    Installs,
+    Installs => INSTALLS, 1000;
     /// The switches turning a customization on or off, by its place among those read.
-    ItemSwitches,
+    ItemSwitches => ITEM_SWITCHES, 5000;
     /// The buttons opening the file of a customization, by its place among those read.
-    ItemOpens,
+    ItemOpens => ITEM_OPENS, 5000;
     /// The switches turning one tool on or off, counted across every set.
-    ToolSwitches,
+    ToolSwitches => TOOL_SWITCHES, 20_000;
     /// The switches turning a whole set of tools on or off, by the set's place.
-    SetSwitches,
+    SetSwitches => SET_SWITCHES, 1000;
     /// The headings folding a set of tools away or showing it, by the set's place.
-    SetFolds,
+    SetFolds => SET_FOLDS, 1000;
     /// The buttons making an agent's default account the one new sessions use, by the agent's place.
-    DefaultUses,
+    DefaultUses => DEFAULT_USES, 500;
     /// The buttons of the added accounts, [`ACCOUNT_COLUMNS`] to a login, by the login's place in the list of logins.
-    AccountControls,
+    AccountControls => ACCOUNT_CONTROLS, 2000 * ACCOUNT_COLUMNS as u64;
     /// The buttons that open the form of each declared model server, by its place in the list.
-    ModelServerEdits,
+    ModelServerEdits => MODEL_SERVER_EDITS, 500;
     /// The buttons that take each declared model server out, by its place in the list.
-    ModelServerRemoves,
+    ModelServerRemoves => MODEL_SERVER_REMOVES, 500;
     /// The boxes that list each model a server was found to offer in its form, by the model's place in what was found.
-    FoundModelPicks,
+    FoundModelPicks => FOUND_MODEL_PICKS, 2000;
     /// The controls of each model slot, [`crate::settings_slots::SLOT_COLUMNS`] to a slot, by the slot's place on the models page.
-    SlotControls,
+    SlotControls => SLOT_CONTROLS, 100 * crate::settings_slots::SLOT_COLUMNS as u64;
     /// The controls of each backup of each model slot, [`crate::settings_slots::BACKUP_COLUMNS`] to a backup, [`crate::settings_slots::MOST_BACKUPS`] backups to a slot.
-    BackupControls,
+    BackupControls => BACKUP_CONTROLS, 100 * (crate::settings_slots::MOST_BACKUPS * crate::settings_slots::BACKUP_COLUMNS) as u64;
     /// The controls of each preset of the models page, [`crate::settings_slots::PRESET_COLUMNS`] to a preset, by its place in the list.
-    PresetControls,
+    PresetControls => PRESET_CONTROLS, 200 * crate::settings_slots::PRESET_COLUMNS as u64;
     /// The choices of how many days the usage page covers, in the order of [`crate::settings_usage::RANGES`].
-    UsageRanges,
+    UsageRanges => USAGE_RANGES, 8;
 }
 
 /// The rows of one list of the settings window: which list, and how many rows it has room for.
@@ -162,133 +173,17 @@ impl Rows {
     }
 }
 
-/// The choices of how the server in the servers page's form is reached.
-pub const MACHINE_REACHES: Rows = Rows::new(SettingsList::MachineReaches, 16);
-
-/// The choices of where a new customization goes.
-pub const DRAFT_SCOPES: Rows = Rows::new(SettingsList::DraftScopes, 16);
-
-/// The sections down the left side, in the order of `Section::ALL`.
-pub const SECTIONS: Rows = Rows::new(SettingsList::Sections, 64);
-
 /// How many controls each setting has room for.
 pub const PER_SETTING: usize = 8;
-
-/// The controls of every setting, [`PER_SETTING`] for each, in the order of `Setting::ALL`.
-pub const SETTING_CONTROLS: Rows =
-    Rows::new(SettingsList::SettingControls, 256 * PER_SETTING as u64);
 
 /// How many controls each action of the keymap has room for.
 pub const PER_ACTION: usize = 4;
 
-/// The controls of every action of the keymap, [`PER_ACTION`] for each, in the order of `Action::ALL`.
-pub const KEYMAP_CONTROLS: Rows = Rows::new(SettingsList::KeymapControls, 1024 * PER_ACTION as u64);
-
-/// The rows of the open list of choices of a setting, by their place among the rows shown.
-pub const PICKS: Rows = Rows::new(SettingsList::Picks, 64);
-
-/// The boxes a line of a setting written as a list is typed in, one for each such setting.
-pub const LIST_FIELDS: Rows = Rows::new(SettingsList::ListFields, 16);
-
-/// The buttons adding what is typed in a box of [`LIST_FIELDS`] to its list, one for each setting written as a list.
-pub const LIST_ADDS: Rows = Rows::new(SettingsList::ListAdds, 16);
-
 /// How many lines of one list the remove buttons have room for.
 pub const LIST_LINES: usize = 1000;
 
-/// The buttons removing a line of a list, [`LIST_LINES`] for each setting written as a list.
-pub const LIST_REMOVES: Rows = Rows::new(SettingsList::ListRemoves, 8 * LIST_LINES as u64);
-
-/// The buttons opening the form for a known server of the servers page.
-pub const MACHINE_EDITS: Rows = Rows::new(SettingsList::MachineEdits, 1000);
-
-/// The buttons taking a known server out of the servers page.
-pub const MACHINE_REMOVES: Rows = Rows::new(SettingsList::MachineRemoves, 1000);
-
-/// The buttons installing or removing a language, in the order the languages page lists them.
-pub const LANGUAGE_ROWS: Rows = Rows::new(SettingsList::LanguageRows, 4000);
-
-/// The switches offering an agent for new sessions, by the agent's position.
-pub const AGENT_SWITCHES: Rows = Rows::new(SettingsList::AgentSwitches, 500);
-
-/// The buttons opening the box for an agent's API key, by the agent's position.
-pub const KEY_SETS: Rows = Rows::new(SettingsList::KeySets, 500);
-
-/// The buttons forgetting an agent's saved API key, by the agent's position.
-pub const KEY_REMOVES: Rows = Rows::new(SettingsList::KeyRemoves, 500);
-
-/// The buttons signing an agent's default account in, by the agent's position.
-pub const SIGN_INS: Rows = Rows::new(SettingsList::SignIns, 500);
-
-/// The buttons adding an account to an agent, by the agent's position.
-pub const ACCOUNT_ADDS: Rows = Rows::new(SettingsList::AccountAdds, 500);
-
-/// The buttons removing an added account, by the account's place among every agent's added accounts.
-pub const ACCOUNT_REMOVES: Rows = Rows::new(SettingsList::AccountRemoves, 2000);
-
-/// The switches turning a tool server on or off, by its place in the list.
-pub const SERVER_SWITCHES: Rows = Rows::new(SettingsList::ServerSwitches, 1000);
-
-/// The buttons opening the menu of a tool server, by its place in the list.
-pub const SERVER_MORES: Rows = Rows::new(SettingsList::ServerMores, 1000);
-
-/// The buttons installing what the tool registry offers, by its place among the offers.
-pub const INSTALLS: Rows = Rows::new(SettingsList::Installs, 1000);
-
-/// The switches turning a customization on or off, by its place among those read.
-pub const ITEM_SWITCHES: Rows = Rows::new(SettingsList::ItemSwitches, 5000);
-
-/// The buttons opening the file of a customization, by its place among those read.
-pub const ITEM_OPENS: Rows = Rows::new(SettingsList::ItemOpens, 5000);
-
-/// The switches turning one tool on or off, counted across every set.
-pub const TOOL_SWITCHES: Rows = Rows::new(SettingsList::ToolSwitches, 20_000);
-
-/// The switches turning a whole set of tools on or off, by the set's place.
-pub const SET_SWITCHES: Rows = Rows::new(SettingsList::SetSwitches, 1000);
-
-/// The headings folding a set of tools away or showing it, by the set's place.
-pub const SET_FOLDS: Rows = Rows::new(SettingsList::SetFolds, 1000);
-
-/// The buttons making an agent's default account the one new sessions use, by the agent's place.
-pub const DEFAULT_USES: Rows = Rows::new(SettingsList::DefaultUses, 500);
-
 /// How many buttons each added account has: use it, sign it in, set its key, forget its key, rename it.
 pub const ACCOUNT_COLUMNS: usize = 5;
-
-/// The buttons of the added accounts, [`ACCOUNT_COLUMNS`] to a login, by the login's place in the list of logins.
-pub const ACCOUNT_CONTROLS: Rows =
-    Rows::new(SettingsList::AccountControls, 2000 * ACCOUNT_COLUMNS as u64);
-
-/// The buttons that open the form of each declared model server, by its place in the list.
-pub const MODEL_SERVER_EDITS: Rows = Rows::new(SettingsList::ModelServerEdits, 500);
-
-/// The buttons that take each declared model server out, by its place in the list.
-pub const MODEL_SERVER_REMOVES: Rows = Rows::new(SettingsList::ModelServerRemoves, 500);
-
-/// The boxes that list each model a server was found to offer in its form, by the model's place in what was found.
-pub const FOUND_MODEL_PICKS: Rows = Rows::new(SettingsList::FoundModelPicks, 2000);
-
-/// The controls of each model slot, [`crate::settings_slots::SLOT_COLUMNS`] to a slot, by the slot's place on the models page.
-pub const SLOT_CONTROLS: Rows = Rows::new(
-    SettingsList::SlotControls,
-    100 * crate::settings_slots::SLOT_COLUMNS as u64,
-);
-
-/// The controls of each backup of each model slot, [`crate::settings_slots::BACKUP_COLUMNS`] to a backup, [`crate::settings_slots::MOST_BACKUPS`] backups to a slot.
-pub const BACKUP_CONTROLS: Rows = Rows::new(
-    SettingsList::BackupControls,
-    100 * (crate::settings_slots::MOST_BACKUPS * crate::settings_slots::BACKUP_COLUMNS) as u64,
-);
-
-/// The controls of each preset of the models page, [`crate::settings_slots::PRESET_COLUMNS`] to a preset, by its place in the list.
-pub const PRESET_CONTROLS: Rows = Rows::new(
-    SettingsList::PresetControls,
-    200 * crate::settings_slots::PRESET_COLUMNS as u64,
-);
-
-/// The choices of how many days the usage page covers, in the order of [`crate::settings_usage::RANGES`].
-pub const USAGE_RANGES: Rows = Rows::new(SettingsList::UsageRanges, 8);
 
 const _: () = assert!(
     crate::settings::Section::ALL.len() as u64 <= SECTIONS.len(),

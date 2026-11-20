@@ -11,16 +11,17 @@ use crate::theme;
 use crate::theme::Indicated;
 use crate::theme::sp;
 use pm_git::{Commit, Edge, Half, Lanes};
-use rustle::{CursorIcon, Modifier};
-use rustle::{Icon, phosphor};
+use rustle::phosphor;
+use rustle::{Color, CursorIcon, Modifier};
 
 use crate::Sash;
 use crate::events::Interactive;
 
 use crate::parts::{glyph, line};
+use crate::review::small_icon_button;
 use crate::state::WorkspaceState;
-use crate::theme::{Radius, Role, Tone};
-use crate::{Badge, Button, badge};
+use crate::theme::{Radius, Role};
+use crate::{Badge, badge};
 
 /// How tall the graph is when it is open, in logical pixels.
 pub const HEIGHT: f32 = 280.0;
@@ -54,9 +55,9 @@ const PALETTE: [(u8, u8, u8); 6] = [
 ];
 
 /// The colour a branch with colour index `color` is drawn in.
-fn lane_color(color: usize) -> Tone {
+fn lane_color(color: usize) -> Color {
     let (red, green, blue) = PALETTE[color % PALETTE.len()];
-    Tone::rgb(red, green, blue)
+    Color::rgb(red, green, blue)
 }
 
 /// The x coordinate of the centre of `lane` in its column.
@@ -66,7 +67,7 @@ fn lane_x(lane: usize) -> f32 {
 
 /// Emits a filled rectangle `width` by `height` at `x`, `y` in its cell, with corners rounded by `radius`.
 #[track_caller]
-fn rect(x: f32, y: f32, width: f32, height: f32, color: Tone, radius: Radius) {
+fn rect(x: f32, y: f32, width: f32, height: f32, color: Color, radius: Radius) {
     rustle::spacer(
         Modifier::new()
             .offset(x, y)
@@ -78,7 +79,7 @@ fn rect(x: f32, y: f32, width: f32, height: f32, color: Tone, radius: Radius) {
 
 /// Emits a line along `x` from `from` to `to`.
 #[track_caller]
-fn vertical(x: f32, from: f32, to: f32, color: Tone) {
+fn vertical(x: f32, from: f32, to: f32, color: Color) {
     rect(
         x - STROKE / 2.0,
         from,
@@ -91,7 +92,7 @@ fn vertical(x: f32, from: f32, to: f32, color: Tone) {
 
 /// Emits a line along `y` from `from` to `to`.
 #[track_caller]
-fn horizontal(y: f32, from: f32, to: f32, color: Tone) {
+fn horizontal(y: f32, from: f32, to: f32, color: Color) {
     rect(
         from.min(to),
         y - STROKE / 2.0,
@@ -154,8 +155,7 @@ fn cell(lanes: &Lanes, columns: usize) {
 /// Emits the pill naming a branch or tag that points at a commit.
 ///
 /// Git decorates the checked out branch as `HEAD -> name` and a tag as `tag: name`; the pill says the name, and the branch HEAD is on is drawn solid.
-#[track_caller]
-fn reference_badge(decorated: &str, color: Tone) {
+fn reference_badge(decorated: &str, color: Color) {
     let (name, current) = match decorated.strip_prefix("HEAD -> ") {
         Some(branch) => (branch, true),
         None => (decorated.strip_prefix("tag: ").unwrap_or(decorated), false),
@@ -172,7 +172,6 @@ fn reference_badge(decorated: &str, color: Tone) {
 }
 
 /// Emits one commit of the graph, the `position`-th of the list: its lanes, its name, its references and its summary.
-#[track_caller]
 fn commit_row(commit: &Commit, columns: usize, position: usize) {
     let color = lane_color(commit.lanes.color);
     let id = Target::Git(GitEvent::HistoryRow(position));
@@ -245,7 +244,6 @@ fn visible(commits: &[Commit], columns: usize, scroll: f32, height: f32) {
 }
 
 /// Emits the button saying which references the graph lists, which switches between the checked out branch and all of them, with `tip` shown while it is hovered.
-#[track_caller]
 fn refs_button(all: bool, tip: &str) {
     crate::tooltip::with_tooltip(tip, || {
         kit::row(
@@ -276,15 +274,6 @@ fn refs_button(all: bool, tip: &str) {
     });
 }
 
-/// Emits a small button showing `icon` that answers to `id`, spinning while `spinning`, with `tip` shown while it is hovered.
-#[track_caller]
-fn strip_button(icon: Icon, id: Target, spinning: bool, tip: &str) {
-    Button::icon(icon, id)
-        .spinning(spinning)
-        .tooltip(tip)
-        .build();
-}
-
 /// Emits the strip over the graph: the button that folds it, its name, and what can be done to the remote.
 #[track_caller]
 fn strip(state: &WorkspaceState) {
@@ -295,75 +284,73 @@ fn strip(state: &WorkspaceState) {
             .fill_max_width()
             .height(theme::sp(7))
             .padding_xy(theme::sp(2), 0.0),
-        StripLayout { gap: sp(0.5) },
+        SplitLayout {
+            gap: sp(0.5),
+            split: 2,
+            fixed: &[2],
+        },
         || {
-            strip_button(
-                if open {
-                    phosphor::CARET_DOWN
-                } else {
-                    phosphor::CARET_RIGHT
-                },
+            let fold = if open {
+                "Collapse Graph"
+            } else {
+                "Expand Graph"
+            };
+            small_icon_button(
+                kit::chevron(open),
                 Target::Git(GitEvent::GraphToggle),
                 false,
-                if open {
-                    "Collapse Graph"
-                } else {
-                    "Expand Graph"
-                },
+                fold,
             );
             line("Graph", 13, 1.4, Role::Text);
             refs_button(git.graph_all, "Choose history references");
-            strip_button(
-                phosphor::TARGET,
-                Target::Git(GitEvent::GraphTarget),
-                false,
-                "Go to current history item",
-            );
-            strip_button(
-                phosphor::CLOUD_ARROW_DOWN,
-                Target::Git(GitEvent::GraphFetch),
-                false,
-                "Fetch from all remotes",
-            );
-            strip_button(
-                phosphor::ARROW_LINE_DOWN,
-                Target::Git(GitEvent::GraphPull),
-                false,
-                "Pull",
-            );
-            strip_button(
-                phosphor::ARROW_LINE_UP,
-                Target::Git(GitEvent::GraphPush),
-                false,
-                "Push",
-            );
-            strip_button(
-                phosphor::ARROWS_CLOCKWISE,
-                Target::Git(GitEvent::ChangesRefresh),
-                git.working,
-                "Refresh",
-            );
+            for (icon, id, spinning, tip) in [
+                (
+                    phosphor::TARGET,
+                    GitEvent::GraphTarget,
+                    false,
+                    "Go to current history item",
+                ),
+                (
+                    phosphor::CLOUD_ARROW_DOWN,
+                    GitEvent::GraphFetch,
+                    false,
+                    "Fetch from all remotes",
+                ),
+                (
+                    phosphor::ARROW_LINE_DOWN,
+                    GitEvent::GraphPull,
+                    false,
+                    "Pull",
+                ),
+                (phosphor::ARROW_LINE_UP, GitEvent::GraphPush, false, "Push"),
+                (
+                    phosphor::ARROWS_CLOCKWISE,
+                    GitEvent::ChangesRefresh,
+                    git.working,
+                    "Refresh",
+                ),
+            ] {
+                small_icon_button(icon, Target::Git(id), spinning, tip);
+            }
         },
     );
 }
 
-/// How the strip over the graph lays out its children: the fold button and the name at the
-/// start, the references button and the remote buttons after it at the end, `gap` apart and at
-/// least two gaps between the two groups.
+/// How a strip lays out its children in two groups `gap` apart: those before `split` from its
+/// start and the rest against its end, at least two gaps between the groups.
 ///
-/// When they do not fit, every child but the references button gives up the overflow in
-/// proportion to its width, the name cutting itself short and the buttons drawing narrower.
-struct StripLayout {
+/// When they do not fit, every child but those at `fixed` gives up the overflow in proportion to
+/// its width, a text cutting itself short and a button drawing narrower.
+pub(crate) struct SplitLayout {
     /// The room between neighbours, in logical pixels.
-    gap: f32,
+    pub gap: f32,
+    /// Where the group at the end begins among the children.
+    pub split: usize,
+    /// The children that keep their own widths.
+    pub fixed: &'static [usize],
 }
 
-impl StripLayout {
-    /// Where the references button is among the strip's children: the first of the group at the end.
-    const REFS: usize = 2;
-}
-
-impl rustle::Layout for StripLayout {
+impl rustle::Layout for SplitLayout {
     /// Measures every child at its own width or, when the strip is too narrow, its share, and
     /// centres each down the strip.
     fn measure(
@@ -378,7 +365,12 @@ impl rustle::Layout for StripLayout {
             .map(|index| children.max_intrinsic_width(index, height))
             .collect();
         let gaps = self.gap * count as f32;
-        let fixed = natural.get(Self::REFS).copied().unwrap_or(0.0) + gaps;
+        let kept = |index: &usize| self.fixed.contains(index);
+        let fixed = (0..count)
+            .filter(kept)
+            .map(|index| natural[index])
+            .sum::<f32>()
+            + gaps;
         let giving: f32 = natural.iter().sum::<f32>() + gaps - fixed;
         let scale = if giving > 0.0 {
             ((room - fixed).max(0.0) / giving).min(1.0)
@@ -388,29 +380,21 @@ impl rustle::Layout for StripLayout {
         let widths: Vec<f32> = natural
             .iter()
             .enumerate()
-            .map(|(index, width)| {
-                if index == Self::REFS {
-                    *width
-                } else {
-                    width * scale
-                }
-            })
+            .map(|(index, width)| if kept(&index) { *width } else { width * scale })
             .collect();
-        let trailing: f32 = widths.iter().skip(Self::REFS).sum::<f32>()
-            + self.gap * (count - Self::REFS.min(count)).saturating_sub(1) as f32;
+        let trailing: f32 = widths.iter().skip(self.split).sum::<f32>()
+            + self.gap * (count - self.split.min(count)).saturating_sub(1) as f32;
         let mut positions = Vec::with_capacity(count);
         let mut along = 0.0;
         for (index, width) in widths.iter().enumerate() {
-            if index == Self::REFS {
+            if index == self.split {
                 along = room - trailing;
             }
             let size = children.measure(
                 index,
                 rustle::Constraints {
                     min_width: *width,
-                    max_width: *width,
-                    min_height: 0.0,
-                    max_height: height,
+                    ..rustle::Constraints::loose(rustle::Size::new(*width, height))
                 },
             );
             positions.push(rustle::Offset::new(along, (height - size.height) / 2.0));
@@ -462,15 +446,7 @@ pub fn graph(state: &WorkspaceState) {
                     0,
                     || {
                         if git.history.is_empty() {
-                            kit::column(
-                                Modifier::new()
-                                    .padding_xy(theme::sp(4), 0.0)
-                                    .padding_xy(0.0, theme::sp(2)),
-                                0,
-                                || {
-                                    line("No commits.", 12, 1.4, Role::Subtle);
-                                },
-                            );
+                            kit::note(4, 2, "No commits.", 12, Role::Subtle);
                         } else {
                             visible(
                                 &git.history,

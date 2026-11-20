@@ -1,7 +1,6 @@
 //! The card that puts the agent's questions to the reader one at a time, each with the answers it offers and a box for an answer of the reader's own.
 
 use crate::areas::ChatEvent;
-use crate::events::{Event, send};
 use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
@@ -9,13 +8,12 @@ use crate::theme::Indicated;
 use crate::theme::sp;
 use pm_harness::Alternative;
 use rustle::{Alignment, Arrangement, FlowOptions, flow_row_with, row_arranged};
-use rustle::{BoxAlignment, CursorIcon, Modifier};
+use rustle::{BoxAlignment, Modifier};
 use rustle::{Icon, phosphor};
 
 use crate::Button;
 use crate::button::Variant;
 use crate::draft::Draft;
-use crate::events::Interactive;
 use crate::exhibit::{MOCKUP_VIEWPORT, Offer, Preview, wanted_document};
 use crate::figures::Figures;
 use crate::input::{self, Input};
@@ -52,46 +50,59 @@ fn key(number: usize) {
     );
 }
 
-/// Emits the row offering `alternative`, which the key `number` picks, drawn as taken when `picked`, answering to `id`, its words wrapped to `width`, with `modifier` outermost on the row.
+/// `modifier` as an offer that picks `id`: filled `idle` and the active fill
+/// under the pointer, outlined in `edge` with large corners and pressable.
 #[track_caller]
-fn choice(
-    alternative: &Alternative,
-    number: usize,
-    picked: bool,
-    id: Target,
-    width: f32,
-    modifier: Modifier,
-) {
-    kit::row(
+fn offered(modifier: Modifier, id: Target, idle: Role, edge: Role) -> Modifier {
+    kit::pressed(
         modifier
             .indicated(
                 theme::InteractionTones::new()
-                    .idle(Role::SurfaceHover)
+                    .idle(idle)
                     .hover(Role::SurfaceActive)
                     .radius(Radius::Lg),
                 theme::Focused::Held(crate::focus::is_held(id)),
             )
-            .border(
-                1.0,
-                theme::color(if picked { Role::Accent } else { Role::Surface }),
-                Radius::Lg.px(),
-            )
-            .padding(1.0)
-            .cursor(CursorIcon::Pointer)
-            .control(id, send(Event::pressing(id)))
-            .padding_xy(theme::sp(3), 0.0)
-            .padding_xy(0.0, theme::sp(2)),
+            .border(1.0, theme::color(edge), Radius::Lg.px())
+            .padding(1.0),
+        id,
+    )
+}
+
+/// Emits the row offering `alternative`, the one at `index`, which the key after it picks, drawn as taken when `picked`, its words wrapped to `width`.
+#[track_caller]
+fn choice(alternative: &Alternative, index: usize, picked: bool, width: f32) {
+    let id = Target::Chat(ChatEvent::InquiryPick(index));
+    kit::row(
+        offered(
+            Modifier::new().fill_max_width(),
+            id,
+            Role::SurfaceHover,
+            if picked { Role::Accent } else { Role::Surface },
+        )
+        .padding_xy(theme::sp(3), theme::sp(2)),
         2,
         || {
-            kit::column(Modifier::new().weight(1.0), 0, || {
-                wrapped(&alternative.label, 14, Role::Text, width);
-                if !alternative.description.is_empty() {
-                    wrapped(&alternative.description, 13, Role::Muted, width);
-                }
-            });
-            key(number);
+            said(
+                Modifier::new().weight(1.0),
+                &alternative.label,
+                &alternative.description,
+                width,
+            );
+            key(index + 1);
         },
     );
+}
+
+/// Emits the words of an answer wrapped to `width` in a column with `modifier`: its `label`, over its `description`, when it has one.
+#[track_caller]
+fn said(modifier: Modifier, label: &str, description: &str, width: f32) {
+    kit::column(modifier, 0, || {
+        wrapped(label, 14, Role::Text, width);
+        if !description.is_empty() {
+            wrapped(description, 13, Role::Muted, width);
+        }
+    });
 }
 
 /// The narrowest a question card's answers may be, in logical pixels, for their tiles to sit two to a row; narrower, each tile takes a row.
@@ -169,14 +180,9 @@ pub(crate) fn marks_in(room: f32) -> Marks {
 /// Emits a small mark on a tile in `tone`, saying `tip` when hovered: `icon`, then `words` when the heading has room to spell marks out as `form` says, and nothing at all when marks are hidden.
 #[track_caller]
 fn mark(icon: Icon, words: &str, tone: Role, form: Marks, tip: &str) {
-    if form != Marks::Hidden {
-        mark_node(icon, (form == Marks::Words).then_some(words), tone, tip);
+    if form == Marks::Hidden {
+        return;
     }
-}
-
-/// Emits a small mark on a tile that shows `icon` in `tone`, followed by `words` when it has any, saying `tip` when hovered.
-#[track_caller]
-fn mark_node(icon: Icon, words: Option<&str>, tone: Role, tip: &str) {
     crate::tooltip::with_tooltip(tip, || {
         kit::row(
             Modifier::new()
@@ -186,7 +192,7 @@ fn mark_node(icon: Icon, words: Option<&str>, tone: Role, tip: &str) {
             1,
             || {
                 crate::parts::glyph(icon, 3.0, tone);
-                if let Some(words) = words {
+                if form == Marks::Words {
                     line(words, 11, 1.5, tone);
                 }
             },
@@ -208,30 +214,18 @@ fn tile(
     let form = marks_in(inner);
     let id = Target::Chat(ChatEvent::InquiryPick(index));
     kit::column(
-        Modifier::new()
-            .width(width)
-            .indicated(
-                theme::InteractionTones::new()
-                    .idle(if picked {
-                        Role::SurfaceActive
-                    } else {
-                        Role::SurfaceHover
-                    })
-                    .hover(Role::SurfaceActive)
-                    .radius(Radius::Lg),
-                theme::Focused::Held(crate::focus::is_held(id)),
-            )
-            .border(
-                1.0,
-                theme::color(if picked { Role::Accent } else { Role::Border }),
-                Radius::Lg.px(),
-            )
-            .padding(1.0)
-            .clip()
-            .cursor(CursorIcon::Pointer)
-            .control(id, send(Event::pressing(id)))
-            .padding_xy(theme::sp(2), 0.0)
-            .padding_xy(0.0, theme::sp(2)),
+        offered(
+            Modifier::new().width(width),
+            id,
+            if picked {
+                Role::SurfaceActive
+            } else {
+                Role::SurfaceHover
+            },
+            if picked { Role::Accent } else { Role::Border },
+        )
+        .clip()
+        .padding_xy(theme::sp(2), theme::sp(2)),
         2,
         || {
             kit::row(Modifier::new().fill_max_width().clip(), 1.5, || {
@@ -266,18 +260,12 @@ fn tile(
                     .offer(offer, Target::Chat(ChatEvent::MockupOffer(index)))
                     .build();
             }
-            kit::column(Modifier::new(), 0, || {
-                wrapped(label, 14, Role::Text, inner);
-                if !alternative.description.is_empty() {
-                    wrapped(&alternative.description, 13, Role::Muted, inner);
-                }
-            });
+            said(Modifier::new(), label, &alternative.description, inner);
         },
     );
 }
 
 /// Emits the answers of a question side by side for comparing, as tiles that wrap onto rows within `width` logical pixels, those of `picked` drawn as taken, with the pictures and the offer of `pictures` as [`tile`] takes them.
-#[track_caller]
 fn tiles(alternatives: &[Alternative], pictures: (&Figures, &Offer), picked: &[usize], width: f32) {
     let each = tile_width(width, tiles_per_row(width, alternatives.len()));
     flow_row_with(
@@ -298,12 +286,13 @@ fn tiles(alternatives: &[Alternative], pictures: (&Figures, &Offer), picked: &[u
     );
 }
 
-/// Emits the row for an answer of the reader's own, with the box to type it in, with `modifier` outermost on the row.
+/// Emits the row for an answer of the reader's own, with the box to type it in, which the key `number` picks.
 #[track_caller]
-fn other(draft: &Draft, number: usize, modifier: Modifier) {
+fn other(draft: &Draft, number: usize) {
     let field = &draft.others[draft.step];
     kit::column(
-        modifier
+        Modifier::new()
+            .fill_max_width()
             .background_rounded(theme::color(Role::SurfaceHover), Radius::Lg.px())
             .border(
                 1.0,
@@ -315,8 +304,7 @@ fn other(draft: &Draft, number: usize, modifier: Modifier) {
                 Radius::Lg.px(),
             )
             .padding(1.0)
-            .padding_xy(theme::sp(3), 0.0)
-            .padding_xy(0.0, theme::sp(2)),
+            .padding_xy(theme::sp(3), theme::sp(2)),
         2,
         || {
             kit::row(Modifier::new().fill_max_width(), 3, || {
@@ -349,8 +337,7 @@ pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
     kit::column(
         Modifier::new()
             .panel(Radius::Xl)
-            .padding_xy(theme::sp(3), 0.0)
-            .padding_xy(0.0, theme::sp(2.5)),
+            .padding_xy(theme::sp(3), theme::sp(2.5)),
         2,
         || {
             kit::row_top(Modifier::new().fill_max_width(), 2, || {
@@ -358,8 +345,7 @@ pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
                     kit::row(
                         Modifier::new()
                             .background_rounded(theme::color(Role::SurfaceHover), Radius::Full.px())
-                            .padding_xy(theme::sp(3), 0.0)
-                            .padding_xy(0.0, theme::sp(1)),
+                            .padding_xy(theme::sp(3), theme::sp(1)),
                         0,
                         || {
                             line(format!("{}/{count}", draft.step + 1), 13, 1.4, Role::Muted);
@@ -374,15 +360,7 @@ pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
                         width - if count > 1 { 145.0 } else { 105.0 },
                     );
                 });
-                Button::icon(
-                    if draft.folded {
-                        phosphor::CARET_RIGHT
-                    } else {
-                        phosphor::CARET_DOWN
-                    },
-                    Target::Chat(ChatEvent::Fold),
-                )
-                .build();
+                Button::icon(kit::chevron(!draft.folded), Target::Chat(ChatEvent::Fold)).build();
                 Button::icon(phosphor::X, Target::Chat(ChatEvent::Close)).build();
             });
             if draft.folded {
@@ -399,39 +377,21 @@ pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
                     );
                 } else {
                     for (index, alternative) in question.alternatives.iter().enumerate() {
-                        choice(
-                            alternative,
-                            index + 1,
-                            picked.contains(&index),
-                            Target::Chat(ChatEvent::InquiryPick(index)),
-                            width - 92.0,
-                            Modifier::new().fill_max_width(),
-                        );
+                        choice(alternative, index, picked.contains(&index), width - 92.0);
                     }
                 }
-                other(
-                    draft,
-                    question.alternatives.len() + 1,
-                    Modifier::new().fill_max_width(),
-                );
+                other(draft, question.alternatives.len() + 1);
             });
-            flow_row_with(
-                Modifier::new().fill_max_width(),
-                FlowOptions::new(sp(2), sp(2))
-                    .arrangement(Arrangement::End)
-                    .item_alignment(Alignment::Center),
-                || {
-                    kit::small_button("Skip", Target::Chat(ChatEvent::Skip), Variant::Outline)
-                        .build();
-                    kit::small_button(
-                        if draft.last() { "Submit" } else { "Next" },
-                        Target::Chat(ChatEvent::Next),
-                        Variant::Default,
-                    )
-                    .disabled(!draft.answered())
-                    .build();
-                },
-            );
+            kit::footer(|| {
+                kit::action("Skip", Target::Chat(ChatEvent::Skip), Variant::Outline);
+                kit::small_button(
+                    if draft.last() { "Submit" } else { "Next" },
+                    Target::Chat(ChatEvent::Next),
+                    Variant::Default,
+                )
+                .disabled(!draft.answered())
+                .build();
+            });
         },
     );
 }
@@ -451,8 +411,7 @@ pub fn answered(answers: &[(String, Option<String>)], width: f32) {
             .align(BoxAlignment::TopStart)
             .background_rounded(theme::color(Role::Background), Radius::Xl.px())
             .outlined(Radius::Xl)
-            .padding_xy(theme::sp(4), 0.0)
-            .padding_xy(0.0, theme::sp(3.5)),
+            .padding_xy(theme::sp(4), theme::sp(3.5)),
         3,
         || {
             for (question, answer) in answers {

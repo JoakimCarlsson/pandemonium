@@ -1,15 +1,13 @@
 //! The problems tab of the dock: what the language servers say is wrong with the files of the project, each a row that goes to its place.
 
 use crate::areas::TerminalEvent;
-use crate::events::Interactive;
-use crate::events::{Event, send};
 use crate::kit;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
 use crate::theme::{Role, color};
 use pm_protocol::Severity;
-use rustle::{CursorIcon, Modifier};
+use rustle::Modifier;
 
 use crate::parts::line;
 use crate::state::WorkspaceState;
@@ -34,7 +32,6 @@ pub fn tally(state: &WorkspaceState) -> (usize, usize) {
 }
 
 /// Emits one row: a dot coloured by how bad it is, the first line of the message, who said it and where.
-#[track_caller]
 fn problem_row(index: usize, problem: &pm_protocol::Problem) {
     let diagnostic = &problem.diagnostic;
     let message = diagnostic.message.lines().next().unwrap_or_default();
@@ -52,10 +49,8 @@ fn problem_row(index: usize, problem: &pm_protocol::Problem) {
         .indicated(
             theme::InteractionTones::new().hover(Role::SurfaceHover),
             theme::Focused::Held(crate::focus::is_held(id)),
-        )
-        .cursor(CursorIcon::Pointer)
-        .control(id, send(Event::pressing(id)))
-        .padding_xy(theme::sp(3), 0.0);
+        );
+    let modifier = kit::pressed(modifier, id).padding_xy(theme::sp(3), 0.0);
     let dot = color(severity_role(diagnostic.severity));
     kit::row(modifier, 2, || {
         rustle::spacer(
@@ -72,7 +67,6 @@ fn problem_row(index: usize, problem: &pm_protocol::Problem) {
 }
 
 /// Emits the tab: the list of problems, scrolled as the state says.
-#[track_caller]
 pub fn problems_tab(state: &WorkspaceState) {
     kit::column(
         Modifier::new()
@@ -88,9 +82,7 @@ pub fn problems_tab(state: &WorkspaceState) {
                         .height(theme::sp(7))
                         .padding_xy(theme::sp(3), 0.0),
                     0,
-                    || {
-                        line(NOTHING_WRONG, 12, 1.4, Role::Subtle);
-                    },
+                    || line(NOTHING_WRONG, 12, 1.4, Role::Subtle),
                 );
                 return;
             }

@@ -3,6 +3,7 @@
 use crate::areas::SettingsEvent;
 use crate::icons::artwork_with;
 use crate::kit::{self, Frame};
+use crate::overview::scrolled_page;
 use crate::target::Target;
 use crate::theme::{self, family_from_colours, set_extension_families};
 use crate::theme::{Radius, Role, sp};
@@ -10,7 +11,6 @@ use pm_protocol::{ExtensionAssets, ExtensionCommand, ExtensionInfo};
 use rustle::Modifier;
 use rustle::TextFieldState;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 
 use crate::Checkbox;
 use crate::button::Variant;
@@ -163,14 +163,10 @@ impl WorkspaceState {
         let host = self.prompt_machine();
         self.extension_assets
             .get(&host)
-            .map(|assets| {
-                assets
-                    .commands
-                    .iter()
-                    .map(|command| (host.clone(), command.clone()))
-                    .collect()
-            })
-            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|assets| &assets.commands)
+            .map(|command| (host.clone(), command.clone()))
+            .collect()
     }
 
     /// The state after the command `command`, which extensions of `host` bring, was taken: the server is asked to run it in the folder the prompt is for.
@@ -292,15 +288,8 @@ impl WorkspaceState {
         }
     }
 
-    /// The state after a switch of an installed extension's row was pressed: the capability is allowed, or refused if it was allowed.
-    fn grant_pressed(&mut self, action: Target) {
-        let Target::Settings(SettingsEvent::ExtensionGrant {
-            row: place,
-            request: which,
-        }) = action
-        else {
-            return;
-        };
+    /// The state after the switch of the `which`-th capability on the `place`-th row was pressed: the capability is allowed, or refused if it was allowed.
+    fn grant_pressed(&mut self, place: usize, which: usize) {
         let Some(extension) = self.listed_extensions().get(place).copied().cloned() else {
             return;
         };
@@ -327,78 +316,53 @@ impl WorkspaceState {
 
     /// The state after the button of the `place`-th row, as `action` names it, was pressed: it installs the extension, or uninstalls it when it is installed.
     pub(crate) fn extensions_pressed(mut self, action: Target) -> Self {
-        if action == Target::Settings(SettingsEvent::InstallExtension) {
-            self.open_folder_picker(crate::folder_picker::Purpose::Extension, None);
-            return self;
+        match action {
+            Target::Settings(SettingsEvent::InstallExtension) => {
+                self.open_folder_picker(crate::folder_picker::Purpose::Extension, None)
+            }
+            Target::Settings(SettingsEvent::ExtensionGrant { row, request }) => {
+                self.grant_pressed(row, request)
+            }
+            Target::Settings(SettingsEvent::ExtensionRow(place)) => {
+                if let Some(extension) = self.listed_extensions().get(place).copied().cloned() {
+                    self.install_or_remove(&extension);
+                }
+            }
+            _ => self.extension_card_pressed(action),
         }
-        if matches!(
-            action,
-            Target::Settings(SettingsEvent::ExtensionGrant { .. })
-        ) {
-            self.grant_pressed(action);
-            return self;
-        }
-        let Target::Settings(SettingsEvent::ExtensionRow(place)) = action else {
-            self.extension_card_pressed(action);
-            return self;
-        };
-        let Some(extension) = self.listed_extensions().get(place).copied().cloned() else {
-            return self;
-        };
-        self.install_or_remove(&extension);
         self
     }
 
     /// Installs `extension`, or uninstalls it when it is installed, unless it is busy being installed.
     pub(crate) fn install_or_remove(&mut self, extension: &ExtensionInfo) {
-        if extension.busy.is_none() {
-            self.outbox
-                .push(if extension.installed && extension.update.is_some() {
-                    Outgoing::InstallExtensions {
-                        ids: vec![extension.id.clone()],
-                    }
-                } else if extension.installed && extension.kind == "extension" {
-                    Outgoing::RemovePackage {
-                        id: extension.id.clone(),
-                    }
-                } else if extension.installed {
-                    Outgoing::RemoveExtension {
-                        id: extension.id.clone(),
-                    }
-                } else {
-                    Outgoing::InstallExtensions {
-                        ids: vec![extension.id.clone()],
-                    }
-                });
+        if extension.busy.is_some() {
+            return;
         }
+        let id = extension.id.clone();
+        self.outbox.push(match extension.installed {
+            true if extension.update.is_some() => Outgoing::InstallExtensions { ids: vec![id] },
+            true if extension.kind == "extension" => Outgoing::RemovePackage { id },
+            true => Outgoing::RemoveExtension { id },
+            false => Outgoing::InstallExtensions { ids: vec![id] },
+        });
     }
 }
 
 /// Emits the title of the page and the button that installs an extension from a folder.
 #[track_caller]
 fn heading() {
-    row_arranged(
-        Modifier::new()
-            .fill_max_width()
-            .height(theme::sp(12))
-            .ruled(theme::Side::Bottom)
-            .padding_xy(theme::sp(5), 0.0),
-        Arrangement::SpaceBetween,
-        Alignment::Center,
-        || {
-            kit::text(
-                Modifier::new(),
-                "Extensions",
-                kit::line(14, Role::Text).font_weight(rustle::FontWeight::MEDIUM),
-            );
-            kit::small_button(
-                "Install Extension…",
-                Target::Settings(SettingsEvent::InstallExtension),
-                Variant::Ghost,
-            )
-            .build();
-        },
-    );
+    kit::bar(12, 5, 0, || {
+        kit::text(
+            Modifier::new().weight(1.0),
+            "Extensions",
+            kit::strong(14, Role::Text),
+        );
+        kit::action(
+            "Install Extension…",
+            Target::Settings(SettingsEvent::InstallExtension),
+            Variant::Ghost,
+        );
+    });
 }
 
 /// Emits the box the reader types into to narrow the list.
@@ -455,8 +419,7 @@ pub(crate) fn row(extension: &ExtensionInfo, action: Target) {
     kit::row(
         Modifier::new()
             .fill_max_width()
-            .padding_xy(theme::sp(4), 0.0)
-            .padding_xy(0.0, theme::sp(3)),
+            .padding_xy(theme::sp(4), theme::sp(3)),
         3,
         || {
             mark(extension);
@@ -465,19 +428,17 @@ pub(crate) fn row(extension: &ExtensionInfo, action: Target) {
                     kit::text(
                         Modifier::new(),
                         &extension.name,
-                        kit::line(14, Role::Text).font_weight(rustle::FontWeight::MEDIUM),
+                        kit::strong(14, Role::Text),
                     );
                     if !extension.version.is_empty() {
                         kit::text(
                             Modifier::new(),
                             &extension.version,
-                            kit::line(12, Role::Subtle)
-                                .font_family(theme::mono())
-                                .ligatures(theme::code_ligatures()),
+                            kit::code(12, Role::Subtle),
                         );
                     }
                     if extension.local {
-                        kit::text(Modifier::new(), "your own", kit::line(12, Role::Subtle));
+                        line("your own", 12, 1.4, Role::Subtle);
                     }
                 });
                 line(about, 12, 1.4, Role::Muted);
@@ -505,9 +466,11 @@ fn permission(capability: &str, allowed: bool, id: Target) {
             .padding_xy(0.0, theme::sp(1)),
         3,
         || {
-            kit::row(Modifier::new().weight(1.0), 0, || {
-                line(describe_capability(capability), 12, 1.4, Role::Muted);
-            });
+            kit::text(
+                Modifier::new().weight(1.0),
+                describe_capability(capability),
+                kit::line(12, Role::Muted),
+            );
             Checkbox::new(allowed, id)
                 .variant(CheckboxVariant::Switch)
                 .build();
@@ -516,16 +479,17 @@ fn permission(capability: &str, allowed: bool, id: Target) {
 }
 
 /// Emits the switches of what an installed extension package asked to be allowed, under its row; nothing for one that asked for nothing.
-#[track_caller]
 fn permissions(extension: &ExtensionInfo, place: usize) {
     if extension.kind != "extension" || !extension.installed || extension.requests.is_empty() {
         return;
     }
     kit::column(
-        Modifier::new()
-            .fill_max_width()
-            .padding_xy(theme::sp(4), 0.0)
-            .padding_each(0.0, 0.0, 0.0, theme::sp(3)),
+        Modifier::new().fill_max_width().padding_each(
+            theme::sp(4),
+            0.0,
+            theme::sp(4),
+            theme::sp(3),
+        ),
         0,
         || {
             line("Allowed to", 12, 1.4, Role::Subtle);
@@ -544,26 +508,18 @@ fn permissions(extension: &ExtensionInfo, place: usize) {
 }
 
 /// Emits the card that shows what an extension carries and asks to be allowed, with a switch for each thing it asks and the buttons that go ahead or drop it.
-#[track_caller]
 fn preview_card(preview: &Preview) {
     let extension = &preview.extension;
-    let mut title = format!("Install {}", extension.name);
-    if !extension.version.is_empty() {
-        title = format!("{title} {}", extension.version);
-    }
+    let title = format!("Install {} {}", extension.name, extension.version);
+    let title = title.trim_end();
     kit::column(
         Modifier::new()
             .fill_max_width()
             .panel(Radius::Lg)
-            .padding_xy(theme::sp(4), 0.0)
-            .padding_xy(0.0, theme::sp(4)),
+            .padding_xy(theme::sp(4), theme::sp(4)),
         3,
         || {
-            kit::text(
-                Modifier::new(),
-                title,
-                kit::line(14, Role::Text).font_weight(rustle::FontWeight::MEDIUM),
-            );
+            kit::text(Modifier::new(), title, kit::strong(14, Role::Text));
             if !extension.description.is_empty() {
                 line(extension.description.clone(), 12, 1.4, Role::Muted);
             }
@@ -578,20 +534,12 @@ fn preview_card(preview: &Preview) {
                     Target::Settings(SettingsEvent::PreviewGrant(which)),
                 );
             }
-            kit::row(Modifier::new(), 2, || {
-                kit::small_button(
-                    "Install",
-                    Target::Settings(SettingsEvent::PreviewInstall),
-                    Variant::Default,
-                )
-                .build();
-                kit::small_button(
-                    "Cancel",
-                    Target::Settings(SettingsEvent::PreviewCancel),
-                    Variant::Ghost,
-                )
-                .build();
-            });
+            kit::confirm_row(
+                "Install",
+                Target::Settings(SettingsEvent::PreviewInstall),
+                true,
+                Target::Settings(SettingsEvent::PreviewCancel),
+            );
         },
     );
 }
@@ -636,12 +584,8 @@ fn lined_group(title: &str, inside: bool, rows: impl FnOnce()) {
                     }
                     let lined = Modifier::new()
                         .fill_max_width()
-                        .draw_with_content(move |canvas| underlined(canvas, color));
-                    let lined = if inside {
-                        lined
-                    } else {
-                        lined.padding_each(0.0, 0.0, 0.0, 1.0)
-                    };
+                        .draw_with_content(move |canvas| underlined(canvas, color))
+                        .padding_each(0.0, 0.0, 0.0, if inside { 0.0 } else { 1.0 });
                     kit::column(lined, 0, move || rustle::emit(built));
                 }
             },
@@ -672,61 +616,36 @@ fn entry(extension: &ExtensionInfo, place: usize) {
 #[track_caller]
 pub fn extensions(state: &WorkspaceState) {
     let listed = state.listed_extensions();
-    kit::column(Modifier::new().weight(1.0), 0, || {
-        heading();
-        column_arranged(
-            Modifier::new()
-                .fill_max_width()
-                .weight(1.0)
-                .vertical_scroll(&state.extensions_page.scroll)
-                .fill_max_width(),
-            Arrangement::Start,
-            Alignment::Center,
-            || {
-                kit::column(
-                    Modifier::new()
-                        .width_in(0.0, PAGE_WIDTH)
-                        .fill_max_width()
-                        .padding_xy(theme::sp(5), 0.0)
-                        .padding_each(0.0, theme::sp(5), 0.0, 0.0)
-                        .padding_each(0.0, 0.0, 0.0, theme::sp(8)),
-                    6,
-                    || {
-                        search(state);
-                        if let Some(problem) = &state.extensions_page.problem {
-                            line(problem.clone(), 12, 1.4, Role::Danger);
+    let bounded = Modifier::new().width_in(0.0, PAGE_WIDTH).fill_max_width();
+    scrolled_page(heading, &state.extensions_page.scroll, bounded, || {
+        search(state);
+        if let Some(problem) = &state.extensions_page.problem {
+            line(problem.clone(), 12, 1.4, Role::Danger);
+        }
+        if let Some(preview) = &state.extensions_page.preview {
+            preview_card(preview);
+        }
+        if state.extensions.is_empty() {
+            line(
+                "Asking the server which extensions there are…",
+                13,
+                1.4,
+                Role::Subtle,
+            );
+        } else if listed.is_empty() {
+            line("No extension matches.", 13, 1.4, Role::Subtle);
+        } else {
+            for (title, installed) in [("Installed on this machine", true), ("Available", false)] {
+                rustle::key(installed, || {
+                    group(title, || {
+                        for (place, extension) in listed.iter().enumerate() {
+                            if extension.installed == installed {
+                                entry(extension, place);
+                            }
                         }
-                        if let Some(preview) = &state.extensions_page.preview {
-                            preview_card(preview);
-                        }
-                        if state.extensions.is_empty() {
-                            line(
-                                "Asking the server which extensions there are…",
-                                13,
-                                1.4,
-                                Role::Subtle,
-                            );
-                        } else if listed.is_empty() {
-                            line("No extension matches.", 13, 1.4, Role::Subtle);
-                        } else {
-                            group("Installed on this machine", || {
-                                for (place, extension) in listed.iter().enumerate() {
-                                    if extension.installed {
-                                        entry(extension, place);
-                                    }
-                                }
-                            });
-                            group("Available", || {
-                                for (place, extension) in listed.iter().enumerate() {
-                                    if !extension.installed {
-                                        entry(extension, place);
-                                    }
-                                }
-                            });
-                        }
-                    },
-                );
-            },
-        );
+                    });
+                });
+            }
+        }
     });
 }

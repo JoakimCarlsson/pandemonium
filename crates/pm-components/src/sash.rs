@@ -63,32 +63,27 @@ pub struct Sash {
     bare: bool,
     /// What the caller puts around the handle's strip.
     modifier: Modifier,
-    /// How the strip lays out the line it lights, when the caller replaces it.
-    arranged: Option<(Arrangement, Alignment)>,
 }
 
 impl Sash {
     /// An upright handle `id`, dragged left and right.
     pub fn column(id: Target) -> Self {
-        Self {
-            id,
-            layout: Layout::Column,
-            placed: None,
-            bare: false,
-            modifier: Modifier::new(),
-            arranged: None,
-        }
+        Self::lying(id, Layout::Column)
     }
 
     /// A flat handle `id`, dragged up and down.
     pub fn row(id: Target) -> Self {
+        Self::lying(id, Layout::Row)
+    }
+
+    /// A handle `id` lying as `layout` says, in the flow, with its own look.
+    fn lying(id: Target, layout: Layout) -> Self {
         Self {
             id,
-            layout: Layout::Row,
+            layout,
             placed: None,
             bare: false,
             modifier: Modifier::new(),
-            arranged: None,
         }
     }
 
@@ -110,12 +105,6 @@ impl Sash {
         self
     }
 
-    /// The handle spreading its children by `arrangement` and placing them across by `alignment` in place of its own.
-    pub fn arranged(mut self, arrangement: Arrangement, alignment: Alignment) -> Self {
-        self.arranged = Some((arrangement, alignment));
-        self
-    }
-
     /// Emits the handle: a strip the pointer takes hold of, clear until the pointer is on it, when a line as thin as a border lights up along the edge.
     #[track_caller]
     pub fn build(self) {
@@ -129,23 +118,16 @@ impl Sash {
                 Modifier::new().height(1.0).fill_max_width(),
             ),
         };
+        let (half, along) = (THICKNESS / 2.0, Modifier::new());
         let own = match (self.layout, self.placed) {
-            (Layout::Column, Some(((x, y), length))) => Modifier::new()
-                .offset(x - THICKNESS / 2.0, y)
-                .width(THICKNESS)
-                .height(length),
-            (Layout::Row, Some(((x, y), length))) => Modifier::new()
-                .offset(x, y - THICKNESS / 2.0)
-                .width(length)
-                .height(THICKNESS),
-            (Layout::Column, None) => Modifier::new()
-                .offset(-THICKNESS / 2.0, 0.0)
-                .width(THICKNESS)
-                .fill_max_height(),
-            (Layout::Row, None) => Modifier::new()
-                .offset(0.0, -THICKNESS / 2.0)
-                .height(THICKNESS)
-                .fill_max_width(),
+            (Layout::Column, Some(((x, y), length))) => {
+                along.offset(x - half, y).size(THICKNESS, length)
+            }
+            (Layout::Row, Some(((x, y), length))) => {
+                along.offset(x, y - half).size(length, THICKNESS)
+            }
+            (Layout::Column, None) => along.offset(-half, 0.0).width(THICKNESS).fill_max_height(),
+            (Layout::Row, None) => along.offset(0.0, -half).height(THICKNESS).fill_max_width(),
         };
         let over = rustle::remember_mutable_interaction_source();
         let hovered = over.collect_is_hovered_as_state();
@@ -155,15 +137,19 @@ impl Sash {
             .cursor(cursor)
             .control(self.id, send(Event::pressing(self.id)))
             .chain(crate::events::sash_drag(self.id));
-        let (arrangement, alignment) = self
-            .arranged
-            .unwrap_or((Arrangement::Center, Alignment::Center));
         let modifier = self.modifier.chain(own);
         let handle = move || {
-            row_arranged(modifier, arrangement, alignment, move || {
-                let hovered = hovered.clone();
-                rustle::spacer(line.draw_behind(group_line(theme::color(Role::Accent), hovered)));
-            });
+            row_arranged(
+                modifier,
+                Arrangement::Center,
+                Alignment::Center,
+                move || {
+                    let hovered = hovered.clone();
+                    rustle::spacer(
+                        line.draw_behind(group_line(theme::color(Role::Accent), hovered)),
+                    );
+                },
+            );
         };
         match self.placed {
             Some(_) => handle(),

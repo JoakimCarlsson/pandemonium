@@ -36,7 +36,7 @@ impl Update {
         body: Option<String>,
     ) -> Self {
         match version {
-            Some(version) if !url.is_empty() && is_newer(&version, RUNNING) => Self::Newer {
+            Some(version) if !url.is_empty() && order(&version) > order(RUNNING) => Self::Newer {
                 name: format!("Pandemonium {version}"),
                 url,
                 version,
@@ -90,9 +90,4 @@ fn order(version: &str) -> (Vec<u64>, bool, Vec<Part>) {
         before.is_none(),
         parts,
     )
-}
-
-/// Whether the release `newest` comes after the version `running`.
-fn is_newer(newest: &str, running: &str) -> bool {
-    order(newest) > order(running)
 }

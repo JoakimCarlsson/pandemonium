@@ -1,18 +1,16 @@
 //! A row of the settings window: what a setting is called and does beside, or above, its one control, and the button that puts it back as it comes once it was changed; with the controls a row is made of.
 
-use crate::events::{Event, send};
 use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
+use rustle::Modifier;
 use rustle::TextFieldState;
 use rustle::{Alignment, Arrangement, row_arranged};
-use rustle::{CursorIcon, Modifier};
 use rustle::{Icon, phosphor};
 
 use crate::Button;
 use crate::button::Variant;
-use crate::events::Interactive;
 use crate::input::Input;
 use crate::parts::{clipped, glyph, line, wrap};
 use crate::settings_rows::PICKS;
@@ -57,12 +55,7 @@ const FILTERED_FROM: usize = 10;
 /// colour while on and on the border colour while off.
 #[track_caller]
 pub fn switch(on: bool, id: Option<Target>) {
-    let mut modifier = Modifier::new().size(SWITCH_WIDTH, theme::sp(5));
-    if let Some(id) = id {
-        modifier = modifier
-            .cursor(CursorIcon::Pointer)
-            .control(id, send(Event::pressing(id)));
-    }
+    let modifier = kit::pressable(Modifier::new().size(SWITCH_WIDTH, theme::sp(5)), id);
     let colors = rustle::SwitchColors {
         checked_thumb_color: theme::color(Role::Text),
         checked_track_color: theme::color(Role::Success),
@@ -104,9 +97,7 @@ pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> Option<Ta
                         on,
                         || {},
                         rustle::SegmentedButtonDefaults::item_shape(index, count, base),
-                        Modifier::new()
-                            .cursor(CursorIcon::Pointer)
-                            .control(id, send(Event::pressing(id))),
+                        kit::pressed(Modifier::new(), id),
                         true,
                         colors,
                         rustle::SegmentedButtonDefaults::border_stroke(
@@ -175,11 +166,7 @@ pub fn picker(shown: &str, width: f32, id: Target, open: bool) {
     kit::small_button(shown, id, Variant::Field)
         .width(width)
         .selected(open)
-        .trailing_icon(if open {
-            phosphor::CARET_DOWN
-        } else {
-            phosphor::CARET_RIGHT
-        })
+        .trailing_icon(kit::chevron(open))
         .build();
 }
 
@@ -307,18 +294,20 @@ pub fn list(
                 kit::column(Modifier::new().width(TEXT_WIDTH), 0, || {
                     text_box(field.0, field.1, placeholder);
                 });
-                kit::small_button(add.1.to_owned(), add.0, Variant::Default).build();
+                kit::action(add.1, add.0, Variant::Default);
             },
         );
     });
 }
 
-/// Emits the button that puts a setting back as it comes, answering to `id`.
+/// Emits the button that puts a setting back as it comes, answering to `id`, when there is one.
 #[track_caller]
-fn reset_button(id: Target) {
-    Button::icon(phosphor::ARROW_COUNTER_CLOCKWISE, id)
-        .size(Size::Xs)
-        .build();
+fn reset_button(id: Option<Target>) {
+    if let Some(id) = id {
+        Button::icon(phosphor::ARROW_COUNTER_CLOCKWISE, id)
+            .size(Size::Xs)
+            .build();
+    }
 }
 
 /// What a row emits for its control or for what opens under it, kept until the row is built.
@@ -341,8 +330,6 @@ pub struct SettingRow<'a> {
     reset: Option<Target>,
     /// What emits what opens under the row, such as a list of choices.
     below: Option<Content<'a>>,
-    /// What the caller puts around the row's box.
-    modifier: Modifier,
 }
 
 impl<'a> SettingRow<'a> {
@@ -354,7 +341,6 @@ impl<'a> SettingRow<'a> {
             control: None,
             reset: None,
             below: None,
-            modifier: Modifier::new(),
         }
     }
 
@@ -376,39 +362,32 @@ impl<'a> SettingRow<'a> {
         self
     }
 
-    /// The row with `modifier` put around its box, outside its own.
-    pub fn modifier(mut self, modifier: Modifier) -> Self {
-        self.modifier = self.modifier.chain(modifier);
-        self
-    }
-
     /// Emits the row, `room` logical pixels across.
     #[track_caller]
     pub fn build(self, room: f32) {
-        let reset = self.reset;
+        let Self {
+            title,
+            about,
+            control,
+            reset,
+            below,
+        } = self;
         let reserved = if reset.is_some() { RESET_WIDTH } else { 0.0 };
-        let width = self
-            .control
+        let width = control
             .as_ref()
             .map_or(0.0, |(_, width)| width.unwrap_or(TEXT_WIDTH));
         let beside = room - width - reserved - ROW_GAP;
         let stacked = beside < MIN_WORDS;
         let words = if stacked { room - reserved } else { beside };
-        let (title, about) = (self.title, self.about);
-        let control = self.control;
-        let below = self.below;
         let modifier = Modifier::new()
             .fill_max_width()
-            .chain(self.modifier)
-            .chain(Modifier::new().padding_xy(0.0, theme::sp(3)));
+            .padding_xy(0.0, theme::sp(3));
         kit::column(modifier, 2, move || {
             if stacked {
                 kit::column(Modifier::new().fill_max_width(), 2, || {
                     kit::row_top(Modifier::new().fill_max_width(), 2, || {
-                        about_words(&title, &about, words, Modifier::new().weight(1.0));
-                        if let Some(id) = reset {
-                            reset_button(id);
-                        }
+                        about_words(&title, &about, words);
+                        reset_button(reset);
                     });
                     match control {
                         Some((control, Some(_))) => {
@@ -422,11 +401,9 @@ impl<'a> SettingRow<'a> {
                 });
             } else {
                 kit::row(Modifier::new().fill_max_width(), 6, || {
-                    about_words(&title, &about, words, Modifier::new().weight(1.0));
+                    about_words(&title, &about, words);
                     kit::row(Modifier::new(), 2, || {
-                        if let Some(id) = reset {
-                            reset_button(id);
-                        }
+                        reset_button(reset);
                         match control {
                             Some((control, Some(_))) => control(),
                             Some((control, None)) => {
@@ -444,10 +421,10 @@ impl<'a> SettingRow<'a> {
     }
 }
 
-/// Emits what a setting is called, `title`, over what it does, `about`, each wrapped to `words` logical pixels, in a column `modifier` sizes.
+/// Emits what a setting is called, `title`, over what it does, `about`, each wrapped to `words` logical pixels, in a column taking the room its row leaves.
 #[track_caller]
-fn about_words(title: &str, about: &str, words: f32, modifier: Modifier) {
-    kit::column(modifier, 0.5, || {
+fn about_words(title: &str, about: &str, words: f32) {
+    kit::column(Modifier::new().weight(1.0), 0.5, || {
         for part in wrap(title, 13, words) {
             line(part, 13, 1.4, Role::Text);
         }

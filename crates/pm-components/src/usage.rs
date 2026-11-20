@@ -3,10 +3,10 @@
 use crate::theme;
 use crate::theme::Indicated;
 use pm_harness::{Limit, LimitUnit, Limits, Usage};
-use rustle::{Alignment, Arrangement, row_arranged};
+use rustle::{Alignment, Arrangement, Color, ColorSpaces, row_arranged};
 use rustle::{CursorIcon, Modifier};
 
-use crate::theme::{Radius, Role, Tone};
+use crate::theme::{Radius, Role};
 
 /// How wide the ring of a context that has no allowance beside it is, in logical pixels.
 const SINGLE_RING: f32 = 20.0;
@@ -47,9 +47,15 @@ fn context_percent(context: &Usage) -> Option<u32> {
 }
 
 /// The colour of a ring that is `used` percent full: green when empty, through amber, to red when full.
-fn tone(used: u32) -> Tone {
+fn tone(used: u32) -> Color {
     let share = used.min(100) as f32 / 100.0;
-    Tone::oklch(0.72, 0.17, EMPTY_HUE + (FULL_HUE - EMPTY_HUE) * share)
+    Color::in_space(
+        0.72,
+        0.17,
+        EMPTY_HUE + (FULL_HUE - EMPTY_HUE) * share,
+        1.0,
+        ColorSpaces::OKLCH,
+    )
 }
 
 /// A count of tokens in whole thousands once it reaches a thousand.
@@ -195,11 +201,17 @@ pub fn summary(limits: &Limits) -> Option<String> {
 
 /// The words that say how much of the account's allowance is used, one limit to a line; nothing when the provider lists none.
 pub fn tooltip(limits: &Limits) -> Option<String> {
-    let lines: Vec<String> = meters(None, Some(limits), crate::age::now())
-        .into_iter()
-        .map(|meter| meter.line)
-        .collect();
-    (!lines.is_empty()).then(|| lines.join("\n"))
+    let found = meters(None, Some(limits), crate::age::now());
+    (!found.is_empty()).then(|| said(&found))
+}
+
+/// What the tooltip of the rings says of `found`: one meter to a line.
+fn said(found: &[Meter]) -> String {
+    found
+        .iter()
+        .map(|meter| meter.line.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Emits the rings for `context` and `limits`, which are whatever is known so far, with the figures as their tooltip; emits nothing when neither is known. Returns whether it emitted them.
@@ -209,11 +221,7 @@ pub fn rings_of(context: Option<&Usage>, limits: Option<&Limits>) -> bool {
     if found.is_empty() {
         return false;
     }
-    let tooltip = found
-        .iter()
-        .map(|meter| meter.line.as_str())
-        .collect::<Vec<_>>()
-        .join("\n");
+    let tooltip = said(&found);
     let shares: Vec<f32> = found
         .iter()
         .filter_map(|meter| meter.share)
@@ -240,7 +248,6 @@ pub fn rings_of(context: Option<&Usage>, limits: Option<&Limits>) -> bool {
 }
 
 /// Emits the rings that fill clockwise from the top as each share grows, outermost first; one thick ring when there is one share, thinner ones set inside each other when there are several.
-#[track_caller]
 fn rings(shares: &[f32]) {
     let (across, width, gap) = match shares.len() {
         0 | 1 => (SINGLE_RING, SINGLE_WIDTH, 0.0),

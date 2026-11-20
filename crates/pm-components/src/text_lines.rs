@@ -204,10 +204,7 @@ impl TextLines {
             .iter()
             .find(|row| y < row[0].rect.origin.y + row[0].rect.size.height)
             .or(rows.last())?;
-        let piece = row
-            .iter()
-            .find(|piece| x < piece.rect.origin.x + piece.rect.size.width)
-            .or(row.last())?;
+        let piece = piece_across(row, x)?;
         Some(piece.offset_at(
             x,
             y.clamp(
@@ -223,10 +220,7 @@ impl TextLines {
         let (rows, index, piece) = self.row_holding(owner, caret)?;
         let (x, _, _) = piece.caret_at(caret);
         let row = rows.get(index.checked_add_signed(by)?)?;
-        let target = row
-            .iter()
-            .find(|piece| x < piece.rect.origin.x + piece.rect.size.width)
-            .or(row.last())?;
+        let target = piece_across(row, x)?;
         let y = target.rect.origin.y + target.rect.size.height / 2.0;
         Some(target.offset_at(x, y))
     }
@@ -261,6 +255,13 @@ impl TextLines {
         let (x, y, height) = self.row_holding(owner, caret)?.2.caret_at(caret);
         Some(Rect::new(Offset::new(x, y), rustle::Size::new(1.0, height)))
     }
+}
+
+/// The piece of `row` the point `x` across falls on, or the last when it is past them all.
+fn piece_across(row: &[DrawnLine], x: f32) -> Option<&DrawnLine> {
+    row.iter()
+        .find(|piece| x < piece.rect.origin.x + piece.rect.size.width)
+        .or(row.last())
 }
 
 /// Where the caret at byte `caret` of `layout` goes when moved one place

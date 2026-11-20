@@ -37,18 +37,12 @@ impl WorkspaceState {
 /// room for their buttons are left out.
 #[track_caller]
 pub(crate) fn body(state: &WorkspaceState, room: f32) {
-    let mut installed = Vec::new();
-    let mut available = Vec::new();
-    for (place, extension) in state.settings_languages().into_iter().enumerate() {
-        let Some(action) = LANGUAGE_ROWS.id(place) else {
-            break;
-        };
-        if extension.installed {
-            installed.push((extension, action));
-        } else {
-            available.push((extension, action));
-        }
-    }
+    let (installed, available): (Vec<_>, Vec<_>) = state
+        .settings_languages()
+        .into_iter()
+        .enumerate()
+        .map_while(|(place, extension)| Some((extension, LANGUAGE_ROWS.id(place)?)))
+        .partition(|(extension, _)| extension.installed);
     page_rows(state, Section::Languages, room);
     if state.extensions.is_empty() {
         line(

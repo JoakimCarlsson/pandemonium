@@ -54,8 +54,10 @@ impl App {
         let Some((x, y)) = self.pointer.position else {
             return;
         };
-        self.model
-            .update(|state| *state = std::mem::take(state).with_pane_menu((x - 190.0, y + 14.0)));
+        self.model.update(|state| {
+            *state = std::mem::take(state)
+                .in_workspace(|state| state.with_pane_menu((x - 190.0, y + 14.0)))
+        });
     }
 
     /// The pane under `at`, by position, and the edge of it `at` is over.
@@ -86,8 +88,9 @@ impl App {
         };
         self.pane_dragging = true;
         let over = self.pane_under(at);
-        self.model
-            .update(|state| *state = std::mem::take(state).pane_dragged(item, over, at));
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.pane_dragged(item, over, at))
+        });
     }
 
     /// Ends a drag of a tab, moving it where it was let go, and says whether there was a drag.
@@ -96,8 +99,9 @@ impl App {
         if pressed.is_none() || !std::mem::take(&mut self.pane_dragging) {
             return false;
         }
-        self.model
-            .update(|state| *state = std::mem::take(state).pane_dropped());
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.pane_dropped())
+        });
         self.deliver();
         true
     }

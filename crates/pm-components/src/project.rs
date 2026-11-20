@@ -1,6 +1,6 @@
 //! A project: a folder or repository the work happens in.
 
-use crate::theme::Tone;
+use rustle::{Color, ColorSpaces};
 
 /// The perceptual lightness every avatar shares, so white letters read on all of them.
 const LIGHTNESS: f32 = 0.55;
@@ -77,10 +77,16 @@ impl Project {
     }
 
     /// The colour of the project's avatar, which the same path always gets.
-    pub fn color(&self) -> Tone {
+    pub fn color(&self) -> Color {
         let hash = self.path.bytes().fold(FNV_OFFSET, |hash, byte| {
             (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME)
         });
-        Tone::oklch(LIGHTNESS, CHROMA, (hash % 360) as f32)
+        Color::in_space(
+            LIGHTNESS,
+            CHROMA,
+            (hash % 360) as f32,
+            1.0,
+            ColorSpaces::OKLCH,
+        )
     }
 }

@@ -16,7 +16,7 @@ use std::rc::Rc;
 
 use crate::events::Interactive;
 use crate::icons::spinner;
-use crate::theme::{Radius, Role, Tone};
+use crate::theme::{Radius, Role};
 
 use crate::branch_menu::branch_menu;
 use crate::button::Variant;
@@ -36,22 +36,7 @@ pub const WIDTH: f32 = 380.0;
 /// How narrow and how wide the review panel can be dragged, in logical pixels.
 pub const WIDTHS: (f32, f32) = (260.0, 760.0);
 
-/// Emits a row of the panel `height` steps tall, with a rule beneath it, holding what `content` emits.
-#[track_caller]
-fn band(height: u32, content: impl FnOnce()) {
-    kit::row(
-        Modifier::new()
-            .fill_max_width()
-            .height(theme::sp(height))
-            .ruled(theme::Side::Bottom)
-            .padding_xy(theme::sp(3), 0.0),
-        2,
-        content,
-    );
-}
-
 /// Emits the box that holds the rows of the panel's list, which `content` emits, and scrolls them.
-#[track_caller]
 fn scrolling_list(state: &WorkspaceState, content: impl FnOnce()) {
     kit::column(
         Modifier::new()
@@ -69,9 +54,7 @@ fn scrolling_list(state: &WorkspaceState, content: impl FnOnce()) {
 #[track_caller]
 pub(crate) fn nothing(message: &str) {
     kit::row_top(
-        Modifier::new()
-            .padding_xy(theme::sp(4), 0.0)
-            .padding_xy(0.0, theme::sp(3)),
+        Modifier::new().padding_xy(theme::sp(4), theme::sp(3)),
         0,
         || line(message, 13, 1.4, Role::Subtle),
     );
@@ -92,7 +75,7 @@ fn panel_tab(label: &str, icon: Icon, filled: Icon, id: Target, shown: bool) {
 
 /// Emits a small button showing only `icon`, answering to `id`, turning while `spinning`, saying what it does with `tooltip`.
 #[track_caller]
-fn small_icon_button(icon: Icon, id: Target, spinning: bool, tooltip: &str) {
+pub(crate) fn small_icon_button(icon: Icon, id: Target, spinning: bool, tooltip: &str) {
     Button::icon(icon, id)
         .spinning(spinning)
         .tooltip(tooltip)
@@ -100,45 +83,42 @@ fn small_icon_button(icon: Icon, id: Target, spinning: bool, tooltip: &str) {
 }
 
 /// Emits the line above the tree: what it lists, and the buttons that make a file or folder, read it again and fold it.
-#[track_caller]
 fn files_header(state: &WorkspaceState) {
-    band(10, || {
-        label_with_grow("Files");
-        small_icon_button(
-            phosphor::FILE_PLUS,
-            Target::Tree(TreeEvent::TreeNewFile),
-            false,
-            "New File…",
+    kit::bar(10, 3, 2, || {
+        kit::text(
+            Modifier::new().weight(1.0),
+            "Files",
+            kit::line(13, Role::Subtle),
         );
-        small_icon_button(
-            phosphor::FOLDER_PLUS,
-            Target::Tree(TreeEvent::TreeNewFolder),
-            false,
-            "New Folder…",
-        );
-        small_icon_button(
-            phosphor::ARROWS_CLOCKWISE,
-            Target::Tree(TreeEvent::TreeRefresh),
-            state.git.working,
-            "Refresh",
-        );
-        small_icon_button(
-            phosphor::ARROWS_IN_LINE_VERTICAL,
-            Target::Tree(TreeEvent::TreeCollapse),
-            false,
-            "Collapse Folders",
-        );
+        for (icon, id, spinning, tooltip) in [
+            (
+                phosphor::FILE_PLUS,
+                TreeEvent::TreeNewFile,
+                false,
+                "New File…",
+            ),
+            (
+                phosphor::FOLDER_PLUS,
+                TreeEvent::TreeNewFolder,
+                false,
+                "New Folder…",
+            ),
+            (
+                phosphor::ARROWS_CLOCKWISE,
+                TreeEvent::TreeRefresh,
+                state.git.working,
+                "Refresh",
+            ),
+            (
+                phosphor::ARROWS_IN_LINE_VERTICAL,
+                TreeEvent::TreeCollapse,
+                false,
+                "Collapse Folders",
+            ),
+        ] {
+            small_icon_button(icon, Target::Tree(id), spinning, tooltip);
+        }
     });
-}
-
-/// Emits `words` as the name of a list, taking the room left in its row.
-#[track_caller]
-fn label_with_grow(words: &str) {
-    kit::text(
-        Modifier::new().weight(1.0),
-        words,
-        kit::line(13, Role::Subtle),
-    );
 }
 
 /// Emits every file of the project, as a tree, under the buttons that act on it.
@@ -150,16 +130,20 @@ fn files(state: &WorkspaceState) {
     });
 }
 
-/// Emits the words and the icon on the button under the commit message, for what it does now.
-#[track_caller]
-fn primary_face(primary: &Primary) {
-    let enabled = !matches!(
+/// Whether the button under the commit message does something now: it is neither stopped nor waiting.
+fn enabled(primary: &Primary) -> bool {
+    !matches!(
         primary,
         Primary::Commit {
             stopped: Some(_),
             ..
         } | Primary::Busy(_)
-    );
+    )
+}
+
+/// Emits the words and the icon on the button under the commit message, for what it does now.
+fn primary_face(primary: &Primary) {
+    let enabled = enabled(primary);
     let tone = if enabled { Role::Text } else { Role::Subtle };
     let (icon, words) = match primary {
         Primary::Commit { title, stopped } => (phosphor::CHECK, stopped.unwrap_or(title)),
@@ -191,15 +175,8 @@ fn primary_face(primary: &Primary) {
 /// Emits the control that commits, or syncs or publishes once there is nothing to commit, with the arrow that offers what else it can do.
 ///
 /// What stops it is written where the words would be, so a reader who cannot commit is told why.
-#[track_caller]
 fn commit_button(primary: &Primary) {
-    let enabled = !matches!(
-        primary,
-        Primary::Commit {
-            stopped: Some(_),
-            ..
-        } | Primary::Busy(_)
-    );
+    let enabled = enabled(primary);
     let pressable = |own: Modifier, id: Target, on_click: Rc<dyn Fn()>| {
         if enabled {
             own.indicated(
@@ -226,82 +203,60 @@ fn commit_button(primary: &Primary) {
         }),
     )
     .padding_xy(theme::sp(2), 0.0);
-    kit::row_top(
+    kit::row(
         Modifier::new()
             .fill_max_width()
-            .padding_xy(theme::sp(3), 0.0)
-            .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
+            .padding_each(theme::sp(3), 0.0, theme::sp(3), theme::sp(2))
+            .height(theme::sp(9))
+            .background_rounded(theme::color(Role::SurfaceSelected), Radius::Md.px()),
         0,
         || {
-            kit::row(
-                Modifier::new()
-                    .height(theme::sp(9))
-                    .fill_max_width()
-                    .background_rounded(theme::color(Role::SurfaceSelected), Radius::Md.px()),
-                0,
-                || {
-                    row_arranged(main, Arrangement::Center, Alignment::Center, || {
-                        primary_face(primary)
-                    });
-                    kit::row(arrow, 0, || {
-                        glyph(
-                            phosphor::CARET_DOWN,
-                            3.0,
-                            if enabled { Role::Text } else { Role::Subtle },
-                        )
-                    });
-                },
-            );
+            row_arranged(main, Arrangement::Center, Alignment::Center, || {
+                primary_face(primary)
+            });
+            kit::row(arrow, 0, || {
+                glyph(
+                    phosphor::CARET_DOWN,
+                    3.0,
+                    if enabled { Role::Text } else { Role::Subtle },
+                )
+            });
         },
     );
 }
 
 /// Emits the box the commit message is written in: several lines, wrapped to the panel.
-#[track_caller]
 fn message_box(state: &WorkspaceState) {
     kit::column(
         Modifier::new()
             .fill_max_width()
-            .padding_xy(theme::sp(3), 0.0)
-            .padding_xy(0.0, theme::sp(2)),
+            .padding_xy(theme::sp(3), theme::sp(2))
+            .background_rounded(theme::color(Role::Background), Radius::Lg.px())
+            .indicated(
+                theme::FocusOutline {
+                    idle: theme::color(Role::Border),
+                    focused: theme::color(Role::Accent),
+                    radius: Radius::Lg,
+                },
+                theme::Focused::Held(crate::focus::is_held(Target::Git(GitEvent::CommitMessage))),
+            )
+            .padding(1.0),
         0,
         || {
-            kit::column(
-                Modifier::new()
-                    .fill_max_width()
-                    .background_rounded(theme::color(Role::Background), Radius::Lg.px())
-                    .indicated(
-                        theme::FocusOutline {
-                            idle: theme::color(Role::Border),
-                            focused: theme::color(Role::Accent),
-                            radius: Radius::Lg,
-                        },
-                        theme::Focused::Held(crate::focus::is_held(Target::Git(
-                            GitEvent::CommitMessage,
-                        ))),
-                    )
-                    .padding(1.0),
-                0,
-                || {
-                    Input::new(&state.message, Target::Git(GitEvent::CommitMessage))
-                        .modifier(Modifier::new().fill_max_width())
-                        .variant(input::Variant::Multiline)
-                        .placeholder(&match &state.git.repository {
-                            Some(submodule) => {
-                                format!("Message (Ctrl+Enter to commit in {submodule})")
-                            }
-                            None => "Message (Ctrl+Enter to commit)".to_owned(),
-                        })
-                        .rows(4)
-                        .build();
-                },
-            );
+            Input::new(&state.message, Target::Git(GitEvent::CommitMessage))
+                .modifier(Modifier::new().fill_max_width())
+                .variant(input::Variant::Multiline)
+                .placeholder(&match &state.git.repository {
+                    Some(submodule) => format!("Message (Ctrl+Enter to commit in {submodule})"),
+                    None => "Message (Ctrl+Enter to commit)".to_owned(),
+                })
+                .rows(4)
+                .build();
         },
     );
 }
 
 /// Emits the heading of the changes section: a chevron that folds it, its name, and what can be done from it.
-#[track_caller]
 fn section_heading(state: &WorkspaceState, primary: &Primary) {
     let open = state.git.changes_open;
     let committable = matches!(primary, Primary::Commit { stopped: None, .. });
@@ -313,25 +268,13 @@ fn section_heading(state: &WorkspaceState, primary: &Primary) {
         1,
         || {
             kit::row(
-                Modifier::new()
-                    .weight(1.0)
-                    .fill_max_height()
-                    .cursor(CursorIcon::Pointer)
-                    .control(
-                        Target::Git(GitEvent::ChangesToggle),
-                        send(Event::Git(GitEvent::ChangesToggle)),
-                    ),
+                kit::pressed(
+                    Modifier::new().weight(1.0).fill_max_height(),
+                    Target::Git(GitEvent::ChangesToggle),
+                ),
                 1,
                 || {
-                    glyph(
-                        if open {
-                            phosphor::CARET_DOWN
-                        } else {
-                            phosphor::CARET_RIGHT
-                        },
-                        3.5,
-                        Role::Subtle,
-                    );
+                    glyph(kit::chevron(open), 3.5, Role::Subtle);
                     line("Changes", 13, 1.4, Role::Text);
                 },
             );
@@ -363,29 +306,17 @@ fn trouble(said: &str, width: f32) {
     kit::row_top(
         Modifier::new()
             .fill_max_width()
-            .padding_xy(theme::sp(3), 0.0)
-            .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
-        0,
+            .padding_each(theme::sp(3), 0.0, theme::sp(3), theme::sp(2))
+            .background_rounded(theme::color(Role::Danger.alpha(0.12)), Radius::Md.px())
+            .padding_xy(theme::sp(3), theme::sp(2)),
+        2,
         || {
-            kit::row_top(
-                Modifier::new()
-                    .weight(1.0)
-                    .background_rounded(
-                        theme::color(Tone::from(Role::Danger).alpha(0.12)),
-                        Radius::Md.px(),
-                    )
-                    .padding_xy(theme::sp(3), 0.0)
-                    .padding_xy(0.0, theme::sp(2)),
-                2,
-                || {
-                    kit::column(Modifier::new().weight(1.0), 0, || {
-                        for words in wrap(said, 12, width - 24.0 - 56.0) {
-                            line(words, 12, 1.5, Role::Danger);
-                        }
-                    });
-                    Button::icon(phosphor::X, Target::Git(GitEvent::TroubleDismiss)).build();
-                },
-            );
+            kit::column(Modifier::new().weight(1.0), 0, || {
+                for words in wrap(said, 12, width - 24.0 - 56.0) {
+                    line(words, 12, 1.5, Role::Danger);
+                }
+            });
+            Button::icon(phosphor::X, Target::Git(GitEvent::TroubleDismiss)).build();
         },
     );
 }
@@ -459,8 +390,7 @@ fn repositories(state: &WorkspaceState, session: &Session) {
         Modifier::new()
             .fill_max_width()
             .ruled(theme::Side::Bottom)
-            .padding_xy(theme::sp(1), 0.0)
-            .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
+            .padding_each(theme::sp(1), 0.0, theme::sp(1), theme::sp(2)),
         0,
         || {
             kit::row(
@@ -483,16 +413,12 @@ fn repositories(state: &WorkspaceState, session: &Session) {
                     .gap(2.0)
                     .radius(Radius::Sm)
                     .modifier(Modifier::new().fill_max_width())
-                    .inner(
-                        Modifier::new()
-                            .padding_each(
-                                theme::sp(2.0 + depth(repository) as f32 * 3.5),
-                                0.0,
-                                0.0,
-                                0.0,
-                            )
-                            .padding_each(0.0, 0.0, theme::sp(1), 0.0),
-                    )
+                    .inner(Modifier::new().padding_each(
+                        theme::sp(2.0 + depth(repository) as f32 * 3.5),
+                        0.0,
+                        theme::sp(1),
+                        0.0,
+                    ))
                     .build_with(|| {
                         glyph(
                             if repository.is_some() {
@@ -522,7 +448,6 @@ fn repositories(state: &WorkspaceState, session: &Session) {
 }
 
 /// Emits the button that shows the branch the repository the panel works on is on and opens the list of branches, or, outside a repository, only says so.
-#[track_caller]
 fn branch_button(state: &WorkspaceState, session: &Session, working: bool) {
     if session.branch.is_empty() {
         let said = if session.unknown {
@@ -566,7 +491,7 @@ pub fn review(state: &WorkspaceState, session: &Session) {
             .ruled(theme::Side::Left),
         || {
             kit::column(Modifier::new().fill_max_size(), 0, || {
-                band(12, || {
+                kit::bar(12, 3, 2, || {
                     kit::row(Modifier::new().weight(1.0).clip(), 2, || {
                         if versioned {
                             panel_tab(
@@ -599,7 +524,9 @@ pub fn review(state: &WorkspaceState, session: &Session) {
                     }
                 });
                 if versioned {
-                    band(10, || branch_button(state, session, state.git.working));
+                    kit::bar(10, 3, 2, || {
+                        branch_button(state, session, state.git.working)
+                    });
                 }
                 if shown == ReviewTab::Changes {
                     repositories(state, session);

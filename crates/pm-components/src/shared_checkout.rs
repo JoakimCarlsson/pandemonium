@@ -121,9 +121,7 @@ pub fn notice(state: &WorkspaceState, session: &Session) {
     }
     let words = shared_words(&titles);
     kit::row(
-        Modifier::new()
-            .padding_xy(theme::sp(2.5), 0.0)
-            .padding_xy(0.0, theme::sp(0.5)),
+        Modifier::new().padding_xy(theme::sp(2.5), theme::sp(0.5)),
         1.5,
         move || {
             glyph(phosphor::GIT_FORK, 3.5, Role::Warning);

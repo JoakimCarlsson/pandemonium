@@ -106,37 +106,41 @@ pub struct Area {
 }
 
 impl Area {
+    /// The area with its left edge at `x`, its top edge at `y`, `width` wide and `height` tall.
+    fn at(x: f32, y: f32, width: f32, height: f32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
     /// The part of the area the first or second side of a split along `axis` takes, the first taking `ratio` of it.
     pub fn halves(self, axis: Axis, ratio: f32) -> (Self, Self) {
+        self.cut(axis, (self.extent(axis) * ratio).round())
+    }
+
+    /// How far the area reaches along `axis`: its width side by side, its height one above the other.
+    fn extent(self, axis: Axis) -> f32 {
         match axis {
-            Axis::Row => {
-                let first = (self.width * ratio).round();
-                (
-                    Self {
-                        width: first,
-                        ..self
-                    },
-                    Self {
-                        x: self.x + first,
-                        width: self.width - first,
-                        ..self
-                    },
-                )
-            }
-            Axis::Column => {
-                let first = (self.height * ratio).round();
-                (
-                    Self {
-                        height: first,
-                        ..self
-                    },
-                    Self {
-                        y: self.y + first,
-                        height: self.height - first,
-                        ..self
-                    },
-                )
-            }
+            Axis::Row => self.width,
+            Axis::Column => self.height,
+        }
+    }
+
+    /// The two parts of the area cut along `axis`, the first `first` logical pixels across.
+    fn cut(self, axis: Axis, first: f32) -> (Self, Self) {
+        let Self { x, y, .. } = self;
+        match axis {
+            Axis::Row => (
+                Self::at(x, y, first, self.height),
+                Self::at(x + first, y, self.width - first, self.height),
+            ),
+            Axis::Column => (
+                Self::at(x, y, self.width, first),
+                Self::at(x, y + first, self.width, self.height - first),
+            ),
         }
     }
 
@@ -145,24 +149,10 @@ impl Area {
         let (wide, tall) = (self.width / 2.0, self.height / 2.0);
         match side {
             Side::Center => self,
-            Side::Left => Self {
-                width: wide,
-                ..self
-            },
-            Side::Right => Self {
-                x: self.x + wide,
-                width: wide,
-                ..self
-            },
-            Side::Top => Self {
-                height: tall,
-                ..self
-            },
-            Side::Bottom => Self {
-                y: self.y + tall,
-                height: tall,
-                ..self
-            },
+            Side::Left => self.cut(Axis::Row, wide).0,
+            Side::Right => self.cut(Axis::Row, wide).1,
+            Side::Top => self.cut(Axis::Column, tall).0,
+            Side::Bottom => self.cut(Axis::Column, tall).1,
         }
     }
 
@@ -225,14 +215,53 @@ pub struct PaneDrag {
 
 impl Default for Layout {
     fn default() -> Self {
-        Self::Group(Group {
-            items: vec![Item::Page],
-            active: 0,
-        })
+        Self::Group(Group::holding(vec![Item::Page]))
+    }
+}
+
+impl Item {
+    /// The tab of the open file `viewer`.
+    fn of_viewer(viewer: &crate::open_files::Viewer) -> Self {
+        Self::File {
+            path: viewer.path.clone(),
+            head: viewer.head,
+        }
+    }
+}
+
+impl Group {
+    /// A pane holding `items`, showing the first.
+    fn holding(items: Vec<Item>) -> Self {
+        Self { items, active: 0 }
+    }
+
+    /// Shows `item`, when the pane holds it.
+    fn show(&mut self, item: &Item) {
+        if let Some(at) = self.items.iter().position(|held| held == item) {
+            self.active = at;
+        }
     }
 }
 
 impl Layout {
+    /// The split along `axis` giving `first` `ratio` of the space and `second` the rest.
+    fn split(axis: Axis, ratio: f32, first: Self, second: Self) -> Self {
+        Self::Split {
+            axis,
+            ratio,
+            first: Box::new(first),
+            second: Box::new(second),
+        }
+    }
+
+    /// The split along `axis` of the parts left, or the one part left when the other is gone.
+    fn joined(axis: Axis, ratio: f32, first: Option<Self>, second: Option<Self>) -> Option<Self> {
+        match (first, second) {
+            (Some(first), Some(second)) => Some(Self::split(axis, ratio, first, second)),
+            (one, two) => one.or(two),
+        }
+    }
+
     /// The panes in the order they are laid out: left to right, top to bottom.
     pub fn groups(&self) -> Vec<&Group> {
         match self {
@@ -310,18 +339,13 @@ impl Layout {
         {
             let (one, two) = area.halves(*axis, *ratio);
             let id = Target::Window(WindowEvent::SplitSash(seams.len()));
-            seams.push(match axis {
-                Axis::Row => Seam {
-                    id,
-                    axis: *axis,
-                    at: (two.x, two.y),
-                    length: two.height,
-                },
-                Axis::Column => Seam {
-                    id,
-                    axis: *axis,
-                    at: (two.x, two.y),
-                    length: two.width,
+            seams.push(Seam {
+                id,
+                axis: *axis,
+                at: (two.x, two.y),
+                length: match axis {
+                    Axis::Row => two.height,
+                    Axis::Column => two.width,
                 },
             });
             first.seam(one, seams);
@@ -329,14 +353,8 @@ impl Layout {
         }
     }
 
-    /// The split whose handle is the `index`-th, laid out in `area`, and the space it cuts.
-    fn split_mut(&mut self, index: usize, area: Area) -> Option<(&mut Self, Area)> {
-        let mut count = 0;
-        self.find_split(index, area, &mut count)
-    }
-
-    /// Looks for the `index`-th split in `area`, counting in `count` the splits passed.
-    fn find_split(
+    /// The split whose handle is the `index`-th, laid out in `area`, and the space it cuts, counting in `count` the splits passed.
+    fn split_mut(
         &mut self,
         index: usize,
         area: Area,
@@ -353,10 +371,10 @@ impl Layout {
         let Self::Split { first, second, .. } = self else {
             return None;
         };
-        if let Some(found) = first.find_split(index, one, count) {
+        if let Some(found) = first.split_mut(index, one, count) {
             return Some(found);
         }
-        second.find_split(index, two, count)
+        second.split_mut(index, two, count)
     }
 
     /// The layout with `item` taken out of its pane, and the pane taken out with it when that leaves it empty.
@@ -377,26 +395,12 @@ impl Layout {
                 ratio,
                 first,
                 second,
-            } => match (first.without(item), second.without(item)) {
-                (Some(first), Some(second)) => Some(Self::Split {
-                    axis,
-                    ratio,
-                    first: Box::new(first),
-                    second: Box::new(second),
-                }),
-                (one, two) => one.or(two),
-            },
+            } => Self::joined(axis, ratio, first.without(item), second.without(item)),
         }
     }
 
-    /// The layout with the `target`-th pane cut in two along `side`, `leaf` on that side.
-    fn split_at(self, target: usize, side: Side, leaf: Group) -> Self {
-        let mut count = 0;
-        self.split_counting(target, side, leaf, &mut count)
-    }
-
-    /// Cuts the `target`-th pane, counting in `count` the panes passed.
-    fn split_counting(self, target: usize, side: Side, leaf: Group, count: &mut usize) -> Self {
+    /// The layout with the `target`-th pane cut in two along `side`, `leaf` on that side, counting in `count` the panes passed.
+    fn split_at(self, target: usize, side: Side, leaf: Group, count: &mut usize) -> Self {
         match self {
             Self::Group(group) => {
                 let here = *count == target;
@@ -412,12 +416,7 @@ impl Layout {
                     Side::Top => (Axis::Column, alone, held),
                     Side::Bottom | Side::Center => (Axis::Column, held, alone),
                 };
-                Self::Split {
-                    axis,
-                    ratio: 0.5,
-                    first: Box::new(first),
-                    second: Box::new(second),
-                }
+                Self::split(axis, 0.5, first, second)
             }
             Self::Split {
                 axis,
@@ -425,14 +424,9 @@ impl Layout {
                 first,
                 second,
             } => {
-                let first = first.split_counting(target, side, leaf.clone(), count);
-                let second = second.split_counting(target, side, leaf, count);
-                Self::Split {
-                    axis,
-                    ratio,
-                    first: Box::new(first),
-                    second: Box::new(second),
-                }
+                let first = first.split_at(target, side, leaf.clone(), count);
+                let second = second.split_at(target, side, leaf, count);
+                Self::split(axis, ratio, first, second)
             }
         }
     }
@@ -444,26 +438,13 @@ impl Layout {
             _ => target + 1,
         };
         (
-            self.split_at(
-                target,
-                side,
-                Group {
-                    items: Vec::new(),
-                    active: 0,
-                },
-            ),
+            self.split_at(target, side, Group::holding(Vec::new()), &mut 0),
             at,
         )
     }
 
-    /// The layout with the `target`-th pane taken out, or nothing when it is the only one.
-    pub fn without_group(self, target: usize) -> Option<Self> {
-        let mut count = 0;
-        self.without_counting(target, &mut count)
-    }
-
-    /// Takes the `target`-th pane out, counting in `count` the panes passed.
-    fn without_counting(self, target: usize, count: &mut usize) -> Option<Self> {
+    /// The layout with the `target`-th pane taken out, or nothing when it is the only one, counting in `count` the panes passed.
+    pub fn without_group(self, target: usize, count: &mut usize) -> Option<Self> {
         match self {
             Self::Group(group) => {
                 let here = *count == target;
@@ -475,18 +456,12 @@ impl Layout {
                 ratio,
                 first,
                 second,
-            } => match (
-                first.without_counting(target, count),
-                second.without_counting(target, count),
-            ) {
-                (Some(first), Some(second)) => Some(Self::Split {
-                    axis,
-                    ratio,
-                    first: Box::new(first),
-                    second: Box::new(second),
-                }),
-                (one, two) => one.or(two),
-            },
+            } => Self::joined(
+                axis,
+                ratio,
+                first.without_group(target, count),
+                second.without_group(target, count),
+            ),
         }
     }
 
@@ -517,14 +492,7 @@ impl Layout {
                 }
                 left
             }
-            side => left.split_at(
-                target,
-                side,
-                Group {
-                    items: vec![item.clone()],
-                    active: 0,
-                },
-            ),
+            side => left.split_at(target, side, Group::holding(vec![item.clone()]), &mut 0),
         };
         let source = if side != Side::Center && from > target {
             from + 1
@@ -535,18 +503,14 @@ impl Layout {
             .groups()
             .get(source)
             .is_some_and(|group| group.items.is_empty())
-            && let Some(pruned) = moved.clone().without_group(source)
+            && let Some(pruned) = moved.clone().without_group(source, &mut 0)
         {
             moved = pruned;
         }
         if let Some(at) = moved.group_of(item)
             && let Some(group) = moved.groups_mut().into_iter().nth(at)
         {
-            group.active = group
-                .items
-                .iter()
-                .position(|held| held == item)
-                .unwrap_or(0);
+            group.show(item);
         }
         moved
     }
@@ -574,12 +538,7 @@ impl Layout {
         let mut layout = gone
             .iter()
             .try_fold(self, |layout, item| layout.without(item))
-            .unwrap_or_else(|| {
-                Self::Group(Group {
-                    items: Vec::new(),
-                    active: 0,
-                })
-            });
+            .unwrap_or_else(|| Self::Group(Group::holding(Vec::new())));
         let count = layout.groups().len();
         let missing: Vec<Item> = items
             .iter()
@@ -633,6 +592,17 @@ pub struct Panes {
     pub focused: usize,
     /// While the pane worked in is empty, the tab that was shown when it was chosen; once another tab is shown, the pane holding it is the one worked in.
     pub parked: Option<Item>,
+}
+
+impl Panes {
+    /// The panes cut as `layout`, the `focused`-th worked in, with the tab `parked` while it is empty.
+    fn new(layout: Layout, focused: usize, parked: Option<Item>) -> Self {
+        Self {
+            layout,
+            focused,
+            parked,
+        }
+    }
 }
 
 /// The edge the row `id` of the menu of panes splits the pane worked in on, if it is one of its rows.
@@ -690,42 +660,27 @@ impl WorkspaceState {
 
     /// Every tab the page has, in order: the page, the diff while the session changed files, and the open files. A chat has no diff.
     fn pane_items(&self) -> Vec<Item> {
-        let mut items = vec![Item::Page];
-        if self
+        let diff = self
             .review_session()
-            .is_some_and(|session| !session.is_chat())
-        {
-            items.push(Item::Diff);
-        }
-        if self.excerpts.is_some() {
-            items.push(Item::Excerpts);
-        }
-        if self.browser.is_some() {
-            items.push(Item::Browser);
-        }
-        if self.update_open {
-            items.push(Item::Update);
-        }
-        items.extend(
-            self.git
-                .viewers
-                .iter()
-                .filter(|viewer| !viewer.hidden)
-                .map(|viewer| Item::File {
-                    path: viewer.path.clone(),
-                    head: viewer.head,
-                }),
-        );
-        items
+            .is_some_and(|session| !session.is_chat());
+        let shown = [
+            (true, Item::Page),
+            (diff, Item::Diff),
+            (self.excerpts.is_some(), Item::Excerpts),
+            (self.browser.is_some(), Item::Browser),
+            (self.update_open, Item::Update),
+        ];
+        let viewers = self.git.viewers.iter().filter(|viewer| !viewer.hidden);
+        let shown = shown
+            .into_iter()
+            .filter_map(|(on, item)| on.then_some(item));
+        shown.chain(viewers.map(Item::of_viewer)).collect()
     }
 
     /// The tab shown in the pane being worked in.
     pub fn current_item(&self) -> Item {
         match self.tab {
-            Tab::File => self.shown_viewer().map_or(Item::Page, |viewer| Item::File {
-                path: viewer.path.clone(),
-                head: viewer.head,
-            }),
+            Tab::File => self.shown_viewer().map_or(Item::Page, Item::of_viewer),
             Tab::Diff if self.pane_items().contains(&Item::Diff) => Item::Diff,
             Tab::Excerpts if self.excerpts.is_some() => Item::Excerpts,
             Tab::Browser if self.browser.is_some() => Item::Browser,
@@ -744,27 +699,17 @@ impl WorkspaceState {
         let current = self.current_item();
         let held = layout.group_of(&current).unwrap_or(0);
         if let Some(group) = layout.groups_mut().into_iter().nth(held) {
-            group.active = group
-                .items
-                .iter()
-                .position(|item| *item == current)
-                .unwrap_or(group.active);
+            group.show(&current);
         }
         let empty = layout
             .groups()
             .get(self.panes.focused)
             .is_some_and(|group| group.items.is_empty());
         match self.panes.parked.as_ref() {
-            Some(parked) if empty && *parked == current => Panes {
-                layout,
-                focused: self.panes.focused,
-                parked: Some(current),
-            },
-            _ => Panes {
-                layout,
-                focused: held,
-                parked: None,
-            },
+            Some(parked) if empty && *parked == current => {
+                Panes::new(layout, self.panes.focused, Some(current))
+            }
+            _ => Panes::new(layout, held, None),
         }
     }
 
@@ -783,17 +728,6 @@ impl WorkspaceState {
         self.panes.layout = std::mem::take(&mut self.panes.layout).replaced(&from, to);
     }
 
-    /// The position of the open file `item` names, if it names one.
-    fn viewer_index(&self, item: &Item) -> Option<usize> {
-        let Item::File { path, head } = item else {
-            return None;
-        };
-        self.git
-            .viewers
-            .iter()
-            .position(|viewer| viewer.path == *path && viewer.head == *head)
-    }
-
     /// The tab `id` is in a pane's strip, if it is one.
     pub fn pane_tab_of(&self, id: Target) -> Option<Item> {
         match id {
@@ -802,16 +736,10 @@ impl WorkspaceState {
             Target::Search(SearchEvent::TabExcerpts) => Some(Item::Excerpts),
             Target::Browser(BrowserEvent::TabBrowser) => Some(Item::Browser),
             Target::Dialog(DialogEvent::TabUpdate) => Some(Item::Update),
-            _ => {
-                let Target::Editor(EditorEvent::FileTab(index)) = id else {
-                    return None;
-                };
-                let viewer = self.git.viewers.get(index)?;
-                Some(Item::File {
-                    path: viewer.path.clone(),
-                    head: viewer.head,
-                })
+            Target::Editor(EditorEvent::FileTab(index)) => {
+                Some(Item::of_viewer(self.git.viewers.get(index)?))
             }
+            _ => None,
         }
         .filter(|item| self.pane_items().contains(item))
     }
@@ -825,7 +753,12 @@ impl WorkspaceState {
             Item::Browser => self.tab = Tab::Browser,
             Item::Update => self.tab = Tab::Update,
             Item::File { .. } => {
-                if let Some(index) = self.viewer_index(item) {
+                if let Some(index) = self
+                    .git
+                    .viewers
+                    .iter()
+                    .position(|viewer| Item::of_viewer(viewer) == *item)
+                {
                     self.git.shown = Some(index);
                     self.tab = Tab::File;
                     self.ask_shown_figures();
@@ -842,13 +775,7 @@ impl WorkspaceState {
         };
         match group.items.get(group.active) {
             Some(item) => self.show_item(item),
-            None => {
-                self.panes = Panes {
-                    focused: index,
-                    parked: Some(self.current_item()),
-                    ..panes
-                }
-            }
+            None => self.panes = Panes::new(panes.layout, index, Some(self.current_item())),
         }
     }
 
@@ -858,28 +785,18 @@ impl WorkspaceState {
             return false;
         };
         match put {
-            0 | 1 => {
-                let item = if put == 0 { Item::Page } else { Item::Diff };
-                let panes = self.panes();
-                self.panes = Panes {
-                    layout: panes.layout.moved(&item, pane, Side::Center),
-                    focused: pane,
-                    parked: None,
+            0 | 1 | 4 => {
+                let item = match put {
+                    0 => Item::Page,
+                    1 => Item::Diff,
+                    _ => Item::Browser,
                 };
-                self.show_item(&item);
-                self.settle_panes();
-            }
-            4 => {
-                if self.browser.is_none() {
+                if item == Item::Browser && self.browser.is_none() {
                     self.open_browser(crate::browser::HOME);
                 }
                 let panes = self.panes();
-                self.panes = Panes {
-                    layout: panes.layout.moved(&Item::Browser, pane, Side::Center),
-                    focused: pane,
-                    parked: None,
-                };
-                self.show_item(&Item::Browser);
+                self.panes = Panes::new(panes.layout.moved(&item, pane, Side::Center), pane, None);
+                self.show_item(&item);
                 self.settle_panes();
             }
             2 => {
@@ -889,12 +806,8 @@ impl WorkspaceState {
             }
             _ => {
                 let panes = self.panes();
-                if let Some(layout) = panes.layout.without_group(pane) {
-                    self.panes = Panes {
-                        layout,
-                        focused: 0,
-                        parked: None,
-                    };
+                if let Some(layout) = panes.layout.without_group(pane, &mut 0) {
+                    self.panes = Panes::new(layout, 0, None);
                     self.settle_panes();
                 }
             }
@@ -913,11 +826,7 @@ impl WorkspaceState {
     pub(crate) fn split_focused(&mut self, side: Side) {
         let panes = self.panes();
         let (layout, empty) = panes.layout.split_empty(panes.focused, side);
-        self.panes = Panes {
-            layout,
-            focused: empty,
-            parked: Some(self.current_item()),
-        };
+        self.panes = Panes::new(layout, empty, Some(self.current_item()));
     }
 
     /// The state with the tab `item` being dragged, over the `over` pane and edge, if any, with the pointer at `at`.
@@ -935,11 +844,11 @@ impl WorkspaceState {
             return self;
         };
         let panes = self.panes();
-        self.panes = Panes {
-            layout: panes.layout.moved(&drag.item, target, side),
-            focused: panes.focused,
-            parked: None,
-        };
+        self.panes = Panes::new(
+            panes.layout.moved(&drag.item, target, side),
+            panes.focused,
+            None,
+        );
         self.show_item(&drag.item);
         self.settle_panes();
         self
@@ -948,7 +857,7 @@ impl WorkspaceState {
     /// The share of its split the handle `index` gives the first side, how big that side is in a window `window` logical pixels wide and tall, and which way the handle is pulled to grow it.
     pub(crate) fn split_sash(&self, index: usize, window: (f32, f32)) -> Option<(f32, Grows)> {
         let mut layout = self.panes().layout;
-        let (split, area) = layout.split_mut(index, self.pane_area(window))?;
+        let (split, area) = layout.split_mut(index, self.pane_area(window), &mut 0)?;
         let Layout::Split { axis, ratio, .. } = split else {
             return None;
         };
@@ -962,12 +871,10 @@ impl WorkspaceState {
     pub(crate) fn resize_split(&mut self, index: usize, size: f32, window: (f32, f32)) {
         let area = self.pane_area(window);
         let mut panes = self.panes();
-        if let Some((Layout::Split { axis, ratio, .. }, cut)) = panes.layout.split_mut(index, area)
+        if let Some((Layout::Split { axis, ratio, .. }, cut)) =
+            panes.layout.split_mut(index, area, &mut 0)
         {
-            let extent = match axis {
-                Axis::Row => cut.width,
-                Axis::Column => cut.height,
-            };
+            let extent = cut.extent(*axis);
             let room = SMALLEST.min(extent / 2.0);
             *ratio = size.clamp(room, extent - room) / extent.max(1.0);
         }

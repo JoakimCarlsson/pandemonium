@@ -1,18 +1,16 @@
 //! Adding a project: the modal that offers a folder on this computer or a repository to clone, found through the accounts and organizations on GitHub.
 
 use crate::areas::DialogEvent;
-use crate::events::{Event, send};
 use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
+use rustle::Modifier;
 use rustle::TextFieldState;
-use rustle::{CursorIcon, Modifier};
 use rustle::{Icon, phosphor};
 
 use crate::Input;
 use crate::Modal;
-use crate::events::Interactive;
 use crate::folder_picker::Purpose;
 use crate::icons::spinner;
 use crate::input;
@@ -107,14 +105,21 @@ pub(crate) enum Status {
     Message(String),
 }
 
-/// One row as it is drawn.
-struct Row {
-    /// The glyph at its left.
-    icon: Icon,
-    /// The name.
-    name: String,
-    /// What is said under it.
-    detail: String,
+/// One row as it is drawn: the glyph at its left, the name and what is said under it.
+type Row = (Icon, String, String);
+
+impl Listing {
+    /// What a list showing none of its rows says: that `loading` is waited for, why the server could not say, that `empty` when it found nothing, or that nothing matches what was typed.
+    pub(crate) fn standing(&self, loading: &str, empty: &str) -> Status {
+        match self {
+            Listing::Loading => Status::Loading(loading.to_owned()),
+            Listing::Failed(reason) => {
+                Status::Message(reason.lines().next().unwrap_or(reason).to_owned())
+            }
+            Listing::Found(inside) if inside.is_empty() => Status::Message(empty.to_owned()),
+            Listing::Found(_) => Status::Message("Nothing matches".to_owned()),
+        }
+    }
 }
 
 /// Whether `text` is written as the address of a repository rather than as words to search for.
@@ -124,7 +129,7 @@ fn is_address(text: &str) -> bool {
 }
 
 /// Whether every word of `needle` is somewhere in `found`, in any case.
-fn matches(found: &Found, needle: &str) -> bool {
+pub(crate) fn matches(found: &Found, needle: &str) -> bool {
     let hay = format!("{} {}", found.name, found.detail).to_lowercase();
     needle
         .to_lowercase()
@@ -145,14 +150,6 @@ impl Adder {
             working: None,
             trouble: None,
             machine,
-        }
-    }
-
-    /// The address of the project in the folder `path` of the machine it is added on.
-    fn address(&self, path: &str) -> String {
-        match &self.machine {
-            Some(machine) => machine.project(path),
-            None => path.to_owned(),
         }
     }
 
@@ -212,19 +209,11 @@ impl Adder {
         if self.step == Step::Choices || self.count() > 0 {
             return None;
         }
-        Some(match self.listing() {
-            Listing::Loading => Status::Loading(
-                match self.step {
-                    Step::Owners => "Loading accounts and organizations",
-                    _ => "Loading repositories",
-                }
-                .to_owned(),
-            ),
-            Listing::Failed(reason) => {
-                Status::Message(reason.lines().next().unwrap_or(reason).to_owned())
-            }
-            Listing::Found(_) => Status::Message("Nothing matches".to_owned()),
-        })
+        let loading = match self.step {
+            Step::Owners => "Loading accounts and organizations",
+            _ => "Loading repositories",
+        };
+        Some(self.listing().standing(loading, "Nothing matches"))
     }
 
     /// What the field says while it is empty.
@@ -236,48 +225,30 @@ impl Adder {
         }
     }
 
-    /// The rows of the first choices, on the machine the project is added on.
-    fn choices(&self) -> [(Icon, &'static str, String); 2] {
-        let browse = match &self.machine {
-            Some(machine) => format!("Choose a folder on {}", machine.name),
-            None => "Choose a folder on this computer".to_owned(),
-        };
-        [
-            (phosphor::FOLDER_OPEN, "Browse", browse),
-            (
-                phosphor::GIT_FORK,
-                "Clone from GitHub",
-                "Search projects available to your GitHub account".to_owned(),
-            ),
-        ]
-    }
-
-    /// The rows as they are drawn.
+    /// The rows as they are drawn: the first choices, on the machine the project is added on, or the entries of a list.
     fn rows(&self) -> Vec<Row> {
-        match self.step {
-            Step::Choices => self
-                .choices()
-                .into_iter()
-                .map(|(icon, name, detail)| Row {
-                    icon,
-                    name: name.to_owned(),
-                    detail,
-                })
-                .collect(),
-            _ => self
-                .entries()
-                .into_iter()
-                .map(|found| Row {
-                    icon: match found.kind {
-                        Kind::Owner(_) => phosphor::USER_CIRCLE,
-                        Kind::Repository => phosphor::GIT_FORK,
-                        Kind::Folder => phosphor::FOLDER,
-                    },
-                    name: found.name,
-                    detail: found.detail,
-                })
-                .collect(),
+        if self.step == Step::Choices {
+            let browse = match &self.machine {
+                Some(machine) => format!("Choose a folder on {}", machine.name),
+                None => "Choose a folder on this computer".to_owned(),
+            };
+            let clone = "Search projects available to your GitHub account".to_owned();
+            return vec![
+                (phosphor::FOLDER_OPEN, "Browse".to_owned(), browse),
+                (phosphor::GIT_FORK, "Clone from GitHub".to_owned(), clone),
+            ];
         }
+        self.entries()
+            .into_iter()
+            .map(|found| {
+                let icon = match found.kind {
+                    Kind::Owner(_) => phosphor::USER_CIRCLE,
+                    Kind::Repository => phosphor::GIT_FORK,
+                    Kind::Folder => phosphor::FOLDER,
+                };
+                (icon, found.name, found.detail)
+            })
+            .collect()
     }
 }
 
@@ -314,8 +285,8 @@ fn panel(open: &Adder, scrolled: &rustle::ScrollState) {
     };
     kit::row(banded(), 2, || {
         line("Add project", 13, 1.4, Role::Text);
-        if let Some(hint) = heading_hint(open) {
-            line(hint, 13, 1.4, Role::Subtle);
+        if let (Some((login, _)), Step::Repositories) = (&open.owner, open.step) {
+            line(login.clone(), 13, 1.4, Role::Subtle);
         }
     });
     if open.step != Step::Choices {
@@ -350,21 +321,11 @@ fn panel(open: &Adder, scrolled: &rustle::ScrollState) {
     );
 }
 
-/// What is said after the heading: whose repositories are listed, once an account is picked.
-fn heading_hint(open: &Adder) -> Option<String> {
-    match (&open.owner, open.step) {
-        (Some((login, _)), Step::Repositories) => Some(login.clone()),
-        _ => None,
-    }
-}
-
 /// Emits the line under the rows: a spinner and what is being waited for, or what is the matter.
 #[track_caller]
 pub(crate) fn status_line(status: Status) {
     kit::row(
-        Modifier::new()
-            .padding_xy(theme::sp(2.5), 0.0)
-            .padding_xy(0.0, theme::sp(2)),
+        Modifier::new().padding_xy(theme::sp(2.5), theme::sp(2)),
         3,
         || match status {
             Status::Loading(message) => {
@@ -378,7 +339,7 @@ pub(crate) fn status_line(status: Status) {
 
 /// Emits one row of the list: a glyph, a name and what is said under it, highlighted while it is the one the keys act on.
 #[track_caller]
-fn entry(row_of: &Row, id: Target, selected: bool) {
+fn entry((icon, name, detail): &Row, id: Target, selected: bool) {
     let looks = theme::InteractionTones::new()
         .hover(Role::SurfaceHover)
         .radius(Radius::Lg);
@@ -387,29 +348,18 @@ fn entry(row_of: &Row, id: Target, selected: bool) {
     } else {
         looks
     };
+    let looks = Modifier::new()
+        .fill_max_width()
+        .indicated(looks, theme::Focused::Held(crate::focus::is_held(id)));
     kit::row(
-        Modifier::new()
-            .fill_max_width()
-            .indicated(looks, theme::Focused::Held(crate::focus::is_held(id)))
-            .cursor(CursorIcon::Pointer)
-            .control(id, send(Event::pressing(id)))
-            .padding_xy(theme::sp(2.5), 0.0)
-            .padding_xy(0.0, theme::sp(1.5)),
+        kit::pressed(looks, id).padding_xy(theme::sp(2.5), theme::sp(1.5)),
         3,
         || {
-            glyph(row_of.icon.clone(), 4.0, Role::Muted);
+            glyph(icon.clone(), 4.0, Role::Muted);
             kit::column(Modifier::new().weight(1.0), 0, || {
-                kit::text(
-                    Modifier::new(),
-                    row_of.name.clone(),
-                    kit::line(13, Role::Text),
-                );
-                if !row_of.detail.is_empty() {
-                    kit::text(
-                        Modifier::new(),
-                        row_of.detail.clone(),
-                        kit::line(12, Role::Subtle),
-                    );
+                line(name.clone(), 13, 1.4, Role::Text);
+                if !detail.is_empty() {
+                    line(detail.clone(), 12, 1.4, Role::Subtle);
                 }
             });
         },
@@ -472,23 +422,20 @@ impl WorkspaceState {
                 });
                 self.menu_scroll.jump_to(0.0);
             }
-            Target::Dialog(DialogEvent::AdderUp) | Target::Dialog(DialogEvent::AdderDown)
-                if !working =>
-            {
-                let last = open.count().saturating_sub(1);
-                open.selected = match (open.selected, action) {
-                    (usize::MAX, _) => 0,
-                    (selected, Target::Dialog(DialogEvent::AdderUp)) => selected.saturating_sub(1),
-                    (selected, _) => (selected + 1).min(last),
-                };
-                self.keep_selected_in_view(open.selected);
+            Target::Dialog(DialogEvent::AdderUp | DialogEvent::AdderDown) if !working => {
+                let up = action == Target::Dialog(DialogEvent::AdderUp);
+                open.selected = stepped(open.selected, up, open.count());
+                scroll_into_view(
+                    &self.menu_scroll,
+                    open.selected,
+                    ENTRY_HEIGHT,
+                    LIST_HEIGHT - 12.0,
+                );
             }
             Target::Dialog(DialogEvent::AdderSubmit) if !working => {
-                let index = if open.selected == usize::MAX {
-                    0
-                } else {
-                    open.selected
-                };
+                let index = Some(open.selected)
+                    .filter(|held| *held != usize::MAX)
+                    .unwrap_or(0);
                 self.adder = Some(open);
                 self.adder_chosen(index);
                 return self;
@@ -561,7 +508,7 @@ impl WorkspaceState {
     /// The state with the accounts and organizations the server listed, or why it could not.
     pub fn with_owners(mut self, listed: Result<Vec<Found>, String>) -> Self {
         if let Some(open) = self.adder.as_mut() {
-            open.owners = Self::listing_of(listed);
+            open.owners = listed.map_or_else(Listing::Failed, Listing::Found);
         }
         self
     }
@@ -571,17 +518,9 @@ impl WorkspaceState {
         if let Some(open) = self.adder.as_mut()
             && open.owner.as_ref().is_some_and(|(held, _)| held == login)
         {
-            open.repositories = Self::listing_of(listed);
+            open.repositories = listed.map_or_else(Listing::Failed, Listing::Found);
         }
         self
-    }
-
-    /// What a list holds, from what the server answered.
-    fn listing_of(listed: Result<Vec<Found>, String>) -> Listing {
-        match listed {
-            Ok(found) => Listing::Found(found),
-            Err(reason) => Listing::Failed(reason),
-        }
     }
 
     /// The state after the server cloned the repository into `path`, which is added as a project and opened.
@@ -589,7 +528,8 @@ impl WorkspaceState {
         let address = self
             .adder
             .as_ref()
-            .map_or_else(|| path.to_owned(), |open| open.address(path));
+            .and_then(|open| open.machine.as_ref())
+            .map_or_else(|| path.to_owned(), |machine| machine.project(path));
         self.without_adder().with_project_opened(&address)
     }
 
@@ -601,17 +541,25 @@ impl WorkspaceState {
         }
         self
     }
+}
 
-    /// Scrolls the list so that the row at `selected` is in view.
-    fn keep_selected_in_view(&mut self, selected: usize) {
-        let row = ENTRY_HEIGHT;
-        let top = selected as f32 * row;
-        let bottom = top + row;
-        if top < self.menu_scroll.offset() {
-            self.menu_scroll.jump_to(top);
-        } else if bottom > self.menu_scroll.offset() + LIST_HEIGHT - 12.0 {
-            self.menu_scroll.jump_to(bottom - LIST_HEIGHT + 12.0);
-        }
+/// The row of a list of `count` rows highlighted after moving `up`, or down, from `selected`: the first while none was.
+pub(crate) fn stepped(selected: usize, up: bool, count: usize) -> usize {
+    match selected {
+        usize::MAX => 0,
+        held if up => held.saturating_sub(1),
+        held => (held + 1).min(count.saturating_sub(1)),
+    }
+}
+
+/// Scrolls the list `scroll` moves, `view` logical pixels tall, so that its row at `selected`, each row `row` logical pixels tall, is in view.
+pub(crate) fn scroll_into_view(scroll: &rustle::ScrollState, selected: usize, row: f32, view: f32) {
+    let top = selected as f32 * row;
+    let bottom = top + row;
+    if top < scroll.offset() {
+        scroll.jump_to(top);
+    } else if bottom > scroll.offset() + view {
+        scroll.jump_to(bottom - view);
     }
 }
 

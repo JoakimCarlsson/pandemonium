@@ -78,7 +78,6 @@ pub fn tooltip(spent: &Spent) -> String {
 }
 
 /// Emits what `session` has cost so far, for the strip above its conversation, with the figures as its tooltip; nothing until a model was asked.
-#[track_caller]
 pub fn cost_of(session: &Session) {
     let Some(spent) = session.spent.as_ref().filter(|spent| spent.requests() > 0) else {
         return;

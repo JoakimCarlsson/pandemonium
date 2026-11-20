@@ -46,7 +46,6 @@ impl WorkspaceState {
 }
 
 /// Emits the question about clearing the cookies and site storage, while it is open; nothing otherwise.
-#[track_caller]
 pub fn clear_question(state: &WorkspaceState) {
     if state.browser_clearing() {
         question_of(

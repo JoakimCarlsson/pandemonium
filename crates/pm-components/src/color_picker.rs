@@ -33,6 +33,19 @@ pub struct ColorPicking {
     pub problem: Option<String>,
 }
 
+impl ColorPicking {
+    /// The request asking the language server how the colour held can be written in the file.
+    fn presentations(&self) -> Outgoing {
+        Outgoing::ColorPresentations {
+            session: self.session,
+            path: self.path.clone(),
+            version: self.version,
+            span: self.span,
+            color: self.color,
+        }
+    }
+}
+
 /// The colour as hex: `#rrggbb`, with two more digits for its opacity when it is not fully opaque.
 pub fn hex_of(color: [u8; 4]) -> String {
     let [red, green, blue, alpha] = color;
@@ -95,7 +108,7 @@ impl WorkspaceState {
         hex.select_all();
         self.color_picking = Some(ColorPicking {
             session,
-            path: path.clone(),
+            path,
             version,
             span,
             color,
@@ -105,13 +118,8 @@ impl WorkspaceState {
             loading: true,
             problem: None,
         });
-        self.outbox.push(Outgoing::ColorPresentations {
-            session,
-            path,
-            version,
-            span,
-            color,
-        });
+        self.outbox
+            .extend(self.color_picking.as_ref().map(ColorPicking::presentations));
         self
     }
 
@@ -138,13 +146,7 @@ impl WorkspaceState {
         picking.color = color;
         picking.loading = true;
         picking.problem = None;
-        let request = Outgoing::ColorPresentations {
-            session: picking.session,
-            path: picking.path.clone(),
-            version: picking.version,
-            span: picking.span,
-            color,
-        };
+        let request = picking.presentations();
         self.outbox.push(request);
     }
 

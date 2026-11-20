@@ -30,10 +30,7 @@ impl WorkspaceState {
     /// The state showing that the sign-in of the agent kept under `agent` waits for `code` to be entered on the page `url`.
     pub fn with_sign_in_code(mut self, agent: &str, url: String, code: String) -> Self {
         let name = self
-            .settings_servers
-            .agents
-            .iter()
-            .chain(&self.settings_servers.retired)
+            .all_agents()
             .find(|entry| entry.id == agent)
             .map_or_else(|| agent.to_owned(), |entry| entry.name.clone());
         self.sign_in_code = Some(SignInCode {
@@ -62,8 +59,9 @@ impl WorkspaceState {
             Target::Dialog(DialogEvent::SignInCodeOpen) => self.outbox.push(Outgoing::Open {
                 address: shown.url.clone(),
             }),
-            Target::Dialog(DialogEvent::SignInCodeHide)
-            | Target::Dialog(DialogEvent::SignInCodeOutside) => self.sign_in_code = None,
+            Target::Dialog(DialogEvent::SignInCodeHide | DialogEvent::SignInCodeOutside) => {
+                self.sign_in_code = None
+            }
             Target::Dialog(DialogEvent::SignInCodeInside) => {}
             _ => return false,
         }
@@ -94,43 +92,27 @@ pub fn code_dialog(state: &WorkspaceState) {
             for words in wrap(&words, 13, WIDTH - 40.0) {
                 line(words, 13, 1.5, Role::Muted);
             }
-            kit::row(Modifier::new(), 0, || {
-                kit::text(
-                    Modifier::new(),
-                    code,
-                    theme::text_style(24, 1.6)
-                        .font_weight(rustle::FontWeight::MEDIUM)
-                        .color(theme::color(Role::Text))
-                        .max_lines(1),
-                );
-            });
+            crate::parts::title(code, 24, 1.6);
         });
         kit::row(
-            Modifier::new()
-                .fill_max_width()
-                .padding_xy(theme::sp(5), 0.0)
-                .padding_each(0.0, 0.0, 0.0, theme::sp(5)),
+            Modifier::new().fill_max_width().padding_each(
+                theme::sp(5),
+                0.0,
+                theme::sp(5),
+                theme::sp(5),
+            ),
             2,
             || {
-                kit::small_button(
+                kit::action(
                     "Hide",
                     Target::Dialog(DialogEvent::SignInCodeHide),
                     Variant::Ghost,
-                )
-                .build();
+                );
                 spacer();
-                kit::small_button(
-                    "Copy code",
-                    Target::Dialog(DialogEvent::SignInCodeCopy),
-                    Variant::Ghost,
-                )
-                .build();
-                kit::small_button(
-                    "Open page",
-                    Target::Dialog(DialogEvent::SignInCodeOpen),
-                    Variant::Default,
-                )
-                .build();
+                let copy = Target::Dialog(DialogEvent::SignInCodeCopy);
+                kit::action("Copy code", copy, Variant::Ghost);
+                let open = Target::Dialog(DialogEvent::SignInCodeOpen);
+                kit::action("Open page", open, Variant::Default);
             },
         );
     });

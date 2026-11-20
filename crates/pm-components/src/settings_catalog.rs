@@ -26,9 +26,23 @@ pub enum Keeper {
     Machine,
 }
 
-/// One setting of the settings window.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum Setting {
+/// Declares [`Setting`] with each of `$name`, documented by its `$doc`, in the order the pages show them, and [`Setting::ALL`] holding every one in that order.
+macro_rules! settings {
+    ($($(#[$doc:meta])* $name:ident,)*) => {
+        /// One setting of the settings window.
+        #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+        pub enum Setting {
+            $($(#[$doc])* $name,)*
+        }
+
+        impl Setting {
+            /// Every setting, in the order the pages show them.
+            pub const ALL: [Self; [$(stringify!($name)),*].len()] = [$(Self::$name),*];
+        }
+    };
+}
+
+settings! {
     /// What the window shows when it opens.
     Launch,
     /// Whether closing over working agents asks first.
@@ -97,6 +111,10 @@ pub enum Setting {
     InlayHints,
     /// Whether the language server's lenses are shown beside the lines.
     CodeLens,
+    /// Whether a map of the file shows beside it.
+    Minimap,
+    /// Whether the lines that open the blocks the view is in stay at its top.
+    StickyScroll,
     /// How the caret is drawn.
     CursorShape,
     /// Whether the caret blinks.
@@ -115,8 +133,6 @@ pub enum Setting {
     AutoIndent,
     /// Whether a new line after a comment is a comment.
     ExtendComments,
-    /// Whether saving formats.
-    FormatOnSave,
     /// Whether typing formats what was typed.
     FormatOnType,
     /// Whether typing in a name edits the names that belong with it.
@@ -125,10 +141,8 @@ pub enum Setting {
     SnippetsOnTab,
     /// Whether Tab writes out an Emmet abbreviation in a markup or style file.
     Emmet,
-    /// Whether a map of the file shows beside it.
-    Minimap,
-    /// Whether the lines that open the blocks the view is in stay at its top.
-    StickyScroll,
+    /// Whether saving formats.
+    FormatOnSave,
     /// Whether saving takes off trailing spaces.
     TrimWhitespace,
     /// Whether saving ends the file with a line break.
@@ -278,133 +292,6 @@ pub enum Setting {
 }
 
 impl Setting {
-    /// Every setting, in the order the pages show them.
-    pub const ALL: [Self; 123] = [
-        Self::Launch,
-        Self::ConfirmClose,
-        Self::CheckUpdates,
-        Self::Channel,
-        Self::OfferLanguages,
-        Self::EmbeddedBrowser,
-        Self::OpenDevServers,
-        Self::OpenLocalLinks,
-        Self::RestrictAgentBrowsing,
-        Self::AgentOrigins,
-        Self::ThemeMode,
-        Self::LightTheme,
-        Self::DarkTheme,
-        Self::InterfaceFont,
-        Self::InterfaceSize,
-        Self::CodeFont,
-        Self::CodeSize,
-        Self::LineHeight,
-        Self::Density,
-        Self::LineNumbers,
-        Self::RelativeLineNumbers,
-        Self::CurrentLine,
-        Self::IndentGuides,
-        Self::WrapGuide,
-        Self::LineLength,
-        Self::GitGutter,
-        Self::InlineBlame,
-        Self::Occurrences,
-        Self::BracketColors,
-        Self::RedactPrivateValues,
-        Self::DependencyHints,
-        Self::SemanticHighlighting,
-        Self::InlayHints,
-        Self::CodeLens,
-        Self::Minimap,
-        Self::StickyScroll,
-        Self::CursorShape,
-        Self::CursorBlink,
-        Self::SoftWrap,
-        Self::TabSize,
-        Self::HardTabs,
-        Self::AutoClose,
-        Self::AutoSurround,
-        Self::AutoIndent,
-        Self::ExtendComments,
-        Self::FormatOnType,
-        Self::LinkedEditing,
-        Self::SnippetsOnTab,
-        Self::Emmet,
-        Self::FormatOnSave,
-        Self::TrimWhitespace,
-        Self::FinalNewline,
-        Self::Autosave,
-        Self::CompletionsOnInput,
-        Self::CompletionDocs,
-        Self::Hover,
-        Self::HoverDelay,
-        Self::SignatureHelp,
-        Self::Diagnostics,
-        Self::SearchWrap,
-        Self::SeedSearch,
-        Self::Smartcase,
-        Self::ScrollBeyond,
-        Self::ScrollMargin,
-        Self::ScrollbarMarks,
-        Self::Language,
-        Self::LanguageTabSize,
-        Self::LanguageIndent,
-        Self::LanguageFormat,
-        Self::LanguageServer,
-        Self::LanguageServerCommand,
-        Self::LanguageServers,
-        Self::BaseKeymap,
-        Self::Shell,
-        Self::ShellArguments,
-        Self::TerminalFontSize,
-        Self::TerminalCursor,
-        Self::Scrollback,
-        Self::CopyOnSelect,
-        Self::AutoFetch,
-        Self::FetchInterval,
-        Self::LocalHistory,
-        Self::HistoryDays,
-        Self::HistorySize,
-        Self::BranchTemplate,
-        Self::WorktreeFolder,
-        Self::WorktreeInclude,
-        Self::GitBlame,
-        Self::GitGutterMarks,
-        Self::GitWordDiff,
-        Self::GitHosts,
-        Self::DefaultAgent,
-        Self::PermissionMode,
-        Self::Effort,
-        Self::Memory,
-        Self::Checkpoints,
-        Self::Orchestrator,
-        Self::SubagentBudget,
-        Self::PromptCache,
-        Self::CacheWarming,
-        Self::PlanAutosave,
-        Self::OnFinish,
-        Self::Notification,
-        Self::DefaultServer,
-        Self::VimMode,
-        Self::VimClipboard,
-        Self::VimBindings,
-        Self::OrganizeOnSave,
-        Self::FixAllOnSave,
-        Self::SemanticRangeLines,
-        Self::SemanticRangeMargin,
-        Self::WorkspaceRepositories,
-        Self::WorkspaceFolders,
-        Self::LanguageOrganize,
-        Self::LanguageFixAll,
-        Self::VimReplayTyping,
-        Self::VimSyntaxObjects,
-        Self::AutoFindInSelection,
-        Self::DragAndDrop,
-        Self::Lightbulb,
-        Self::Ligatures,
-        Self::VisualCaret,
-        Self::CompareIgnoreWhitespace,
-    ];
-
     /// The page it is on.
     pub fn page(self) -> Section {
         match self {

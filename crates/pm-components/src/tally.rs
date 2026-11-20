@@ -17,8 +17,6 @@ pub struct Tally {
     removed: usize,
     /// How tall the type is, in logical pixels.
     pixels: u32,
-    /// What the caller puts around its box.
-    modifier: Modifier,
 }
 
 impl Tally {
@@ -28,7 +26,6 @@ impl Tally {
             added,
             removed,
             pixels: 12,
-            modifier: Modifier::new(),
         }
     }
 
@@ -38,28 +35,18 @@ impl Tally {
         self
     }
 
-    /// The tally with `modifier` put around its box, outside its own: sizes, weight, placement.
-    pub fn modifier(mut self, modifier: Modifier) -> Self {
-        self.modifier = self.modifier.chain(modifier);
-        self
-    }
-
     /// Emits `+added −removed`, the first in the success colour and the second in the danger colour.
     #[track_caller]
     pub fn build(self) {
-        let kind = theme::mono_style(self.pixels, 1.4);
         let (added, removed) = (self.added, self.removed);
-        kit::row(self.modifier, 1.5, move || {
-            kit::text(
-                Modifier::new(),
-                format!("+{added}"),
-                kind.color(theme::color(Role::Success)),
-            );
-            kit::text(
-                Modifier::new(),
-                format!("−{removed}"),
-                kind.color(theme::color(Role::Danger)),
-            );
+        kit::row(Modifier::new(), 1.5, move || {
+            for (words, tone) in [
+                (format!("+{added}"), Role::Success),
+                (format!("−{removed}"), Role::Danger),
+            ] {
+                let kind = theme::mono_style(self.pixels, 1.4).color(theme::color(tone));
+                kit::text(Modifier::new(), words, kind);
+            }
         });
     }
 }

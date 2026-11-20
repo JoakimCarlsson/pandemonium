@@ -46,9 +46,7 @@ impl WorkspaceState {
             .and_then(|id| self.machine.language(id).format_on_save)
             .unwrap_or(self.editor.format_on_save)
     }
-}
 
-impl WorkspaceState {
     /// Whether saving the file written in `language` organizes its imports first, as the language's settings say, then as the editor's do.
     pub(crate) fn organizes_on_save(&self, language: Option<&str>) -> bool {
         language

@@ -1,21 +1,17 @@
 //! The design tokens: colour roles resolved against the theme, corner radii,
 //! the spacing step and the text scale, and the font families text is set in.
 //!
-//! Views never name colours: they name a [`Role`] or a [`Tone`] (a role, a
-//! palette entry or an explicit value, optionally faded), and [`color`]
-//! resolves it against the [`Theme`] the host provided with [`provide`] for
-//! the frame being composed. Spacing counts steps of four logical pixels at
+//! Views never name colours: they name a [`Role`], which reads as the rustle
+//! `Color` the [`Theme`] the host provided with [`provide`] gives it for the
+//! frame being composed. Spacing counts steps of four logical pixels at
 //! the density the host set with [`set_scales`]; interface text is scaled by
 //! the reader's text size, code text is not.
 //!
-//! The colour and theme data live here as plain data: the colour model
-//! ([`Srgba`], [`Oklch`], [`Oklab`]) and the named palette ([`Tone`]), the
-//! roles ([`Role`], [`Roles`]), one appearance's [`Theme`] with its [`Fonts`],
-//! the [`ThemeFamily`] holding a dark and a light theme, the shipped
-//! families and the families extensions bring.
+//! Colours are rustle's `Color`, with its maths; what lives here is values:
+//! the roles ([`Role`]), one appearance's [`Theme`] with its [`Fonts`], the
+//! [`ThemeFamily`] holding a dark and a light theme, the shipped families and
+//! the families extensions bring, and their mapping onto rustle's theme.
 //!
-//! - [`srgba`], [`oklch`]: gamma-encoded and perceptual colour values.
-//! - [`palette`], [`color`]: the named palette and operations on a tone.
 //! - [`role`]: the roles a view names instead of colours.
 //! - [`scheme`], [`fonts`], [`family`]: a theme, its font stacks, a family of two.
 //! - [`builtin`], [`extension`]: the shipped families and those extensions add.
@@ -30,26 +26,21 @@
 //! local holding the [`Tokens`] rustle's scheme has no slot for.
 
 pub mod builtin;
-pub mod color;
 pub mod decoration;
 pub mod extension;
 pub mod family;
 pub mod fonts;
 pub mod interaction;
-pub mod oklch;
-pub mod palette;
 pub mod role;
 pub mod scheme;
-pub mod srgba;
 pub mod typography;
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use rustle::{CompositionLocal, FontFamily};
+use rustle::{Color, CompositionLocal, FontFamily};
 
 pub use builtin::{default_family, families, family_named, shipped_families};
-pub use color::Tone;
 pub use decoration::{
     FLOATING_SHADOW, MEDIUM_SHADOW, SHADOW_SOFTNESS, ShadowLayers, Side, box_shadow, edge,
 };
@@ -57,10 +48,8 @@ pub use extension::{family_from_colours, set_extension_families};
 pub use family::{Appearance, ThemeFamily};
 pub use fonts::Fonts;
 pub use interaction::{FocusOutline, FocusRing, Focused, Indicated, InteractionTones};
-pub use oklch::{Oklab, Oklch};
-pub use role::{Role, Roles};
+pub use role::Role;
 pub use scheme::Theme;
-pub use srgba::Srgba;
 pub use typography::{
     code_ligatures, code_style, fixed_text_style, font_families, font_key, in_mono, mono_style,
     set_code_ligatures, text_style, typography,
@@ -219,12 +208,18 @@ pub fn provide(tokens: Tokens, content: impl FnOnce()) {
     });
 }
 
+/// The colour of `role` in `theme`, its opacity scaled by `share`.
+fn faded(theme: &Theme, role: Role, share: f32) -> Color {
+    let color = theme.color(role);
+    color.copy(color.alpha() * share)
+}
+
 /// The colours of selected text in `theme`, as a design system provides Compose's
 /// `LocalTextSelectionColors`: the focus colour, translucent behind the text.
-fn selection_colors(theme: &Theme) -> rustle::TextSelectionColors {
+pub fn selection_colors(theme: &Theme) -> rustle::TextSelectionColors {
     rustle::TextSelectionColors {
-        handle_color: color_in(theme, Role::Focused),
-        background_color: color_in(theme, Tone::from(Role::Focused).alpha(0.45)),
+        handle_color: theme.color(Role::Focused),
+        background_color: faded(theme, Role::Focused, 0.45),
     }
 }
 
@@ -233,7 +228,7 @@ fn selection_colors(theme: &Theme) -> rustle::TextSelectionColors {
 /// hover and pressed fills as the surface containers, borders as outlines,
 /// danger as error), the rest kept from rustle's scheme of that appearance.
 pub fn color_scheme(theme: &Theme, appearance: Appearance) -> rustle::ColorScheme {
-    let role = |role: Role| color_in(theme, role);
+    let role = |role: Role| theme.color(role);
     let base = match appearance {
         Appearance::Dark => rustle::dark_color_scheme(),
         Appearance::Light => rustle::light_color_scheme(),
@@ -258,12 +253,12 @@ pub fn color_scheme(theme: &Theme, appearance: Appearance) -> rustle::ColorSchem
         on_surface: role(Role::Text),
         surface_variant: role(Role::SurfaceHover),
         on_surface_variant: role(Role::Muted),
-        surface_tint: rustle::Color::TRANSPARENT,
+        surface_tint: Color::TRANSPARENT,
         inverse_surface: role(Role::Text),
         inverse_on_surface: role(Role::Background),
         error: role(Role::Danger),
         on_error: role(Role::OnDanger),
-        error_container: color_in(theme, Tone::from(Role::Danger).alpha(0.15)),
+        error_container: faded(theme, Role::Danger, 0.15),
         on_error_container: role(Role::Danger),
         outline: role(Role::Border),
         outline_variant: role(Role::Border),
@@ -310,17 +305,10 @@ pub fn theme() -> Rc<Theme> {
     tokens().theme
 }
 
-/// `tone` resolved against the theme being composed with: a role takes the
-/// theme's colour, an explicit value stays as it is.
-pub fn color(tone: impl Into<Tone>) -> rustle::Color {
-    color_in(&theme(), tone)
-}
-
-/// `tone` resolved against `theme`, for code that runs outside composition,
-/// such as a drawing closure that captured the theme.
-pub fn color_in(theme: &Theme, tone: impl Into<Tone>) -> rustle::Color {
-    let [r, g, b, a] = tone.into().resolve(theme).to_bytes();
-    rustle::Color::rgba(r, g, b, a)
+/// The colour `color` names: a [`Role`] read from the theme being composed
+/// with, or a colour as it is.
+pub fn color(color: impl Into<Color>) -> Color {
+    color.into()
 }
 
 /// How the bar of a scrolling area looks in the theme being composed with: a
@@ -331,8 +319,8 @@ pub fn scrollbar() -> rustle::ScrollbarStyle {
     let theme = theme();
     rustle::ScrollbarStyle {
         visibility: rustle::ScrollbarVisibility::Always,
-        color: color_in(&theme, Tone::from(Role::Muted).alpha(0.55)),
-        active_color: color_in(&theme, Tone::from(Role::Muted).alpha(0.85)),
+        color: faded(&theme, Role::Muted, 0.55),
+        active_color: faded(&theme, Role::Muted, 0.85),
         thickness: 4.0,
         hit_thickness: 14.0,
         min_length: 24.0,
@@ -342,8 +330,8 @@ pub fn scrollbar() -> rustle::ScrollbarStyle {
 }
 
 /// The colour of `role` in the theme being composed with.
-pub fn role(role: Role) -> rustle::Color {
-    color(role)
+pub fn role(role: Role) -> Color {
+    theme().color(role)
 }
 
 /// The family interface text is set in: the first family of the theme's sans
@@ -406,7 +394,7 @@ mod tests {
         rustle::Shapes,
         f32,
         rustle::ScrollbarStyle,
-        rustle::Color,
+        Color,
     )>;
 
     /// Providing the tokens gives rustle's theme the app's roles, corners and type scale,
@@ -435,14 +423,14 @@ mod tests {
         ui.update();
         let (scheme, corners, ratio, bar, keyword) = seen.borrow().expect("composed");
         let theme = &tokens.theme;
-        assert_eq!(scheme.primary, color_in(theme, Role::Accent));
-        assert_eq!(scheme.on_primary, color_in(theme, Role::OnAccent));
-        assert_eq!(scheme.background, color_in(theme, Role::Background));
-        assert_eq!(scheme.outline, color_in(theme, Role::Border));
-        assert_eq!(scheme.error, color_in(theme, Role::Danger));
+        assert_eq!(scheme.primary, theme.color(Role::Accent));
+        assert_eq!(scheme.on_primary, theme.color(Role::OnAccent));
+        assert_eq!(scheme.background, theme.color(Role::Background));
+        assert_eq!(scheme.outline, theme.color(Role::Border));
+        assert_eq!(scheme.error, theme.color(Role::Danger));
         assert_eq!(corners.small, rustle::Shape::rounded(Radius::Md.px()));
         assert!((ratio - 1.4).abs() < 1e-4);
         assert_eq!(bar.thickness, 4.0);
-        assert_eq!(keyword, color_in(theme, Role::SyntaxKeyword));
+        assert_eq!(keyword, theme.color(Role::SyntaxKeyword));
     }
 }

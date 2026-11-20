@@ -37,19 +37,22 @@ fn goes_straight(seek: Seek) -> bool {
     )
 }
 
+/// The selection of `document` as a span of the language server, or the caret where nothing is selected.
+pub(crate) fn selection_span(document: &pm_editor::Document) -> pm_protocol::Span {
+    let caret = document.field.caret();
+    let range = document.field.selection().unwrap_or(caret..caret);
+    pm_protocol::Span::new(
+        document.position_of(range.start),
+        document.position_of(range.end),
+    )
+}
+
 /// Whether `character` is part of a name.
 fn is_name(character: char) -> bool {
     character.is_alphanumeric() || character == '_'
 }
 
 impl WorkspaceState {
-    /// The session the review panel is about and the file it shows, by path, when the file is read by a language server.
-    pub(crate) fn coding_file(&self) -> Option<(usize, String)> {
-        let session = self.review_index()?;
-        let path = self.shown_viewer()?.path.clone();
-        self.coding().then_some((session, path))
-    }
-
     /// The name around the byte `offset` of the file shown, as a byte range.
     fn name_at(&self, offset: usize) -> Option<std::ops::Range<usize>> {
         let document = self.shown_document()?;
@@ -77,19 +80,13 @@ impl WorkspaceState {
 
     /// Looks for what `seek` names from the byte `offset` of the file shown; what is found is listed at `at` unless it is one place to go to.
     pub fn seek_requested(mut self, offset: usize, seek: Seek, at: (f32, f32)) -> Self {
-        let Some((session, path)) = self.coding_file() else {
+        let Some((session, path, document)) = self.asking(|document| document.synced) else {
             return self;
         };
         let word = self
             .name_at(offset)
-            .and_then(|range| {
-                self.shown_document()
-                    .map(|document| document.field.text()[range].to_owned())
-            })
+            .map(|range| document.field.text()[range].to_owned())
             .unwrap_or_default();
-        let Some(document) = self.shown_document() else {
-            return self;
-        };
         let request = Outgoing::Definition {
             session,
             path,
@@ -146,13 +143,10 @@ impl WorkspaceState {
 
     /// Opens a box at `at` to give the thing at the byte `offset` of the file shown a new name, holding its name now, selected.
     pub fn rename_requested(mut self, offset: usize, at: (f32, f32)) -> Self {
-        let Some((session, path)) = self.coding_file() else {
+        let Some((session, path, document)) = self.asking(|document| document.synced) else {
             return self;
         };
         let Some(range) = self.name_at(offset).filter(|range| !range.is_empty()) else {
-            return self;
-        };
-        let Some(document) = self.shown_document() else {
             return self;
         };
         let field = TextFieldState::new(&document.field.text()[range.clone()]);
@@ -294,7 +288,7 @@ impl WorkspaceState {
                 }
             }
             pm_protocol::LinkTarget::Unresolved { link } => {
-                if let Some((session, path)) = self.coding_file() {
+                if let Some((session, path, _)) = self.asking(|document| document.synced) {
                     self.outbox.push(Outgoing::ResolveLink {
                         session,
                         path,
@@ -305,11 +299,7 @@ impl WorkspaceState {
             pm_protocol::LinkTarget::File { path, position } => {
                 self.remember_spot();
                 self.open_viewer(path, false);
-                if let Some(viewer) = self
-                    .git
-                    .shown
-                    .and_then(|index| self.git.viewers.get_mut(index))
-                {
+                if let Some(viewer) = self.chosen_viewer_mut() {
                     viewer.jump = position;
                 }
             }
@@ -345,23 +335,14 @@ impl WorkspaceState {
 
     /// Asks the language server what changes it offers at the caret of the file shown, or for the selection, a list of them hanging at `at`.
     pub fn code_actions_requested(mut self, at: (f32, f32)) -> Self {
-        let Some((session, path)) = self.coding_file() else {
+        let Some((session, path, document)) = self.asking(|document| document.synced) else {
             return self;
         };
-        let Some(document) = self.shown_document() else {
-            return self;
-        };
-        let caret = document.field.caret();
-        let range = document.field.selection().unwrap_or(caret..caret);
-        let span = pm_protocol::Span::new(
-            document.position_of(range.start),
-            document.position_of(range.end),
-        );
         let request = Outgoing::CodeActions {
             session,
             path: path.clone(),
             version: document.version,
-            span,
+            span: selection_span(document),
         };
         self.outbox.push(request);
         self.listing = Some(Listing::waiting(

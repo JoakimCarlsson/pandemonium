@@ -1,7 +1,6 @@
 //! Keeping project submodules and the shown git panel up to date through their servers’ folder watches.
 
 use crate::model::Model;
-use pm_pages::Screen;
 use pm_protocol::Request;
 
 use super::{Host, Pending, Work};
@@ -9,8 +8,7 @@ use super::{Host, Pending, Work};
 impl Work {
     /// The machine and folder of the session the git panel is about, with its position, if one is shown; nothing for a chat whose scratch folder its server has yet to make.
     fn shown_folder(model: &Model) -> Option<(usize, Host, String)> {
-        model.read(|screen| {
-            let Screen::Workspace(state) = screen;
+        model.read(|state| {
             let position = state.review_index()?;
             let session = state.sessions.get(position)?;
             let host = state.machine_of(session)?;
@@ -23,8 +21,7 @@ impl Work {
 
     /// The projects on `host`, with their positions and folders as the server knows them.
     fn project_folders(model: &Model, host: &Host) -> Vec<(usize, String)> {
-        model.read(|screen| {
-            let Screen::Workspace(state) = screen;
+        model.read(|state| {
             state
                 .projects
                 .iter()
@@ -105,11 +102,7 @@ impl Work {
             && shown == directory
         {
             self.refresh(model, position);
-            model.update(|screen| {
-                *screen = std::mem::take(screen)
-                    .with_tree_stale()
-                    .open_files_wanted(position);
-            });
+            model.change(|state| state.with_tree_stale().open_files_wanted(position));
         }
     }
 }
@@ -119,7 +112,7 @@ mod tests {
     use super::*;
     use crate::work::Link;
     use pm_components::Project;
-    use pm_pages::WorkspaceState;
+    use pm_pages::{Screen, WorkspaceState};
 
     /// All project roots are watched on their own machines even without a session, and reconnecting refreshes them again.
     #[test]

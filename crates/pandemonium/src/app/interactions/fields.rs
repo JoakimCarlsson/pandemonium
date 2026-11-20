@@ -3,7 +3,7 @@
 
 use pm_components::areas::{ComposerEvent, SettingsEvent};
 use pm_components::target::Target;
-use pm_pages::Screen;
+use pm_pages::{Screen, WorkspaceState};
 use rustle::{Key, Modifiers};
 
 use crate::keys::Clip;
@@ -234,7 +234,7 @@ fn arrows_and_home_follow_the_lines_as_drawn() {
 fn a_key_box_keeps_its_text_off_the_clipboard() {
     let rig = Rig::shot(Shot::Workspace);
     let key = Target::Settings(SettingsEvent::KeyField);
-    assert!(Screen::is_secure(key) && Screen::is_text_field(key));
+    assert!(WorkspaceState::is_secure(key) && Screen::is_text_field(key));
     let field = rustle::TextFieldState::new("secret");
     field.select_all();
     rig.app.borrow_mut().clip_text(key, &field, Clip::Copy);

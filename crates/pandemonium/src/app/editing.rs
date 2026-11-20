@@ -7,7 +7,6 @@ use std::time::Instant;
 use pm_components::text_lines::Step;
 use pm_editor::LightbulbShown;
 use pm_field::{Edit, Motion};
-use pm_pages::Screen;
 use rustle::{Key, KeyEvent};
 
 use super::App;
@@ -35,21 +34,19 @@ impl App {
     /// Asks the language server whether it offers changes at the caret of the file shown once the caret has rested there long enough, and says when to look again while it has yet to.
     pub(super) fn editor_bulb_due(&mut self) -> Option<Instant> {
         let here = if self.focus.current() == Some(Target::Editor(EditorEvent::EditorField)) {
-            self.model.read(|screen| match screen {
-                Screen::Workspace(state) => {
-                    if state.editor.lightbulb == LightbulbShown::Off {
-                        return None;
-                    }
-                    let path = state.shown_viewer()?.path.clone();
-                    let document = state.shown_document()?;
-                    Some((
-                        path,
-                        document.version,
-                        document.field.caret(),
-                        document.field.anchor(),
-                        document.diagnostics.len(),
-                    ))
+            self.model.read(|state| {
+                if state.editor.lightbulb == LightbulbShown::Off {
+                    return None;
                 }
+                let path = state.shown_viewer()?.path.clone();
+                let document = state.shown_document()?;
+                Some((
+                    path,
+                    document.version,
+                    document.field.caret(),
+                    document.field.anchor(),
+                    document.diagnostics.len(),
+                ))
             })
         } else {
             None
@@ -76,8 +73,7 @@ impl App {
         }
         self.bulb_wait = None;
         self.bulb_asked = Some(here);
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).lightbulb_requested());
+        self.model.change(|state| state.lightbulb_requested());
         None
     }
 
@@ -98,8 +94,7 @@ impl App {
     /// Takes the press in the file shown at the byte `byte`, at the point `at` of the window, as the start of carrying the selected text when it is on the selection and dragging text is on; says whether it did, in which case the press is not a selection of its own.
     pub(super) fn drag_text_begins(&mut self, byte: usize, at: (f32, f32)) -> bool {
         let mut picked = false;
-        self.model.update(|screen| {
-            let Screen::Workspace(state) = screen;
+        self.model.update(|state| {
             picked = state.editor_drag_started(byte);
         });
         self.text_drag = picked.then_some(TextDrag {
@@ -127,8 +122,7 @@ impl App {
         else {
             return;
         };
-        self.model.update(|screen| {
-            let Screen::Workspace(state) = screen;
+        self.model.update(|state| {
             let byte = state
                 .shown_document()
                 .map(|document| document.field.to_text(offset));
@@ -145,14 +139,12 @@ impl App {
         };
         if drag.moving {
             let copy = self.modifiers.ctrl || self.modifiers.meta;
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 state.editor_dropped(copy);
             });
             self.show_editor_caret();
         } else {
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 state.editor_drag_cancelled();
             });
             self.edit_field(
@@ -166,8 +158,7 @@ impl App {
     /// Lets go of the selected text being dragged, leaving it where it was.
     pub(super) fn drag_text_cancelled(&mut self) {
         if self.text_drag.take().is_some() {
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 state.editor_drag_cancelled();
             });
         }

@@ -89,6 +89,25 @@ fn stepped(value: i64, by: i64, option: usize, low: i64, high: i64) -> i64 {
     (value + by).clamp(low, high)
 }
 
+/// The tab sizes the choices of a tab size set, in their order; nothing follows another setting.
+const TAB_SIZES: [Option<usize>; 4] = [None, Some(2), Some(4), Some(8)];
+
+/// Whether the choices of indentation indent with tabs, in their order; nothing follows another setting.
+const INDENTS: [Option<bool>; 3] = [None, Some(false), Some(true)];
+
+/// What the choices that follow the editor, turn on or turn off set, in their order.
+const FOLLOWS: [Option<bool>; 3] = [None, Some(true), Some(false)];
+
+/// The place of the tab size `size` among the choices of [`TAB_SIZES`], any size not offered taken as the last.
+fn tab_place(size: Option<usize>) -> usize {
+    match size {
+        None => 0,
+        Some(2) => 1,
+        Some(4) => 2,
+        Some(_) => 3,
+    }
+}
+
 impl Setting {
     /// How it stands in `state`.
     pub(crate) fn control(self, state: &WorkspaceState) -> Control {
@@ -108,13 +127,6 @@ impl Setting {
                 &["Last workspace", "Fresh start"],
                 place_of(&[Launch::Restore, Launch::Fresh], &window.general.launch),
             ),
-            Self::ConfirmClose => Control::Switch(window.general.confirm_close),
-            Self::CheckUpdates => Control::Switch(window.general.check_updates),
-            Self::OfferLanguages => Control::Switch(window.general.offer_languages),
-            Self::EmbeddedBrowser => Control::Switch(window.general.embedded_browser),
-            Self::OpenDevServers => Control::Switch(window.general.open_dev_servers),
-            Self::OpenLocalLinks => Control::Switch(window.general.open_local_links),
-            Self::RestrictAgentBrowsing => Control::Switch(window.general.restrict_agent_browsing),
             Self::AgentOrigins => Control::List(self.lines(state)),
             Self::Channel => Control::Choice(
                 &["Stable", "Preview"],
@@ -148,27 +160,6 @@ impl Setting {
                     &window.appearance.density,
                 ),
             ),
-            Self::LineNumbers => Control::Switch(editor.line_numbers),
-            Self::RelativeLineNumbers => Control::Switch(editor.relative_line_numbers),
-            Self::CurrentLine => Control::Switch(editor.current_line_highlight),
-            Self::IndentGuides => Control::Switch(editor.indent_guides),
-            Self::WrapGuide => Control::Switch(editor.wrap_guide),
-            Self::LineLength => Control::Number(editor.preferred_line_length.to_string()),
-            Self::GitGutter => Control::Switch(editor.git_gutter),
-            Self::InlineBlame => Control::Switch(editor.inline_blame),
-            Self::Occurrences => Control::Switch(editor.occurrence_highlights),
-            Self::BracketColors => Control::Switch(editor.bracket_colors),
-            Self::RedactPrivateValues => Control::Switch(editor.redact_private_values),
-            Self::DependencyHints => Control::Switch(editor.dependency_hints),
-            Self::SemanticHighlighting => Control::Switch(editor.semantic_highlighting),
-            Self::InlayHints => Control::Switch(editor.inlay_hints),
-            Self::CodeLens => Control::Switch(editor.code_lens),
-            Self::Minimap => Control::Switch(editor.minimap),
-            Self::StickyScroll => Control::Switch(editor.sticky_scroll),
-            Self::FormatOnType => Control::Switch(editor.format_on_type),
-            Self::LinkedEditing => Control::Switch(editor.linked_editing),
-            Self::SnippetsOnTab => Control::Switch(editor.snippets_on_tab),
-            Self::Emmet => Control::Switch(editor.emmet),
             Self::CursorShape => Control::Choice(
                 &["Bar", "Block", "Underline"],
                 place_of(
@@ -176,7 +167,6 @@ impl Setting {
                     &editor.cursor_shape,
                 ),
             ),
-            Self::CursorBlink => Control::Switch(editor.cursor_blink),
             Self::SoftWrap => Control::Choice(
                 &["Off", "Window edge", "Line length"],
                 place_of(
@@ -184,36 +174,9 @@ impl Setting {
                     &editor.soft_wrap,
                 ),
             ),
-            Self::TabSize => Control::Choice(
-                TABS,
-                match editor.tab_size {
-                    None => 0,
-                    Some(2) => 1,
-                    Some(4) => 2,
-                    Some(_) => 3,
-                },
-            ),
-            Self::HardTabs => Control::Choice(
-                INDENT,
-                match editor.hard_tabs {
-                    None => 0,
-                    Some(false) => 1,
-                    Some(true) => 2,
-                },
-            ),
-            Self::AutoClose => Control::Switch(editor.auto_close),
-            Self::AutoSurround => Control::Switch(editor.auto_surround),
-            Self::AutoIndent => Control::Switch(editor.auto_indent),
-            Self::ExtendComments => Control::Switch(editor.extend_comment_on_newline),
-            Self::FormatOnSave => Control::Switch(editor.format_on_save),
-            Self::TrimWhitespace => Control::Switch(editor.remove_trailing_whitespace_on_save),
-            Self::FinalNewline => Control::Switch(editor.ensure_final_newline_on_save),
-            Self::Autosave => Control::Switch(editor.autosave),
-            Self::CompletionsOnInput => Control::Switch(editor.completions_on_input),
-            Self::CompletionDocs => Control::Switch(editor.completion_documentation),
-            Self::Hover => Control::Switch(editor.hover),
+            Self::TabSize => Control::Choice(TABS, tab_place(editor.tab_size)),
+            Self::HardTabs => Control::Choice(INDENT, place_of(&INDENTS, &editor.hard_tabs)),
             Self::HoverDelay => Control::Number(format!("{} ms", editor.hover_delay)),
-            Self::SignatureHelp => Control::Switch(editor.signature_help),
             Self::Diagnostics => Control::Choice(
                 PROBLEMS,
                 place_of(
@@ -226,13 +189,7 @@ impl Setting {
                     &editor.diagnostics,
                 ),
             ),
-            Self::SearchWrap => Control::Switch(editor.search_wrap),
-            Self::SeedSearch => Control::Switch(editor.seed_search_from_selection),
-            Self::Smartcase => Control::Switch(editor.smartcase),
-            Self::ScrollBeyond => Control::Switch(editor.scroll_beyond_last_line),
             Self::ScrollMargin => Control::Number(editor.vertical_scroll_margin.to_string()),
-            Self::ScrollbarMarks => Control::Switch(editor.scrollbar_marks),
-            Self::VimMode => Control::Switch(editor.vim_mode),
             Self::VimClipboard => Control::Choice(
                 &["Always", "On yank", "Never"],
                 place_of(
@@ -244,8 +201,6 @@ impl Setting {
                     &editor.vim_clipboard,
                 ),
             ),
-            Self::VimReplayTyping => Control::Switch(editor.vim_replay_typing),
-            Self::VimSyntaxObjects => Control::Switch(editor.vim_syntax_objects),
             Self::VimBindings => Control::List(self.lines(state)),
             Self::AutoFindInSelection => Control::Choice(
                 &["Never", "Always", "Multiline"],
@@ -258,7 +213,6 @@ impl Setting {
                     &editor.auto_find_in_selection,
                 ),
             ),
-            Self::DragAndDrop => Control::Switch(editor.drag_and_drop),
             Self::Lightbulb => Control::Choice(
                 &["Off", "Caret line", "Problem lines"],
                 place_of(
@@ -270,9 +224,6 @@ impl Setting {
                     &editor.lightbulb,
                 ),
             ),
-            Self::Ligatures => Control::Switch(editor.ligatures),
-            Self::VisualCaret => Control::Switch(editor.visual_caret_movement),
-            Self::CompareIgnoreWhitespace => Control::Switch(editor.compare_ignore_whitespace),
             Self::Language => Control::Picker(
                 state
                     .settings_language()
@@ -285,56 +236,28 @@ impl Setting {
                     })
                     .unwrap_or_else(|| "None installed".to_owned()),
             ),
-            Self::LanguageTabSize => Control::Choice(
-                LANGUAGE_TABS,
-                match language.tab_size {
-                    None => 0,
-                    Some(2) => 1,
-                    Some(4) => 2,
-                    Some(_) => 3,
-                },
-            ),
-            Self::LanguageIndent => Control::Choice(
-                LANGUAGE_INDENT,
-                match language.hard_tabs {
-                    None => 0,
-                    Some(false) => 1,
-                    Some(true) => 2,
-                },
-            ),
+            Self::LanguageTabSize => Control::Choice(LANGUAGE_TABS, tab_place(language.tab_size)),
+            Self::LanguageIndent => {
+                Control::Choice(LANGUAGE_INDENT, place_of(&INDENTS, &language.hard_tabs))
+            }
             Self::LanguageFormat => Control::Choice(
                 LANGUAGE_FORMAT,
-                match language.format_on_save {
-                    None => 0,
-                    Some(true) => 1,
-                    Some(false) => 2,
-                },
+                place_of(&FOLLOWS, &language.format_on_save),
             ),
             Self::LanguageOrganize => Control::Choice(
                 LANGUAGE_FORMAT,
-                match language.organize_imports_on_save {
-                    None => 0,
-                    Some(true) => 1,
-                    Some(false) => 2,
-                },
+                place_of(&FOLLOWS, &language.organize_imports_on_save),
             ),
             Self::LanguageFixAll => Control::Choice(
                 LANGUAGE_FORMAT,
-                match language.fix_all_on_save {
-                    None => 0,
-                    Some(true) => 1,
-                    Some(false) => 2,
-                },
+                place_of(&FOLLOWS, &language.fix_all_on_save),
             ),
-            Self::OrganizeOnSave => Control::Switch(editor.organize_imports_on_save),
-            Self::FixAllOnSave => Control::Switch(editor.fix_all_on_save),
             Self::SemanticRangeLines => Control::Number(if editor.semantic_range_lines == 0 {
                 "Never".to_owned()
             } else {
                 editor.semantic_range_lines.to_string()
             }),
             Self::SemanticRangeMargin => Control::Number(editor.semantic_range_margin.to_string()),
-            Self::WorkspaceRepositories => Control::Switch(machine.workspace.attach_repositories),
             Self::WorkspaceFolders => Control::Text("e.g. ../shared"),
             Self::LanguageServer => Control::Switch(!language.server_off),
             Self::LanguageServerCommand => Control::Text("The one it comes with"),
@@ -358,10 +281,7 @@ impl Setting {
                 ),
             ),
             Self::Scrollback => Control::Number(window.terminal.scrollback.to_string()),
-            Self::CopyOnSelect => Control::Switch(window.terminal.copy_on_select),
-            Self::AutoFetch => Control::Switch(machine.git.auto_fetch),
             Self::FetchInterval => Control::Number(format!("{} min", machine.git.fetch_minutes)),
-            Self::LocalHistory => Control::Switch(machine.history.enabled),
             Self::HistoryDays => Control::Number(format!("{} days", machine.history.days)),
             Self::HistorySize => Control::Number(format!("{} MB", machine.history.megabytes)),
             Self::BranchTemplate => Control::Text("No branch, e.g. pm/{title}"),
@@ -375,7 +295,6 @@ impl Setting {
                 FOLLOW,
                 place_of(&[GitMarks::FollowEditor, GitMarks::Off], &window.git.gutter),
             ),
-            Self::GitWordDiff => Control::Switch(window.git.word_diff),
             Self::GitHosts => Control::Text("e.g. git.example.com=gitlab"),
             Self::DefaultAgent => {
                 let options = self.options(state);
@@ -390,9 +309,6 @@ impl Setting {
                 EFFORTS,
                 place_of(&EFFORT_IDS, &machine.agents.effort.as_deref()),
             ),
-            Self::Memory => Control::Switch(machine.agents.memory),
-            Self::Checkpoints => Control::Switch(machine.agents.checkpoints),
-            Self::Orchestrator => Control::Switch(machine.agents.orchestrator),
             Self::SubagentBudget => Control::Choice(
                 BUDGETS,
                 place_of(&BUDGET_IDS, &machine.agents.subagent_budget.as_str()),
@@ -400,8 +316,6 @@ impl Setting {
             Self::PromptCache => {
                 Control::Choice(CACHES, place_of(&CACHE_IDS, &machine.agents.cache.as_str()))
             }
-            Self::CacheWarming => Control::Switch(machine.agents.cache_warming),
-            Self::PlanAutosave => Control::Switch(machine.agents.plan_autosave),
             Self::OnFinish => Control::Choice(
                 &["Nothing", "Notify", "Open review"],
                 place_of(
@@ -426,6 +340,8 @@ impl Setting {
                     .default_target()
                     .map_or_else(|| THIS_MACHINE.to_owned(), |server| server.name.clone()),
             ),
+            Self::LineLength => Control::Number(editor.preferred_line_length.to_string()),
+            _ => Control::Switch(self.flag(&mut state.kept()).is_some_and(|on| *on)),
         }
     }
 
@@ -437,21 +353,92 @@ impl Setting {
             .unwrap_or_default()
     }
 
+    /// The switch it is in `kept`, for a setting that is only turned on or off.
+    fn flag(self, kept: &mut Kept) -> Option<&mut bool> {
+        let (editor, window, machine) = (&mut kept.editor, &mut kept.window, &mut kept.machine);
+        Some(match self {
+            Self::ConfirmClose => &mut window.general.confirm_close,
+            Self::CheckUpdates => &mut window.general.check_updates,
+            Self::OfferLanguages => &mut window.general.offer_languages,
+            Self::EmbeddedBrowser => &mut window.general.embedded_browser,
+            Self::OpenDevServers => &mut window.general.open_dev_servers,
+            Self::OpenLocalLinks => &mut window.general.open_local_links,
+            Self::RestrictAgentBrowsing => &mut window.general.restrict_agent_browsing,
+            Self::LineNumbers => &mut editor.line_numbers,
+            Self::RelativeLineNumbers => &mut editor.relative_line_numbers,
+            Self::CurrentLine => &mut editor.current_line_highlight,
+            Self::IndentGuides => &mut editor.indent_guides,
+            Self::WrapGuide => &mut editor.wrap_guide,
+            Self::GitGutter => &mut editor.git_gutter,
+            Self::InlineBlame => &mut editor.inline_blame,
+            Self::Occurrences => &mut editor.occurrence_highlights,
+            Self::BracketColors => &mut editor.bracket_colors,
+            Self::RedactPrivateValues => &mut editor.redact_private_values,
+            Self::DependencyHints => &mut editor.dependency_hints,
+            Self::SemanticHighlighting => &mut editor.semantic_highlighting,
+            Self::InlayHints => &mut editor.inlay_hints,
+            Self::CodeLens => &mut editor.code_lens,
+            Self::Minimap => &mut editor.minimap,
+            Self::StickyScroll => &mut editor.sticky_scroll,
+            Self::FormatOnType => &mut editor.format_on_type,
+            Self::LinkedEditing => &mut editor.linked_editing,
+            Self::SnippetsOnTab => &mut editor.snippets_on_tab,
+            Self::Emmet => &mut editor.emmet,
+            Self::CursorBlink => &mut editor.cursor_blink,
+            Self::AutoClose => &mut editor.auto_close,
+            Self::AutoSurround => &mut editor.auto_surround,
+            Self::AutoIndent => &mut editor.auto_indent,
+            Self::ExtendComments => &mut editor.extend_comment_on_newline,
+            Self::FormatOnSave => &mut editor.format_on_save,
+            Self::TrimWhitespace => &mut editor.remove_trailing_whitespace_on_save,
+            Self::FinalNewline => &mut editor.ensure_final_newline_on_save,
+            Self::Autosave => &mut editor.autosave,
+            Self::CompletionsOnInput => &mut editor.completions_on_input,
+            Self::CompletionDocs => &mut editor.completion_documentation,
+            Self::Hover => &mut editor.hover,
+            Self::SignatureHelp => &mut editor.signature_help,
+            Self::SearchWrap => &mut editor.search_wrap,
+            Self::SeedSearch => &mut editor.seed_search_from_selection,
+            Self::Smartcase => &mut editor.smartcase,
+            Self::ScrollBeyond => &mut editor.scroll_beyond_last_line,
+            Self::ScrollbarMarks => &mut editor.scrollbar_marks,
+            Self::VimMode => &mut editor.vim_mode,
+            Self::VimReplayTyping => &mut editor.vim_replay_typing,
+            Self::VimSyntaxObjects => &mut editor.vim_syntax_objects,
+            Self::DragAndDrop => &mut editor.drag_and_drop,
+            Self::Ligatures => &mut editor.ligatures,
+            Self::VisualCaret => &mut editor.visual_caret_movement,
+            Self::CompareIgnoreWhitespace => &mut editor.compare_ignore_whitespace,
+            Self::OrganizeOnSave => &mut editor.organize_imports_on_save,
+            Self::FixAllOnSave => &mut editor.fix_all_on_save,
+            Self::WorkspaceRepositories => &mut machine.workspace.attach_repositories,
+            Self::CopyOnSelect => &mut window.terminal.copy_on_select,
+            Self::AutoFetch => &mut machine.git.auto_fetch,
+            Self::LocalHistory => &mut machine.history.enabled,
+            Self::GitWordDiff => &mut window.git.word_diff,
+            Self::Memory => &mut machine.agents.memory,
+            Self::Checkpoints => &mut machine.agents.checkpoints,
+            Self::Orchestrator => &mut machine.agents.orchestrator,
+            Self::CacheWarming => &mut machine.agents.cache_warming,
+            Self::PlanAutosave => &mut machine.agents.plan_autosave,
+            _ => return None,
+        })
+    }
+
     /// Changes `state` as pressing its control at `option` does: a switch flips, a choice is picked, and a number goes down for the first and up for the second.
     pub(crate) fn press(self, state: &mut WorkspaceState, option: usize) {
+        let mut kept = state.kept();
+        if let Some(flag) = self.flag(&mut kept) {
+            *flag ^= true;
+            state.put_back(kept);
+            return;
+        }
         let language = state.settings_language();
         let editor = &mut state.editor;
         let window = &mut state.window;
         let machine = &mut state.machine;
         match self {
             Self::Launch => window.general.launch = [Launch::Restore, Launch::Fresh][option.min(1)],
-            Self::ConfirmClose => window.general.confirm_close ^= true,
-            Self::CheckUpdates => window.general.check_updates ^= true,
-            Self::OfferLanguages => window.general.offer_languages ^= true,
-            Self::EmbeddedBrowser => window.general.embedded_browser ^= true,
-            Self::OpenDevServers => window.general.open_dev_servers ^= true,
-            Self::OpenLocalLinks => window.general.open_local_links ^= true,
-            Self::RestrictAgentBrowsing => window.general.restrict_agent_browsing ^= true,
             Self::Channel => {
                 window.general.channel = [Channel::Stable, Channel::Preview][option.min(1)];
             }
@@ -472,56 +459,23 @@ impl Setting {
             Self::Density => {
                 window.appearance.density = [Density::Comfortable, Density::Compact][option.min(1)];
             }
-            Self::LineNumbers => editor.line_numbers ^= true,
-            Self::RelativeLineNumbers => editor.relative_line_numbers ^= true,
-            Self::CurrentLine => editor.current_line_highlight ^= true,
-            Self::IndentGuides => editor.indent_guides ^= true,
-            Self::WrapGuide => editor.wrap_guide ^= true,
             Self::LineLength => {
                 editor.preferred_line_length =
                     stepped(editor.preferred_line_length as i64, 10, option, 40, 200) as usize;
             }
-            Self::GitGutter => editor.git_gutter ^= true,
-            Self::InlineBlame => editor.inline_blame ^= true,
-            Self::Occurrences => editor.occurrence_highlights ^= true,
-            Self::BracketColors => editor.bracket_colors ^= true,
-            Self::RedactPrivateValues => editor.redact_private_values ^= true,
-            Self::DependencyHints => editor.dependency_hints ^= true,
-            Self::SemanticHighlighting => editor.semantic_highlighting ^= true,
-            Self::InlayHints => editor.inlay_hints ^= true,
-            Self::CodeLens => editor.code_lens ^= true,
-            Self::Minimap => editor.minimap ^= true,
-            Self::StickyScroll => editor.sticky_scroll ^= true,
-            Self::FormatOnType => editor.format_on_type ^= true,
-            Self::LinkedEditing => editor.linked_editing ^= true,
-            Self::SnippetsOnTab => editor.snippets_on_tab ^= true,
-            Self::Emmet => editor.emmet ^= true,
             Self::CursorShape => {
                 let shapes = [CursorShape::Bar, CursorShape::Block, CursorShape::Underline];
                 editor.cursor_shape = chosen(&shapes, option);
             }
-            Self::CursorBlink => editor.cursor_blink ^= true,
             Self::SoftWrap => {
                 let wraps = [SoftWrap::Off, SoftWrap::Edge, SoftWrap::LineLength];
                 editor.soft_wrap = chosen(&wraps, option);
             }
-            Self::TabSize => editor.tab_size = [None, Some(2), Some(4), Some(8)][option.min(3)],
-            Self::HardTabs => editor.hard_tabs = [None, Some(false), Some(true)][option.min(2)],
-            Self::AutoClose => editor.auto_close ^= true,
-            Self::AutoSurround => editor.auto_surround ^= true,
-            Self::AutoIndent => editor.auto_indent ^= true,
-            Self::ExtendComments => editor.extend_comment_on_newline ^= true,
-            Self::FormatOnSave => editor.format_on_save ^= true,
-            Self::TrimWhitespace => editor.remove_trailing_whitespace_on_save ^= true,
-            Self::FinalNewline => editor.ensure_final_newline_on_save ^= true,
-            Self::Autosave => editor.autosave ^= true,
-            Self::CompletionsOnInput => editor.completions_on_input ^= true,
-            Self::CompletionDocs => editor.completion_documentation ^= true,
-            Self::Hover => editor.hover ^= true,
+            Self::TabSize => editor.tab_size = chosen(&TAB_SIZES, option),
+            Self::HardTabs => editor.hard_tabs = chosen(&INDENTS, option),
             Self::HoverDelay => {
                 editor.hover_delay = stepped(editor.hover_delay as i64, 50, option, 0, 2000) as u64;
             }
-            Self::SignatureHelp => editor.signature_help ^= true,
             Self::Diagnostics => {
                 editor.diagnostics = [
                     DiagnosticsShown::All,
@@ -530,18 +484,10 @@ impl Setting {
                     DiagnosticsShown::Off,
                 ][option.min(3)];
             }
-            Self::SearchWrap => editor.search_wrap ^= true,
-            Self::SeedSearch => editor.seed_search_from_selection ^= true,
-            Self::Smartcase => editor.smartcase ^= true,
-            Self::ScrollBeyond => editor.scroll_beyond_last_line ^= true,
             Self::ScrollMargin => {
                 editor.vertical_scroll_margin =
                     stepped(editor.vertical_scroll_margin as i64, 1, option, 0, 20) as usize;
             }
-            Self::ScrollbarMarks => editor.scrollbar_marks ^= true,
-            Self::VimMode => editor.vim_mode ^= true,
-            Self::VimReplayTyping => editor.vim_replay_typing ^= true,
-            Self::VimSyntaxObjects => editor.vim_syntax_objects ^= true,
             Self::VimClipboard => {
                 let sharing = [
                     VimClipboard::Always,
@@ -550,8 +496,6 @@ impl Setting {
                 ];
                 editor.vim_clipboard = chosen(&sharing, option);
             }
-            Self::OrganizeOnSave => editor.organize_imports_on_save ^= true,
-            Self::FixAllOnSave => editor.fix_all_on_save ^= true,
             Self::SemanticRangeLines => {
                 editor.semantic_range_lines =
                     stepped(editor.semantic_range_lines as i64, 1000, option, 0, 100_000) as usize;
@@ -560,7 +504,6 @@ impl Setting {
                 editor.semantic_range_margin =
                     stepped(editor.semantic_range_margin as i64, 50, option, 0, 2000) as usize;
             }
-            Self::WorkspaceRepositories => machine.workspace.attach_repositories ^= true,
             Self::AutoFindInSelection => {
                 editor.auto_find_in_selection = chosen(
                     &[
@@ -571,7 +514,6 @@ impl Setting {
                     option,
                 );
             }
-            Self::DragAndDrop => editor.drag_and_drop ^= true,
             Self::Lightbulb => {
                 editor.lightbulb = chosen(
                     &[
@@ -582,9 +524,6 @@ impl Setting {
                     option,
                 );
             }
-            Self::Ligatures => editor.ligatures ^= true,
-            Self::VisualCaret => editor.visual_caret_movement ^= true,
-            Self::CompareIgnoreWhitespace => editor.compare_ignore_whitespace ^= true,
             Self::LanguageTabSize
             | Self::LanguageIndent
             | Self::LanguageFormat
@@ -596,22 +535,13 @@ impl Setting {
                 };
                 let mut held = machine.language(&id);
                 match self {
-                    Self::LanguageTabSize => {
-                        held.tab_size = [None, Some(2), Some(4), Some(8)][option.min(3)];
-                    }
-                    Self::LanguageIndent => {
-                        held.hard_tabs = [None, Some(false), Some(true)][option.min(2)];
-                    }
-                    Self::LanguageFormat => {
-                        held.format_on_save = [None, Some(true), Some(false)][option.min(2)];
-                    }
+                    Self::LanguageTabSize => held.tab_size = chosen(&TAB_SIZES, option),
+                    Self::LanguageIndent => held.hard_tabs = chosen(&INDENTS, option),
+                    Self::LanguageFormat => held.format_on_save = chosen(&FOLLOWS, option),
                     Self::LanguageOrganize => {
-                        held.organize_imports_on_save =
-                            [None, Some(true), Some(false)][option.min(2)];
+                        held.organize_imports_on_save = chosen(&FOLLOWS, option);
                     }
-                    Self::LanguageFixAll => {
-                        held.fix_all_on_save = [None, Some(true), Some(false)][option.min(2)];
-                    }
+                    Self::LanguageFixAll => held.fix_all_on_save = chosen(&FOLLOWS, option),
                     _ => held.server_off ^= true,
                 }
                 machine.set_language(&id, held);
@@ -638,13 +568,10 @@ impl Setting {
                     100_000,
                 ) as usize;
             }
-            Self::CopyOnSelect => window.terminal.copy_on_select ^= true,
-            Self::AutoFetch => machine.git.auto_fetch ^= true,
             Self::FetchInterval => {
                 machine.git.fetch_minutes =
                     stepped(machine.git.fetch_minutes.into(), 5, option, 1, 240) as u32;
             }
-            Self::LocalHistory => machine.history.enabled ^= true,
             Self::HistoryDays => {
                 machine.history.days =
                     stepped(machine.history.days.into(), 5, option, 1, 3650) as u32;
@@ -659,22 +586,16 @@ impl Setting {
             Self::GitGutterMarks => {
                 window.git.gutter = [GitMarks::FollowEditor, GitMarks::Off][option.min(1)];
             }
-            Self::GitWordDiff => window.git.word_diff ^= true,
             Self::PermissionMode => {
                 machine.agents.permission_mode = chosen(&MODE_IDS, option).map(str::to_owned);
             }
             Self::Effort => {
                 machine.agents.effort = chosen(&EFFORT_IDS, option).map(str::to_owned);
             }
-            Self::Memory => machine.agents.memory ^= true,
-            Self::Checkpoints => machine.agents.checkpoints ^= true,
-            Self::Orchestrator => machine.agents.orchestrator ^= true,
             Self::SubagentBudget => {
                 machine.agents.subagent_budget = chosen(&BUDGET_IDS, option).to_owned();
             }
             Self::PromptCache => machine.agents.cache = chosen(&CACHE_IDS, option).to_owned(),
-            Self::CacheWarming => machine.agents.cache_warming ^= true,
-            Self::PlanAutosave => machine.agents.plan_autosave ^= true,
             Self::OnFinish => {
                 let finishes = [Finish::Nothing, Finish::Notify, Finish::OpenReview];
                 window.agents.on_finish = chosen(&finishes, option);
@@ -687,24 +608,7 @@ impl Setting {
                 ];
                 window.agents.notification = chosen(&ways, option);
             }
-            Self::LightTheme
-            | Self::DarkTheme
-            | Self::InterfaceFont
-            | Self::CodeFont
-            | Self::Language
-            | Self::LanguageServerCommand
-            | Self::LanguageServers
-            | Self::Shell
-            | Self::ShellArguments
-            | Self::BranchTemplate
-            | Self::WorktreeFolder
-            | Self::WorktreeInclude
-            | Self::AgentOrigins
-            | Self::VimBindings
-            | Self::GitHosts
-            | Self::WorkspaceFolders
-            | Self::DefaultAgent
-            | Self::DefaultServer => {}
+            _ => {}
         }
     }
 
@@ -943,28 +847,15 @@ impl Setting {
 
     /// Copies it from `from` into `into`; a setting of one language is copied for the language `language`.
     pub(crate) fn take(self, into: &mut Kept, from: &Kept, language: Option<&str>) {
+        if let (Some(flag), Some(given)) = (self.flag(into), self.flag(&mut from.clone())) {
+            *flag = *given;
+            return;
+        }
         let (editor, source) = (&mut into.editor, &from.editor);
         let (window, own) = (&mut into.window, &from.window);
         let (machine, kept) = (&mut into.machine, &from.machine);
         match self {
             Self::Launch => window.general.launch = own.general.launch,
-            Self::ConfirmClose => window.general.confirm_close = own.general.confirm_close,
-            Self::CheckUpdates => window.general.check_updates = own.general.check_updates,
-            Self::OfferLanguages => {
-                window.general.offer_languages = own.general.offer_languages;
-            }
-            Self::EmbeddedBrowser => {
-                window.general.embedded_browser = own.general.embedded_browser;
-            }
-            Self::OpenDevServers => {
-                window.general.open_dev_servers = own.general.open_dev_servers;
-            }
-            Self::OpenLocalLinks => {
-                window.general.open_local_links = own.general.open_local_links;
-            }
-            Self::RestrictAgentBrowsing => {
-                window.general.restrict_agent_browsing = own.general.restrict_agent_browsing;
-            }
             Self::AgentOrigins => window
                 .general
                 .agent_origins
@@ -993,99 +884,28 @@ impl Setting {
             Self::CodeSize => editor.font_size = source.font_size,
             Self::LineHeight => editor.line_height = source.line_height,
             Self::Density => window.appearance.density = own.appearance.density,
-            Self::LineNumbers => editor.line_numbers = source.line_numbers,
-            Self::RelativeLineNumbers => {
-                editor.relative_line_numbers = source.relative_line_numbers
-            }
-            Self::CurrentLine => editor.current_line_highlight = source.current_line_highlight,
-            Self::IndentGuides => editor.indent_guides = source.indent_guides,
-            Self::WrapGuide => editor.wrap_guide = source.wrap_guide,
             Self::LineLength => editor.preferred_line_length = source.preferred_line_length,
-            Self::GitGutter => editor.git_gutter = source.git_gutter,
-            Self::InlineBlame => editor.inline_blame = source.inline_blame,
-            Self::Occurrences => editor.occurrence_highlights = source.occurrence_highlights,
-            Self::BracketColors => editor.bracket_colors = source.bracket_colors,
-            Self::RedactPrivateValues => {
-                editor.redact_private_values = source.redact_private_values
-            }
-            Self::DependencyHints => editor.dependency_hints = source.dependency_hints,
-            Self::SemanticHighlighting => {
-                editor.semantic_highlighting = source.semantic_highlighting
-            }
-            Self::InlayHints => editor.inlay_hints = source.inlay_hints,
-            Self::CodeLens => editor.code_lens = source.code_lens,
-            Self::Minimap => editor.minimap = source.minimap,
-            Self::StickyScroll => editor.sticky_scroll = source.sticky_scroll,
-            Self::FormatOnType => editor.format_on_type = source.format_on_type,
-            Self::LinkedEditing => editor.linked_editing = source.linked_editing,
-            Self::SnippetsOnTab => editor.snippets_on_tab = source.snippets_on_tab,
-            Self::Emmet => editor.emmet = source.emmet,
             Self::CursorShape => editor.cursor_shape = source.cursor_shape,
-            Self::CursorBlink => editor.cursor_blink = source.cursor_blink,
             Self::SoftWrap => editor.soft_wrap = source.soft_wrap,
             Self::TabSize => editor.tab_size = source.tab_size,
             Self::HardTabs => editor.hard_tabs = source.hard_tabs,
-            Self::AutoClose => editor.auto_close = source.auto_close,
-            Self::AutoSurround => editor.auto_surround = source.auto_surround,
-            Self::AutoIndent => editor.auto_indent = source.auto_indent,
-            Self::ExtendComments => {
-                editor.extend_comment_on_newline = source.extend_comment_on_newline;
-            }
-            Self::FormatOnSave => editor.format_on_save = source.format_on_save,
-            Self::OrganizeOnSave => {
-                editor.organize_imports_on_save = source.organize_imports_on_save;
-            }
-            Self::FixAllOnSave => editor.fix_all_on_save = source.fix_all_on_save,
             Self::SemanticRangeLines => editor.semantic_range_lines = source.semantic_range_lines,
             Self::SemanticRangeMargin => {
                 editor.semantic_range_margin = source.semantic_range_margin;
-            }
-            Self::WorkspaceRepositories => {
-                machine.workspace.attach_repositories = kept.workspace.attach_repositories;
             }
             Self::WorkspaceFolders => machine
                 .workspace
                 .folders
                 .clone_from(&kept.workspace.folders),
-            Self::TrimWhitespace => {
-                editor.remove_trailing_whitespace_on_save =
-                    source.remove_trailing_whitespace_on_save;
-            }
-            Self::FinalNewline => {
-                editor.ensure_final_newline_on_save = source.ensure_final_newline_on_save;
-            }
-            Self::Autosave => editor.autosave = source.autosave,
-            Self::CompletionsOnInput => editor.completions_on_input = source.completions_on_input,
-            Self::CompletionDocs => {
-                editor.completion_documentation = source.completion_documentation;
-            }
-            Self::Hover => editor.hover = source.hover,
             Self::HoverDelay => editor.hover_delay = source.hover_delay,
-            Self::SignatureHelp => editor.signature_help = source.signature_help,
             Self::Diagnostics => editor.diagnostics = source.diagnostics,
-            Self::SearchWrap => editor.search_wrap = source.search_wrap,
-            Self::SeedSearch => {
-                editor.seed_search_from_selection = source.seed_search_from_selection;
-            }
-            Self::Smartcase => editor.smartcase = source.smartcase,
-            Self::ScrollBeyond => editor.scroll_beyond_last_line = source.scroll_beyond_last_line,
             Self::ScrollMargin => editor.vertical_scroll_margin = source.vertical_scroll_margin,
-            Self::ScrollbarMarks => editor.scrollbar_marks = source.scrollbar_marks,
-            Self::VimMode => editor.vim_mode = source.vim_mode,
-            Self::VimReplayTyping => editor.vim_replay_typing = source.vim_replay_typing,
-            Self::VimSyntaxObjects => editor.vim_syntax_objects = source.vim_syntax_objects,
             Self::VimClipboard => editor.vim_clipboard = source.vim_clipboard,
             Self::VimBindings => editor.vim_bindings.clone_from(&source.vim_bindings),
             Self::AutoFindInSelection => {
                 editor.auto_find_in_selection = source.auto_find_in_selection;
             }
-            Self::DragAndDrop => editor.drag_and_drop = source.drag_and_drop,
             Self::Lightbulb => editor.lightbulb = source.lightbulb,
-            Self::Ligatures => editor.ligatures = source.ligatures,
-            Self::VisualCaret => editor.visual_caret_movement = source.visual_caret_movement,
-            Self::CompareIgnoreWhitespace => {
-                editor.compare_ignore_whitespace = source.compare_ignore_whitespace;
-            }
             Self::Language => {}
             Self::LanguageTabSize
             | Self::LanguageIndent
@@ -1119,10 +939,7 @@ impl Setting {
             Self::TerminalFontSize => window.terminal.font_size = own.terminal.font_size,
             Self::TerminalCursor => window.terminal.cursor = own.terminal.cursor,
             Self::Scrollback => window.terminal.scrollback = own.terminal.scrollback,
-            Self::CopyOnSelect => window.terminal.copy_on_select = own.terminal.copy_on_select,
-            Self::AutoFetch => machine.git.auto_fetch = kept.git.auto_fetch,
             Self::FetchInterval => machine.git.fetch_minutes = kept.git.fetch_minutes,
-            Self::LocalHistory => machine.history.enabled = kept.history.enabled,
             Self::HistoryDays => machine.history.days = kept.history.days,
             Self::HistorySize => machine.history.megabytes = kept.history.megabytes,
             Self::BranchTemplate => machine
@@ -1139,7 +956,6 @@ impl Setting {
                 .clone_from(&kept.git.worktree_include),
             Self::GitBlame => window.git.blame = own.git.blame,
             Self::GitGutterMarks => window.git.gutter = own.git.gutter,
-            Self::GitWordDiff => window.git.word_diff = own.git.word_diff,
             Self::GitHosts => machine.git.hosts.clone_from(&kept.git.hosts),
             Self::DefaultAgent => machine
                 .agents
@@ -1152,9 +968,6 @@ impl Setting {
                     .clone_from(&kept.agents.permission_mode);
             }
             Self::Effort => machine.agents.effort.clone_from(&kept.agents.effort),
-            Self::Memory => machine.agents.memory = kept.agents.memory,
-            Self::Checkpoints => machine.agents.checkpoints = kept.agents.checkpoints,
-            Self::Orchestrator => machine.agents.orchestrator = kept.agents.orchestrator,
             Self::SubagentBudget => {
                 machine
                     .agents
@@ -1162,8 +975,6 @@ impl Setting {
                     .clone_from(&kept.agents.subagent_budget);
             }
             Self::PromptCache => machine.agents.cache.clone_from(&kept.agents.cache),
-            Self::CacheWarming => machine.agents.cache_warming = kept.agents.cache_warming,
-            Self::PlanAutosave => machine.agents.plan_autosave = kept.agents.plan_autosave,
             Self::OnFinish => window.agents.on_finish = own.agents.on_finish,
             Self::Notification => window.agents.notification = own.agents.notification,
             Self::DefaultServer => {
@@ -1172,6 +983,7 @@ impl Setting {
                     .default_server
                     .clone_from(&own.servers.default_server);
             }
+            _ => {}
         }
     }
 

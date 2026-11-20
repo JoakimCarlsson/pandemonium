@@ -1,13 +1,11 @@
 //! The tab chip: one tab of a strip inside a pane, with its glyph, its words, marks for what it is and a button that closes it.
 
-use crate::events::Interactive;
-use crate::events::{Event, send};
 use crate::kit;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
 use crate::theme::{Radius, Role};
-use rustle::{CursorIcon, Modifier};
+use rustle::Modifier;
 use rustle::{Icon, phosphor};
 
 use crate::Button;
@@ -39,16 +37,12 @@ pub struct TabChip {
     selected: bool,
     /// Whose tab it is.
     variant: TabVariant,
-    /// How big it is: `Sm` is the strip's usual height, `Xs` a tighter one.
-    size: Size,
     /// Whether a padlock marks it as kept from agents.
     locked: bool,
     /// How wide it is, in logical pixels.
     width: f32,
     /// What it says when the pointer rests on it, if anything.
     hint: Option<String>,
-    /// What the caller puts around its box.
-    modifier: Modifier,
 }
 
 impl TabChip {
@@ -61,23 +55,15 @@ impl TabChip {
             icon: phosphor::GLOBE,
             selected: false,
             variant: TabVariant::Page,
-            size: Size::Sm,
             locked: false,
             width: 160.0,
             hint: None,
-            modifier: Modifier::new(),
         }
     }
 
     /// Whose tab it is.
     pub fn variant(mut self, variant: TabVariant) -> Self {
         self.variant = variant;
-        self
-    }
-
-    /// How big it is.
-    pub fn size(mut self, size: Size) -> Self {
-        self.size = size;
         self
     }
 
@@ -105,12 +91,6 @@ impl TabChip {
         self
     }
 
-    /// The tab with `modifier` put around its box, outside its own: sizes, weight, placement.
-    pub fn modifier(mut self, modifier: Modifier) -> Self {
-        self.modifier = self.modifier.chain(modifier);
-        self
-    }
-
     /// Emits the tab.
     #[track_caller]
     pub fn build(self) {
@@ -119,28 +99,20 @@ impl TabChip {
         } else {
             Role::Muted
         };
-        let height = if self.size == Size::Xs { 24.0 } else { 28.0 };
-        let looks = if self.selected {
-            theme::InteractionTones::new().idle(Role::SurfaceSelected)
-        } else {
-            theme::InteractionTones::new().hover(Role::SurfaceHover)
-        }
-        .radius(Radius::Md);
-        let own = Modifier::new()
-            .width(self.width)
-            .height(height)
-            .indicated(
+        let looks = kit::selectable(self.selected).radius(Radius::Md);
+        let own = kit::pressed(
+            Modifier::new().width(self.width).height(28.0).indicated(
                 looks,
                 theme::Focused::Held(crate::focus::is_held(self.select)),
-            )
-            .cursor(CursorIcon::Pointer)
-            .control(self.select, send(Event::pressing(self.select)))
-            .padding_xy(theme::sp(2), 0.0);
+            ),
+            self.select,
+        )
+        .padding_xy(theme::sp(2), 0.0);
         let (variant, icon, label, locked, close) =
             (self.variant, self.icon, self.label, self.locked, self.close);
         let hint = self.hint;
         let row = move || {
-            kit::row(self.modifier.chain(own), 1, move || {
+            kit::row(own, 1, move || {
                 match variant {
                     TabVariant::Agent => glyph(phosphor::SPARKLE, 3.5, Role::Accent),
                     TabVariant::Page => glyph(icon, 3.5, tone),

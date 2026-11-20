@@ -89,8 +89,7 @@ impl App {
 
     /// Asks the window to close, as its close button or the desktop does, and says whether it is to close now: once nothing is left to ask first.
     pub(super) fn close_window(&mut self) -> bool {
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).close_asked());
+        self.model.change(|state| state.close_asked());
         self.model.read(Screen::quitting)
     }
 }

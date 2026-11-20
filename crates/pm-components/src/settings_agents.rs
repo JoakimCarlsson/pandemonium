@@ -15,13 +15,13 @@ use crate::theme::{Radius, Role};
 use crate::Badge;
 use crate::button::Variant;
 use crate::input::Input;
-use crate::parts::{glyph, line};
+use crate::parts::glyph;
 use crate::settings_row::switch;
 use crate::settings_rows::{
     ACCOUNT_ADDS, ACCOUNT_COLUMNS, ACCOUNT_CONTROLS, ACCOUNT_REMOVES, AGENT_SWITCHES, DEFAULT_USES,
     KEY_REMOVES, KEY_SETS, SIGN_INS,
 };
-use crate::settings_servers::{boxed, flat_row, paragraph};
+use crate::settings_servers::{boxed, flat_row, form_buttons, name_tone, note, paragraph, titled};
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 
@@ -159,27 +159,15 @@ impl WorkspaceState {
 
     /// Adds an account to the agent at `agent`: one that signs in through the provider is signed in at once, and one that only takes an API key opens the box for its key.
     fn add_account_from_settings(&mut self, agent: usize) {
-        let signs_in = self
-            .agent_id_at(agent)
-            .and_then(|id| pm_harness::agent(&id))
-            .is_some_and(|held| held.sign_in.has_accounts());
-        if signs_in {
-            self.add_account(agent);
-            return;
-        }
         let Some(owner) = self.agent_id_at(agent) else {
             return;
         };
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |since| since.as_millis());
-        let id = format!("{stamp:x}");
-        let name = self.placeholder_name(&owner);
-        self.logins.push((owner, id.clone(), name));
-        self.outbox.push(Outgoing::Accounts {
-            logins: self.logins.clone(),
-            in_use: self.in_use.clone(),
-        });
+        if pm_harness::agent(&owner).is_some_and(|held| held.sign_in.has_accounts()) {
+            self.add_account(agent);
+            return;
+        }
+        let id = self.new_login(owner);
+        self.send_accounts();
         self.settings_servers
             .login_identities
             .insert(id.clone(), Some(None));
@@ -198,10 +186,7 @@ impl WorkspaceState {
         if let Some(identity) = self.identities.get_mut(agent) {
             *identity = None;
         }
-        self.outbox.push(Outgoing::Accounts {
-            logins: self.logins.clone(),
-            in_use: self.in_use.clone(),
-        });
+        self.send_accounts();
     }
 
     /// Opens the box for the API key of the agent at `agent`, for its added account `login` or its default account when there is none.
@@ -227,15 +212,10 @@ impl WorkspaceState {
 
     /// Has the server keep `key` as the API key of the agent at `agent` for its added account `login`, or its default account when there is none, or forget the saved one, and forgets what the page said about that account until the server answers.
     fn send_key(&mut self, agent: usize, key: Option<String>, login: Option<String>) {
-        match &login {
-            Some(login) => {
-                self.settings_servers.login_identities.remove(login);
-            }
-            None => {
-                if let Some(held) = self.defaults.get_mut(agent) {
-                    *held = None;
-                }
-            }
+        if let Some(login) = &login {
+            self.settings_servers.login_identities.remove(login);
+        } else if let Some(held) = self.defaults.get_mut(agent) {
+            *held = None;
         }
         self.outbox.push(Outgoing::SaveKey { agent, key, login });
     }
@@ -250,10 +230,7 @@ impl WorkspaceState {
             return;
         };
         held.2 = name;
-        self.outbox.push(Outgoing::Accounts {
-            logins: self.logins.clone(),
-            in_use: self.in_use.clone(),
-        });
+        self.send_accounts();
     }
 
     /// Asks who each added account is signed in as, for those not asked about yet.
@@ -277,17 +254,12 @@ impl WorkspaceState {
 
     /// The box `id`, the one for an API key or the one for an account's name, while it is open.
     pub(crate) fn key_field(&self, id: Target) -> Option<&TextFieldState> {
+        let servers = &self.settings_servers;
         if id == Target::Settings(SettingsEvent::NameField) {
-            return self
-                .settings_servers
-                .name_form
-                .as_ref()
-                .map(|form| &form.name);
+            servers.name_form.as_ref().map(|form| &form.name)
+        } else {
+            servers.key_form.as_ref().map(|form| &form.key)
         }
-        self.settings_servers
-            .key_form
-            .as_ref()
-            .map(|form| &form.key)
     }
 }
 
@@ -322,45 +294,6 @@ fn emblem(icon: Icon, dim: bool) {
     );
 }
 
-/// Emits a name `title` in `tone` followed by `badges`, over a quieter line `under` when it says something.
-#[track_caller]
-fn titled(title: &str, under: &str, tone: Role, badges: impl FnOnce()) {
-    kit::column(Modifier::new().weight(1.0).clip(), 1, || {
-        kit::row(Modifier::new(), 2, || {
-            kit::text(Modifier::new(), title, kit::strong(13, tone));
-            badges();
-        });
-        if !under.is_empty() {
-            line(under, 12, 1.4, Role::Muted);
-        }
-    });
-}
-
-/// Emits the buttons `buttons` emits at the end of a row, side by side.
-#[track_caller]
-fn actions(buttons: impl FnOnce()) {
-    kit::row(Modifier::new(), 2, buttons);
-}
-
-/// Emits a row of a boxed list, as the list's own rows are, set in from the left by `inset` steps and holding what `content` emits.
-#[track_caller]
-fn inset_row(inset: u32, content: impl FnOnce()) {
-    kit::row(
-        Modifier::new()
-            .padding_each(theme::sp(inset), 0.0, 0.0, 0.0)
-            .padding_each(0.0, 0.0, theme::sp(3), 0.0)
-            .padding_xy(0.0, theme::sp(3)),
-        3,
-        content,
-    );
-}
-
-/// Emits a row inside an agent's card, standing in to line up with the agent's name, holding what `content` emits.
-#[track_caller]
-fn inner_row(content: impl FnOnce()) {
-    inset_row(ROW_INSET, content);
-}
-
 /// Emits the top of an agent's card: its glyph, its name and how it signs in, `keyed` when it also takes an API key and naming the cloud `credentials` it reads instead when it does, and the switch that offers it for new sessions.
 fn header(
     state: &WorkspaceState,
@@ -373,16 +306,20 @@ fn header(
     let shown = state.agent_shown(index);
     let look = state.agent_look(index);
     let under = how_it_signs_in(sign_in, keyed, credentials);
-    flat_row(|| {
+    flat_row(3, || {
         kit::row(Modifier::new().weight(1.0), 3, || {
             emblem(look.icon, !shown);
             titled(
                 name,
-                &under,
-                if shown { Role::Text } else { Role::Muted },
+                name_tone(shown),
                 || {
                     if !shown {
                         Badge::new("Hidden").tone(Role::Subtle).build();
+                    }
+                },
+                || {
+                    if !under.is_empty() {
+                        note(&under);
                     }
                 },
             );
@@ -413,42 +350,53 @@ fn status_of(said: Option<&Option<String>>, signing: Signing) -> (String, bool) 
     }
 }
 
-/// Emits the buttons every account has, by the names given for them: use it when it is not in use, sign it in, and set or forget its key.
+/// Emits the row of an account called `title`: whom it is signed in as, from `said`, under its name, marked when it is `in_use`, then the buttons every account has, by the names `ids` gives them (use it when it is not in use, sign it in, and set or forget its key), and what `more` emits after them.
 #[track_caller]
-fn account_buttons(signing: Signing, in_use: bool, status: (&str, bool), ids: [Option<Target>; 4]) {
+fn account_row(
+    title: &str,
+    said: Option<&Option<String>>,
+    signing: Signing,
+    in_use: bool,
+    ids: [Option<Target>; 4],
+    more: impl FnOnce(),
+) {
     let [use_id, sign_in, set_key, remove_key] = ids;
-    let (said, signed_in) = status;
-    let keyed_now = said.starts_with("API key");
-    if signing.keyed {
-        if let Some(remove) = remove_key.filter(|_| said == pm_harness::SAVED_KEY) {
-            kit::small_button("Remove key", remove, Variant::Ghost).build();
-        }
-        if let Some(set) = set_key {
-            kit::small_button(
-                if keyed_now { "Replace key" } else { "Add key" },
-                set,
-                Variant::Ghost,
-            )
-            .build();
-        }
-    }
-    if signing.signs_in
-        && let Some(sign_in) = sign_in
-    {
-        kit::small_button(
-            if signed_in && !keyed_now {
-                "Sign in again"
-            } else {
-                "Sign in"
+    let (status, signed_in) = status_of(said, signing);
+    let keyed_now = status.starts_with("API key");
+    flat_row(ROW_INSET, || {
+        titled(
+            title,
+            name_tone(signed_in),
+            || {
+                if in_use {
+                    Badge::new("In use").tone(Role::Subtle).build();
+                }
             },
-            sign_in,
-            Variant::Ghost,
-        )
-        .build();
-    }
-    if let Some(use_id) = use_id.filter(|_| !in_use) {
-        kit::small_button("Use", use_id, Variant::Outline).build();
-    }
+            || note(&status),
+        );
+        kit::row(Modifier::new(), 2, || {
+            if signing.keyed {
+                if let Some(remove) = remove_key.filter(|_| status == pm_harness::SAVED_KEY) {
+                    kit::action("Remove key", remove, Variant::Ghost);
+                }
+                if let Some(set) = set_key {
+                    let label = if keyed_now { "Replace key" } else { "Add key" };
+                    kit::action(label, set, Variant::Ghost);
+                }
+            }
+            if signing.signs_in
+                && let Some(sign_in) = sign_in
+            {
+                let again = signed_in && !keyed_now;
+                let label = if again { "Sign in again" } else { "Sign in" };
+                kit::action(label, sign_in, Variant::Ghost);
+            }
+            if let Some(use_id) = use_id.filter(|_| !in_use) {
+                kit::action("Use", use_id, Variant::Outline);
+            }
+            more();
+        });
+    });
 }
 
 /// Emits the box `id` an account's name or API key is typed into, holding `field` and showing `placeholder` while empty, with its buttons `save` and `cancel`, in place of the account's row.
@@ -463,71 +411,50 @@ fn form_row(field: &TextFieldState, id: Target, placeholder: &str, save: Target,
         input = input.leading_icon(phosphor::LOCK_SIMPLE).secure(true);
     }
     rustle::key(id, || {
-        inner_row(|| {
+        flat_row(ROW_INSET, || {
             input.build();
-            actions(|| {
-                kit::small_button("Cancel", cancel, Variant::Ghost).build();
-                kit::small_button("Save", save, Variant::Default).build();
-            });
+            form_buttons(Modifier::new(), cancel, save, true);
         });
     });
 }
 
-/// The open key box, when it is for the account `login` of the agent at `index`, or its default account when `login` is nothing.
-fn key_form_for<'a>(
-    state: &'a WorkspaceState,
-    index: usize,
-    login: Option<&str>,
-) -> Option<&'a KeyForm> {
-    state
+/// Emits the box an API key is typed into for the account `login` of the agent at `index`, or its default account when `login` is nothing, in place of the account's row; says whether that box is open.
+#[track_caller]
+fn key_row(state: &WorkspaceState, index: usize, login: Option<&str>) -> bool {
+    let Some(form) = state
         .settings_servers
         .key_form
         .as_ref()
         .filter(|form| form.agent == index && form.login.as_deref() == login)
+    else {
+        return false;
+    };
+    form_row(
+        &form.key,
+        Target::Settings(SettingsEvent::KeyField),
+        "Paste an API key",
+        Target::Settings(SettingsEvent::KeySave),
+        Target::Settings(SettingsEvent::KeyCancel),
+    );
+    true
 }
 
 /// Emits the rows of the accounts of the agent at `index`, whose id is `id`: its default account, the ones added, each with who it is signed in as and its buttons, and the button adding one.
 fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing) {
-    let in_use_badge = || Badge::new("In use").tone(Role::Subtle).build();
-    let default_in_use = !state.in_use.iter().any(|(owner, _)| owner == id);
-    let default_said = match state.defaults.get(index) {
-        Some(Some(said)) => Some(said),
-        _ => None,
-    };
-    let (status, signed_in) = status_of(default_said, signing);
-    match key_form_for(state, index, None) {
-        Some(form) => form_row(
-            &form.key,
-            Target::Settings(SettingsEvent::KeyField),
-            "Paste an API key",
-            Target::Settings(SettingsEvent::KeySave),
-            Target::Settings(SettingsEvent::KeyCancel),
-        ),
-        None => inner_row(|| {
-            titled(
-                "Default account",
-                &status,
-                if signed_in { Role::Text } else { Role::Muted },
-                || {
-                    if default_in_use {
-                        in_use_badge();
-                    }
-                },
-            );
-            actions(|| {
-                account_buttons(
-                    signing,
-                    default_in_use,
-                    (&status, signed_in),
-                    [
-                        DEFAULT_USES.id(index),
-                        SIGN_INS.id(index),
-                        KEY_SETS.id(index),
-                        KEY_REMOVES.id(index),
-                    ],
-                );
-            });
-        }),
+    if !key_row(state, index, None) {
+        account_row(
+            "Default account",
+            state.defaults.get(index).and_then(Option::as_ref),
+            signing,
+            !state.in_use.iter().any(|(owner, _)| owner == id),
+            [
+                DEFAULT_USES.id(index),
+                SIGN_INS.id(index),
+                KEY_SETS.id(index),
+                KEY_REMOVES.id(index),
+            ],
+            || {},
+        );
     }
     for (position, (_, login, name)) in state
         .logins
@@ -535,14 +462,7 @@ fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing
         .enumerate()
         .filter(|(_, (owner, _, _))| owner == id)
     {
-        if let Some(form) = key_form_for(state, index, Some(login)) {
-            form_row(
-                &form.key,
-                Target::Settings(SettingsEvent::KeyField),
-                "Paste an API key",
-                Target::Settings(SettingsEvent::KeySave),
-                Target::Settings(SettingsEvent::KeyCancel),
-            );
+        if key_row(state, index, Some(login)) {
             continue;
         }
         if let Some(form) = state
@@ -569,42 +489,30 @@ fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing
             .login_identities
             .get(login)
             .and_then(Option::as_ref);
-        let (status, signed_in) = status_of(said, signing);
         rustle::key(position, || {
-            inner_row(|| {
-                titled(
-                    name,
-                    &status,
-                    if signed_in { Role::Text } else { Role::Muted },
-                    || {
-                        if used {
-                            in_use_badge();
-                        }
-                    },
-                );
-                actions(|| {
-                    account_buttons(
-                        signing,
-                        used,
-                        (&status, signed_in),
-                        [
-                            AccountControl::Use.id(position),
-                            AccountControl::SignIn.id(position),
-                            AccountControl::SetKey.id(position),
-                            AccountControl::RemoveKey.id(position),
-                        ],
-                    );
+            account_row(
+                name,
+                said,
+                signing,
+                used,
+                [
+                    AccountControl::Use.id(position),
+                    AccountControl::SignIn.id(position),
+                    AccountControl::SetKey.id(position),
+                    AccountControl::RemoveKey.id(position),
+                ],
+                || {
                     if let Some(rename) = AccountControl::Rename.id(position) {
                         crate::queued::icon_button(phosphor::PENCIL_SIMPLE, "Rename", rename);
                     }
                     if let Some(remove) = ACCOUNT_REMOVES.id(position) {
                         crate::queued::icon_button(phosphor::TRASH, "Remove account", remove);
                     }
-                });
-            });
+                },
+            );
         });
     }
-    inset_row(ADD_INSET, || {
+    flat_row(ADD_INSET, || {
         if let Some(add) = ACCOUNT_ADDS.id(index) {
             kit::small_button("Add account", add, Variant::Ghost)
                 .with_icon(phosphor::PLUS)
@@ -614,7 +522,6 @@ fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing
 }
 
 /// Emits the card of the agent at `index`, `room` logical pixels across: its header, what the reader sets up for it when it needs something, then its accounts, each signed in or given a key of its own; nothing when there is no agent there.
-#[track_caller]
 fn agent_card(state: &WorkspaceState, index: usize, room: f32) {
     let Some(entry) = state.settings_servers.agents.get(index) else {
         return;
@@ -635,7 +542,7 @@ fn agent_card(state: &WorkspaceState, index: usize, room: f32) {
     boxed(|| {
         header(state, index, &entry.name, sign_in, keyed, credentials);
         if let Some(hint) = &hint {
-            inner_row(|| {
+            flat_row(ROW_INSET, || {
                 crate::settings_servers::wrapped_note(
                     hint,
                     (room - ROW_INSET as f32 * 4.0 - 24.0).max(160.0),

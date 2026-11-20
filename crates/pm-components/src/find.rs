@@ -15,7 +15,7 @@ use std::ops::Range;
 use pm_editor::{Document, Query};
 use pm_field::Edit;
 use rustle::TextFieldState;
-use rustle::{BoxAlignment, CursorIcon, Modifier};
+use rustle::{BoxAlignment, Modifier};
 
 use crate::button::{Button, Variant};
 use crate::events::Interactive;
@@ -99,13 +99,19 @@ impl WorkspaceState {
         ))
     }
 
-    /// Opens the bar, with the row for replacing when `replacing`, looking for what is selected in the file shown when that is part of one line.
-    pub fn find_opened(mut self, replacing: bool) -> Self {
-        let selected = self
-            .shown_document()
+    /// What is selected in the file shown, when that is part of one line and
+    /// a search is set to start from the selection: what a search opened
+    /// looks for.
+    pub(crate) fn selection_to_seek(&self) -> Option<String> {
+        self.shown_document()
             .map(|document| document.field.selected().to_owned())
             .filter(|selected| !selected.is_empty() && !selected.contains('\n'))
-            .filter(|_| self.editor.seed_search_from_selection);
+            .filter(|_| self.editor.seed_search_from_selection)
+    }
+
+    /// Opens the bar, with the row for replacing when `replacing`, looking for what is selected in the file shown when that is part of one line.
+    pub fn find_opened(mut self, replacing: bool) -> Self {
+        let selected = self.selection_to_seek();
         let mut finding = self.finding.take().unwrap_or(Finding {
             query: TextFieldState::new(""),
             replacement: TextFieldState::new(""),
@@ -170,15 +176,18 @@ impl WorkspaceState {
     }
 
     /// Selects the match after the selection of the file shown, or the one before it when `back`.
-    pub fn find_stepped(mut self, back: bool) -> Self {
-        let Some((Ok(matches), _)) = self.found() else {
-            return self;
-        };
-        let edit = self.shown_document().and_then(|document| {
-            document.next_match_edit_with(&matches, back, self.editor.search_wrap)
-        });
-        if let Some(edit) = edit {
-            self.file_edited(edit);
+    pub fn find_stepped(self, back: bool) -> Self {
+        let wrap = self.editor.search_wrap;
+        self.match_selected(|document, matches| document.next_match_edit_with(matches, back, wrap))
+    }
+
+    /// Makes the edit `pick` chooses from the matches of the bar in the file shown, when the query can be used and it chooses one.
+    fn match_selected(
+        mut self,
+        pick: impl FnOnce(&Document, &[Range<usize>]) -> Option<Edit>,
+    ) -> Self {
+        if let Some((Ok(matches), _)) = self.found() {
+            self.edit_shown(|document| pick(document, &matches));
         }
         self
     }
@@ -192,17 +201,8 @@ impl WorkspaceState {
     }
 
     /// Selects the first match from where the selection of the file shown starts, going round to the first.
-    fn select_first_match(mut self) -> Self {
-        let Some((Ok(matches), _)) = self.found() else {
-            return self;
-        };
-        let edit = self
-            .shown_document()
-            .and_then(|document| document.first_match_edit(&matches));
-        if let Some(edit) = edit {
-            self.file_edited(edit);
-        }
-        self
+    fn select_first_match(self) -> Self {
+        self.match_selected(|document, matches| document.first_match_edit(matches))
     }
 
     /// Switches one of the ways of matching, the one `which` names, on or off, and selects the first match from the selection on.
@@ -222,24 +222,32 @@ impl WorkspaceState {
         self.select_first_match()
     }
 
-    /// Replaces the selected match, or selects the next one when none is selected, and then selects the next.
-    pub fn replaced_one(mut self) -> Self {
+    /// The edit that replaces the selected match, or every match when `all`, by what the bar replaces with; nothing when the file shown is read only or the query cannot be used.
+    fn replacement(&self, all: bool) -> Option<Edit> {
         let Some((Ok(matches), query)) = self.found() else {
-            return self;
+            return None;
         };
         let replacement = self
             .finding
             .as_ref()
             .map(|finding| finding.replacement.text().to_owned())
             .unwrap_or_default();
-        let read_only = self
+        let document = self
             .shown_document()
-            .is_none_or(|document| document.field.is_read_only());
-        let edit = self
-            .shown_document()
-            .and_then(|document| document.replace_edit(&query, &matches, &replacement))
-            .filter(|_| !read_only);
-        if let Some(edit) = edit {
+            .filter(|document| !document.field.is_read_only())?;
+        if all {
+            document.replace_all_edit(&query, &matches, &replacement)
+        } else {
+            document.replace_edit(&query, &matches, &replacement)
+        }
+    }
+
+    /// Replaces the selected match, or selects the next one when none is selected, and then selects the next.
+    pub fn replaced_one(mut self) -> Self {
+        if !matches!(self.found(), Some((Ok(_), _))) {
+            return self;
+        }
+        if let Some(edit) = self.replacement(false) {
             self.file_edited_inside_scope(edit);
         }
         self.find_stepped(false)
@@ -247,22 +255,7 @@ impl WorkspaceState {
 
     /// Replaces every match in one change.
     pub fn replaced_all(mut self) -> Self {
-        let Some((Ok(matches), query)) = self.found() else {
-            return self;
-        };
-        let replacement = self
-            .finding
-            .as_ref()
-            .map(|finding| finding.replacement.text().to_owned())
-            .unwrap_or_default();
-        let read_only = self
-            .shown_document()
-            .is_none_or(|document| document.field.is_read_only());
-        let edit = self
-            .shown_document()
-            .and_then(|document| document.replace_all_edit(&query, &matches, &replacement))
-            .filter(|_| !read_only);
-        if let Some(edit) = edit {
+        if let Some(edit) = self.replacement(true) {
             self.file_edited_inside_scope(edit);
         }
         self
@@ -336,9 +329,7 @@ pub(crate) fn switch(label: &str, id: Target, on: bool) {
             .border(1.0, theme::color(Role::Accent), Radius::Sm.px())
             .padding(1.0);
     }
-    let own = own
-        .cursor(CursorIcon::Pointer)
-        .control(id, send(Event::pressing(id)));
+    let own = kit::pressed(own, id);
     let kind =
         theme::mono_style(11, 1.2).color(theme::color(if on { Role::Text } else { Role::Subtle }));
     row_arranged(own, Arrangement::Center, Alignment::Center, || {
@@ -369,11 +360,7 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
         .ok()
         .and_then(|matches| document.selected_match(matches));
     let (said, tone) = tally(&found, selected, query.text.is_empty());
-    let toggle = if finding.replacing {
-        phosphor::CARET_DOWN
-    } else {
-        phosphor::CARET_RIGHT
-    };
+    let toggle = kit::chevron(finding.replacing);
     let read_only = document.field.is_read_only();
     kit::column(
         Modifier::new()
@@ -430,20 +417,16 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
                     .placeholder("Replace")
                     .modifier(Modifier::new().width(194.0))
                     .build();
-                    kit::small_button(
-                        "Replace",
-                        Target::Editor(EditorEvent::ReplaceOne),
-                        Variant::Ghost,
-                    )
-                    .disabled(read_only)
-                    .build();
-                    kit::small_button(
-                        "Replace all",
-                        Target::Editor(EditorEvent::ReplaceAll),
-                        Variant::Ghost,
-                    )
-                    .disabled(read_only)
-                    .build();
+                    for (label, event) in [
+                        ("Replace", EditorEvent::ReplaceOne),
+                        ("Replace all", EditorEvent::ReplaceAll),
+                    ] {
+                        rustle::key(label, || {
+                            kit::small_button(label, Target::Editor(event), Variant::Ghost)
+                                .disabled(read_only)
+                                .build();
+                        });
+                    }
                 });
             }
         },

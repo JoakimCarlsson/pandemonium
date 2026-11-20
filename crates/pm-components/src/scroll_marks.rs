@@ -21,6 +21,11 @@ const MOST_LINES: usize = 50_000;
 /// A mark of the strip: where it is as a share of the file's rows, and its colour.
 type Placed = (f32, Role);
 
+/// How far down the `rows` rows of `document` the row of the byte `at` is, as a share of them.
+fn share(document: &Document, at: usize, rows: f32) -> f32 {
+    document.row_of_line(document.line_of(at)) as f32 / rows
+}
+
 /// The marks of `document`'s problems, as bad as `settings` show, at the shares of its rows they are on.
 fn problems(document: &Document, settings: &EditorSettings, rows: f32) -> Vec<Placed> {
     document
@@ -28,9 +33,9 @@ fn problems(document: &Document, settings: &EditorSettings, rows: f32) -> Vec<Pl
         .iter()
         .filter(|diagnostic| settings.diagnostics.shows(diagnostic.severity))
         .map(|diagnostic| {
-            let line = document.line_of(document.range_of(diagnostic.span).start);
+            let at = document.range_of(diagnostic.span).start;
             (
-                document.row_of_line(line) as f32 / rows,
+                share(document, at, rows),
                 severity_role(diagnostic.severity),
             )
         })
@@ -58,10 +63,7 @@ fn changes(document: &Document, rows: f32) -> Vec<Placed> {
 fn matches(document: &Document, found: &[Range<usize>], rows: f32) -> Vec<Placed> {
     found
         .iter()
-        .map(|range| {
-            let line = document.line_of(range.start);
-            (document.row_of_line(line) as f32 / rows, Role::Warning)
-        })
+        .map(|range| (share(document, range.start, rows), Role::Warning))
         .collect()
 }
 

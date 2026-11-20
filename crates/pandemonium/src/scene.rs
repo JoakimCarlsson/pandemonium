@@ -78,7 +78,6 @@ pub fn aside_frame(state: &Screen, window: WindowKey, width: f32, height: f32) {
 /// logical pixels drawn with `tokens`: the screen in its frame, the tooltips
 /// over it, the pointer shape `cursor` over everything when the host decides
 /// it, and the area that takes dropped files.
-#[track_caller]
 pub fn main_root(
     state: &Screen,
     width: f32,
@@ -110,7 +109,6 @@ pub fn main_root(
 /// Emits the root of the window beside the main one kept under `window`,
 /// `width` by `height` logical pixels, drawn with `tokens`: the settings
 /// window or the folder picker's.
-#[track_caller]
 pub fn aside_root(state: &Screen, window: WindowKey, width: f32, height: f32, tokens: Tokens) {
     scale_for(state);
     theme::provide(tokens, || {

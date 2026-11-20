@@ -157,6 +157,17 @@ const PREFIXES: [(&str, &str); 7] = [
     ("?", "List what can be typed first"),
 ];
 
+/// A choice for each of `tasks`, by name and command, picking it doing what `then` makes of its place among them.
+fn run<'a>(
+    tasks: impl Iterator<Item = (&'a String, &'a String)>,
+    then: fn(usize) -> Then,
+) -> Vec<Choice> {
+    tasks
+        .enumerate()
+        .map(|(index, (name, command))| Choice::new(name.clone(), command.clone(), then(index)))
+        .collect()
+}
+
 /// The first line of `text`, as a list names a message by it.
 fn first_line(text: &str) -> String {
     text.lines()
@@ -272,32 +283,20 @@ impl WorkspaceState {
                     )
                 })
                 .collect(),
-            Choosing::Task => self
-                .tasks
-                .tasks
-                .iter()
-                .enumerate()
-                .map(|(index, task)| {
-                    Choice::new(
-                        task.name.clone(),
-                        task.command.clone(),
-                        Then::RunTask(index),
-                    )
-                })
-                .collect(),
-            Choosing::RunnableTask => self
-                .tasks
-                .options
-                .iter()
-                .enumerate()
-                .map(|(index, task)| {
-                    Choice::new(
-                        task.name.clone(),
-                        task.command.clone(),
-                        Then::RunPlace(index),
-                    )
-                })
-                .collect(),
+            Choosing::Task => run(
+                self.tasks
+                    .tasks
+                    .iter()
+                    .map(|task| (&task.name, &task.command)),
+                Then::RunTask,
+            ),
+            Choosing::RunnableTask => run(
+                self.tasks
+                    .options
+                    .iter()
+                    .map(|task| (&task.name, &task.command)),
+                Then::RunPlace,
+            ),
             Choosing::Toolchain => self
                 .tasks
                 .toolchains
@@ -403,66 +402,46 @@ impl WorkspaceState {
     /// The state after `choice` was picked from the quick input hanging at `at`.
     pub(crate) fn choice_taken(mut self, choice: Choice, at: (f32, f32)) -> Self {
         match choice.then {
-            Then::Press(id) => self.handle(Event::pressing(id)),
+            Then::Press(id) => return self.handle(Event::pressing(id)),
+            Then::Setting(index) => {
+                return self.choices_requested(Choosing::SettingValue(index), at);
+            }
+            Then::Type(prefix) => return self.quick_typed(prefix, at),
             Then::Theme(name) => {
                 self.window.appearance.light_theme = name.clone();
                 self.window.appearance.dark_theme = name;
-                self
             }
-            Then::Keymap(preset) => {
-                self.editor.keymap = preset;
-                self
-            }
-            Then::Setting(index) => self.choices_requested(Choosing::SettingValue(index), at),
-            Then::Value(index, value) => {
-                self.agent_setting_changed(index, &value);
-                self
-            }
+            Then::Keymap(preset) => self.editor.keymap = preset,
+            Then::Value(index, value) => self.agent_setting_changed(index, &value),
             Then::Checkout(branch) => {
-                if let Some(session) = self.review_index() {
-                    self.git.trouble = None;
-                    self.git.busy = Some("Switching branch…");
-                    self.outbox.push(Outgoing::Checkout {
-                        session,
-                        branch,
-                        submodule: None,
-                    });
-                }
-                self
+                self.branch_work("Switching branch…", |session| Outgoing::Checkout {
+                    session,
+                    branch,
+                    submodule: None,
+                })
             }
             Then::CreateBranch(name) => {
-                if let Some(session) = self.review_index() {
-                    self.git.trouble = None;
-                    self.git.busy = Some("Making branch…");
-                    self.outbox.push(Outgoing::CreateBranch {
-                        session,
-                        name,
-                        submodule: None,
-                    });
-                }
-                self
+                self.branch_work("Making branch…", |session| Outgoing::CreateBranch {
+                    session,
+                    name,
+                    submodule: None,
+                })
             }
-            Then::Type(prefix) => self.quick_typed(prefix, at),
-            Then::DebugStart(index) => {
-                self.debug_scenario_taken(index);
-                self
-            }
-            Then::DebugAttach(pid) => {
-                self.debug_process_taken(pid);
-                self
-            }
-            Then::RunTask(index) => {
-                self.task_taken(index);
-                self
-            }
-            Then::RunPlace(index) => {
-                self.runnable_taken(index);
-                self
-            }
-            Then::Toolchain(language, id) => {
-                self.toolchain_taken(language, id);
-                self
-            }
+            Then::DebugStart(index) => self.debug_scenario_taken(index),
+            Then::DebugAttach(pid) => self.debug_process_taken(pid),
+            Then::RunTask(index) => self.task_taken(index),
+            Then::RunPlace(index) => self.runnable_taken(index),
+            Then::Toolchain(language, id) => self.toolchain_taken(language, id),
+        }
+        self
+    }
+
+    /// Sends what `request` makes for the session the review panel is about, when there is one, saying `busy` meanwhile and clearing the trouble last told.
+    fn branch_work(&mut self, busy: &'static str, request: impl FnOnce(usize) -> Outgoing) {
+        if let Some(session) = self.review_index() {
+            self.git.trouble = None;
+            self.git.busy = Some(busy);
+            self.outbox.push(request(session));
         }
     }
 

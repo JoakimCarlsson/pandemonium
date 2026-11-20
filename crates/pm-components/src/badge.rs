@@ -2,9 +2,9 @@
 
 use crate::kit;
 use crate::theme;
-use rustle::Modifier;
+use rustle::{Color, Modifier};
 
-use crate::theme::{Radius, Role, Tone};
+use crate::theme::{Radius, Role};
 
 use crate::parts::line;
 
@@ -29,15 +29,11 @@ pub struct Badge {
     /// The words on the badge.
     label: String,
     /// The colour of its fill or its words, by variant.
-    tone: Tone,
+    tone: Color,
     /// How it looks.
     variant: Variant,
     /// Whether its corners are fully round.
     round: bool,
-    /// What the caller puts around its box, outside its own.
-    modifier: Modifier,
-    /// The padding the caller gave in place of the badge's own.
-    inner: Option<Modifier>,
 }
 
 impl Badge {
@@ -45,16 +41,14 @@ impl Badge {
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
-            tone: Tone::from(Role::Muted),
+            tone: Color::from(Role::Muted),
             variant: Variant::default(),
             round: true,
-            modifier: Modifier::new(),
-            inner: None,
         }
     }
 
     /// The badge in `tone`.
-    pub fn tone(mut self, tone: impl Into<Tone>) -> Self {
+    pub fn tone(mut self, tone: impl Into<Color>) -> Self {
         self.tone = tone.into();
         self
     }
@@ -71,33 +65,19 @@ impl Badge {
         self
     }
 
-    /// The badge with `modifier` put around its box, outside its own: sizes, weight, placement.
-    pub fn modifier(mut self, modifier: Modifier) -> Self {
-        self.modifier = self.modifier.chain(modifier);
-        self
-    }
-
-    /// The badge with `modifier`, padding, in place of its own padding, inside its fill.
-    pub fn inner(mut self, modifier: Modifier) -> Self {
-        self.inner = Some(modifier);
-        self
-    }
-
     /// Emits the badge: its words in a pill.
     #[track_caller]
     pub fn build(self) {
         let (fill, words) = match self.variant {
-            Variant::Solid => (self.tone, Tone::from(Role::Background)),
-            Variant::Soft => (self.tone.alpha(0.18), self.tone),
-            Variant::Subtle => (Tone::from(Role::SurfaceSelected), self.tone),
+            Variant::Solid => (self.tone, Color::from(Role::Background)),
+            Variant::Soft => (self.tone.copy(self.tone.alpha() * 0.18), self.tone),
+            Variant::Subtle => (Color::from(Role::SurfaceSelected), self.tone),
         };
         let radius = if self.round { Radius::Full } else { Radius::Sm };
-        let inner = self
-            .inner
-            .unwrap_or_else(|| Modifier::new().padding_xy(theme::sp(2), 0.0));
+        let inner = Modifier::new().padding_xy(theme::sp(2), 0.0);
         let label = self.label;
         rustle::surface_custom(
-            self.modifier.height(theme::sp(4.5)),
+            Modifier::new().height(theme::sp(4.5)),
             rustle::Shape::rounded(radius.px()),
             theme::color(fill),
             theme::color(words),

@@ -3,7 +3,7 @@
 use crate::areas::SidebarEvent;
 use crate::button::Variant;
 use crate::events::{Event, send};
-use crate::kit::{self, Frame};
+use crate::kit;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
@@ -45,36 +45,44 @@ const GROUPS: [(Status, &str); 6] = [
     (Status::Idle, "Idle"),
 ];
 
-impl WorkspaceState {}
-
 /// Emits the overview of the project at `project`.
 #[track_caller]
 pub fn overview(state: &WorkspaceState, project: usize) {
+    let bounded = Modifier::new().fill_max_width().width_in(0.0, PAGE_WIDTH);
+    scrolled_page(
+        || heading(state, project),
+        &state.overview_scroll,
+        bounded,
+        || {
+            sessions(state, project);
+            repository(state);
+            commits(state);
+        },
+    );
+}
+
+/// Emits a page of the main area: the bar `heading` emits across its top, and under it the column `content` emits, sized by `bounded`, padded and centred in a pane scrolled as `scroll` holds.
+#[track_caller]
+pub(crate) fn scrolled_page(
+    heading: impl FnOnce(),
+    scroll: &rustle::ScrollState,
+    bounded: Modifier,
+    content: impl FnOnce(),
+) {
     kit::column(Modifier::new().weight(1.0), 0, || {
-        heading(state, project);
+        heading();
         column_arranged(
             Modifier::new()
                 .fill_max_width()
                 .weight(1.0)
-                .vertical_scroll(&state.overview_scroll)
+                .vertical_scroll(scroll)
                 .fill_max_width(),
             Arrangement::Start,
             Alignment::Center,
             || {
-                kit::column(
-                    Modifier::new()
-                        .fill_max_width()
-                        .width_in(0.0, PAGE_WIDTH)
-                        .padding_xy(theme::sp(5), 0.0)
-                        .padding_each(0.0, theme::sp(5), 0.0, 0.0)
-                        .padding_each(0.0, 0.0, 0.0, theme::sp(8)),
-                    6,
-                    || {
-                        sessions(state, project);
-                        repository(state);
-                        commits(state);
-                    },
-                );
+                let padded =
+                    bounded.padding_each(theme::sp(5), theme::sp(5), theme::sp(5), theme::sp(8));
+                kit::column(padded, 6, content);
             },
         );
     });
@@ -83,29 +91,21 @@ pub fn overview(state: &WorkspaceState, project: usize) {
 /// Emits the bar across the top: the project, where it lives, and the button that starts a session in it.
 #[track_caller]
 fn heading(state: &WorkspaceState, project: usize) {
-    kit::row(
-        Modifier::new()
-            .fill_max_width()
-            .height(theme::sp(12))
-            .ruled(theme::Side::Bottom)
-            .padding_xy(theme::sp(5), 0.0),
-        3,
-        || {
-            if let Some(held) = state.projects.get(project) {
-                Avatar::of(held).build();
-                kit::text(Modifier::new(), &held.name, kit::strong(14, Role::Text));
-                clipped(&held.path, 12, Role::Subtle);
-            }
-            spacer();
-            kit::small_button(
-                "New session",
-                Target::Sidebar(SidebarEvent::NewIn(project)),
-                Variant::Default,
-            )
-            .with_icon(phosphor::PLUS)
-            .build();
-        },
-    );
+    kit::bar(12, 5, 3, || {
+        if let Some(held) = state.projects.get(project) {
+            Avatar::of(held).build();
+            kit::text(Modifier::new(), &held.name, kit::strong(14, Role::Text));
+            clipped(&held.path, 12, Role::Subtle);
+        }
+        spacer();
+        kit::small_button(
+            "New session",
+            Target::Sidebar(SidebarEvent::NewIn(project)),
+            Variant::Default,
+        )
+        .with_icon(phosphor::PLUS)
+        .build();
+    });
 }
 
 /// Emits the project's open sessions, a group for each way they stand, or a line saying there are none.
@@ -140,6 +140,8 @@ fn session_row(state: &WorkspaceState, index: usize) {
     let session: &Session = &state.sessions[index];
     let agent = state.agent_look(session.agent);
     let id = Target::Sidebar(SidebarEvent::Session(index));
+    let pressed = send(Event::pressing(id));
+    let operations = crate::events::operations();
     let own = Modifier::new()
         .indicated(
             theme::InteractionTones::new().hover(Role::SurfaceHover),
@@ -148,14 +150,8 @@ fn session_row(state: &WorkspaceState, index: usize) {
         .cursor(CursorIcon::Pointer)
         .control_menu(
             id,
-            {
-                let pressed = send(Event::pressing(id));
-                move |_| pressed()
-            },
-            {
-                let operations = crate::events::operations();
-                move || operations.open_session_menu(index)
-            },
+            move |_| pressed(),
+            move || operations.open_session_menu(index),
         );
     card_row(own, || {
         status_icon(session.shown());
@@ -168,13 +164,8 @@ fn session_row(state: &WorkspaceState, index: usize) {
         if !session.changes.is_empty() {
             tally(session);
         }
-        kit::row_top(Modifier::new().width(BRANCH_WIDTH).clip(), 0, || {
-            kit::text(
-                Modifier::new().weight(1.0),
-                &session.branch,
-                kit::line(12, Role::Muted),
-            );
-        });
+        let branch = Modifier::new().width(BRANCH_WIDTH).clip();
+        kit::text(branch, &session.branch, kit::line(12, Role::Muted));
         row_arranged(
             Modifier::new().width(AGE_WIDTH),
             Arrangement::End,
@@ -188,16 +179,10 @@ fn session_row(state: &WorkspaceState, index: usize) {
 #[track_caller]
 fn tally(session: &Session) {
     kit::row(Modifier::new(), 1.5, || {
-        kit::text(
-            Modifier::new(),
-            format!("+{}", session.added()),
-            kit::code(12, Role::Success),
-        );
-        kit::text(
-            Modifier::new(),
-            format!("−{}", session.removed()),
-            kit::code(12, Role::Danger),
-        );
+        let added = format!("+{}", session.added());
+        kit::text(Modifier::new(), added, kit::code(12, Role::Success));
+        let removed = format!("−{}", session.removed());
+        kit::text(Modifier::new(), removed, kit::code(12, Role::Danger));
     });
 }
 
@@ -211,16 +196,12 @@ fn repository(state: &WorkspaceState) {
         group("Repository", || {
             card_row(Modifier::new(), || {
                 glyph(phosphor::FOLDER, 4.0, Role::Muted);
-                line(
-                    if home.unknown {
-                        "Reading the folder…"
-                    } else {
-                        "Not a Git repository"
-                    },
-                    13,
-                    1.4,
-                    Role::Muted,
-                );
+                let said = if home.unknown {
+                    "Reading the folder…"
+                } else {
+                    "Not a Git repository"
+                };
+                line(said, 13, 1.4, Role::Muted);
             });
         });
         return;
@@ -239,11 +220,7 @@ fn repository(state: &WorkspaceState) {
     group("Repository", || {
         card_row(Modifier::new(), || {
             glyph(phosphor::GIT_FORK, 4.0, Role::Muted);
-            kit::text(
-                Modifier::new().weight(1.0),
-                &home.branch,
-                kit::line(13, Role::Text),
-            );
+            clipped(&home.branch, 13, Role::Text);
             line(standing, 13, 1.4, Role::Muted);
         });
         card_row(Modifier::new(), || {
@@ -269,13 +246,12 @@ fn repository(state: &WorkspaceState) {
 /// Emits the latest commits of the project's own repository, once the server has listed them.
 #[track_caller]
 fn commits(state: &WorkspaceState) {
-    if state
+    let Some(_) = state
         .review_session()
         .filter(|home| !home.branch.is_empty())
-        .is_none()
-    {
+    else {
         return;
-    }
+    };
     group("Recent commits", || {
         for commit in state.git.history.iter().take(COMMITS_SHOWN) {
             card_row(Modifier::new(), || {

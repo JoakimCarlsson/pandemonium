@@ -10,10 +10,10 @@ use std::cell::RefCell;
 use std::ops::Range;
 use std::rc::Rc;
 
-use rustle::{MarkPaint, MarkedTextOptions, Modifier, TextLayout, TextMark};
+use rustle::{Color, MarkPaint, MarkedTextOptions, Modifier, TextLayout, TextMark};
 
 use crate::text_lines::TextLines;
-use crate::theme::{self, Role, Theme, Tone};
+use crate::theme::{self, Theme};
 
 pub use rustle::CaretShape;
 
@@ -56,14 +56,14 @@ pub struct Mark {
     /// The bytes of the text.
     pub range: Range<usize>,
     /// The colour.
-    pub tone: Tone,
+    pub tone: Color,
     /// How.
     pub paint: Paint,
 }
 
 impl Mark {
     /// Paints the bytes `range` in `tone` the way `paint` says.
-    pub fn new(range: Range<usize>, tone: impl Into<Tone>, paint: Paint) -> Self {
+    pub fn new(range: Range<usize>, tone: impl Into<Color>, paint: Paint) -> Self {
         Self {
             range,
             tone: tone.into(),
@@ -75,7 +75,6 @@ impl Mark {
 /// Whether a blinking caret is lit: on for [`CARET_BLINK_MS`] and off for as long, by the
 /// time of the frame clock, which an effect follows frame by frame and waits on until the
 /// next change, as a text field's cursor blinks on `withFrameMillis`.
-#[track_caller]
 pub fn caret_lit(look: CaretLook) -> bool {
     let lit = rustle::remember(|| true);
     let driven = lit.clone();
@@ -102,7 +101,7 @@ pub fn caret_lit(look: CaretLook) -> bool {
 
 /// The colour selected text is highlighted in, in `theme`.
 pub fn selection_color(theme: &Theme) -> rustle::Color {
-    theme::color_in(theme, Tone::from(Role::Focused).alpha(0.45))
+    theme::selection_colors(theme).background_color
 }
 
 /// Emits one line of `content` set in `kind` with `marks` painted over and
@@ -129,7 +128,6 @@ pub fn marked_line(
 /// selection and composition given as [`Paint::Caret`], [`Paint::Selected`]
 /// and [`Paint::Underline`] marks (add them only while the app keeps focus on `owner`).
 /// `lines` then answers the app's questions about the text as drawn.
-#[track_caller]
 pub fn marked_field_line(
     modifier: Modifier,
     lines: &TextLines,
@@ -152,24 +150,20 @@ pub fn marked_field_line(
 /// The rustle mark `mark` stands for, its tone resolved in `theme`; a
 /// selection is a fill in the selection colour.
 fn resolved(mark: &Mark, theme: &Theme) -> TextMark {
-    match mark.paint {
-        Paint::Selected => {
-            TextMark::new(mark.range.clone(), selection_color(theme), MarkPaint::Fill)
-        }
-        paint => TextMark::new(
-            mark.range.clone(),
-            theme::color_in(theme, mark.tone),
-            match paint {
-                Paint::Ink => MarkPaint::Ink,
-                Paint::Fill | Paint::Selected => MarkPaint::Fill,
-                Paint::Wave => MarkPaint::Wave,
-                Paint::Underline => MarkPaint::Underline,
-                Paint::Caret => MarkPaint::Caret,
-                Paint::Guide => MarkPaint::Guide,
-                Paint::Drop => MarkPaint::Drop,
-            },
-        ),
-    }
+    let tone = match mark.paint {
+        Paint::Selected => selection_color(theme),
+        _ => mark.tone,
+    };
+    let paint = match mark.paint {
+        Paint::Ink => MarkPaint::Ink,
+        Paint::Fill | Paint::Selected => MarkPaint::Fill,
+        Paint::Wave => MarkPaint::Wave,
+        Paint::Underline => MarkPaint::Underline,
+        Paint::Caret => MarkPaint::Caret,
+        Paint::Guide => MarkPaint::Guide,
+        Paint::Drop => MarkPaint::Drop,
+    };
+    TextMark::new(mark.range.clone(), tone, paint)
 }
 
 /// Emits a marked line, told to the lines holder as the piece of a field

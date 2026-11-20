@@ -43,7 +43,6 @@ pub mod browser_scope;
 pub mod browser_tabs;
 pub mod button;
 pub mod captures;
-pub mod card;
 pub mod change_list;
 pub mod changes;
 pub mod chat;
@@ -189,12 +188,11 @@ pub use avatar::Avatar;
 pub use badge::Badge;
 pub use bar_row::BarRow;
 pub use button::Button;
-pub use card::Card;
 pub use changes::Changes;
 pub use checkbox::Checkbox;
 pub use code_box::CodeBox;
 pub use conflict::Conflict;
-pub use context_menu::{ContextMenu, EDITOR_MENU_HEIGHT, EditorCommand, editor_menu, is_menu_item};
+pub use context_menu::{EDITOR_MENU_HEIGHT, EditorCommand, is_menu_item};
 pub use input::Input;
 pub use markdown::Markdown;
 pub use menu::Menu;
@@ -209,6 +207,6 @@ pub use tally::Tally;
 pub use tile::Tile;
 pub use title_bar::TitleBar;
 pub use window::{
-    FRAME_RADIUS, RESIZE_EDGE, SHADOW_MARGIN, WINDOW_SHADOW, Window, framed, resize_edges,
-    set_floating, set_shadow_outside, shadow_margin, shadow_outside, shadowed,
+    FRAME_RADIUS, SHADOW_MARGIN, WINDOW_SHADOW, Window, framed, resize_edges, set_floating,
+    set_shadow_outside, shadow_margin, shadow_outside, shadowed,
 };

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::model::Model;
-use pm_pages::{Outgoing, Screen};
+use pm_pages::Outgoing;
 use pm_protocol::{GrammarBundle, Request, Response};
 use pm_treesitter::{Editing, Grammar, Queries};
 
@@ -77,15 +77,15 @@ impl Work {
         if host.is_none() {
             return;
         }
-        let ids: Vec<String> = model.read(|screen| match screen {
-            Screen::Workspace(state) => state
+        let ids: Vec<String> = model.read(|state| {
+            state
                 .extensions
                 .iter()
                 .filter(|language| {
                     language.installed && !language.hidden && language.kind != "extension"
                 })
                 .map(|language| language.id.clone())
-                .collect(),
+                .collect()
         });
         if !ids.is_empty() {
             self.ask(host, Request::InstallExtensions { ids }, Pending::Nothing);
@@ -125,7 +125,7 @@ impl Work {
     pub(super) fn ask_wanted_grammars(&mut self, model: &Model) {
         let wanted = pm_treesitter::registry::take_wanted();
         if !wanted.is_empty() {
-            model.update(|screen| *screen = std::mem::take(screen).grammars_wanted(wanted));
+            model.change(|state| state.grammars_wanted(wanted));
         }
     }
 
@@ -557,9 +557,7 @@ impl Work {
                 range,
             } => {
                 let asked = path.clone();
-                let rules = model.read(|screen| match screen {
-                    Screen::Workspace(state) => state.editor.semantic_token_rules.clone(),
-                });
+                let rules = model.read(|state| state.editor.semantic_token_rules.clone());
                 self.ask_in_folder(
                     model,
                     session,
@@ -968,7 +966,7 @@ impl Work {
             (Pending::Grammar(_), Response::Grammar(bundle)) => {
                 if pm_treesitter::registry::called(&bundle.id).is_some() {
                     let id = bundle.id.clone();
-                    model.update(|screen| *screen = std::mem::take(screen).with_grammar(&id));
+                    model.change(|state| state.with_grammar(&id));
                     return;
                 }
                 self.spawn(move |reporter| {
@@ -1023,101 +1021,68 @@ impl Work {
                 });
             }
             (Pending::Completions(session, path, version), Response::Completions { items }) => {
-                model.update(|screen| {
-                    *screen =
-                        std::mem::take(screen).with_completions(session, &path, version, items);
-                });
+                model.change(|state| state.with_completions(session, &path, version, items));
             }
             (Pending::CompletionResolved(session, path), Response::CompletionResolved { item }) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_completion_resolved(session, &path, item);
-                });
+                model.change(|state| state.with_completion_resolved(session, &path, item));
             }
             (Pending::CompletionResolved(..), _) => {}
             (Pending::Completions(session, path, version), _) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_completions(
-                        session,
-                        &path,
-                        version,
-                        Vec::new(),
-                    );
-                });
+                model.change(|state| state.with_completions(session, &path, version, Vec::new()));
             }
             (Pending::Hovered(session, path, position), Response::Hovered { hover }) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_hover(session, &path, position, hover);
-                });
+                model.change(|state| state.with_hover(session, &path, position, hover));
             }
             (Pending::Hovered(session, path, position), _) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_hover(session, &path, position, None);
-                });
+                model.change(|state| state.with_hover(session, &path, position, None));
             }
             (Pending::Formatted(session, path, version, save), response) => {
                 let edits = match response {
                     Response::Formatted { edits } => edits,
                     _ => Vec::new(),
                 };
-                model.update(|screen| {
-                    *screen =
-                        std::mem::take(screen).with_formatted(session, &path, version, edits, save);
-                });
+                model.change(|state| state.with_formatted(session, &path, version, edits, save));
             }
             (
                 Pending::FoldingRanges(session, path, version),
                 Response::FoldingRanges { ranges },
             ) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_folds(session, &path, version, ranges);
-                });
+                model.change(|state| state.with_folds(session, &path, version, ranges));
             }
             (Pending::LinkedRanges(session, path, version), response) => {
                 let spans = match response {
                     Response::LinkedRanges { spans } => spans,
                     _ => Vec::new(),
                 };
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_links(session, &path, version, spans);
-                });
+                model.change(|state| state.with_links(session, &path, version, spans));
             }
             (Pending::FoldingRanges(..), _) => {}
             (Pending::Definitions(session, seek), Response::Definitions { locations }) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_places(session, seek, locations);
-                });
+                model.change(|state| state.with_places(session, seek, locations));
             }
             (
                 Pending::Renamed(session) | Pending::TookAction(session),
                 Response::Edited { files },
             ) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_edited_files(session, files);
-                });
+                model.change(|state| state.with_edited_files(session, files));
             }
             (Pending::TookAction(session), Response::ActionTaken { files, shown }) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_action_shown(session, files, shown);
-                });
+                model.change(|state| state.with_action_shown(session, files, shown));
             }
             (Pending::RenameTarget(session), Response::RenameTarget { target }) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_rename_target(session, target);
-                });
+                model.change(|state| state.with_rename_target(session, target));
             }
             (Pending::RenameTarget(_), other) => {
                 let problem = Self::trouble_of(other);
-                model.update(|screen| *screen = std::mem::take(screen).rename_unprepared(problem));
+                model.change(|state| state.rename_unprepared(problem));
             }
             (Pending::Renamed(_), other) => {
                 let problem = Self::trouble_of(other);
-                model.update(|screen| *screen = std::mem::take(screen).rename_failed(problem));
+                model.change(|state| state.rename_failed(problem));
             }
             (Pending::TookAction(session), other) => {
                 let problem = Self::trouble_of(other);
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).noted(session, &problem);
-                });
+                model.change(|state| state.noted(session, &problem));
             }
             (Pending::SourceOffered(step), Response::CodeActions { actions }) => {
                 match pm_components::source_actions::source_action_to_take(&actions) {
@@ -1134,21 +1099,21 @@ impl Work {
                             Pending::SourceTaken(step),
                         );
                     }
-                    None => model.update(|screen| {
-                        *screen = std::mem::take(screen).with_source_done(
+                    None => model.change(|state| {
+                        state.with_source_done(
                             step,
                             pm_components::source_actions::SourceOutcome::Nothing,
-                        );
+                        )
                     }),
                 }
             }
             (Pending::SourceOffered(step), other) => {
                 let problem = Self::trouble_of(other);
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_source_done(
+                model.change(|state| {
+                    state.with_source_done(
                         step,
                         pm_components::source_actions::SourceOutcome::Failed(problem),
-                    );
+                    )
                 });
             }
             (Pending::SourceTaken(step), Response::Edited { files }) => {
@@ -1159,22 +1124,20 @@ impl Work {
                 };
                 model.update(|screen| {
                     let edited = std::mem::take(screen).with_source_edited(step.session, files);
-                    *screen = edited.with_source_done(step, outcome);
+                    *screen = edited.in_workspace(|state| state.with_source_done(step, outcome));
                 });
             }
             (Pending::SourceTaken(step), other) => {
                 let problem = Self::trouble_of(other);
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_source_done(
+                model.change(|state| {
+                    state.with_source_done(
                         step,
                         pm_components::source_actions::SourceOutcome::Failed(problem),
-                    );
+                    )
                 });
             }
             (Pending::CodeActions(session, path), Response::CodeActions { actions }) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_code_actions(session, &path, actions);
-                });
+                model.change(|state| state.with_code_actions(session, &path, actions));
             }
             (
                 Pending::Compared(session, active, path, saved),
@@ -1182,14 +1145,11 @@ impl Work {
                     text: Some(text), ..
                 },
             ) => {
-                model.update(|screen| {
-                    *screen =
-                        std::mem::take(screen).with_compared(session, &active, &path, saved, &text);
-                });
+                model.change(|state| state.with_compared(session, &active, &path, saved, &text));
             }
             (Pending::Compared(session, _, path, _), other) => {
                 let problem = format!("{path}: {}", Self::trouble_of(other));
-                model.update(|screen| *screen = std::mem::take(screen).noted(session, &problem));
+                model.change(|state| state.noted(session, &problem));
             }
             (Pending::Lightbulb(session, path, version, line), response) => {
                 let offered = match response {
@@ -1199,28 +1159,21 @@ impl Work {
                         .count(),
                     _ => 0,
                 };
-                model.update(|screen| {
-                    *screen = std::mem::take(screen)
-                        .with_lightbulb(session, &path, version, line, offered);
-                });
+                model.change(|state| state.with_lightbulb(session, &path, version, line, offered));
             }
             (Pending::CodeActions(..), other) => {
                 let problem = Self::trouble_of(other);
-                model.update(|screen| *screen = std::mem::take(screen).listing_failed(problem));
+                model.change(|state| state.listing_failed(problem));
             }
             (Pending::Blame(session, path, line), Response::Blamed { blame }) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_blame(session, &path, line, blame);
-                });
+                model.change(|state| state.with_blame(session, &path, line, blame));
             }
             (Pending::Problems(session), response) => {
                 let problems = match response {
                     Response::Problems { problems } => problems,
                     _ => Vec::new(),
                 };
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_problems(session, problems)
-                });
+                model.change(|state| state.with_problems(session, problems));
             }
             (Pending::ProjectSearch(session, query, case, regex), response) => {
                 let hits = match response {
@@ -1245,61 +1198,47 @@ impl Work {
                             .map(|position| (*position, hit))
                     })
                     .collect();
-                model.update(|screen| *screen = std::mem::take(screen).with_chats(&query, placed));
+                model.change(|state| state.with_chats(&query, placed));
             }
             (Pending::Symbols(session, query), response) => {
                 let locations = match response {
                     Response::Definitions { locations } => locations,
                     _ => Vec::new(),
                 };
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_symbols(session, &query, locations);
-                });
+                model.change(|state| state.with_symbols(session, &query, locations));
             }
             (Pending::Base(session, path), response) => {
                 let base = match response {
                     Response::File { text, .. } => text,
                     _ => None,
                 };
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_base(session, &path, base)
-                });
+                model.change(|state| state.with_base(session, &path, base));
             }
             (Pending::Highlights(session, path, version), response) => {
                 let spans = match response {
                     Response::Highlights { spans } => spans,
                     _ => Vec::new(),
                 };
-                model.update(|screen| {
-                    *screen =
-                        std::mem::take(screen).with_highlights(session, &path, version, spans);
-                });
+                model.change(|state| state.with_highlights(session, &path, version, spans));
             }
             (Pending::SemanticTokens(session, path, version, range), response) => {
                 let (tokens, partial) = match response {
                     Response::SemanticTokens { tokens, partial } => (tokens, partial),
                     _ => (Vec::new(), false),
                 };
-                model.update(|screen| {
-                    let taken = std::mem::take(screen);
-                    *screen = match range.filter(|_| partial) {
-                        Some(range) => {
-                            taken.with_semantic_range(session, &path, version, range, tokens)
-                        }
-                        None => taken.with_semantic_tokens(session, &path, version, tokens),
-                    };
+                model.change(|state| match range.filter(|_| partial) {
+                    Some(range) => {
+                        state.with_semantic_range(session, &path, version, range, tokens)
+                    }
+                    None => state.with_semantic_tokens(session, &path, version, tokens),
                 });
             }
             (Pending::LinkResolved(session), Response::LinkResolved { target }) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_link_resolved(session, target);
-                });
+                model.change(|state| state.with_link_resolved(session, target));
             }
             (Pending::LinkResolved(session), other) => {
                 let problem = Self::trouble_of(other);
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).noted(session, &problem);
-                });
+                model.change(|state| state.noted(session, &problem));
             }
             (
                 Pending::ColorPresentations(session, path, color),
@@ -1316,70 +1255,52 @@ impl Work {
             }
             (Pending::ColorPresentations(..), other) => {
                 let problem = Self::trouble_of(other);
-                model
-                    .update(|screen| *screen = std::mem::take(screen).color_picker_failed(problem));
+                model.change(|state| state.color_picker_failed(problem));
             }
             (Pending::DocumentLinks(session, path, version), response) => {
                 let links = match response {
                     Response::DocumentLinks { links } => links,
                     _ => Vec::new(),
                 };
-                model.update(|screen| {
-                    *screen =
-                        std::mem::take(screen).with_document_links(session, &path, version, links);
-                });
+                model.change(|state| state.with_document_links(session, &path, version, links));
             }
             (Pending::Colors(session, path, version), response) => {
                 let colors = match response {
                     Response::Colors { colors } => colors,
                     _ => Vec::new(),
                 };
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_colors(session, &path, version, colors);
-                });
+                model.change(|state| state.with_colors(session, &path, version, colors));
             }
             (Pending::InlayHints(session, path, version), response) => {
                 let hints = match response {
                     Response::InlayHints { hints } => hints,
                     _ => Vec::new(),
                 };
-                model.update(|screen| {
-                    *screen =
-                        std::mem::take(screen).with_inlay_hints(session, &path, version, hints);
-                });
+                model.change(|state| state.with_inlay_hints(session, &path, version, hints));
             }
             (Pending::InlineValues(session, path, version), response) => {
                 let values = match response {
                     Response::InlineValues { values } => values,
                     _ => Vec::new(),
                 };
-                model.update(|screen| {
-                    *screen =
-                        std::mem::take(screen).with_inline_values(session, &path, version, values);
-                });
+                model.change(|state| state.with_inline_values(session, &path, version, values));
             }
             (Pending::CodeLenses(session, path, version), response) => {
                 let lenses = match response {
                     Response::CodeLenses { lenses } => lenses,
                     _ => Vec::new(),
                 };
-                model.update(|screen| {
-                    *screen =
-                        std::mem::take(screen).with_code_lenses(session, &path, version, lenses);
-                });
+                model.change(|state| state.with_code_lenses(session, &path, version, lenses));
             }
             (Pending::LensPressed(session), Response::LensPressed { places, files }) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_lens_pressed(session, places, files);
-                });
+                model.change(|state| state.with_lens_pressed(session, places, files));
             }
             (Pending::LensPressed(session), other) => {
                 let problem = Self::trouble_of(other);
-                model.update(|screen| {
-                    let taken = std::mem::take(screen);
-                    *screen = taken
+                model.change(|state| {
+                    state
                         .listing_failed(problem.clone())
-                        .noted(session, &problem);
+                        .noted(session, &problem)
                 });
             }
             (Pending::Signature(session, path, version), response) => {
@@ -1387,29 +1308,23 @@ impl Work {
                     Response::Signature { signature } => signature,
                     _ => None,
                 };
-                model.update(|screen| {
-                    *screen =
-                        std::mem::take(screen).with_signature(session, &path, version, signature);
-                });
+                model.change(|state| state.with_signature(session, &path, version, signature));
             }
             (Pending::Permalink(open), Response::Address { url }) => {
-                model.update(|screen| {
-                    let taken = std::mem::take(screen);
-                    *screen = if open {
-                        taken.with_address_opened(url)
+                model.change(|state| {
+                    if open {
+                        state.with_address_opened(url)
                     } else {
-                        taken.with_copied(url)
-                    };
+                        state.with_copied(url)
+                    }
                 });
             }
             (Pending::FileHistory(session, path), Response::FileHistory { commits }) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_file_history(session, &path, commits);
-                });
+                model.change(|state| state.with_file_history(session, &path, commits));
             }
             (Pending::Definitions(..) | Pending::FileHistory(..), other) => {
                 let problem = Self::trouble_of(other);
-                model.update(|screen| *screen = std::mem::take(screen).listing_failed(problem));
+                model.change(|state| state.listing_failed(problem));
             }
             (
                 Pending::Revision(session, label),
@@ -1419,18 +1334,14 @@ impl Work {
                     ..
                 },
             ) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_revision(session, label, text, language);
-                });
+                model.change(|state| state.with_revision(session, label, text, language));
             }
             (Pending::Revision(session, label), other) => {
                 let problem = format!("{label}: {}", Self::trouble_of(other));
-                model.update(|screen| *screen = std::mem::take(screen).noted(session, &problem));
+                model.change(|state| state.noted(session, &problem));
             }
             (Pending::LocalHistory(session, path), Response::LocalHistory { versions }) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_local_history(session, &path, versions);
-                });
+                model.change(|state| state.with_local_history(session, &path, versions));
             }
             (Pending::LocalHistory(..), _) => {}
             (
@@ -1439,13 +1350,11 @@ impl Work {
                     text: Some(text), ..
                 },
             ) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).timeline_opened(session, &path, when, text);
-                });
+                model.change(|state| state.timeline_opened(session, &path, when, text));
             }
             (Pending::Version(session, path, _), other) => {
                 let problem = format!("{path}: {}", Self::trouble_of(other));
-                model.update(|screen| *screen = std::mem::take(screen).noted(session, &problem));
+                model.change(|state| state.noted(session, &problem));
             }
             (Pending::Conflict(session, path), Response::Conflict { files }) => {
                 model.update(|screen| {
@@ -1454,60 +1363,50 @@ impl Work {
             }
             (Pending::Conflict(session, path), other) => {
                 let problem = format!("{path}: {}", Self::trouble_of(other));
-                model.update(|screen| *screen = std::mem::take(screen).noted(session, &problem));
+                model.change(|state| state.noted(session, &problem));
             }
             (Pending::Revisions(session, label, turn), Response::RevisionChanges { changes }) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).revision_opened(session, label, turn, changes);
-                });
+                model.change(|state| state.revision_opened(session, label, turn, changes));
             }
             (Pending::Revisions(session, label, _), other) => {
                 let problem = format!("{label}: {}", Self::trouble_of(other));
-                model.update(|screen| *screen = std::mem::take(screen).noted(session, &problem));
+                model.change(|state| state.noted(session, &problem));
             }
             (Pending::Permalink(_), other) => {
                 eprintln!("no permalink: {}", Self::trouble_of(other));
             }
             (Pending::ExtensionPreview(path), Response::ExtensionPreview { extension }) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_extension_preview(path, extension);
-                });
+                model.change(|state| state.with_extension_preview(path, extension));
             }
             (Pending::ExtensionPreview(_), other) => {
                 let problem = Self::trouble_of(other);
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_extension_problem(problem)
-                });
+                model.change(|state| state.with_extension_problem(problem));
             }
             (Pending::ExtensionAssets(host), Response::ExtensionAssets(assets)) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_extension_assets(&host, assets);
-                });
+                model.change(|state| state.with_extension_assets(&host, assets));
             }
             (
                 Pending::ExtensionCommand(session),
                 Response::ExtensionCommand { prompt, message },
             ) => {
                 model.update(|screen| {
-                    *screen = std::mem::take(screen).with_command_result(prompt);
+                    *screen = std::mem::take(screen)
+                        .in_workspace(|state| state.with_command_result(prompt));
                     if let (Some(session), Some(message)) = (session, &message) {
-                        *screen = std::mem::take(screen).noted(session, message);
+                        *screen = std::mem::take(screen)
+                            .in_workspace(|state| state.noted(session, message));
                     }
                 });
             }
             (Pending::ExtensionCommand(session), other) => {
                 let problem = Self::trouble_of(other);
                 match session {
-                    Some(session) => model.update(|screen| {
-                        *screen = std::mem::take(screen).noted(session, &problem);
-                    }),
+                    Some(session) => model.change(|state| state.noted(session, &problem)),
                     None => eprintln!("extension command failed: {problem}"),
                 }
             }
             (Pending::Extensions, Response::Extensions { extensions }) => {
-                model.update(|screen| {
-                    *screen = std::mem::take(screen).with_extensions(extensions);
-                });
+                model.change(|state| state.with_extensions(extensions));
                 self.ask_extension_assets(&None);
                 for remote in self.hosts().into_iter().filter(Option::is_some) {
                     self.share_extensions(model, &remote);
@@ -1525,9 +1424,7 @@ impl Work {
         outcome: Result<(), String>,
     ) {
         match outcome {
-            Ok(()) => {
-                model.update(|screen| *screen = std::mem::take(screen).with_grammar(language))
-            }
+            Ok(()) => model.change(|state| state.with_grammar(language)),
             Err(reason) => eprintln!("the grammar of {language} could not be loaded: {reason}"),
         }
     }

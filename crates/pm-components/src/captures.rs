@@ -6,34 +6,21 @@
 use crate::areas::ComposerEvent;
 use crate::kit;
 
-use crate::events::Interactive;
-use crate::events::{Event, send};
 use crate::target::Target;
-use crate::theme;
-use crate::theme::{Radius, Role, sp};
+use crate::theme::Role;
 use rustle::Modifier;
-use rustle::{FlowOptions, flow_row_with};
 use rustle::{Icon, phosphor};
 
-use crate::button::Variant;
-use crate::elements::{code, fence, one_line, section, words};
+use crate::elements::{
+    CARD_TEXT, chip_flow, chip_popover, code, entry_head, fence, one_line, pill, said_section,
+    section, words,
+};
 use crate::parts::line;
 use crate::popover::anchored;
-use crate::size::Size;
 use crate::state::{Picker, WorkspaceState};
-use crate::{Button, Popover};
 
 /// How many captures the prompt holds at most.
 pub const MOST_CAPTURES: usize = 10;
-
-/// How wide the popover of a capture is, in logical pixels.
-const WIDTH: f32 = 400.0;
-
-/// How tall the part of the popover that scrolls is at most, in logical pixels.
-const HEIGHT: f32 = 380.0;
-
-/// How wide the words and the pictures in a card of the popover may be, in logical pixels.
-const CARD_TEXT: f32 = 356.0;
 
 /// How tall a picture in the popover is at most, in logical pixels.
 const PICTURE_HEIGHT: f32 = 260.0;
@@ -138,18 +125,13 @@ pub fn message(captures: &[Capture]) -> String {
     }
     let mut out = format!("{HEADER}\n");
     for (index, capture) in sent.iter().enumerate() {
-        out.push_str(&format!(
-            "\n### {}. {}\n\n",
-            index + 1,
-            code(&capture.label())
-        ));
-        if !capture.url.is_empty() {
-            out.push_str(&format!(
-                "- **Page:** {} ({})\n",
-                code(&capture.url),
-                code(&capture.title)
-            ));
-        }
+        entry_head(
+            &mut out,
+            index,
+            &capture.label(),
+            &capture.url,
+            &capture.title,
+        );
         for shot in &capture.shots {
             out.push_str(&format!(
                 "- **Picture:** {} ({}), attached to this message\n",
@@ -182,7 +164,6 @@ fn console_block(lines: &[String]) -> String {
 }
 
 /// Emits a card of the popover with a picture drawn as large as the card allows, or a line saying it is not ready.
-#[track_caller]
 fn picture_card(state: &WorkspaceState, shot: &Shot) {
     section(&shot.label.to_uppercase(), || {
         match state.previews.get(&shot.path) {
@@ -204,49 +185,21 @@ fn picture_card(state: &WorkspaceState, shot: &Shot) {
     });
 }
 
-/// Emits the popover of a capture: the pictures, or the lines, and where they are from.
-#[track_caller]
-fn popover(capture: &Capture, state: &WorkspaceState) {
-    Popover::new()
-        .width(WIDTH)
-        .modifier(Modifier::new().control(
-            Target::Composer(ComposerEvent::MenuBody),
-            send(Event::Composer(ComposerEvent::MenuBody)),
-        ))
-        .build_with(|| {
-            kit::column(
-                Modifier::new()
-                    .fill_max_width()
-                    .height_in(0.0, sp(HEIGHT / 4.0))
-                    .vertical_scroll(&state.menu_scroll)
-                    .fill_max_width(),
-                2,
-                || {
-                    cards(capture, state);
-                },
-            );
-        });
-}
-
 /// Emits the cards of a capture's popover, in order: why it failed, the page, the pictures, the note and the console.
 #[track_caller]
 fn cards(capture: &Capture, state: &WorkspaceState) {
     if capture.kind == Kind::Failed {
-        section("WHY", || {
-            words(&capture.note, false, Role::Text, CARD_TEXT);
-        });
+        said_section("WHY", &capture.note, false);
     }
     if !capture.url.is_empty() {
         let page = format!("{} ({})", capture.url, capture.title);
-        section("PAGE", || words(&page, false, Role::Text, CARD_TEXT));
+        said_section("PAGE", &page, false);
     }
     for (index, shot) in capture.shots.iter().enumerate() {
         rustle::key(index, || picture_card(state, shot));
     }
     if capture.kind != Kind::Failed && !capture.note.is_empty() {
-        section("NOTE", || {
-            words(&capture.note, false, Role::Text, CARD_TEXT);
-        });
+        said_section("NOTE", &capture.note, false);
     }
     if capture.kind == Kind::Console {
         section(&format!("CONSOLE, {} LINES", capture.lines.len()), || {
@@ -275,51 +228,21 @@ pub fn chips(state: &WorkspaceState) {
     };
     anchored(
         || {
-            flow_row_with(
-                Modifier::new().padding_xy(theme::sp(3), 0.0).padding_each(
-                    0.0,
-                    theme::sp(3),
-                    0.0,
-                    0.0,
-                ),
-                FlowOptions::new(sp(2), sp(2)),
-                || {
-                    for (index, capture) in state.captures.iter().enumerate() {
-                        rustle::key(Target::Composer(ComposerEvent::Capture(index)), || {
-                            pill(index, capture, open.is_some_and(|(held, _)| held == index));
-                        });
-                    }
-                },
-            );
+            chip_flow(|| {
+                for (index, capture) in state.captures.iter().enumerate() {
+                    rustle::key(Target::Composer(ComposerEvent::Capture(index)), || {
+                        pill(
+                            capture.label(),
+                            capture.icon(),
+                            Target::Composer(ComposerEvent::Capture(index)),
+                            Target::Composer(ComposerEvent::CaptureRemove(index)),
+                            open.is_some_and(|(held, _)| held == index),
+                        );
+                    });
+                }
+            });
         },
-        open.map(|(_, capture)| move || popover(capture, state)),
-    );
-}
-
-/// Emits the chip of the capture at `index`: a button that opens its popover, filled while `selected`, and one that takes it off.
-#[track_caller]
-fn pill(index: usize, capture: &Capture, selected: bool) {
-    kit::row(
-        Modifier::new()
-            .background_rounded(theme::color(Role::SurfaceHover), Radius::Lg.px())
-            .padding_each(0.0, 0.0, theme::sp(1), 0.0),
-        0.5,
-        || {
-            Button::new(
-                capture.label(),
-                Target::Composer(ComposerEvent::Capture(index)),
-            )
-            .variant(Variant::Ghost)
-            .size(Size::Xs)
-            .with_icon(capture.icon())
-            .selected(selected)
-            .build();
-            Button::icon(
-                phosphor::X,
-                Target::Composer(ComposerEvent::CaptureRemove(index)),
-            )
-            .build();
-        },
+        open.map(|(_, capture)| move || chip_popover(state, None, || cards(capture, state))),
     );
 }
 

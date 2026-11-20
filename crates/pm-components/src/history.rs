@@ -18,8 +18,6 @@ use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::tile::Tile;
 
-impl WorkspaceState {}
-
 /// How wide the search box is.
 const SEARCH_WIDTH: f32 = 500.0;
 
@@ -66,27 +64,16 @@ pub fn history(state: &WorkspaceState) {
 /// Emits the bar across the top naming the page.
 #[track_caller]
 fn heading() {
-    kit::row(
-        Modifier::new()
-            .fill_max_width()
-            .height(theme::sp(12))
-            .ruled(theme::Side::Bottom)
-            .padding_xy(theme::sp(5), 0.0),
-        0,
-        || {
-            kit::text(Modifier::new(), "History", kit::strong(14, Role::Text));
-        },
-    );
+    kit::bar(12, 5, 0, || {
+        kit::text(Modifier::new(), "History", kit::strong(14, Role::Text));
+    });
 }
 
 /// Emits the box the reader types into to narrow the list.
 #[track_caller]
 fn search(state: &WorkspaceState) {
     kit::column(
-        Modifier::new()
-            .padding_xy(theme::sp(5), 0.0)
-            .padding_each(0.0, theme::sp(5), 0.0, 0.0)
-            .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
+        Modifier::new().padding_each(theme::sp(5), theme::sp(5), theme::sp(5), theme::sp(2)),
         0,
         || {
             kit::row(

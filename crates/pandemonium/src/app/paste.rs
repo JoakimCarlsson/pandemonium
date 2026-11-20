@@ -34,8 +34,9 @@ impl App {
 
     /// Attaches the files at `paths` to the prompt, starts their previews and focuses the prompt.
     pub(super) fn attach_paths(&mut self, paths: Vec<String>) {
-        self.model
-            .update(|state| *state = std::mem::take(state).with_attachments(&paths));
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.with_attachments(&paths))
+        });
         self.work.preview(paths);
         self.focus.focus(Target::Composer(ComposerEvent::Prompt));
     }

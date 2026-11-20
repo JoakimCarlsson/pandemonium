@@ -3,9 +3,6 @@
 use crate::events::{Event, send};
 use crate::kit::{self, Frame};
 use crate::theme;
-use crate::theme::sp;
-use rustle::phosphor;
-use rustle::{Alignment, Arrangement, column_arranged};
 
 use pm_markdown::{Block, Inline, Span};
 use rustle::{CursorIcon, Modifier};
@@ -62,10 +59,6 @@ pub struct Markdown<'a> {
     figures: Option<&'a Figures>,
     /// The markdown file the source is, from the root of its repository, which the paths of its images start from; nothing for text in no file.
     place: Option<&'a str>,
-    /// What the caller puts around the column of blocks.
-    modifier: Modifier,
-    /// How the column of blocks spreads them, and where it places them across.
-    arranged: (Arrangement, Alignment),
 }
 
 impl<'a> Markdown<'a> {
@@ -81,8 +74,6 @@ impl<'a> Markdown<'a> {
             links: None,
             figures: None,
             place: None,
-            modifier: Modifier::new(),
-            arranged: (Arrangement::SpacedBy(sp(3)), Alignment::Start),
         }
     }
 
@@ -119,18 +110,6 @@ impl<'a> Markdown<'a> {
         self
     }
 
-    /// The source with `modifier` put around its column of blocks (size, growth, margins), on top of what earlier calls put.
-    pub fn modifier(mut self, modifier: Modifier) -> Self {
-        self.modifier = self.modifier.chain(modifier);
-        self
-    }
-
-    /// The column of blocks spread by `arrangement` and placed across by `alignment` instead of one under the other three steps apart.
-    pub fn arranged(mut self, arrangement: Arrangement, alignment: Alignment) -> Self {
-        self.arranged = (arrangement, alignment);
-        self
-    }
-
     /// Emits the source, its lines broken as the type measures them. The
     /// source is parsed and laid out once for as long as nothing about it
     /// changes, and each block once for as long as it stays the same, so a
@@ -152,9 +131,7 @@ impl<'a> Markdown<'a> {
             &drawn,
             self.place,
         ));
-        let modifier = self.modifier.clone();
-        let (arrangement, alignment) = self.arranged;
-        column_arranged(modifier, arrangement, alignment, || {
+        kit::column(Modifier::new(), 3, || {
             rustle::key(whole, || {
                 rustle::skippable((whole, width.to_bits()), || {
                     let blocks = pm_markdown::parse(self.source);
@@ -259,14 +236,7 @@ impl Layout<'_> {
             ),
             Block::Code { text, .. } => self.code(text, width),
             Block::Quote(blocks) => {
-                let own = Modifier::new()
-                    .draw_behind(theme::edge(
-                        theme::Side::Left,
-                        2.0,
-                        theme::color(Role::Border),
-                    ))
-                    .padding_each(2.0, 0.0, 0.0, 0.0)
-                    .padding_each(theme::sp(QUOTE_INDENT / 4.0 - 0.5), 0.0, 0.0, 0.0);
+                let own = barred(theme::sp(QUOTE_INDENT / 4.0 - 0.5));
                 kit::row_top(own, 0, || {
                     self.blocks(
                         Modifier::new(),
@@ -301,7 +271,6 @@ impl Layout<'_> {
     }
 
     /// Emits a fold-out: a chevron and `summary`, over `blocks` set in past a bar under the chevron when it is open.
-    #[track_caller]
     fn fold_out(&mut self, summary: &[Span], blocks: &[Block], tone: Role, width: f32) {
         let place = self.seen;
         self.seen += 1;
@@ -330,15 +299,7 @@ impl Layout<'_> {
             || {
                 kit::row_top(Modifier::new().fill_max_width().chain(head), 1.5, || {
                     kit::row(Modifier::new().height(height), 0, || {
-                        glyph(
-                            if open {
-                                phosphor::CARET_DOWN
-                            } else {
-                                phosphor::CARET_RIGHT
-                            },
-                            3.5,
-                            Role::Subtle,
-                        );
+                        glyph(kit::chevron(open), 3.5, Role::Subtle);
                     });
                     self.text(
                         Modifier::new().weight(1.0),
@@ -355,13 +316,7 @@ impl Layout<'_> {
                 }
                 let bar = Modifier::new()
                     .padding_each(theme::sp(1.5), 0.0, 0.0, 0.0)
-                    .draw_behind(theme::edge(
-                        theme::Side::Left,
-                        2.0,
-                        theme::color(Role::Border),
-                    ))
-                    .padding_each(2.0, 0.0, 0.0, 0.0)
-                    .padding_each(INDENT - 8.0, 0.0, 0.0, 0.0);
+                    .chain(barred(INDENT - 8.0));
                 kit::row_top(bar, 0, || {
                     self.blocks(Modifier::new(), 3.0, blocks, tone, width - INDENT);
                 });
@@ -488,8 +443,7 @@ impl Layout<'_> {
         kit::column(
             Modifier::new()
                 .width(width)
-                .padding_xy(theme::sp(2.5), 0.0)
-                .padding_xy(0.0, theme::sp(1.5)),
+                .padding_xy(theme::sp(2.5), theme::sp(1.5)),
             0,
             || self.text(Modifier::new(), spans, pixels, strong, tone, width - 20.0),
         );
@@ -545,15 +499,7 @@ impl Layout<'_> {
             for runs in lines {
                 kit::row(Modifier::new().height(height), 0, move || {
                     for (content, inline) in runs {
-                        let pressed = match (links, inline.target) {
-                            (Some(base), target) if target > 0 => {
-                                Modifier::new().cursor(CursorIcon::Pointer).control(
-                                    base.offset(usize::from(target) - 1),
-                                    send(Event::pressing(base.offset(usize::from(target) - 1))),
-                                )
-                            }
-                            _ => Modifier::new(),
-                        };
+                        let pressed = crate::figures::link_press(links, inline.target);
                         run(pressed, content, inline, pixels, strong, tone);
                     }
                 });
@@ -605,6 +551,18 @@ fn count_details(blocks: &[Block]) -> usize {
             _ => 0,
         })
         .sum()
+}
+
+/// The modifier of a quote or an open fold-out: a two pixel bar in the border role down its
+/// left edge, with what it holds set `inset` logical pixels past the bar.
+fn barred(inset: f32) -> Modifier {
+    Modifier::new()
+        .draw_behind(theme::edge(
+            theme::Side::Left,
+            2.0,
+            theme::color(Role::Border),
+        ))
+        .padding_each(2.0 + inset, 0.0, 0.0, 0.0)
 }
 
 /// The room a run set as `inline` takes besides its text when it starts

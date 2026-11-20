@@ -287,10 +287,15 @@ impl WorkspaceState {
 
     /// The files in the order the list shows them, group by group.
     fn listed(&self) -> Vec<usize> {
+        self.ordered(&self.closed_folders)
+    }
+
+    /// The files in the order the list shows them, group by group, leaving out those in the folders `closed` folds away.
+    fn ordered(&self, closed: &std::collections::HashSet<String>) -> Vec<usize> {
         self.review_session().map_or_else(Vec::new, |session| {
             crate::change_list::order_shown(
                 &session.changes,
-                &self.closed_folders,
+                closed,
                 self.git.repository.as_deref(),
             )
         })
@@ -311,14 +316,7 @@ impl WorkspaceState {
         if !real {
             return self.git.selected.into_iter().collect();
         }
-        self.review_session()
-            .map_or_else(Vec::new, |session| {
-                crate::change_list::order_shown(
-                    &session.changes,
-                    &std::collections::HashSet::new(),
-                    self.git.repository.as_deref(),
-                )
-            })
+        self.ordered(&std::collections::HashSet::new())
             .into_iter()
             .filter(|row| self.git.marked.contains(row))
             .collect()
@@ -413,7 +411,7 @@ impl WorkspaceState {
     }
 
     /// Closes the menus that cannot be open together with the menu on changed files.
-    fn close_other_menus(&mut self) {
+    pub(crate) fn close_other_menus(&mut self) {
         self.menu = None;
         self.project_menu = None;
         self.session_menu = None;
@@ -460,13 +458,7 @@ impl WorkspaceState {
             .filter(|change| change.unstaged && !change.untracked && !change.conflicted)
             .count();
         let operation = self.git.operation.as_ref();
-        let title = match operation {
-            Some(pm_git::Operation::Merge { .. }) => "Commit Merge",
-            Some(pm_git::Operation::Rebase { .. }) => "Continue Rebase",
-            Some(pm_git::Operation::CherryPick { .. }) => "Continue Cherry-Pick",
-            None if staged == 0 => "Commit Tracked",
-            None => "Commit",
-        };
+        let title = self.commit_title(staged == 0);
         let unsaid = self.message.text().trim().is_empty();
         let stopped = if session.changes.iter().any(|change| change.conflicted) {
             Some(
@@ -535,6 +527,12 @@ impl WorkspaceState {
         self.step_with("continue", "Continuing…", message);
     }
 
+    /// Shows `doing` on the button while the server works, forgetting what git refused before.
+    pub(crate) fn await_git(&mut self, doing: &'static str) {
+        self.git.busy = Some(doing);
+        self.git.trouble = None;
+    }
+
     /// Takes the next step of what is stopped, `doing` being what the button says meanwhile.
     pub(crate) fn step(&mut self, action: &'static str, doing: &'static str) {
         self.step_with(action, doing, None);
@@ -543,8 +541,7 @@ impl WorkspaceState {
     /// Takes the next step of what is stopped, finishing it under `message` when there is one.
     fn step_with(&mut self, action: &'static str, doing: &'static str, message: Option<String>) {
         if let Some(session) = self.review_index() {
-            self.git.busy = Some(doing);
-            self.git.trouble = None;
+            self.await_git(doing);
             self.outbox.push(Outgoing::Step {
                 session,
                 action,
@@ -558,8 +555,7 @@ impl WorkspaceState {
         if let Some(session) = self.review_index()
             && self.git.busy.is_none()
         {
-            self.git.busy = Some(doing);
-            self.git.trouble = None;
+            self.await_git(doing);
             self.outbox.push(Outgoing::Sync { session, operation });
         }
     }
@@ -793,6 +789,17 @@ impl WorkspaceState {
         self
     }
 
+    /// Closes the list of branches and checks out `branch` of the repository the panel works on, in the folder of the session at `open`.
+    fn checkout(&mut self, open: usize, branch: String) {
+        self.git.branch_menu = false;
+        self.await_git("Switching branch…");
+        self.outbox.push(Outgoing::Checkout {
+            session: open,
+            branch,
+            submodule: self.git.repository.clone(),
+        });
+    }
+
     /// Checks out the branch typed, or makes it when `create` is set or none is called that.
     fn submit_branch(&mut self, create: bool) {
         let Some(open) = self.review_index() else {
@@ -807,21 +814,13 @@ impl WorkspaceState {
                 .or_else(|| (matching.len() == 1).then(|| &matching[0]))
                 .map(|name| (*name).clone());
             if let Some(branch) = picked {
-                self.git.branch_menu = false;
-                self.git.trouble = None;
-                self.git.busy = Some("Switching branch…");
-                self.outbox.push(Outgoing::Checkout {
-                    session: open,
-                    branch,
-                    submodule: self.git.repository.clone(),
-                });
+                self.checkout(open, branch);
                 return;
             }
         }
         if !typed.is_empty() && !self.git.exists() {
             self.git.branch_menu = false;
-            self.git.trouble = None;
-            self.git.busy = Some("Making branch…");
+            self.await_git("Making branch…");
             self.outbox.push(Outgoing::CreateBranch {
                 session: open,
                 name: typed,
@@ -852,14 +851,7 @@ impl WorkspaceState {
         };
         let name = self.git.matching().get(row).map(|name| (*name).clone());
         if let Some(branch) = name {
-            self.git.branch_menu = false;
-            self.git.trouble = None;
-            self.git.busy = Some("Switching branch…");
-            self.outbox.push(Outgoing::Checkout {
-                session: open,
-                branch,
-                submodule: self.git.repository.clone(),
-            });
+            self.checkout(open, branch);
         }
         true
     }

@@ -113,7 +113,7 @@ impl Work {
             }
             (Pending::DebugScenarios(_), other) => {
                 let problem = Self::trouble_of(other);
-                model.update(|screen| *screen = std::mem::take(screen).listing_failed(problem));
+                model.change(|state| state.listing_failed(problem));
             }
             (
                 Pending::DebugProcesses(session),
@@ -129,7 +129,7 @@ impl Work {
             }
             (Pending::DebugProcesses(_), other) => {
                 let problem = Self::trouble_of(other);
-                model.update(|screen| *screen = std::mem::take(screen).listing_failed(problem));
+                model.change(|state| state.listing_failed(problem));
             }
             (Pending::DebugStarted(session), response) => {
                 let started = match response {
@@ -175,9 +175,7 @@ impl Work {
             return;
         }
         let found = debugs.into_iter().find_map(|info| {
-            let session = model.read(|screen| match screen {
-                Screen::Workspace(state) => state.session_in(host, &info.directory),
-            })?;
+            let session = model.read(|state| state.session_in(host, &info.directory))?;
             Some((session, info.debug))
         });
         if let Some((session, debug)) = found {

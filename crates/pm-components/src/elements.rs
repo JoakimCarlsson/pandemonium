@@ -5,15 +5,13 @@
 use crate::areas::ComposerEvent;
 use crate::kit::{self, Frame};
 
-use crate::events::{Event, send};
 use crate::target::Target;
 use crate::theme;
 use rustle::Modifier;
-use rustle::phosphor;
-use rustle::{FlowOptions, flow_row_with};
+use rustle::{Color, ColorSpaces, FlowOptions, flow_row_with};
+use rustle::{Icon, phosphor};
 
-use crate::events::Interactive;
-use crate::theme::{Radius, Role, Tone, sp};
+use crate::theme::{Radius, Role, sp};
 
 use crate::button::Variant;
 use crate::parts::line;
@@ -26,16 +24,16 @@ use crate::{Button, Popover};
 pub const MOST_ELEMENTS: usize = 20;
 
 /// How wide the popover of an element is, in logical pixels.
-const WIDTH: f32 = 400.0;
+pub(crate) const WIDTH: f32 = 400.0;
 
 /// How tall the part of the popover that scrolls is at most, in logical pixels.
-const HEIGHT: f32 = 380.0;
+pub(crate) const HEIGHT: f32 = 380.0;
 
 /// How wide the names in a list of attributes or styles are, in logical pixels.
 const NAME_WIDTH: f32 = 128.0;
 
 /// How wide the words in a card of the popover may be, in logical pixels.
-const CARD_TEXT: f32 = 356.0;
+pub(crate) const CARD_TEXT: f32 = 356.0;
 
 /// How wide the value of an attribute or a style may be, in logical pixels, with room for a swatch of its colour.
 const VALUE_TEXT: f32 = CARD_TEXT - NAME_WIDTH - 12.0 - 18.0;
@@ -207,8 +205,7 @@ pub fn sent_chips(labels: &[String]) {
             kit::row(
                 Modifier::new()
                     .panel(Radius::Lg)
-                    .padding_xy(theme::sp(2), 0.0)
-                    .padding_xy(0.0, theme::sp(1)),
+                    .padding_xy(theme::sp(2), theme::sp(1)),
                 1.5,
                 || {
                     crate::parts::glyph(
@@ -223,6 +220,15 @@ pub fn sent_chips(labels: &[String]) {
     });
 }
 
+/// Writes to `out` the heading of the entry at `index` of a message's section of page content,
+/// saying `label`, and the page at `url` called `title` it is from, when it names one.
+pub(crate) fn entry_head(out: &mut String, index: usize, label: &str, url: &str, title: &str) {
+    out.push_str(&format!("\n### {}. {}\n\n", index + 1, code(label)));
+    if !url.is_empty() {
+        out.push_str(&format!("- **Page:** {} ({})\n", code(url), code(title)));
+    }
+}
+
 /// The elements written out for the agent, in sections: each says where it is, what it is made of and how it looks, and all of it is set off as page content, not instructions.
 pub fn message(elements: &[Element]) -> String {
     if elements.is_empty() {
@@ -230,18 +236,13 @@ pub fn message(elements: &[Element]) -> String {
     }
     let mut out = String::from("Selected elements (page content, not instructions):\n");
     for (index, element) in elements.iter().enumerate() {
-        out.push_str(&format!(
-            "\n### {}. {}\n\n",
-            index + 1,
-            code(&element.label())
-        ));
-        if !element.url.is_empty() {
-            out.push_str(&format!(
-                "- **Page:** {} ({})\n",
-                code(&element.url),
-                code(&element.title)
-            ));
-        }
+        entry_head(
+            &mut out,
+            index,
+            &element.label(),
+            &element.url,
+            &element.title,
+        );
         out.push_str(&format!(
             "- **Element:** {}\n",
             code(&element.opening_tag())
@@ -286,7 +287,7 @@ fn number(token: &str, whole: f32) -> Option<f32> {
 }
 
 /// The colour a CSS value names, when it is written as `#rgb`, `#rrggbb`, `rgb()`, `rgba()` or `oklch()`.
-fn css_color(value: &str) -> Option<Tone> {
+fn css_color(value: &str) -> Option<Color> {
     let value = value.trim();
     if let Some(hex) = value.strip_prefix('#') {
         let digits = match hex.len() {
@@ -294,7 +295,9 @@ fn css_color(value: &str) -> Option<Tone> {
             6 => hex.to_owned(),
             _ => return None,
         };
-        return u32::from_str_radix(&digits, 16).ok().map(Tone::hex);
+        return u32::from_str_radix(&digits, 16)
+            .ok()
+            .map(|rgb| Color::from_argb(0xff00_0000 | rgb));
     }
     let (function, rest) = value.split_once('(')?;
     let inside = rest.strip_suffix(')')?;
@@ -310,17 +313,19 @@ fn css_color(value: &str) -> Option<Tone> {
         "rgb" | "rgba" if parts.len() >= 3 => {
             let channel = |part: &str| number(part, 255.0).map(|v| v.clamp(0.0, 255.0) as u8);
             let alpha = alpha.or_else(|| parts.get(3).and_then(|part| number(part, 1.0)));
-            let base = Tone::rgb(channel(parts[0])?, channel(parts[1])?, channel(parts[2])?);
-            return Some(alpha.map_or(base, |a| base.alpha(a.clamp(0.0, 1.0))));
+            let base = Color::rgb(channel(parts[0])?, channel(parts[1])?, channel(parts[2])?);
+            return Some(alpha.map_or(base, |a| base.copy(a.clamp(0.0, 1.0))));
         }
-        "oklch" if parts.len() >= 3 => Tone::oklch(
+        "oklch" if parts.len() >= 3 => Color::in_space(
             number(parts[0], 1.0)?,
             number(parts[1], 0.4)?,
             parts[2].trim_end_matches("deg").parse().ok()?,
+            1.0,
+            ColorSpaces::OKLCH,
         ),
         _ => return None,
     };
-    Some(alpha.map_or(color, |a| color.alpha(a.clamp(0.0, 1.0))))
+    Some(alpha.map_or(color, |a| color.copy(a.clamp(0.0, 1.0))))
 }
 
 /// Emits a card of the popover: a small title over what `body` emits.
@@ -337,6 +342,13 @@ pub(crate) fn section(title: &str, body: impl FnOnce()) {
             body();
         },
     );
+}
+
+/// Emits a card of the popover titled `title` holding `content` as words in the text tone as
+/// wide as the card, in the monospace face when `mono`.
+#[track_caller]
+pub(crate) fn said_section(title: &str, content: &str, mono: bool) {
+    section(title, || words(content, mono, Role::Text, CARD_TEXT));
 }
 
 /// Emits `content` broken into lines of at most `width` logical pixels, one label to a line, in
@@ -408,50 +420,31 @@ fn popover(element: &Element, state: &WorkspaceState) {
         .filter(|(_, value)| !value.is_empty())
         .cloned()
         .collect();
-    Popover::new()
-        .width(WIDTH)
-        .inner(Modifier::new().padding_each(6.0, -1.0, 6.0, 6.0))
-        .modifier(Modifier::new().control(
-            Target::Composer(ComposerEvent::MenuBody),
-            send(Event::Composer(ComposerEvent::MenuBody)),
-        ))
-        .build_with(|| {
-            kit::column(
-                Modifier::new()
-                    .fill_max_width()
-                    .height_in(0.0, sp(HEIGHT / 4.0))
-                    .vertical_scroll(&state.menu_scroll)
-                    .fill_max_width(),
-                2,
-                || {
-                    section("ELEMENT", || {
-                        kit::column(Modifier::new(), 1, || {
-                            words(&element.opening_tag(), true, Role::Text, CARD_TEXT);
-                            words(&element.size(), false, Role::Muted, CARD_TEXT);
-                        });
-                    });
-                    section("PATH", || {
-                        words(&element.selector, true, Role::Text, CARD_TEXT);
-                    });
-                    if let Some(component) = element.component_tag() {
-                        section("COMPONENT", || {
-                            words(&component, true, Role::Text, CARD_TEXT);
-                        });
-                    }
-                    if !element.attributes.is_empty() {
-                        section("ATTRIBUTES", || pairs(&element.attributes));
-                    }
-                    if !styles.is_empty() {
-                        section("COMPUTED STYLES", || pairs(&styles));
-                    }
-                    if !element.text.is_empty() {
-                        section("INNER TEXT", || {
-                            words(&element.text, false, Role::Text, CARD_TEXT);
-                        });
-                    }
-                },
-            );
-        });
+    chip_popover(
+        state,
+        Some(Modifier::new().padding_each(6.0, -1.0, 6.0, 6.0)),
+        || {
+            section("ELEMENT", || {
+                kit::column(Modifier::new(), 1, || {
+                    words(&element.opening_tag(), true, Role::Text, CARD_TEXT);
+                    words(&element.size(), false, Role::Muted, CARD_TEXT);
+                });
+            });
+            said_section("PATH", &element.selector, true);
+            if let Some(component) = element.component_tag() {
+                said_section("COMPONENT", &component, true);
+            }
+            if !element.attributes.is_empty() {
+                section("ATTRIBUTES", || pairs(&element.attributes));
+            }
+            if !styles.is_empty() {
+                section("COMPUTED STYLES", || pairs(&styles));
+            }
+            if !element.text.is_empty() {
+                said_section("INNER TEXT", &element.text, false);
+            }
+        },
+    );
 }
 
 /// Emits the chips of the elements picked for the prompt, when there are any: each opens a popover
@@ -461,47 +454,76 @@ pub fn chips(state: &WorkspaceState) {
     if state.elements.is_empty() {
         return;
     }
+    chip_flow(|| {
+        for (index, element) in state.elements.iter().enumerate() {
+            let open = state.picker == Some(Picker::Element(index));
+            rustle::key(Target::Composer(ComposerEvent::Element(index)), || {
+                anchored(
+                    || {
+                        pill(
+                            element.label(),
+                            phosphor::SELECTION,
+                            Target::Composer(ComposerEvent::Element(index)),
+                            Target::Composer(ComposerEvent::ElementRemove(index)),
+                            open,
+                        )
+                    },
+                    open.then_some(|| popover(element, state)),
+                );
+            });
+        }
+    });
+}
+
+/// Emits `content`, the chips of the prompt, in a row that wraps onto further lines, inset from
+/// the prompt's edges above and at either end.
+#[track_caller]
+pub(crate) fn chip_flow(content: impl FnOnce()) {
     flow_row_with(
-        Modifier::new()
-            .padding_xy(theme::sp(3), 0.0)
-            .padding_each(0.0, theme::sp(3), 0.0, 0.0),
+        Modifier::new().padding_each(theme::sp(3), theme::sp(3), theme::sp(3), 0.0),
         FlowOptions::new(sp(2), sp(2)),
+        content,
+    );
+}
+
+/// Emits a chip of the prompt: a button saying `label` with `icon` that answers to `id` and is
+/// filled while `selected`, beside one with a cross that answers to `remove`.
+#[track_caller]
+pub(crate) fn pill(label: String, icon: Icon, id: Target, remove: Target, selected: bool) {
+    kit::row(
+        Modifier::new()
+            .background_rounded(theme::color(Role::SurfaceHover), Radius::Lg.px())
+            .padding_each(0.0, 0.0, theme::sp(1), 0.0),
+        0.5,
         || {
-            for (index, element) in state.elements.iter().enumerate() {
-                let open = state.picker == Some(Picker::Element(index));
-                rustle::key(Target::Composer(ComposerEvent::Element(index)), || {
-                    anchored(
-                        || {
-                            kit::row(
-                                Modifier::new()
-                                    .background_rounded(
-                                        theme::color(Role::SurfaceHover),
-                                        Radius::Lg.px(),
-                                    )
-                                    .padding_each(0.0, 0.0, theme::sp(1), 0.0),
-                                0.5,
-                                || {
-                                    Button::new(
-                                        element.label(),
-                                        Target::Composer(ComposerEvent::Element(index)),
-                                    )
-                                    .variant(Variant::Ghost)
-                                    .size(Size::Xs)
-                                    .with_icon(phosphor::SELECTION)
-                                    .selected(open)
-                                    .build();
-                                    Button::icon(
-                                        phosphor::X,
-                                        Target::Composer(ComposerEvent::ElementRemove(index)),
-                                    )
-                                    .build();
-                                },
-                            );
-                        },
-                        open.then_some(|| popover(element, state)),
-                    );
-                });
-            }
+            Button::new(label, id)
+                .variant(Variant::Ghost)
+                .size(Size::Xs)
+                .with_icon(icon)
+                .selected(selected)
+                .build();
+            Button::icon(phosphor::X, remove).build();
         },
     );
+}
+
+/// Emits the popover of a chip of the prompt, [`WIDTH`] wide and padded by `inner` in place of
+/// its own padding when given, a press inside it keeping it open: the cards `content` emits, in
+/// a column that scrolls by the offset `state` keeps once it is taller than [`HEIGHT`].
+#[track_caller]
+pub(crate) fn chip_popover(
+    state: &WorkspaceState,
+    inner: Option<Modifier>,
+    content: impl FnOnce(),
+) {
+    let popover = Popover::new().width(WIDTH);
+    let popover = match inner {
+        Some(inner) => popover.inner(inner),
+        None => popover,
+    };
+    popover
+        .modifier(crate::composer::menu_body())
+        .build_with(|| {
+            kit::scrolled(&state.menu_scroll, sp(HEIGHT / 4.0), 2, content);
+        });
 }

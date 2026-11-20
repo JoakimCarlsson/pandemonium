@@ -7,9 +7,9 @@ use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
 use crate::theme::{Radius, Role};
+use rustle::Modifier;
 use rustle::phosphor;
 use rustle::{Alignment, Arrangement, row_arranged};
-use rustle::{CursorIcon, Modifier};
 
 use crate::parts::{glyph, line};
 use crate::popups::Placement;
@@ -41,8 +41,7 @@ enum Entry {
 /// A popover being described: the rows and sections it holds.
 ///
 /// Build it with [`Popover::new`], fill it with [`Popover::heading`] and
-/// [`Popover::row`], and emit it with [`Popover::build`], or with
-/// [`Popover::build_with`] to put more after its entries. Place it over what
+/// [`Popover::row`], and emit it with [`Popover::build_with`], giving what follows its entries. Place it over what
 /// it belongs to with [`anchored`] or [`anchored_end`], emitting it there with
 /// [`Popover::build_target`] so pressing it does not count as pressing outside.
 #[derive(Clone, Debug, Default)]
@@ -150,24 +149,12 @@ impl Popover {
             });
     }
 
-    /// Emits the popover.
-    #[track_caller]
-    pub fn build(self) {
-        self.build_with(|| {});
-    }
-
     /// Emits the popover answering to `id`, so that pressing it does not count as pressing outside.
     /// Placed over its trigger by [`anchored`] or [`anchored_end`].
     #[track_caller]
     pub fn build_target(self, id: Target) {
         self.modifier(Modifier::new().control(id, send(Event::pressing(id))))
-            .build();
-    }
-
-    /// Emits the popover across the width of the box it hangs over; placed just above that box by [`anchored`].
-    #[track_caller]
-    pub fn above_box(self) {
-        self.modifier(Modifier::new().fill_max_width()).build();
+            .build_with(|| {});
     }
 }
 
@@ -175,46 +162,32 @@ impl Popover {
 /// left edges together; a press elsewhere asks the app to close it.
 #[track_caller]
 pub fn anchored(button: impl FnOnce(), popover: Option<impl FnOnce()>) {
-    crate::popups::anchored(
-        Modifier::new(),
-        Placement::Above,
-        2.0,
-        true,
-        button,
-        popover,
-    );
+    hang(Placement::Above, button, popover);
 }
 
 /// Emits `button` with `popover`, when there is one, hanging a little way above it with their
 /// right edges together; a press elsewhere asks the app to close it.
-#[track_caller]
 pub fn anchored_end(button: impl FnOnce(), popover: Option<impl FnOnce()>) {
-    crate::popups::anchored(
-        Modifier::new(),
-        Placement::AboveEnd,
-        2.0,
-        true,
-        button,
-        popover,
-    );
+    hang(Placement::AboveEnd, button, popover);
+}
+
+/// Emits `button` with `popover`, when there is one, hanging a little way from it at `placement`; a press elsewhere asks the app to close it.
+#[track_caller]
+fn hang(placement: Placement, button: impl FnOnce(), popover: Option<impl FnOnce()>) {
+    crate::popups::anchored(Modifier::new(), placement, 2.0, true, button, popover);
 }
 
 /// Emits one row of a popover: a name over what choosing it means, with a tick on the one that is current.
 #[track_caller]
 pub fn row(name: &str, description: &str, current: bool, id: Target) {
-    let looks = if current {
-        theme::InteractionTones::new().idle(Role::SurfaceSelected)
-    } else {
-        theme::InteractionTones::new().hover(Role::SurfaceHover)
-    }
-    .radius(Radius::Lg);
-    let modifier = Modifier::new()
-        .fill_max_width()
-        .indicated(looks, theme::Focused::Held(crate::focus::is_held(id)))
-        .cursor(CursorIcon::Pointer)
-        .control(id, send(Event::pressing(id)))
-        .padding_xy(theme::sp(2.5), 0.0)
-        .padding_xy(0.0, theme::sp(1.5));
+    let looks = kit::selectable(current).radius(Radius::Lg);
+    let modifier = kit::pressed(
+        Modifier::new()
+            .fill_max_width()
+            .indicated(looks, theme::Focused::Held(crate::focus::is_held(id))),
+        id,
+    )
+    .padding_xy(theme::sp(2.5), theme::sp(1.5));
     kit::row(modifier, 3, || {
         kit::column(Modifier::new().weight(1.0), 0, || {
             line(name, 13, 1.4, Role::Text);

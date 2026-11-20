@@ -12,7 +12,7 @@ use rustle::phosphor;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use rustle::Modifier;
+use rustle::{Color, Modifier};
 
 use crate::Input;
 use crate::change_list::mark_color;
@@ -21,7 +21,7 @@ use crate::file_icon::{file_icon, folder_icon};
 use crate::icons::icon as icon_of;
 use crate::size::Size;
 use crate::state::WorkspaceState;
-use crate::theme::{Radius, Role, Tone};
+use crate::theme::{Radius, Role};
 use crate::tile::Tile;
 use crate::tree::{Entry, Folder, folders};
 
@@ -91,24 +91,23 @@ struct Changed {
     /// The letter git's status is written with, for a file.
     letter: Option<&'static str>,
     /// The colour the name is written in, when there is a change.
-    tone: Option<Tone>,
+    tone: Option<Color>,
 }
 
 impl Changed {
-    /// A row with no change under it.
-    fn none() -> Self {
-        Self {
-            letter: None,
-            tone: None,
-        }
+    /// A row marked with no letter, its name written in `tone` when it is given one.
+    fn unlettered(tone: Option<Color>) -> Self {
+        Self { letter: None, tone }
     }
 
-    /// A file or folder git ignores.
-    fn ignored() -> Self {
-        Self {
-            letter: None,
-            tone: Some(Tone::from(Role::Muted)),
-        }
+    /// The row of the entry at `path` with no change under it, muted when git ignores it.
+    fn unchanged(state: &WorkspaceState, path: &str) -> Self {
+        Self::unlettered(
+            state
+                .tree_ignored
+                .contains(path)
+                .then(|| Color::from(Role::Muted)),
+        )
     }
 
     /// A file marked `letter`.
@@ -116,14 +115,6 @@ impl Changed {
         Self {
             letter: Some(letter),
             tone: Some(mark_color(letter)),
-        }
-    }
-
-    /// A folder with a changed file somewhere beneath it.
-    fn folder() -> Self {
-        Self {
-            letter: None,
-            tone: Some(mark_color("M")),
         }
     }
 }
@@ -181,19 +172,16 @@ fn entry_row(
     let operations = crate::events::operations();
     let picked = target.clone();
     let tone = match look.changed.tone {
-        _ if look.cut => Tone::from(Role::Subtle),
+        _ if look.cut => Color::from(Role::Subtle),
         Some(tone) => tone,
-        None => Tone::from(Role::Text),
+        None => Color::from(Role::Text),
     };
     let mut around = Modifier::new().fill_max_width();
     if look.cut {
         around = around.alpha(0.6);
     }
     if look.landing {
-        around = around.background_rounded(
-            theme::color(Tone::from(Role::Accent).alpha(0.24)),
-            Radius::Sm.px(),
-        );
+        around = around.background_rounded(theme::color(Role::Accent.alpha(0.24)), Radius::Sm.px());
     }
     let letter = look.changed.letter;
     Tile::new(id)
@@ -206,15 +194,15 @@ fn entry_row(
         .gap(1.5)
         .radius(Radius::Sm)
         .modifier(crate::bounds::placed(id, around))
-        .inner(
-            Modifier::new()
-                .padding_each(theme::sp(3.0 + depth as f32 * INDENT), 0.0, 0.0, 0.0)
-                .padding_each(0.0, 0.0, theme::sp(3), 0.0),
-        )
+        .inner(Modifier::new().padding_each(
+            theme::sp(3.0 + depth as f32 * INDENT),
+            0.0,
+            theme::sp(3),
+            0.0,
+        ))
         .build_with(|| {
             match fold {
-                Some(true) => icon_of(phosphor::CARET_DOWN, 3.5, Role::Muted),
-                Some(false) => icon_of(phosphor::CARET_RIGHT, 3.5, Role::Muted),
+                Some(open) => icon_of(kit::chevron(open), 3.5, Role::Muted),
                 None => rustle::spacer(Modifier::new().size(theme::sp(3.5), theme::sp(3.5))),
             }
             icon();
@@ -264,7 +252,6 @@ pub fn drag_ghost(state: &WorkspaceState) {
 }
 
 /// Emits the field a name is typed into where its row will be, `depth` levels down, with what is wrong with the name under it; nothing while nothing is being named.
-#[track_caller]
 fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) {
     let Some((_, field)) = state.git.naming.as_ref() else {
         return;
@@ -275,8 +262,12 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) {
             Modifier::new()
                 .fill_max_width()
                 .height(theme::sp(6))
-                .padding_each(theme::sp(3.0 + depth as f32 * INDENT), 0.0, 0.0, 0.0)
-                .padding_each(0.0, 0.0, theme::sp(3), 0.0),
+                .padding_each(
+                    theme::sp(3.0 + depth as f32 * INDENT),
+                    0.0,
+                    theme::sp(3),
+                    0.0,
+                ),
             2,
             || {
                 rustle::spacer(Modifier::new().size(theme::sp(3.5), theme::sp(3.5)));
@@ -296,10 +287,12 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) {
             return;
         };
         kit::column(
-            Modifier::new()
-                .padding_each(theme::sp(3.0 + depth as f32 * INDENT + 8.0), 0.0, 0.0, 0.0)
-                .padding_each(0.0, 0.0, theme::sp(3), 0.0)
-                .padding_each(0.0, 0.0, 0.0, theme::sp(1)),
+            Modifier::new().padding_each(
+                theme::sp(3.0 + depth as f32 * INDENT + 8.0),
+                0.0,
+                theme::sp(3),
+                theme::sp(1),
+            ),
             0,
             || kit::text(Modifier::new(), problem, kit::line(12, Role::Danger)),
         );
@@ -375,11 +368,6 @@ impl Item<'_> {
         }
     }
 
-    /// The key the list knows the item by.
-    fn key(&self) -> Option<Target> {
-        self.id()
-    }
-
     /// The row of the tree the item is, if it is one.
     fn row(&self) -> Option<Target> {
         match self {
@@ -404,27 +392,22 @@ fn items<'a>(state: &'a WorkspaceState, entries: &'a [Entry]) -> Vec<Item<'a>> {
             match entry {
                 Entry::File { name, index } => {
                     let path = state.files.get(*index).map_or("", String::as_str);
-                    items.push(if renaming(state, path) {
-                        Item::Field {
+                    let index = *index;
+                    items.push(match renaming(state, path) {
+                        true => Item::Field {
                             folder: false,
                             depth,
-                        }
-                    } else {
-                        Item::File {
-                            name,
-                            index: *index,
-                            depth,
-                        }
+                        },
+                        false => Item::File { name, index, depth },
                     });
                 }
                 Entry::Folder(folder) => {
-                    items.push(if renaming(state, &folder.path) {
-                        Item::Field {
+                    items.push(match renaming(state, &folder.path) {
+                        true => Item::Field {
                             folder: true,
                             depth,
-                        }
-                    } else {
-                        Item::Folder { folder, depth }
+                        },
+                        false => Item::Folder { folder, depth },
                     });
                     if state.open_tree.contains(&folder.path) {
                         if let Some(is_folder) = new_in(state, &folder.path) {
@@ -539,7 +522,6 @@ fn walks_rows(rows: Rc<Vec<(Target, usize)>>, list: rustle::LazyListState) -> Mo
 
 /// Keeps the item being composed composed while focus is on `id`, even scrolled out of view,
 /// as a focused item of a lazy list pins itself.
-#[track_caller]
 fn pin_while_held(id: Target) {
     let held = crate::focus::is_held(id);
     let container = rustle::LOCAL_PINNABLE_CONTAINER.current();
@@ -569,10 +551,7 @@ fn space(state: &WorkspaceState, index: usize) {
         .is_some_and(|drag| drag.into.as_deref() == Some(""));
     let mut around = Modifier::new().fill_max_width().height(height);
     if landing {
-        around = around.background_rounded(
-            theme::color(Tone::from(Role::Accent).alpha(0.24)),
-            Radius::Sm.px(),
-        );
+        around = around.background_rounded(theme::color(Role::Accent.alpha(0.24)), Radius::Sm.px());
     }
     let operations = crate::events::operations();
     let pressed = crate::events::send(crate::events::Event::Tree(TreeEvent::TreeSpace));
@@ -602,8 +581,7 @@ fn file_row(
     let path = state.files.get(index).map_or("", String::as_str);
     let changed = match marks.get(path) {
         Some(letter) => Changed::file(letter),
-        None if state.tree_ignored.contains(path) => Changed::ignored(),
-        None => Changed::none(),
+        None => Changed::unchanged(state, path),
     };
     entry_row(
         || file_icon(name, 4.0),
@@ -635,11 +613,9 @@ fn folder_row(
             .get(*index)
             .is_some_and(|path| marks.contains_key(path.as_str()))
     }) {
-        Changed::folder()
-    } else if state.tree_ignored.contains(&folder.path) {
-        Changed::ignored()
+        Changed::unlettered(Some(mark_color("M")))
     } else {
-        Changed::none()
+        Changed::unchanged(state, &folder.path)
     };
     entry_row(
         || folder_icon(open, 4.0),
@@ -677,7 +653,7 @@ pub fn list(state: &WorkspaceState) {
         &state.files_list,
         rustle::LazyContent::new().padding(sp(1)),
         items.len(),
-        |index| items[index].key(),
+        |index| items[index].id(),
         |index| {
             let item = &items[index];
             if let Some(id) = item.id() {

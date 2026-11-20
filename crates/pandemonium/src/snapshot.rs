@@ -6221,12 +6221,14 @@ mod performance_tests {
                     total_before = TOTAL.load(Ordering::Relaxed);
                 }
                 let started = std::time::Instant::now();
-                screen = screen.heard(
-                    0,
-                    pm_harness::Event::Said(format!(
-                        "chunk {version} of **streamed** words and `code`. "
-                    )),
-                );
+                screen = screen.in_workspace(|state| {
+                    state.heard(
+                        0,
+                        pm_harness::Event::Said(format!(
+                            "chunk {version} of **streamed** words and `code`. "
+                        )),
+                    )
+                });
                 let heard_at = started.elapsed();
                 std::hint::black_box(laid(&screen, WIDTH as f32, None));
                 if version > 0 {
@@ -6295,10 +6297,12 @@ mod performance_tests {
             let mut samples = Vec::new();
             for version in 0..21 {
                 let started = std::time::Instant::now();
-                screen = screen.handle(Event::Field(FieldEvent::Typed {
-                    field: Target::Composer(ComposerEvent::Prompt),
-                    text: String::from("x"),
-                }));
+                screen = screen.in_workspace(|state| {
+                    state.handle(Event::Field(FieldEvent::Typed {
+                        field: Target::Composer(ComposerEvent::Prompt),
+                        text: String::from("x"),
+                    }))
+                });
                 std::hint::black_box(laid(
                     &screen,
                     WIDTH as f32,

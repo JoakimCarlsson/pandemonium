@@ -1,29 +1,25 @@
 //! The pages of the settings window that list what agents are given in a project: an overview, the skills, instructions, agent definitions and hooks found in the folders the agent reads, and the tools it may call, each with a switch that leaves it out of new sessions.
 
-use crate::events::{Event, send};
 use crate::kit;
 use crate::target::Target;
-use crate::theme;
-use rustle::phosphor;
-use rustle::{Alignment, Arrangement, row_arranged};
 
 use std::path::Path;
 
 use pm_protocol::library::{Item, Kind, Product, Scope, Source, ToolSet, locations};
-use rustle::{CursorIcon, Modifier};
+use rustle::Modifier;
 
-use crate::events::Interactive;
 use crate::theme::Role;
 
 use crate::Badge;
 use crate::button::Variant;
-use crate::parts::{glyph, line};
+use crate::parts::glyph;
 use crate::settings::Section;
 use crate::settings_drafts::{draft_node, draftable, new_button};
 use crate::settings_row::switch;
 use crate::settings_rows::{ITEM_OPENS, ITEM_SWITCHES, SET_FOLDS, SET_SWITCHES, TOOL_SWITCHES};
 use crate::settings_servers::{
-    boxed, card, flat_row, heading_only, note, paragraph, search_box, wrapped_note,
+    boxed, card, flat_row, heading_only, name_tone, note, paragraph, search_box, spread, titled,
+    wrapped_note,
 };
 use crate::state::{Outgoing, Page, WorkspaceState};
 
@@ -48,6 +44,13 @@ pub struct Library {
     pub draft: Option<crate::settings_drafts::DraftForm>,
 }
 
+impl Library {
+    /// The set of tools at `place`, once the sets were listed.
+    fn set(&self, place: usize) -> Option<&ToolSet> {
+        self.sets.as_ref()?.get(place)
+    }
+}
+
 /// Whether `section` is one of the pages of what agents are given.
 pub(crate) fn lists(section: Section) -> bool {
     section == Section::Customizations || section == Section::Tools || kind_of(section).is_some()
@@ -55,13 +58,9 @@ pub(crate) fn lists(section: Section) -> bool {
 
 /// The kind of customization `section` lists, when it lists one.
 pub(crate) fn kind_of(section: Section) -> Option<Kind> {
-    match section {
-        Section::Skills => Some(Kind::Skill),
-        Section::Instructions => Some(Kind::Instruction),
-        Section::AgentDefinitions => Some(Kind::Agent),
-        Section::Hooks => Some(Kind::Hook),
-        _ => None,
-    }
+    Kind::ALL
+        .into_iter()
+        .find(|kind| section_of(*kind) == section)
 }
 
 /// The section that lists `kind`.
@@ -138,13 +137,11 @@ impl WorkspaceState {
 
     /// The machine, or nothing for this one, and the folder of the project at `project`; this machine and no folder when no project is open.
     pub(crate) fn library_place(&self, project: Option<usize>) -> Option<(Option<String>, String)> {
-        match project {
-            Some(project) => {
-                let held = self.projects.get(project)?;
-                Some((held.host(), held.directory().to_string_lossy().into_owned()))
-            }
-            None => Some((None, String::new())),
-        }
+        let Some(project) = project else {
+            return Some((None, String::new()));
+        };
+        let held = self.projects.get(project)?;
+        Some((held.host(), held.directory().to_string_lossy().into_owned()))
     }
 
     /// Asks the server of the project the pages are about for what its agent is given there, and for the agent's tools.
@@ -178,36 +175,45 @@ impl WorkspaceState {
 
     /// The state with what the agent at `agent` is given in the project at `project`, when that is still what the pages are about.
     pub fn with_library(
-        mut self,
+        self,
         project: Option<usize>,
         agent: usize,
         product: Option<Product>,
         items: Vec<Item>,
         withheld: Vec<String>,
     ) -> Self {
-        let library = &mut self.settings_page.library;
-        if library.of == Some((project, agent)) {
-            library.product = product;
+        self.library_answered((project, agent), product, withheld, |library| {
             library.items = Some(items);
-            library.withheld = withheld;
-        }
-        self
+        })
     }
 
     /// The state with the tools the agent at `agent` is given, when that is still the agent the pages are about.
     pub fn with_tool_sets(
-        mut self,
+        self,
         project: Option<usize>,
         agent: usize,
         product: Option<Product>,
         sets: Vec<ToolSet>,
         withheld: Vec<String>,
     ) -> Self {
-        let library = &mut self.settings_page.library;
-        if library.of == Some((project, agent)) {
-            library.product = product;
+        self.library_answered((project, agent), product, withheld, |library| {
             library.sets = Some(sets);
+        })
+    }
+
+    /// The state with what the server answered about the project and the agent `of`, by position, when that is still what the pages are about: the `product` the agent runs, what is turned off, `withheld`, and what `fill` puts in.
+    fn library_answered(
+        mut self,
+        of: (Option<usize>, usize),
+        product: Option<Product>,
+        withheld: Vec<String>,
+        fill: impl FnOnce(&mut Library),
+    ) -> Self {
+        let library = &mut self.settings_page.library;
+        if library.of == Some(of) {
+            library.product = product;
             library.withheld = withheld;
+            fill(library);
         }
         self
     }
@@ -319,7 +325,7 @@ impl WorkspaceState {
             return;
         };
         let library = &self.settings_page.library;
-        let Some(set) = library.sets.as_ref().and_then(|sets| sets.get(place)) else {
+        let Some(set) = library.set(place) else {
             return;
         };
         if set.per_tool(library.product) {
@@ -333,9 +339,7 @@ impl WorkspaceState {
     fn toggle_set(&mut self, place: usize) {
         let library = &self.settings_page.library;
         let Some(set) = library
-            .sets
-            .as_ref()
-            .and_then(|sets| sets.get(place))
+            .set(place)
             .filter(|set| set.switchable(library.product))
         else {
             return;
@@ -349,19 +353,16 @@ impl WorkspaceState {
         let Some(id) = self
             .settings_page
             .library
-            .sets
-            .as_ref()
-            .and_then(|sets| sets.get(place))
+            .set(place)
             .map(|set| set.id.clone())
         else {
             return;
         };
         let open = &mut self.settings_page.library.open_sets;
-        match open.iter().position(|held| *held == id) {
-            Some(place) => {
-                open.remove(place);
-            }
-            None => open.push(id),
+        let before = open.len();
+        open.retain(|held| *held != id);
+        if open.len() == before {
+            open.push(id);
         }
     }
 
@@ -488,11 +489,10 @@ pub(crate) fn body(state: &WorkspaceState, section: Section, page: impl FnOnce()
 }
 
 /// Emits the page of one kind of customization: the search box, a note when the agent cannot leave this kind out, and the rows found, or where the files would go when none are.
-#[track_caller]
 fn items_page(state: &WorkspaceState, kind: Kind, room: f32) {
     let library = &state.settings_page.library;
     let product = library.product;
-    let needle = state.settings_servers.search.text().trim().to_lowercase();
+    let needle = state.needle();
     search_box(state, section_of(kind));
     if library.of.is_some() && !kind.switchable(product) {
         let name = product.map_or("This agent", Product::name);
@@ -504,11 +504,7 @@ fn items_page(state: &WorkspaceState, kind: Kind, room: f32) {
         );
     }
     let Some(items) = library.items.as_ref() else {
-        note(if library.of.is_some() {
-            "Reading…"
-        } else {
-            ""
-        });
+        note(library.of.map_or("", |_| "Reading…"));
         return;
     };
     let rows: Vec<(usize, &Item)> = items
@@ -526,7 +522,12 @@ fn items_page(state: &WorkspaceState, kind: Kind, room: f32) {
     if kind == Kind::Instruction {
         crate::settings_drafts::prompt_node(state, room);
     }
-    found_heading(state, kind, rows.len());
+    spread(|| {
+        heading_only("Found", rows.len());
+        if draftable(kind) {
+            new_button(state, kind);
+        }
+    });
     if let Some(form) = library.draft.as_ref().filter(|form| form.kind == kind) {
         draft_node(form, room);
     }
@@ -553,24 +554,7 @@ fn items_page(state: &WorkspaceState, kind: Kind, room: f32) {
     wrapped_note(&said, room);
 }
 
-/// Emits the heading over the customizations of `kind` found, with how many show, and the button for a new one when one can be written.
-#[track_caller]
-fn found_heading(state: &WorkspaceState, kind: Kind, shown: usize) {
-    row_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::SpaceBetween,
-        Alignment::Center,
-        || {
-            heading_only("Found", shown);
-            if draftable(kind) {
-                new_button(state, kind);
-            }
-        },
-    );
-}
-
 /// Emits one customization as its row shows it: its name with its scope, what it is for, what it says about itself in the code font, its switch and the button that opens its file.
-#[track_caller]
 fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
     let library = &state.settings_page.library;
     let on = item.enabled(&library.withheld);
@@ -604,15 +588,11 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
         Kind::Hook if !item.description.is_empty() => format!("Matches {}", item.description),
         _ => item.description.clone(),
     };
-    let name_tone = if on { Role::Text } else { Role::Muted };
-    flat_row(|| {
-        kit::column(Modifier::new().weight(1.0).clip(), 1, || {
-            kit::row(Modifier::new(), 2, || {
-                kit::text(
-                    Modifier::new(),
-                    item.name.clone(),
-                    kit::strong(13, name_tone),
-                );
+    flat_row(3, || {
+        titled(
+            &item.name,
+            name_tone(on),
+            || {
                 Badge::new(item.scope.label()).tone(Role::Subtle).build();
                 if !item.tool.is_empty() {
                     Badge::new(&item.tool).tone(Role::Subtle).build();
@@ -620,16 +600,18 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
                 if !on {
                     Badge::new("Off").tone(Role::Subtle).build();
                 }
-            });
-            if !description.is_empty() {
-                line(description, 12, 1.4, Role::Muted);
-            }
-            kit::text(
-                Modifier::new().fill_max_width(),
-                detail,
-                kit::line(11, Role::Subtle),
-            );
-        });
+            },
+            || {
+                if !description.is_empty() {
+                    note(&description);
+                }
+                kit::text(
+                    Modifier::new().fill_max_width(),
+                    detail,
+                    kit::line(11, Role::Subtle),
+                );
+            },
+        );
         kit::row(Modifier::new(), 2, || {
             if item.kind.switchable(library.product) {
                 switch(on, ITEM_SWITCHES.id(index));
@@ -643,35 +625,23 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
     });
 }
 
-/// One set of tools the tools page shows: where it is in the list, whether it is unfolded, and its tools that match the search with their place among every tool.
-struct ShownSet<'a> {
-    /// The set.
-    set: &'a ToolSet,
-    /// Where it is among the sets.
-    place: usize,
-    /// Whether its tools show under it.
-    open: bool,
-    /// Its tools that match the search, each with its place among the tools of every set.
-    matching: Vec<(usize, &'a pm_protocol::library::ToolEntry)>,
-}
-
 /// Emits the page of tools: the search box, and each set with how many of its tools are on and its switch, its tools under it when it is unfolded or searched.
 #[track_caller]
 fn tools_page(state: &WorkspaceState) {
     let library = &state.settings_page.library;
     let product = library.product;
-    let needle = state.settings_servers.search.text().trim().to_lowercase();
+    let needle = state.needle();
     search_box(state, Section::Tools);
     let Some(sets) = library.sets.as_ref() else {
-        note(if library.of.is_some() {
-            "Listing the tools of each server…"
-        } else {
-            ""
-        });
+        note(
+            library
+                .of
+                .map_or("", |_| "Listing the tools of each server…"),
+        );
         return;
     };
     let mut first = 0;
-    let mut shown = Vec::new();
+    let mut any = false;
     for (place, set) in sets.iter().enumerate() {
         let start = first;
         first += set.tools.len();
@@ -690,31 +660,16 @@ fn tools_page(state: &WorkspaceState) {
         if !named && matching.is_empty() {
             continue;
         }
+        any = true;
         let open = !needle.is_empty() || library.open_sets.contains(&set.id);
-        shown.push(ShownSet {
-            set,
-            place,
-            open,
-            matching,
-        });
-    }
-    if shown.is_empty() {
-        note(if sets.is_empty() {
-            "The agent has no tools the app knows of, and no tool server is switched on."
-        } else {
-            "Nothing found matches."
-        });
-        return;
-    }
-    for held in &shown {
-        rustle::key(held.place, || {
+        rustle::key(place, || {
             boxed(|| {
-                set_row(held.set, held.place, held.open, product, &library.withheld);
-                if held.open {
-                    for &(index, tool) in &held.matching {
+                set_row(set, place, open, product, &library.withheld);
+                if open {
+                    for &(index, tool) in &matching {
                         rustle::key(index, || {
                             tool_row(
-                                held.set,
+                                set,
                                 tool,
                                 TOOL_SWITCHES.id(index),
                                 product,
@@ -726,20 +681,21 @@ fn tools_page(state: &WorkspaceState) {
             });
         });
     }
+    if !any {
+        note(if sets.is_empty() {
+            "The agent has no tools the app knows of, and no tool server is switched on."
+        } else {
+            "Nothing found matches."
+        });
+    }
 }
 
 /// Emits the heading row of a set of tools: the chevron that folds it, its name and where it comes from, how many of its tools are on, and its switch.
-#[track_caller]
 fn set_row(set: &ToolSet, place: usize, open: bool, product: Option<Product>, withheld: &[String]) {
     let on = set.enabled(withheld);
     let count = match &set.error {
         Some(_) => "?".to_owned(),
         None => format!("{}/{}", set.enabled_count(withheld), set.tools.len()),
-    };
-    let chevron = if open {
-        phosphor::CARET_DOWN
-    } else {
-        phosphor::CARET_RIGHT
     };
     let about = match &set.error {
         Some(reason) => format!(
@@ -748,29 +704,20 @@ fn set_row(set: &ToolSet, place: usize, open: bool, product: Option<Product>, wi
         ),
         None => source_label(set),
     };
-    let heading = Modifier::new().weight(1.0).clip();
-    let heading = match SET_FOLDS.id(place) {
-        Some(fold) => heading
-            .cursor(CursorIcon::Pointer)
-            .control(fold, send(Event::pressing(fold))),
-        None => heading,
-    };
-    let name_tone = if on { Role::Text } else { Role::Muted };
-    flat_row(|| {
-        kit::row(heading, 2, || {
-            glyph(chevron, 4.0, Role::Muted);
-            kit::column(Modifier::new().weight(1.0).clip(), 1, || {
-                kit::row(Modifier::new(), 2, || {
-                    kit::text(
-                        Modifier::new(),
-                        set.name.clone(),
-                        kit::strong(13, name_tone),
-                    );
-                    Badge::new(count).build();
-                });
-                line(about, 12, 1.4, Role::Muted);
-            });
-        });
+    flat_row(3, || {
+        kit::row(
+            kit::pressable(Modifier::new().weight(1.0).clip(), SET_FOLDS.id(place)),
+            2,
+            || {
+                glyph(kit::chevron(open), 4.0, Role::Muted);
+                titled(
+                    &set.name,
+                    name_tone(on),
+                    || Badge::new(count).build(),
+                    || note(&about),
+                );
+            },
+        );
         if set.switchable(product) {
             switch(on, SET_SWITCHES.id(place));
         }
@@ -778,7 +725,6 @@ fn set_row(set: &ToolSet, place: usize, open: bool, product: Option<Product>, wi
 }
 
 /// Emits one tool of a set, set in under the set's heading: its name, what it does and, where the agent can be started without it alone, its switch answering to `id`.
-#[track_caller]
 fn tool_row(
     set: &ToolSet,
     tool: &pm_protocol::library::ToolEntry,
@@ -787,25 +733,21 @@ fn tool_row(
     withheld: &[String],
 ) {
     let on = set.tool_enabled(&tool.name, withheld);
-    let name_tone = if on { Role::Text } else { Role::Muted };
-    kit::row(
-        Modifier::new()
-            .padding_each(theme::sp(10), 0.0, 0.0, 0.0)
-            .padding_each(0.0, 0.0, theme::sp(3), 0.0)
-            .padding_xy(0.0, theme::sp(3)),
-        3,
-        || {
-            kit::column(Modifier::new().weight(1.0).clip(), 1, || {
-                kit::text(Modifier::new(), tool.name.clone(), kit::code(12, name_tone));
-                if let Some(first) = tool.description.lines().next() {
-                    line(first.to_owned(), 12, 1.4, Role::Muted);
-                }
-            });
-            if set.per_tool(product) {
-                switch(on, id);
+    flat_row(10, || {
+        kit::column(Modifier::new().weight(1.0).clip(), 1, || {
+            kit::text(
+                Modifier::new(),
+                tool.name.clone(),
+                kit::code(12, name_tone(on)),
+            );
+            if let Some(first) = tool.description.lines().next() {
+                note(first);
             }
-        },
-    );
+        });
+        if set.per_tool(product) {
+            switch(on, id);
+        }
+    });
 }
 
 #[cfg(test)]

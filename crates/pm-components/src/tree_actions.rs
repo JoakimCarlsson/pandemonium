@@ -419,12 +419,8 @@ impl WorkspaceState {
             Naming::Rename(target) => parent_of(&target.path).to_owned(),
         };
         let path = joined(&directory, typed);
-        let taken = self.files.iter().any(|file| {
-            file == &path
-                || file
-                    .strip_prefix(&path)
-                    .is_some_and(|rest| rest.starts_with('/'))
-        }) || self.tree_folders.iter().any(|folder| folder == &path);
+        let taken = self.files.iter().any(|file| within(file, &path))
+            || self.tree_folders.iter().any(|folder| folder == &path);
         taken.then_some("A file or folder with this name already exists.")
     }
 
@@ -434,14 +430,9 @@ impl WorkspaceState {
             if field.text().trim() == name_of(&target.path))
     }
 
-    /// The target the menu that is open was opened on.
-    fn tree_target(&self) -> Option<TreeTarget> {
-        self.git.tree_target.clone()
-    }
-
     /// The entries the open menu acts on: the rows picked when it was opened on one of them, the one it was opened on when not.
     pub(crate) fn tree_targets(&self) -> Vec<TreeTarget> {
-        let Some(target) = self.tree_target() else {
+        let Some(target) = self.git.tree_target.clone() else {
             return Vec::new();
         };
         let picked = self.tree_picked();
@@ -455,15 +446,22 @@ impl WorkspaceState {
     /// Asks for the name of a new file, or folder, in the folder the menu was opened on.
     pub(crate) fn tree_new(&mut self, folder: bool) {
         let directory = self
-            .tree_target()
-            .map(|target| target.directory())
+            .git
+            .tree_target
+            .as_ref()
+            .map(TreeTarget::directory)
             .unwrap_or_default();
         self.ask_name(Naming::New { directory, folder });
     }
 
     /// Asks for the new name of the entry the menu was opened on.
     pub(crate) fn tree_rename(&mut self) {
-        if let Some(target) = self.tree_target().filter(|target| !target.is_root()) {
+        if let Some(target) = self
+            .git
+            .tree_target
+            .clone()
+            .filter(|target| !target.is_root())
+        {
             self.ask_name(Naming::Rename(target));
         }
     }
@@ -486,12 +484,7 @@ impl WorkspaceState {
         let several = files.len() > 1;
         for target in files {
             self.open_viewer(target.path, false);
-            if several
-                && let Some(viewer) = self
-                    .git
-                    .shown
-                    .and_then(|shown| self.git.viewers.get_mut(shown))
-            {
+            if several && let Some(viewer) = self.chosen_viewer_mut() {
                 viewer.preview = false;
             }
         }
@@ -511,8 +504,10 @@ impl WorkspaceState {
             return;
         };
         let into = self
-            .tree_target()
-            .map(|target| target.directory())
+            .git
+            .tree_target
+            .as_ref()
+            .map(TreeTarget::directory)
             .unwrap_or_default();
         if held.cut {
             self.git.tree_clipboard = None;
@@ -723,7 +718,7 @@ impl WorkspaceState {
 
     /// Shows the entry the menu was opened on in the file manager of this machine.
     pub(crate) fn tree_reveal(&mut self) {
-        if let (Some(target), Some(session)) = (self.tree_target(), self.review_index()) {
+        if let (Some(target), Some(session)) = (self.git.tree_target.clone(), self.review_index()) {
             self.outbox.push(Outgoing::RevealFile {
                 session,
                 path: target.path,

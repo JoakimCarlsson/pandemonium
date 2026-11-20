@@ -3,12 +3,14 @@
 use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use pm_protocol::{UsageDay, UsageModel, UsageReport, UsageSession, UsageTotals};
 use rustle::Modifier;
-use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with, row_arranged};
+use rustle::{
+    Alignment, Arrangement, Color, ColorSpaces, FlowOptions, column_arranged, flow_row_with,
+    row_arranged,
+};
 
-use crate::theme::{Radius, Role, Tone};
+use crate::theme::{Radius, Role};
 
 use crate::BarRow;
 use crate::parts::line;
@@ -323,9 +325,9 @@ pub(crate) fn bar_width(room: f32, count: usize) -> f32 {
 }
 
 /// The colour of the part of a bar at `place` among the chart's models; the one every other model shares past the last of them.
-fn series_tone(place: usize) -> Tone {
+fn series_tone(place: usize) -> Color {
     match SERIES_HUES.get(place) {
-        Some(hue) => Tone::oklch(0.72, 0.15, *hue),
+        Some(hue) => Color::in_space(0.72, 0.15, *hue, 1.0, ColorSpaces::OKLCH),
         None => Role::Subtle.into(),
     }
 }
@@ -355,7 +357,6 @@ fn headline(title: &str, value: String, more: String, width: f32) {
 }
 
 /// Emits the headline figures of `report` in `room` logical pixels: spend, tokens, requests and how much of the input was read from the cache, four side by side or two when the page is narrow.
-#[track_caller]
 fn headlines(report: &UsageReport, room: f32) {
     let total = &report.total;
     let columns = if room >= WIDE_HEADLINE { 4.0 } else { 2.0 };
@@ -376,7 +377,7 @@ fn headlines(report: &UsageReport, room: f32) {
         1 => "in 1 session".to_owned(),
         count => format!("in {count} sessions"),
     };
-    flow_row_with(Modifier::new(), FlowOptions::new(sp(2), sp(2)), || {
+    kit::flow(false, || {
         headline("Spend", spend.0, spend.1, width);
         headline(
             "Tokens",
@@ -395,7 +396,6 @@ fn headlines(report: &UsageReport, room: f32) {
 }
 
 /// Emits the bar of `day`, `width` logical pixels across: a part for each of `series` and one for the rest, the first at the bottom, as tall as their share of `most`; resting on it says the day and what it came to.
-#[track_caller]
 fn day_bar(day: &UsageDay, series: &[String], measure: Measure, most: u64, width: f32) {
     let amounts = stack(day, series, measure);
     let whole: u64 = amounts.iter().sum();
@@ -427,7 +427,7 @@ fn day_bar(day: &UsageDay, series: &[String], measure: Measure, most: u64, width
 
 /// Emits one entry of the chart's legend: a swatch of `tone` and the name it stands for.
 #[track_caller]
-fn legend_entry(name: &str, tone: Tone) {
+fn legend_entry(name: &str, tone: Color) {
     kit::row(Modifier::new(), 1.5, || {
         rustle::spacer(
             Modifier::new()
@@ -456,23 +456,16 @@ fn chart(report: &UsageReport, room: f32) {
         Measure::Tokens => "Tokens per day",
     };
     let others = report.models.len() > series.len();
-    let ends = |day: Option<&UsageDay>| {
-        line(
-            day.map(|day| day_label(&day.day)).unwrap_or_default(),
-            12,
-            1.4,
-            Role::Muted,
-        );
-    };
+    let ends =
+        |day: Option<&UsageDay>| note(&day.map(|day| day_label(&day.day)).unwrap_or_default());
     kit::column(Modifier::new().width(room), 2, || {
         kit::row(Modifier::new().fill_max_width(), 3, || {
-            label_grown(title);
-            line(
-                format!("most {}", figure(most, measure)),
-                12,
-                1.4,
-                Role::Muted,
+            kit::text(
+                Modifier::new().weight(1.0),
+                title,
+                kit::strong(15, Role::Text),
             );
+            note(&format!("most {}", figure(most, measure)));
         });
         row_arranged(
             Modifier::new()
@@ -499,7 +492,7 @@ fn chart(report: &UsageReport, room: f32) {
         );
         flow_row_with(
             Modifier::new(),
-            FlowOptions::new(sp(3), sp(3)).item_alignment(Alignment::Center),
+            FlowOptions::new(theme::sp(3), theme::sp(3)).item_alignment(Alignment::Center),
             || {
                 for (place, name) in series.iter().enumerate() {
                     legend_entry(name, series_tone(place));
@@ -512,16 +505,6 @@ fn chart(report: &UsageReport, room: f32) {
     });
 }
 
-/// Emits the title of the chart, set medium, taking the room its row leaves and cut short at its edge.
-#[track_caller]
-fn label_grown(title: &str) {
-    kit::text(
-        Modifier::new().weight(1.0),
-        title,
-        kit::strong(15, Role::Text),
-    );
-}
-
 /// Emits a row of a boxed list holding what `content` emits, with room around it and a hairline under it unless it is the `last`.
 #[track_caller]
 fn padded(last: bool, content: impl FnOnce()) {
@@ -530,12 +513,7 @@ fn padded(last: bool, content: impl FnOnce()) {
     } else {
         Modifier::new().ruled(theme::Side::Bottom)
     };
-    kit::row_top(
-        own.padding_xy(theme::sp(3), 0.0)
-            .padding_xy(0.0, theme::sp(3)),
-        0,
-        content,
-    );
+    kit::row_top(own.padding(theme::sp(3)), 0, content);
 }
 
 /// How wide a row inside a boxed list is when the page is `room` logical pixels across.
@@ -552,32 +530,45 @@ fn counts(totals: &UsageTotals) -> String {
     )
 }
 
+/// Emits a row of a boxed list for each of `entries`, in `room` logical pixels: what it is called, what it came to and the line saying more, with a bar in its colour as long as its share of the most any of them came to in `measure`.
+#[track_caller]
+fn bar_rows(entries: Vec<(String, &UsageTotals, String, Color)>, measure: Measure, room: f32) {
+    let most = entries
+        .iter()
+        .map(|(_, totals, _, _)| amount(totals, measure))
+        .max()
+        .unwrap_or(0);
+    let last = entries.len().saturating_sub(1);
+    for (place, (name, totals, detail, tone)) in entries.into_iter().enumerate() {
+        padded(place == last, || {
+            BarRow::new(name, spend_label(totals), row_width(room))
+                .detail(detail)
+                .share(share_of(amount(totals, measure), most))
+                .tone(tone)
+                .build();
+        });
+    }
+}
+
 /// Emits the models of `report`, one to a row in `room` logical pixels, the costliest first, each with a bar as long as its share of the costliest and in its colour of the chart.
 #[track_caller]
 fn model_rows(report: &UsageReport, room: f32) {
     let measure = measure(report);
-    let most = report
-        .models
-        .iter()
-        .map(|model| amount(&model.totals, measure))
-        .max()
-        .unwrap_or(0);
-    let last = report.models.len().saturating_sub(1);
-    for (place, model) in report.models.iter().enumerate() {
+    let entries = report.models.iter().enumerate().map(|(place, model)| {
         let unpriced = measure == Measure::Cost && model.totals.cost.is_none();
         let detail = if unpriced {
             format!("{} · no known prices", counts(&model.totals))
         } else {
             counts(&model.totals)
         };
-        padded(place == last, || {
-            BarRow::new(&model.model, spend_label(&model.totals), row_width(room))
-                .detail(detail)
-                .share(share_of(amount(&model.totals, measure), most))
-                .tone(series_tone(place))
-                .build();
-        });
-    }
+        (
+            model.model.clone(),
+            &model.totals,
+            detail,
+            series_tone(place),
+        )
+    });
+    bar_rows(entries.collect(), measure, room);
 }
 
 /// How much of `most` `amount` is, from nought to one; nothing when `most` is.
@@ -589,38 +580,22 @@ pub(crate) fn share_of(amount: u64, most: u64) -> f32 {
     }
 }
 
-/// Emits the sessions of `report` that used most, one to a row in `room` logical pixels, each with its title, its project, what it used and a bar as long as its share of the first.
-#[track_caller]
+/// Emits the sessions of `report` that used most, one to a row in `room` logical pixels, each with its title, its project, what it used and a bar as long as its share of the first, which used most.
 fn session_rows(report: &UsageReport, room: f32) {
-    let measure = measure(report);
-    let most = report
-        .sessions
-        .iter()
-        .map(|session| amount(&session.totals, measure))
-        .max()
-        .unwrap_or(0);
-    let last = report.sessions.len().min(TOP_SESSIONS).saturating_sub(1);
-    for (place, session) in report.sessions.iter().take(TOP_SESSIONS).enumerate() {
-        padded(place == last, || {
-            BarRow::new(
-                session_name(session),
-                spend_label(&session.totals),
-                row_width(room),
-            )
-            .detail(format!(
-                "{} · {}",
-                project_name(&session.project),
-                counts(&session.totals)
-            ))
-            .share(share_of(amount(&session.totals, measure), most))
-            .build();
-        });
-    }
-}
-
-/// What the machine `host` is called in a note: its name, or this machine.
-fn host_name(host: Option<&str>) -> &str {
-    host.unwrap_or("This machine")
+    let entries = report.sessions.iter().take(TOP_SESSIONS).map(|session| {
+        let detail = format!(
+            "{} · {}",
+            project_name(&session.project),
+            counts(&session.totals)
+        );
+        (
+            session_name(session),
+            &session.totals,
+            detail,
+            Role::Accent.into(),
+        )
+    });
+    bar_rows(entries.collect(), measure(report), room);
 }
 
 /// Emits the body of the usage page, `room` logical pixels across, after what `page` emits: what it is for, the choice of days, then the headline figures, the chart, the models and the top sessions; or that the servers are being asked, that nothing was used, or why a server could not say.
@@ -640,20 +615,15 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     };
     page();
     paragraph(SUMMARY, room);
-    flow_row_with(
-        Modifier::new().fill_max_width(),
-        FlowOptions::new(sp(2), sp(2))
-            .arrangement(Arrangement::SpaceBetween)
-            .item_alignment(Alignment::Center),
-        || {
-            choices(&RANGE_NAMES, picked, |option| USAGE_RANGES.id(option));
-            if let Some(said) = &status {
-                note(said);
-            }
-        },
-    );
+    kit::flow(true, || {
+        choices(&RANGE_NAMES, picked, |option| USAGE_RANGES.id(option));
+        if let Some(said) = &status {
+            note(said);
+        }
+    });
     for (host, reason) in &usage.errors {
-        wrapped_note(&format!("{}: {reason}", host_name(host.as_deref())), room);
+        let host = host.as_deref().unwrap_or("This machine");
+        wrapped_note(&format!("{host}: {reason}"), room);
     }
     if usage.reports.is_empty() {
         if usage.loading {

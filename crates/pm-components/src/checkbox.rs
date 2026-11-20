@@ -2,13 +2,10 @@
 //! drawn by rustle's check box and switch in the theme's colours. The box itself does
 //! not answer the pointer: the control around it, named by its id, does.
 
-use crate::events::OnClick;
+use crate::kit;
 use crate::target::Target;
-use rustle::{
-    CheckboxColors, CheckboxDefaults, CursorIcon, Modifier, SwitchColors, ToggleableState,
-};
+use rustle::{CheckboxColors, CheckboxDefaults, Modifier, SwitchColors, ToggleableState};
 
-use crate::events::Interactive;
 use crate::theme;
 use crate::theme::Role;
 
@@ -36,11 +33,6 @@ pub struct Checkbox {
     id: Target,
     /// How it looks.
     variant: Variant,
-    /// What the caller puts around its box.
-    modifier: Modifier,
-    /// What clicking it does, when the caller said; the workspace's reducer takes the
-    /// press otherwise.
-    on_click: Option<OnClick>,
 }
 
 impl Checkbox {
@@ -51,16 +43,7 @@ impl Checkbox {
             mixed: false,
             id,
             variant: Variant::default(),
-            modifier: Modifier::new(),
-            on_click: None,
         }
-    }
-
-    /// The check box running `on_click` when clicked, or activated from the keyboard, in
-    /// place of handing the press to the workspace's reducer.
-    pub fn on_click(mut self, on_click: impl Fn() + 'static) -> Self {
-        self.on_click = Some(OnClick::new(on_click));
-        self
     }
 
     /// The check box dashed instead of ticked while `mixed` and not `checked`.
@@ -75,12 +58,6 @@ impl Checkbox {
         self
     }
 
-    /// The check box with `modifier` chained outside its own, for what the caller puts around it.
-    pub fn modifier(mut self, modifier: Modifier) -> Self {
-        self.modifier = self.modifier.chain(modifier);
-        self
-    }
-
     /// Emits the check box.
     #[track_caller]
     pub fn build(self) {
@@ -92,7 +69,6 @@ impl Checkbox {
 
     /// Emits the square, four steps on a side: filled in the accent with its mark while
     /// ticked or dashed, outlined in the subtle colour while clear.
-    #[track_caller]
     fn build_box(self) {
         let state = match (self.checked, self.mixed) {
             (true, _) => ToggleableState::On,
@@ -108,10 +84,7 @@ impl Checkbox {
             ..CheckboxDefaults::colors()
         };
         rustle::tri_state_checkbox(
-            self.modifier
-                .size(side, side)
-                .cursor(CursorIcon::Pointer)
-                .control(self.id, OnClick::or_send(self.on_click, self.id).lambda()),
+            kit::pressed(Modifier::new().size(side, side), self.id),
             state,
             None,
             true,
@@ -122,7 +95,6 @@ impl Checkbox {
     /// Emits the switch, nine steps by five: a track in the text colour with its knob at
     /// the end on the background while on, a hovered surface with the knob at the start
     /// in the muted colour while off.
-    #[track_caller]
     fn build_switch(self) {
         let colors = SwitchColors {
             checked_thumb_color: theme::color(Role::Background),
@@ -131,10 +103,7 @@ impl Checkbox {
             unchecked_track_color: theme::color(Role::SurfaceHover),
         };
         rustle::switch_with(
-            self.modifier
-                .size(theme::sp(9), theme::sp(5))
-                .cursor(CursorIcon::Pointer)
-                .control(self.id, OnClick::or_send(self.on_click, self.id).lambda()),
+            kit::pressed(Modifier::new().size(theme::sp(9), theme::sp(5)), self.id),
             self.checked,
             None,
             true,

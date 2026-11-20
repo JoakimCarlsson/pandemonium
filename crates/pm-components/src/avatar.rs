@@ -3,9 +3,9 @@
 use crate::kit;
 use crate::theme;
 use rustle::Modifier;
-use rustle::{Alignment, Arrangement, row_arranged};
+use rustle::{Alignment, Arrangement, Color, row_arranged};
 
-use crate::theme::{Radius, Tone};
+use crate::theme::Radius;
 
 use crate::Project;
 use crate::size::Size;
@@ -19,16 +19,14 @@ pub struct Avatar {
     /// The first letter of the name, in capitals.
     initial: String,
     /// What it is filled with.
-    color: Tone,
+    color: Color,
     /// How big it is.
     size: Size,
-    /// What the caller puts around its box, outside its own.
-    modifier: Modifier,
 }
 
 impl Avatar {
     /// An avatar showing the first letter of `name` on `color`.
-    pub fn new(name: &str, color: Tone) -> Self {
+    pub fn new(name: &str, color: Color) -> Self {
         Self {
             initial: name
                 .chars()
@@ -37,7 +35,6 @@ impl Avatar {
                 .unwrap_or_default(),
             color,
             size: Size::Sm,
-            modifier: Modifier::new(),
         }
     }
 
@@ -49,12 +46,6 @@ impl Avatar {
     /// The avatar at `size`: a square 16, 20, 24 or 32px on a side.
     pub fn size(mut self, size: Size) -> Self {
         self.size = size;
-        self
-    }
-
-    /// The avatar with `modifier` put around its box, outside its own: sizes, weight, placement.
-    pub fn modifier(mut self, modifier: Modifier) -> Self {
-        self.modifier = self.modifier.chain(modifier);
         self
     }
 
@@ -71,20 +62,15 @@ impl Avatar {
             .size(theme::sp(side), theme::sp(side))
             .background_rounded(theme::color(self.color), Radius::Md.px());
         let initial = self.initial;
-        row_arranged(
-            self.modifier.chain(own),
-            Arrangement::Center,
-            Alignment::Center,
-            move || {
-                kit::text(
-                    Modifier::new(),
-                    initial,
-                    theme::text_style(font, 1.2)
-                        .font_weight(rustle::FontWeight::SEMI_BOLD)
-                        .color(theme::color(Tone::White)),
-                );
-            },
-        );
+        row_arranged(own, Arrangement::Center, Alignment::Center, move || {
+            kit::text(
+                Modifier::new(),
+                initial,
+                theme::text_style(font, 1.2)
+                    .font_weight(rustle::FontWeight::SEMI_BOLD)
+                    .color(theme::color(Color::WHITE)),
+            );
+        });
     }
 }
 

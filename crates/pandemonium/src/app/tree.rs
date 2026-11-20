@@ -1,7 +1,6 @@
 //! The project's files under the pointer and the keyboard: rows dragged into another folder, the keys that cut, copy, paste, rename and delete them, and files of this machine let go on them.
 
 use pm_components::tree_actions::{TreeShortcut, TreeTarget};
-use pm_pages::Screen;
 use rustle::{Key, KeyEvent};
 
 use super::App;
@@ -29,14 +28,15 @@ impl App {
             return;
         };
         let over = self.tree_row_at(at);
-        self.model
-            .update(|state| *state = std::mem::take(state).tree_dragged(from, over, at));
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.tree_dragged(from, over, at))
+        });
     }
 
     /// Ends a drag of rows of the project's files, moving them into the folder they were let go on, or copying them there while the key that copies is held in `modifiers`, and says whether there was a drag.
     pub(super) fn drop_tree(&mut self, modifiers: rustle::Modifiers) -> bool {
         self.tree_press = None;
-        if !self.model.read(Screen::tree_dragging) {
+        if !self.model.read(|screen| screen.tree_dragging()) {
             return false;
         }
         let copy = if cfg!(target_os = "macos") {
@@ -44,8 +44,9 @@ impl App {
         } else {
             modifiers.ctrl
         };
-        self.model
-            .update(|state| *state = std::mem::take(state).tree_dropped(copy));
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.tree_dropped(copy))
+        });
         self.deliver();
         true
     }
@@ -54,16 +55,17 @@ impl App {
     pub(super) fn tree_key(&mut self, event: &KeyEvent) -> bool {
         let command = event.modifiers.ctrl || event.modifiers.meta;
         let shortcut = match (keys::clip(event), &event.key) {
-            (_, Key::Escape) if self.model.read(Screen::tree_dragging) => {
+            (_, Key::Escape) if self.model.read(|screen| screen.tree_dragging()) => {
                 self.tree_press = None;
-                self.model
-                    .update(|state| *state = std::mem::take(state).without_tree_drag());
+                self.model.update(|state| {
+                    *state = std::mem::take(state).in_workspace(|state| state.without_tree_drag())
+                });
                 return true;
             }
             (Some(Clip::Cut), _) => TreeShortcut::Cut,
             (Some(Clip::Copy), _) => TreeShortcut::Copy,
             (Some(Clip::Paste), _) => {
-                if !self.model.read(Screen::tree_holding) {
+                if !self.model.read(|screen| screen.tree_holding()) {
                     self.paste_files_into_tree();
                     return true;
                 }
@@ -74,8 +76,9 @@ impl App {
             (None, Key::Backspace) if cfg!(target_os = "macos") && command => TreeShortcut::Delete,
             _ => return false,
         };
-        self.model
-            .update(|state| *state = std::mem::take(state).tree_shortcut(shortcut));
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.tree_shortcut(shortcut))
+        });
         self.deliver();
         true
     }
@@ -97,8 +100,9 @@ impl App {
 
     /// Brings the files of this machine at `paths` into the folder of `over`, or of the row last picked without it.
     fn files_dropped_on(&mut self, paths: Vec<String>, over: Option<TreeTarget>) {
-        self.model
-            .update(|state| *state = std::mem::take(state).tree_brought_in(paths, over));
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.tree_brought_in(paths, over))
+        });
         self.deliver();
     }
 
@@ -108,8 +112,8 @@ impl App {
         self.model.update(|state| {
             let taken = std::mem::take(state);
             *state = match at {
-                Some(at) => taken.tree_hovered(over, at),
-                None => taken.without_tree_drag(),
+                Some(at) => taken.in_workspace(|state| state.tree_hovered(over, at)),
+                None => taken.in_workspace(|state| state.without_tree_drag()),
             };
         });
     }
@@ -119,8 +123,9 @@ impl App {
         match at.and_then(|at| self.tree_row_at(at)) {
             Some(over) => self.files_dropped_on(paths, Some(over)),
             None => {
-                self.model
-                    .update(|state| *state = std::mem::take(state).without_tree_drag());
+                self.model.update(|state| {
+                    *state = std::mem::take(state).in_workspace(|state| state.without_tree_drag())
+                });
                 self.attach_paths(paths);
             }
         }

@@ -72,15 +72,10 @@ pub const HEADING_HEIGHT: f32 = ROW;
 /// Emits the heading of a group of the list, saying `words`.
 #[track_caller]
 fn heading(words: &str) {
-    kit::row(
-        Modifier::new()
-            .height(theme::sp(9))
-            .padding_xy(theme::sp(2), 0.0),
-        0,
-        || {
-            line(words, 12, 1.4, Role::Subtle);
-        },
-    );
+    let banded = Modifier::new()
+        .height(theme::sp(9))
+        .padding_xy(theme::sp(2), 0.0);
+    kit::row(banded, 0, || line(words, 12, 1.4, Role::Subtle));
 }
 
 /// Every submodule row of the sidebar, project by project in the order they were added: the project's position and the submodule's path. The place of a row in this list is what it answers to.
@@ -120,6 +115,7 @@ pub fn status_icon(status: Status) {
         Status::Idle => "Idle",
         Status::Unreachable => "Server out of reach",
     };
+    let dot = Modifier::new().size(theme::sp(2), theme::sp(2));
     crate::tooltip::with_tooltip(meaning, || {
         row_arranged(
             Modifier::new().size(theme::sp(4), theme::sp(4)),
@@ -127,61 +123,69 @@ pub fn status_icon(status: Status) {
             Alignment::Center,
             move || match status {
                 Status::Working => spinner(3.5, Role::Muted),
-                Status::Unread => {
-                    rustle::spacer(
-                        Modifier::new()
-                            .size(theme::sp(2), theme::sp(2))
-                            .background_rounded(theme::color(Role::Accent), Radius::Full.px()),
-                    );
-                }
+                Status::Unread => rustle::spacer(
+                    dot.background_rounded(theme::color(Role::Accent), Radius::Full.px()),
+                ),
                 Status::Error => glyph(phosphor::X, 3.5, Role::Danger),
                 Status::NeedsInput => glyph(phosphor::CHAT_CIRCLE, 3.5, Role::Warning),
                 Status::Unreachable => glyph(phosphor::PLUG, 3.5, Role::Warning),
-                Status::Idle => {
-                    rustle::spacer(
-                        Modifier::new()
-                            .size(theme::sp(2), theme::sp(2))
-                            .border(1.0, theme::color(Role::Subtle), Radius::Full.px())
-                            .padding(1.0),
-                    );
-                }
+                Status::Idle => rustle::spacer(
+                    dot.border(1.0, theme::color(Role::Subtle), Radius::Full.px())
+                        .padding(1.0),
+                ),
             },
         );
     });
 }
 
-/// Emits one of the ways in at the top: a glyph and a label.
-#[track_caller]
-fn entry(icon: Icon, label: &str, id: Target, selected: bool) {
-    let tone = if selected { Role::Text } else { Role::Muted };
+/// The session the page shows, by position, if it shows one.
+fn open_session(state: &WorkspaceState) -> Option<usize> {
+    match state.page {
+        Page::Session(open) => Some(open),
+        _ => None,
+    }
+}
+
+/// A row of the sidebar across its width answering to `id`, filled while `selected`, its content padded by `inner`.
+fn tile(id: Target, selected: bool, inner: Modifier) -> Tile {
     Tile::new(id)
         .modifier(Modifier::new().fill_max_width())
         .selected(selected)
-        .inner(Modifier::new().padding_xy(theme::sp(2), 0.0))
-        .build_with(|| {
-            glyph(icon, 4.0, tone);
-            line(label, 14, 1.4, tone);
-        });
+        .inner(inner)
+}
+
+/// Emits one of the ways in at the top: a glyph and a label.
+#[track_caller]
+fn entry(icon: Icon, label: &str, id: Target, selected: bool) {
+    let inner = Modifier::new().padding_xy(theme::sp(2), 0.0);
+    glyph_row(tile(id, selected, inner), icon, label, selected);
+}
+
+/// Builds `tile` holding a glyph and a label, in the text role while `selected` and muted otherwise.
+#[track_caller]
+fn glyph_row(tile: Tile, icon: Icon, label: &str, selected: bool) {
+    let tone = if selected { Role::Text } else { Role::Muted };
+    tile.build_with(|| {
+        glyph(icon, 4.0, tone);
+        line(label, 14, 1.4, tone);
+    });
 }
 
 /// Emits the row of one session under its project, set in `indent` steps.
 #[track_caller]
 fn session_row(index: usize, session: &Session, selected: bool, indent: f32) {
     let operations = crate::events::operations();
-    Tile::new(Target::Sidebar(SidebarEvent::Session(index)))
-        .on_context(move || operations.open_session_menu(index))
-        .modifier(Modifier::new().fill_max_width())
-        .selected(selected)
-        .inner(
-            Modifier::new()
-                .padding_each(theme::sp(indent), 0.0, 0.0, 0.0)
-                .padding_each(0.0, 0.0, theme::sp(2), 0.0),
-        )
-        .build_with(|| {
-            status_icon(session.shown());
-            clipped(&session.title, 14, Role::Text);
-            line(session.age(), 12, 1.4, Role::Subtle);
-        });
+    tile(
+        Target::Sidebar(SidebarEvent::Session(index)),
+        selected,
+        Modifier::new().padding_each(theme::sp(indent), 0.0, theme::sp(2), 0.0),
+    )
+    .on_context(move || operations.open_session_menu(index))
+    .build_with(|| {
+        status_icon(session.shown());
+        clipped(&session.title, 14, Role::Text);
+        line(session.age(), 12, 1.4, Role::Subtle);
+    });
 }
 
 /// The submodule of `paths` that `path` sits directly inside, or nothing when it sits in the project itself.
@@ -197,37 +201,30 @@ fn holder<'a>(path: &str, paths: &'a [String]) -> Option<&'a str> {
 }
 
 /// Emits the header of a submodule at `relative`, its path from what holds it, numbered `position` among [`submodule_rows`]: its own avatar in its project's colour, its name, the folder it is in and a button that starts work in it.
-#[track_caller]
 fn submodule_row(project: &Project, relative: &str, position: usize, starting: bool) {
     let (folder, name) = relative
         .rsplit_once('/')
         .map_or(("", relative), |(folder, name)| (folder, name));
-    Tile::new(Target::Sidebar(SidebarEvent::NewInSubmodule(position)))
-        .modifier(Modifier::new().fill_max_width())
-        .selected(starting)
-        .inner(
-            Modifier::new()
-                .padding_each(theme::sp(2), 0.0, 0.0, 0.0)
-                .padding_each(0.0, 0.0, theme::sp(2), 0.0),
-        )
-        .build_with(|| {
-            Avatar::new(name, project.color()).size(Size::Xs).build();
-            kit::row(Modifier::new().weight(1.0).clip(), 1.5, || {
-                line(name, 13, 1.4, Role::Text);
-                if !folder.is_empty() {
-                    kit::text(
-                        Modifier::new().weight(1.0),
-                        format!("{folder}/"),
-                        kit::line(12, Role::Subtle),
-                    );
-                }
-            });
-            glyph(
-                phosphor::PLUS,
-                3.5,
-                if starting { Role::Text } else { Role::Subtle },
-            );
+    tile(
+        Target::Sidebar(SidebarEvent::NewInSubmodule(position)),
+        starting,
+        Modifier::new().padding_each(theme::sp(2), 0.0, theme::sp(2), 0.0),
+    )
+    .build_with(|| {
+        Avatar::new(name, project.color()).size(Size::Xs).build();
+        kit::row(Modifier::new().weight(1.0).clip(), 1.5, || {
+            line(name, 13, 1.4, Role::Text);
+            if !folder.is_empty() {
+                kit::text(
+                    Modifier::new().weight(1.0),
+                    format!("{folder}/"),
+                    kit::line(12, Role::Subtle),
+                );
+            }
         });
+        let plus = if starting { Role::Text } else { Role::Subtle };
+        glyph(phosphor::PLUS, 3.5, plus);
+    });
 }
 
 /// Emits the submodules of the project at `index` that sit directly in `parent`, each with the sessions working in it and the submodules inside it, behind a line that ties them to what holds them; nothing when there are none.
@@ -240,10 +237,7 @@ fn submodule_tree(
     first: usize,
 ) {
     let project = &state.projects[index];
-    let open = match state.page {
-        Page::Session(open) => Some(open),
-        _ => None,
-    };
+    let open = open_session(state);
     let blocks: Vec<(usize, &String)> = project
         .submodules
         .iter()
@@ -302,10 +296,7 @@ fn project(state: &WorkspaceState, index: usize) {
         .position(|(held, _)| *held == index)
         .unwrap_or(0);
     let dragged = state.project_drag.is_some_and(|drag| drag.from == index);
-    let open = match state.page {
-        Page::Session(open) => Some(open),
-        _ => None,
-    };
+    let open = open_session(state);
     let starting = state.page == Page::New(index) && state.new_in.is_none();
     let section = Modifier::new()
         .fill_max_width()
@@ -318,21 +309,22 @@ fn project(state: &WorkspaceState, index: usize) {
     kit::column(section, 0, || {
         let operations = crate::events::operations();
         let opens = Rc::clone(&operations);
-        Tile::new(Target::Sidebar(SidebarEvent::Project(index)))
-            .on_context(move || opens.open_project_menu(index))
-            .modifier(Modifier::new().fill_max_width())
-            .selected(state.page == Page::Project(index))
-            .inner(Modifier::new().padding_xy(theme::sp(2), 0.0))
-            .build_with(|| {
-                Avatar::of(project).build();
-                clipped(&project.name, 14, Role::Text);
-                Button::icon(
-                    phosphor::DOTS_THREE,
-                    Target::Sidebar(SidebarEvent::ProjectMore(index)),
-                )
-                .on_click(move || operations.open_project_menu(index))
-                .build();
-            });
+        tile(
+            Target::Sidebar(SidebarEvent::Project(index)),
+            state.page == Page::Project(index),
+            Modifier::new().padding_xy(theme::sp(2), 0.0),
+        )
+        .on_context(move || opens.open_project_menu(index))
+        .build_with(|| {
+            Avatar::of(project).build();
+            clipped(&project.name, 14, Role::Text);
+            Button::icon(
+                phosphor::DOTS_THREE,
+                Target::Sidebar(SidebarEvent::ProjectMore(index)),
+            )
+            .on_click(move || operations.open_project_menu(index))
+            .build();
+        });
         for &(position, session) in members
             .iter()
             .filter(|(_, session)| listed_under(state, session).is_none())
@@ -340,15 +332,9 @@ fn project(state: &WorkspaceState, index: usize) {
             session_row(position, session, open == Some(position), 3.5);
         }
         submodule_tree(state, index, None, &members, first_submodule);
-        let tone = if starting { Role::Text } else { Role::Muted };
-        Tile::new(Target::Sidebar(SidebarEvent::NewIn(index)))
-            .modifier(Modifier::new().fill_max_width())
-            .selected(starting)
-            .inner(Modifier::new().padding_each(theme::sp(3), 0.0, 0.0, 0.0))
-            .build_with(|| {
-                glyph(phosphor::PLUS, 4.0, tone);
-                line("New session", 14, 1.4, tone);
-            });
+        let inner = Modifier::new().padding_each(theme::sp(3), 0.0, 0.0, 0.0);
+        let new_in = tile(Target::Sidebar(SidebarEvent::NewIn(index)), starting, inner);
+        glyph_row(new_in, phosphor::PLUS, "New session", starting);
     });
 }
 
@@ -359,10 +345,7 @@ fn chats(state: &WorkspaceState) {
     if members.is_empty() {
         return;
     }
-    let open = match state.page {
-        Page::Session(open) => Some(open),
-        _ => None,
-    };
+    let open = open_session(state);
     kit::column(
         Modifier::new()
             .fill_max_width()
@@ -371,12 +354,8 @@ fn chats(state: &WorkspaceState) {
         || {
             heading("Chats");
             for position in members {
-                session_row(
-                    position,
-                    &state.sessions[position],
-                    open == Some(position),
-                    2.0,
-                );
+                let session = &state.sessions[position];
+                session_row(position, session, open == Some(position), 2.0);
             }
         },
     );
@@ -394,11 +373,12 @@ pub fn sidebar(state: &WorkspaceState) {
         0,
         || {
             kit::column(
-                Modifier::new()
-                    .fill_max_width()
-                    .padding_xy(theme::sp(2), 0.0)
-                    .padding_each(0.0, theme::sp(3), 0.0, 0.0)
-                    .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
+                Modifier::new().fill_max_width().padding_each(
+                    theme::sp(2),
+                    theme::sp(3),
+                    theme::sp(2),
+                    theme::sp(2),
+                ),
                 0.5,
                 || {
                     entry(

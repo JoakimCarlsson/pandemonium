@@ -61,11 +61,6 @@ pub struct TaskState {
     pub options: Vec<pm_protocol::RunnableTask>,
 }
 
-/// The language `family` as a reader knows it: what its manifest calls it, or the family as it is written.
-fn language_name(family: &str, named: &str) -> String {
-    if named.is_empty() { family } else { named }.to_owned()
-}
-
 impl WorkspaceState {
     /// Asks the server what the folder of the session being worked in can be built, tested and run with.
     pub(crate) fn tasks_asked(&mut self) {
@@ -172,10 +167,17 @@ impl WorkspaceState {
         let Some(viewer) = self.git.viewers.get(file).filter(|viewer| !viewer.head) else {
             return;
         };
-        let path = viewer.path.clone();
-        let Some(place) = self.shown_runnable(file, line) else {
+        let crate::open_files::Contents::Text(document) = &viewer.contents else {
             return;
         };
+        let runnables = document.runnables();
+        let Some((_, place)) = runnables
+            .iter()
+            .find(|(held, place)| *held == line && !document.is_lens_place(place))
+        else {
+            return;
+        };
+        let (path, place) = (viewer.path.clone(), place.clone());
         let Some(session) = self.review_index() else {
             return;
         };
@@ -236,39 +238,16 @@ impl WorkspaceState {
 
     /// Runs the place whose button was pressed with the task at `index` of those the reader was offered.
     pub(crate) fn runnable_taken(&mut self, index: usize) {
-        let Some(Rerun::Runnable {
-            path,
-            tags,
-            variables,
-            position,
-            ..
-        }) = self.tasks.waiting.take()
-        else {
+        let Some(mut place) = self.tasks.waiting.take() else {
             return;
         };
-        let Some(chosen) = self.tasks.options.get(index) else {
+        let Some(chosen) = self.tasks.options.get(index).map(|held| held.name.clone()) else {
             return;
         };
-        self.run_in_terminal(Rerun::Runnable {
-            path,
-            tags,
-            variables,
-            position,
-            task: Some(chosen.name.clone()),
-        });
-    }
-
-    /// The runnable place that starts on `line` of the open file at `file`.
-    fn shown_runnable(&self, file: usize, line: usize) -> Option<pm_treesitter::Runnable> {
-        let document = match &self.git.viewers.get(file)?.contents {
-            crate::open_files::Contents::Text(document) => document,
-            _ => return None,
-        };
-        document
-            .runnables()
-            .iter()
-            .find(|(held, place)| *held == line && !document.is_lens_place(place))
-            .map(|(_, place)| place.clone())
+        if let Rerun::Runnable { task, .. } = &mut place {
+            *task = Some(chosen);
+            self.run_in_terminal(place);
+        }
     }
 
     /// The lines of the open file at `file` where a place that can be run starts.
@@ -358,8 +337,8 @@ impl WorkspaceState {
         });
     }
 
-    /// The name `language`, by family, is shown under in the list of toolchains.
+    /// The name `language`, by family, is shown under in the list of toolchains: what its manifest calls it, `named`, or the family as it is written.
     pub(crate) fn toolchain_language(language: &str, named: &str) -> String {
-        language_name(language, named)
+        if named.is_empty() { language } else { named }.to_owned()
     }
 }

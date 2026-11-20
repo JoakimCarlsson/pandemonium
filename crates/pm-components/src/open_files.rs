@@ -96,9 +96,43 @@ pub(crate) fn jump(
 }
 
 impl Viewer {
+    /// A file looked at in a tab the next one replaces, at `path`, read from the last commit when `head`, holding `contents`.
+    pub(crate) fn new(path: String, head: bool, contents: Contents) -> Self {
+        Self {
+            path,
+            head,
+            contents,
+            scroll: rustle::LazyListState::default(),
+            hover_scroll: rustle::ScrollState::default(),
+            preview: true,
+            left: None,
+            jump: None,
+            pinned: false,
+            source: false,
+            drawn: None,
+            hidden: false,
+        }
+    }
+
+    /// The text the file holds, when it holds text.
+    pub fn document(&self) -> Option<&Document> {
+        match &self.contents {
+            Contents::Text(document) => Some(document),
+            _ => None,
+        }
+    }
+
+    /// The text the file holds, to change, when it holds text.
+    pub(crate) fn document_mut(&mut self) -> Option<&mut Document> {
+        match &mut self.contents {
+            Contents::Text(document) => Some(document),
+            _ => None,
+        }
+    }
+
     /// Whether the file has changes that were not written to the folder.
     pub fn is_dirty(&self) -> bool {
-        matches!(&self.contents, Contents::Text(document) if document.is_dirty())
+        self.document().is_some_and(|document| document.is_dirty())
     }
 
     /// How the file is shown rendered, or nothing when it is shown as its source.
@@ -108,9 +142,7 @@ impl Viewer {
 
     /// What asks for the text of the file to be drawn as a vector picture, when it is one and is shown rendered.
     fn draw_request(&self, session: usize) -> Option<Outgoing> {
-        let Contents::Text(document) = &self.contents else {
-            return None;
-        };
+        let document = self.document()?;
         (self.rendering() == Some(Rendering::Vector)).then(|| Outgoing::DrawVector {
             session,
             path: self.path.clone(),
@@ -159,12 +191,29 @@ impl WorkspaceState {
             .filter(|_| matches!(self.tab, Tab::File | Tab::Excerpts))
     }
 
+    /// The file of the tab chosen, to change, whichever view shows.
+    pub(crate) fn chosen_viewer_mut(&mut self) -> Option<&mut Viewer> {
+        self.git.viewers.get_mut(self.git.shown?)
+    }
+
     /// The text of the file whose tab is showing, if it holds text.
     pub fn shown_document(&self) -> Option<&Document> {
-        match &self.shown_viewer()?.contents {
-            Contents::Text(document) => Some(document),
-            _ => None,
-        }
+        self.shown_viewer()?.document()
+    }
+
+    /// Puts `viewer` in the tab of the file only looked at, which it closes and returns, or in a new tab when there is none, and gives its position.
+    pub(crate) fn take_preview_tab(
+        &mut self,
+        session: usize,
+        viewer: Viewer,
+    ) -> (usize, Option<Viewer>) {
+        let Some(index) = self.git.viewers.iter().position(|held| held.preview) else {
+            self.git.viewers.push(viewer);
+            return (self.git.viewers.len() - 1, None);
+        };
+        let replaced = std::mem::replace(&mut self.git.viewers[index], viewer);
+        self.close_document(session, &replaced);
+        (index, Some(replaced))
     }
 
     /// Looks at the file at `path` in the window, as it is in the last commit when `head`, and asks the server for it; a file already open is shown, and any other takes the tab of the file looked at before.
@@ -187,20 +236,7 @@ impl WorkspaceState {
                 index
             }
             None => {
-                let viewer = Viewer {
-                    path: path.clone(),
-                    head,
-                    contents: Contents::Loading,
-                    scroll: rustle::LazyListState::default(),
-                    hover_scroll: rustle::ScrollState::default(),
-                    preview: true,
-                    left: None,
-                    jump: None,
-                    pinned: false,
-                    source: false,
-                    drawn: None,
-                    hidden: false,
-                };
+                let viewer = Viewer::new(path.clone(), head, Contents::Loading);
                 self.outbox.push(match Rendering::of(&path) {
                     Some(Rendering::Picture) => Outgoing::ReadPicture {
                         session,
@@ -213,27 +249,20 @@ impl WorkspaceState {
                         head,
                     },
                 });
-                match self.git.viewers.iter().position(|held| held.preview) {
-                    Some(index) => {
-                        let replaced = std::mem::replace(&mut self.git.viewers[index], viewer);
-                        self.close_document(session, &replaced);
-                        self.replace_pane_item(
-                            Item::File {
-                                path: replaced.path.clone(),
-                                head: replaced.head,
-                            },
-                            Item::File {
-                                path: self.git.viewers[index].path.clone(),
-                                head,
-                            },
-                        );
-                        index
-                    }
-                    None => {
-                        self.git.viewers.push(viewer);
-                        self.git.viewers.len() - 1
-                    }
+                let (index, replaced) = self.take_preview_tab(session, viewer);
+                if let Some(replaced) = replaced {
+                    self.replace_pane_item(
+                        Item::File {
+                            path: replaced.path,
+                            head: replaced.head,
+                        },
+                        Item::File {
+                            path: self.git.viewers[index].path.clone(),
+                            head,
+                        },
+                    );
                 }
+                index
             }
         };
         self.git.shown = Some(shown);
@@ -256,18 +285,9 @@ impl WorkspaceState {
             head: false,
         });
         self.git.viewers.push(Viewer {
-            path: path.to_owned(),
-            head: false,
-            contents: Contents::Loading,
-            scroll: rustle::LazyListState::default(),
-            hover_scroll: rustle::ScrollState::default(),
             preview: false,
-            left: None,
-            jump: None,
-            pinned: false,
-            source: false,
-            drawn: None,
             hidden: true,
+            ..Viewer::new(path.to_owned(), false, Contents::Loading)
         });
         self.git.viewers.len() - 1
     }
@@ -383,13 +403,10 @@ impl WorkspaceState {
         read: Result<(Option<String>, bool, Option<String>), String>,
     ) -> Self {
         let current = self.viewer_of(session, path, head).is_some_and(|viewer| {
-            match &viewer.contents {
-                Contents::Text(document) => {
-                    document.is_dirty()
-                        || matches!(&read, Ok((Some(text), _, _)) if text == document.field.text())
-                }
-                _ => false,
-            }
+            viewer.document().is_some_and(|document| {
+                document.is_dirty()
+                    || matches!(&read, Ok((Some(text), _, _)) if text == document.field.text())
+            })
         });
         if current {
             return self;
@@ -402,10 +419,11 @@ impl WorkspaceState {
             .and_then(|(text, _, language)| text.as_ref().and(language.clone()));
         let mut draw = None;
         if let Some(viewer) = self.viewer_of(session, path, head) {
-            if let Contents::Text(shown) = &viewer.contents {
+            if let Some(shown) = viewer.document() {
+                let caret = shown.field.caret();
                 viewer.left.get_or_insert(Left {
                     unsaved: None,
-                    caret: shown.field.caret(),
+                    caret,
                 });
             }
             viewer.contents = match read {
@@ -427,13 +445,9 @@ impl WorkspaceState {
         self.outbox.extend(draw);
         self.ask_shown_figures();
         let opened = !head
-            && self.viewers_of(session).is_some_and(|viewers| {
-                viewers.iter().any(|viewer| {
-                    viewer.path == path
-                        && !viewer.head
-                        && matches!(viewer.contents, Contents::Text(_))
-                })
-            });
+            && self
+                .viewer_of(session, path, false)
+                .is_some_and(|viewer| viewer.document().is_some());
         if opened {
             self.outbox.push(Outgoing::ReadBase {
                 session,
@@ -480,11 +494,7 @@ impl WorkspaceState {
         let Some(session) = self.review_index() else {
             return;
         };
-        let Some(viewer) = self
-            .git
-            .shown
-            .and_then(|index| self.git.viewers.get_mut(index))
-        else {
+        let Some(viewer) = self.chosen_viewer_mut() else {
             return;
         };
         viewer.source = source;
@@ -505,7 +515,7 @@ impl WorkspaceState {
         else {
             return;
         };
-        let Contents::Text(document) = &viewer.contents else {
+        let Some(document) = viewer.document() else {
             return;
         };
         let wanted = crate::figures::figures_of(document.field.text(), Some(&viewer.path));
@@ -517,7 +527,7 @@ impl WorkspaceState {
         let Some(viewer) = self.shown_viewer() else {
             return;
         };
-        let Contents::Text(document) = &viewer.contents else {
+        let Some(document) = viewer.document() else {
             return;
         };
         let Some(address) = pm_markdown::links(document.field.text())
@@ -538,19 +548,17 @@ impl WorkspaceState {
     pub fn with_caret_shown(mut self, height: f32) -> Self {
         let row = self.editor.row_height();
         let columns = self.wrap_columns();
-        let Some(index) = self.git.shown else {
+        let wanted_margin = self.editor.vertical_scroll_margin;
+        let Some(viewer) = self.chosen_viewer_mut() else {
             return self;
         };
-        let Some(viewer) = self.git.viewers.get_mut(index) else {
-            return self;
-        };
-        let Contents::Text(document) = &viewer.contents else {
+        let Some(document) = viewer.document() else {
             return self;
         };
         let caret = document.caret_row(columns) as f32;
         let view = (height - STRIP).max(row) / row;
         let room = (view / 2.0).floor().max(0.0) as usize;
-        let margin = self.editor.vertical_scroll_margin.min(room) as f32;
+        let margin = wanted_margin.min(room) as f32;
         let top = viewer.top_row(columns, row);
         if caret - margin < top {
             viewer.scroll_to_row(caret - margin, columns, row);
@@ -569,20 +577,15 @@ impl WorkspaceState {
             self.editor.remove_trailing_whitespace_on_save,
             self.editor.ensure_final_newline_on_save,
         );
-        let tidy = self
-            .shown_document()
-            .filter(|document| !document.field.is_read_only())
-            .and_then(|document| document.tidy_edit(trim, final_newline));
-        if let Some(edit) = tidy {
-            self.file_edited(edit);
-        }
-        let Some(index) = self.git.shown else {
+        self.edit_shown(|document| {
+            (!document.field.is_read_only())
+                .then(|| document.tidy_edit(trim, final_newline))
+                .flatten()
+        });
+        let Some(viewer) = self.chosen_viewer_mut() else {
             return;
         };
-        let Some(viewer) = self.git.viewers.get_mut(index) else {
-            return;
-        };
-        let Contents::Text(document) = &mut viewer.contents else {
+        let Some(document) = viewer.document_mut() else {
             return;
         };
         if document.field.is_read_only() || !document.is_dirty() {
@@ -606,7 +609,7 @@ impl WorkspaceState {
                 .iter_mut()
                 .filter(|viewer| viewer.path == path && !viewer.head)
             {
-                if let Contents::Text(document) = &mut viewer.contents {
+                if let Some(document) = viewer.document_mut() {
                     document.mark_unsaved();
                 }
             }
@@ -671,29 +674,20 @@ impl WorkspaceState {
     /// Carries out `action` if it is a tab of an open file, a button of one or the file's own keys, and says whether it was.
     pub(crate) fn press_files(&mut self, action: Target) -> bool {
         let count = self.git.viewers.len();
-        if let Target::Editor(EditorEvent::FileTab(index)) = action
-            && index < count
-        {
-            self.git.shown = Some(index);
-            self.tab = Tab::File;
-            self.ask_shown_figures();
-            return true;
-        }
-        if let Target::Editor(EditorEvent::FileClose(index)) = action
-            && index < count
-        {
-            if self.git.viewers[index].pinned {
-                self.git.viewers[index].pinned = false;
-            } else {
-                self.close_file(index);
-            }
-            return true;
-        }
-        if let Target::Editor(EditorEvent::PreviewLink(place)) = action {
-            self.follow_preview_link(place);
-            return true;
-        }
         match action {
+            Target::Editor(EditorEvent::FileTab(index)) if index < count => {
+                self.git.shown = Some(index);
+                self.tab = Tab::File;
+                self.ask_shown_figures();
+            }
+            Target::Editor(EditorEvent::FileClose(index)) if index < count => {
+                if self.git.viewers[index].pinned {
+                    self.git.viewers[index].pinned = false;
+                } else {
+                    self.close_file(index);
+                }
+            }
+            Target::Editor(EditorEvent::PreviewLink(place)) => self.follow_preview_link(place),
             Target::Editor(EditorEvent::PreviewShow) => self.show_source(false),
             Target::Editor(EditorEvent::SourceShow) => self.show_source(true),
             Target::Editor(EditorEvent::EditorSave) => self.format_then_save(true, None),

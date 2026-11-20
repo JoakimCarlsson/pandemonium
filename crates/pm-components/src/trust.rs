@@ -4,9 +4,7 @@ use crate::areas::ChatEvent;
 use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use rustle::phosphor;
-use rustle::{Alignment, Arrangement, FlowOptions, flow_row_with, row_arranged};
 
 use std::path::Path;
 
@@ -29,24 +27,13 @@ const LISTED: usize = 3;
 /// The kinds of input in the order the card lists them: hooks first, since they run commands.
 const KINDS: [Input; 4] = [Input::Hook, Input::Instruction, Input::Skill, Input::Agent];
 
-/// What a group of `count` inputs of `kind` is called on the card.
-fn heading(kind: Input, count: usize) -> String {
-    let (one, many) = match kind {
-        Input::Hook => ("hook", "hooks"),
-        Input::Instruction => ("instruction file", "instruction files"),
-        Input::Skill => ("skill", "skills"),
-        Input::Agent => ("agent", "agents"),
-    };
-    format!("{count} {}", if count == 1 { one } else { many })
-}
-
-/// What inputs of `kind` are called in a sentence about what the agent goes without.
-fn plural(kind: Input) -> &'static str {
+/// What one input of `kind` is called on the card, what many are, and what they are called in a sentence about what the agent goes without.
+fn names(kind: Input) -> (&'static str, &'static str, &'static str) {
     match kind {
-        Input::Hook => "hooks",
-        Input::Instruction => "instructions",
-        Input::Skill => "skills",
-        Input::Agent => "agents",
+        Input::Hook => ("hook", "hooks", "hooks"),
+        Input::Instruction => ("instruction file", "instruction files", "instructions"),
+        Input::Skill => ("skill", "skills", "skills"),
+        Input::Agent => ("agent", "agents", "agents"),
     }
 }
 
@@ -81,7 +68,7 @@ fn words(request: &TrustRequest) -> (String, String) {
     let kinds: Vec<&str> = KINDS
         .into_iter()
         .filter(|kind| request.skipped.iter().any(|skipped| skipped.kind == *kind))
-        .map(plural)
+        .map(|kind| names(kind).2)
         .collect();
     let missing = listed(&kinds);
     match request.standing {
@@ -118,13 +105,7 @@ fn item(skipped: &Skipped, root: &Path, filed: bool, width: f32) {
         .max_lines(1);
     if skipped.kind != Input::Hook {
         kit::row(Modifier::new().fill_max_width(), 2, move || {
-            kit::text(
-                Modifier::new(),
-                named,
-                theme::text_style(12, 1.5)
-                    .color(theme::color(Role::Text))
-                    .max_lines(1),
-            );
+            line(named, 12, 1.5, Role::Text);
             if let Some(file) = beside {
                 kit::text(Modifier::new().weight(1.0), file, file_type);
             }
@@ -158,7 +139,12 @@ fn group(request: &TrustRequest, kind: Input, width: f32) {
     } else {
         of_kind.len().min(LISTED)
     };
-    let title = heading(kind, of_kind.len());
+    let (one, many, _) = names(kind);
+    let title = format!(
+        "{} {}",
+        of_kind.len(),
+        if of_kind.len() == 1 { one } else { many }
+    );
     let filed = of_kind.len() > 1
         && of_kind
             .iter()
@@ -168,13 +154,9 @@ fn group(request: &TrustRequest, kind: Input, width: f32) {
         kit::row(Modifier::new().fill_max_width(), 1.5, || {
             if kind == Input::Hook {
                 glyph(phosphor::TERMINAL, 3.5, Role::Warning);
-                kit::text(
-                    Modifier::new(),
-                    format!("{title} · run commands"),
-                    kit::line(12, Role::Warning),
-                );
+                line(format!("{title} · run commands"), 12, 1.4, Role::Warning);
             } else {
-                kit::text(Modifier::new(), title, kit::line(12, Role::Muted));
+                line(title, 12, 1.4, Role::Muted);
             }
             if let Some(file) = file {
                 kit::text(
@@ -188,12 +170,8 @@ fn group(request: &TrustRequest, kind: Input, width: f32) {
             item(skipped, &request.root, filed, width);
         }
         if of_kind.len() > shown {
-            line(
-                format!("and {} more", of_kind.len() - shown),
-                12,
-                1.4,
-                Role::Subtle,
-            );
+            let more = format!("and {} more", of_kind.len() - shown);
+            line(more, 12, 1.4, Role::Subtle);
         }
     });
 }
@@ -201,40 +179,21 @@ fn group(request: &TrustRequest, kind: Input, width: f32) {
 /// Emits the buttons that answer the request, the refusal first and the boldest last, at the end of the line and wrapping when they do not fit one line.
 #[track_caller]
 fn choices(width: f32) {
-    row_arranged(
-        Modifier::new().fill_max_width(),
-        Arrangement::End,
-        Alignment::Center,
-        || {
-            flow_row_with(
-                Modifier::new().fill_max_width(),
-                FlowOptions::new(sp(2), sp(2))
-                    .arrangement(Arrangement::End)
-                    .item_alignment(Alignment::Center),
-                || {
-                    for (label, id, variant) in [
-                        (
-                            "Don't trust",
-                            Target::Chat(ChatEvent::TrustDecline),
-                            Variant::Ghost,
-                        ),
-                        (
-                            "This session only",
-                            Target::Chat(ChatEvent::TrustSession),
-                            Variant::Outline,
-                        ),
-                        (
-                            "Trust",
-                            Target::Chat(ChatEvent::TrustAlways),
-                            Variant::Default,
-                        ),
-                    ] {
-                        kit::small_button(label, id, variant).wrapped(width).build();
-                    }
-                },
-            );
-        },
-    );
+    kit::footer(|| {
+        for (label, id, variant) in [
+            ("Don't trust", ChatEvent::TrustDecline, Variant::Ghost),
+            (
+                "This session only",
+                ChatEvent::TrustSession,
+                Variant::Outline,
+            ),
+            ("Trust", ChatEvent::TrustAlways, Variant::Default),
+        ] {
+            kit::small_button(label, Target::Chat(id), variant)
+                .wrapped(width)
+                .build();
+        }
+    });
 }
 
 /// Emits the card that asks the reader to trust the project of `request`, `width` logical pixels wide: which repository, what the agent goes without until it is trusted, grouped by kind, and a button for each answer.
@@ -242,11 +201,9 @@ fn choices(width: f32) {
 pub fn card(request: &TrustRequest, width: f32) {
     let inner = width - CARD_INSET;
     let (title, said) = words(request);
-    let title_type = theme::text_style(13, 1.4).color(theme::color(Role::Text));
     let own = Modifier::new()
         .panel(Radius::Xl)
-        .padding_xy(theme::sp(4), 0.0)
-        .padding_xy(0.0, theme::sp(3));
+        .padding_xy(theme::sp(4), theme::sp(3));
     kit::column(own, 2.5, || {
         kit::row(Modifier::new().fill_max_width(), 1.5, || {
             glyph(phosphor::LOCK_SIMPLE, 3.5, Role::Muted);
@@ -257,18 +214,13 @@ pub fn card(request: &TrustRequest, width: f32) {
                 kit::code(11, Role::Subtle),
             );
         });
-        kit::column(Modifier::new(), 0, || {
-            for piece in rustle::wrap_at_spaces(&title, &title_type, inner) {
-                kit::text(Modifier::new(), &title[piece.start..piece.end], title_type);
-            }
-        });
+        paragraph(&title, 13, 1.4, Role::Text, inner);
         paragraph(&said, 12, 1.5, Role::Muted, inner);
         kit::column(
             Modifier::new()
                 .fill_max_width()
                 .background_rounded(theme::color(Role::Background), Radius::Lg.px())
-                .padding_xy(theme::sp(3), 0.0)
-                .padding_xy(0.0, theme::sp(2.5)),
+                .padding_xy(theme::sp(3), theme::sp(2.5)),
             2.5,
             || {
                 for kind in KINDS {

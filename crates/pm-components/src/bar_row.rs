@@ -2,9 +2,9 @@
 
 use crate::kit;
 use crate::theme;
-use rustle::Modifier;
+use rustle::{Color, Modifier};
 
-use crate::theme::{Role, Tone};
+use crate::theme::Role;
 
 use crate::parts::line;
 
@@ -29,11 +29,9 @@ pub struct BarRow {
     /// How much of the track the bar fills, from nought to one.
     share: f32,
     /// The colour of the bar.
-    tone: Tone,
+    tone: Color,
     /// How wide the row is, in logical pixels.
     width: f32,
-    /// What the caller puts around its box, outside its own.
-    modifier: Modifier,
 }
 
 impl BarRow {
@@ -46,7 +44,6 @@ impl BarRow {
             share: 0.0,
             tone: Role::Accent.into(),
             width,
-            modifier: Modifier::new(),
         }
     }
 
@@ -67,7 +64,7 @@ impl BarRow {
     }
 
     /// The row with its bar in `tone`.
-    pub fn tone(mut self, tone: impl Into<Tone>) -> Self {
+    pub fn tone(mut self, tone: impl Into<Color>) -> Self {
         self.tone = tone.into();
         self
     }
@@ -81,12 +78,6 @@ impl BarRow {
         }
     }
 
-    /// The row with `modifier` put around its box, outside its own: margins, placement.
-    pub fn modifier(mut self, modifier: Modifier) -> Self {
-        self.modifier = self.modifier.chain(modifier);
-        self
-    }
-
     /// Emits the row: the name and the figure on one line, the detail under them, and the bar on its track as rustle's linear progress indicator.
     #[track_caller]
     pub fn build(self) {
@@ -97,10 +88,9 @@ impl BarRow {
             detail,
             tone,
             width,
-            modifier,
             ..
         } = self;
-        kit::column(modifier.chain(Modifier::new().width(width)), 1, move || {
+        kit::column(Modifier::new().width(width), 1, move || {
             kit::row(Modifier::new().fill_max_width(), 3, || {
                 kit::column(Modifier::new().weight(1.0).clip(), 0, || {
                     line(label, 13, 1.4, Role::Text);

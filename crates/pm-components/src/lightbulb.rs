@@ -11,27 +11,19 @@ impl WorkspaceState {
         if mode == LightbulbShown::Off || self.listing.is_some() {
             return self;
         }
-        let Some((session, path)) = self.coding_file() else {
+        let Some((session, path, document)) = self.asking(|document| document.synced) else {
             return self;
         };
-        let Some(document) = self.shown_document().filter(|document| document.synced) else {
-            return self;
-        };
-        let caret = document.field.caret();
-        let line = document.line_of(caret);
+        let line = document.line_of(document.field.caret());
         if mode == LightbulbShown::Problems && document.diagnostics_on(line).is_empty() {
             return self;
         }
-        let range = document.field.selection().unwrap_or(caret..caret);
         let request = Outgoing::Lightbulb {
             session,
             path,
             version: document.version,
             line,
-            span: pm_protocol::Span::new(
-                document.position_of(range.start),
-                document.position_of(range.end),
-            ),
+            span: crate::navigate::selection_span(document),
         };
         self.outbox.push(request);
         self

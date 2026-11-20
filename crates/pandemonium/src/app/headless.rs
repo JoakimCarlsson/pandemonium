@@ -313,7 +313,7 @@ impl Rig {
         self.app
             .borrow()
             .model
-            .update(|screen| *screen = std::mem::take(screen).heard(0, event));
+            .change(|state| state.heard(0, event));
         self.settle();
     }
 
@@ -779,10 +779,7 @@ impl Rig {
 
     /// Reads the workspace through `read`.
     pub(super) fn state<T>(&self, read: impl FnOnce(&WorkspaceState) -> T) -> T {
-        self.read(|screen| {
-            let Screen::Workspace(state) = screen;
-            read(state)
-        })
+        self.read(|state| read(state))
     }
 
     /// The rectangles the main window fills with `color` now, in its outer logical pixels.

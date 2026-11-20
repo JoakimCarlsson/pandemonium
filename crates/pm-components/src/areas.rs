@@ -1,13 +1,12 @@
 //! What the reader does to the controls of each area of the window, as the workspace's
 //! reducer takes it: one event enum per area, each variant the press of one control with
 //! the data it carries (a session's index, a row, a file and a line, ...). An [`Event`]
-//! holds one of them; [`WorkspaceState::handle`] matches it per area. These enums are the
+//! holds one of them; [`WorkspaceState::handle`](crate::state::WorkspaceState::handle) matches it per area. These enums are the
 //! one list of the window's controls: a [`Target`] is one of them wrapped in its area.
 
 use serde::{Deserialize, Serialize};
 
 use crate::events::Event;
-use crate::state::WorkspaceState;
 use crate::target::Target;
 
 /// A press of a control of the sidebar: its pages, projects and sessions.
@@ -1005,82 +1004,5 @@ impl Event {
             Target::Dialog(event) => Self::Dialog(event),
             Target::Window(event) => Self::Window(event),
         }
-    }
-}
-
-impl WorkspaceState {
-    /// The state after a control of the sidebar: its pages, projects and sessions was pressed.
-    pub(crate) fn sidebar_event(self, event: SidebarEvent) -> Self {
-        self.pressed(Target::Sidebar(event))
-    }
-
-    /// The state after a control of the conversation: its messages, steps, questions and queued prompts was pressed.
-    pub(crate) fn chat_event(self, event: ChatEvent) -> Self {
-        self.pressed(Target::Chat(event))
-    }
-
-    /// The state after a control of the prompt box and the chips and menus around it was pressed.
-    pub(crate) fn composer_event(self, event: ComposerEvent) -> Self {
-        self.pressed(Target::Composer(event))
-    }
-
-    /// The state after a control of the review of the changes and the comments on them was pressed.
-    pub(crate) fn diff_event(self, event: DiffEvent) -> Self {
-        self.pressed(Target::Diff(event))
-    }
-
-    /// The state after a control of the project's files was pressed.
-    pub(crate) fn tree_event(self, event: TreeEvent) -> Self {
-        self.pressed(Target::Tree(event))
-    }
-
-    /// The state after a control of the file shown and what is laid over it was pressed.
-    pub(crate) fn editor_event(self, event: EditorEvent) -> Self {
-        self.pressed(Target::Editor(event))
-    }
-
-    /// The state after a control of the project search, the excerpts and the conflict resolver was pressed.
-    pub(crate) fn search_event(self, event: SearchEvent) -> Self {
-        self.pressed(Target::Search(event))
-    }
-
-    /// The state after a control of source control: branches, commits, stashes, pull requests and the history was pressed.
-    pub(crate) fn git_event(self, event: GitEvent) -> Self {
-        self.pressed(Target::Git(event))
-    }
-
-    /// The state after a control of the dock: its shells and problems was pressed.
-    pub(crate) fn terminal_event(self, event: TerminalEvent) -> Self {
-        self.pressed(Target::Terminal(event))
-    }
-
-    /// The state after a control of the debug tab was pressed.
-    pub(crate) fn debug_event(self, event: DebugEvent) -> Self {
-        self.pressed(Target::Debug(event))
-    }
-
-    /// The state after a control of the browser pane was pressed.
-    pub(crate) fn browser_event(self, event: BrowserEvent) -> Self {
-        self.pressed(Target::Browser(event))
-    }
-
-    /// The state after a control of the settings window and the extensions page was pressed.
-    pub(crate) fn settings_event(self, event: SettingsEvent) -> Self {
-        self.pressed(Target::Settings(event))
-    }
-
-    /// The state after a control of the menus opened over fields, tabs, messages, sessions and projects was pressed.
-    pub(crate) fn menu_event(self, event: MenuEvent) -> Self {
-        self.pressed(Target::Menu(event))
-    }
-
-    /// The state after a control of the dialogs laid over the window was pressed.
-    pub(crate) fn dialog_event(self, event: DialogEvent) -> Self {
-        self.pressed(Target::Dialog(event))
-    }
-
-    /// The state after a control of the window's frame: its title bar, panes and the handles between panels was pressed.
-    pub(crate) fn window_event(self, event: WindowEvent) -> Self {
-        self.pressed(Target::Window(event))
     }
 }

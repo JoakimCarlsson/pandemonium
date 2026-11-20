@@ -191,11 +191,7 @@ impl WorkspaceState {
             TabCommand::RevealInProject => self.reveal_in_project(&path),
             TabCommand::OpenInTerminal => {
                 if let Some(session) = session {
-                    let folder = path
-                        .rsplit_once('/')
-                        .map(|(folder, _)| folder.to_owned())
-                        .unwrap_or_default();
-                    self.open_terminal_in(session, folder);
+                    self.open_terminal_beside(session, &path);
                 }
             }
         }
@@ -249,106 +245,44 @@ impl WorkspaceState {
 /// Emits the menu on the tab of `viewer`, at `at`, its rows enabled by what the file allows, `local` when the project is on this machine.
 #[track_caller]
 pub fn tab_menu(viewer: &Viewer, open: TabMenu, count: usize, local: bool) {
-    let row = |menu: Menu, label: &str, keys: Option<&str>, command: TabCommand, on: bool| {
-        menu.item(label, keys, command.id(), !on)
-    };
     let in_folder = !viewer.head;
-    let read_only = !editable(viewer);
-    let menu = Menu::new(open.at.0, open.at.1).width(62.0).row_height(6.5);
-    let menu = row(menu, "Close", None, TabCommand::Close, true);
-    let menu = row(
-        menu,
-        "Close Others",
-        None,
-        TabCommand::CloseOthers,
-        count > 1,
-    )
-    .separator();
-    let menu = row(
-        menu,
-        "Close Left",
-        None,
-        TabCommand::CloseLeft,
-        open.index > 0,
-    );
-    let menu = row(
-        menu,
-        "Close Right",
-        None,
-        TabCommand::CloseRight,
-        open.index + 1 < count,
-    )
-    .separator();
-    let menu = row(menu, "Close Clean", None, TabCommand::CloseClean, true);
-    let menu = row(menu, "Close All", None, TabCommand::CloseAll, true).separator();
-    let menu = row(
-        menu,
-        if read_only {
-            "Make Tab Editable"
-        } else {
-            "Make Tab Read-Only"
-        },
-        None,
-        TabCommand::ToggleReadOnly,
-        in_folder,
-    )
-    .separator();
-    let menu = row(menu, "Copy Path", None, TabCommand::CopyPath, in_folder);
-    let menu = row(
-        menu,
-        "Copy Relative Path",
-        None,
-        TabCommand::CopyRelativePath,
-        true,
-    )
-    .separator();
-    let menu = row(
-        menu,
-        "Open File Permalink",
-        None,
-        TabCommand::OpenPermalink,
-        in_folder,
-    );
-    let menu = row(
-        menu,
-        "Copy File Permalink",
-        None,
-        TabCommand::CopyPermalink,
-        in_folder,
-    )
-    .separator();
-    let menu = row(
-        menu,
-        "Reveal in File Manager",
-        None,
-        TabCommand::Reveal,
-        local && in_folder,
-    )
-    .separator();
-    let menu = row(
-        menu,
-        if viewer.pinned {
-            "Unpin Tab"
-        } else {
-            "Pin Tab"
-        },
-        None,
-        TabCommand::TogglePin,
-        true,
-    );
-    let menu = row(
-        menu,
-        "Reveal in Project Panel",
-        None,
-        TabCommand::RevealInProject,
-        in_folder,
-    );
-    row(
-        menu,
-        "Open in Terminal",
-        None,
-        TabCommand::OpenInTerminal,
-        in_folder,
-    )
-    .build();
+    let lock = if editable(viewer) {
+        "Make Tab Read-Only"
+    } else {
+        "Make Tab Editable"
+    };
+    let pin = if viewer.pinned {
+        "Unpin Tab"
+    } else {
+        "Pin Tab"
+    };
+    let reveal = local && in_folder;
+    use TabCommand as Do;
+    let rows = [
+        ("Close", Do::Close, true, false),
+        ("Close Others", Do::CloseOthers, count > 1, true),
+        ("Close Left", Do::CloseLeft, open.index > 0, false),
+        ("Close Right", Do::CloseRight, open.index + 1 < count, true),
+        ("Close Clean", Do::CloseClean, true, false),
+        ("Close All", Do::CloseAll, true, true),
+        (lock, Do::ToggleReadOnly, in_folder, true),
+        ("Copy Path", Do::CopyPath, in_folder, false),
+        ("Copy Relative Path", Do::CopyRelativePath, true, true),
+        ("Open File Permalink", Do::OpenPermalink, in_folder, false),
+        ("Copy File Permalink", Do::CopyPermalink, in_folder, true),
+        ("Reveal in File Manager", Do::Reveal, reveal, true),
+        (pin, Do::TogglePin, true, false),
+        (
+            "Reveal in Project Panel",
+            Do::RevealInProject,
+            in_folder,
+            false,
+        ),
+        ("Open in Terminal", Do::OpenInTerminal, in_folder, false),
+    ];
+    Menu::new(open.at.0, open.at.1)
+        .width(62.0)
+        .row_height(6.5)
+        .rows(rows.map(|(label, command, on, rule)| (label, None, command.id(), on, rule)))
+        .build();
 }

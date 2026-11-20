@@ -81,7 +81,7 @@ impl Work {
     /// Hands the workspace what looking for a newer release last found, when anything was.
     pub fn show_release(&self, model: &Model) {
         if let Some(update) = self.release.clone() {
-            Self::in_workspace(model, |state| state.with_release(update));
+            model.change(|state| state.with_release(update));
         }
     }
 
@@ -111,7 +111,7 @@ impl Work {
                         self.ask(&host, request, Pending::Nothing);
                     }
                 }
-                Self::in_workspace(model, |state| state.with_machine_settings(settings));
+                model.change(|state| state.with_machine_settings(settings));
             }
             (
                 Pending::LatestRelease,
@@ -133,11 +133,11 @@ impl Work {
                 self.show_release(model);
             }
             (Pending::Update, Response::UpdateStaged { path }) => {
-                Self::in_workspace(model, |state| state.with_update_installing());
+                model.change(|state| state.with_update_installing());
                 self.install_update(path);
             }
             (Pending::Update, Response::Failed { message }) => {
-                Self::in_workspace(model, |state| state.with_update_failed(message));
+                model.change(|state| state.with_update_failed(message));
             }
             _ => {}
         }

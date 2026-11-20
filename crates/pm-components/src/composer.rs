@@ -89,8 +89,15 @@ pub(crate) fn ruled() -> Modifier {
         .ruled(theme::Side::Top)
 }
 
+/// The modifier of the body of a menu over the prompt box: a press inside it keeps it open.
+pub(crate) fn menu_body() -> Modifier {
+    Modifier::new().control(
+        Target::Composer(ComposerEvent::MenuBody),
+        send(Event::Composer(ComposerEvent::MenuBody)),
+    )
+}
+
 /// Emits the menu of the setting at `index`: its values in a list that scrolls, and the effort beneath the models; nothing when there is no such setting.
-#[track_caller]
 fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) {
     let settings = state.settings_now();
     let Some(setting) = settings.get(index) else {
@@ -110,17 +117,16 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) {
     Popover::new()
         .width(MENU_WIDTH)
         .heading(title, hint)
-        .modifier(Modifier::new().control(
-            Target::Composer(ComposerEvent::MenuBody),
-            send(Event::Composer(ComposerEvent::MenuBody)),
-        ))
+        .modifier(menu_body())
         .build_with(|| {
             if filters {
                 kit::column(
-                    Modifier::new()
-                        .fill_max_width()
-                        .padding_xy(theme::sp(1), 0.0)
-                        .padding_each(0.0, 0.0, 0.0, theme::sp(1)),
+                    Modifier::new().fill_max_width().padding_each(
+                        theme::sp(1),
+                        0.0,
+                        theme::sp(1),
+                        theme::sp(1),
+                    ),
                     0,
                     || {
                         Input::search(
@@ -137,38 +143,23 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) {
                     },
                 );
             }
-            kit::column(
-                Modifier::new()
-                    .fill_max_width()
-                    .height_in(0.0, sp(list_height(settings, above, rows) / 4.0))
-                    .vertical_scroll(&state.menu_scroll)
-                    .fill_max_width(),
-                0,
-                || {
-                    for position in &shown {
-                        let Some(pick) = setting.picks.get(*position) else {
-                            continue;
-                        };
-                        crate::popover::row(
-                            &pick.name,
-                            &pick.description,
-                            pick.value == setting.current,
-                            Target::Composer(ComposerEvent::MenuPick(*position)),
-                        );
-                    }
-                    if shown.is_empty() {
-                        kit::column(
-                            Modifier::new()
-                                .padding_xy(theme::sp(2), 0.0)
-                                .padding_xy(0.0, theme::sp(2)),
-                            0,
-                            || {
-                                line("Nothing matches", 13, 1.4, Role::Muted);
-                            },
-                        );
-                    }
-                },
-            );
+            let height = sp(list_height(settings, above, rows) / 4.0);
+            kit::scrolled(&state.menu_scroll, height, 0, || {
+                for position in &shown {
+                    let Some(pick) = setting.picks.get(*position) else {
+                        continue;
+                    };
+                    crate::popover::row(
+                        &pick.name,
+                        &pick.description,
+                        pick.value == setting.current,
+                        Target::Composer(ComposerEvent::MenuPick(*position)),
+                    );
+                }
+                if shown.is_empty() {
+                    kit::note(2, 2, "Nothing matches", 13, Role::Muted);
+                }
+            });
             if setting.category == "model"
                 && let Some(effort) = settings
                     .iter()
@@ -184,26 +175,23 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) {
             if setting.category == "model"
                 && let Some(on) = state.orchestrating()
             {
-                orchestrate_row(on);
+                ruled_row(
+                    "Orchestrate",
+                    "Lead, and hand work to subagents by category",
+                    on,
+                    Target::Composer(ComposerEvent::Orchestrate),
+                );
             }
         });
 }
 
-/// Emits the row at the foot of the model menu that switches the conversation in and out of orchestrator mode, ticked while it is `on`.
+/// Emits a row of a menu set off from what is above it by a rule: `name` over `said`, ticked while `on`, answering to `id`.
 #[track_caller]
-fn orchestrate_row(on: bool) {
-    kit::column(ruled(), 0, || {
-        crate::popover::row(
-            "Orchestrate",
-            "Lead, and hand work to subagents by category",
-            on,
-            Target::Composer(ComposerEvent::Orchestrate),
-        );
-    });
+fn ruled_row(name: &str, said: &str, on: bool, id: Target) {
+    kit::column(ruled(), 0, || crate::popover::row(name, said, on, id));
 }
 
 /// Emits the menu of where new work is done, and the branch a worktree is made from.
-#[track_caller]
 fn location_menu(state: &WorkspaceState) {
     let worktree = state.location == Location::Worktree;
     let mut menu = Popover::new().width(MENU_WIDTH).heading("Run in", None);
@@ -222,20 +210,14 @@ fn location_menu(state: &WorkspaceState) {
                 Target::Composer(ComposerEvent::Place(1)),
             );
     }
-    menu.modifier(Modifier::new().control(
-        Target::Composer(ComposerEvent::MenuBody),
-        send(Event::Composer(ComposerEvent::MenuBody)),
-    ))
-    .build_with(|| {
+    menu.modifier(menu_body()).build_with(|| {
         if state.offers_container() {
-            kit::column(ruled(), 0, || {
-                crate::popover::row(
-                    "Dev container",
-                    "Not a security boundary",
-                    state.container,
-                    Target::Composer(ComposerEvent::DevContainer),
-                );
-            });
+            ruled_row(
+                "Dev container",
+                "Not a security boundary",
+                state.container,
+                Target::Composer(ComposerEvent::DevContainer),
+            );
         }
         if worktree {
             kit::column(ruled(), 0, || heading("Branch from", None));
@@ -267,7 +249,6 @@ fn spoken(state: &WorkspaceState, login: Option<&str>) -> String {
 }
 
 /// Emits the menu of the logins of the chosen agent: its own, each one added, and adding another.
-#[track_caller]
 fn account_menu(state: &WorkspaceState) {
     let used = state.login_in_use();
     let logins = state.logins_here();
@@ -318,7 +299,6 @@ fn goal_label(goal: &pm_harness::Goal) -> String {
 }
 
 /// Emits the menu of the goal chip: the objective and why the goal stands as it does, then pausing it while it is active, resuming it while it is paused, and clearing it.
-#[track_caller]
 fn goal_menu(goal: &pm_harness::Goal) {
     use pm_harness::GoalState;
     let mut menu = Popover::new().width(MENU_WIDTH).heading("Goal", None).row(
@@ -327,33 +307,29 @@ fn goal_menu(goal: &pm_harness::Goal) {
         false,
         Target::Composer(ComposerEvent::MenuBody),
     );
-    if goal.state == GoalState::Active {
-        menu = menu.row(
+    let offered = [
+        (
+            GoalState::Active,
             "Pause",
             "Finish this turn and start no more",
-            false,
-            Target::Composer(ComposerEvent::GoalRow(0)),
-        );
+        ),
+        (GoalState::Paused, "Resume", "Go on working toward it"),
+        (goal.state, "Clear", "Forget the goal"),
+    ];
+    for (row, (when, name, said)) in offered.into_iter().enumerate() {
+        if goal.state == when {
+            menu = menu.row(
+                name,
+                said,
+                false,
+                Target::Composer(ComposerEvent::GoalRow(row)),
+            );
+        }
     }
-    if goal.state == GoalState::Paused {
-        menu = menu.row(
-            "Resume",
-            "Go on working toward it",
-            false,
-            Target::Composer(ComposerEvent::GoalRow(1)),
-        );
-    }
-    menu.row(
-        "Clear",
-        "Forget the goal",
-        false,
-        Target::Composer(ComposerEvent::GoalRow(2)),
-    )
-    .build_target(Target::Composer(ComposerEvent::MenuBody));
+    menu.build_target(Target::Composer(ComposerEvent::MenuBody));
 }
 
 /// Emits the line under the models that sets how hard the agent thinks: its name and a track with a stop for each level.
-#[track_caller]
 fn effort_row(effort: &Setting) {
     let current = effort
         .picks
@@ -441,75 +417,73 @@ fn list_row_looks(chosen: bool) -> theme::InteractionTones {
     }
 }
 
-/// Emits the list of files the word after an `@` being typed narrows; nothing when no `@` word is being typed.
+/// Emits a list hanging above the prompt box, headed `title`, holding what `content` emits.
 #[track_caller]
+fn above_list(title: &str, content: impl FnOnce()) {
+    Popover::new()
+        .full_width()
+        .heading(title, None)
+        .modifier(above_box())
+        .build_with(content);
+}
+
+/// Emits the rows `content` emits in a column of a list above the prompt box that scrolls as
+/// `state` holds once it is taller than the list's rows.
+#[track_caller]
+fn scrolled_rows(state: &WorkspaceState, content: impl FnOnce()) {
+    let height = sp(LIST_ROW_HEIGHT * LIST_ROWS as f32 / 4.0);
+    kit::scrolled(&state.menu_scroll, height, 0, content);
+}
+
+/// The modifier of the row at `position` of a list above the prompt box, filled while it is
+/// `chosen`, and pressed as a slash row when `pressable`, padded around its text.
+fn list_row(position: usize, chosen: bool, pressable: bool) -> Modifier {
+    let looks = list_row_looks(chosen);
+    let own = if pressable {
+        let id = Target::Composer(ComposerEvent::Slash(position));
+        kit::pressed(
+            Modifier::new().indicated(looks, theme::Focused::Held(crate::focus::is_held(id))),
+            id,
+        )
+    } else {
+        Modifier::new()
+            .indicated(looks, theme::Focused::Rustle)
+            .cursor(CursorIcon::Pointer)
+    };
+    Modifier::new()
+        .fill_max_width()
+        .chain(own)
+        .padding_xy(theme::sp(2.5), theme::sp(2))
+}
+
+/// Emits the list of files the word after an `@` being typed narrows; nothing when no `@` word is being typed.
 fn mention_list(state: &WorkspaceState) {
     let matches = state.mention_matches();
     if matches.is_empty() {
-        if state.mention_query().is_none() {
-            return;
-        }
-        Popover::new()
-            .full_width()
-            .heading("Files", None)
-            .modifier(above_box())
-            .build_with(|| {
-                kit::column(
-                    Modifier::new()
-                        .padding_xy(theme::sp(2.5), 0.0)
-                        .padding_xy(0.0, theme::sp(2)),
-                    0,
-                    || {
-                        line("No files found", 13, 1.4, Role::Subtle);
-                    },
-                );
+        if state.mention_query().is_some() {
+            above_list("Files", || {
+                kit::note(2.5, 2, "No files found", 13, Role::Subtle)
             });
+        }
         return;
     }
     let chosen = state.slash.min(matches.len() - 1);
-    Popover::new()
-        .full_width()
-        .heading("Files", None)
-        .modifier(above_box())
-        .build_with(|| {
-            kit::column(
-                Modifier::new()
-                    .fill_max_width()
-                    .height_in(0.0, sp(LIST_ROW_HEIGHT * LIST_ROWS as f32 / 4.0))
-                    .vertical_scroll(&state.menu_scroll)
-                    .fill_max_width(),
-                0,
-                || {
-                    for (position, path) in matches.iter().enumerate() {
-                        let id = Target::Composer(ComposerEvent::Slash(position));
-                        kit::row(
-                            Modifier::new()
-                                .fill_max_width()
-                                .indicated(
-                                    list_row_looks(position == chosen),
-                                    theme::Focused::Held(crate::focus::is_held(id)),
-                                )
-                                .cursor(CursorIcon::Pointer)
-                                .control(id, send(Event::pressing(id)))
-                                .padding_xy(theme::sp(2.5), 0.0)
-                                .padding_xy(0.0, theme::sp(2)),
-                            0,
-                            || {
-                                kit::text(
-                                    Modifier::new().weight(1.0),
-                                    path.as_str(),
-                                    kit::code(13, Role::Text),
-                                );
-                            },
-                        );
-                    }
-                },
-            );
+    above_list("Files", || {
+        scrolled_rows(state, || {
+            for (position, path) in matches.iter().enumerate() {
+                kit::row(list_row(position, position == chosen, true), 0, || {
+                    kit::text(
+                        Modifier::new().weight(1.0),
+                        path.as_str(),
+                        kit::code(13, Role::Text),
+                    );
+                });
+            }
         });
+    });
 }
 
 /// Emits the list of commands the agent offers, which the slash being typed narrows, or else the list of files; nothing when neither is being typed.
-#[track_caller]
 fn slash_list(state: &WorkspaceState) {
     let matches = state.slash_matches();
     if matches.is_empty() {
@@ -517,56 +491,25 @@ fn slash_list(state: &WorkspaceState) {
         return;
     }
     let chosen = state.slash.min(matches.len() - 1);
-    Popover::new()
-        .full_width()
-        .heading("Commands", None)
-        .modifier(above_box())
-        .build_with(|| {
-            kit::column(
-                Modifier::new()
-                    .fill_max_width()
-                    .height_in(0.0, sp(LIST_ROW_HEIGHT * LIST_ROWS as f32 / 4.0))
-                    .vertical_scroll(&state.menu_scroll)
-                    .fill_max_width(),
-                0,
-                || {
-                    for (position, command) in matches.iter().enumerate() {
-                        let looks = list_row_looks(position == chosen);
-                        let own = if position < PRESSABLE_LIST_ROWS {
-                            let id = Target::Composer(ComposerEvent::Slash(position));
-                            Modifier::new()
-                                .indicated(looks, theme::Focused::Held(crate::focus::is_held(id)))
-                                .cursor(CursorIcon::Pointer)
-                                .control(id, send(Event::pressing(id)))
-                        } else {
-                            Modifier::new()
-                                .indicated(looks, theme::Focused::Rustle)
-                                .cursor(CursorIcon::Pointer)
-                        };
-                        kit::row(
-                            Modifier::new()
-                                .fill_max_width()
-                                .chain(own)
-                                .padding_xy(theme::sp(2.5), 0.0)
-                                .padding_xy(0.0, theme::sp(2)),
-                            3,
-                            || {
-                                kit::text(
-                                    Modifier::new(),
-                                    format!("/{}", command.name),
-                                    theme::mono_style(13, 1.4).color(theme::color(Role::Text)),
-                                );
-                                kit::text(
-                                    Modifier::new().weight(1.0),
-                                    &command.description,
-                                    kit::line(12, Role::Subtle),
-                                );
-                            },
-                        );
-                    }
-                },
-            );
+    above_list("Commands", || {
+        scrolled_rows(state, || {
+            for (position, command) in matches.iter().enumerate() {
+                let own = list_row(position, position == chosen, position < PRESSABLE_LIST_ROWS);
+                kit::row(own, 3, || {
+                    kit::text(
+                        Modifier::new(),
+                        format!("/{}", command.name),
+                        theme::mono_style(13, 1.4).color(theme::color(Role::Text)),
+                    );
+                    kit::text(
+                        Modifier::new().weight(1.0),
+                        &command.description,
+                        kit::line(12, Role::Subtle),
+                    );
+                });
+            }
         });
+    });
 }
 
 /// How far across a thumbnail of an attached picture is, in logical pixels.
@@ -593,16 +536,17 @@ pub fn attached_file(state: &WorkspaceState, path: &str, side: f32) {
 }
 
 /// Emits the files attached to the prompt, each with a button that takes it off again; nothing when none is attached.
-#[track_caller]
 fn attachment_row(state: &WorkspaceState) {
     if state.attachments.is_empty() {
         return;
     }
     flow_row_with(
-        Modifier::new()
-            .fill_max_width()
-            .padding_xy(theme::sp(3), 0.0)
-            .padding_each(0.0, theme::sp(3), 0.0, 0.0),
+        Modifier::new().fill_max_width().padding_each(
+            theme::sp(3),
+            theme::sp(3),
+            theme::sp(3),
+            0.0,
+        ),
         FlowOptions::new(sp(2), sp(2)),
         || {
             for (index, path) in state.attachments.iter().enumerate() {
@@ -662,48 +606,53 @@ fn round_button(icon: Icon, id: Target, disabled: bool) {
 /// while the agent is on a turn (`working`), one that stops it when nothing is
 /// written (`empty`) and otherwise one that queues the prompt behind the turn
 /// and one that sends it in place of the turn.
-#[track_caller]
 fn send_buttons(working: bool, empty: bool) {
-    match (working, empty) {
-        (true, true) => round_button(phosphor::STOP, Target::Composer(ComposerEvent::Stop), false),
-        (true, false) => {
-            kit::small_button(
-                "Send now",
-                Target::Composer(ComposerEvent::SendNow),
-                button::Variant::Ghost,
-            )
-            .with_icon(phosphor::LIGHTNING)
-            .build();
-            round_button(
-                phosphor::ARROW_UP,
-                Target::Composer(ComposerEvent::Send),
-                false,
-            );
-        }
-        (false, _) => round_button(
-            phosphor::ARROW_UP,
-            Target::Composer(ComposerEvent::Send),
-            empty,
-        ),
+    if working && empty {
+        round_button(phosphor::STOP, Target::Composer(ComposerEvent::Stop), false);
+        return;
     }
+    if working {
+        kit::small_button(
+            "Send now",
+            Target::Composer(ComposerEvent::SendNow),
+            button::Variant::Ghost,
+        )
+        .with_icon(phosphor::LIGHTNING)
+        .build();
+    }
+    round_button(
+        phosphor::ARROW_UP,
+        Target::Composer(ComposerEvent::Send),
+        !working && empty,
+    );
 }
 
-/// Emits a button in the prompt box's strip that names a setting's current value, `label`, with `icon`, answering to `id`, and opens its menu; shown pressed while `open`.
+/// Emits a button in the prompt box's strip that names a setting's current value, `label`, with `icon`, answering to `id`, and opens `menu` above it, against its end when `end`; shown pressed while `open`.
 #[track_caller]
-fn chip(label: &str, icon: Option<Icon>, id: Target, open: bool) {
+fn chip_menu(
+    label: &str,
+    icon: impl Into<Option<Icon>>,
+    id: Target,
+    open: bool,
+    end: bool,
+    menu: impl FnOnce(),
+) {
     let chip = Button::new(label, id)
         .variant(button::Variant::Ghost)
         .size(Size::Xs)
         .selected(open);
-    match icon {
+    let chip = match icon.into() {
         Some(icon) => chip.with_icon(icon),
         None => chip,
+    };
+    if end {
+        anchored_end(|| chip.build(), open.then_some(menu));
+    } else {
+        anchored(|| chip.build(), open.then_some(menu));
     }
-    .build();
 }
 
 /// Emits the card that asks the reader to sign in to the agent of `session` again, saying `reason`.
-#[track_caller]
 fn sign_in_again(state: &WorkspaceState, session: &Session, reason: &str, account: Option<&str>) {
     let agent = state.agent_look(session.agent).name;
     let account = account.or_else(|| {
@@ -750,11 +699,12 @@ fn strip(state: &WorkspaceState, session: Option<&Session>, rows: u32, above: f3
         && state.captures.is_empty();
     let settings = state.settings_now();
     kit::row(
-        Modifier::new()
-            .fill_max_width()
-            .padding_xy(theme::sp(2.5), 0.0)
-            .padding_each(0.0, theme::sp(1), 0.0, 0.0)
-            .padding_each(0.0, 0.0, 0.0, theme::sp(2.5)),
+        Modifier::new().fill_max_width().padding_each(
+            theme::sp(2.5),
+            theme::sp(1),
+            theme::sp(2.5),
+            theme::sp(2.5),
+        ),
         1,
         || {
             let operations = crate::events::operations();
@@ -778,46 +728,34 @@ fn strip(state: &WorkspaceState, session: Option<&Session>, rows: u32, above: f3
                     .unwrap_or(&setting.current)
                     .replace(" (recommended)", "");
                 rustle::key(index, || {
-                    anchored(
-                        || {
-                            chip(
-                                &words,
-                                icon,
-                                Target::Composer(ComposerEvent::SettingChip(position)),
-                                open,
-                            )
-                        },
-                        open.then_some(|| setting_menu(state, index, rows, above)),
+                    chip_menu(
+                        &words,
+                        icon,
+                        Target::Composer(ComposerEvent::SettingChip(position)),
+                        open,
+                        false,
+                        || setting_menu(state, index, rows, above),
                     );
                 });
             }
             if state.on_this_computer() && state.agent_has_accounts(state.agent_now()) {
-                let account = state.account().unwrap_or("Account");
-                let open = state.picker == Some(Picker::Account);
-                anchored(
-                    || {
-                        chip(
-                            account,
-                            Some(phosphor::USER_CIRCLE),
-                            Target::Composer(ComposerEvent::Account),
-                            open,
-                        )
-                    },
-                    open.then_some(|| account_menu(state)),
+                chip_menu(
+                    state.account().unwrap_or("Account"),
+                    phosphor::USER_CIRCLE,
+                    Target::Composer(ComposerEvent::Account),
+                    state.picker == Some(Picker::Account),
+                    false,
+                    || account_menu(state),
                 );
             }
             if let Some(goal) = session.and_then(|session| session.goal.as_ref()) {
-                let open = state.picker == Some(Picker::Goal);
-                anchored_end(
-                    || {
-                        chip(
-                            &goal_label(goal),
-                            Some(phosphor::TARGET),
-                            Target::Composer(ComposerEvent::GoalChip),
-                            open,
-                        )
-                    },
-                    open.then_some(|| goal_menu(goal)),
+                chip_menu(
+                    &goal_label(goal),
+                    phosphor::TARGET,
+                    Target::Composer(ComposerEvent::GoalChip),
+                    state.picker == Some(Picker::Goal),
+                    true,
+                    || goal_menu(goal),
                 );
             }
             spacer();
@@ -865,16 +803,13 @@ fn place(state: &WorkspaceState, session: Option<&Session>) {
             words.push_str(" in a dev container");
         }
         let open = state.picker == Some(Picker::Location);
-        anchored(
-            || {
-                chip(
-                    &words,
-                    Some(phosphor::GIT_FORK),
-                    Target::Composer(ComposerEvent::Location),
-                    open,
-                )
-            },
-            open.then_some(|| location_menu(state)),
+        chip_menu(
+            &words,
+            phosphor::GIT_FORK,
+            Target::Composer(ComposerEvent::Location),
+            open,
+            false,
+            || location_menu(state),
         );
     });
 }

@@ -70,11 +70,12 @@ pub fn quick_input(listing: &Listing) {
         || {
             if let Some(filter) = listing.items.filter() {
                 kit::column(
-                    Modifier::new()
-                        .fill_max_width()
-                        .padding_xy(theme::sp(1.5), 0.0)
-                        .padding_each(0.0, theme::sp(1.5), 0.0, 0.0)
-                        .padding_each(0.0, 0.0, 0.0, theme::sp(1)),
+                    Modifier::new().fill_max_width().padding_each(
+                        theme::sp(1.5),
+                        theme::sp(1.5),
+                        theme::sp(1.5),
+                        theme::sp(1),
+                    ),
                     0,
                     || {
                         Input::new(filter, Target::Editor(EditorEvent::ListingFilter))
@@ -86,10 +87,12 @@ pub fn quick_input(listing: &Listing) {
                 );
             }
             kit::column(
-                Modifier::new()
-                    .fill_max_width()
-                    .padding_xy(theme::sp(1.5), 0.0)
-                    .padding_each(0.0, 0.0, 0.0, theme::sp(1.75)),
+                Modifier::new().fill_max_width().padding_each(
+                    theme::sp(1.5),
+                    0.0,
+                    theme::sp(1.5),
+                    theme::sp(1.75),
+                ),
                 0,
                 || {
                     if let Some(said) = status {
@@ -138,7 +141,6 @@ fn cut(modifier: Modifier, content: impl Into<String>, pixels: u32, tone: Role) 
 }
 
 /// Emits the row at `place` among those shown, of the item at `index`, filled under the pointer and when `picked`.
-#[track_caller]
 fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
     let query = &listing.items.query();
     let (cells, group): (Cells<'_>, Option<(&str, bool)>) = match &listing.items {
@@ -150,59 +152,43 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
             ..
         } => {
             let shown = listing.items.rows();
-            let is_task = |place: usize| {
-                shown.get(place).is_some_and(|held| {
-                    (commands.len()..commands.len() + tasks.len()).contains(held)
+            let kind = |place: usize| {
+                shown.get(place).map(|held| {
+                    u8::from(*held >= commands.len())
+                        + u8::from(*held >= commands.len() + tasks.len())
                 })
             };
-            let is_extra = |place: usize| {
-                shown
-                    .get(place)
-                    .is_some_and(|held| *held >= commands.len() + tasks.len())
-            };
-            let group = match (*recent, place) {
-                (_, place) if is_task(place) && (place == 0 || !is_task(place - 1)) => {
-                    Some(("tasks", place > 0))
-                }
-                (_, place) if is_extra(place) && (place == 0 || !is_extra(place - 1)) => {
-                    Some(("extensions", place > 0))
-                }
-                (0, _) => None,
-                (_, 0) => Some(("recently used", false)),
-                (recent, place) if place == recent && !is_task(place) && !is_extra(place) => {
-                    Some(("other commands", true))
-                }
+            let starts = place == 0 || kind(place - 1) != kind(place);
+            let group = match kind(place) {
+                Some(1) if starts => Some(("tasks", place > 0)),
+                Some(2) if starts => Some(("extensions", place > 0)),
+                Some(0) if *recent > 0 && place == 0 => Some(("recently used", false)),
+                Some(0) if *recent > 0 && place == *recent => Some(("other commands", true)),
                 _ => None,
             };
-            let cells: Cells<'_> = Box::new(move || match commands.get(index) {
-                Some((action, keys)) => {
+            let cells: Cells<'_> = Box::new(move || {
+                let task = index.checked_sub(commands.len());
+                if let Some((action, keys)) = commands.get(index) {
                     marked(Modifier::new().weight(1.0), &action.palette_title(), query);
-                    if let Some((said, _)) = group {
-                        separator(said);
-                    }
+                    group_name(group);
                     if let Some(keys) = keys.as_deref() {
                         keycaps(keys);
                     }
+                } else if let Some(task) = task.and_then(|task| tasks.get(task)) {
+                    marked(Modifier::new().weight(1.0), &task_title(task), query);
+                    group_name(group);
+                    cut(Modifier::new(), task.command.clone(), 12, Role::Subtle);
+                } else if let Some((_, command)) = extras.get(index - commands.len() - tasks.len())
+                {
+                    marked(Modifier::new().weight(1.0), &command.title, query);
+                    group_name(group);
+                    line(
+                        format!("extension {}", command.extension),
+                        11,
+                        1.4,
+                        Role::Subtle,
+                    );
                 }
-                None => match tasks.get(index - commands.len()) {
-                    Some(task) => {
-                        marked(Modifier::new().weight(1.0), &task_title(task), query);
-                        if let Some((said, _)) = group {
-                            separator(said);
-                        }
-                        cut(Modifier::new(), task.command.clone(), 12, Role::Subtle);
-                    }
-                    None => {
-                        if let Some((_, command)) = extras.get(index - commands.len() - tasks.len())
-                        {
-                            marked(Modifier::new().weight(1.0), &command.title, query);
-                            if let Some((said, _)) = group {
-                                separator(said);
-                            }
-                            separator(&format!("extension {}", command.extension));
-                        }
-                    }
-                },
             });
             (cells, group)
         }
@@ -219,9 +205,7 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
                     crate::file_icon::file_icon(path, 4.0);
                     marked(Modifier::new().clip(), name, query);
                     cut(Modifier::new().weight(1.0), folder, 12, Role::Subtle);
-                    if let Some((said, _)) = group {
-                        separator(said);
-                    }
+                    group_name(group);
                 }
             });
             (cells, group)
@@ -259,9 +243,7 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
                     }
                     None => marked(Modifier::new().weight(1.0), title, query),
                 }
-                if let Some((said, _)) = group {
-                    separator(said);
-                }
+                group_name(group);
                 let beside = match preview {
                     Some(_) => beside.rsplit(" · ").next().unwrap_or_default(),
                     None => beside.as_str(),
@@ -366,14 +348,15 @@ fn marked(modifier: Modifier, name: &str, query: &str) {
     });
 }
 
-/// Emits the name of a group of rows, at the end of its first row.
+/// Emits the name of the group `group` begins, at the end of its first row, when the row begins one.
 #[track_caller]
-fn separator(said: &str) {
-    line(said, 11, 1.4, Role::Subtle);
+fn group_name(group: Option<(&str, bool)>) {
+    if let Some((said, _)) = group {
+        line(said, 11, 1.4, Role::Subtle);
+    }
 }
 
 /// Emits the keys `binding` is pressed with, such as `Ctrl+K Ctrl+I`, each on a cap of its own, joined by `+` within a chord and set apart between chords.
-#[track_caller]
 fn keycaps(binding: &str) {
     kit::row(Modifier::new(), 1.5, || {
         for chord in binding.split(' ') {
@@ -390,7 +373,6 @@ fn keycaps(binding: &str) {
 }
 
 /// Emits one key, on a cap.
-#[track_caller]
 fn keycap(key: &str) {
     kit::row(
         Modifier::new()

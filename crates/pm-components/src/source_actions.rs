@@ -68,12 +68,8 @@ impl WorkspaceState {
 
     /// Asks the language server for the change of `kind` to the file shown, a list hanging at `at` while it answers.
     fn source_requested(mut self, kind: &str, at: (f32, f32)) -> Self {
-        let Some((session, path)) = self.coding_file() else {
-            return self;
-        };
-        let Some(document) = self
-            .shown_document()
-            .filter(|document| !document.field.is_read_only())
+        let Some((session, path, document)) =
+            self.asking(|document| document.synced && !document.field.is_read_only())
         else {
             return self;
         };
@@ -114,14 +110,10 @@ impl WorkspaceState {
         if self.organizes_on_save(language.as_deref()) {
             kinds.push(ORGANIZE_IMPORTS.to_owned());
         }
-        let (Some(session), Some(path), Some((version, span))) = (
-            self.review_index(),
-            self.shown_viewer().map(|viewer| viewer.path.clone()),
-            self.shown_document()
-                .map(|document| (document.version, document.whole_span())),
-        ) else {
+        let Some((session, path, document)) = self.asking(|_| true) else {
             return false;
         };
+        let (version, span) = (document.version, document.whole_span());
         if kinds.is_empty() {
             return false;
         }
@@ -160,11 +152,7 @@ impl WorkspaceState {
                 SourceOutcome::Failed(problem) => self = self.listing_failed(problem),
             }
         }
-        let current = self.review_index() == Some(session)
-            && self
-                .shown_viewer()
-                .is_some_and(|viewer| viewer.path == path && !viewer.head);
-        if !current {
+        if !self.shows_file(session, &path) {
             return self;
         }
         if !kinds.is_empty() {

@@ -3,13 +3,11 @@
 use crate::areas::ChatEvent;
 use crate::kit::{self, Frame};
 
-use crate::events::{Event, send};
 use crate::target::Target;
 use crate::theme;
 use rustle::{Alignment, Arrangement, column_arranged};
 use rustle::{
-    BoxAlignment, CursorIcon, Modifier, MutableInteractionSource,
-    remember_mutable_interaction_source,
+    BoxAlignment, Modifier, MutableInteractionSource, remember_mutable_interaction_source,
 };
 use rustle::{Icon, phosphor};
 
@@ -66,47 +64,51 @@ fn chat_line(content: impl Into<String>, pixels: u32, tone: Role) {
     rustle::text_styled(Modifier::new(), content, kit::line(pixels, tone));
 }
 
-/// Emits a button that shows under a message while the pointer is over the message, which
-/// `message` hears of, or the button has focus, showing `icon`, saying what it does with
-/// `tooltip` and answering to `id`, switched off while `disabled`.
+/// Emits `actions` in a row with `modifier`: buttons that show under a message while the
+/// pointer is over the message, which `message` hears of, or the button has focus, each
+/// showing its icon, saying what it does with its tooltip and answering to its event of the
+/// conversation, switched off while its flag is set.
 #[track_caller]
-fn message_action(
+fn message_actions(
     message: &MutableInteractionSource,
-    icon: Icon,
-    tooltip: &str,
-    id: Target,
-    disabled: bool,
+    modifier: Modifier,
+    actions: &[(Icon, &str, ChatEvent, bool)],
 ) {
-    let hovered = message.collect_is_hovered_as_state();
-    let held = crate::focus::is_held(id);
-    Button::icon(icon, id)
-        .disabled(disabled)
-        .tone(Role::Subtle)
-        .modifier(
-            Modifier::new()
-                .draw_with_content(move |canvas| shown_while(canvas, held || hovered.get())),
-        )
-        .tooltip(tooltip)
-        .build();
+    kit::row(modifier, 1, || {
+        for (icon, tooltip, event, disabled) in actions {
+            let id = Target::Chat(*event);
+            rustle::key(id, || {
+                let hovered = message.collect_is_hovered_as_state();
+                let held = crate::focus::is_held(id);
+                Button::icon(icon.clone(), id)
+                    .disabled(*disabled)
+                    .tone(Role::Subtle)
+                    .modifier(Modifier::new().draw_with_content(move |canvas| {
+                        if held || hovered.get() {
+                            canvas.draw_content();
+                        }
+                    }))
+                    .tooltip(*tooltip)
+                    .build();
+            });
+        }
+    });
 }
 
 /// Emits the offer to put the files back as they were before a message of the reader's, in place of the buttons under it.
-#[track_caller]
 fn restore_offer() {
     kit::row(Modifier::new().align(BoxAlignment::BottomEnd), 2, || {
         chat_line("Restore files to before this turn?", 12, Role::Muted);
-        kit::small_button(
+        kit::action(
             "Restore",
             Target::Chat(ChatEvent::RestoreFiles),
             Variant::Destructive,
-        )
-        .build();
-        kit::small_button("Cancel", Target::Chat(ChatEvent::KeepFiles), Variant::Ghost).build();
+        );
+        kit::action("Cancel", Target::Chat(ChatEvent::KeepFiles), Variant::Ghost);
     });
 }
 
 /// Emits a message the reader wrote, at `index` of `session`: a filled bubble at the right, with buttons under it to show what the turn changed, to put the files back as they were before it and to write it again.
-#[track_caller]
 fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: f32) {
     let message = &session.messages[index];
     let working = session.status == Status::Working;
@@ -124,8 +126,7 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
                 Modifier::new()
                     .align(BoxAlignment::BottomEnd)
                     .background_rounded(theme::color(Role::SurfaceHover), Radius::Xl2.px())
-                    .padding_xy(theme::sp(4), 0.0)
-                    .padding_xy(0.0, theme::sp(2.5)),
+                    .padding_xy(theme::sp(4), theme::sp(2.5)),
                 2,
                 || {
                     if !message.attachments.is_empty() {
@@ -141,39 +142,39 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
             );
             if restoring {
                 restore_offer();
-            } else {
-                kit::row(Modifier::new().align(BoxAlignment::BottomEnd), 1, || {
-                    if message.checkpoint {
-                        message_action(
-                            &over_message,
-                            phosphor::GIT_DIFF,
-                            "Show what this turn changed",
-                            Target::Chat(ChatEvent::TurnChanges(index)),
-                            false,
-                        );
-                        message_action(
-                            &over_message,
-                            phosphor::CLOCK_COUNTER_CLOCKWISE,
-                            "Restore files to before this turn",
-                            Target::Chat(ChatEvent::Restore(index)),
-                            working,
-                        );
-                    }
-                    message_action(
-                        &over_message,
-                        phosphor::ARROW_COUNTER_CLOCKWISE,
-                        "Rewind conversation to before this message · edit and resend",
-                        Target::Chat(ChatEvent::Rewind(index)),
-                        working,
-                    );
-                });
+                return;
             }
+            let mut actions = Vec::new();
+            if message.checkpoint {
+                actions.push((
+                    phosphor::GIT_DIFF,
+                    "Show what this turn changed",
+                    ChatEvent::TurnChanges(index),
+                    false,
+                ));
+                actions.push((
+                    phosphor::CLOCK_COUNTER_CLOCKWISE,
+                    "Restore files to before this turn",
+                    ChatEvent::Restore(index),
+                    working,
+                ));
+            }
+            actions.push((
+                phosphor::ARROW_COUNTER_CLOCKWISE,
+                "Rewind conversation to before this message · edit and resend",
+                ChatEvent::Rewind(index),
+                working,
+            ));
+            message_actions(
+                &over_message,
+                Modifier::new().align(BoxAlignment::BottomEnd),
+                &actions,
+            );
         },
     );
 }
 
 /// Emits a note beside the conversation, message `index`, that says `content`: an answer to a question asked on the side, framed apart from the turns since it is not part of the conversation, or the mark where the conversation was handed over to a new one, with the prompt the new one starts with.
-#[track_caller]
 fn side_note(side: &Side, content: &str, index: usize, width: f32) {
     let (icon, heading, asked) = match side {
         Side::Aside { question, failed } => (
@@ -199,8 +200,7 @@ fn side_note(side: &Side, content: &str, index: usize, width: f32) {
             .interaction_group()
             .message_area(index)
             .outlined(Radius::Xl)
-            .padding_xy(theme::sp(4), 0.0)
-            .padding_xy(0.0, theme::sp(3)),
+            .padding_xy(theme::sp(4), theme::sp(3)),
         2,
         || {
             kit::row(Modifier::new(), 2, || {
@@ -248,7 +248,6 @@ fn exhibit_card(
 }
 
 /// Emits a reply from the agent: the steps it took, what it says, the points it lists and how long it took; a note beside the conversation shows as one.
-#[track_caller]
 fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width: f32) {
     let message = &session.messages[index];
     if let Some(Side::Fallback { from, to, .. }) = &message.side {
@@ -279,25 +278,15 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
             .count();
         kit::column(Modifier::new(), 1, || {
             kit::row(
-                Modifier::new()
-                    .align(BoxAlignment::TopStart)
-                    .height(theme::sp(7))
-                    .cursor(CursorIcon::Pointer)
-                    .control(
-                        Target::Chat(ChatEvent::Turn(index)),
-                        send(Event::Chat(ChatEvent::Turn(index))),
-                    ),
+                kit::pressed(
+                    Modifier::new()
+                        .align(BoxAlignment::TopStart)
+                        .height(theme::sp(7)),
+                    Target::Chat(ChatEvent::Turn(index)),
+                ),
                 1.5,
                 || {
-                    glyph(
-                        if open {
-                            phosphor::CARET_DOWN
-                        } else {
-                            phosphor::CARET_RIGHT
-                        },
-                        3.5,
-                        Role::Subtle,
-                    );
+                    glyph(kit::chevron(open), 3.5, Role::Subtle);
                     line(
                         format!(
                             "{label} · {count} step{}",
@@ -414,38 +403,29 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                     }
                 });
             }
-            let copy = !message.text.is_empty();
             let writing = session.status == Status::Working && index + 1 == session.messages.len();
-            let fork = session.turn_of(index) > 0;
-            if copy || fork {
-                kit::row(
+            let mut actions = Vec::new();
+            if !message.text.is_empty() {
+                actions.push((phosphor::COPY, "Copy", ChatEvent::Copy(index), false));
+            }
+            if session.turn_of(index) > 0 {
+                actions.push((
+                    phosphor::GIT_FORK,
+                    "Branch from this reply · new session · shared current files",
+                    ChatEvent::Fork(index),
+                    writing,
+                ));
+            }
+            if !actions.is_empty() {
+                message_actions(
+                    &over_message,
                     Modifier::new().align(BoxAlignment::TopStart).padding_each(
                         0.0,
                         -sp(1.0),
                         0.0,
                         0.0,
                     ),
-                    1,
-                    || {
-                        if copy {
-                            message_action(
-                                &over_message,
-                                phosphor::COPY,
-                                "Copy",
-                                Target::Chat(ChatEvent::Copy(index)),
-                                false,
-                            );
-                        }
-                        if fork {
-                            message_action(
-                                &over_message,
-                                phosphor::GIT_FORK,
-                                "Branch from this reply · new session · shared current files",
-                                Target::Chat(ChatEvent::Fork(index)),
-                                writing,
-                            );
-                        }
-                    },
+                    &actions,
                 );
             }
             if message.steps.is_empty()
@@ -476,36 +456,28 @@ fn header(state: &WorkspaceState, session: &Session) {
         Some(model) => format!("{agent} · {model}"),
         None => agent.clone(),
     };
-    kit::row(
-        Modifier::new()
-            .fill_max_width()
-            .height(theme::sp(10))
-            .ruled(theme::Side::Bottom)
-            .padding_xy(theme::sp(5), 0.0),
-        3,
-        || {
-            status_icon(session.shown());
-            clipped(&session.title, 14, Role::Text);
-            if !session.branch.is_empty() {
-                kit::row(
-                    Modifier::new()
-                        .background_rounded(theme::color(Role::Surface), Radius::Md.px())
-                        .padding_xy(theme::sp(2), 0.0),
-                    1,
-                    || {
-                        glyph(phosphor::GIT_FORK, 3.0, Role::Muted);
-                        kit::text(
-                            Modifier::new(),
-                            &session.branch,
-                            theme::mono_style(11, 1.6).color(theme::color(Role::Muted)),
-                        );
-                    },
-                );
-            }
-            clipped(who, 12, Role::Subtle);
-            crate::spend::cost_of(session);
-        },
-    );
+    kit::bar(10, 5, 3, || {
+        status_icon(session.shown());
+        clipped(&session.title, 14, Role::Text);
+        if !session.branch.is_empty() {
+            kit::row(
+                Modifier::new()
+                    .background_rounded(theme::color(Role::Surface), Radius::Md.px())
+                    .padding_xy(theme::sp(2), 0.0),
+                1,
+                || {
+                    glyph(phosphor::GIT_FORK, 3.0, Role::Muted);
+                    kit::text(
+                        Modifier::new(),
+                        &session.branch,
+                        theme::mono_style(11, 1.6).color(theme::color(Role::Muted)),
+                    );
+                },
+            );
+        }
+        clipped(who, 12, Role::Subtle);
+        crate::spend::cost_of(session);
+    });
 }
 
 /// Emits the conversation of `session` in a column `width` logical pixels wide, with the prompt box below, which keeps its own height and runs past the bottom when the column is too short for it.
@@ -567,7 +539,6 @@ pub fn chat(state: &WorkspaceState, session: &Session, width: f32, above: f32) {
 
 /// Emits `content`, the conversation's list, as the selectable text of the conversation: a
 /// selection container holding the workspace's selection of it, filling the rest of the column.
-#[track_caller]
 fn conversation_text(state: &WorkspaceState, content: impl FnOnce()) {
     rustle::selection_container_with(
         state
@@ -761,13 +732,6 @@ fn message(state: &WorkspaceState, session: &Session, index: usize, width: f32) 
             agent_message(state, session, index, width)
         }
     });
-}
-
-/// Draws the content of `canvas` only while `shown`.
-fn shown_while(canvas: &mut rustle::Canvas, shown: bool) {
-    if shown {
-        canvas.draw_content();
-    }
 }
 
 /// Tests of the conversation's list: what it composes, where it stays as messages grow and

@@ -6,19 +6,15 @@ use crate::kit::{self, Frame};
 use crate::theme::Indicated;
 use crate::theme::ShadowLayers;
 
-use crate::events::{Event, send};
 use crate::target::Target;
 use crate::theme;
-use crate::theme::sp;
 use pm_harness::Progress;
+use rustle::Modifier;
 use rustle::phosphor;
-use rustle::{Alignment, FlowOptions, flow_row_with};
-use rustle::{CursorIcon, Modifier};
 
 use crate::Button;
 use crate::Tally;
 use crate::button::Variant;
-use crate::events::Interactive;
 use crate::icons::spinner;
 use crate::parts::{clipped, line};
 use crate::popups::{Placement, anchored};
@@ -28,12 +24,13 @@ use crate::state::{Activity, WorkspaceState};
 use crate::steps::{elapsed, plan, question, subagents};
 use crate::theme::{Radius, Role};
 
-/// A pill in the strip of activity that says what there is, filled while it is the one open, answering to `id`.
-fn chip(label: impl Into<String>, id: Target) -> Button {
+/// A pill in the strip of activity that says what there is, filled while it is the one `open`, answering to `id`.
+fn chip(label: impl Into<String>, id: Target, open: bool) -> Button {
     Button::new(label, id)
         .variant(Variant::Outline)
         .round()
         .size(Size::Xs)
+        .selected(open)
 }
 
 /// The plan the agent keeps, the latest one of its replies, if it keeps one.
@@ -55,8 +52,7 @@ fn shells(session: &Session) {
         Modifier::new()
             .fill_max_width()
             .panel(Radius::Lg)
-            .padding_xy(theme::sp(3.5), 0.0)
-            .padding_xy(0.0, theme::sp(3)),
+            .padding_xy(theme::sp(3.5), theme::sp(3)),
         2,
         || {
             line(
@@ -189,62 +185,60 @@ fn chips(
     awaiting: usize,
     working_agents: usize,
 ) {
-    flow_row_with(
-        Modifier::new(),
-        FlowOptions::new(sp(2), sp(2)).item_alignment(Alignment::Center),
-        || {
-            if awaiting > 0 {
-                chip(
-                    format!("{awaiting} awaiting approval"),
-                    Target::Chat(ChatEvent::ApprovalsChip),
+    kit::flow(false, || {
+        if awaiting > 0 {
+            chip(
+                format!("{awaiting} awaiting approval"),
+                Target::Chat(ChatEvent::ApprovalsChip),
+                state.activity == Some(Activity::Approvals),
+            )
+            .mark(|| {
+                rustle::spacer(
+                    Modifier::new()
+                        .size(theme::sp(1.5), theme::sp(1.5))
+                        .background_rounded(theme::color(Role::Danger), Radius::Full.px()),
                 )
-                .mark(|| {
-                    rustle::spacer(
-                        Modifier::new()
-                            .size(theme::sp(1.5), theme::sp(1.5))
-                            .background_rounded(theme::color(Role::Danger), Radius::Full.px()),
-                    )
-                })
-                .selected(state.activity == Some(Activity::Approvals))
-                .build();
-            }
-            if let Some(items) = plan_items {
-                let done = items
-                    .iter()
-                    .filter(|item| item.progress == Progress::Done)
-                    .count();
-                chip(
-                    format!("{done}/{} tasks", items.len()),
-                    Target::Chat(ChatEvent::PlanChip),
-                )
-                .with_icon(phosphor::CHECK_CIRCLE)
-                .selected(state.activity == Some(Activity::Plan))
-                .build();
-            }
-            if working_agents > 0 {
-                chip(
-                    format!("{working_agents} running"),
-                    Target::Chat(ChatEvent::SubagentsChip),
-                )
-                .mark(|| spinner(3.5, Role::Muted))
-                .selected(state.activity == Some(Activity::Subagents))
-                .build();
-            }
-            if !session.shells.is_empty() {
-                let count = session.shells.len();
-                chip(
-                    format!(
-                        "{count} {} running",
-                        if count == 1 { "command" } else { "commands" }
-                    ),
-                    Target::Chat(ChatEvent::ShellsChip),
-                )
-                .mark(|| spinner(3.5, Role::Muted))
-                .selected(state.activity == Some(Activity::Shells))
-                .build();
-            }
-            if !session.changes.is_empty() {
-                kit::row(
+            })
+            .build();
+        }
+        if let Some(items) = plan_items {
+            let done = items
+                .iter()
+                .filter(|item| item.progress == Progress::Done)
+                .count();
+            chip(
+                format!("{done}/{} tasks", items.len()),
+                Target::Chat(ChatEvent::PlanChip),
+                state.activity == Some(Activity::Plan),
+            )
+            .with_icon(phosphor::CHECK_CIRCLE)
+            .build();
+        }
+        if working_agents > 0 {
+            chip(
+                format!("{working_agents} running"),
+                Target::Chat(ChatEvent::SubagentsChip),
+                state.activity == Some(Activity::Subagents),
+            )
+            .mark(|| spinner(3.5, Role::Muted))
+            .build();
+        }
+        if !session.shells.is_empty() {
+            let count = session.shells.len();
+            chip(
+                format!(
+                    "{count} {} running",
+                    if count == 1 { "command" } else { "commands" }
+                ),
+                Target::Chat(ChatEvent::ShellsChip),
+                state.activity == Some(Activity::Shells),
+            )
+            .mark(|| spinner(3.5, Role::Muted))
+            .build();
+        }
+        if !session.changes.is_empty() {
+            kit::row(
+                kit::pressed(
                     Modifier::new()
                         .height(theme::sp(7))
                         .indicated(
@@ -255,21 +249,17 @@ fn chips(
                                 DiffEvent::OpenDiff,
                             ))),
                         )
-                        .outlined(Radius::Full)
-                        .cursor(CursorIcon::Pointer)
-                        .control(
-                            Target::Diff(DiffEvent::OpenDiff),
-                            send(Event::Diff(DiffEvent::OpenDiff)),
-                        )
-                        .padding_xy(theme::sp(3), 0.0),
-                    0,
-                    || {
-                        Tally::new(session.added(), session.removed())
-                            .size(12)
-                            .build();
-                    },
-                );
-            }
-        },
-    );
+                        .outlined(Radius::Full),
+                    Target::Diff(DiffEvent::OpenDiff),
+                )
+                .padding_xy(theme::sp(3), 0.0),
+                0,
+                || {
+                    Tally::new(session.added(), session.removed())
+                        .size(12)
+                        .build();
+                },
+            );
+        }
+    });
 }

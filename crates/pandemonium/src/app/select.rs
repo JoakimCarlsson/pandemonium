@@ -9,7 +9,7 @@ use pm_components::events::Event;
 use pm_components::message_menu::is_message_menu_item;
 use pm_components::target::Target;
 use pm_field::Edit;
-use pm_pages::Screen;
+use pm_pages::{Screen, WorkspaceState};
 use rustle::{Key, KeyEvent, SelectionPoint};
 
 use super::App;
@@ -47,7 +47,7 @@ impl App {
     /// of it when a key asks for that outside a text field, and says whether
     /// it did.
     pub(super) fn text_key(&mut self, event: &KeyEvent) -> bool {
-        if self.focus.current().is_some_and(Screen::is_field) {
+        if self.focus.current().is_some_and(WorkspaceState::is_field) {
             return false;
         }
         if matches!(keys::edit(event), Some(Edit::SelectAll)) {
@@ -111,9 +111,11 @@ impl App {
             .read(|screen| screen.message_at((at.0 - left, at.1 - top)));
         let selected = self.text_selection().is_some();
         self.model.update(|state| {
-            let closed = std::mem::take(state).without_menu();
+            let closed = std::mem::take(state).in_workspace(|state| state.without_menu());
             *state = match message {
-                Some(message) => closed.with_message_menu(message, at, selected),
+                Some(message) => {
+                    closed.in_workspace(|state| state.with_message_menu(message, at, selected))
+                }
                 None => closed,
             };
         });
@@ -126,8 +128,9 @@ impl App {
             Target::Menu(MenuEvent::MessageMenuSelectAll) => self.select_all_text(),
             _ => {}
         }
-        self.model
-            .update(|state| *state = std::mem::take(state).handle(Event::pressing(row)));
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.handle(Event::pressing(row)))
+        });
         self.deliver();
     }
 }

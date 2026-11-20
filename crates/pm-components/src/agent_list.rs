@@ -135,7 +135,11 @@ impl WorkspaceState {
         let hidden = &mut self.machine.agents.hidden;
         if let Some(place) = hidden.iter().position(|held| *held == id) {
             hidden.remove(place);
-        } else if self.shown_agents() > 1 {
+        } else if (0..self.agent_slots())
+            .filter(|index| self.agent_shown(*index))
+            .count()
+            > 1
+        {
             self.machine.agents.hidden.push(id);
         } else {
             return;
@@ -148,14 +152,6 @@ impl WorkspaceState {
         }
     }
 
-    /// How many of the agents offered are not hidden.
-    fn shown_agents(&self) -> usize {
-        self.offered_agents()
-            .into_iter()
-            .filter(|index| self.agent_shown(*index))
-            .count()
-    }
-
     /// Moves the agent new work is given to onto the first one a new session can be started with, when the one picked was hidden or is not signed in.
     pub(crate) fn keep_startable_agent(&mut self) {
         if self.startable_agents().contains(&self.agent) {
@@ -166,13 +162,15 @@ impl WorkspaceState {
         }
     }
 
+    /// Every agent: those offered, then those taken out of the list that sessions still run.
+    pub(crate) fn all_agents(&self) -> impl Iterator<Item = &AgentEntry> {
+        let servers = &self.settings_servers;
+        servers.agents.iter().chain(&servers.retired)
+    }
+
     /// The agent at `index`: one offered, or, past those, one taken out of the list that sessions still run.
     fn agent_record(&self, index: usize) -> Option<&AgentEntry> {
-        self.settings_servers
-            .agents
-            .iter()
-            .chain(&self.settings_servers.retired)
-            .nth(index)
+        self.all_agents().nth(index)
     }
 
     /// The id the servers know the agent at `index` by.
@@ -182,11 +180,7 @@ impl WorkspaceState {
 
     /// The position of the agent the servers know by `id`, offered or retired.
     pub fn agent_position(&self, id: &str) -> Option<usize> {
-        self.settings_servers
-            .agents
-            .iter()
-            .chain(&self.settings_servers.retired)
-            .position(|agent| agent.id == id)
+        self.all_agents().position(|agent| agent.id == id)
     }
 
     /// The position of the agent `id`, retiring it when the list does not have it, so a session it ran can still be shown.
@@ -232,13 +226,7 @@ impl WorkspaceState {
 
     /// Makes `servers` the agents that can be started, carrying everything kept per agent over to the agent's new position, retiring the agents that sessions still run.
     pub(crate) fn set_agents(&mut self, servers: Vec<AgentEntry>) {
-        let before: Vec<AgentEntry> = self
-            .settings_servers
-            .agents
-            .iter()
-            .chain(&self.settings_servers.retired)
-            .cloned()
-            .collect();
+        let before: Vec<AgentEntry> = self.all_agents().cloned().collect();
         let listed = self.settings_servers.agents.len();
         let used: Vec<usize> = self
             .sessions

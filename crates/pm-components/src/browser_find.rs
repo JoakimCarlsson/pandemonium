@@ -75,16 +75,10 @@ impl WorkspaceState {
         let Some(browser) = self.browser.as_mut() else {
             return;
         };
-        let tab = &mut **browser;
-        let search = tab.search.get_or_insert_with(PageSearch::default);
+        let search = browser.search.get_or_insert_with(PageSearch::default);
         search.query.select_all();
         if !search.query.text().is_empty() {
-            search.counted = false;
-            tab.commands.push(Command::Find {
-                text: search.query.text().to_owned(),
-                forward: true,
-                again: false,
-            });
+            self.browser_find_typed();
         }
     }
 
@@ -135,12 +129,7 @@ impl WorkspaceState {
 
     /// Takes in the count the engine reported for the page of tab `tab`: which match is current and how many there are.
     pub fn browser_found(&mut self, tab: u32, active: u32, total: u32) {
-        if let Some(search) = self
-            .browser
-            .as_mut()
-            .and_then(|browser| browser.tab_mut(tab))
-            .and_then(|tab| tab.search.as_mut())
-        {
+        if let Some(search) = self.browser_tab(tab).and_then(|tab| tab.search.as_mut()) {
             search.active = active;
             search.total = total;
             search.counted = true;
@@ -189,17 +178,13 @@ pub fn find_bar(search: &PageSearch, page: f32, beside: f32) {
                     line(said, 11, 1.4, tone);
                 },
             );
-            Button::icon(
-                phosphor::ARROW_UP,
-                Target::Browser(BrowserEvent::BrowserFindPrevious),
-            )
-            .build();
-            Button::icon(
-                phosphor::ARROW_DOWN,
-                Target::Browser(BrowserEvent::BrowserFindNext),
-            )
-            .build();
-            Button::icon(phosphor::X, Target::Browser(BrowserEvent::BrowserFindClose)).build();
+            for (icon, id) in [
+                (phosphor::ARROW_UP, BrowserEvent::BrowserFindPrevious),
+                (phosphor::ARROW_DOWN, BrowserEvent::BrowserFindNext),
+                (phosphor::X, BrowserEvent::BrowserFindClose),
+            ] {
+                Button::icon(icon, Target::Browser(id)).build();
+            }
         },
     );
 }

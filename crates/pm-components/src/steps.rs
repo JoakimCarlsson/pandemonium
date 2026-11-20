@@ -1,7 +1,6 @@
 //! What an agent did on the way to a reply: the steps it took, its plan and its questions.
 
 use crate::areas::ChatEvent;
-use crate::events::{Event, send};
 use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
@@ -10,14 +9,13 @@ use pm_harness::{
 };
 use rustle::phosphor;
 use rustle::{Alignment, row_arranged};
-use rustle::{Arrangement, CursorIcon, FlowOptions, Modifier};
+use rustle::{Arrangement, Modifier};
 
 use crate::Button;
 use crate::Tile;
 use crate::button::Variant;
 use crate::diff::diff_line;
 use crate::diff_syntax::DiffColours;
-use crate::events::Interactive;
 use crate::file_icon::{file_icon, file_language};
 use crate::icons::spinner;
 use crate::parts::{clipped, glyph, line, wrap};
@@ -82,14 +80,12 @@ fn step_line(
     id: Option<Target>,
     open: bool,
 ) {
-    let mut own = Modifier::new()
-        .fill_max_width()
-        .height_in(theme::sp(8), f32::INFINITY);
-    if let Some(id) = id {
-        own = own
-            .cursor(CursorIcon::Pointer)
-            .control(id, send(Event::pressing(id)));
-    }
+    let own = kit::pressable(
+        Modifier::new()
+            .fill_max_width()
+            .height_in(theme::sp(8), f32::INFINITY),
+        id,
+    );
     kit::row(own, 2.5, || {
         kit::row(Modifier::new().size(theme::sp(4), theme::sp(4)), 0, mark);
         line(verb, 13, 1.4, Role::Muted);
@@ -100,21 +96,12 @@ fn step_line(
         }
         detail();
         if id.is_some() {
-            glyph(
-                if open {
-                    phosphor::CARET_DOWN
-                } else {
-                    phosphor::CARET_RIGHT
-                },
-                3.5,
-                Role::Subtle,
-            );
+            glyph(kit::chevron(open), 3.5, Role::Subtle);
         }
     });
 }
 
 /// Emits a box that takes the room left in its row and cuts a line of code short at its edge, on a chip when `chip` is set.
-#[track_caller]
 fn clipped_mono(content: &str, chip: bool) {
     let code = kit::code(12, Role::Text);
     kit::row_top(Modifier::new().weight(1.0), 0, || {
@@ -132,7 +119,6 @@ fn clipped_mono(content: &str, chip: bool) {
 }
 
 /// Emits the mark of how a tool got on: a turning ring, or the glyph that is its kind.
-#[track_caller]
 fn tool_mark(tool: &ToolUse) {
     match tool.state {
         ToolState::Running => spinner(3.5, Role::Muted),
@@ -164,25 +150,21 @@ fn has_detail(tool: &ToolUse) -> bool {
 }
 
 /// Emits the detail under a tool's line, when it has some.
-#[track_caller]
 fn tool_detail(tool: &ToolUse) {
     if let Some(diff) = &tool.diff {
         let lines = changed_lines(diff);
         let colours = DiffColours::of(&lines, file_language(&diff.path).as_deref());
-        CodeBox::new(|| {
+        detail_box(|| {
             for (at, line) in lines.iter().enumerate() {
                 diff_line(line.kind, &line.text, colours.line(at));
             }
-        })
-        .modifier(Modifier::new().fill_max_width())
-        .max_height(DETAIL_HEIGHT)
-        .build();
+        });
         return;
     }
     let Some(output) = tool_output(tool) else {
         return;
     };
-    CodeBox::new(move || {
+    detail_box(move || {
         for printed in output
             .lines()
             .filter(|printed| !printed.starts_with("```"))
@@ -196,16 +178,16 @@ fn tool_detail(tool: &ToolUse) {
                 );
             });
         }
-    })
-    .modifier(Modifier::new().fill_max_width())
-    .max_height(DETAIL_HEIGHT)
-    .build();
+    });
 }
 
-/// Emits one tool of the steps.
+/// Emits the box of code the detail of a step folds out in, as wide as the steps and at most [`DETAIL_HEIGHT`] tall, holding what `content` emits.
 #[track_caller]
-fn tool_step(tool: &ToolUse, root: &str, id: Target, open: bool) {
-    tool_line(tool, root, Some(id), open);
+fn detail_box(content: impl FnOnce()) {
+    CodeBox::new(content)
+        .modifier(Modifier::new().fill_max_width())
+        .max_height(DETAIL_HEIGHT)
+        .build();
 }
 
 /// Emits one tool of the steps, folding out its detail only when it has a step `id` to fold it by.
@@ -277,7 +259,6 @@ pub fn elapsed(seconds: u64) -> String {
 }
 
 /// Emits the mark of how a subagent is getting on: a turning ring, a dot once it is done, or a cross.
-#[track_caller]
 fn agent_mark(state: ToolState) {
     kit::row(
         Modifier::new().size(theme::sp(4), theme::sp(4)),
@@ -295,7 +276,6 @@ fn agent_mark(state: ToolState) {
 }
 
 /// Emits the chip of a subagent working in a git worktree of its own: that it does, while it works, and what became of its changes once it ended.
-#[track_caller]
 fn worktree_chip(worktree: &Worktree) {
     let (words, role) = match &worktree.merge {
         None => ("worktree".to_owned(), Role::Muted),
@@ -307,49 +287,31 @@ fn worktree_chip(worktree: &Worktree) {
         Some(Merge::Conflicted { .. }) => ("conflict".to_owned(), Role::Danger),
         Some(Merge::Held { .. }) => ("not applied".to_owned(), Role::Warning),
     };
-    kit::row(
-        Modifier::new()
-            .background_rounded(theme::color(Role::SurfaceHover), Radius::Md.px())
-            .padding_xy(theme::sp(1.5), 0.0),
-        1,
-        || {
-            glyph(phosphor::GIT_FORK, 3.0, role);
-            kit::text(
-                Modifier::new(),
-                words,
-                theme::text_style(12, 1.4).color(theme::color(role)),
-            );
-        },
-    );
+    kit::row(chip_box(), 1, || {
+        glyph(phosphor::GIT_FORK, 3.0, role);
+        kit::text(
+            Modifier::new(),
+            words,
+            theme::text_style(12, 1.4).color(theme::color(role)),
+        );
+    });
 }
 
-/// A small quiet label on a subagent's row naming the kind of subagent, set like its other labels.
-#[track_caller]
-fn quiet_chip(words: String) {
-    quiet_text(words);
+/// The modifier of a small chip on a subagent's row: a rounded quiet fill, inset at its ends.
+fn chip_box() -> Modifier {
+    Modifier::new()
+        .background_rounded(theme::color(Role::SurfaceHover), Radius::Md.px())
+        .padding_xy(theme::sp(1.5), 0.0)
 }
 
-/// Emits a small quiet label on a subagent's row, such as the category and model it runs as.
-#[track_caller]
-fn quiet_label(words: String) {
-    quiet_text(words);
-}
-
-/// Emits `words` small and muted on a chip.
+/// Emits `words` small and muted on a chip: the kind of a subagent, or the category and model it runs as.
 #[track_caller]
 fn quiet_text(words: String) {
     let kind = theme::text_style(12, 1.4).color(theme::color(Role::Muted));
-    kit::row_top(
-        Modifier::new()
-            .background_rounded(theme::color(Role::SurfaceHover), Radius::Md.px())
-            .padding_xy(theme::sp(1.5), 0.0),
-        0,
-        || kit::text(Modifier::new(), words, kind),
-    );
+    kit::row_top(chip_box(), 0, || kit::text(Modifier::new(), words, kind));
 }
 
 /// Emits what a subagent has cost so far, `micros` millionths of a US dollar, as a muted amount cut short when the row runs out of room.
-#[track_caller]
 fn cost_label(micros: u64) {
     kit::text(
         Modifier::new().clip(),
@@ -423,18 +385,10 @@ pub fn subagents(
         Modifier::new().fill_max_width().panel(Radius::Lg).clip(),
         0,
         || {
-            kit::row(
-                Modifier::new()
-                    .fill_max_width()
-                    .height(theme::sp(10))
-                    .ruled(theme::Side::Bottom)
-                    .padding_xy(theme::sp(3.5), 0.0),
-                2.5,
-                || {
-                    glyph(phosphor::GIT_FORK, 4.0, Role::Muted);
-                    line(title, 13, 1.4, Role::Text);
-                },
-            );
+            kit::bar(10, 3.5, 2.5, || {
+                glyph(phosphor::GIT_FORK, 4.0, Role::Muted);
+                line(title, 13, 1.4, Role::Text);
+            });
             match scroll {
                 Some((own, parent)) => rows(
                     handing_on(
@@ -497,14 +451,14 @@ fn agent_row(
             .build_with(|| {
                 agent_mark(tool.state);
                 if tool.agent.as_deref() != Some("agent") {
-                    quiet_chip(tool.agent.clone().unwrap_or_default());
+                    quiet_text(tool.agent.clone().unwrap_or_default());
                 }
                 if let Some(worktree) = tool.worktree.as_deref() {
                     worktree_chip(worktree);
                 }
                 clipped(described, 13, Role::Text);
                 if let Some(runs_as) = tool.runs_as.clone() {
-                    quiet_label(runs_as);
+                    quiet_text(runs_as);
                 }
                 if let Some(cost) = tool.cost {
                     cost_label(cost);
@@ -527,23 +481,16 @@ fn agent_row(
                     .tooltip("Stop this subagent")
                     .build();
                 }
-                glyph(
-                    if open {
-                        phosphor::CARET_DOWN
-                    } else {
-                        phosphor::CARET_RIGHT
-                    },
-                    3.5,
-                    Role::Subtle,
-                );
+                glyph(kit::chevron(open), 3.5, Role::Subtle);
             });
         if open && !used.is_empty() {
             kit::column(
-                Modifier::new()
-                    .fill_max_width()
-                    .padding_each(theme::sp(10), 0.0, 0.0, 0.0)
-                    .padding_each(0.0, 0.0, theme::sp(3.5), 0.0)
-                    .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
+                Modifier::new().fill_max_width().padding_each(
+                    theme::sp(10),
+                    0.0,
+                    theme::sp(3.5),
+                    theme::sp(2),
+                ),
                 1,
                 || {
                     for tool in used {
@@ -556,7 +503,6 @@ fn agent_row(
 }
 
 /// Emits the mark in front of a plan step: a filled check when done, a spinner while under way, an empty ring when not begun.
-#[track_caller]
 fn plan_mark(progress: Progress) {
     match progress {
         Progress::Done => row_arranged(
@@ -589,32 +535,23 @@ pub fn plan(items: &[PlanStep]) {
         Modifier::new().fill_max_width().panel(Radius::Xl).clip(),
         0,
         || {
-            kit::row(
-                Modifier::new()
-                    .fill_max_width()
-                    .height(theme::sp(12))
-                    .ruled(theme::Side::Bottom)
-                    .padding_xy(theme::sp(4), 0.0),
-                3,
-                || {
-                    glyph(
-                        phosphor::CHECK_CIRCLE,
-                        4.5,
-                        if finished { Role::Success } else { Role::Muted },
-                    );
-                    line(
-                        format!("Plan · {done} of {} done", items.len()),
-                        14,
-                        1.4,
-                        Role::Text,
-                    );
-                },
-            );
+            kit::bar(12, 4, 3, || {
+                glyph(
+                    phosphor::CHECK_CIRCLE,
+                    4.5,
+                    if finished { Role::Success } else { Role::Muted },
+                );
+                line(
+                    format!("Plan · {done} of {} done", items.len()),
+                    14,
+                    1.4,
+                    Role::Text,
+                );
+            });
             kit::column(
                 Modifier::new()
                     .fill_max_width()
-                    .padding_xy(theme::sp(4), 0.0)
-                    .padding_xy(0.0, theme::sp(3.5)),
+                    .padding_xy(theme::sp(4), theme::sp(3.5)),
                 3,
                 || {
                     for item in items {
@@ -673,7 +610,7 @@ pub fn steps(
                     Step::Tool(tool) if tool.is_subagent() => agents.push(position),
                     Step::Tool(tool) => {
                         flush(&mut agents);
-                        rustle::key(position, || tool_step(tool, root, id, open));
+                        rustle::key(position, || tool_line(tool, root, Some(id), open));
                     }
                     Step::Plan(items) => {
                         flush(&mut agents);
@@ -697,11 +634,11 @@ pub fn steps(
                                 );
                                 if open {
                                     kit::column(
-                                        Modifier::new().padding_xy(0.0, theme::sp(1)).padding_each(
+                                        Modifier::new().padding_each(
                                             theme::sp(4),
+                                            theme::sp(1),
                                             0.0,
-                                            0.0,
-                                            0.0,
+                                            theme::sp(1),
                                         ),
                                         0,
                                         || {
@@ -734,8 +671,7 @@ pub fn question(ask: &Permission, width: f32) {
     kit::column(
         Modifier::new()
             .panel(Radius::Xl)
-            .padding_xy(theme::sp(4), 0.0)
-            .padding_xy(0.0, theme::sp(3)),
+            .padding_xy(theme::sp(4), theme::sp(3)),
         2.5,
         || {
             line("Needs your approval", 12, 1.4, Role::Muted);
@@ -752,8 +688,7 @@ pub fn question(ask: &Permission, width: f32) {
                     Modifier::new()
                         .fill_max_width()
                         .background_rounded(theme::color(Role::Background), Radius::Lg.px())
-                        .padding_xy(theme::sp(3), 0.0)
-                        .padding_xy(0.0, theme::sp(2)),
+                        .padding_xy(theme::sp(3), theme::sp(2)),
                     0,
                     || {
                         for piece in rustle::wrap_at_spaces(&shown, &kind, room) {
@@ -777,25 +712,24 @@ fn answers(ask: &Permission, width: f32) {
     };
     let mut choices: Vec<(usize, &pm_harness::Choice)> = ask.choices.iter().enumerate().collect();
     choices.sort_by_key(|(_, choice)| order(&choice.verdict));
-    rustle::flow_row_with(
-        Modifier::new().fill_max_width(),
-        FlowOptions::new(sp(2), sp(2))
-            .arrangement(Arrangement::End)
-            .item_alignment(rustle::Alignment::Center),
-        || {
-            for (index, choice) in choices {
-                kit::small_button(
-                    &choice.name,
-                    Target::Chat(ChatEvent::Choice(index)),
-                    match choice.verdict {
-                        Verdict::Reject => Variant::Ghost,
-                        Verdict::Allow => Variant::Outline,
-                        Verdict::Always => Variant::Default,
-                    },
-                )
-                .wrapped(width)
-                .build();
-            }
-        },
-    );
+    kit::footer(|| {
+        for (index, choice) in choices {
+            kit::small_button(
+                &choice.name,
+                Target::Chat(ChatEvent::Choice(index)),
+                variant_of(&choice.verdict),
+            )
+            .wrapped(width)
+            .build();
+        }
+    });
+}
+
+/// The look of the button that answers with `verdict`: quiet for a refusal, outlined for once and filled for the boldest, which goes ahead without asking again.
+pub(crate) fn variant_of(verdict: &Verdict) -> Variant {
+    match verdict {
+        Verdict::Reject => Variant::Ghost,
+        Verdict::Allow => Variant::Outline,
+        Verdict::Always => Variant::Default,
+    }
 }

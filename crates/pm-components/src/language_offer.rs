@@ -67,8 +67,7 @@ pub(crate) fn offer(state: &WorkspaceState, viewer: &Viewer) {
         Modifier::new()
             .background(theme::color(Role::Surface))
             .ruled(theme::Side::Bottom)
-            .padding_xy(theme::sp(4), 0.0)
-            .padding_xy(0.0, theme::sp(1)),
+            .padding_xy(theme::sp(4), theme::sp(1)),
         3,
         move || {
             kit::text(
@@ -77,18 +76,11 @@ pub(crate) fn offer(state: &WorkspaceState, viewer: &Viewer) {
                 kit::line(12, Role::Muted),
             );
             if idle {
-                kit::small_button(
-                    if retry { "Try again" } else { "Install" },
-                    Target::Editor(EditorEvent::OfferInstall),
-                    Variant::Secondary,
-                )
-                .build();
-                kit::small_button(
-                    "Not now",
-                    Target::Editor(EditorEvent::OfferDecline),
-                    Variant::Ghost,
-                )
-                .build();
+                let install = Target::Editor(EditorEvent::OfferInstall);
+                let label = if retry { "Try again" } else { "Install" };
+                kit::action(label, install, Variant::Secondary);
+                let decline = Target::Editor(EditorEvent::OfferDecline);
+                kit::action("Not now", decline, Variant::Ghost);
             }
         },
     );

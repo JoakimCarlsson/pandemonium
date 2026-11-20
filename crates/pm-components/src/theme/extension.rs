@@ -3,20 +3,20 @@
 use std::collections::BTreeMap;
 use std::sync::RwLock;
 
-use super::{Role, Tone};
+use rustle::Color;
 
-use super::{Theme, ThemeFamily, default_family};
+use super::{Role, Theme, ThemeFamily, default_family};
 
 /// The families extensions brought, by the source that told of them, such as the machine a server runs on.
 static BROUGHT: RwLock<BTreeMap<String, Vec<ThemeFamily>>> = RwLock::new(BTreeMap::new());
 
 /// The colour written `#rrggbb` or `#rrggbbaa`.
-fn colour_of(text: &str) -> Option<Tone> {
+fn colour_of(text: &str) -> Option<Color> {
     let digits = text.strip_prefix('#')?;
     let value = u32::from_str_radix(digits, 16).ok()?;
     match digits.len() {
-        6 => Some(Tone::hex(value)),
-        8 => Some(Tone::hexa(value)),
+        6 => Some(Color::from_argb(0xff00_0000 | value)),
+        8 => Some(Color::from_argb(value.rotate_right(8))),
         _ => None,
     }
 }

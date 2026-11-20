@@ -352,13 +352,8 @@ impl WorkspaceState {
 
     /// Starts debugging: lists what the folder of the session being worked in can be debugged as at `at`, to pick one, or runs the program on when one is paused.
     pub fn debug_started(mut self, at: (f32, f32)) -> Self {
-        if let Some(run) = self.debug.live() {
-            let (session, debug) = (run.session, run.debug);
-            self.outbox.push(Outgoing::DebugDo {
-                session,
-                debug,
-                action: DebugAction::Continue,
-            });
+        if self.debug.live().is_some() {
+            self.send_debug(DebugAction::Continue);
             return self;
         }
         let Some(session) = self.review_index() else {
@@ -371,20 +366,7 @@ impl WorkspaceState {
         });
         self.debug.scenarios_for = file;
         self.debug.trouble = None;
-        self.listing = Some(Listing {
-            session,
-            items: Items::Choices {
-                choosing: Choosing::DebugScenario,
-                choices: Vec::new(),
-                filter: TextFieldState::new(""),
-                matched: Vec::new(),
-            },
-            picked: 0,
-            answered: false,
-            problem: None,
-            at,
-            quick: true,
-        });
+        self.await_choices(session, Choosing::DebugScenario, at);
         self
     }
 
@@ -394,32 +376,38 @@ impl WorkspaceState {
             return self;
         };
         self.outbox.push(Outgoing::DebugProcesses { session });
-        self.listing = Some(Listing {
-            session,
-            items: Items::Choices {
-                choosing: Choosing::DebugProcess,
-                choices: Vec::new(),
-                filter: TextFieldState::new(""),
-                matched: Vec::new(),
-            },
-            picked: 0,
-            answered: false,
-            problem: None,
-            at,
-            quick: true,
-        });
+        self.await_choices(session, Choosing::DebugProcess, at);
         self
     }
 
-    /// The state after the server listed what the folder of the session at `session` can be debugged as.
-    pub fn with_debug_scenarios(mut self, session: usize, scenarios: Vec<DebugScenario>) -> Self {
-        self.debug.scenarios = scenarios;
-        self.choices_renewed(Choosing::DebugScenario);
+    /// Opens the quick list of `choosing` for the session at `session` at `at`, empty until the server answers.
+    fn await_choices(&mut self, session: usize, choosing: Choosing, at: (f32, f32)) {
+        let items = Items::Choices {
+            choosing,
+            choices: Vec::new(),
+            filter: TextFieldState::new(""),
+            matched: Vec::new(),
+        };
+        self.listing = Some(Listing {
+            quick: true,
+            ..Listing::waiting(session, items, at)
+        });
+    }
+
+    /// Fills the quick list of `choosing` anew now that the server answered for the session at `session`.
+    fn choices_answered(&mut self, session: usize, choosing: Choosing) {
+        self.choices_renewed(choosing);
         if let Some(listing) = self.listing.as_mut()
             && listing.session == session
         {
             listing.answered = true;
         }
+    }
+
+    /// The state after the server listed what the folder of the session at `session` can be debugged as.
+    pub fn with_debug_scenarios(mut self, session: usize, scenarios: Vec<DebugScenario>) -> Self {
+        self.debug.scenarios = scenarios;
+        self.choices_answered(session, Choosing::DebugScenario);
         self
     }
 
@@ -431,12 +419,7 @@ impl WorkspaceState {
         processes: Vec<DebugProcess>,
     ) -> Self {
         self.debug.processes = (adapters, processes);
-        self.choices_renewed(Choosing::DebugProcess);
-        if let Some(listing) = self.listing.as_mut()
-            && listing.session == session
-        {
-            listing.answered = true;
-        }
+        self.choices_answered(session, Choosing::DebugProcess);
         self
     }
 
@@ -560,18 +543,12 @@ impl WorkspaceState {
         else {
             return self;
         };
-        let place = Position {
-            line: frame.line as u32,
-            character: 0,
-        };
+        let place = Position::new(frame.line as u32, 0);
         self.go_to_location(
             session,
             Location {
                 path: relative,
-                span: Span {
-                    start: place,
-                    end: place,
-                },
+                span: Span::new(place, place),
                 inside: true,
                 ..Location::default()
             },
@@ -614,76 +591,61 @@ impl WorkspaceState {
 
     /// Carries out a press on one of the debug tab's controls, and says whether `id` was one.
     pub(crate) fn press_debug(&mut self, id: Target) -> bool {
-        let action = match id {
-            Target::Debug(DebugControl::DebugContinue) => Some(DebugAction::Continue),
-            Target::Debug(DebugControl::DebugPause) => Some(DebugAction::Pause),
-            Target::Debug(DebugControl::DebugStepOver) => Some(DebugAction::StepOver),
-            Target::Debug(DebugControl::DebugStepIn) => Some(DebugAction::StepIn),
-            Target::Debug(DebugControl::DebugStepOut) => Some(DebugAction::StepOut),
-            Target::Debug(DebugControl::DebugStop) => Some(DebugAction::Stop),
-            _ => None,
+        let Target::Debug(control) = id else {
+            return false;
         };
-        if let Some(action) = action {
-            self.send_debug(action);
-            return true;
-        }
-        match id {
-            Target::Debug(DebugControl::DebugTab) => {
+        let action = match control {
+            DebugControl::DebugContinue => DebugAction::Continue,
+            DebugControl::DebugPause => DebugAction::Pause,
+            DebugControl::DebugStepOver => DebugAction::StepOver,
+            DebugControl::DebugStepIn => DebugAction::StepIn,
+            DebugControl::DebugStepOut => DebugAction::StepOut,
+            DebugControl::DebugStop => DebugAction::Stop,
+            DebugControl::DebugTab => {
                 self.bottom = crate::dock::BottomTab::Debug;
-                true
+                return true;
             }
-            Target::Debug(DebugControl::DebugConsoleSubmit) => {
+            DebugControl::DebugConsoleSubmit => {
                 self.evaluate_typed();
-                true
+                return true;
             }
-            Target::Debug(DebugControl::DebugWatchAdd) => {
+            DebugControl::DebugWatchAdd => {
                 self.watch_typed();
-                true
+                return true;
             }
-            Target::Debug(DebugControl::DebugConsoleField)
-            | Target::Debug(DebugControl::DebugWatchField) => true,
-            _ => self.press_debug_row(id),
-        }
+            DebugControl::DebugConsoleField | DebugControl::DebugWatchField => return true,
+            _ => return self.press_debug_row(control),
+        };
+        self.send_debug(action);
+        true
     }
 
-    /// Carries out a press on a row of the stack, the variables or the watches, and says whether `id` was one.
-    fn press_debug_row(&mut self, id: Target) -> bool {
-        let row = |wanted: fn(usize) -> Target| match id {
-            Target::Debug(DebugControl::DebugFrame(index))
-            | Target::Debug(DebugControl::DebugVariable(index))
-            | Target::Debug(DebugControl::DebugWatchRemove(index))
-                if index < DEBUG_ROWS && id == wanted(index) =>
-            {
-                Some(index)
+    /// Carries out a press on a row of the stack, the variables or the watches, and says whether `control` was one.
+    fn press_debug_row(&mut self, control: DebugControl) -> bool {
+        match control {
+            DebugControl::DebugFrame(index) if index < DEBUG_ROWS => {
+                let frame = self
+                    .debug
+                    .live()
+                    .and_then(|run| run.view.frames.get(index).map(|frame| frame.id));
+                if let Some(frame) = frame {
+                    self.debug.reveal = self.debug.run.as_mut().map(|run| {
+                        run.view.frame = Some(frame);
+                        (run.session, run.view.frames[index].clone())
+                    });
+                    self.send_debug(DebugAction::SelectFrame { frame });
+                }
             }
-            _ => None,
-        };
-        if let Some(index) = row(|index| Target::Debug(DebugControl::DebugFrame(index))) {
-            let frame = self
-                .debug
-                .live()
-                .and_then(|run| run.view.frames.get(index).map(|frame| frame.id));
-            if let Some(frame) = frame {
-                self.debug.reveal = self.debug.run.as_mut().map(|run| {
-                    run.view.frame = Some(frame);
-                    (run.session, run.view.frames[index].clone())
-                });
-                self.send_debug(DebugAction::SelectFrame { frame });
+            DebugControl::DebugVariable(index) if index < DEBUG_ROWS => self.toggle_variable(index),
+            DebugControl::DebugWatchRemove(index) if index < DEBUG_ROWS => {
+                if index < self.debug.watches.len() {
+                    self.debug.watches.remove(index);
+                    self.send_watches();
+                }
             }
-            return true;
+            _ => return false,
         }
-        if let Some(index) = row(|index| Target::Debug(DebugControl::DebugVariable(index))) {
-            self.toggle_variable(index);
-            return true;
-        }
-        if let Some(index) = row(|index| Target::Debug(DebugControl::DebugWatchRemove(index))) {
-            if index < self.debug.watches.len() {
-                self.debug.watches.remove(index);
-                self.send_watches();
-            }
-            return true;
-        }
-        false
+        true
     }
 
     /// Unfolds the variable at row `index`, asking for its members, or folds it.

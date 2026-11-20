@@ -135,7 +135,7 @@ impl WorkspaceState {
         match id {
             Target::Chat(ChatEvent::Next) => self.advance(true),
             Target::Chat(ChatEvent::Skip) => self.advance(false),
-            Target::Chat(ChatEvent::Close) => self.abandon(),
+            Target::Chat(ChatEvent::Close) => self.hand_over(false),
             Target::Chat(ChatEvent::Fold) => {
                 if let Some(draft) = self.draft_mut() {
                     draft.folded = !draft.folded;
@@ -178,12 +178,7 @@ impl WorkspaceState {
         self.hand_over(true);
     }
 
-    /// Abandons the form, which aborts what the agent was doing with it.
-    fn abandon(&mut self) {
-        self.hand_over(false);
-    }
-
-    /// Takes the form off the open session and queues its answers, or its abandoning when `answers` is false.
+    /// Takes the form off the open session and queues its answers, or, when `answers` is false, its abandoning, which aborts what the agent was doing with it.
     fn hand_over(&mut self, answers: bool) {
         let Page::Session(open) = self.page else {
             return;

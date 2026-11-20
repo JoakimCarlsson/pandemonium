@@ -68,17 +68,6 @@ pub fn shadow_margin() -> f32 {
 /// press anywhere in the band around the frame that holds its shadow.
 pub const RESIZE_EDGE: f32 = 4.0;
 
-/// The pointer shape that says the edge or corner `edge` resizes the window.
-fn edge_cursor(edge: rustle::ResizeEdge) -> rustle::CursorIcon {
-    use rustle::{CursorIcon, ResizeEdge};
-    match edge {
-        ResizeEdge::North | ResizeEdge::South => CursorIcon::NsResize,
-        ResizeEdge::West | ResizeEdge::East => CursorIcon::EwResize,
-        ResizeEdge::NorthWest | ResizeEdge::SouthEast => CursorIcon::NwseResize,
-        ResizeEdge::NorthEast | ResizeEdge::SouthWest => CursorIcon::NeswResize,
-    }
-}
-
 /// Emits, over everything in a window that draws its own frame and floats, the strips along
 /// its edges and the squares at its corners that resize it: the band that holds its shadow
 /// and [`RESIZE_EDGE`] into the frame. Each shows the pointer shape of its edge and hands a
@@ -86,47 +75,52 @@ fn edge_cursor(edge: rustle::ResizeEdge) -> rustle::CursorIcon {
 /// Emit it last in a stack that fills the window.
 #[track_caller]
 pub fn resize_edges() {
-    use rustle::{BoxAlignment, PointerButton, PointerPhase, ResizeEdge};
+    use rustle::{BoxAlignment, CursorIcon, PointerButton, PointerPhase, ResizeEdge};
     if !framed() {
         return;
     }
     let reach = shadow_margin() + RESIZE_EDGE;
     let operations = crate::events::operations();
+    let across = (
+        Modifier::new().fill_max_width().height(reach),
+        CursorIcon::NsResize,
+    );
+    let down = (
+        Modifier::new().fill_max_height().width(reach),
+        CursorIcon::EwResize,
+    );
+    let corner = Modifier::new().width(reach).height(reach);
+    let falling = (corner.clone(), CursorIcon::NwseResize);
+    let rising = (corner, CursorIcon::NeswResize);
     let edges = [
-        (ResizeEdge::North, BoxAlignment::TopCenter),
-        (ResizeEdge::South, BoxAlignment::BottomCenter),
-        (ResizeEdge::West, BoxAlignment::CenterStart),
-        (ResizeEdge::East, BoxAlignment::CenterEnd),
-        (ResizeEdge::NorthWest, BoxAlignment::TopStart),
-        (ResizeEdge::NorthEast, BoxAlignment::TopEnd),
-        (ResizeEdge::SouthWest, BoxAlignment::BottomStart),
-        (ResizeEdge::SouthEast, BoxAlignment::BottomEnd),
+        (ResizeEdge::North, BoxAlignment::TopCenter, across.clone()),
+        (ResizeEdge::South, BoxAlignment::BottomCenter, across),
+        (ResizeEdge::West, BoxAlignment::CenterStart, down.clone()),
+        (ResizeEdge::East, BoxAlignment::CenterEnd, down),
+        (
+            ResizeEdge::NorthWest,
+            BoxAlignment::TopStart,
+            falling.clone(),
+        ),
+        (ResizeEdge::NorthEast, BoxAlignment::TopEnd, rising.clone()),
+        (ResizeEdge::SouthWest, BoxAlignment::BottomStart, rising),
+        (ResizeEdge::SouthEast, BoxAlignment::BottomEnd, falling),
     ];
     rustle::stack_with(
         Modifier::new()
             .fill_max_size()
             .z_index(rustle::POPUP_Z_INDEX + 1),
         || {
-            for (edge, alignment) in edges {
-                let size = match edge {
-                    ResizeEdge::North | ResizeEdge::South => {
-                        Modifier::new().fill_max_width().height(reach)
-                    }
-                    ResizeEdge::West | ResizeEdge::East => {
-                        Modifier::new().fill_max_height().width(reach)
-                    }
-                    _ => Modifier::new().width(reach).height(reach),
-                };
+            for (edge, alignment, (size, cursor)) in edges {
                 let pressed = std::rc::Rc::clone(&operations);
-                rustle::spacer(
-                    size.align(alignment)
-                        .cursor(edge_cursor(edge))
-                        .on_pointer_button(PointerButton::Primary, move |event| {
-                            if event.phase == PointerPhase::Press {
-                                pressed.edge_pressed(edge);
-                            }
-                        }),
-                );
+                rustle::spacer(size.align(alignment).cursor(cursor).on_pointer_button(
+                    PointerButton::Primary,
+                    move |event| {
+                        if event.phase == PointerPhase::Press {
+                            pressed.edge_pressed(edge);
+                        }
+                    },
+                ));
             }
         },
     );
@@ -141,7 +135,7 @@ pub fn shadowed(frame: impl FnOnce()) {
     }
     let own = Modifier::new().fill_max_size();
     let own = if shadow_margin() > 0.0 {
-        cast_shadow(own)
+        own.shadow_layers(WINDOW_SHADOW, FRAME_RADIUS)
     } else {
         own
     };
@@ -151,16 +145,12 @@ pub fn shadowed(frame: impl FnOnce()) {
     kit::column(own, 0, frame);
 }
 
-/// `modifier` with [`WINDOW_SHADOW`] drawn behind its box, its corners rounded by [`FRAME_RADIUS`].
-fn cast_shadow(modifier: Modifier) -> Modifier {
-    modifier.shadow_layers(WINDOW_SHADOW, FRAME_RADIUS)
-}
-
 /// A window's frame being described: what its body holds, and what is laid over the body.
 ///
 /// Build it with [`Window::new`], fill it with [`Window::body`], lay menus
 /// over it with [`Window::over`], and emit it with [`Window::build`]. It
 /// fills the window.
+#[derive(Default)]
 pub struct Window<'a> {
     /// What fills the window under the title bar, in the order it was given.
     body: Vec<Box<dyn FnOnce() + 'a>>,
@@ -173,11 +163,7 @@ pub struct Window<'a> {
 impl<'a> Window<'a> {
     /// A frame with nothing in it.
     pub fn new() -> Self {
-        Self {
-            body: Vec::new(),
-            over: Vec::new(),
-            modifier: Modifier::new(),
-        }
+        Self::default()
     }
 
     /// The frame with what `child` emits filling the window under the title bar, after what the body already holds.
@@ -231,12 +217,5 @@ impl<'a> Window<'a> {
                 content();
             }
         });
-    }
-}
-
-impl Default for Window<'_> {
-    /// A frame with nothing in it.
-    fn default() -> Self {
-        Self::new()
     }
 }

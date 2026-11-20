@@ -48,8 +48,6 @@ pub struct Menu {
     width: f32,
     /// How tall each row is, in style units.
     row: f32,
-    /// What the caller puts around its box.
-    modifier: Modifier,
     /// What picking a row does, told the row's id, when the caller said; the workspace's
     /// reducer takes the press of the row otherwise.
     on_pick: Option<Pick>,
@@ -74,15 +72,8 @@ impl Menu {
             entries: Vec::new(),
             width: 52.0,
             row: 8.0,
-            modifier: Modifier::new(),
             on_pick: None,
         }
-    }
-
-    /// The menu with `modifier` put around its box, outside its own.
-    pub fn modifier(mut self, modifier: Modifier) -> Self {
-        self.modifier = self.modifier.chain(modifier);
-        self
     }
 
     /// The menu running `on_pick` with the id of the row picked, in place of handing the
@@ -120,6 +111,18 @@ impl Menu {
     pub fn separator(mut self) -> Self {
         self.entries.push(Entry::Separator);
         self
+    }
+
+    /// The menu with each of `rows` added in turn: what the row says, the keys that do the same, the name it answers to, whether it is switched on, and whether a rule follows it.
+    pub fn rows<'a>(
+        self,
+        rows: impl IntoIterator<Item = (&'a str, Option<String>, Target, bool, bool)>,
+    ) -> Self {
+        rows.into_iter()
+            .fold(self, |menu, (label, keys, id, on, rule)| {
+                let menu = menu.item(label, keys.as_deref(), id, !on);
+                if rule { menu.separator() } else { menu }
+            })
     }
 
     /// The menu opened from the control occupying `trigger`, as `(x, y, width, height)` in logical pixels, inside a window `window` wide and tall:
@@ -172,11 +175,10 @@ impl Menu {
         let (x, y) = self.at;
         let (width, height) = (self.width, self.row);
         let entries = self.entries;
-        let modifier = self.modifier;
         let on_pick = self.on_pick;
         crate::popups::at_window(x, y, true, move || {
             Surface::new()
-                .modifier(modifier.chain(Modifier::new().width(theme::sp(width))))
+                .modifier(Modifier::new().width(theme::sp(width)))
                 .inner(Modifier::new().padding(theme::sp(1)))
                 .build_with(move || {
                     for entry in entries {
@@ -201,7 +203,6 @@ fn picked(id: Target, on_pick: Option<Pick>) -> impl Fn() + 'static {
 /// across the menu inside its padding with a step of room above and below it, or a row with
 /// the label and its shortcut, whose click runs `on_pick`, or hands the press to the
 /// workspace's reducer without one.
-#[track_caller]
 fn menu_row(entry: Entry, height: f32, on_pick: Option<Pick>) {
     match entry {
         Entry::Separator => {

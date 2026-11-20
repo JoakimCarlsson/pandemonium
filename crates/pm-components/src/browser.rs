@@ -279,44 +279,7 @@ fn served_move(current: &str, address: &str) -> Move {
 
 /// Whether `id` is something of the browser.
 pub fn is_browser_part(id: Target) -> bool {
-    matches!(
-        id,
-        Target::Browser(BrowserEvent::TabBrowser)
-            | Target::Browser(BrowserEvent::BrowserClose)
-            | Target::Browser(BrowserEvent::BrowserBody)
-            | Target::Browser(BrowserEvent::BrowserAddress)
-            | Target::Browser(BrowserEvent::BrowserBack)
-            | Target::Browser(BrowserEvent::BrowserForward)
-            | Target::Browser(BrowserEvent::BrowserReload)
-            | Target::Browser(BrowserEvent::BrowserTools)
-            | Target::Browser(BrowserEvent::BrowserToolsBody)
-            | Target::Browser(BrowserEvent::BrowserGo)
-            | Target::Browser(BrowserEvent::BrowserPick)
-            | Target::Browser(BrowserEvent::BrowserSash)
-            | Target::Browser(BrowserEvent::BrowserFindField)
-            | Target::Browser(BrowserEvent::BrowserFindNext)
-            | Target::Browser(BrowserEvent::BrowserFindPrevious)
-            | Target::Browser(BrowserEvent::BrowserFindClose)
-            | Target::Browser(BrowserEvent::BrowserFindBar)
-            | Target::Browser(BrowserEvent::BrowserZoom)
-            | Target::Browser(BrowserEvent::BrowserClearOutside)
-            | Target::Browser(BrowserEvent::BrowserClearInside)
-            | Target::Browser(BrowserEvent::BrowserClearConfirm)
-            | Target::Browser(BrowserEvent::BrowserClearCancel)
-            | Target::Browser(BrowserEvent::BrowserNewTab)
-            | Target::Browser(BrowserEvent::BrowserLock)
-            | Target::Browser(BrowserEvent::BrowserTabsPrevious)
-            | Target::Browser(BrowserEvent::BrowserTabsNext)
-            | Target::Browser(BrowserEvent::BrowserDismiss)
-            | Target::Browser(BrowserEvent::BrowserCertBack)
-            | Target::Browser(BrowserEvent::BrowserCertProceed)
-            | Target::Browser(BrowserEvent::BrowserQuestionBar)
-            | Target::Browser(BrowserEvent::BrowserCapture)
-            | Target::Browser(BrowserEvent::BrowserAllow(_))
-            | Target::Browser(BrowserEvent::BrowserBlock(_))
-            | Target::Browser(BrowserEvent::BrowserTab(_))
-            | Target::Browser(BrowserEvent::BrowserTabClose(_))
-    )
+    matches!(id, Target::Browser(_))
 }
 
 impl WorkspaceState {
@@ -437,35 +400,27 @@ impl WorkspaceState {
         }
         match id {
             Target::Browser(BrowserEvent::BrowserClose) => return self.browser_closed(),
-            Target::Browser(BrowserEvent::BrowserFindNext) => {
-                self.browser_find_stepped(false);
-                return self;
-            }
-            Target::Browser(BrowserEvent::BrowserFindPrevious) => {
-                self.browser_find_stepped(true);
-                return self;
-            }
-            Target::Browser(BrowserEvent::BrowserFindClose) => {
-                self.browser_find_closed();
-                return self;
-            }
-            Target::Browser(BrowserEvent::BrowserClearConfirm) => {
-                self.browser_clear_confirmed();
-                return self;
-            }
+            Target::Browser(BrowserEvent::BrowserFindNext) => self.browser_find_stepped(false),
+            Target::Browser(BrowserEvent::BrowserFindPrevious) => self.browser_find_stepped(true),
+            Target::Browser(BrowserEvent::BrowserFindClose) => self.browser_find_closed(),
+            Target::Browser(BrowserEvent::BrowserClearConfirm) => self.browser_clear_confirmed(),
             Target::Browser(BrowserEvent::BrowserClearCancel)
             | Target::Browser(BrowserEvent::BrowserClearOutside) => {
                 self.browser_clear_declined();
-                return self;
             }
-            _ => {}
+            _ => self.browser_page_pressed(id),
         }
+        self
+    }
+
+    /// Carries out what pressing `id` of the bar above the page, or of a question or note over it, does.
+    fn browser_page_pressed(&mut self, id: Target) {
         let host = self.current_project_host();
         let Some(browser) = self.browser.as_mut() else {
-            return self;
+            return;
         };
         if browser.safety.press(id) {
-            return self;
+            return;
         }
         match id {
             Target::Browser(BrowserEvent::TabBrowser) => self.tab = Tab::Browser,
@@ -499,41 +454,36 @@ impl WorkspaceState {
             }
             _ => {}
         }
-        self
+    }
+
+    /// Takes what `held` keeps in each tab of the browser, each with the number of the tab it is for, leaving the tabs with nothing; nothing when the browser is closed.
+    fn take_from_tabs<T>(
+        &mut self,
+        held: impl Fn(&mut BrowserTab) -> &mut Vec<T>,
+    ) -> Vec<(u32, T)> {
+        let Some(browser) = self.browser.as_mut() else {
+            return Vec::new();
+        };
+        browser
+            .tabs
+            .iter_mut()
+            .flat_map(|tab| {
+                let id = tab.id;
+                std::mem::take(held(tab))
+                    .into_iter()
+                    .map(move |item| (id, item))
+            })
+            .collect()
     }
 
     /// What the engine has not yet been told to do, each with the number of the tab it is for, which it is now.
     pub fn take_browser_commands(&mut self) -> Vec<(u32, Command)> {
-        let Some(browser) = self.browser.as_mut() else {
-            return Vec::new();
-        };
-        let mut commands = Vec::new();
-        for tab in &mut browser.tabs {
-            let id = tab.id;
-            commands.extend(
-                std::mem::take(&mut tab.commands)
-                    .into_iter()
-                    .map(|c| (id, c)),
-            );
-        }
-        commands
+        self.take_from_tabs(|tab| &mut tab.commands)
     }
 
     /// What the reader answered to the questions of the pages and to certificates that are not trusted, each with the number of the tab it is for, which the engine has not yet been told.
     pub fn take_browser_answers(&mut self) -> Vec<(u32, Answer)> {
-        let Some(browser) = self.browser.as_mut() else {
-            return Vec::new();
-        };
-        let mut answers = Vec::new();
-        for tab in &mut browser.tabs {
-            let id = tab.id;
-            answers.extend(
-                std::mem::take(&mut tab.safety.answers)
-                    .into_iter()
-                    .map(|a| (id, a)),
-            );
-        }
-        answers
+        self.take_from_tabs(|tab| &mut tab.safety.answers)
     }
 
     /// Clears the notice of every tab that has one and loads its address again, as after the browser was installed.
@@ -555,13 +505,14 @@ impl WorkspaceState {
         }
     }
 
+    /// The tab numbered `tab` of the browser, when the browser is open and has it.
+    pub(crate) fn browser_tab(&mut self, tab: u32) -> Option<&mut BrowserTab> {
+        self.browser.as_mut()?.tab_mut(tab)
+    }
+
     /// The state after the mode of picking an element ended in tab `tab`: the pick becomes a chip on the prompt of the chat and the pane being looked at stays as it is; no element means the mode ended without a pick.
     pub fn browser_picked(mut self, tab: u32, element: Option<crate::elements::Element>) -> Self {
-        if let Some(tab) = self
-            .browser
-            .as_mut()
-            .and_then(|browser| browser.tab_mut(tab))
-        {
+        if let Some(tab) = self.browser_tab(tab) {
             tab.picking = false;
         }
         match element {
@@ -572,22 +523,14 @@ impl WorkspaceState {
 
     /// Takes in the zoom the engine reported for the page of tab `tab`, as a factor.
     pub fn browser_zoomed(&mut self, tab: u32, factor: f32) {
-        if let Some(tab) = self
-            .browser
-            .as_mut()
-            .and_then(|browser| browser.tab_mut(tab))
-        {
+        if let Some(tab) = self.browser_tab(tab) {
             tab.zoom = factor;
         }
     }
 
     /// The state after the helper reported, for tab `tab`, what the reader asked to add to the prompt: it becomes a chip, and the mode of dragging a rectangle, if it was on, is over; no capture means the mode ended without an area.
     pub fn browser_captured(mut self, tab: u32, capture: Option<crate::captures::Capture>) -> Self {
-        if let Some(tab) = self
-            .browser
-            .as_mut()
-            .and_then(|browser| browser.tab_mut(tab))
-        {
+        if let Some(tab) = self.browser_tab(tab) {
             tab.picking_area = false;
         }
         match capture {
@@ -598,22 +541,14 @@ impl WorkspaceState {
 
     /// Takes away the notice of tab `tab`, as its page is about to be shown.
     pub fn browser_notice_cleared(&mut self, tab: u32) {
-        if let Some(tab) = self
-            .browser
-            .as_mut()
-            .and_then(|browser| browser.tab_mut(tab))
-        {
+        if let Some(tab) = self.browser_tab(tab) {
             tab.notice = None;
         }
     }
 
     /// Says why the page of tab `tab` cannot be shown.
     pub fn browser_tab_notice(&mut self, tab: u32, notice: &str) {
-        if let Some(tab) = self
-            .browser
-            .as_mut()
-            .and_then(|browser| browser.tab_mut(tab))
-        {
+        if let Some(tab) = self.browser_tab(tab) {
             tab.notice = Some(notice.to_owned());
         }
     }
@@ -662,8 +597,16 @@ impl WorkspaceState {
     }
 }
 
+/// The look of a button of the toolbar that turns a mode on and off: filled while `on`, bare otherwise.
+fn toggled(on: bool) -> Variant {
+    if on {
+        Variant::Secondary
+    } else {
+        Variant::Ghost
+    }
+}
+
 /// Emits the bar above the page of `browser`: back, forward, reload, the address, the zoom when it is not 100%, picking, capturing, the lock and the developer tools.
-#[track_caller]
 fn toolbar(browser: &Browser) {
     let zoomed = (browser.zoom - 1.0).abs() > 0.005;
     kit::row(
@@ -674,21 +617,13 @@ fn toolbar(browser: &Browser) {
             .padding_xy(theme::sp(2), 0.0),
         1,
         || {
-            Button::icon(
-                phosphor::ARROW_LEFT,
-                Target::Browser(BrowserEvent::BrowserBack),
-            )
-            .build();
-            Button::icon(
-                phosphor::ARROW_RIGHT,
-                Target::Browser(BrowserEvent::BrowserForward),
-            )
-            .build();
-            Button::icon(
-                phosphor::ARROWS_CLOCKWISE,
-                Target::Browser(BrowserEvent::BrowserReload),
-            )
-            .build();
+            for (icon, id) in [
+                (phosphor::ARROW_LEFT, BrowserEvent::BrowserBack),
+                (phosphor::ARROW_RIGHT, BrowserEvent::BrowserForward),
+                (phosphor::ARROWS_CLOCKWISE, BrowserEvent::BrowserReload),
+            ] {
+                Button::icon(icon, Target::Browser(id)).build();
+            }
             kit::column(Modifier::new().weight(1.0), 0, || {
                 Input::new(
                     &browser.address,
@@ -700,22 +635,17 @@ fn toolbar(browser: &Browser) {
                 .build();
             });
             if zoomed {
-                kit::small_button(
+                kit::action(
                     format!("{}%", (browser.zoom * 100.0).round()),
                     Target::Browser(BrowserEvent::BrowserZoom),
                     Variant::Ghost,
-                )
-                .build();
+                );
             }
             Button::icon(
                 phosphor::SELECTION,
                 Target::Browser(BrowserEvent::BrowserPick),
             )
-            .variant(if browser.picking {
-                Variant::Secondary
-            } else {
-                Variant::Ghost
-            })
+            .variant(toggled(browser.picking))
             .build();
             let operations = crate::events::operations();
             Button::icon(
@@ -723,11 +653,7 @@ fn toolbar(browser: &Browser) {
                 Target::Browser(BrowserEvent::BrowserCapture),
             )
             .on_click(move || operations.open_browser_capture_menu())
-            .variant(if browser.picking_area {
-                Variant::Secondary
-            } else {
-                Variant::Ghost
-            })
+            .variant(toggled(browser.picking_area))
             .build();
             Button::icon(
                 if browser.locked {
@@ -737,11 +663,7 @@ fn toolbar(browser: &Browser) {
                 },
                 Target::Browser(BrowserEvent::BrowserLock),
             )
-            .variant(if browser.locked {
-                Variant::Secondary
-            } else {
-                Variant::Ghost
-            })
+            .variant(toggled(browser.locked))
             .disabled(browser.agent)
             .tooltip(if browser.agent {
                 "Opened by an agent: agents may always work in this tab"
@@ -806,7 +728,6 @@ fn surface(browser: &Browser, id: Target, shown: &Option<rustle::ImageData>, wid
 }
 
 /// Emits the line between the page and the developer tools, `tall` logical pixels high, with the handle that drags it.
-#[track_caller]
 fn divider(tall: f32) {
     rustle::stack_with(
         Modifier::new()
@@ -822,7 +743,6 @@ fn divider(tall: f32) {
 }
 
 /// Emits the browser shown in a pane `width` by `height` logical pixels; nothing when it is closed.
-#[track_caller]
 pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) {
     let Some(browser) = state.browser.as_ref() else {
         return;
@@ -849,36 +769,25 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) {
             toolbar(browser);
             browser.safety.bar_nodes();
             rustle::stack_with(Modifier::new().fill_max_width().height(room), || {
-                kit::row_top(
-                    Modifier::new().fill_max_width().height(room),
-                    0,
-                    || match tools {
-                        Some(tools) => {
-                            surface(
-                                browser,
-                                Target::Browser(BrowserEvent::BrowserBody),
-                                &browser.page,
-                                page_width,
-                                room,
-                            );
-                            divider(room);
-                            surface(
-                                browser,
-                                Target::Browser(BrowserEvent::BrowserToolsBody),
-                                &browser.tools_page,
-                                tools,
-                                room,
-                            );
-                        }
-                        None => surface(
+                kit::row_top(Modifier::new().fill_max_width().height(room), 0, || {
+                    surface(
+                        browser,
+                        Target::Browser(BrowserEvent::BrowserBody),
+                        &browser.page,
+                        page_width,
+                        room,
+                    );
+                    if let Some(tools) = tools {
+                        divider(room);
+                        surface(
                             browser,
-                            Target::Browser(BrowserEvent::BrowserBody),
-                            &browser.page,
-                            width,
+                            Target::Browser(BrowserEvent::BrowserToolsBody),
+                            &browser.tools_page,
+                            tools,
                             room,
-                        ),
-                    },
-                );
+                        );
+                    }
+                });
                 if let Some(search) = browser.search.as_ref() {
                     find_bar(search, page_width, beside);
                 }

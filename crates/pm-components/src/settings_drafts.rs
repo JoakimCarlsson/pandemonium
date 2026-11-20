@@ -12,13 +12,11 @@ use rustle::TextFieldState;
 
 use crate::theme::{Radius, Role};
 
-use crate::Input;
 use crate::button::Variant;
 use crate::parts::line;
-use crate::settings_row::choices;
+use crate::settings_machines::{labelled, labelled_choices};
 use crate::settings_rows::DRAFT_SCOPES;
 use crate::settings_servers::{boxed, flat_row, wrapped_note};
-use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 
 /// Where a new customization can go, in the order the form offers them.
@@ -106,17 +104,6 @@ pub(crate) fn is_draft_field(id: Target) -> bool {
         || id == Target::Settings(SettingsEvent::DraftDescription)
 }
 
-/// Whether `id` names a control of the form.
-fn is_draft_control(id: Target) -> bool {
-    [
-        Target::Settings(SettingsEvent::DraftNew),
-        Target::Settings(SettingsEvent::DraftCreate),
-        Target::Settings(SettingsEvent::DraftCancel),
-    ]
-    .contains(&id)
-        || DRAFT_SCOPES.contains(id)
-}
-
 impl WorkspaceState {
     /// Opens the form for a new customization of `kind`.
     pub(crate) fn open_draft(&mut self, kind: Kind) {
@@ -130,9 +117,6 @@ impl WorkspaceState {
 
     /// The state after `action`, which may name a control of the form, was pressed on the page of `kind`; whether it named one.
     pub(crate) fn draft_pressed(&mut self, action: Target, kind: Option<Kind>) -> bool {
-        if !is_draft_control(action) {
-            return false;
-        }
         match action {
             Target::Settings(SettingsEvent::DraftNew) => {
                 if let Some(kind) = kind.filter(|kind| draftable(*kind)) {
@@ -141,21 +125,15 @@ impl WorkspaceState {
             }
             Target::Settings(SettingsEvent::DraftCancel) => self.settings_page.library.draft = None,
             Target::Settings(SettingsEvent::DraftCreate) => self.create_draft(),
-            _ => {
-                let scope = DRAFT_SCOPES
-                    .index_of(action)
-                    .and_then(|place| SCOPES.get(place));
-                if let (Some(form), Some(scope)) = (
-                    self.settings_page
-                        .library
-                        .draft
-                        .as_mut()
-                        .filter(|form| form.in_project),
-                    scope,
-                ) {
+            _ if let Some(at) = DRAFT_SCOPES.index_of(action) => {
+                let form = self.settings_page.library.draft.as_mut();
+                if let (Some(form), Some(scope)) =
+                    (form.filter(|form| form.in_project), SCOPES.get(at))
+                {
                     form.scope = *scope;
                 }
             }
+            _ => return false,
         }
         true
     }
@@ -278,7 +256,6 @@ fn prompt_item(state: &WorkspaceState, file: PromptFile) -> Option<&Item> {
 }
 
 /// Emits the box of crab's own prompt files on the page of instructions, `room` logical pixels across: the one replacing its built-in instructions and the one added to every prompt, each with the button that opens or makes it.
-#[track_caller]
 pub(crate) fn prompt_node(state: &WorkspaceState, room: f32) {
     let prompt_row = |file: PromptFile, title: &str, about: &str, id: Target| {
         let found = prompt_item(state, file);
@@ -286,7 +263,7 @@ pub(crate) fn prompt_node(state: &WorkspaceState, room: f32) {
             Some(_) => format!("{about} Written."),
             None => format!("{about} Not written yet."),
         };
-        flat_row(|| {
+        flat_row(3, || {
             kit::column(Modifier::new().weight(1.0), 1, || {
                 line(title, 13, 1.4, Role::Text);
                 wrapped_note(&said, (room - 160.0).max(120.0));
@@ -326,7 +303,6 @@ pub(crate) fn prompt_node(state: &WorkspaceState, room: f32) {
 }
 
 /// Emits the button that opens the form for a new customization of `kind`, turned off while the form is open or nothing can be written.
-#[track_caller]
 pub(crate) fn new_button(state: &WorkspaceState, kind: Kind) {
     let library = &state.settings_page.library;
     kit::small_button(
@@ -359,7 +335,6 @@ fn place_note(kind: Kind, scope: Scope) -> String {
 }
 
 /// Emits the form for a new customization `form`, `room` logical pixels across.
-#[track_caller]
 pub(crate) fn draft_node(form: &DraftForm, room: f32) {
     let (name_hint, description_label, description_hint) = match form.kind {
         Kind::Skill => (
@@ -410,50 +385,25 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) {
                 description_hint,
             );
             if form.in_project {
-                kit::column(Modifier::new(), 1, || {
-                    line("Where", 12, 1.4, Role::Muted);
-                    kit::row_top(Modifier::new(), 0, || {
-                        choices(&["This project", "Every project"], picked, |place| {
-                            DRAFT_SCOPES.id(place)
-                        });
-                    });
-                });
+                labelled_choices(
+                    "Where",
+                    &["This project", "Every project"],
+                    picked,
+                    |place| DRAFT_SCOPES.id(place),
+                );
             }
             wrapped_note(&place_note(form.kind, form.scope), room);
             if let Some(message) = message {
                 line(message, 12, 1.4, Role::Danger);
             }
-            kit::row(Modifier::new(), 2, || {
-                kit::small_button(
-                    if form.busy { "Creating…" } else { "Create" },
-                    Target::Settings(SettingsEvent::DraftCreate),
-                    Variant::Default,
-                )
-                .disabled(!form.complete())
-                .build();
-                kit::small_button(
-                    "Cancel",
-                    Target::Settings(SettingsEvent::DraftCancel),
-                    Variant::Ghost,
-                )
-                .build();
-            });
+            kit::confirm_row(
+                if form.busy { "Creating…" } else { "Create" },
+                Target::Settings(SettingsEvent::DraftCreate),
+                form.complete(),
+                Target::Settings(SettingsEvent::DraftCancel),
+            );
         },
     );
-}
-
-/// Emits a box `id` holding `field`, showing `placeholder` while empty, under the words `label` that say what is written in it.
-#[track_caller]
-fn labelled(label: &str, field: &TextFieldState, id: Target, placeholder: &str) {
-    rustle::key(id, || {
-        kit::column(Modifier::new().fill_max_width(), 1, || {
-            line(label, 12, 1.4, Role::Muted);
-            Input::new(field, id)
-                .size(Size::Sm)
-                .placeholder(placeholder)
-                .build();
-        });
-    });
 }
 
 #[cfg(test)]

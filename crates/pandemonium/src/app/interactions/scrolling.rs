@@ -13,8 +13,7 @@ const GRIP: f32 = 14.0;
 
 /// How far the conversation is scrolled back from its end, and how far back it can go.
 fn back(rig: &Rig) -> (f32, f32) {
-    rig.read(|screen| {
-        let Screen::Workspace(state) = screen;
+    rig.read(|state| {
         let room = state.chat_list.scroll().max_offset();
         (state.chat_list.scroll().offset().min(room), room)
     })
@@ -37,17 +36,13 @@ fn middle(rig: &Rig) -> (f32, f32) {
 
 /// How far the lines of the prompt are scrolled.
 fn prompt_offset(rig: &Rig) -> f32 {
-    rig.read(|screen| {
-        let Screen::Workspace(state) = screen;
-        state.prompt_scroll.offset()
-    })
+    rig.read(|state| state.prompt_scroll.offset())
 }
 
 /// Whether the conversation shows its oldest entry and is scrolled exactly as far back as it
 /// can go, the room it has measured once that entry is laid out.
 fn at_start(rig: &Rig) -> bool {
-    rig.read(|screen| {
-        let Screen::Workspace(state) = screen;
+    rig.read(|state| {
         let info = state.chat_list.layout_info();
         let oldest = info.total_items_count.checked_sub(1);
         let scroll = state.chat_list.scroll();

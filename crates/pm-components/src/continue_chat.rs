@@ -5,11 +5,11 @@
 use crate::areas::ChatEvent;
 use crate::areas::SidebarEvent;
 use crate::button::Variant;
-use crate::kit::{self};
+use crate::kit;
 
 use crate::areas::ComposerEvent;
 
-use crate::events::{Event, send};
+use crate::events::Event;
 use crate::target::Target;
 use crate::theme;
 use rustle::Modifier;
@@ -17,7 +17,7 @@ use rustle::phosphor;
 use rustle::{Alignment, Arrangement, row_arranged};
 
 use crate::Button;
-use crate::events::Interactive;
+
 use crate::parts::line;
 use crate::popover::{Popover, anchored, heading};
 use crate::sample::{Message, Session, Status};
@@ -68,9 +68,10 @@ impl Choice {
 
 /// Whether `id` is the chip, the button or a project row of the choice, which leave the choice open or work it.
 pub fn is_continue_part(id: Target) -> bool {
-    id == Target::Chat(ChatEvent::Continue)
-        || id == Target::Chat(ChatEvent::ContinueStart)
-        || matches!(id, Target::Chat(ChatEvent::ContinueProject(project)) if project < MOST_PROJECTS)
+    matches!(
+        id,
+        Target::Chat(ChatEvent::Continue | ChatEvent::ContinueStart)
+    ) || matches!(id, Target::Chat(ChatEvent::ContinueProject(project)) if project < MOST_PROJECTS)
 }
 
 impl WorkspaceState {
@@ -134,13 +135,11 @@ impl WorkspaceState {
                 .cloned(),
             _ => None,
         };
-        match picked {
-            Some(branch) => {
-                self.continuing.base = Some(branch);
-                true
-            }
-            None => false,
+        let found = picked.is_some();
+        if picked.is_some() {
+            self.continuing.base = picked;
         }
+        found
     }
 
     /// Works the chip, a project row, a branch row or the button of the choice named by `id`, and returns whether `id` was one of them.
@@ -221,9 +220,7 @@ impl WorkspaceState {
 #[track_caller]
 fn said(words: &str) {
     kit::row(
-        Modifier::new()
-            .padding_xy(theme::sp(2.5), 0.0)
-            .padding_xy(0.0, theme::sp(1.5)),
+        Modifier::new().padding_xy(theme::sp(2.5), theme::sp(1.5)),
         0,
         || line(words, 13, 1.4, Role::Subtle),
     );
@@ -247,11 +244,7 @@ fn menu(state: &WorkspaceState, chat: &Session) {
     }
     let listed = state.continuing.branches.as_deref();
     let ready = chosen.is_some() && listed.is_some_and(|branches| !branches.is_empty());
-    menu.modifier(Modifier::new().control(
-        Target::Composer(ComposerEvent::MenuBody),
-        send(Event::Composer(ComposerEvent::MenuBody)),
-    ))
-    .build_with(|| {
+    menu.modifier(crate::composer::menu_body()).build_with(|| {
         kit::column(crate::composer::ruled(), 0, || {
             heading("Branch from", None);
             match listed {
@@ -263,9 +256,7 @@ fn menu(state: &WorkspaceState, chat: &Session) {
             }
         });
         row_arranged(
-            crate::composer::ruled()
-                .padding_xy(theme::sp(1), 0.0)
-                .padding_xy(0.0, theme::sp(1.5)),
+            crate::composer::ruled().padding_xy(theme::sp(1), theme::sp(1.5)),
             Arrangement::End,
             Alignment::Start,
             || {

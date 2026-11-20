@@ -60,11 +60,6 @@ pub struct TitleBar {
 }
 
 impl TitleBar {
-    /// A bar holding only the controls of the window.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// A bar holding only the control that closes the window.
     pub fn closing() -> Self {
         Self {
@@ -133,26 +128,14 @@ impl TitleBar {
                 Alignment::Center,
                 || {
                     if self.language_update {
-                        kit::small_button(
+                        update_button(
                             "Update languages",
-                            Target::Window(WindowEvent::LanguageUpdate),
-                            Variant::Ghost,
-                        )
-                        .tone(Role::Accent)
-                        .modifier(Modifier::new().padding_each(0.0, 0.0, theme::sp(1), 0.0))
-                        .tooltip("A newer language or language server is available")
-                        .build();
+                            WindowEvent::LanguageUpdate,
+                            "A newer language or language server is available",
+                        );
                     }
                     if self.update {
-                        kit::small_button(
-                            "Update",
-                            Target::Window(WindowEvent::Update),
-                            Variant::Ghost,
-                        )
-                        .tone(Role::Accent)
-                        .modifier(Modifier::new().padding_each(0.0, 0.0, theme::sp(1), 0.0))
-                        .tooltip("Update Available")
-                        .build();
+                        update_button("Update", WindowEvent::Update, "Update Available");
                     }
                     if navigation {
                         layout_toggle(
@@ -171,7 +154,7 @@ impl TitleBar {
                         );
                         layout_toggle(
                             phosphor::SIDEBAR_SIMPLE,
-                            review_mark,
+                            |open| panel_right(open, 5.0, Role::Muted),
                             Target::Diff(DiffEvent::Review),
                             "Toggle Review Panel",
                             self.review_open,
@@ -272,7 +255,6 @@ fn layout_toggle(icon: Icon, mark: fn(bool), id: Target, words: &str, open: bool
 }
 
 /// Emits the primary side bar's toggle: Phosphor's sidebar, filled while `open`.
-#[track_caller]
 fn sidebar_mark(open: bool) {
     let sidebar = if open {
         phosphor::fill::SIDEBAR_SIMPLE
@@ -284,7 +266,6 @@ fn sidebar_mark(open: bool) {
 
 /// Emits the bottom panel's toggle: a window with a band along its bottom,
 /// the bottom half filled while `open`.
-#[track_caller]
 fn panel_mark(open: bool) {
     if open {
         crate::parts::glyph(phosphor::fill::SQUARE_HALF_BOTTOM, 5.0, Role::Muted);
@@ -293,14 +274,17 @@ fn panel_mark(open: bool) {
     }
 }
 
-/// Emits the review panel's toggle: a window with a panel on its right, filled while `open`.
+/// Emits the button that offers a newer release, saying `label`, answering to `id` and explaining `tip` on hover.
 #[track_caller]
-fn review_mark(open: bool) {
-    panel_right(open, 5.0, Role::Muted);
+fn update_button(label: &str, id: WindowEvent, tip: &str) {
+    kit::small_button(label, Target::Window(id), Variant::Ghost)
+        .tone(Role::Accent)
+        .modifier(Modifier::new().padding_each(0.0, 0.0, theme::sp(1), 0.0))
+        .tooltip(tip)
+        .build();
 }
 
 /// Emits the box in the middle of the bar that says where the window is pointed and lists every command when it is pressed.
-#[track_caller]
 fn command_center(place: String) {
     let operations = crate::events::operations();
     Button::new(place, Target::Window(WindowEvent::CommandCenter))
@@ -328,7 +312,6 @@ fn command_center(place: String) {
 }
 
 /// Emits the buttons that minimize, maximize and close a window the desktop draws no frame around, or only the one that closes it when `close_only` is set.
-#[track_caller]
 fn window_controls(close_only: bool) {
     kit::row(
         Modifier::new()
