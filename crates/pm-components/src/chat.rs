@@ -7,7 +7,10 @@ use crate::events::{Event, send};
 use crate::target::Target;
 use crate::theme;
 use rustle::{Alignment, Arrangement, column_arranged};
-use rustle::{BoxAlignment, CursorIcon, Modifier};
+use rustle::{
+    BoxAlignment, CursorIcon, Modifier, MutableInteractionSource,
+    remember_mutable_interaction_source,
+};
 use rustle::{Icon, phosphor};
 
 use crate::Button;
@@ -63,16 +66,25 @@ fn chat_line(content: impl Into<String>, pixels: u32, tone: Role) {
     rustle::text_styled(Modifier::new(), content, kit::line(pixels, tone));
 }
 
-/// Emits a button that shows under a message while the pointer is over it or it has focus, showing `icon`, saying what it does with `tooltip` and answering to `id`, switched off while `disabled`.
+/// Emits a button that shows under a message while the pointer is over the message, which
+/// `message` hears of, or the button has focus, showing `icon`, saying what it does with
+/// `tooltip` and answering to `id`, switched off while `disabled`.
 #[track_caller]
-fn message_action(icon: Icon, tooltip: &str, id: Target, disabled: bool) {
+fn message_action(
+    message: &MutableInteractionSource,
+    icon: Icon,
+    tooltip: &str,
+    id: Target,
+    disabled: bool,
+) {
+    let hovered = message.collect_is_hovered_as_state();
+    let held = crate::focus::is_held(id);
     Button::icon(icon, id)
         .disabled(disabled)
         .tone(Role::Subtle)
         .modifier(
             Modifier::new()
-                .interaction_focused(crate::focus::is_held(id))
-                .draw_with_content_interactive(shown_on_group_hover),
+                .draw_with_content(move |canvas| shown_while(canvas, held || hovered.get())),
         )
         .tooltip(tooltip)
         .build();
@@ -100,10 +112,11 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
     let working = session.status == Status::Working;
     let restoring = state.restoring == Some(index);
     let (typed, elements) = crate::elements::split(&message.text);
+    let over_message = remember_mutable_interaction_source();
     kit::column(
         Modifier::new()
             .fill_max_width()
-            .interaction_group()
+            .hoverable(&over_message)
             .message_area(index),
         1,
         || {
@@ -132,12 +145,14 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
                 kit::row(Modifier::new().align(BoxAlignment::BottomEnd), 1, || {
                     if message.checkpoint {
                         message_action(
+                            &over_message,
                             phosphor::GIT_DIFF,
                             "Show what this turn changed",
                             Target::Chat(ChatEvent::TurnChanges(index)),
                             false,
                         );
                         message_action(
+                            &over_message,
                             phosphor::CLOCK_COUNTER_CLOCKWISE,
                             "Restore files to before this turn",
                             Target::Chat(ChatEvent::Restore(index)),
@@ -145,6 +160,7 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
                         );
                     }
                     message_action(
+                        &over_message,
                         phosphor::ARROW_COUNTER_CLOCKWISE,
                         "Rewind conversation to before this message · edit and resend",
                         Target::Chat(ChatEvent::Rewind(index)),
@@ -305,10 +321,11 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
             }
         });
     };
+    let over_message = remember_mutable_interaction_source();
     kit::column(
         Modifier::new()
             .fill_max_width()
-            .interaction_group()
+            .hoverable(&over_message)
             .message_area(index),
         3,
         || {
@@ -412,6 +429,7 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                     || {
                         if copy {
                             message_action(
+                                &over_message,
                                 phosphor::COPY,
                                 "Copy",
                                 Target::Chat(ChatEvent::Copy(index)),
@@ -420,6 +438,7 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                         }
                         if fork {
                             message_action(
+                                &over_message,
                                 phosphor::GIT_FORK,
                                 "Branch from this reply · new session · shared current files",
                                 Target::Chat(ChatEvent::Fork(index)),
@@ -744,9 +763,9 @@ fn message(state: &WorkspaceState, session: &Session, index: usize, width: f32) 
     });
 }
 
-/// Draws the content only while the group around it is hovered or it counts as focused.
-fn shown_on_group_hover(canvas: &mut rustle::Canvas, interaction: rustle::Interaction) {
-    if interaction.group_hovered || interaction.focused {
+/// Draws the content of `canvas` only while `shown`.
+fn shown_while(canvas: &mut rustle::Canvas, shown: bool) {
+    if shown {
         canvas.draw_content();
     }
 }

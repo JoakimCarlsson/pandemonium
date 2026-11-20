@@ -147,9 +147,11 @@ impl Sash {
                 .height(THICKNESS)
                 .fill_max_width(),
         };
+        let over = rustle::remember_mutable_interaction_source();
+        let hovered = over.collect_is_hovered_as_state();
         let own = own
             .z_index(10)
-            .interaction_group()
+            .hoverable(&over)
             .cursor(cursor)
             .control(self.id, send(Event::pressing(self.id)))
             .chain(crate::events::sash_drag(self.id));
@@ -159,9 +161,8 @@ impl Sash {
         let modifier = self.modifier.chain(own);
         let handle = move || {
             row_arranged(modifier, arrangement, alignment, move || {
-                rustle::spacer(
-                    line.draw_behind_interactive(group_line(theme::color(Role::Accent))),
-                );
+                let hovered = hovered.clone();
+                rustle::spacer(line.draw_behind(group_line(theme::color(Role::Accent), hovered)));
             });
         };
         match self.placed {
@@ -246,12 +247,14 @@ impl WorkspaceState {
     }
 }
 
-/// Fills the sash's line in `accent` while the pointer is over the sash around it.
+/// Fills the sash's line in `accent` while `hovered`, the pointer being over the sash
+/// around it, holds, read while drawing.
 fn group_line(
     accent: rustle::Color,
-) -> impl Fn(&mut rustle::Canvas, rustle::Interaction) + 'static {
-    move |canvas, interaction| {
-        if interaction.group_hovered {
+    hovered: rustle::State<bool>,
+) -> impl Fn(&mut rustle::Canvas) + 'static {
+    move |canvas| {
+        if hovered.get() {
             canvas.rect(0.0, 0.0, canvas.width(), canvas.height(), accent);
         }
     }

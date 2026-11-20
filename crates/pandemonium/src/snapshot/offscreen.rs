@@ -69,6 +69,27 @@ pub(crate) fn write_png(
     shot: &Shot,
     content: impl Fn() + 'static,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let (width, height, rgba) = pixels(shot, content)?;
+    let image = rustle::ImageData::from_rgba(width, height, rgba)
+        .ok_or("the picture's size does not match its pixels")?;
+    let png = image.encode_png()?;
+    if let Some(folder) = path.parent() {
+        std::fs::create_dir_all(folder)?;
+    }
+    std::fs::write(path, png)?;
+    Ok(())
+}
+
+/// Draws `content` as [`write_png`] does for `shot` and gives back the picture's width and
+/// height in physical pixels and its RGBA bytes.
+///
+/// # Errors
+///
+/// Returns an error when no GPU adapter can be opened or the picture cannot be read back.
+pub(crate) fn pixels(
+    shot: &Shot,
+    content: impl Fn() + 'static,
+) -> Result<(u32, u32, Vec<u8>), Box<dyn std::error::Error>> {
     rustle_wgpu::set_legible_text(false);
     let tokens = Tokens::new(&shot.family, shot.appearance);
     let focused = shot.focused;
@@ -91,7 +112,7 @@ pub(crate) fn write_png(
         rounding: PixelRounding::Logical,
         focused_tag: shot.focused.map(Target::tag),
     };
-    let (width, height, rgba) = match &shot.preedit {
+    Ok(match &shot.preedit {
         Some(text) => rustle::preview_pixels_composing(
             root,
             options,
@@ -101,13 +122,48 @@ pub(crate) fn write_png(
             },
         )?,
         None => rustle::preview_pixels(root, options)?,
-    };
-    let image = rustle::ImageData::from_rgba(width, height, rgba)
-        .ok_or("the picture's size does not match its pixels")?;
-    let png = image.encode_png()?;
-    if let Some(folder) = path.parent() {
-        std::fs::create_dir_all(folder)?;
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rustle::{Color, Modifier, remember_mutable_interaction_source};
+
+    /// A box 40 logical pixels square that fills itself red while the pointer is over it.
+    fn hover_box() {
+        let over = remember_mutable_interaction_source();
+        let hovered = over.collect_is_hovered_as_state();
+        rustle::spacer(
+            Modifier::new()
+                .width(40.0)
+                .height(40.0)
+                .hoverable(&over)
+                .draw_behind(move |canvas| {
+                    if hovered.get() {
+                        canvas.rect(
+                            0.0,
+                            0.0,
+                            canvas.width(),
+                            canvas.height(),
+                            Color::rgb(255, 0, 0),
+                        );
+                    }
+                }),
+        );
     }
-    std::fs::write(path, png)?;
-    Ok(())
+
+    /// A shot with the pointer resting over a hoverable area draws its hover look, and one
+    /// without a pointer does not.
+    #[test]
+    fn the_pointer_shows_hover() {
+        let mut shot = Shot::new(80.0, 80.0);
+        shot.pointer = Some((20.0, 20.0));
+        let over = pixels(&shot, hover_box).expect("drawn");
+        shot.pointer = None;
+        let bare = pixels(&shot, hover_box).expect("drawn");
+        assert_ne!(bare.2, over.2);
+        let at = ((20 * over.0 + 20) * 4) as usize;
+        assert_eq!(&over.2[at..at + 3], &[255, 0, 0]);
+    }
 }

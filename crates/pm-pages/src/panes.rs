@@ -14,7 +14,7 @@ use pm_components::theme;
 use pm_components::theme::sp;
 use pm_components::theme::{Radius, Role, Side};
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
-use rustle::{BoxAlignment, Canvas, CursorIcon, Interaction, Modifier};
+use rustle::{BoxAlignment, Canvas, CursorIcon, Modifier, remember_mutable_interaction_source};
 use rustle::{Icon, phosphor};
 use std::rc::Rc;
 
@@ -55,16 +55,20 @@ fn fill_top_rounded(canvas: &mut Canvas, color: rustle::Color) {
 }
 
 /// The box of a tab answering to `id`: rounded at the top, filled while it is the one its pane shows and while the pointer is on it otherwise, with its padding; as wide as what it holds, running past the end of a strip too narrow for it. A secondary press runs `on_context` when the tab has a menu.
+#[track_caller]
 fn tab_modifier(shown: bool, id: Target, on_context: Option<Rc<dyn Fn()>>) -> Modifier {
     let surface = pm_components::theme::color(Role::Surface);
     let hover = pm_components::theme::color(Role::SurfaceHover);
+    let over = remember_mutable_interaction_source();
+    let hovered = over.collect_is_hovered_as_state();
     Modifier::new()
         .wrap_content_width(BoxAlignment::CenterStart, true)
         .height(theme::sp(10))
-        .draw_behind_interactive(move |canvas: &mut Canvas, interaction: Interaction| {
+        .hoverable(&over)
+        .draw_behind(move |canvas: &mut Canvas| {
             if shown {
                 fill_top_rounded(canvas, surface);
-            } else if interaction.hovered {
+            } else if hovered.get() {
                 fill_top_rounded(canvas, hover);
             }
         })

@@ -5672,6 +5672,21 @@ pub fn write(
     shot: Shot,
     scale: f32,
 ) -> Result<(), String> {
+    let (frame, drawn) = prepare(elapsed_ms, pointer, focused, appearance, shot, scale);
+    write_png(path, &frame, drawn).map_err(|error| error.to_string())
+}
+
+/// Lays out `shot` and gives back how to draw it, `elapsed_ms` into the animations with the
+/// pointer at `pointer` and focus on `focused` in `appearance` at `scale`, and what to draw,
+/// as [`write`] draws it.
+fn prepare(
+    elapsed_ms: f32,
+    pointer: Option<(f32, f32)>,
+    focused: Option<Target>,
+    appearance: Appearance,
+    shot: Shot,
+    scale: f32,
+) -> (Frame, impl Fn() + 'static) {
     let (width, height) = if shot.narrow() {
         (NARROW_WIDTH, NARROW_HEIGHT)
     } else if shot.in_settings_window() {
@@ -5736,7 +5751,7 @@ pub fn write(
             rustle::side_effect(move || select_words(&held, ends));
         }
     };
-    write_png(path, &frame, selected).map_err(|error| error.to_string())
+    (frame, selected)
 }
 
 /// Selects in `held` from one of `ends` to the other, each words of a text and how many
@@ -6524,4 +6539,34 @@ fn many_models() -> WorkspaceState {
         .into_iter()
         .collect();
     WorkspaceState::new(&projects).with_discovery(0, discovery)
+}
+
+#[cfg(test)]
+mod pointer_tests {
+    use super::*;
+
+    /// The pixels of the workspace shot drawn 700 ms in with the pointer at `pointer`.
+    fn workspace_pixels(pointer: Option<(f32, f32)>) -> Vec<u8> {
+        let (frame, drawn) = prepare(700.0, pointer, None, Appearance::Dark, Shot::Workspace, 1.0);
+        offscreen::pixels(&frame, drawn).expect("drawn").2
+    }
+
+    /// How many pixels differ between `one` and `other`, both RGBA.
+    fn changed(one: &[u8], other: &[u8]) -> usize {
+        one.chunks(4)
+            .zip(other.chunks(4))
+            .filter(|(one, other)| one != other)
+            .count()
+    }
+
+    /// The pointer resting on a sidebar row lights it, and resting on a title-bar button
+    /// shows its tooltip, a larger change than the button's own hover fill.
+    #[test]
+    fn the_pointer_shows_hover_and_tooltips() {
+        let bare = workspace_pixels(None);
+        let row = changed(&bare, &workspace_pixels(Some((120.0, 336.0))));
+        assert!(row > 0, "a hovered row looks the same");
+        let button = changed(&bare, &workspace_pixels(Some((1062.0, 19.0))));
+        assert!(button > 28 * 28, "no tooltip under the title-bar button");
+    }
 }

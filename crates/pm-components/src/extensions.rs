@@ -634,13 +634,9 @@ fn lined_group(title: &str, inside: bool, rows: impl FnOnce()) {
                         rustle::emit(built);
                         continue;
                     }
-                    let lined =
-                        Modifier::new()
-                            .fill_max_width()
-                            .draw_over_interactive(move |canvas, _| {
-                                let (width, height) = (canvas.width(), canvas.height());
-                                canvas.rect(0.0, height - 1.0, width, 1.0, color);
-                            });
+                    let lined = Modifier::new()
+                        .fill_max_width()
+                        .draw_with_content(move |canvas| underlined(canvas, color));
                     let lined = if inside {
                         lined
                     } else {
@@ -651,6 +647,13 @@ fn lined_group(title: &str, inside: bool, rows: impl FnOnce()) {
             },
         );
     });
+}
+
+/// Draws the content of `canvas`, then a one pixel line in `color` along its bottom edge.
+fn underlined(canvas: &mut rustle::Canvas, color: rustle::Color) {
+    canvas.draw_content();
+    let (width, height) = (canvas.width(), canvas.height());
+    canvas.rect(0.0, height - 1.0, width, 1.0, color);
 }
 
 /// Emits the row of the extension listed at `place`, with the switches of what it is allowed under it.

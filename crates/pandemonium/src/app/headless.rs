@@ -785,6 +785,21 @@ impl Rig {
         })
     }
 
+    /// The rectangles the main window fills with `color` now, in its outer logical pixels.
+    pub(super) fn filled_with(&self, color: rustle::Color) -> Vec<Rect> {
+        self.screens
+            .main
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                rustle::DrawCommand::Rect {
+                    rect, color: fill, ..
+                } if *fill == color => Some(*rect),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The pointer shape the main window shows.
     pub(super) fn cursor(&self) -> rustle::CursorIcon {
         let decided = self.app.borrow().shell.shared.cursor();

@@ -42,6 +42,48 @@ fn the_sidebar_handle_resizes_it() {
     assert_eq!(rig.state(|state| state.sidebar_width), before + 60.0);
 }
 
+/// The rectangles a line one logical pixel wide fills in the accent colour within a
+/// handle's reach of `x`, as the sidebar's handle draws while the pointer is over it.
+fn accent_lines_near(rig: &Rig, x: f32) -> Vec<rustle::Rect> {
+    let accent = pm_components::theme::color(pm_components::theme::Role::Accent);
+    rig.filled_with(accent)
+        .into_iter()
+        .filter(|rect| {
+            rect.size.width <= 1.0
+                && (rect.origin.x - x - pm_components::shadow_margin()).abs() < 8.0
+        })
+        .collect()
+}
+
+/// The sidebar's handle lights while the pointer is over it, and once a drag of it ends
+/// and the pointer moves away, a click lands elsewhere and Tab is pressed it is dark
+/// again: neither the pointer's hover nor the drag stays held.
+#[test]
+fn the_sidebar_handle_goes_dark_after_a_drag() {
+    let mut rig = Rig::shot(Shot::Workspace);
+    let from = rig.center(Target::Window(WindowEvent::SidebarSash));
+    rig.move_to(from);
+    assert!(
+        !accent_lines_near(&rig, from.0).is_empty(),
+        "the handle does not light under the pointer"
+    );
+    let to = (from.0 + 60.0, from.1);
+    rig.drag(from, to, 6);
+    let away = (to.0 + 300.0, to.1);
+    rig.move_to(away);
+    assert!(
+        accent_lines_near(&rig, to.0).is_empty(),
+        "the handle stays lit after the drag"
+    );
+    rig.click(away);
+    rig.key(rustle::Key::Tab);
+    assert!(
+        accent_lines_near(&rig, to.0).is_empty(),
+        "the handle lights again"
+    );
+    assert_eq!(rig.cursor(), rustle::CursorIcon::Default);
+}
+
 /// While the sidebar's handle is dragged the first pane follows its edge, and the review
 /// panel, whose room does not change, stays drawn where it was.
 #[test]
