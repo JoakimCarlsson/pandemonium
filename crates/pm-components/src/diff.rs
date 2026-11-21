@@ -244,9 +244,10 @@ fn tints(kind: Option<Kind>) -> (Option<Color>, Option<Color>, Role) {
     }
 }
 
-/// Emits the cell that holds a line number, on the stronger tint of the line it numbers; pressing it, or dragging from it, starts a comment on the lines.
+/// Emits the cell that holds a line number, on the stronger tint of the line it numbers; clicking it starts a comment on its line, and dragging from it over other numbers a comment on the lines between.
 #[track_caller]
 fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<Target>) {
+    use crate::events::Interactive;
     let (_, tint, tone) = tints(kind);
     let mut own = Modifier::new().fill_max_height().width(theme::sp(11));
     own = match id.filter(|_| number.is_some()) {
@@ -256,8 +257,10 @@ fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<Target>) {
                 Some(tint) => looks.idle(tint),
                 None => looks,
             };
-            events::pressed(own.indicated(looks, theme::Focused::Rustle), id)
-                .chain(crate::events::comment_drag(id))
+            own.indicated(looks, theme::Focused::Rustle)
+                .cursor(rustle::CursorIcon::Pointer)
+                .control(id, events::comment_click(id))
+                .chain(events::comment_drag(id))
         }
         None => match tint {
             Some(tint) => own.background(theme::color(tint)),

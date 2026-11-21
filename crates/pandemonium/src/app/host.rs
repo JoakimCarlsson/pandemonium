@@ -12,7 +12,7 @@ use pm_components::areas::EditorEvent;
 use pm_components::target::Target;
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use pm_components::events::{self, Operations};
 use pm_components::focus;
@@ -32,22 +32,30 @@ use crate::scene;
 /// The operations of the main window's views and of each window's beside it.
 type WindowOperations = [Rc<dyn Operations>; 3];
 
-/// What the app waits for while it is idle, as it last said, which the effects of the main
-/// window's root follow, one per concern, each keyed on its own part.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+/// What the app waits on while it is idle, as it last said: for each thing that waits for a
+/// pause, what it waits on, which the effect of the main window's root that owns it is keyed
+/// on, so a change starts its delay again; how often the agents' work is looked at; whether
+/// the browser's pages are pumped; and whether the app quits.
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub(super) struct Idle {
-    /// When the card about the word of code the pointer rests on is due to show or go.
-    pub(super) hover: Option<Instant>,
-    /// When the language server is due to be asked where the thing at the caret is used.
-    pub(super) highlight: Option<Instant>,
-    /// When the language server is due to be asked for the marker beside the caret's line.
-    pub(super) bulb: Option<Instant>,
-    /// When the file shown is due to be saved by itself.
-    pub(super) autosave: Option<Instant>,
-    /// When the chords recorded on the keymap page are due to be kept.
-    pub(super) recording: Option<Instant>,
-    /// When the app is due to look for a newer release again.
-    pub(super) release: Option<Instant>,
+    /// The word of code the pointer rests on, by where it starts, and how long it rests
+    /// before the card about it is asked for.
+    pub(super) hover: Option<(usize, Duration)>,
+    /// Whether the pointer left the card about a word and its word while the card shows.
+    pub(super) hover_leaving: bool,
+    /// The file, version and caret waiting for the language server to be asked where the
+    /// thing at the caret is used.
+    pub(super) highlight: Option<(String, i32, usize)>,
+    /// What waits for the language server to be asked for the marker beside the caret's line.
+    pub(super) bulb: Option<super::editing::BulbKey>,
+    /// The file shown and its version while it waits to be saved by itself.
+    pub(super) autosave: Option<(String, i32)>,
+    /// The chords recorded on the keymap page while recording waits for another.
+    pub(super) recording: Option<Vec<String>>,
+    /// Whether the app looks for newer releases.
+    pub(super) release: bool,
+    /// Whether the view changed since it was last written.
+    pub(super) view_unsaved: bool,
     /// How often the agents' work is to be looked at while it is under way.
     pub(super) polling: Option<Duration>,
     /// Whether the browser's pages are being pumped.
@@ -310,10 +318,11 @@ fn wake_handlers(shared: &Shared) {
 }
 
 /// The app's idle work as effects of the main window's root: what follows each change of
-/// the screen, and the view saved once typing pauses, keyed on the screen's generation; a delay for each thing that waits on time, keyed on
-/// when it is due; the agents' work looked at and the browser's pages pumped at their
-/// intervals while that work is under way; the main window closed once the app quits; and
-/// the view saved when the root leaves the composition.
+/// the screen; the view written once changes pause, or at the latest a while after they
+/// began; for each thing that waits for a pause, an effect keyed on what it waits on that
+/// delays on the frame clock and then acts; the agents' work looked at, the browser's pages
+/// pumped and newer releases looked for at their intervals; the main window closed once the
+/// app quits; and the view saved when the root leaves the composition.
 fn idle_effects(shared: &Shared) {
     let app = shared.app();
     let generation = shared.model.generation();
@@ -322,18 +331,8 @@ fn idle_effects(shared: &Shared) {
         with_app(&changed, App::screen_changed);
         || {}
     });
-    let saving = app.clone();
-    rustle::launched_effect(generation, move |scope| async move {
-        let mut wait = None;
-        with_app(&saving, |app| wait = app.view_save_wait());
-        let Some(wait) = wait else {
-            return;
-        };
-        scope.delay(wait).await;
-        with_app(&saving, |app| {
-            app.view_save_deadline();
-            app.flush();
-        });
+    rested(Some(generation), super::VIEW_SAVE_PAUSE, &app, |app, _| {
+        app.view_save_rested()
     });
     let leaving = app.clone();
     rustle::disposable_effect((), move || {
@@ -348,39 +347,60 @@ fn idle_effects(shared: &Shared) {
     rustle::restartable((), move || {
         let Idle {
             hover,
+            hover_leaving,
             highlight,
             bulb,
             autosave,
             recording,
             release,
+            view_unsaved,
             polling,
             pumping,
             quit,
         } = idle.get();
-        after(hover, &app, |app| {
-            app.editor_hover_due();
-        });
-        after(highlight, &app, |app| {
-            app.editor_highlight_due();
-        });
-        after(bulb, &app, |app| {
-            app.editor_bulb_due();
-        });
-        after(autosave, &app, |app| {
-            app.editor_autosave_due();
-        });
-        after(recording, &app, |app| {
-            app.recording_due();
-        });
-        after(release, &app, |app| {
-            app.release_due();
-        });
+        let rest = hover.map_or(Duration::ZERO, |(_, rest)| rest);
+        rested(hover, rest, &app, |app, (word, _)| app.hover_rested(word));
+        rested(
+            hover_leaving.then_some(()),
+            super::code::HOVER_GRACE,
+            &app,
+            |app, ()| app.hover_left(),
+        );
+        rested(
+            highlight,
+            super::code::HIGHLIGHT_REST,
+            &app,
+            App::highlight_rested,
+        );
+        rested(bulb, super::editing::BULB_REST, &app, App::bulb_rested);
+        each_rest(
+            autosave,
+            super::code::AUTOSAVE_REST,
+            &app,
+            App::autosave_rested,
+        );
+        rested(
+            recording,
+            super::code::RECORD_PAUSE,
+            &app,
+            App::recording_rested,
+        );
+        rested(
+            view_unsaved.then_some(()),
+            super::VIEW_SAVE_BURST,
+            &app,
+            |app, ()| app.view_save_rested(),
+        );
         every(polling, &app, App::on_wake);
         every(
             pumping.then_some(super::browser::PUMP),
             &app,
             App::pump_browser,
         );
+        every(release.then_some(super::RELEASE_RECHECK), &app, |app| {
+            app.release_rechecked();
+            app.flush();
+        });
         rustle::disposable_effect(quit, move || {
             if quit {
                 WindowHandle::MAIN.close();
@@ -390,22 +410,51 @@ fn idle_effects(shared: &Shared) {
     });
 }
 
-/// A task, keyed on `at`, that waits until `at` with a delay and then runs `act` on `app`,
-/// and lets the app follow what that did.
+/// A task keyed on `waiting`, what something waits on, that waits `rest` on the frame clock
+/// with a delay while there is something and then runs `act` on `app` with it, and lets the
+/// app follow what that did: a change of what is waited on starts the wait again.
 #[track_caller]
-fn after(at: Option<Instant>, app: &Weak<RefCell<App>>, act: fn(&mut App)) {
+fn rested<K: std::hash::Hash + Clone + 'static>(
+    waiting: Option<K>,
+    rest: Duration,
+    app: &Weak<RefCell<App>>,
+    act: fn(&mut App, K),
+) {
     let app = app.clone();
-    rustle::launched_effect(at, move |scope| async move {
-        let Some(at) = at else {
+    rustle::launched_effect(waiting.clone(), move |scope| async move {
+        let Some(waiting) = waiting else {
             return;
         };
-        scope
-            .delay(at.saturating_duration_since(Instant::now()))
-            .await;
+        scope.delay(rest).await;
         with_app(&app, |app| {
-            act(app);
+            act(app, waiting);
             app.flush();
         });
+    });
+}
+
+/// A task keyed on `waiting`, what something waits on, that runs `act` on `app` with it each
+/// time `rest` passed on the frame clock while there is something and it stays the same, and
+/// lets the app follow what that did: a change of what is waited on starts the wait again.
+#[track_caller]
+fn each_rest<K: std::hash::Hash + Clone + 'static>(
+    waiting: Option<K>,
+    rest: Duration,
+    app: &Weak<RefCell<App>>,
+    act: fn(&mut App, K),
+) {
+    let app = app.clone();
+    rustle::launched_effect(waiting.clone(), move |scope| async move {
+        let Some(waiting) = waiting else {
+            return;
+        };
+        loop {
+            scope.delay(rest).await;
+            with_app(&app, |app| {
+                act(app, waiting.clone());
+                app.flush();
+            });
+        }
     });
 }
 
@@ -649,12 +698,6 @@ impl App {
         self.flush();
     }
 
-    /// How long until the view is due to be saved, once typing paused, if a save waits.
-    fn view_save_wait(&self) -> Option<Duration> {
-        self.view_save_due
-            .map(|due| due.saturating_duration_since(Instant::now()))
-    }
-
     /// Pumps the browser's pages, as their effect does at its interval while they are shown.
     fn pump_browser(&mut self) {
         self.browsing = self.browser_tick();
@@ -696,9 +739,9 @@ impl App {
         self.flush();
     }
 
-    /// Says what the app waits for while it is idle, for the root's effects: each thing that
-    /// waits on time (and what of it is due now is done), how often the agents' work is to
-    /// be looked at, whether the browser's pages are pumped, and whether the app quits.
+    /// Says what the app waits on while it is idle, for the root's effects: what each thing
+    /// that waits for a pause waits on, how often the agents' work is to be looked at,
+    /// whether the browser's pages are pumped, and whether the app quits.
     fn publish_idle(&mut self) {
         let waiting = self.model.read(|screen| screen.waiting()) || self.work.busy();
         let polling = if self.work.hearing() {
@@ -709,12 +752,14 @@ impl App {
             None
         };
         let idle = Idle {
-            hover: self.editor_hover_due(),
-            highlight: self.editor_highlight_due(),
-            bulb: self.editor_bulb_due(),
-            autosave: self.editor_autosave_due(),
-            recording: self.recording_due(),
-            release: self.release_due(),
+            hover: self.hover_waiting(),
+            hover_leaving: self.hover_leaving(),
+            highlight: self.highlight_waiting(),
+            bulb: self.bulb_waiting(),
+            autosave: self.autosave_waiting(),
+            recording: self.recording_waiting(),
+            release: self.release_checked(),
+            view_unsaved: self.view_unsaved,
             polling,
             pumping: self.browsing,
             quit: self.closing || self.model.read(Screen::quitting),

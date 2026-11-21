@@ -296,6 +296,32 @@ fn the_gutter_marks_lines_for_a_comment() {
         range.is_some_and(|range| range.end > range.start),
         "{range:?}"
     );
+    assert!(rig.state(|state| state.commenting()));
+}
+
+/// Clicking the number of a line of the changes opens the box for a comment on that line
+/// alone, and a drag that ends opens it too, no longer stretching.
+#[test]
+fn a_click_on_the_gutter_comments_on_one_line() {
+    let mut rig = Rig::shot(Shot::Diff);
+    let number = rig
+        .tagged()
+        .iter()
+        .find(|node| matches!(node.id, Target::Diff(DiffEvent::Gutter { .. })))
+        .map(|node| {
+            (
+                node.visible.origin.x + node.visible.size.width / 2.0,
+                node.visible.origin.y + node.visible.size.height / 2.0,
+            )
+        })
+        .expect("the gutter is drawn");
+    rig.click(number);
+    let range = rig.state(|state| state.comment_target.and_then(|target| target.range));
+    assert!(
+        range.is_some_and(|range| range.end == range.start),
+        "{range:?}"
+    );
+    assert!(rig.state(|state| state.commenting()));
 }
 
 /// Dragging the handle on the top edge of the terminal dock up makes the dock taller.

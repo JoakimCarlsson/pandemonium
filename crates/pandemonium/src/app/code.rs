@@ -21,7 +21,7 @@ use pm_components::areas::BrowserEvent;
 
 use pm_components::events::Event;
 use pm_components::target::Target;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use pm_components::EditorCommand;
 
@@ -47,19 +47,19 @@ use super::App;
 use crate::keys;
 
 /// How long a card stays after the pointer left both it and its word, so the pointer can cross the gap between them.
-const HOVER_GRACE: Duration = Duration::from_millis(350);
+pub(super) const HOVER_GRACE: Duration = Duration::from_millis(350);
 
 /// How many chords a binding recorded on the keymap page takes at most.
 const RECORDED_CHORDS: usize = 2;
 
 /// How long recording waits for a second chord before it keeps the first alone.
-const RECORD_PAUSE: Duration = Duration::from_millis(1000);
+pub(super) const RECORD_PAUSE: Duration = Duration::from_millis(1000);
 
 /// How long a file waits after it was last changed before it saves itself, when the editor saves by itself.
-const AUTOSAVE_REST: Duration = Duration::from_millis(1000);
+pub(super) const AUTOSAVE_REST: Duration = Duration::from_millis(1000);
 
 /// How long the caret rests before the language server is asked where the thing at it is used.
-const HIGHLIGHT_REST: Duration = Duration::from_millis(250);
+pub(super) const HIGHLIGHT_REST: Duration = Duration::from_millis(250);
 
 /// How far below the line it is about the list or card hangs, in logical pixels.
 const GAP: f32 = 2.0;
@@ -145,9 +145,11 @@ impl App {
         self.editor_point(offset).map(|(x, top, _)| (x, top))
     }
 
-    /// Saves the file shown once it has gone unchanged long enough with changes to save, when the editor saves by itself, and says when to look again while it has yet to.
-    pub(super) fn editor_autosave_due(&mut self) -> Option<Instant> {
-        let waiting = self.model.read(|state| {
+    /// The file shown and its version while it has changes to save and the editor saves by
+    /// itself: what the root's effect waits on, saving it once it has gone unchanged long
+    /// enough.
+    pub(super) fn autosave_waiting(&self) -> Option<(String, i32)> {
+        self.model.read(|state| {
             let document = state.shown_document()?;
             let dirty = state.editor.autosave && state.shown_dirty();
             dirty.then(|| {
@@ -159,32 +161,22 @@ impl App {
                     document.version,
                 )
             })
-        });
-        let Some(here) = waiting else {
-            self.autosave_wait = None;
-            return None;
-        };
-        let since = match &self.autosave_wait {
-            Some((held, since)) if *held == here => *since,
-            _ => {
-                let now = Instant::now();
-                self.autosave_wait = Some((here, now));
-                return Some(now + AUTOSAVE_REST);
-            }
-        };
-        let due = since + AUTOSAVE_REST;
-        if Instant::now() < due {
-            return Some(due);
-        }
-        self.autosave_wait = None;
-        self.handle(Event::Editor(EditorEvent::EditorSave));
-        None
+        })
     }
 
-    /// Asks the language server where the thing at the caret of the file shown is used once the caret has rested there long enough, and says when to look again while it has yet to.
-    pub(super) fn editor_highlight_due(&mut self) -> Option<Instant> {
+    /// Saves the file shown once it went unchanged for [`AUTOSAVE_REST`] as `here`, when it
+    /// still waits to be saved as that.
+    pub(super) fn autosave_rested(&mut self, here: (String, i32)) {
+        if self.autosave_waiting() == Some(here) {
+            self.handle(Event::Editor(EditorEvent::EditorSave));
+        }
+    }
+
+    /// The file, version and caret of the file shown while the code editor has the keyboard
+    /// and the language server was not yet asked where the thing there is used: what the
+    /// root's effect waits on, asking once the caret rested there long enough.
+    pub(super) fn highlight_waiting(&self) -> Option<(String, i32, usize)> {
         if self.focus.focused() != Some(Target::Editor(EditorEvent::EditorField)) {
-            self.highlight_wait = None;
             return None;
         }
         let here = self.model.read(|state| {
@@ -192,23 +184,16 @@ impl App {
             let document = state.shown_document()?;
             Some((path, document.version, document.field.caret()))
         })?;
-        if self.highlighted.as_ref() == Some(&here) {
-            self.highlight_wait = None;
-            return None;
+        (self.highlighted.as_ref() != Some(&here)).then_some(here)
+    }
+
+    /// Asks the language server where the thing at the caret is used, and what else it
+    /// tells of the file, once the caret rested at `here` for [`HIGHLIGHT_REST`], when it
+    /// still waits there.
+    pub(super) fn highlight_rested(&mut self, here: (String, i32, usize)) {
+        if self.highlight_waiting().as_ref() != Some(&here) {
+            return;
         }
-        let since = match &self.highlight_wait {
-            Some((waiting, since)) if *waiting == here => *since,
-            _ => {
-                let now = Instant::now();
-                self.highlight_wait = Some((here, now));
-                return Some(now + HIGHLIGHT_REST);
-            }
-        };
-        let due = since + HIGHLIGHT_REST;
-        if Instant::now() < due {
-            return Some(due);
-        }
-        self.highlight_wait = None;
         self.highlighted = Some(here);
         self.model.change(|state| {
             state
@@ -218,7 +203,6 @@ impl App {
                 .links_requested()
                 .blame_requested()
         });
-        None
     }
 
     /// Where the card about the byte `offset` is placed from: the left edge of the byte and the top of its line, as the last frame drew them.
@@ -405,7 +389,6 @@ impl App {
         }
         if event.key == Key::Escape {
             self.recorded.clear();
-            self.record_deadline = None;
             self.model.change(|state| state.keys_recorded(None));
             return true;
         }
@@ -416,7 +399,6 @@ impl App {
         if self.recorded.len() >= RECORDED_CHORDS {
             self.finish_recording();
         } else {
-            self.record_deadline = Some(Instant::now() + RECORD_PAUSE);
             let so_far = self.recorded.clone();
             self.model.change(|state| state.with_recorded(so_far));
         }
@@ -425,21 +407,24 @@ impl App {
 
     /// Keeps the chords recorded so far as the action's keys.
     fn finish_recording(&mut self) {
-        self.record_deadline = None;
         let binding = std::mem::take(&mut self.recorded).join(" ");
         self.model
             .change(|state| state.keys_recorded((!binding.is_empty()).then_some(binding)));
         self.persist();
     }
 
-    /// Keeps what was recorded once no further chord came in time, and says when to look again while one still may.
-    pub(super) fn recording_due(&mut self) -> Option<Instant> {
-        let due = self.record_deadline?;
-        if Instant::now() < due {
-            return Some(due);
+    /// The chords recorded so far while recording waits for another: what the root's effect
+    /// waits on, keeping them once no further chord came for [`RECORD_PAUSE`].
+    pub(super) fn recording_waiting(&self) -> Option<Vec<String>> {
+        (!self.recorded.is_empty()).then(|| self.recorded.clone())
+    }
+
+    /// Keeps the chords `recorded` as the action's keys once no further chord came in time,
+    /// when they are still what was recorded.
+    pub(super) fn recording_rested(&mut self, recorded: Vec<String>) {
+        if self.recorded == recorded {
+            self.finish_recording();
         }
-        self.finish_recording();
-        None
     }
 
     /// Takes a press of keys the keymap binds to an action, or that starts a binding of more chords, and says whether it took it; typing goes on as typing.
@@ -1200,7 +1185,7 @@ impl App {
                 .is_some();
         if self.hover_card_over || selecting {
             self.hover_rest = None;
-            self.hover_leaving = None;
+            self.hover_leaving = false;
             return;
         }
         let stretch = self.word_at(byte);
@@ -1214,21 +1199,16 @@ impl App {
         });
         let left = shown.is_some_and(|offset| word != Some(offset));
         if left && std::mem::take(&mut self.hover_entered) {
-            self.hover_leaving = None;
+            self.hover_leaving = false;
             self.model.change(|state| state.hover_closed());
         } else {
-            self.hover_leaving = left.then(|| self.hover_leaving.unwrap_or_else(Instant::now));
+            self.hover_leaving = left;
         }
         if shown.is_none() {
             self.hover_entered = false;
         }
         let word = word.filter(|_| self.hover_wanted());
-        self.hover_rest = match (word, self.hover_rest) {
-            (Some(start), _) if Some(start) == shown => None,
-            (Some(start), Some((held, since))) if held == start => Some((held, since)),
-            (Some(start), _) => Some((start, Instant::now())),
-            (None, _) => None,
-        };
+        self.hover_rest = word.filter(|start| Some(*start) != shown);
     }
 
     /// Notes that the pointer came over the card about a word of the file shown, which keeps
@@ -1238,7 +1218,7 @@ impl App {
         self.hover_card_over = over;
         if over {
             self.hover_rest = None;
-            self.hover_leaving = None;
+            self.hover_leaving = false;
             self.hover_entered = true;
         } else {
             self.code_hovered(self.editor_hover);
@@ -1352,32 +1332,38 @@ impl App {
         true
     }
 
-    /// Takes away a card the pointer left long enough ago, asks about the word the pointer has rested on long enough, and says when to look again while either has yet to happen.
-    pub(super) fn editor_hover_due(&mut self) -> Option<Instant> {
-        let now = Instant::now();
-        let mut next: Option<Instant> = None;
-        if let Some(left) = self.hover_leaving {
-            let due = left + HOVER_GRACE;
-            if now >= due {
-                self.hover_leaving = None;
-                self.model.change(|state| state.hover_closed());
-            } else {
-                next = Some(due);
-            }
+    /// The word of the file shown the pointer rests on, by where it starts, with how long it
+    /// rests before the language server is asked about it: what the root's effect keyed on
+    /// the word waits on.
+    pub(super) fn hover_waiting(&self) -> Option<(usize, Duration)> {
+        self.hover_rest.map(|word| (word, self.hover_rest_time()))
+    }
+
+    /// Asks the language server about the word starting at `word` once the pointer rested on
+    /// it long enough, when it still rests there.
+    pub(super) fn hover_rested(&mut self, word: usize) {
+        if self.hover_rest != Some(word) {
+            return;
         }
-        if let Some((start, since)) = self.hover_rest {
-            let due = since + self.hover_rest_time();
-            if now >= due {
-                self.hover_rest = None;
-                self.hover_leaving = None;
-                if let Some(at) = self.card_at(start) {
-                    self.model.change(|state| state.hover_requested(start, at));
-                }
-            } else {
-                next = Some(next.map_or(due, |held| held.min(due)));
-            }
+        self.hover_rest = None;
+        self.hover_leaving = false;
+        if let Some(at) = self.card_at(word) {
+            self.model.change(|state| state.hover_requested(word, at));
         }
-        next
+    }
+
+    /// Whether the pointer left both the card about a word and the word while the card shows:
+    /// what the root's effect waits on, taking the card away after [`HOVER_GRACE`].
+    pub(super) fn hover_leaving(&self) -> bool {
+        self.hover_leaving
+    }
+
+    /// Takes away the card about a word once the pointer stayed off it and its word for
+    /// [`HOVER_GRACE`], when it is still away.
+    pub(super) fn hover_left(&mut self) {
+        if std::mem::take(&mut self.hover_leaving) {
+            self.model.change(|state| state.hover_closed());
+        }
     }
 }
 

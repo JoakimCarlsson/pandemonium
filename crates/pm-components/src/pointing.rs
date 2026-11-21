@@ -28,9 +28,6 @@ pub struct Press {
     pub clicks: u32,
     /// The modifier keys held.
     pub modifiers: Modifiers,
-    /// How far the pointer moves before a press becomes a drag where the control was
-    /// composed, the touch slop of its view configuration.
-    pub touch_slop: f32,
 }
 
 /// What the primary button did on text the pointer selects: going down, moving while
@@ -61,8 +58,6 @@ pub struct CodePointer {
     pub at: (f32, f32),
     /// What the button did.
     pub stroke: Stroke,
-    /// How far the pointer moves before a press becomes a drag where the text was composed.
-    pub touch_slop: f32,
 }
 
 /// The primary button on the window of the shell.

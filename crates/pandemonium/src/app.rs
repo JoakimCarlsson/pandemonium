@@ -18,7 +18,7 @@ use pm_components::target::Target;
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::model::Model;
 
@@ -92,6 +92,12 @@ const WINDOW_SETTINGS: &str = "window-settings.json";
 /// How long the window waits before looking for a newer release again while it stays open.
 const RELEASE_RECHECK: Duration = Duration::from_secs(6 * 60 * 60);
 
+/// How long typing pauses before the view is written.
+const VIEW_SAVE_PAUSE: Duration = Duration::from_millis(300);
+
+/// How long the view waits at most, while it keeps changing, before it is written.
+const VIEW_SAVE_BURST: Duration = Duration::from_secs(2);
+
 /// The window and what draws into it; both exist once the platform is ready.
 pub struct App {
     /// The interface on rustle, its windows and what its root reads.
@@ -158,36 +164,20 @@ pub struct App {
     saved_choices: Vec<pm_store::Choice>,
     /// The editor's settings as they were last written to disk.
     saved_editor: pm_editor::EditorSettings,
-    /// The file shown and its version while it waits to be saved by itself, and since when.
-    autosave_wait: Option<((String, i32), Instant)>,
-    /// When the window last looked for a newer release.
-    release_asked: Instant,
     /// The agents that run, and the work done for them.
     work: Work,
     /// What was last written as the view, which is what the window opened with until it changes.
     saved_view: Option<View>,
     /// Serializes and writes the latest window state outside the event loop.
     view_writer: crate::view::Writer,
-    /// The next debounced capture of the window state.
-    view_save_due: Option<Instant>,
+    /// Whether the view changed since it was last written.
+    view_unsaved: bool,
     /// The text field that held the keyboard before the interface handled the
     /// current event, and what it held then.
     typed_before: Option<(Target, String)>,
-    /// The start of the current burst, limiting how long continuous typing delays saving.
-    view_save_started: Option<Instant>,
     /// The field the reader was typing in when the window last closed, which takes the
     /// keyboard back as it appears, until the reader presses or types anything or it has it.
     refocus: Option<Target>,
-    /// The project header being carried, by position, from when its drag started.
-    project_press: Option<usize>,
-    /// Whether the carried project header has moved since its drag started.
-    project_dragging: bool,
-    /// The tab of a pane being carried, from when its drag started.
-    pane_press: Option<pm_components::panes::Item>,
-    /// Whether the carried tab has moved since its drag started.
-    pane_dragging: bool,
-    /// The row of the project's files being carried, from when its drag started.
-    tree_press: Option<TreeTarget>,
     /// What held keyboard focus when the event loop last came to rest, for telling the screen which text field the reader left.
     focus_before: Option<Target>,
     /// Whether the window's own close button asked it to close and nothing is left to ask first.
@@ -198,10 +188,10 @@ pub struct App {
     terminal_hover: Option<(usize, usize)>,
     /// The part of a line the wheel has scrolled the shell that was not enough to move it.
     terminal_scroll_rest: f32,
-    /// The word of the file shown the pointer rests on, by where it starts, and since when.
-    hover_rest: Option<(usize, Instant)>,
-    /// When the pointer left both the card about a word and the word, while the card is still showing.
-    hover_leaving: Option<Instant>,
+    /// The word of the file shown the pointer rests on, by where it starts, while the language server is yet to be asked about it.
+    hover_rest: Option<usize>,
+    /// Whether the pointer left both the card about a word and the word, while the card is still showing.
+    hover_leaving: bool,
     /// Whether the pointer has been on the card about a word since it opened, so leaving it takes it away at once.
     hover_entered: bool,
     /// The byte of the file shown whose drawn character the pointer is over, as the code last told.
@@ -214,20 +204,14 @@ pub struct App {
     pending: Vec<pm_editor::Chord>,
     /// The chords pressed so far while keys are recorded on the keymap page, as they are written.
     recorded: Vec<String>,
-    /// When recording keeps what was pressed so far, unless another chord comes first.
-    record_deadline: Option<Instant>,
     /// The file, version and caret the language server was last asked about for where the thing at the caret is used.
     highlighted: Option<(String, i32, usize)>,
-    /// The file, version and caret waiting to settle before the language server is asked about them, and since when.
-    highlight_wait: Option<((String, i32, usize), Instant)>,
     /// The engine that paints pages of the web, and the pages it holds.
     web: browser::Web,
     /// The file, version, caret, other end of the selection and number of problems the language server was last asked about for the marker beside the caret's line.
     bulb_asked: Option<editing::BulbKey>,
-    /// The same, waiting to settle before the language server is asked, and since when.
-    bulb_wait: Option<(editing::BulbKey, Instant)>,
-    /// The selected text of the file shown that was pressed on, while the button is held.
-    text_drag: Option<editing::TextDrag>,
+    /// The byte of the selected text of the file shown that was pressed on, while the button is held and no drag has started from it.
+    text_press: Option<usize>,
     /// Whether what the reader changed is written to disk, as it is unless the app runs headless.
     keeps_to_disk: bool,
     /// How large the main window's frame opens, in logical pixels.
@@ -380,18 +364,10 @@ impl App {
             refocus: None,
             saved_view: None,
             view_writer: crate::view::Writer::default(),
-            view_save_due: None,
+            view_unsaved: false,
             typed_before: None,
-            view_save_started: None,
-            project_press: None,
-            project_dragging: false,
-            pane_press: None,
-            pane_dragging: false,
-            tree_press: None,
             saved_choices: Vec::new(),
             saved_editor: editor,
-            autosave_wait: None,
-            release_asked: Instant::now(),
             work,
             focus_before: None,
             closing: false,
@@ -400,19 +376,16 @@ impl App {
             terminal_scroll_rest: 0.0,
             web: browser::Web::default(),
             hover_rest: None,
-            hover_leaving: None,
+            hover_leaving: false,
             hover_entered: false,
             editor_hover: None,
             hover_card_over: false,
             hover_card_held: false,
             pending: Vec::new(),
             recorded: Vec::new(),
-            record_deadline: None,
             highlighted: None,
-            highlight_wait: None,
             bulb_asked: None,
-            bulb_wait: None,
-            text_drag: None,
+            text_press: None,
             keeps_to_disk: false,
             opening_frame: (WIDTH, HEIGHT),
             fit_to_screen: false,
@@ -605,17 +578,19 @@ impl App {
         self.apply_appearance();
     }
 
-    /// When the window looks for a newer release again while updates are looked for, asking now once that time has come.
-    fn release_due(&mut self) -> Option<Instant> {
+    /// Whether the window looks for newer releases: what the root's effect that asks again
+    /// every [`RELEASE_RECHECK`] is keyed on.
+    fn release_checked(&self) -> bool {
+        self.saved_window.general.check_updates
+    }
+
+    /// Asks for the newest release of the channel the reader follows, as the root's effect
+    /// does every [`RELEASE_RECHECK`] while releases are looked for.
+    fn release_rechecked(&mut self) {
         let general = &self.saved_window.general;
-        if !general.check_updates {
-            return None;
-        }
-        if self.release_asked.elapsed() >= RELEASE_RECHECK {
+        if general.check_updates {
             self.work.ask_release(general.channel);
-            self.release_asked = Instant::now();
         }
-        Some(self.release_asked + RELEASE_RECHECK)
     }
 
     /// Draws the window light or dark, in the themes and fonts, as its own settings and the desktop say.
@@ -661,22 +636,18 @@ impl App {
         self.saved_choices = choices;
     }
 
-    /// Defers view capture until typing pauses, while saving at least every two seconds.
+    /// Notes that the view changed since it was last written, so the root's effects write it
+    /// once typing pauses, or at the latest [`VIEW_SAVE_BURST`] after the first change.
     fn defer_view_save(&mut self) {
-        let now = Instant::now();
-        let started = *self.view_save_started.get_or_insert(now);
-        self.view_save_due =
-            Some((now + Duration::from_millis(300)).min(started + Duration::from_secs(2)));
+        self.view_unsaved = true;
     }
 
-    /// Captures an expired pending save and returns the next deadline for the event loop.
-    fn view_save_deadline(&mut self) -> Option<Instant> {
-        if self.view_save_due.is_some_and(|due| due <= Instant::now()) {
-            self.view_save_due = None;
-            self.view_save_started = None;
+    /// Writes the view once the root's effect says typing paused or the burst ran long, when
+    /// it changed since it was last written.
+    fn view_save_rested(&mut self) {
+        if std::mem::take(&mut self.view_unsaved) {
             self.persist_view();
         }
-        self.view_save_due
     }
 
     /// Writes where the window is to disk when it differs from what was last written, once the window has finished opening where it was left.
@@ -1031,9 +1002,11 @@ impl App {
     /// gesture and did not start a drag.
     pub(super) fn click_lands(&mut self, click: Press) -> bool {
         self.anchor = Some(click);
-        let dragging = self.project_dragging
-            || self.pane_dragging
-            || self.model.read(|screen| screen.tree_dragging());
+        let dragging = self.model.read(|screen| match screen {
+            Screen::Workspace(state) => {
+                state.project_drag.is_some() || state.pane_drag.is_some() || state.tree_dragging()
+            }
+        });
         if dragging || self.takes_its_press(click.id) {
             return false;
         }
@@ -1206,18 +1179,17 @@ impl App {
     /// Follows the pointer to `at` while a project header is carried, over the project
     /// `over` when it is over one: that project is the one it would take the place of.
     fn drag_project(&mut self, at: (f32, f32), over: Option<usize>) {
-        let Some(from) = self.project_press else {
+        let Some(drag) = self.model.read(|screen| match screen {
+            Screen::Workspace(state) => state.project_drag,
+        }) else {
             return;
         };
-        self.project_dragging = true;
-        let over = self.model.read(|held| {
-            let current = match held {
-                Screen::Workspace(state) => state.project_drag.map_or(from, |drag| drag.over),
-            };
-            over.filter(|project| *project != from).unwrap_or(current)
-        });
+        let over = over
+            .filter(|project| *project != drag.from)
+            .unwrap_or(drag.over);
         self.model.update(|state| {
-            *state = std::mem::take(state).in_workspace(|state| state.dragged_over(from, over, at))
+            *state =
+                std::mem::take(state).in_workspace(|state| state.dragged_over(drag.from, over, at))
         });
     }
 
@@ -1256,8 +1228,9 @@ impl App {
 
     /// Ends a drag of a project header, putting the project where it was let go, and says whether there was a drag.
     pub(super) fn drop_project(&mut self) -> bool {
-        self.project_press = None;
-        if !std::mem::take(&mut self.project_dragging) {
+        if !self.model.read(|screen| match screen {
+            Screen::Workspace(state) => state.project_drag.is_some(),
+        }) {
             return false;
         }
         self.model
@@ -1307,8 +1280,8 @@ impl App {
 
     /// Carries out what the primary button did on the code text of a field, as `pointer`
     /// tells: a press places the caret or selects, or makes a file of the excerpts the one
-    /// edited; a move with the button held stretches the selection or carries the selected
-    /// text; the release ends both.
+    /// edited; a move with the button held stretches the selection; the release ends it, and
+    /// puts the caret where a press on the selection that never became a drag of it was.
     pub(super) fn code_pointer(&mut self, pointer: CodePointer) {
         match pointer.stroke {
             Stroke::Down { clicks, modifiers } => self.code_pressed(pointer, clicks, modifiers),
@@ -1316,15 +1289,12 @@ impl App {
                 let Some(offset) = pointer.offset else {
                     return;
                 };
-                if pointer.owner == Target::Editor(EditorEvent::EditorField) {
-                    self.drag_text_moved(pointer.at, offset);
-                }
                 if self.dragging == Some(pointer.owner) {
                     self.drag_in_field(pointer.owner, offset);
                 }
             }
             Stroke::Up => {
-                self.drag_text_released();
+                self.text_released();
                 self.dragging = None;
                 self.column_press = None;
                 self.code_hold = None;
@@ -1354,7 +1324,7 @@ impl App {
             return;
         };
         self.focus.request_focus(id);
-        self.press_in_field(id, offset, pointer, clicks, modifiers);
+        self.press_in_field(id, offset, clicks, modifiers);
         if self.editor_reach_pressed(modifiers) {
             self.dragging = None;
         }
@@ -1372,16 +1342,9 @@ impl App {
         }
     }
 
-    /// Takes the press `pointer` inside the code editor's field `id`, at the shown offset
-    /// `offset`, the `clicks`-th in a row with `modifiers` held.
-    fn press_in_field(
-        &mut self,
-        id: Target,
-        offset: usize,
-        pointer: CodePointer,
-        clicks: u32,
-        modifiers: Modifiers,
-    ) {
+    /// Takes the press inside the code editor's field `id`, at the shown offset `offset`,
+    /// the `clicks`-th in a row with `modifiers` held.
+    fn press_in_field(&mut self, id: Target, offset: usize, clicks: u32, modifiers: Modifiers) {
         if modifiers.alt && modifiers.shift {
             let byte = self
                 .model
@@ -1404,7 +1367,7 @@ impl App {
             && let Some(byte) = self
                 .model
                 .read(|screen| screen.field(id).map(|field| field.to_text(offset)))
-            && self.drag_text_begins(byte, pointer.at, pointer.touch_slop)
+            && self.text_pressed(byte)
         {
             return;
         }
@@ -1854,7 +1817,7 @@ impl App {
             Key::Escape if self.model.read(|screen| screen.commenting()) => {
                 self.handle(Event::Diff(DiffEvent::CommentCancel))
             }
-            Key::Escape if self.text_drag.is_some() => self.drag_text_cancelled(),
+            Key::Escape if self.text_dragging() => self.text_drag_cancelled(),
             Key::Escape if self.model.read(Screen::restore_offered) => {
                 self.model
                     .update(|state| *state = std::mem::take(state).without_picker());

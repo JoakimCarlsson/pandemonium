@@ -241,8 +241,8 @@ impl Operations for Controller {
     }
 
     /// Follows the pointer carrying a control.
-    fn carry_moved(&self, at: (f32, f32), over: Option<Over>) {
-        self.with(|app| app.carry_moved(at, over));
+    fn carry_moved(&self, id: Target, at: (f32, f32), over: Option<Over>) {
+        self.with(|app| app.carry_moved(id, at, over));
     }
 
     /// Puts what was carried where it was let go.
@@ -250,7 +250,7 @@ impl Operations for Controller {
         self.with(|app| app.carry_ended(modifiers));
     }
 
-    /// Starts or stretches the lines selected for a comment.
+    /// Starts the lines selected for a comment.
     fn comment_dragged(&self, id: Target) {
         self.with(|app| app.comment_dragged(id));
     }
@@ -263,6 +263,23 @@ impl Operations for Controller {
     /// Ends the selection of lines for a comment.
     fn comment_drag_ended(&self) {
         self.with(App::end_comment_drag);
+    }
+
+    /// Picks up the selected text pressed on, as a drag from it starts.
+    fn text_drag_started(&self) -> bool {
+        let mut picked = false;
+        self.with(|app| picked = app.text_drag_started());
+        picked
+    }
+
+    /// Marks where the selected text being carried would be put down.
+    fn text_dragged_over(&self, offset: usize) {
+        self.with(|app| app.text_dragged_over(offset));
+    }
+
+    /// Puts the selected text being carried down where it is over.
+    fn text_drag_ended(&self, modifiers: rustle::Modifiers) {
+        self.with(|app| app.text_drag_ended(modifiers));
     }
 
     /// Asks the desktop to resize the window by the edge pressed.

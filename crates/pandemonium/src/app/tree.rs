@@ -1,5 +1,6 @@
 //! The project's files under the pointer and the keyboard: rows dragged into another folder, the keys that cut, copy, paste, rename and delete them, and files of this machine let go on them.
 
+use pm_components::target::Target;
 use pm_components::tree_actions::{TreeShortcut, TreeTarget};
 use rustle::{Key, KeyEvent};
 
@@ -7,10 +8,14 @@ use super::App;
 use crate::keys::{self, Clip};
 
 impl App {
-    /// Follows the pointer to `at` while a row of the project's files is carried, over the
-    /// row `over` when it is over one: the folder there is where the row would land.
-    pub(super) fn drag_tree(&mut self, at: (f32, f32), over: Option<TreeTarget>) {
-        let Some(from) = self.tree_press.clone() else {
+    /// Follows the pointer to `at` while the row of the project's files `id` is carried,
+    /// over the row `over` when it is over one: the folder there is where the row would
+    /// land. Nothing follows once the drag was given up.
+    pub(super) fn drag_tree(&mut self, id: Target, at: (f32, f32), over: Option<TreeTarget>) {
+        if !self.model.read(|screen| screen.tree_dragging()) {
+            return;
+        }
+        let Some(from) = self.model.read(|screen| screen.tree_row_of(id)) else {
             return;
         };
         self.model.update(|state| {
@@ -20,7 +25,6 @@ impl App {
 
     /// Ends a drag of rows of the project's files, moving them into the folder they were let go on, or copying them there while the key that copies is held in `modifiers`, and says whether there was a drag.
     pub(super) fn drop_tree(&mut self, modifiers: rustle::Modifiers) -> bool {
-        self.tree_press = None;
         if !self.model.read(|screen| screen.tree_dragging()) {
             return false;
         }
@@ -41,7 +45,6 @@ impl App {
         let command = event.modifiers.ctrl || event.modifiers.meta;
         let shortcut = match (keys::clip(event), &event.key) {
             (_, Key::Escape) if self.model.read(|screen| screen.tree_dragging()) => {
-                self.tree_press = None;
                 self.model.update(|state| {
                     *state = std::mem::take(state).in_workspace(|state| state.without_tree_drag())
                 });

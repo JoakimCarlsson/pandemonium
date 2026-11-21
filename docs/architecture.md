@@ -149,12 +149,24 @@ One crate per layer, each depending only on the layers below it.
   the pointer: the press that went down on a control (`Operations::pressed`, for
   fields, handles and the title bar), whether a click counts
   (`Operations::click_lands`: the press began there and dragged nothing), the
-  pointer over a control (`hovered`) and drags. A panel's handle, the minimap
-  and the numbers of a diff's lines hand their drags over with drag modifiers.
+  pointer over a control (`hovered`) and drags. A panel's handle is
+  `draggable_with` along its axis (`events::sash_drag`), the drag state adding
+  up the distance since the drag began, and the minimap hands its press and
+  drag over with `on_drag`, mapped through the height it is drawn at.
   Project headers, pane tabs and rows of the project's files are
   rustle drag-and-drop sources (`drag_and_drop_source`), and each window's
   root is the drag-and-drop target that tells the app a drag started, where
-  the pointer carries it and that it ended (`events::carry_target`). The
+  the pointer carries it and that it ended (`events::carry_target`); the
+  payload names the control carried all the way, and the drag itself lives
+  in the screen's state (the project, tab or rows dragged), which the app
+  reads instead of keeping presses of its own. The number of a diff's line
+  is a drag-and-drop source and target of its own (`events::comment_drag`):
+  a drag from it starts the lines for a comment, the numbers it comes over
+  stretch them and its end opens the box, while a click comments on that
+  line alone. Selected code is carried the same way
+  (`code_pointing::text_drag`): the code editor's text is the source, picking
+  the selection up as the drag starts from a press on it, and the target
+  marking where it would land and putting it down as the drag ends. The
   title bar moves the window through its control's press, and strips laid
   over a floating frame's edges resize it (`resize_edges`). Every control carries
   the rustle `test_tag` of its `Target` (`Target::tag`), by which headless tests and
@@ -329,13 +341,18 @@ What the app does with the windows goes through rustle's API:
   follows a change of the screen (settings written, the outbox delivered, the
   view's save put off, the place recorded, the windows beside the main one
   followed) on the screen's generation; the card about a word, the highlight
-  and marker requests, autosave, recording keys, the release check and the
-  view's save each as a `launched_effect` keyed on when it is due, waiting with
-  rustle's `delay`, which sets a timer and draws nothing meanwhile; the agents'
-  work looked at and the browser's pages pumped at their intervals while that
-  work is under way; the main window closed once the app quits; and the view
-  saved when the root leaves the composition. The app says what it waits for
-  after each turn (`App::publish_idle`) in one rustle state those effects read.
+  and marker requests, autosave, recording keys and the view's save each as a
+  `launched_effect` keyed on what it waits on (the word under the pointer, the
+  file, version and caret, the chords recorded, the screen's generation), so a
+  change starts its wait again, waiting with rustle's `delay` on the frame
+  clock, which sets a timer and draws nothing meanwhile, and then acting when
+  it still waits on the same thing; the agents' work looked at, the browser's
+  pages pumped and newer releases looked for at their intervals; the main
+  window closed once the app quits; and the view saved when the root leaves
+  the composition. The app says what each waits on after each turn
+  (`App::publish_idle`) in one rustle state those effects read, and keeps no
+  deadline of its own, so the headless rig sees each wait fire by moving the
+  frame clock on.
 
 The interaction tests and benchmarks (`app/interactions`) run the same views
 headless through `rustle::Embedded` (`app/headless.rs`): the rig feeds each

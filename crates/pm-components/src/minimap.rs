@@ -178,7 +178,7 @@ pub(crate) fn minimap(
             rustle::vertical_divider(Modifier::new(), 1.0, theme::color(Role::Border));
             let own = Modifier::new().weight(1.0).fill_max_height().clip();
             let own = events::pressed(own, Target::Editor(EditorEvent::Minimap))
-                .chain(crate::events::minimap_drag());
+                .chain(crate::events::minimap_drag(height));
             rustle::stack_with(own, || {
                 rustle::column_arranged(
                     Modifier::new().offset(0.0, first as f32 * ROW - geometry.offset),

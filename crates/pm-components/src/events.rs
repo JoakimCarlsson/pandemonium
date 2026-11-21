@@ -31,8 +31,7 @@ use std::rc::Rc;
 
 use rustle::{
     CompositionLocal, DragAndDropEvent, DragAndDropTarget, DragAndDropTransferData, DragData, Key,
-    KeyEvent, LOCAL_VIEW_CONFIGURATION, Modifier, Modifiers, Offset, PointerButton, PointerEvent,
-    PointerPhase, Rect, ResizeEdge,
+    KeyEvent, Modifier, Modifiers, PointerButton, PointerEvent, PointerPhase, Rect, ResizeEdge,
 };
 
 use crate::browser_menu::BrowserCommand;
@@ -200,17 +199,28 @@ pub trait Operations {
     }
     /// A drag of the control `id` started, the pointer at `at` in the window.
     fn carry_started(&self, _id: Target, _at: (f32, f32)) {}
-    /// The pointer carrying a control moved to `at` in the window, over `over` when the
-    /// place under it takes what is carried.
-    fn carry_moved(&self, _at: (f32, f32), _over: Option<Over>) {}
+    /// The pointer carrying the control `id` moved to `at` in the window, over `over` when
+    /// the place under it takes what is carried.
+    fn carry_moved(&self, _id: Target, _at: (f32, f32), _over: Option<Over>) {}
     /// The drag of a control ended where the pointer let go, with `modifiers` held.
     fn carry_ended(&self, _modifiers: Modifiers) {}
-    /// The number of a line `id` of a diff is pressed, or the pointer dragged on from it.
+    /// A drag of the number of the line `id` of a diff started, or the number was clicked:
+    /// lines start being selected for a comment there.
     fn comment_dragged(&self, _id: Target) {}
-    /// The pointer came over the number of the line `id` of a diff.
+    /// A drag of a line's number came over the number of the line `id` of a diff.
     fn comment_hovered(&self, _id: Target) {}
-    /// The press or drag on the numbers of a diff's lines ended.
+    /// The drag or click on the numbers of a diff's lines ended.
     fn comment_drag_ended(&self) {}
+    /// A drag that began with a press on the code editor's text past the touch slop: says
+    /// whether the press picked up the selection to carry it.
+    fn text_drag_started(&self) -> bool {
+        false
+    }
+    /// The selected text being carried is over the byte `offset` of the code editor's text
+    /// as shown.
+    fn text_dragged_over(&self, _offset: usize) {}
+    /// The drag of selected text ended, with `modifiers` held where it was let go.
+    fn text_drag_ended(&self, _modifiers: Modifiers) {}
     /// The primary button went down on the edge or corner `edge` of the window's frame.
     fn edge_pressed(&self, _edge: ResizeEdge) {}
     /// Makes the window an icon on the desktop's bar.
@@ -397,35 +407,40 @@ fn activates(event: &KeyEvent) -> bool {
         }
 }
 
-/// The modifier that hands a drag of the handle `id` on a panel's edge to the app, as
-/// `detectDragGestures` hands its `onDrag` and `onDragEnd` lambdas the distance dragged: from
-/// the press on, how far the pointer went from where it went down, and the end of the drag.
-pub fn sash_drag(id: Target) -> Modifier {
+/// The modifier that hands a drag of the handle `id` on a panel's edge to the app through
+/// rustle's [`draggable_with`](Modifier::draggable_with) along `axis`: once the pointer moved
+/// the touch slop, `state` adds up each distance dragged, the app is told the whole distance
+/// since the drag began, across for a horizontal handle and down for a vertical one, and the
+/// end of the drag puts the distance back to nothing.
+pub fn sash_drag(id: Target, state: &rustle::DraggableState, axis: rustle::Axis) -> Modifier {
     let operations = operations();
     let ended = Rc::clone(&operations);
-    let start: Rc<Cell<Option<Offset>>> = Rc::default();
-    let reset = Rc::clone(&start);
-    Modifier::new()
-        .on_drag_end(move || {
-            reset.set(None);
+    let (dragged, reset) = (state.clone(), state.clone());
+    Modifier::new().draggable_with(
+        state,
+        axis,
+        move |delta| {
+            dragged.drag_by(delta);
+            let by = dragged.offset();
+            let by = match axis {
+                rustle::Axis::Horizontal => (by, 0.0),
+                rustle::Axis::Vertical => (0.0, by),
+            };
+            operations.sash_dragged(id, by);
+        },
+        move |_| {
+            reset.set_offset(0.0);
             ended.sash_released();
-        })
-        .on_drag(move |at| {
-            let from = start.get().unwrap_or(at);
-            start.set(Some(from));
-            operations.sash_dragged(id, (at.x - from.x, at.y - from.y));
-        })
+        },
+    )
 }
 
-/// The modifier that hands a press and drag along the minimap to the app: how far down
-/// the pointer is from the minimap's top, and how tall the minimap is.
-pub fn minimap_drag() -> Modifier {
+/// The modifier that hands a press and drag along the minimap to the app, as rustle's
+/// [`on_drag`](Modifier::on_drag) reports it: how far down the pointer is from the
+/// minimap's top, and how tall the minimap is drawn, `height` logical pixels.
+pub fn minimap_drag(height: f32) -> Modifier {
     let operations = operations();
-    let height = Rc::new(Cell::new(0.0_f32));
-    let measured = Rc::clone(&height);
-    Modifier::new()
-        .on_size_changed(move |size| measured.set(size.height))
-        .on_drag(move |at| operations.minimap_dragged(at.y, height.get()))
+    Modifier::new().on_drag(move |at| operations.minimap_dragged(at.y, height))
 }
 
 /// What a drag and drop inside the window carries: the control it started from.
@@ -469,8 +484,8 @@ impl DragAndDropTarget for Carrying {
 
     /// Tells the holder where the pointer carries the control, over no place that takes it.
     fn on_moved(&self, event: &DragAndDropEvent) {
-        if let Some((_, at)) = Self::of(event) {
-            self.operations.carry_moved(at, None);
+        if let Some((id, at)) = Self::of(event) {
+            self.operations.carry_moved(id, at, None);
         }
     }
 
@@ -523,9 +538,9 @@ impl Taking {
 
     /// Tells the holder where the pointer is over the place, carrying a control or files.
     fn follow(&self, event: &DragAndDropEvent) {
-        if event.payload::<Carried>().is_some() {
+        if let Some(Carried(id)) = event.payload::<Carried>() {
             self.operations
-                .carry_moved(event_at(event), Some(self.over(event)));
+                .carry_moved(*id, event_at(event), Some(self.over(event)));
         } else {
             self.operations
                 .files_held(Some(event_at(event)), self.row(event));
@@ -584,20 +599,65 @@ pub fn carried_over(files: bool, over: impl Fn((f32, f32), Rect) -> Over + 'stat
         )
 }
 
-/// The modifier of the numbers of a diff's lines that hands a press and drag on them to the
-/// app: the press and each move, then the end;
-/// and the pointer coming over the number `id`, which a drag stretches the lines to.
+/// What a drag of a line's number in a diff carries: the number it started from.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LineNumber(Target);
+
+/// The number of the line `id` of a diff as a place a drag of a line's number goes over:
+/// a drag and drop target telling the app the drag came over it, and, for the number the
+/// drag started from, that the drag ended.
+struct Numbered {
+    /// The app's state holder.
+    operations: Rc<dyn Operations>,
+    /// The number of the line.
+    id: Target,
+}
+
+impl DragAndDropTarget for Numbered {
+    /// Takes the drop; the drag's end opens the box for the comment.
+    fn on_drop(&self, _: &DragAndDropEvent) -> bool {
+        true
+    }
+
+    /// Tells the holder the drag came over this number, which stretches the lines to it.
+    fn on_entered(&self, _: &DragAndDropEvent) {
+        self.operations.comment_hovered(self.id);
+    }
+
+    /// Tells the holder the drag ended, once, from the number it started at.
+    fn on_ended(&self, event: &DragAndDropEvent) {
+        if event.payload::<LineNumber>() == Some(&LineNumber(self.id)) {
+            self.operations.comment_drag_ended();
+        }
+    }
+}
+
+/// The modifier of the number of the line `id` of a diff that selects lines for a comment
+/// by dragging, with rustle's drag and drop: a drag from the number, once past the touch
+/// slop, starts the selection there and carries the number, the numbers it comes over
+/// stretch the selection to them, and letting go ends it.
 pub fn comment_drag(id: Target) -> Modifier {
     let operations = operations();
-    let (ended, hovered) = (Rc::clone(&operations), Rc::clone(&operations));
+    let started = Rc::clone(&operations);
     Modifier::new()
-        .on_hover(move |over| {
-            if over {
-                hovered.comment_hovered(id);
-            }
+        .drag_and_drop_source(move |_| {
+            started.comment_dragged(id);
+            Some(DragAndDropTransferData::new(LineNumber(id)))
         })
-        .on_drag_end(move || ended.comment_drag_ended())
-        .on_drag(move |_| operations.comment_dragged(id))
+        .drag_and_drop_target(
+            |event| event.payload::<LineNumber>().is_some(),
+            Numbered { operations, id },
+        )
+}
+
+/// What a click of the number of the line `id` of a diff does: selects that line alone for
+/// a comment and opens the box for it.
+pub fn comment_click(id: Target) -> impl Fn() + 'static {
+    let operations = operations();
+    move || {
+        operations.comment_dragged(id);
+        operations.comment_drag_ended();
+    }
 }
 
 /// The window's root as the place files dragged in from another application are held over
@@ -706,24 +766,22 @@ struct Reported {
     on_pointer: Option<OnPointer>,
 }
 
-/// The press or click `event` makes on the control `id` laid out at `area`, with the touch
-/// slop `touch_slop` in effect where it was composed.
-fn press_of(id: Target, area: Rect, event: &PointerEvent, touch_slop: f32) -> Press {
+/// The press or click `event` makes on the control `id` laid out at `area`.
+fn press_of(id: Target, area: Rect, event: &PointerEvent) -> Press {
     Press {
         id,
         area,
         at: window_at(event),
         clicks: event.click_count,
         modifiers: event.modifiers,
-        touch_slop,
     }
 }
 
 /// The modifier that names the area `id` for tests, tells the app of the presses on it and
 /// runs its lambdas: a primary press is reported, and `on_click` runs with the modifier keys
 /// held when the button came up on the area it went down on and the app let the click
-/// count, the press telling where it is and how many in a row it makes by the view
-/// configuration in effect here; a drag of it is carried when the app
+/// count, the press telling where it is and how many in a row it makes; a drag of it is
+/// carried, through rustle's drag and drop, when the app
 /// [carries](Operations::carries) it. A secondary press runs `on_context` when the control
 /// has a menu of its own, and is left to what is beneath otherwise. `on_pointer` sees the buttons on the area after the app was told.
 fn reporting(reported: Reported) -> Modifier {
@@ -737,7 +795,6 @@ fn reporting(reported: Reported) -> Modifier {
     let (carry, menus) = (Rc::clone(&operations), Rc::clone(&operations));
     let area: Rc<Cell<Rect>> = Rc::default();
     let (placed, context_area) = (Rc::clone(&area), Rc::clone(&area));
-    let touch_slop = LOCAL_VIEW_CONFIGURATION.current().touch_slop;
     let secondary_pointer = on_pointer.clone();
     let modifier = Modifier::new()
         .test_tag(id.tag())
@@ -750,10 +807,10 @@ fn reporting(reported: Reported) -> Modifier {
         .on_pointer_button(PointerButton::Primary, move |event| {
             match event.phase {
                 PointerPhase::Press => {
-                    operations.pressed(press_of(id, area.get(), event, touch_slop));
+                    operations.pressed(press_of(id, area.get(), event));
                 }
                 PointerPhase::Click => {
-                    if operations.click_lands(press_of(id, area.get(), event, touch_slop)) {
+                    if operations.click_lands(press_of(id, area.get(), event)) {
                         on_click(event.modifiers);
                     }
                 }
@@ -772,7 +829,7 @@ fn reporting(reported: Reported) -> Modifier {
         if event.phase == PointerPhase::Press
             && let Some(on_context) = &on_context
         {
-            menus.context_pressed(press_of(id, context_area.get(), event, touch_slop));
+            menus.context_pressed(press_of(id, context_area.get(), event));
             on_context(window_at(event));
         }
         if let Some(on_pointer) = &secondary_pointer

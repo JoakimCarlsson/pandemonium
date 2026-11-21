@@ -340,21 +340,14 @@ impl Rig {
         self.shared.quits()
     }
 
-    /// Moves the app's clock on by `ms` milliseconds, for what waits on time
-    /// such as tooltips and the card about a word of code,
-    /// and comes to rest.
+    /// Moves every interface's frame clock on by `ms` milliseconds, for what waits on it
+    /// with a delay, such as tooltips, the card about a word of code and the app's other
+    /// pauses, and comes to rest.
     pub(super) fn wait(&mut self, ms: u64) {
-        let by = Duration::from_millis(ms);
-        let mut app = self.app.borrow_mut();
-        if let Some((word, at)) = app.hover_rest {
-            app.hover_rest = at.checked_sub(by).map(|at| (word, at));
-        }
-        if let Some(at) = app.hover_leaving {
-            app.hover_leaving = at.checked_sub(by);
-        }
-        app.recompose = true;
-        drop(app);
-        self.screens.clock.set(self.screens.clock.get() + by);
+        self.app.borrow_mut().recompose = true;
+        self.screens
+            .clock
+            .set(self.screens.clock.get() + Duration::from_millis(ms));
         self.settle();
     }
 

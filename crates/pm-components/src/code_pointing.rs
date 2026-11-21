@@ -1,7 +1,8 @@
 //! The pointer on code text drawn line by line: the press, drag and release of the
-//! primary button that place the caret and select, and the pointer resting over a
-//! character, each told to the app as a typed operation with the byte of the text under
-//! the pointer, found in the [`TextLines`] the text was drawn into.
+//! primary button that place the caret and select, the selected text carried elsewhere by
+//! rustle's drag and drop, and the pointer resting over a character, each told to the app
+//! as a typed operation with the byte of the text under the pointer, found in the
+//! [`TextLines`] the text was drawn into.
 
 use crate::events::{self, OnPointer};
 use crate::pointing::{CodePointer, Stroke};
@@ -11,8 +12,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use rustle::{
-    LOCAL_VIEW_CONFIGURATION, Modifier, PointerButton, PointerEvent, PointerInputPhase,
-    PointerPhase, Rect,
+    DragAndDropEvent, DragAndDropTarget, DragAndDropTransferData, Modifier, PointerButton,
+    PointerEvent, PointerInputPhase, PointerPhase, Rect,
 };
 
 /// What a control drawing the code text of `owner` into `lines` does with its own presses,
@@ -21,7 +22,6 @@ use rustle::{
 pub fn on_press(owner: Target, lines: &TextLines) -> OnPointer {
     let operations = events::operations();
     let lines = lines.clone();
-    let touch_slop = LOCAL_VIEW_CONFIGURATION.current().touch_slop;
     Rc::new(move |event: &PointerEvent| {
         if event.button != PointerButton::Primary || event.phase != PointerPhase::Press {
             return;
@@ -35,7 +35,6 @@ pub fn on_press(owner: Target, lines: &TextLines) -> OnPointer {
                 clicks: event.click_count,
                 modifiers: event.modifiers,
             },
-            touch_slop,
         });
     })
 }
@@ -46,7 +45,6 @@ pub fn on_press(owner: Target, lines: &TextLines) -> OnPointer {
 pub fn held(owner: Target, lines: &TextLines) -> Modifier {
     let operations = events::operations();
     let lines = lines.clone();
-    let touch_slop = LOCAL_VIEW_CONFIGURATION.current().touch_slop;
     Modifier::new().pointer_input(move |event| {
         let stroke = match event.phase {
             PointerInputPhase::Move => Stroke::Move,
@@ -59,7 +57,6 @@ pub fn held(owner: Target, lines: &TextLines) -> Modifier {
             offset: lines.offset_at_window(owner, at),
             at,
             stroke,
-            touch_slop,
         });
         false
     })
@@ -81,4 +78,67 @@ pub fn hover(owner: Target, lines: &TextLines) -> Modifier {
             });
             operations.code_hovered(byte);
         })
+}
+
+/// What a drag of selected code text carries: the selection the press picked up, which the
+/// app holds.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct CarriedText;
+
+/// The code text of `owner`, drawn into `lines`, as the place carried text is let go over:
+/// a drag and drop target telling the app which byte the text is over and that the drag
+/// ended, which puts the text down where it was last over.
+struct TextDrop {
+    /// The app's state holder.
+    operations: Rc<dyn crate::events::Operations>,
+    /// The field whose text it is.
+    owner: Target,
+    /// Where the text was drawn.
+    lines: TextLines,
+}
+
+impl DragAndDropTarget for TextDrop {
+    /// Takes the drop; the drag's end puts the text down.
+    fn on_drop(&self, _: &DragAndDropEvent) -> bool {
+        true
+    }
+
+    /// Tells the app the byte of the text nearest the pointer.
+    fn on_moved(&self, event: &DragAndDropEvent) {
+        let at = (event.position.x, event.position.y);
+        if let Some(offset) = self.lines.offset_at_window(self.owner, at) {
+            self.operations.text_dragged_over(offset);
+        }
+    }
+
+    /// Tells the app the drag ended, with the keys held as it was let go.
+    fn on_ended(&self, event: &DragAndDropEvent) {
+        if event.payload::<CarriedText>().is_some() {
+            self.operations.text_drag_ended(event.modifiers);
+        }
+    }
+}
+
+/// The modifier that carries the selected code text of `owner`, drawn into `lines`, to
+/// another place with rustle's drag and drop: a drag from a press the app took as picking
+/// up the selection starts once past the touch slop, the text follows the pointer over the
+/// code, and letting go puts it down there.
+pub fn text_drag(owner: Target, lines: &TextLines) -> Modifier {
+    let operations = events::operations();
+    let picking = Rc::clone(&operations);
+    let lines = lines.clone();
+    Modifier::new()
+        .drag_and_drop_source(move |_| {
+            picking
+                .text_drag_started()
+                .then(|| DragAndDropTransferData::new(CarriedText))
+        })
+        .drag_and_drop_target(
+            |event| event.payload::<CarriedText>().is_some(),
+            TextDrop {
+                operations,
+                owner,
+                lines,
+            },
+        )
 }

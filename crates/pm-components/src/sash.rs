@@ -111,14 +111,16 @@ impl Sash {
     /// Emits the handle: a strip the pointer takes hold of, clear until the pointer is on it, when a line as thin as a border lights up along the edge.
     #[track_caller]
     pub fn build(self) {
-        let (cursor, line) = match self.layout {
+        let (cursor, line, axis) = match self.layout {
             Layout::Column => (
                 CursorIcon::ColResize,
                 Modifier::new().width(1.0).fill_max_height(),
+                rustle::Axis::Horizontal,
             ),
             Layout::Row => (
                 CursorIcon::RowResize,
                 Modifier::new().height(1.0).fill_max_width(),
+                rustle::Axis::Vertical,
             ),
         };
         let (half, along) = (THICKNESS / 2.0, Modifier::new());
@@ -136,12 +138,13 @@ impl Sash {
         };
         let over = rustle::remember_mutable_interaction_source();
         let hovered = over.collect_is_hovered_as_state();
+        let dragged = rustle::remember_draggable_state();
         let own = own
             .z_index(10)
             .hoverable(&over)
             .cursor(cursor)
             .control(self.id, send(Event::pressing(self.id)))
-            .chain(crate::events::sash_drag(self.id));
+            .chain(crate::events::sash_drag(self.id, &dragged, axis));
         let modifier = self.modifier.chain(own);
         let handle = move || {
             row_arranged(

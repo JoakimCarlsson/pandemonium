@@ -31,6 +31,7 @@ mod fields;
 mod keyboard;
 mod menus;
 mod panes;
+mod pauses;
 mod pointer;
 mod popups;
 mod scrolling;

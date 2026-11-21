@@ -1168,6 +1168,10 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
     };
     let pressed = if live {
         let on_press = crate::code_pointing::on_press(owner, drawn);
+        let carrying = match owner == Target::Editor(EditorEvent::EditorField) {
+            true => crate::code_pointing::text_drag(owner, drawn),
+            false => Modifier::new(),
+        };
         own.chain(crate::code_pointing::hover(owner, drawn))
             .chain(crate::code_pointing::held(owner, drawn))
             .pressable_pointing(
@@ -1176,6 +1180,7 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
                 on_context,
                 move |event| on_press(event),
             )
+            .chain(carrying)
     } else {
         own.pressable_menu(owner, send(Event::pressing(owner)), on_context)
     };

@@ -150,6 +150,71 @@ fn selected_code_drags_to_another_place() {
     assert!(after.contains("LIMITimpl Session"), "{after}");
 }
 
+/// The code shot with the word `LIMIT` of the file shown selected by a double press, and
+/// where the press was.
+fn limit_selected() -> (Rig, (f32, f32)) {
+    let mut rig = Rig::shot(Shot::Code);
+    let word = rig
+        .read(|screen| {
+            screen
+                .field(Target::Editor(EditorEvent::EditorField))
+                .and_then(|field| field.text().find("LIMIT"))
+        })
+        .expect("the word is in the file");
+    rig.click_on(Target::Editor(EditorEvent::EditorField));
+    std::thread::sleep(double_tap_timeout());
+    let at = code_point(&rig, word + 2);
+    rig.click(at);
+    rig.click(at);
+    std::thread::sleep(double_tap_timeout());
+    (rig, at)
+}
+
+/// The text of the file shown, and what of it is selected.
+fn text_and_selection(rig: &Rig) -> (String, String) {
+    rig.read(|screen| {
+        screen
+            .field(Target::Editor(EditorEvent::EditorField))
+            .map(|field| (field.text().to_owned(), field.selected().to_owned()))
+    })
+    .unwrap_or_default()
+}
+
+/// A press on the selection let go without moving is no drag: the selection goes and the
+/// caret is put where it was pressed, the text unchanged.
+#[test]
+fn a_press_on_selected_code_without_a_drag_places_the_caret() {
+    let (mut rig, at) = limit_selected();
+    let (before, selected) = text_and_selection(&rig);
+    assert_eq!(selected, "LIMIT");
+    rig.click(at);
+    let (after, selected) = text_and_selection(&rig);
+    assert_eq!(after, before);
+    assert_eq!(selected, "");
+}
+
+/// Escape while selected code is carried lets go of it: letting the button go afterwards
+/// moves nothing.
+#[test]
+fn escape_gives_up_carrying_selected_code() {
+    let (mut rig, at) = limit_selected();
+    let (before, _) = text_and_selection(&rig);
+    let target = before
+        .find("impl Session")
+        .expect("the line is in the file");
+    let to = code_point(&rig, target);
+    rig.move_to(at);
+    rig.button_in(None, rustle::PointerButton::Primary, true, at);
+    rig.move_to((at.0, at.1 + 20.0));
+    rig.move_to(to);
+    assert!(rig.state(|state| state.editor_dragging()));
+    rig.key(Key::Escape);
+    assert!(!rig.state(|state| state.editor_dragging()));
+    rig.button_in(None, rustle::PointerButton::Primary, false, to);
+    let (after, _) = text_and_selection(&rig);
+    assert_eq!(after, before);
+}
+
 /// Dragging with Alt and Shift held selects a rectangle of code, a stretch on each line.
 #[test]
 fn alt_shift_drag_selects_columns() {
