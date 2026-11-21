@@ -8,7 +8,7 @@
 //! that wake the app for the work that waits on time and close the main window
 //! when the app quits.
 
-use pm_components::areas::{BrowserEvent, ComposerEvent, EditorEvent, TerminalEvent, TreeEvent};
+use pm_components::areas::EditorEvent;
 use pm_components::target::Target;
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -79,6 +79,8 @@ pub(super) struct Shared {
     composed: rustle::State<u64>,
     /// What the app waits for while it is idle, as it last said.
     idle: rustle::State<Idle>,
+    /// The field the views give the keyboard back to as it appears, as the app last said.
+    restored: rustle::State<Option<Target>>,
 }
 
 impl Shared {
@@ -164,6 +166,7 @@ impl Shell {
                 app: Rc::new(RefCell::new(Weak::new())),
                 composed: rustle::mutable_state(0),
                 idle: rustle::mutable_state(Idle::default()),
+                restored: rustle::mutable_state(None),
             },
             #[cfg(test)]
             headless_ports: Rc::new(RefCell::new(None)),
@@ -213,6 +216,15 @@ impl Shell {
     pub(super) fn set_idle(&self, idle: Idle) {
         if self.shared.idle.get() != idle {
             self.shared.idle.set(idle);
+        }
+    }
+
+    /// Says which field the views give the keyboard back to as it appears, the one the
+    /// reader was typing in when the window last closed; the root composes again only
+    /// when that changed.
+    pub(super) fn set_restored(&self, restored: Option<Target>) {
+        if self.shared.restored.get() != restored {
+            self.shared.restored.set(restored);
         }
     }
 }
@@ -414,7 +426,8 @@ fn every(interval: Option<Duration>, app: &Weak<RefCell<App>>, act: fn(&mut App)
 }
 
 /// Emits what the main window shows for what `shared` holds, under the operations its
-/// views hand what the user does to, with what the app reads of the window.
+/// views hand what the user does to, with what the app reads of the window; the field the
+/// reader was typing in when the window last closed takes the keyboard back as it appears.
 pub(super) fn main_view(shared: &Shared) {
     idle_effects(shared);
     watch_window(shared, None);
@@ -422,11 +435,14 @@ pub(super) fn main_view(shared: &Shared) {
     let size = shared.sizes.borrow()[0];
     let revision = shared.model.revision();
     let _ = shared.composed.get();
+    let restored = shared.restored.get();
     shared.under_operations(None, || {
-        pm_components::revision::provide(revision, || {
-            shared
-                .model
-                .read(|screen| scene::main_root(screen, size.0, size.1, tokens));
+        focus::provide_restored(restored, || {
+            pm_components::revision::provide(revision, || {
+                shared
+                    .model
+                    .read(|screen| scene::main_root(screen, size.0, size.1, tokens));
+            });
         });
     });
 }
@@ -745,34 +761,8 @@ impl App {
         if self.window.is_none() {
             return;
         }
-        let model = self.model.clone();
-        model.read(|state| {
-            if std::mem::take(&mut self.focus_terminal) {
-                self.focus
-                    .request_focus(Target::Terminal(TerminalEvent::TerminalBody));
-            }
-            if std::mem::take(&mut self.focus_browser_address) {
-                self.focus
-                    .request_focus(Target::Browser(BrowserEvent::BrowserAddress));
-            }
-            if std::mem::take(&mut self.focus_filter) {
-                self.focus
-                    .request_focus(Target::Editor(EditorEvent::ListingFilter));
-            }
-            Self::give_back_focus(&mut self.refocus, &self.focus, self.work.resuming());
-            let starting = state.is_starting();
-            if starting && !self.autofocused {
-                self.focus
-                    .request_focus(Target::Composer(ComposerEvent::Prompt));
-            }
-            self.autofocused = starting;
-            let naming = state.is_naming();
-            if naming && !self.naming {
-                self.focus
-                    .request_focus(Target::Tree(TreeEvent::EntryField));
-            }
-            self.naming = naming;
-        });
+        let restored = Self::restored_focus(&mut self.refocus, &self.focus, self.work.resuming());
+        self.shell.set_restored(restored);
         crate::startup::scene_painted();
         crate::startup::frame_presented();
         self.place_completion();

@@ -1500,20 +1500,6 @@ pub struct CommentTarget {
 /// What one machine said about its agents: the settings and the commands of each.
 pub type Discovered = (Vec<Vec<Setting>>, Vec<Vec<Slash>>);
 
-/// What pressing a control asks of the app once the workspace took the press in, which
-/// the app carries out after the event: keyboard focus, the shell and the caret are the app's.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Asked {
-    /// The box to give keyboard focus: the prompt or a field the press calls for, or the box
-    /// of a menu it opened that is narrowed with one.
-    pub focus: Option<Target>,
-    /// Whether the press showed a shell that takes the keyboard.
-    pub keyboard_to_shell: bool,
-    /// Whether the caret of the file shown is to be shown again, after a press on the find
-    /// bar or a row of the list over the file.
-    pub caret: bool,
-}
-
 /// Everything the workspace window shows and lets the reader change.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WorkspaceState {
@@ -1668,9 +1654,9 @@ pub struct WorkspaceState {
     pub project_drag: Option<ProjectDrag>,
     /// What the agents have yet to be told.
     pub outbox: Vec<Outgoing>,
-    /// What the control pressed last asks of the app once the state took the press in, until
-    /// the app [takes](Self::take_asked) it.
-    pub asked: Option<Asked>,
+    /// How many presses asked for a shell to take the keyboard, such as a shell's tab or
+    /// a new shell: the shell's view gives itself the keyboard each time this changes.
+    pub shell_asked: u64,
     /// The session, by position, whose files are the ones open now.
     pub files_owner: Option<usize>,
     /// The files open for each session other than the one whose tabs are showing, by its position, kept so that switching away does not lose them or what was typed in them.
@@ -1977,26 +1963,40 @@ impl WorkspaceState {
         }
     }
 
-    /// The state after `action` was pressed, with what the press asks of the app kept in
-    /// [`asked`](Self::asked): the box to give keyboard focus, whether a shell takes the
-    /// keyboard and whether the caret of the file shown is to be shown.
+    /// The state after `action` was pressed: a press that shows a shell asks it to take the
+    /// keyboard (see [`shell_asked`](Self::shell_asked)), and a press on the find bar or a
+    /// row of the list over the file scrolls the file shown to its caret.
     pub(crate) fn pressed(self, action: Target) -> Self {
         let mut state = self.after_press(action);
-        state.asked = Some(Asked {
-            focus: Self::refocus(action).or_else(|| state.menu_filter_focus(action)),
-            keyboard_to_shell: Self::takes_keyboard(action),
-            caret: crate::find::is_find_part(action)
-                || matches!(action, Target::Editor(EditorEvent::ListingRow(_))),
-        });
+        if Self::takes_keyboard(action) {
+            state.shell_asked += 1;
+        }
+        if crate::find::is_find_part(action)
+            || matches!(action, Target::Editor(EditorEvent::ListingRow(_)))
+        {
+            state = state.with_caret_in_view();
+        }
         state
     }
 
-    /// Takes what the control pressed last asks of the app, leaving nothing asked.
-    pub fn take_asked(&mut self) -> Option<Asked> {
-        self.asked.take()
+    /// The state with the file shown scrolled to bring its caret into view, in the room
+    /// its lines were last drawn in, when they were drawn.
+    fn with_caret_in_view(self) -> Self {
+        match self.code_bounds.get() {
+            Some(area) => self.with_caret_shown(area.size.height + crate::open_files::STRIP),
+            None => self,
+        }
     }
 
-    /// The state after `action` was pressed, before what the press asks of the app is noted.
+    /// Opens the browser, or shows it when it is open, asking its address to take the keyboard.
+    pub fn browser_summoned(&mut self) {
+        self.open_browser(crate::browser::HOME);
+        if let Some(browser) = self.browser.as_mut() {
+            browser.asked += 1;
+        }
+    }
+
+    /// The state after `action` was pressed, before the shell and the caret follow the press.
     fn after_press(mut self, action: Target) -> Self {
         if !Self::keeps_picker(action) {
             self.picker = None;
@@ -2318,147 +2318,26 @@ impl WorkspaceState {
         }
     }
 
-    /// Whether the field `id` hides what it holds behind dots and keeps it off the clipboard: a key or a token.
-    pub fn is_secure(id: Target) -> bool {
-        id == Target::Settings(SettingsEvent::KeyField)
-            || id == Target::Settings(SettingsEvent::ModelKey)
-            || id == Target::Settings(SettingsEvent::MachineToken)
-    }
-
-    /// Whether the field `id` holds several lines, so Enter can break a line in it.
-    pub fn is_multiline(id: Target) -> bool {
-        id == Target::Composer(ComposerEvent::Prompt)
-            || id == Target::Git(GitEvent::CommitMessage)
-            || crate::settings_slots::is_prompt_field(id)
-    }
-
-    /// Whether `id` names a text field.
-    pub fn is_field(id: Target) -> bool {
-        id == Target::Composer(ComposerEvent::Prompt)
-            || id == Target::Git(GitEvent::CommitMessage)
-            || id == Target::Diff(DiffEvent::CommentField)
-            || id == Target::Git(GitEvent::BranchFilter)
-            || id == Target::Git(GitEvent::StashField)
-            || id == Target::Git(GitEvent::BranchTaskField)
-            || id == Target::Git(GitEvent::RenameField)
-            || id == Target::Tree(TreeEvent::EntryField)
-            || id == Target::Editor(EditorEvent::EditorField)
-            || id == Target::Editor(EditorEvent::RenameSymbol)
-            || id == Target::Editor(EditorEvent::ColorHex)
-            || id == Target::Editor(EditorEvent::GoToLine)
-            || id == Target::Browser(BrowserEvent::BrowserAddress)
-            || id == Target::Browser(BrowserEvent::BrowserFindField)
-            || id == Target::Editor(EditorEvent::FindField)
-            || id == Target::Search(SearchEvent::ProjectSearchField)
-            || id == Target::Editor(EditorEvent::ListingFilter)
-            || id == Target::Debug(DebugEvent::DebugConsoleField)
-            || id == Target::Debug(DebugEvent::DebugWatchField)
-            || id == Target::Editor(EditorEvent::ReplaceField)
-            || id == Target::Sidebar(SidebarEvent::HistorySearch)
-            || id == Target::Settings(SettingsEvent::ExtensionsSearch)
-            || id == Target::Composer(ComposerEvent::MenuFilter)
-            || id == Target::Chat(ChatEvent::Other)
-            || id == Target::Dialog(DialogEvent::AdderField)
-            || id == Target::Dialog(DialogEvent::PickerField)
-            || crate::settings_servers::is_form_field(id)
-            || crate::settings_drafts::is_draft_field(id)
-            || crate::settings_agents::is_key_field(id)
-            || crate::settings_pages::is_setting_field(id)
-            || crate::settings_machines::is_machine_field(id)
-            || crate::settings_models::is_model_field(id)
-            || crate::settings_slots::is_slot_field(id)
-            || id == Target::Settings(SettingsEvent::SettingsFind)
-            || id == Target::Settings(SettingsEvent::SettingsKeymapFind)
-    }
-
-    /// What pressing the field `id` hands in when Enter is pressed in it.
-    pub fn submit_of(id: Target) -> Target {
-        match id {
-            Target::Git(GitEvent::CommitMessage) => Target::Git(GitEvent::Commit),
-            Target::Diff(DiffEvent::CommentField) => Target::Diff(DiffEvent::CommentAdd),
-            Target::Git(GitEvent::BranchFilter) => Target::Git(GitEvent::BranchSubmit),
-            Target::Git(GitEvent::StashField)
-            | Target::Git(GitEvent::RenameField)
-            | Target::Git(GitEvent::BranchTaskField) => Target::Git(GitEvent::PromptConfirm),
-            Target::Tree(TreeEvent::EntryField) => Target::Tree(TreeEvent::TreeNameSubmit),
-            Target::Editor(EditorEvent::EditorField) => Target::Editor(EditorEvent::EditorSave),
-            Target::Editor(EditorEvent::RenameSymbol) => {
-                Target::Editor(EditorEvent::RenameSymbolSubmit)
-            }
-            Target::Editor(EditorEvent::ColorHex) => Target::Editor(EditorEvent::ColorHexSubmit),
-            Target::Editor(EditorEvent::GoToLine) => Target::Editor(EditorEvent::GoToLineSubmit),
-            Target::Browser(BrowserEvent::BrowserAddress) => {
-                Target::Browser(BrowserEvent::BrowserGo)
-            }
-            Target::Browser(BrowserEvent::BrowserFindField) => {
-                Target::Browser(BrowserEvent::BrowserFindNext)
-            }
-            Target::Editor(EditorEvent::FindField) => Target::Editor(EditorEvent::FindNext),
-            Target::Search(SearchEvent::ProjectSearchField) => {
-                Target::Search(SearchEvent::ProjectSearchGo)
-            }
-            Target::Editor(EditorEvent::ListingFilter) => Target::Editor(EditorEvent::ListingTake),
-            Target::Debug(DebugEvent::DebugConsoleField) => {
-                Target::Debug(DebugEvent::DebugConsoleSubmit)
-            }
-            Target::Debug(DebugEvent::DebugWatchField) => Target::Debug(DebugEvent::DebugWatchAdd),
-            Target::Editor(EditorEvent::ReplaceField) => Target::Editor(EditorEvent::ReplaceOne),
-            Target::Sidebar(SidebarEvent::HistorySearch) => Target::Sidebar(SidebarEvent::History),
-            Target::Composer(ComposerEvent::MenuFilter) => {
-                Target::Composer(ComposerEvent::MenuFilterPick)
-            }
-            Target::Dialog(DialogEvent::AdderField) => Target::Dialog(DialogEvent::AdderSubmit),
-            Target::Dialog(DialogEvent::PickerField) => Target::Dialog(DialogEvent::PickerSubmit),
-            Target::Settings(SettingsEvent::SettingsSearch) => {
-                Target::Settings(SettingsEvent::SettingsSearchGo)
-            }
-            id if crate::settings_servers::is_form_field(id) => {
-                Target::Settings(SettingsEvent::SettingsSave)
-            }
-            id if crate::settings_drafts::is_draft_field(id) => {
-                Target::Settings(SettingsEvent::DraftCreate)
-            }
-            id if crate::settings_agents::is_key_field(id) => {
-                crate::settings_agents::key_submit(id)
-            }
-            id if crate::settings_machines::is_machine_field(id) => {
-                Target::Settings(SettingsEvent::MachineSave)
-            }
-            id if crate::settings_models::is_model_field(id) => {
-                Target::Settings(SettingsEvent::ModelSave)
-            }
-            id if crate::settings_slots::is_slot_field(id) => {
-                crate::settings_slots::slot_submit(id)
-            }
-            id if let Some(submit) = crate::settings_pages::list_submit_of(id) => submit,
-            id if crate::settings_pages::is_setting_field(id)
-                || id == Target::Settings(SettingsEvent::SettingsFind)
-                || id == Target::Settings(SettingsEvent::SettingsKeymapFind) =>
-            {
-                id
-            }
-            Target::Chat(ChatEvent::Other) => Target::Chat(ChatEvent::Next),
-            _ => Target::Composer(ComposerEvent::Send),
-        }
-    }
-
-    /// What pressing Control or Command with Enter in the field `id` hands in, when it hands in something of its own.
-    pub fn hurried_submit_of(id: Target) -> Option<Target> {
-        match id {
-            Target::Composer(ComposerEvent::Prompt) => {
-                Some(Target::Composer(ComposerEvent::SendNow))
-            }
-            Target::Git(GitEvent::CommitMessage) => Some(Target::Git(GitEvent::Commit)),
-            Target::Editor(EditorEvent::ListingFilter) => {
-                Some(Target::Editor(EditorEvent::ListingPrompt))
-            }
-            _ => None,
-        }
-    }
-
     /// The state with a menu open over the field `field` at `at`.
-    pub fn with_menu(mut self, field: Target, at: (f32, f32)) -> Self {
-        self.menu = Some(ContextMenu { field, at });
+    pub fn with_menu(self, field: Target, at: (f32, f32)) -> Self {
+        self.with_text_menu(field, at, false, false)
+    }
+
+    /// The state with a menu open over the text field `field` at `at`, the field having
+    /// said whether it is `secure` and `multiline`.
+    pub fn with_text_menu(
+        mut self,
+        field: Target,
+        at: (f32, f32),
+        secure: bool,
+        multiline: bool,
+    ) -> Self {
+        self.menu = Some(ContextMenu {
+            field,
+            at,
+            secure,
+            multiline,
+        });
         self
     }
 
@@ -3717,25 +3596,15 @@ mod tests {
     use crate::git_controls::Pick;
     use crate::panes::{Item, Side};
 
-    /// A press notes what it asks of the app, until the app takes it: a shell taking the
-    /// keyboard, the caret shown again after the find bar, and nothing else for a plain press.
+    /// A press that shows a shell asks it to take the keyboard, and other presses do not.
     #[test]
     fn a_press_notes_what_it_asks_of_the_app() {
-        let mut state = WorkspaceState::sample().handle(Event::Terminal(TerminalEvent::Terminal));
-        let asked = state.take_asked().expect("a press asks");
-        assert!(asked.keyboard_to_shell && !asked.caret);
-        assert_eq!(state.take_asked(), None);
-        let mut state = state.handle(Event::Editor(EditorEvent::FindBar));
-        assert_eq!(
-            state.take_asked(),
-            Some(Asked {
-                focus: None,
-                keyboard_to_shell: false,
-                caret: true,
-            })
-        );
-        let mut state = state.handle(Event::Diff(DiffEvent::TabDiff));
-        assert_eq!(state.take_asked(), Some(Asked::default()));
+        let state = WorkspaceState::sample().handle(Event::Terminal(TerminalEvent::Terminal));
+        assert_eq!(state.shell_asked, 1);
+        let state = state.handle(Event::Editor(EditorEvent::FindBar));
+        assert_eq!(state.shell_asked, 1);
+        let state = state.handle(Event::Diff(DiffEvent::TabDiff));
+        assert_eq!(state.shell_asked, 1);
     }
 
     /// Taking in an agent's events in place leaves the workspace as taking them in by value does.

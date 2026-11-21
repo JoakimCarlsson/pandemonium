@@ -28,6 +28,8 @@ pub struct Modal {
     inside: Target,
     /// How wide the panel is, in logical pixels, when fixed.
     width: Option<f32>,
+    /// What the caller puts on the panel besides its own look.
+    modifier: Modifier,
 }
 
 impl Modal {
@@ -37,7 +39,14 @@ impl Modal {
             outside,
             inside,
             width: None,
+            modifier: Modifier::new(),
         }
+    }
+
+    /// The modal with `modifier` put on its panel. Calls accumulate.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
     }
 
     /// The modal with a panel `pixels` wide.
@@ -51,7 +60,7 @@ impl Modal {
     #[track_caller]
     pub fn build_with(self, content: impl FnOnce()) {
         let layer = Modifier::new().match_parent_size().z_index_unclipped(LAYER);
-        let mut panel = Modifier::new();
+        let mut panel = self.modifier;
         if let Some(width) = self.width {
             panel = panel.width(width);
         }

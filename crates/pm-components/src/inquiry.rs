@@ -352,6 +352,7 @@ fn other(draft: &Draft, number: usize) {
                     Input::new(field, Target::Chat(ChatEvent::Other))
                         .variant(input::Variant::Ghost)
                         .placeholder("Type your own answer here")
+                        .submits(Target::Chat(ChatEvent::Next))
                         .build();
                 },
             );

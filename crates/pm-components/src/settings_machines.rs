@@ -171,17 +171,12 @@ impl WorkspaceState {
     }
 }
 
-/// Emits a box `id` of a form holding `field`, showing `placeholder` while empty, under the words `label` that say what is written in it.
+/// Emits the box of a form `input` describes, small, under the words `label` that say
+/// what is written in it.
 #[track_caller]
-pub(crate) fn labelled(label: &str, field: &TextFieldState, id: Target, placeholder: &str) {
-    rustle::key(id, || {
-        labelled_box(label, || {
-            Input::new(field, id)
-                .size(Size::Sm)
-                .placeholder(placeholder)
-                .secure(WorkspaceState::is_secure(id))
-                .build();
-        });
+pub(crate) fn labelled(label: &str, input: Input<'_>) {
+    rustle::key(input.answers_to(), || {
+        labelled_box(label, || input.size(Size::Sm).build());
     });
 }
 
@@ -275,25 +270,29 @@ fn form_node(form: &MachineForm) {
         || {
             labelled(
                 "Name",
-                &form.name,
-                Target::Settings(SettingsEvent::MachineName),
-                "e.g. Build box",
+                Input::new(&form.name, Target::Settings(SettingsEvent::MachineName))
+                    .placeholder("e.g. Build box")
+                    .submits(Target::Settings(SettingsEvent::MachineSave)),
             );
             labelled_choices("Reached", &REACH_NAMES, reach_place(form.reach), |option| {
                 MACHINE_REACHES.id(option)
             });
             labelled(
                 address_label,
-                &form.address,
-                Target::Settings(SettingsEvent::MachineAddress),
-                address_hint,
+                Input::new(
+                    &form.address,
+                    Target::Settings(SettingsEvent::MachineAddress),
+                )
+                .placeholder(address_hint)
+                .submits(Target::Settings(SettingsEvent::MachineSave)),
             );
             if form.reach.keeps_token() {
                 labelled(
                     "Token",
-                    &form.token,
-                    Target::Settings(SettingsEvent::MachineToken),
-                    "As in server.json on that machine",
+                    Input::new(&form.token, Target::Settings(SettingsEvent::MachineToken))
+                        .placeholder("As in server.json on that machine")
+                        .submits(Target::Settings(SettingsEvent::MachineSave))
+                        .secure(true),
                 );
             }
             form_buttons(

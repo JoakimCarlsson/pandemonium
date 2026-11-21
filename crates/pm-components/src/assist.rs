@@ -650,6 +650,7 @@ fn go_to_line_box(going: &GoingTo, lines: usize) {
             .modifier(Modifier::new().fill_max_width())
             .size(Size::Sm)
             .placeholder("Line number")
+            .submits(Target::Editor(EditorEvent::GoToLineSubmit))
             .build();
         line(
             format!("Go to a line from 1 to {lines}"),
@@ -899,10 +900,16 @@ fn listing_panel(listing: &Listing) {
                     Arrangement::Start,
                     Alignment::Start,
                     || {
+                        crate::focus::request_focus_on(
+                            Target::Editor(EditorEvent::ListingFilter),
+                            filter,
+                        );
                         Input::new(filter, Target::Editor(EditorEvent::ListingFilter))
                             .modifier(Modifier::new().fill_max_width())
                             .size(Size::Sm)
                             .placeholder(hint)
+                            .on_submit(crate::quick_input::take_picked())
+                            .hurries(Target::Editor(EditorEvent::ListingPrompt))
                             .build();
                     },
                 );
@@ -955,6 +962,7 @@ fn rename_box(renaming: &Renaming) {
             .modifier(Modifier::new().fill_max_width())
             .size(Size::Sm)
             .invalid(renaming.problem.is_some())
+            .submits(Target::Editor(EditorEvent::RenameSymbolSubmit))
             .build();
         let tone = if renaming.problem.is_some() {
             Role::Danger
@@ -1015,6 +1023,7 @@ fn color_box(picking: &ColorPicking) {
                     .size(Size::Sm)
                     .invalid(crate::color_picker::color_of(&picking.hex.text()).is_none())
                     .modifier(Modifier::new().weight(1.0))
+                    .submits(Target::Editor(EditorEvent::ColorHexSubmit))
                     .build();
             },
         );

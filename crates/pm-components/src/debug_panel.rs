@@ -339,9 +339,9 @@ fn variable_parts(entry: &crate::debug::VariableRow, room: f32) {
     );
 }
 
-/// Emits the small field `id` of the tab over `held`, saying `placeholder` while empty, padded as the tab's fields are.
+/// Emits the small field `id` of the tab over `held`, saying `placeholder` while empty, padded as the tab's fields are, handing in the press of `submit` on Enter.
 #[track_caller]
-fn field(held: &rustle::TextFieldState, id: Target, placeholder: &str) {
+fn field(held: &rustle::TextFieldState, id: Target, placeholder: &str, submit: Target) {
     rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
@@ -352,6 +352,7 @@ fn field(held: &rustle::TextFieldState, id: Target, placeholder: &str) {
             Input::new(held, id)
                 .size(Size::Sm)
                 .placeholder(placeholder)
+                .submits(submit)
                 .build();
         },
     );
@@ -415,6 +416,7 @@ fn variables(state: &WorkspaceState, run: &Run) {
                 &state.debug.watch,
                 Target::Debug(DebugEvent::DebugWatchField),
                 "Add an expression to watch",
+                Target::Debug(DebugEvent::DebugWatchAdd),
             );
         });
     });
@@ -466,6 +468,7 @@ fn console(state: &WorkspaceState, run: &Run) {
                     &state.debug.console,
                     Target::Debug(DebugEvent::DebugConsoleField),
                     "Evaluate an expression",
+                    Target::Debug(DebugEvent::DebugConsoleSubmit),
                 );
             },
         );

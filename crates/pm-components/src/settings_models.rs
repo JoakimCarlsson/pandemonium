@@ -2,6 +2,7 @@
 
 use crate::areas::SettingsEvent;
 use crate::button;
+use crate::input::Input;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Frame;
@@ -484,36 +485,37 @@ fn form_node(form: &ModelServerForm, room: f32) {
         || {
             labelled(
                 "Name",
-                &form.name,
-                Target::Settings(SettingsEvent::ModelName),
-                "e.g. Company gateway",
+                Input::new(&form.name, Target::Settings(SettingsEvent::ModelName))
+                    .placeholder("e.g. Company gateway")
+                    .submits(Target::Settings(SettingsEvent::ModelSave)),
             );
             labelled(
                 "Base URL",
-                &form.base_url,
-                Target::Settings(SettingsEvent::ModelUrl),
-                "e.g. http://localhost:8000/v1",
+                Input::new(&form.base_url, Target::Settings(SettingsEvent::ModelUrl))
+                    .placeholder("e.g. http://localhost:8000/v1")
+                    .submits(Target::Settings(SettingsEvent::ModelSave)),
             );
             labelled_choices("API", &WIRES.map(|(_, name, _)| name), picked, |option| {
                 WIRES.get(option).map(|(.., id)| *id)
             });
             labelled(
                 "API key",
-                &form.key,
-                Target::Settings(SettingsEvent::ModelKey),
-                key_hint,
+                Input::new(&form.key, Target::Settings(SettingsEvent::ModelKey))
+                    .placeholder(key_hint)
+                    .submits(Target::Settings(SettingsEvent::ModelSave))
+                    .secure(true),
             );
             labelled(
                 "Or read the key from (environment variables)",
-                &form.key_env,
-                Target::Settings(SettingsEvent::ModelKeyEnv),
-                "e.g. GATEWAY_API_KEY",
+                Input::new(&form.key_env, Target::Settings(SettingsEvent::ModelKeyEnv))
+                    .placeholder("e.g. GATEWAY_API_KEY")
+                    .submits(Target::Settings(SettingsEvent::ModelSave)),
             );
             labelled(
                 "Models (separated by commas; blank asks the server)",
-                &form.models,
-                Target::Settings(SettingsEvent::ModelList),
-                "e.g. qwen3-coder, gpt-oss-120b",
+                Input::new(&form.models, Target::Settings(SettingsEvent::ModelList))
+                    .placeholder("e.g. qwen3-coder, gpt-oss-120b")
+                    .submits(Target::Settings(SettingsEvent::ModelSave)),
             );
             found_node(form, room);
             spread(|| {

@@ -361,9 +361,6 @@ impl App {
             self.focus
                 .request_focus(Target::Editor(EditorEvent::RenameSymbol));
         }
-        if command == EditorCommand::OpenTerminal {
-            self.focus_terminal = true;
-        }
     }
 
     /// The chord a press of keys makes, as the keymap names it.
@@ -546,19 +543,11 @@ impl App {
         }
     }
 
-    /// Gives the keyboard to the field narrowing the list over the file once it is drawn, when one is open.
-    fn focus_listing(&mut self) {
-        if self.model.read(|screen| screen.listing_open()) {
-            self.focus_filter = true;
-        }
-    }
-
     /// Opens the quick input over the choices of `choosing`.
     fn choose(&mut self, choosing: Choosing) {
         let at = self.across_top();
         self.model
             .change(|state| state.choices_requested(choosing, at));
-        self.focus_listing();
     }
 
     /// Presses the row `row` of the menu of the session shown.
@@ -707,17 +696,14 @@ impl App {
             Action::Outline => {
                 let at = self.across_top();
                 self.model.change(|state| state.outline_requested(at));
-                self.focus_listing();
             }
             Action::ProjectSymbols => {
                 let at = self.across_top();
                 self.model.change(|state| state.symbols_requested(at));
-                self.focus_listing();
             }
             Action::FileFinder => {
                 let at = self.across_top();
                 self.model.change(|state| state.file_finder_requested(at));
-                self.focus_listing();
             }
             Action::SearchProject => {
                 self.model.change(|state| state.project_search_opened());
@@ -738,21 +724,18 @@ impl App {
                 let at = self.across_top();
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).debug_started(at));
-                self.focus_listing();
                 self.deliver();
             }
             Action::AttachDebugger => {
                 let at = self.across_top();
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).debug_attach_requested(at));
-                self.focus_listing();
                 self.deliver();
             }
             Action::RunTask => {
                 let at = self.across_top();
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).tasks_requested(at));
-                self.focus_listing();
                 self.deliver();
             }
             Action::RerunTask => {
@@ -764,7 +747,6 @@ impl App {
                 let at = self.across_top();
                 self.model
                     .update(|screen| *screen = std::mem::take(screen).toolchains_requested(at));
-                self.focus_listing();
                 self.deliver();
             }
             Action::StopDebugging
@@ -801,18 +783,15 @@ impl App {
                 let at = self.across_top();
                 self.model
                     .change(|state| state.compare_with_file_requested(at));
-                self.focus_listing();
             }
             Action::CommandPalette => {
                 let at = self.across_top();
                 self.model.change(|state| state.commands_requested(at));
-                self.focus_listing();
             }
             Action::OpenSettings => self.open_settings(),
             Action::GoToSession => {
                 let at = self.across_top();
                 self.model.change(|state| state.sessions_requested(at));
-                self.focus_listing();
             }
             Action::NewSession => {
                 if let Some(id) = self.model.read(Screen::new_session_button) {
@@ -845,7 +824,6 @@ impl App {
                 let at = self.across_top();
                 self.model
                     .change(|state| state.agent_category_requested(category, at));
-                self.focus_listing();
             }
             Action::ChangeAgentSetting => self.choose(Choosing::AgentSetting),
             Action::ChangeTheme => self.choose(Choosing::Theme),
@@ -1020,7 +998,6 @@ impl App {
             Key::PageDown => page,
             Key::Escape => {
                 self.model.change(|state| state.listing_closed());
-                self.focus_filter = false;
                 self.leave_listing();
                 return true;
             }

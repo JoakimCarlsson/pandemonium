@@ -2,7 +2,7 @@
 //!
 //! Each row shows the first few lines of its prompt, with the elements and captures it carries as chips, and only the first few rows are shown, so that a long prompt or many of them never push the prompt box out of the window; the whole of a prompt is read by editing it.
 
-use crate::areas::ChatEvent;
+use crate::areas::{ChatEvent, ComposerEvent};
 use crate::button;
 use crate::target::Target;
 use crate::theme;
@@ -221,6 +221,10 @@ pub(crate) fn icon_button(icon: Icon, tooltip: &str, id: Target) {
     Button::icon(icon, id).tooltip(tooltip).build();
 }
 
+/// The prompt box, which takes the keyboard once a waiting prompt is given to it to edit,
+/// or once that edit is given up.
+const PROMPT: Target = Target::Composer(ComposerEvent::Prompt);
+
 /// Emits a small ghost button saying `label` with `icon`, answering to `id`: the actions of a waiting prompt's row.
 #[track_caller]
 fn ghost(label: &str, id: Target, icon: Icon) {
@@ -281,11 +285,11 @@ fn waiting(index: usize, queued: &Queued, width: f32) {
             Arrangement::SpacedBy(theme::sp(1)),
             Alignment::Center,
             || {
-                icon_button(
-                    phosphor::PENCIL_SIMPLE,
-                    "Edit",
-                    Target::Chat(ChatEvent::EditQueued(index)),
-                );
+                let edit = Target::Chat(ChatEvent::EditQueued(index));
+                Button::icon(phosphor::PENCIL_SIMPLE, edit)
+                    .tooltip("Edit")
+                    .on_click(crate::focus::pressing_into(edit, PROMPT))
+                    .build();
                 ghost(
                     "Send now",
                     Target::Chat(ChatEvent::Hurry(index)),
@@ -308,7 +312,11 @@ fn editing(queued: &Queued, width: f32) {
     frame(|| {
         leading_glyph(phosphor::PENCIL_SIMPLE, Role::Accent);
         body(&queued.text, Role::Muted, room);
-        ghost("Cancel", Target::Chat(ChatEvent::QueuedCancel), phosphor::X);
+        let cancel = Target::Chat(ChatEvent::QueuedCancel);
+        button::small_button("Cancel", cancel, Variant::Ghost)
+            .with_icon(phosphor::X)
+            .on_click(crate::focus::pressing_into(cancel, PROMPT))
+            .build();
     });
 }
 

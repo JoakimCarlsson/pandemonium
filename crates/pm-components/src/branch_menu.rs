@@ -57,6 +57,7 @@ pub fn branch_menu(state: &WorkspaceState) {
                             .placeholder("Search branches, or name a new one")
                             .size(Size::Sm)
                             .modifier(Modifier::new().fill_max_width())
+                            .submits(Target::Git(GitEvent::BranchSubmit))
                             .build();
                     },
                 );

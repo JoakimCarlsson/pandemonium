@@ -90,6 +90,10 @@ pub struct ContextMenu {
     pub field: Target,
     /// Where it opened, in logical pixels.
     pub at: (f32, f32),
+    /// Whether the field said it keeps what it holds off the clipboard, as a key does.
+    pub secure: bool,
+    /// Whether the field said it holds several lines, so what is pasted keeps its line breaks.
+    pub multiline: bool,
 }
 
 /// Whether `id` names a row of the menu.
@@ -173,11 +177,11 @@ fn picked_in_field() -> impl Fn(Target) + 'static {
 }
 
 /// Emits the menu opened at `open`, with each row enabled by what `field` can
-/// do; nothing is copied or cut from a `secure` field.
+/// do; nothing is copied or cut from a field that said it is secure.
 #[track_caller]
-pub fn field_menu(field: &TextFieldState, open: ContextMenu, secure: bool) {
+pub fn field_menu(field: &TextFieldState, open: ContextMenu) {
     let undo = field.undo_state();
-    let copies = !secure && !field.selection().collapsed();
+    let copies = !open.secure && !field.selection().collapsed();
     let rows = [
         (
             "Undo",

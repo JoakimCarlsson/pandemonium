@@ -152,6 +152,9 @@ pub struct Browser {
     pub tools_width: f32,
     /// Whether the question about clearing cookies and site data is open.
     pub clearing: bool,
+    /// How many times the reader opened the browser or brought it forward: its address
+    /// takes the keyboard each time this changes.
+    pub asked: u64,
 }
 
 impl Deref for Browser {
@@ -188,6 +191,7 @@ impl Browser {
             tools: false,
             tools_width: TOOLS_WIDTH,
             clearing: false,
+            asked: 0,
         }
     }
 
@@ -642,6 +646,7 @@ fn toolbar(browser: &Browser) {
                     .size(Size::Sm)
                     .placeholder("Search or enter an address")
                     .modifier(Modifier::new().fill_max_width())
+                    .submits(Target::Browser(BrowserEvent::BrowserGo))
                     .build();
                 },
             );

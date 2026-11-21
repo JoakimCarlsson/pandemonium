@@ -965,6 +965,7 @@ pub(crate) fn search_box(state: &WorkspaceState, section: Section) {
     )
     .size(Size::Lg)
     .placeholder(placeholder)
+    .submits(Target::Settings(SettingsEvent::SettingsSearchGo))
     .build();
 }
 
@@ -1228,21 +1229,24 @@ fn form_node(form: &ServerForm) {
         || {
             labelled(
                 "Name",
-                &form.name,
-                Target::Settings(SettingsEvent::SettingsName),
-                "My server",
+                Input::new(&form.name, Target::Settings(SettingsEvent::SettingsName))
+                    .placeholder("My server")
+                    .submits(Target::Settings(SettingsEvent::SettingsSave)),
             );
             labelled(
                 "Command or address",
-                &form.target,
-                Target::Settings(SettingsEvent::SettingsTarget),
-                "npx my-server",
+                Input::new(
+                    &form.target,
+                    Target::Settings(SettingsEvent::SettingsTarget),
+                )
+                .placeholder("npx my-server")
+                .submits(Target::Settings(SettingsEvent::SettingsSave)),
             );
             labelled(
                 "Environment or headers (NAME=value, separated by spaces)",
-                &form.env,
-                Target::Settings(SettingsEvent::SettingsEnv),
-                "TOKEN=abc",
+                Input::new(&form.env, Target::Settings(SettingsEvent::SettingsEnv))
+                    .placeholder("TOKEN=abc")
+                    .submits(Target::Settings(SettingsEvent::SettingsSave)),
             );
             button::confirm_row(
                 "Save",

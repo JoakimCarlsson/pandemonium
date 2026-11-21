@@ -108,6 +108,7 @@ fn search(state: &WorkspaceState) {
                     .size(Size::Sm)
                     .placeholder("Search history")
                     .modifier(Modifier::new().weight(1.0))
+                    .submits(Target::Sidebar(SidebarEvent::History))
                     .build();
                 },
             );

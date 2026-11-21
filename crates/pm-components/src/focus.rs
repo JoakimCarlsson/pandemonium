@@ -7,8 +7,12 @@
 //! Compose screen holds its `FocusRequester`s, and provides it to the views with
 //! [`provide`]. A view attaches the focus of its control to its focus target, focusable
 //! or text field; the app asks which control holds focus by reading rustle's state of
-//! those focuses, asks for focus with [`FocusRequesters::request_focus`] and lets it go
-//! with [`FocusRequesters::free_focus`].
+//! those focuses. A control that is to take the keyboard as it appears asks for focus from
+//! an effect of its own keyed on what makes it appear ([`request_focus_on`]), as a Compose
+//! composable runs `LaunchedEffect(key) { focusRequester.requestFocus() }`; a panel whose
+//! controls all serve one box keeps the keyboard in that box ([`keeps_keyboard_in`]); and
+//! the field the reader was typing in when the window last closed takes the keyboard back
+//! as it appears ([`provide_restored`]).
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -89,6 +93,95 @@ impl FocusRequesters {
     pub fn free_focus_of(&self, id: Target) {
         self.focus_of(id).free_focus();
     }
+
+    /// Withdraws a request for focus on any control of the registry not yet given, such as
+    /// one the effect of a control that just appeared made.
+    pub fn withdraw_requests(&self) {
+        let entries: Vec<Focus> = self.entries.borrow().values().cloned().collect();
+        for focus in entries {
+            focus.free_focus();
+        }
+    }
+}
+
+/// Asks for focus on the control `id` from an effect, Compose's
+/// `LaunchedEffect(key) { focusRequester.requestFocus() }`: after the pass in which the call
+/// first appears, and again after each pass in which `key` differs from the one before.
+/// Call it from the composable of the control that is to take the keyboard as it appears,
+/// with what makes it appear as `key`, such as the state of a box just opened.
+#[track_caller]
+pub fn request_focus_on<K: PartialEq + Clone + 'static>(id: Target, key: &K) {
+    let requesters = requesters();
+    rustle::group(|| {
+        let seen: Rc<RefCell<(Option<K>, u64)>> =
+            rustle::remember(|| Rc::new(RefCell::new((None, 0)))).get();
+        let serial = {
+            let mut seen = seen.borrow_mut();
+            if seen.0.as_ref() != Some(key) {
+                *seen = (Some(key.clone()), seen.1 + 1);
+            }
+            seen.1
+        };
+        rustle::disposable_effect(serial, move || {
+            requesters.request_focus(id);
+            || {}
+        });
+    });
+}
+
+/// The lambda that hands the press of `id` to the workspace, then gives the field `field`
+/// the keyboard: what a control that leads to typing in a box does when clicked, as a
+/// Compose `onClick` that ends with `focusRequester.requestFocus()`.
+pub fn pressing_into(id: Target, field: Target) -> impl Fn() + 'static {
+    let pressed = crate::events::send(crate::events::Event::pressing(id));
+    let focus = focus_of(field);
+    move || {
+        pressed();
+        focus.request_focus();
+    }
+}
+
+/// The modifier that gives the field `id` the keyboard after each click of the primary
+/// button inside the area, once the controls under the pointer had it: a panel whose
+/// controls all serve the one box typed in, such as a list narrowed by what the box holds,
+/// keeps the keyboard in the box.
+pub fn keeps_keyboard_in(id: Target) -> Modifier {
+    let focus = focus_of(id);
+    Modifier::new().on_pointer_event(
+        rustle::PointerEventType::Release,
+        rustle::PointerEventPass::Final,
+        move |event| {
+            if event.button == Some(rustle::PointerButton::Primary) {
+                focus.request_focus();
+            }
+        },
+    )
+}
+
+/// The control the reader was typing in when the window last closed, which takes the
+/// keyboard back as it appears; nothing while the view it was in is being put back.
+static LOCAL_RESTORED_FOCUS: CompositionLocal<Option<Target>> = CompositionLocal::new(|| None);
+
+/// Composes `content` with `restored` as the control that takes the keyboard back as it
+/// appears (see [`restores_focus`]).
+pub fn provide_restored<R>(restored: Option<Target>, content: impl FnOnce() -> R) -> R {
+    LOCAL_RESTORED_FOCUS.provide(restored, content)
+}
+
+/// Gives the control `id` the keyboard from an effect when it is the one the reader was
+/// typing in when the window last closed, as it appears or once its view is put back.
+#[track_caller]
+pub fn restores_focus(id: Target) {
+    let restored = LOCAL_RESTORED_FOCUS.current() == Some(id);
+    let requesters = requesters();
+    rustle::group(|| {
+        rustle::disposable_effect(restored, move || {
+            if restored {
+                requesters.request_focus(id);
+            }
+            || {}
+        });
+    });
 }
 
 thread_local! {
@@ -147,6 +240,7 @@ pub fn keyboard_focus(id: Target) -> Modifier {
     };
     let started = session.clone();
     rustle::side_effect(move || started.start_input_method(request));
+    restores_focus(id);
     Modifier::new()
         .focusable(&focus, |_| false)
         .platform_text_input(&session)

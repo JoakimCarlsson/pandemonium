@@ -393,6 +393,7 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
                         .placeholder("Find")
                         .invalid(found.is_err())
                         .modifier(Modifier::new().width(194.0))
+                        .submits(Target::Editor(EditorEvent::FindNext))
                         .build();
                     switch("Aa", Target::Editor(EditorEvent::FindCase), finding.case);
                     switch("ab", Target::Editor(EditorEvent::FindWord), finding.word);
@@ -432,6 +433,7 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
                         .size(Size::Sm)
                         .placeholder("Replace")
                         .modifier(Modifier::new().width(194.0))
+                        .submits(Target::Editor(EditorEvent::ReplaceOne))
                         .build();
                         for (label, event) in [
                             ("Replace", EditorEvent::ReplaceOne),

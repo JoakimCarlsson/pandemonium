@@ -187,6 +187,7 @@ pub(crate) fn rows(state: &WorkspaceState, room: f32) {
         Target::Settings(SettingsEvent::SettingsKeymapFind),
     )
     .placeholder("Search actions by name or keys")
+    .submits(Target::Settings(SettingsEvent::SettingsKeymapFind))
     .build();
     let groups = [
         "Window",

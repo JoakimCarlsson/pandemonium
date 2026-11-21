@@ -175,6 +175,7 @@ pub fn find_bar(search: &PageSearch, page: f32, beside: f32, on_hover: impl Fn(b
                     .size(Size::Sm)
                     .placeholder("Find in page")
                     .invalid(!search.query.text().is_empty() && search.counted && search.total == 0)
+                    .submits(Target::Browser(BrowserEvent::BrowserFindNext))
                     .build();
                 },
             );

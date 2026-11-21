@@ -1,6 +1,7 @@
 //! The workspace window: the sidebar of projects and sessions beside the page the reader is on.
 
-use pm_components::areas::{MenuEvent, WindowEvent};
+use pm_components::areas::{BrowserEvent, ComposerEvent, MenuEvent, TerminalEvent, WindowEvent};
+use pm_components::focus::request_focus_on;
 use pm_components::target::Target;
 use pm_components::theme;
 use pm_components::theme::Role;
@@ -23,6 +24,33 @@ use pm_components::state::Page;
 
 use crate::panes;
 
+/// Gives the keyboard, from effects the screen holds, to what was asked to take it: the
+/// prompt once the page for starting work shows, the shell each time a press asked for
+/// it and the browser's address each time the browser was opened or brought forward, as
+/// a Compose screen runs `LaunchedEffect(asked) { focusRequester.requestFocus() }`. Held by
+/// the screen, a shell or an address that shows again without being asked for keeps out
+/// of it.
+#[track_caller]
+fn keyboard_asks(state: &WorkspaceState) {
+    if state.starting() {
+        request_focus_on(Target::Composer(ComposerEvent::Prompt), &());
+    }
+    if state.shell_asked > 0 {
+        request_focus_on(
+            Target::Terminal(TerminalEvent::TerminalBody),
+            &state.shell_asked,
+        );
+    }
+    if let Some(asked) = state
+        .browser
+        .as_ref()
+        .map(|browser| browser.asked)
+        .filter(|asked| *asked > 0)
+    {
+        request_focus_on(Target::Browser(BrowserEvent::BrowserAddress), &asked);
+    }
+}
+
 /// Emits the whole workspace screen for `state` in a window `width` logical pixels wide and `height` tall: the title bar over the sidebar and the page, with the handles between them, the menus and the dialogs laid over the window.
 #[track_caller]
 pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
@@ -36,6 +64,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
     let paned = state.paned();
     let inner = state.inner_sizes();
     let frame = state.code_lines.frame(Modifier::new().fill_max_size());
+    keyboard_asks(state);
     rustle::stack_with(frame, || {
         state.places.provide(|| {
             column_arranged(
@@ -133,7 +162,7 @@ fn over(state: &WorkspaceState, height: f32, reviewing: bool) {
                 &state.editor.keymap(),
             );
         } else if let Some(field) = state.text_field(menu.field) {
-            field_menu(field, menu, WorkspaceState::is_secure(menu.field));
+            field_menu(field, menu);
         }
     }
     sidebar::drag_ghost(state);
@@ -283,7 +312,7 @@ pub(crate) fn settings_window(state: &WorkspaceState, width: f32) {
             if let Some(menu) = state.menu.filter(|menu| settings::is_settings(menu.field))
                 && let Some(field) = state.text_field(menu.field)
             {
-                field_menu(field, menu, WorkspaceState::is_secure(menu.field));
+                field_menu(field, menu);
             }
         })
         .build();

@@ -451,6 +451,22 @@ impl Operations for Controller {
         });
     }
 
+    /// Opens the menu of a text field, which said whether it is secure and multiline.
+    fn open_text_field_menu(&self, field: Target, at: (f32, f32), secure: bool, multiline: bool) {
+        self.with(|app| {
+            let at = app.framed_point(at);
+            app.open_text_menu(field, at, secure, multiline);
+        });
+    }
+
+    /// Attaches the files or the picture on the clipboard to the prompt, as a paste in the
+    /// prompt offers them first, and says whether there were any.
+    fn paste_attachments(&self) -> bool {
+        let mut attached = false;
+        self.with(|app| attached = app.paste_attachments());
+        attached
+    }
+
     /// Opens the menu of the shell.
     fn open_terminal_menu(&self, at: (f32, f32)) {
         self.with(|app| {

@@ -63,8 +63,10 @@ impl WorkspaceState {
         self
     }
 
-    /// Starts a shell in the folder of the file shown and shows the dock.
+    /// Starts a shell in the folder of the file shown and shows the dock, asking the shell
+    /// to take the keyboard (see [`shell_asked`](Self::shell_asked)).
     pub fn terminal_beside_file(mut self) -> Self {
+        self.shell_asked += 1;
         let Some((session, path)) = self.shown_file() else {
             return self;
         };

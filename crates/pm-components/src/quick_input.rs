@@ -34,6 +34,14 @@ const PREVIEWED_TITLE: f32 = 170.0;
 /// How tall the field is, in logical pixels: as tall as the command center it lies over.
 pub const FIELD_HEIGHT: f32 = 28.0;
 
+/// The lambda that takes the row picked of the list over the file, as Enter in the field
+/// narrowing it does: the command it holds when the list holds commands, and otherwise
+/// the row as the workspace takes it.
+pub(crate) fn take_picked() -> impl Fn() + 'static {
+    let operations = crate::events::operations();
+    move || operations.take_listing(None)
+}
+
 /// The shadow the quick input casts over the window, as `(x, y, blur, spread, alpha)`.
 const SHADOW: [rustle::Shadow; 1] = [crate::theme::box_shadow(0.0, 10.0, 32.0, 0.0, 0.36)];
 
@@ -87,10 +95,16 @@ pub fn quick_input(listing: &Listing) {
                     Arrangement::Start,
                     Alignment::Start,
                     || {
+                        crate::focus::request_focus_on(
+                            Target::Editor(EditorEvent::ListingFilter),
+                            filter,
+                        );
                         Input::new(filter, Target::Editor(EditorEvent::ListingFilter))
                             .size(Size::Sm)
                             .placeholder(listing.items.placeholder())
                             .modifier(Modifier::new().fill_max_width().height(FIELD_HEIGHT))
+                            .on_submit(crate::quick_input::take_picked())
+                            .hurries(Target::Editor(EditorEvent::ListingPrompt))
                             .build();
                     },
                 );

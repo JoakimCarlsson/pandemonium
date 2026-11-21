@@ -2,7 +2,7 @@
 
 use pm_components::areas::SettingsEvent;
 use pm_components::areas::{
-    BrowserEvent, ComposerEvent, EditorEvent, MenuEvent, TerminalEvent, TreeEvent, WindowEvent,
+    ComposerEvent, EditorEvent, MenuEvent, TerminalEvent, TreeEvent, WindowEvent,
 };
 
 use pm_components::areas::GitEvent;
@@ -182,7 +182,8 @@ pub struct App {
     typed_before: Option<(Target, String)>,
     /// The start of the current burst, limiting how long continuous typing delays saving.
     view_save_started: Option<Instant>,
-    /// The field the reader was typing in when the window last closed, which takes the keyboard once it is drawn.
+    /// The field the reader was typing in when the window last closed, which takes the
+    /// keyboard back as it appears, until the reader presses or types anything or it has it.
     refocus: Option<Target>,
     /// The project header being carried, by position, from when its drag started.
     project_press: Option<usize>,
@@ -194,18 +195,10 @@ pub struct App {
     pane_dragging: bool,
     /// The row of the project's files being carried, from when its drag started.
     tree_press: Option<TreeTarget>,
-    /// Whether the prompt of the page for starting work was given keyboard focus on arriving there.
-    autofocused: bool,
-    /// Whether the tree was asking for a name when the last frame was drawn.
-    naming: bool,
     /// What held keyboard focus when the event loop last came to rest, for telling the screen which text field the reader left.
     focus_before: Option<Target>,
     /// Whether the window's own close button asked it to close and nothing is left to ask first.
     closing: bool,
-    /// Whether the field narrowing the list over the file is to take the keyboard once it is drawn.
-    focus_filter: bool,
-    /// Whether the shell is to take the keyboard once it is drawn.
-    focus_terminal: bool,
     /// What the press held in the shell's window took, so dragging marks the same amount.
     terminal_hold: Option<Hold<(usize, usize)>>,
     /// The cell of the shell's window the pointer is over, as the window last told.
@@ -236,8 +229,6 @@ pub struct App {
     highlight_wait: Option<((String, i32, usize), Instant)>,
     /// The engine that paints pages of the web, and the pages it holds.
     web: browser::Web,
-    /// Whether the address of the browser is to take the keyboard once it is drawn.
-    focus_browser_address: bool,
     /// The file, version, caret, other end of the selection and number of problems the language server was last asked about for the marker beside the caret's line.
     bulb_asked: Option<editing::BulbKey>,
     /// The same, waiting to settle before the language server is asked, and since when.
@@ -410,17 +401,12 @@ impl App {
             autosave_wait: None,
             release_asked: Instant::now(),
             work,
-            autofocused: false,
-            naming: false,
             focus_before: None,
             closing: false,
-            focus_filter: false,
-            focus_terminal: false,
             terminal_hold: None,
             terminal_hover: None,
             terminal_scroll_rest: 0.0,
             web: browser::Web::default(),
-            focus_browser_address: false,
             hover_rest: None,
             hover_leaving: None,
             hover_entered: false,
@@ -554,33 +540,11 @@ impl App {
         self.settle();
     }
 
-    /// Does what every change of the workspace asks of the app once it is made: shows the
-    /// caret, gives keyboard focus and the shell the keyboard as the press asked, then saves
-    /// what is to be kept and sends what the agents and the folders are to be told.
+    /// Does what every change of the workspace asks of the app once it is made: saves what
+    /// is to be kept and sends what the agents and the folders are to be told.
     fn settle(&mut self) {
-        let mut asked = None;
-        self.model.update(|screen| asked = screen.take_asked());
-        if let Some(asked) = asked {
-            if asked.caret {
-                self.show_editor_caret();
-            }
-            if let Some(next) = asked.focus {
-                self.focus.request_focus(next);
-            }
-            self.focus_terminal = asked.keyboard_to_shell;
-        }
         self.persist();
         self.deliver();
-    }
-
-    /// Hands in what the field submits, `id`, as Enter in the field does: the row picked
-    /// of the list over the file when it is the list's, or the press of `id` otherwise.
-    fn submit(&mut self, id: Target) {
-        if id == Target::Editor(EditorEvent::ListingTake) {
-            self.take_listing(None);
-        } else {
-            self.handle(Event::pressing(id));
-        }
     }
 
     /// Takes the row `row` of the list over the file, or its picked row: the command it
@@ -746,21 +710,18 @@ impl App {
         self.saved_view = Some(view);
     }
 
-    /// Gives rustle's focus to the field in `refocus`, the one the reader was typing in when
-    /// the window last closed, once the view is no longer `resuming`: focus is asked for
-    /// until rustle says the field holds it, which is once the field is composed.
-    fn give_back_focus(refocus: &mut Option<Target>, focus: &FocusRequesters, resuming: bool) {
-        let Some(field) = *refocus else {
-            return;
-        };
-        if resuming {
-            return;
-        }
-        if focus.is_focused(field) {
+    /// The field the reader was typing in when the window last closed, which the views give
+    /// the keyboard back to as it appears (see [`pm_components::focus::restores_focus`]),
+    /// once the view is no longer `resuming`; forgotten once rustle says the field holds it.
+    fn restored_focus(
+        refocus: &mut Option<Target>,
+        focus: &FocusRequesters,
+        resuming: bool,
+    ) -> Option<Target> {
+        if refocus.is_some_and(|field| focus.is_focused(field)) {
             *refocus = None;
-        } else {
-            focus.request_focus(field);
         }
+        refocus.filter(|_| !resuming)
     }
 
     /// Writes the project list to disk when the workspace's differs from what was last written.
@@ -798,15 +759,11 @@ impl App {
     /// holds, before the interface handles an event, so [`App::follow_typing`]
     /// can tell whether the field changed while it did.
     pub(super) fn note_typing(&mut self) {
-        self.typed_before = self
-            .focus
-            .focused()
-            .filter(|id| Screen::is_text_field(*id))
-            .and_then(|id| {
-                self.model
-                    .read(|screen| screen.text_field(id).map(rustle::TextFieldState::text))
-                    .map(|text| (id, text))
-            });
+        self.typed_before = self.focus.focused().and_then(|id| {
+            self.model
+                .read(|screen| screen.text_field(id).map(rustle::TextFieldState::text))
+                .map(|text| (id, text))
+        });
     }
 
     /// Catches the screen up with what the reader typed in the text field that
@@ -1027,9 +984,10 @@ impl App {
         self.press_on(on);
     }
 
-    /// Presses `on`, or nothing: the press closes what a press elsewhere closes, holds a
-    /// row of a list for the keys that pick every row, and gives the keyboard to `on` when
-    /// it is a text field, taking it from anything else.
+    /// Presses `on`, or nothing: the press closes what a press elsewhere closes and holds a
+    /// row of a list for the keys that pick every row. Keyboard focus is rustle's to move:
+    /// a press on a text field or an area that takes the keyboard gives it focus, and a press
+    /// anywhere else takes focus away.
     fn press_on(&mut self, on: Option<Target>) {
         self.list_pressed = on.filter(|id| {
             self.model.read(|screen| {
@@ -1046,15 +1004,9 @@ impl App {
                 *state = std::mem::take(state).in_workspace(|state| state.without_naming())
             });
         }
-        if self.focus.focused() != on {
-            self.focus.free_focus();
-        }
         if on.is_none() && self.model.read(Screen::restore_offered) {
             self.model
                 .update(|state| *state = std::mem::take(state).without_picker());
-        }
-        if let Some(id) = on.filter(|id| Screen::is_text_field(*id)) {
-            self.focus.request_focus(id);
         }
     }
 
@@ -1097,8 +1049,7 @@ impl App {
 
     /// Says whether `click`, a click of a control as its view tells it while the interface
     /// handles the release, counts: when the press was not taken by the control's own
-    /// gesture and did not start a drag. A click that counts gives the keyboard to the
-    /// field, shell or page it is on.
+    /// gesture and did not start a drag.
     pub(super) fn click_lands(&mut self, click: Press) -> bool {
         self.anchor = Some(click);
         let dragging = self.project_dragging
@@ -1107,24 +1058,16 @@ impl App {
         if dragging || self.takes_its_press(click.id) {
             return false;
         }
-        self.take_keyboard_on_click(click.id);
         self.note_click(click.id, click.clicks);
         true
     }
 
-    /// Gives the keyboard to `id` when it is a field, the shell or a page, which a click on
-    /// it does.
-    fn take_keyboard_on_click(&mut self, id: Target) {
-        if WorkspaceState::is_field(id)
-            || id == Target::Terminal(TerminalEvent::TerminalBody)
-            || id == Target::Browser(BrowserEvent::BrowserBody)
-            || id == Target::Browser(BrowserEvent::BrowserToolsBody)
-        {
-            self.focus.request_focus(id);
-        }
-    }
-
-    /// Carries out the menu row `row` on the field the menu is open over, and closes the menu.
+    /// Carries out the menu row `row` on the field the menu is open over, and closes the
+    /// menu, giving the field the keyboard back. A text field's rows act through its own
+    /// state: its history undoes and redoes, its selection is copied, cut, replaced or made
+    /// whole, nothing being copied from a field that said it is secure, and what is pasted
+    /// keeping its line breaks only in a field that said it holds several lines; the prompt
+    /// takes files and pictures pasted as attachments.
     pub(super) fn menu_action(&mut self, row: Target) {
         let Some(open) = self.model.read(|screen| screen.menu()) else {
             return;
@@ -1134,11 +1077,11 @@ impl App {
         });
         let field = open.field;
         self.focus.request_focus(field);
-        let text = self.model.read(|screen| screen.text_field(field).cloned());
+        if let Some(text) = self.model.read(|screen| screen.text_field(field).cloned()) {
+            self.text_menu_action(row, &text, open);
+            return;
+        }
         match row {
-            Target::Menu(MenuEvent::MenuUndo) if let Some(text) = &text => text.undo_state().undo(),
-            Target::Menu(MenuEvent::MenuRedo) if let Some(text) = &text => text.undo_state().redo(),
-            Target::Menu(MenuEvent::MenuSelectAll) if let Some(text) = &text => text.select_all(),
             Target::Menu(MenuEvent::MenuUndo) => self.edit_field(field, Edit::Undo),
             Target::Menu(MenuEvent::MenuRedo) => self.edit_field(field, Edit::Redo),
             Target::Menu(MenuEvent::MenuCut) => self.clip(field, Clip::Cut),
@@ -1150,6 +1093,45 @@ impl App {
                     self.editor_command(command);
                 }
             }
+        }
+    }
+
+    /// Carries out the row `row` of the menu `open` over a text field holding `text`,
+    /// through the field's own state and the clipboard, as [`App::menu_action`] says.
+    fn text_menu_action(
+        &mut self,
+        row: Target,
+        text: &rustle::TextFieldState,
+        open: pm_components::context_menu::ContextMenu,
+    ) {
+        let selected = text.selected_text();
+        match row {
+            Target::Menu(MenuEvent::MenuUndo) => text.undo_state().undo(),
+            Target::Menu(MenuEvent::MenuRedo) => text.undo_state().redo(),
+            Target::Menu(MenuEvent::MenuSelectAll) => text.select_all(),
+            Target::Menu(MenuEvent::MenuCopy | MenuEvent::MenuCut)
+                if open.secure || selected.is_empty() => {}
+            Target::Menu(MenuEvent::MenuCopy | MenuEvent::MenuCut) => {
+                if let Some(clipboard) = self.clipboard() {
+                    clipboard.set_text(&selected);
+                }
+                if row == Target::Menu(MenuEvent::MenuCut) {
+                    text.replace_selection("");
+                }
+            }
+            Target::Menu(MenuEvent::MenuPaste)
+                if open.field == Target::Composer(ComposerEvent::Prompt)
+                    && self.paste_attachments() => {}
+            Target::Menu(MenuEvent::MenuPaste) => {
+                if let Some(pasted) = self.clipboard().and_then(|clipboard| clipboard.text()) {
+                    let pasted: String = pasted
+                        .chars()
+                        .filter(|c| !c.is_control() || (open.multiline && matches!(c, '\n' | '\t')))
+                        .collect();
+                    text.replace_selection(&pasted);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1326,8 +1308,6 @@ impl App {
         self.model.update(|state| {
             *state = std::mem::take(state).in_workspace(|state| state.comment_drag_ended())
         });
-        self.focus
-            .request_focus(Target::Diff(DiffEvent::CommentField));
     }
 
     /// Ends a drag of a project header, putting the project where it was let go, and says whether there was a drag.
@@ -1343,17 +1323,25 @@ impl App {
         true
     }
 
-    /// Opens the menu over the field `id` at `at`, in the window's frame, after putting the
-    /// caret at the byte `offset` of the code text under the pointer unless it is inside the
-    /// selection.
+    /// Opens the menu over the text field `id` at `at`, in the window's frame, the field
+    /// having said whether it is `secure` and `multiline`.
+    pub(super) fn open_text_menu(
+        &mut self,
+        id: Target,
+        at: (f32, f32),
+        secure: bool,
+        multiline: bool,
+    ) {
+        self.model.update(|state| {
+            *state = std::mem::take(state)
+                .in_workspace(|state| state.with_text_menu(id, at, secure, multiline))
+        });
+    }
+
+    /// Opens the menu over the code field `id` at `at`, in the window's frame, after putting
+    /// the caret at the byte `offset` of the code text under the pointer unless it is inside
+    /// the selection.
     pub(super) fn open_menu(&mut self, id: Target, (x, y): (f32, f32), offset: Option<usize>) {
-        if Screen::is_text_field(id) {
-            self.focus.request_focus(id);
-            self.model.update(|state| {
-                *state = std::mem::take(state).in_workspace(|state| state.with_menu(id, (x, y)))
-            });
-            return;
-        }
         let Some(offset) = offset else {
             return;
         };
@@ -1698,12 +1686,8 @@ impl App {
         rustle::clipboard()
     }
 
-    /// Carries out a clipboard shortcut in the field `id`.
+    /// Carries out a clipboard shortcut in the code editor's field `id`.
     fn clip(&mut self, id: Target, action: Clip) {
-        if let Some(text) = self.model.read(|screen| screen.text_field(id).cloned()) {
-            self.clip_text(id, &text, action);
-            return;
-        }
         match action {
             Clip::Copy | Clip::Cut => {
                 let selected = self.model.read(|screen| {
@@ -1752,9 +1736,6 @@ impl App {
                 }
             }
             Clip::Paste => {
-                if id == Target::Composer(ComposerEvent::Prompt) && self.paste_attachments() {
-                    return;
-                }
                 let pasted = self.clipboard().and_then(|clipboard| clipboard.text());
                 if let Some(text) = pasted {
                     let adjusted = (id == Target::Editor(EditorEvent::EditorField))
@@ -1771,45 +1752,13 @@ impl App {
         }
     }
 
-    /// Carries out a clipboard shortcut in the text field `id`, which edits
-    /// `field`: nothing of a secure field is copied, and what is pasted in a
-    /// field of one line loses its line breaks.
-    fn clip_text(&mut self, id: Target, field: &rustle::TextFieldState, action: Clip) {
-        match action {
-            Clip::Copy | Clip::Cut => {
-                let selected = field.selected_text();
-                if WorkspaceState::is_secure(id) || selected.is_empty() {
-                    return;
-                }
-                if let Some(clipboard) = self.clipboard() {
-                    clipboard.set_text(&selected);
-                }
-                if action == Clip::Cut {
-                    field.edit(|buffer| {
-                        let selection = buffer.selection();
-                        buffer.delete(selection.min(), selection.max());
-                    });
-                }
-            }
-            Clip::Paste => {
-                if id == Target::Composer(ComposerEvent::Prompt) && self.paste_attachments() {
-                    return;
-                }
-                let Some(pasted) = self.clipboard().and_then(|clipboard| clipboard.text()) else {
-                    return;
-                };
-                let multiline = WorkspaceState::is_multiline(id);
-                let pasted: String = pasted
-                    .chars()
-                    .filter(|c| !c.is_control() || (multiline && (*c == '\n' || *c == '\t')))
-                    .collect();
-                field.edit(|buffer| {
-                    let selection = buffer.selection();
-                    buffer.replace(selection.min(), selection.max(), &pasted);
-                    buffer.place_cursor_before_char_at(selection.min() + pasted.chars().count());
-                });
-            }
-        }
+    /// Whether a field the reader types in holds keyboard focus: a text field or the code
+    /// editor's field.
+    pub(super) fn typing(&self) -> bool {
+        self.focus.focused().is_some_and(|id| {
+            id == Target::Editor(EditorEvent::EditorField)
+                || self.model.read(|screen| screen.text_field(id).is_some())
+        })
     }
 
     /// Whether the prompt box holds keyboard focus.
@@ -1839,7 +1788,7 @@ impl App {
         let Some(id) = self.list_pressed else {
             return false;
         };
-        if self.focus.focused().is_some_and(WorkspaceState::is_field) {
+        if self.typing() {
             return false;
         }
         if self.model.read(|screen| screen.tree_row_of(id).is_some()) && self.tree_key(event) {
@@ -1928,12 +1877,16 @@ impl App {
             Key::Character(_)
                 if let Some(digit) =
                     keys::character(event).and_then(|typed| typed.to_digit(10))
-                    && !self.focus.focused().is_some_and(WorkspaceState::is_field)
+                    && !self.typing()
                     && let Some(id) = self
                         .model
                         .read(|screen| screen.inquiry_hotkey(digit as usize)) =>
             {
                 self.handle(Event::pressing(id));
+                if id == Target::Chat(pm_components::areas::ChatEvent::TypeOwn) {
+                    self.focus
+                        .request_focus(Target::Chat(pm_components::areas::ChatEvent::Other));
+                }
             }
             Key::Tab if event.modifiers.shift && self.in_prompt() => {
                 self.model.update(|state| {
@@ -1988,72 +1941,36 @@ impl App {
         true
     }
 
-    /// Carries out a key aimed at whatever holds the keyboard, and says whether it took it:
-    /// a text field's Enter and clipboard keys and the code editor's keys. Enter or Space
-    /// on a control goes on to the control.
+    /// Carries out a key aimed at the code editor's field while it holds the keyboard, and
+    /// says whether it took it: Enter breaks the line of a field of several lines unless
+    /// Control or Command is held, and saves otherwise; the arrows, Home and End follow
+    /// the lines as drawn, and the clipboard and editing keys edit the field. A rustle text
+    /// field takes its own keys, and Enter or Space on a control goes on to the control.
     fn focused_key(&mut self, event: &KeyEvent) -> bool {
-        match self.focus.focused() {
-            Some(id) if Screen::is_text_field(id) => self.text_field_key(id, event),
-            Some(id) if WorkspaceState::is_field(id) => {
-                let multiline = self
-                    .model
-                    .read(|screen| screen.field(id).is_some_and(pm_editor::Field::is_multiline));
-                let shift = event.modifiers.shift;
-                let hurried = event.modifiers.ctrl || event.modifiers.meta;
-                let breaks = shift || (Screen::enter_breaks_line(id) && !hurried);
-                if event.key == Key::Enter && breaks && multiline {
-                    self.edit_field(id, Edit::Insert('\n'));
-                } else if event.key == Key::Enter
-                    && hurried
-                    && let Some(submit) = WorkspaceState::hurried_submit_of(id)
-                {
-                    self.submit(submit);
-                } else if event.key == Key::Enter {
-                    self.submit(WorkspaceState::submit_of(id));
-                } else if multiline && matches!(event.key, Key::ArrowUp | Key::ArrowDown) {
-                    self.move_vertically(id, if event.key == Key::ArrowUp { -1 } else { 1 }, shift);
-                } else if multiline && matches!(event.key, Key::Home | Key::End) {
-                    self.move_to_line_edge(id, event.key == Key::End, shift);
-                } else if id == Target::Editor(EditorEvent::EditorField)
-                    && self.move_along_screen(event)
-                {
-                } else if let Some(action) = keys::clip(event) {
-                    self.clip(id, action);
-                } else if let Some(edit) = keys::edit(event) {
-                    self.edit_field(id, edit);
-                }
-                true
-            }
-            _ => false,
+        let id = Target::Editor(EditorEvent::EditorField);
+        if self.focus.focused() != Some(id) {
+            return false;
         }
-    }
-
-    /// Carries out a key aimed at the text field `id` that the app keeps, and says
-    /// whether it did: Enter presses what the field hands in, Control or Command with
-    /// it what it hands in at once, and breaks the line instead in a field of several
-    /// lines when Shift is held or the field breaks lines on Enter; the clipboard keys
-    /// use the app's clipboard. The field edits with every other key itself.
-    fn text_field_key(&mut self, id: Target, event: &KeyEvent) -> bool {
+        let multiline = self
+            .model
+            .read(|screen| screen.field(id).is_some_and(pm_editor::Field::is_multiline));
         let shift = event.modifiers.shift;
         let hurried = event.modifiers.ctrl || event.modifiers.meta;
-        let breaks = shift || (Screen::enter_breaks_line(id) && !hurried);
-        if event.key == Key::Enter && breaks && WorkspaceState::is_multiline(id) {
-            false
-        } else if event.key == Key::Enter
-            && hurried
-            && let Some(submit) = WorkspaceState::hurried_submit_of(id)
-        {
-            self.submit(submit);
-            true
+        if event.key == Key::Enter && (shift || !hurried) && multiline {
+            self.edit_field(id, Edit::Insert('\n'));
         } else if event.key == Key::Enter {
-            self.submit(WorkspaceState::submit_of(id));
-            true
+            self.handle(Event::pressing(Target::Editor(EditorEvent::EditorSave)));
+        } else if multiline && matches!(event.key, Key::ArrowUp | Key::ArrowDown) {
+            self.move_vertically(id, if event.key == Key::ArrowUp { -1 } else { 1 }, shift);
+        } else if multiline && matches!(event.key, Key::Home | Key::End) {
+            self.move_to_line_edge(id, event.key == Key::End, shift);
+        } else if self.move_along_screen(event) {
         } else if let Some(action) = keys::clip(event) {
             self.clip(id, action);
-            true
-        } else {
-            false
+        } else if let Some(edit) = keys::edit(event) {
+            self.edit_field(id, edit);
         }
+        true
     }
 }
 

@@ -9,7 +9,7 @@ use pm_components::events::Event;
 use pm_components::message_menu::is_message_menu_item;
 use pm_components::target::Target;
 use pm_editor::Edit;
-use pm_pages::{Screen, WorkspaceState};
+use pm_pages::Screen;
 use rustle::{Key, KeyEvent, SelectionPoint};
 
 use super::App;
@@ -38,7 +38,7 @@ impl App {
     /// of it when a key asks for that outside a text field, and says whether
     /// it did.
     pub(super) fn text_key(&mut self, event: &KeyEvent) -> bool {
-        if self.focus.focused().is_some_and(WorkspaceState::is_field) {
+        if self.typing() {
             return false;
         }
         if matches!(keys::edit(event), Some(Edit::SelectAll)) {

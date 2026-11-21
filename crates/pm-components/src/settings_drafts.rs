@@ -2,6 +2,7 @@
 
 use crate::areas::SettingsEvent;
 use crate::button;
+use crate::input::Input;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Frame;
@@ -393,15 +394,18 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) {
         || {
             labelled(
                 "Name",
-                &form.name,
-                Target::Settings(SettingsEvent::DraftName),
-                name_hint,
+                Input::new(&form.name, Target::Settings(SettingsEvent::DraftName))
+                    .placeholder(name_hint)
+                    .submits(Target::Settings(SettingsEvent::DraftCreate)),
             );
             labelled(
                 description_label,
-                &form.description,
-                Target::Settings(SettingsEvent::DraftDescription),
-                description_hint,
+                Input::new(
+                    &form.description,
+                    Target::Settings(SettingsEvent::DraftDescription),
+                )
+                .placeholder(description_hint)
+                .submits(Target::Settings(SettingsEvent::DraftCreate)),
             );
             if form.in_project {
                 labelled_choices(

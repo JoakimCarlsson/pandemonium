@@ -129,7 +129,13 @@ pub fn proposal(ask: &Permission) -> bool {
                     {
                         answer(index, "Reject", &Verdict::Reject);
                     }
-                    button::action("Revise…", Target::Chat(ChatEvent::Revise), Variant::Ghost);
+                    let revise = Target::Chat(ChatEvent::Revise);
+                    button::small_button("Revise…", revise, Variant::Ghost)
+                        .on_click(crate::focus::pressing_into(
+                            revise,
+                            Target::Composer(crate::areas::ComposerEvent::Prompt),
+                        ))
+                        .build();
                     spacer();
                     for (index, choice) in ask
                         .choices

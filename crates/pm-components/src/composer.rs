@@ -2,7 +2,6 @@
 
 use crate::areas::ChatEvent;
 use crate::areas::ComposerEvent;
-use crate::events;
 use crate::parts;
 use crate::theme::Frame;
 use crate::theme::ShadowLayers;
@@ -35,6 +34,9 @@ use crate::{Button, Checkbox, Input, Stepper, button, checkbox, input};
 
 /// The shadow under the prompt box: a soft, wide one that lifts it off the page, as `(x, y, blur, spread, alpha)`.
 const COMPOSER_SHADOW: [rustle::Shadow; 1] = [crate::theme::box_shadow(0.0, 8.0, 30.0, 0.0, 0.18)];
+
+/// The prompt box, which takes the keyboard once a control that leads to typing in it was pressed.
+const PROMPT: Target = Target::Composer(ComposerEvent::Prompt);
 
 /// How many branches the menu of where work is done lists.
 const BRANCH_ROWS: usize = 8;
@@ -142,6 +144,10 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) {
                     Arrangement::Start,
                     Alignment::Start,
                     || {
+                        crate::focus::request_focus_on(
+                            Target::Composer(ComposerEvent::MenuFilter),
+                            &index,
+                        );
                         Input::search(
                             &state.menu_filter,
                             Target::Composer(ComposerEvent::MenuFilter),
@@ -152,6 +158,7 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) {
                             "model" => "Search models",
                             _ => "Search",
                         })
+                        .submits(Target::Composer(ComposerEvent::MenuFilterPick))
                         .build();
                     },
                 );
@@ -389,6 +396,14 @@ fn agent_row(agent: &Setting) {
     );
 }
 
+/// The lambda that offers a paste in the prompt to the app first, which attaches the files
+/// or the picture on the clipboard and says whether there were any, so the prompt pastes
+/// only text.
+fn attaches_pasted() -> impl Fn() -> bool + 'static {
+    let operations = crate::events::operations();
+    move || operations.paste_attachments()
+}
+
 /// Emits a line of a menu's footer: `name` with how it is set, `value`, in brackets, then what `control` emits to set it, under a rule when `rule`.
 #[track_caller]
 fn labelled(name: &str, value: &str, control: impl FnOnce(), rule: bool) {
@@ -486,10 +501,20 @@ fn list_row(position: usize, chosen: bool, pressable: bool) -> Modifier {
     let looks = list_row_looks(chosen);
     let own = if pressable {
         let id = Target::Composer(ComposerEvent::Slash(position));
-        events::pressed(
-            Modifier::new().indicated(looks, theme::Focused::Control(crate::focus::is_focused(id))),
-            id,
-        )
+        Modifier::new()
+            .indicated(looks, theme::Focused::Control(crate::focus::is_focused(id)))
+            .cursor(CursorIcon::Pointer)
+            .control(id, {
+                let pressed = send(Event::pressing(id));
+                let prompt =
+                    (position < PRESSABLE_LIST_ROWS).then(|| crate::focus::focus_of(PROMPT));
+                move || {
+                    pressed();
+                    if let Some(prompt) = &prompt {
+                        prompt.request_focus();
+                    }
+                }
+            })
     } else {
         Modifier::new()
             .indicated(looks, theme::Focused::Rustle)
@@ -784,14 +809,17 @@ fn strip(state: &WorkspaceState, session: Option<&Session>, rows: u32, above: f3
             Button::icon(phosphor::PLUS, Target::Composer(ComposerEvent::Attach))
                 .on_click(move || operations.attach())
                 .build();
-            Button::icon(phosphor::AT, Target::Composer(ComposerEvent::Mention)).build();
-            button::small_button(
-                "/",
+            let (mention, slash) = (
+                Target::Composer(ComposerEvent::Mention),
                 Target::Composer(ComposerEvent::SlashButton),
-                button::Variant::Ghost,
-            )
-            .monospace()
-            .build();
+            );
+            Button::icon(phosphor::AT, mention)
+                .on_click(crate::focus::pressing_into(mention, PROMPT))
+                .build();
+            button::small_button("/", slash, button::Variant::Ghost)
+                .monospace()
+                .on_click(crate::focus::pressing_into(slash, PROMPT))
+                .build();
             for (position, index) in WorkspaceState::chips(settings).into_iter().enumerate() {
                 let setting = &settings[index];
                 let icon = (setting.category == "mode").then_some(phosphor::LIGHTNING);
@@ -966,6 +994,9 @@ pub fn composer(
                                 .variant(input::Variant::Multiline)
                                 .placeholder(placeholder)
                                 .rows(rows)
+                                .submits(Target::Composer(ComposerEvent::Send))
+                                .hurries(Target::Composer(ComposerEvent::SendNow))
+                                .on_paste(attaches_pasted())
                                 .build();
                             strip(state, session, rows, above);
                         },

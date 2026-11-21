@@ -55,14 +55,6 @@ fn list_line_of(id: Target) -> Option<(Setting, usize)> {
     Some((*LISTS.get(list)?, line))
 }
 
-/// What Enter in the box `id` presses, when `id` is the box of a list or the one narrowing the open list of choices.
-pub(crate) fn list_submit_of(id: Target) -> Option<Target> {
-    if id == Target::Settings(SettingsEvent::SettingsPickFilter) {
-        return Some(Target::Settings(SettingsEvent::SettingsPickFirst));
-    }
-    list_add_id(list_of(LIST_FIELDS, id)?)
-}
-
 /// What the open list of choices of `setting` holds: the choices of a setting picked from a few, or the options of one picked from a long list.
 fn picker_options(setting: Setting, state: &WorkspaceState) -> Vec<String> {
     match setting.control(state) {
@@ -250,7 +242,7 @@ pub(crate) fn setting_row(state: &WorkspaceState, setting: Setting, room: f32) {
                 .cloned()
                 .unwrap_or_else(|| TextFieldState::new(setting.text(state)));
             match setting.id(0) {
-                Some(id) => row.control(move || text_box(&field, id, placeholder), None),
+                Some(id) => row.control(move || text_box(&field, id, placeholder, id), None),
                 None => row,
             }
         }

@@ -482,6 +482,7 @@ fn find(state: &WorkspaceState, searching: bool) {
             .size(Size::Sm)
             .placeholder("Search settings")
             .modifier(Modifier::new().weight(1.0))
+            .submits(Target::Settings(SettingsEvent::SettingsFind))
             .build();
             if searching {
                 let clear = Target::Settings(SettingsEvent::SettingsFindClear);
@@ -617,9 +618,7 @@ mod tests {
     #[test]
     fn enter_in_the_filter_picks_the_first_match() {
         let state = fonts_narrowed_to("family 0042");
-        let submit = WorkspaceState::submit_of(Target::Settings(SettingsEvent::SettingsPickFilter));
-        assert_eq!(submit, Target::Settings(SettingsEvent::SettingsPickFirst));
-        let state = state.settings_pressed(submit);
+        let state = state.settings_pressed(Target::Settings(SettingsEvent::SettingsPickFirst));
         assert_eq!(state.window.appearance.interface_font, "Family 0042");
         assert_eq!(state.settings_page.picker, None);
     }
@@ -633,8 +632,7 @@ mod tests {
         let field = LIST_FIELDS.at(place);
         let include = open_on(Section::Editor).machine.git.worktree_include;
         let state = open_on(Section::Editor).typed(field, binding);
-        let add = WorkspaceState::submit_of(field);
-        assert_eq!(add, LIST_ADDS.at(place));
+        let add = LIST_ADDS.at(place);
         let state = state.settings_pressed(add);
         assert!(state.editor.vim_bindings.iter().any(|held| held == binding));
         assert_eq!(state.machine.git.worktree_include, include);

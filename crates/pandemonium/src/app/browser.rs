@@ -8,7 +8,7 @@ use pm_browser::{
     Button as Mouse, CaptureKind, Cursor as Shape, DownloadState, EditAction, Engine, Error,
     Key as Typed, Modifiers as Held, Notice, PickedElement, View, ZoomAction,
 };
-use pm_components::browser::{Command, HOME, Pointer, ZoomStep};
+use pm_components::browser::{Command, Pointer, ZoomStep};
 use pm_components::browser_keys::{Shortcut, shortcut_of};
 use pm_components::browser_links::{Route, route};
 use pm_components::browser_menu::{BROWSER_MENU_HEIGHT, BrowserCommand};
@@ -505,10 +505,7 @@ impl App {
 
     /// Opens the browser, or shows it when it is open.
     pub(super) fn open_browser(&mut self) {
-        self.model.update(|state| {
-            state.open_browser(HOME);
-        });
-        self.focus_browser_address = true;
+        self.model.update(|state| state.browser_summoned());
     }
 
     /// Hands what the pointer did over a page or its tools, as `pointer` tells, on to that

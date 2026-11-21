@@ -409,13 +409,14 @@ fn account_row(
     });
 }
 
-/// Emits the box `id` an account's name or API key is typed into, holding `field` and showing `placeholder` while empty, with its buttons `save` and `cancel`, in place of the account's row.
+/// Emits the box `id` an account's name or API key is typed into, holding `field` and showing `placeholder` while empty, with its buttons `save` and `cancel`, in place of the account's row; Enter in the box presses `save`.
 #[track_caller]
 fn form_row(field: &TextFieldState, id: Target, placeholder: &str, save: Target, cancel: Target) {
     let mut input = Input::new(field, id)
         .variant(crate::input::Variant::Bordered)
         .size(Size::Sm)
         .placeholder(placeholder)
+        .submits(save)
         .modifier(Modifier::new().weight(1.0));
     if id == Target::Settings(SettingsEvent::KeyField) {
         input = input.leading_icon(phosphor::LOCK_SIMPLE).secure(true);
@@ -581,15 +582,6 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
 pub(crate) fn is_key_field(id: Target) -> bool {
     id == Target::Settings(SettingsEvent::KeyField)
         || id == Target::Settings(SettingsEvent::NameField)
-}
-
-/// The button the box `id` is kept with when Enter is pressed in it.
-pub(crate) fn key_submit(id: Target) -> Target {
-    if id == Target::Settings(SettingsEvent::NameField) {
-        Target::Settings(SettingsEvent::NameSave)
-    } else {
-        Target::Settings(SettingsEvent::KeySave)
-    }
 }
 
 #[cfg(test)]

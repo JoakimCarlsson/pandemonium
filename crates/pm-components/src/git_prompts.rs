@@ -356,6 +356,7 @@ fn naming_box(
                     .modifier(Modifier::new().fill_max_width())
                     .placeholder(placeholder)
                     .size(Size::Md)
+                    .submits(Target::Git(GitEvent::PromptConfirm))
                     .build();
             },
         );

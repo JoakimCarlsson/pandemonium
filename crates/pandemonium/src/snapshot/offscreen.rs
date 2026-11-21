@@ -58,7 +58,8 @@ impl Shot {
 
 /// Draws `content` as `shot` says into a PNG file at `path`, inside the
 /// theme of `shot` and a root that shows tooltips at once, with rustle's
-/// focus given to the shot's control.
+/// focus given to the shot's control and nowhere else, whatever the
+/// controls that appear in it ask for.
 ///
 /// # Errors
 ///
@@ -93,7 +94,8 @@ pub(crate) fn pixels(
     rustle::set_legible_text(false);
     let tokens = Tokens::new(&shot.family, shot.appearance);
     let requesters = FocusRequesters::new();
-    if let Some(id) = shot.focused {
+    let focused = shot.focused;
+    if let Some(id) = focused {
         requesters.request_focus(id);
     }
     let root = move || {
@@ -103,7 +105,12 @@ pub(crate) fn pixels(
                     rustle::stack_with(rustle::Modifier::new().fill_max_size(), &content)
                 })
             })
-        })
+        });
+        let asked = requesters.clone();
+        rustle::side_effect(move || match focused {
+            Some(id) => asked.request_focus(id),
+            None => asked.withdraw_requests(),
+        });
     };
     let options = PreviewOptions {
         size: (shot.width, shot.height),

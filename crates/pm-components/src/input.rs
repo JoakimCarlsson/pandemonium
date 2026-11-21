@@ -3,12 +3,15 @@
 //! The text is a rustle text field editing a [`TextFieldState`] the model holds,
 //! drawn in the input's type with its placeholder in the decoration. The field
 //! holds the rustle focus of its control from the registry the views are
-//! composed with (see [`crate::focus`]), so the app gives it the keyboard and
-//! reads whether it has it through that focus. Keys
-//! reach the app's own key handler around the window before the field edits
-//! its state itself.
+//! composed with (see [`crate::focus`]), so the app reads whether it has the
+//! keyboard through that focus. The field edits, selects, copies, cuts,
+//! pastes, undoes and redoes by itself, as rustle's text field does; what it
+//! hands in on Enter, and on Control or Command with Enter, whether Enter
+//! breaks its lines, whether it hides what it holds and what takes a paste
+//! before it are declared where the input is built, as a Compose text field
+//! declares its `KeyboardOptions`, `onKeyboardAction` and line limits.
 
-use crate::events::{Event, send};
+use crate::events::{Event, OnClick, send};
 use crate::target::Target;
 use crate::theme;
 use crate::theme::{FocusOutline, Indicated};
@@ -21,7 +24,10 @@ use rustle::{
     BasicTextFieldOptions, Modifier, ScrollState, TextFieldDecorator, TextFieldLineLimits,
     TextFieldState, TextObfuscationMode, TextSelectionColors,
 };
-use rustle::{CursorIcon, LOCAL_TEXT_SELECTION_COLORS, PointerButton, PointerPhase};
+use rustle::{
+    CursorIcon, Key, KeyEvent, KeyboardActionHandler, LOCAL_TEXT_SELECTION_COLORS, PointerButton,
+    PointerPhase,
+};
 
 use crate::events;
 use crate::events::Interactive;
@@ -61,6 +67,29 @@ pub enum Variant {
     Multiline,
 }
 
+/// What takes a paste in an input before the field does, and says whether it took it.
+#[derive(Clone)]
+pub struct OnPaste(Rc<dyn Fn() -> bool>);
+
+impl std::fmt::Debug for OnPaste {
+    /// Writes that there is a lambda, which has nothing else to show.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("OnPaste")
+    }
+}
+
+/// What an input does with Enter: what it hands in, what it hands in with Control or
+/// Command held, and whether Enter breaks a line of a multiline input instead.
+#[derive(Clone, Debug, Default)]
+struct Submits {
+    /// What Enter hands in.
+    plain: Option<OnClick>,
+    /// What Control or Command with Enter hands in, when it is something of its own.
+    hurried: Option<OnClick>,
+    /// Whether Enter breaks a line of a multiline input, Control or Command with it handing in.
+    breaks: bool,
+}
+
 /// An input being described: the text it edits, what it says while empty,
 /// how it looks and whether it is switched off.
 ///
@@ -88,6 +117,10 @@ pub struct Input<'a> {
     secure: bool,
     /// The scroll state of a multiline box's lines, when its owner holds it.
     scroll: Option<&'a ScrollState>,
+    /// What Enter does in it.
+    submits: Submits,
+    /// What takes a paste before the field does, if anything.
+    on_paste: Option<OnPaste>,
     /// What the caller puts around its box: sizes, growth, margins, placement.
     modifier: Modifier,
 }
@@ -106,6 +139,8 @@ impl<'a> Input<'a> {
             rows: 1,
             secure: false,
             scroll: None,
+            submits: Submits::default(),
+            on_paste: None,
             modifier: Modifier::new(),
         }
     }
@@ -115,6 +150,11 @@ impl<'a> Input<'a> {
         Self::new(field, id)
             .variant(Variant::Bordered)
             .leading_icon(phosphor::MAGNIFYING_GLASS)
+    }
+
+    /// The name the input answers to.
+    pub fn answers_to(&self) -> Target {
+        self.id
     }
 
     /// The input with `icon` before its line.
@@ -133,6 +173,46 @@ impl<'a> Input<'a> {
     /// be neither copied nor cut, while `secure` is true: for keys and tokens.
     pub fn secure(mut self, secure: bool) -> Self {
         self.secure = secure;
+        self
+    }
+
+    /// The input running `on_submit` when Enter is pressed in it: its keyboard action,
+    /// Compose's `onKeyboardAction`. In a multiline input Shift with Enter breaks a line.
+    pub fn on_submit(mut self, on_submit: impl Fn() + 'static) -> Self {
+        self.submits.plain = Some(OnClick::new(on_submit));
+        self
+    }
+
+    /// The input handing the press of `id` to the workspace when Enter is pressed in it,
+    /// as [`on_submit`](Self::on_submit) runs it.
+    pub fn submits(self, id: Target) -> Self {
+        self.on_submit(send(Event::pressing(id)))
+    }
+
+    /// The input running `on_hurried_submit` when Control or Command with Enter is
+    /// pressed in it, instead of what Enter hands in.
+    pub fn on_hurried_submit(mut self, on_hurried_submit: impl Fn() + 'static) -> Self {
+        self.submits.hurried = Some(OnClick::new(on_hurried_submit));
+        self
+    }
+
+    /// The input handing the press of `id` to the workspace when Control or Command with
+    /// Enter is pressed in it, as [`on_hurried_submit`](Self::on_hurried_submit) runs it.
+    pub fn hurries(self, id: Target) -> Self {
+        self.on_hurried_submit(send(Event::pressing(id)))
+    }
+
+    /// The multiline input breaking a line on Enter, and handing in with Control or
+    /// Command held with it, as a message is written.
+    pub fn breaks_lines_on_enter(mut self) -> Self {
+        self.submits.breaks = true;
+        self
+    }
+
+    /// The input offering a paste to `on_paste` before its field pastes the clipboard's
+    /// text: when `on_paste` says it took the paste, the field pastes nothing.
+    pub fn on_paste(mut self, on_paste: impl Fn() -> bool + 'static) -> Self {
+        self.on_paste = Some(OnPaste(Rc::new(on_paste)));
         self
     }
 
@@ -174,9 +254,12 @@ impl<'a> Input<'a> {
     }
 
     /// Emits the input: a ring and a blinking caret while it holds keyboard
-    /// focus, and the selection highlighted.
+    /// focus, and the selection highlighted. It takes the keyboard back as it
+    /// appears when it is the field the reader was typing in when the window
+    /// last closed.
     #[track_caller]
     pub fn build(self) {
+        crate::focus::restores_focus(self.id);
         if self.variant == Variant::Multiline {
             return self.build_multiline();
         }
@@ -215,7 +298,7 @@ impl<'a> Input<'a> {
         if boxed || invalid {
             own = own.padding(1.0);
         }
-        own = editing(own, id).padding_xy(theme::sp(3), 0.0);
+        own = editing(own, id, (self.secure, false)).padding_xy(theme::sp(3), 0.0);
         let mut kind = theme::text_style(font, 1.4).color(theme::color(Role::Text));
         kind = if self.variant == Variant::Default {
             theme::in_mono(kind)
@@ -224,6 +307,7 @@ impl<'a> Input<'a> {
         };
         let (field, placeholder, leading) = (self.field, self.placeholder, self.leading);
         let secure = self.secure;
+        let (submits, on_paste) = (self.submits, self.on_paste);
         rustle::row_arranged(
             self.modifier.chain(own),
             Arrangement::SpacedBy(theme::sp(2)),
@@ -240,6 +324,8 @@ impl<'a> Input<'a> {
                     lines: None,
                     secure,
                     scroll: None,
+                    submits,
+                    on_paste,
                 }
                 .build(Modifier::new().weight(1.0));
             },
@@ -259,11 +345,13 @@ impl<'a> Input<'a> {
             lines: Some(MAX_LINES),
             secure: false,
             scroll: self.scroll,
+            submits: self.submits,
+            on_paste: self.on_paste,
         };
         let mut own = Modifier::new()
             .fill_max_width()
             .height_in(theme::sp(minimum / 4.0), f32::INFINITY);
-        own = editing(own, self.id).padding_each(
+        own = editing(own, self.id, (false, true)).padding_each(
             theme::sp(4),
             theme::sp(3.5),
             theme::sp(4),
@@ -295,15 +383,20 @@ struct FieldText<'a> {
     secure: bool,
     /// The scroll state of its lines, when its owner holds it.
     scroll: Option<&'a ScrollState>,
+    /// What Enter does in it.
+    submits: Submits,
+    /// What takes a paste before the field does, if anything.
+    on_paste: Option<OnPaste>,
 }
 
 impl FieldText<'_> {
-    /// Emits the field with `modifier` around it: rustle focus asked for while
-    /// the host's focus is on the input and freed otherwise, its keys offered to
-    /// the app first, its selection in the theme's selection colour.
+    /// Emits the field with `modifier` around it: holding the registry's focus of
+    /// the input, handing in on Enter as declared, offering pastes to what takes
+    /// them first, its selection in the theme's selection colour.
     #[track_caller]
     fn build(self, modifier: Modifier) {
         let id = self.id;
+        let multiline = self.lines.is_some();
         let kind = self.kind;
         let style = match self.lines {
             Some(_) => {
@@ -337,7 +430,7 @@ impl FieldText<'_> {
                 ..theme::scrollbar()
             },
         });
-        let context = context_press(id, self.field, &shaped, &scroll);
+        let context = context_press(id, self.field, &shaped, &scroll, (self.secure, multiline));
         let decorator: TextFieldDecorator = Rc::new(move |inner: &dyn Fn()| {
             rustle::stack_with(
                 Modifier::new().fill_max_width().chain(context.clone()),
@@ -366,9 +459,15 @@ impl FieldText<'_> {
             decorator: Some(decorator),
             scroll_state: Some(scroll),
             on_text_layout: Some(Rc::new(move |layout| *shaped.borrow_mut() = Some(layout))),
-            focus: Some(focus),
+            on_keyboard_action: self.submits.plain.clone().map(|submit| {
+                let submit = submit.lambda();
+                let action: KeyboardActionHandler = Rc::new(move |_| submit());
+                action
+            }),
+            focus: Some(focus.clone()),
             ..BasicTextFieldOptions::default()
         };
+        let modifier = modifier.chain(entering(&focus, self.submits, self.on_paste, multiline));
         let colors = TextSelectionColors {
             background_color: marked::selection_color(&theme::theme()),
             ..LOCAL_TEXT_SELECTION_COLORS.current()
@@ -391,17 +490,68 @@ impl FieldText<'_> {
     }
 }
 
+/// Whether `event` is the paste shortcut, Control or Command with V going down.
+fn is_paste(event: &KeyEvent) -> bool {
+    event.pressed
+        && event.modifiers.command()
+        && !event.modifiers.alt
+        && matches!(&event.key, Key::Character(letter) if letter.eq_ignore_ascii_case("v"))
+}
+
+/// The modifier that sees the keys of the field holding `focus` before the field does:
+/// Enter hands in what `submits` says, unless it breaks a line of a `multiline` field
+/// (Shift held, or Enter breaking lines without Control or Command), and the paste
+/// shortcut goes to `on_paste` first, the field pasting only what it leaves. Enter in a
+/// single line without Control or Command is left to the field's keyboard action.
+fn entering(
+    focus: &rustle::Focus,
+    submits: Submits,
+    on_paste: Option<OnPaste>,
+    multiline: bool,
+) -> Modifier {
+    let focus = focus.clone();
+    Modifier::new().on_preview_key_event(move |event| {
+        if !event.pressed || !focus.is_focused() {
+            return false;
+        }
+        if is_paste(event) {
+            return on_paste.as_ref().is_some_and(|on_paste| (on_paste.0)());
+        }
+        if event.key != Key::Enter {
+            return false;
+        }
+        let hurried = event.modifiers.command();
+        let breaks = event.modifiers.shift || (submits.breaks && !hurried);
+        let handing = match (&submits.hurried, &submits.plain) {
+            _ if multiline && breaks => None,
+            (Some(hurried_submit), _) if hurried => Some(hurried_submit),
+            (_, Some(submit)) if multiline => Some(submit),
+            _ => None,
+        };
+        match handing {
+            Some(submit) => {
+                submit.run();
+                true
+            }
+            None => false,
+        }
+    })
+}
+
 /// The modifier that takes a secondary press on the text of the input `id`:
 /// the caret of `field` goes to the character under the pointer, found in the
 /// `shaped` text scrolled by `scroll`, unless the press is inside the
-/// selection, and the app opens the input's menu.
+/// selection, and the app opens the input's menu, told whether the field is
+/// secure and holds several lines, as `(secure, multiline)` says.
 fn context_press(
     id: Target,
     field: &TextFieldState,
     shaped: &Rc<RefCell<Option<Rc<rustle::TextLayout>>>>,
     scroll: &ScrollState,
+    (secure, multiline): (bool, bool),
 ) -> Modifier {
     let operations = events::operations();
+    let focus = crate::focus::focus_of(id);
     let (field, shaped, scroll) = (field.clone(), Rc::clone(shaped), scroll.clone());
     Modifier::new().on_pointer_button(PointerButton::Secondary, move |event| {
         if event.phase != PointerPhase::Press {
@@ -423,17 +573,31 @@ fn context_press(
                 field.edit(|buffer| buffer.place_cursor_before_char_at(index));
             }
         }
-        operations.open_field_menu(id, crate::events::window_at(event), None);
+        focus.request_focus();
+        operations.open_text_field_menu(id, crate::events::window_at(event), secure, multiline);
     })
 }
 
-/// `own` taking the presses of the input `id` with the text cursor, its secondary press opening the input's menu.
-fn editing(own: Modifier, id: Target) -> Modifier {
+/// `own` taking the presses of the input `id` with the text cursor: a click gives its
+/// field the keyboard, as a press on a Compose text field's decoration does, and a
+/// secondary press gives it the keyboard and opens its menu, told whether the field is
+/// secure and holds several lines, as `(secure, multiline)` says.
+fn editing(own: Modifier, id: Target, (secure, multiline): (bool, bool)) -> Modifier {
     let operations = crate::events::operations();
-    own.cursor(CursorIcon::Text)
-        .pressable_menu(id, send(Event::pressing(id)), move |at| {
-            operations.open_field_menu(id, at, None)
-        })
+    let focus = crate::focus::focus_of(id);
+    let held = focus.clone();
+    let pressed = send(Event::pressing(id));
+    own.cursor(CursorIcon::Text).pressable_menu(
+        id,
+        move || {
+            pressed();
+            held.request_focus();
+        },
+        move |at| {
+            focus.request_focus();
+            operations.open_text_field_menu(id, at, secure, multiline);
+        },
+    )
 }
 
 #[cfg(test)]

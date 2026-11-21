@@ -1,6 +1,6 @@
 //! The workspace screen and the actions and auxiliary windows it exposes.
 
-use pm_components::areas::{DialogEvent, EditorEvent, GitEvent};
+use pm_components::areas::DialogEvent;
 use pm_components::events::Change;
 use pm_components::target::Target;
 
@@ -116,11 +116,6 @@ impl Screen {
         match self {
             Self::Workspace(state) => state.code_lines.clone(),
         }
-    }
-
-    /// Whether `id` names a text field other than the code editor's: one a rustle text field edits.
-    pub fn is_text_field(id: Target) -> bool {
-        WorkspaceState::is_field(id) && id != Target::Editor(EditorEvent::EditorField)
     }
 
     /// Whether the panel for adding a project is open.
@@ -311,11 +306,6 @@ impl Screen {
         }
     }
 
-    /// Whether pressing Enter in the field `id` puts a line break in it rather than pressing its button.
-    pub fn enter_breaks_line(id: Target) -> bool {
-        id == Target::Git(GitEvent::CommitMessage) || id == Target::Editor(EditorEvent::EditorField)
-    }
-
     /// Whether the menu on changed files, the question of whether to discard or the list of branches is open.
     pub fn review_overlay_open(&self) -> bool {
         matches!(self, Self::Workspace(state) if state.review_overlay_open())
@@ -486,7 +476,7 @@ pub fn picker_screen(state: &Screen, width: f32, height: f32) {
                 .filter(|menu| menu.field == Target::Dialog(DialogEvent::PickerField))
                 && let Some(field) = state.text_field(menu.field)
             {
-                field_menu(field, menu, false);
+                field_menu(field, menu);
             }
         })
         .build();

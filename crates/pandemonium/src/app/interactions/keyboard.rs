@@ -3,7 +3,7 @@
 //! prompt offers, digits answering a question, and Escape closing what is
 //! open before letting go of the focus.
 
-use pm_components::areas::{ComposerEvent, DiffEvent, EditorEvent, SidebarEvent};
+use pm_components::areas::{ComposerEvent, DiffEvent, EditorEvent, GitEvent, SidebarEvent};
 use pm_components::state::{Page, Tab};
 use pm_components::target::Target;
 use rustle::{Key, Modifiers};
@@ -167,4 +167,65 @@ fn modal_editing_moves_then_types() {
     rig.key(Key::Character("i".into()));
     rig.type_text("q");
     assert_eq!(text(&rig).len(), before.len() + 1);
+}
+
+/// Control held.
+const CONTROL: Modifiers = Modifiers {
+    shift: false,
+    ctrl: true,
+    alt: false,
+    meta: false,
+};
+
+/// The text of the field `id`.
+fn text_of(rig: &Rig, id: Target) -> String {
+    rig.read(|screen| screen.text_field(id).map(rustle::TextFieldState::text))
+        .unwrap_or_default()
+}
+
+/// Enter breaks a line of the commit message, which the box declares, and Control with
+/// Enter commits what it says.
+#[test]
+fn enter_breaks_the_message_and_control_enter_commits() {
+    let mut rig = Rig::shot(Shot::Source);
+    let message = Target::Git(GitEvent::CommitMessage);
+    rig.click_on(message);
+    rig.chord(CONTROL, Key::End);
+    rig.key(Key::Enter);
+    assert_eq!(
+        text_of(&rig, message),
+        "Restore sessions from checkpoints\n"
+    );
+    rig.chord(CONTROL, Key::Enter);
+    assert!(
+        !text_of(&rig, message).contains("Restore sessions"),
+        "{:?}",
+        text_of(&rig, message)
+    );
+}
+
+/// The list of files opened from the keyboard gives its box the keyboard as it appears,
+/// so what is typed next narrows it.
+#[test]
+fn a_list_that_opens_gives_its_box_the_keyboard() {
+    let mut rig = Rig::shot(Shot::Code);
+    let filter = Target::Editor(EditorEvent::ListingFilter);
+    rig.chord(CONTROL, Key::Character("p".into()));
+    assert!(rig.state(|state| state.listing_open()));
+    assert_eq!(rig.focused(), Some(filter));
+    rig.type_text("main");
+    assert!(
+        text_of(&rig, filter).ends_with("main"),
+        "{:?}",
+        text_of(&rig, filter)
+    );
+}
+
+/// Pressing the branch button opens the list of branches with its box holding the
+/// keyboard, which the button asks for as it is clicked.
+#[test]
+fn the_branch_button_gives_its_box_the_keyboard() {
+    let mut rig = Rig::shot(Shot::Source);
+    rig.click_on(Target::Git(GitEvent::BranchButton));
+    assert_eq!(rig.focused(), Some(Target::Git(GitEvent::BranchFilter)));
 }

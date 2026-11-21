@@ -453,6 +453,9 @@ pub fn panel(state: &WorkspaceState) {
             rustle::column_arranged(
                 Modifier::new()
                     .fill_max_width()
+                    .chain(crate::focus::keeps_keyboard_in(Target::Search(
+                        SearchEvent::ProjectSearchField,
+                    )))
                     .padding_xy(theme::sp(3), theme::sp(2)),
                 Arrangement::SpacedBy(theme::sp(1.5)),
                 Alignment::Start,
@@ -470,6 +473,7 @@ pub fn panel(state: &WorkspaceState) {
                             .placeholder("Search")
                             .invalid(search.problem.is_some())
                             .modifier(Modifier::new().weight(1.0))
+                            .submits(Target::Search(SearchEvent::ProjectSearchGo))
                             .build();
                             if !search.query.text().is_empty() {
                                 crate::button::Button::icon(

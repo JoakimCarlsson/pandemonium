@@ -3,11 +3,9 @@
 
 use pm_components::areas::{ComposerEvent, SettingsEvent};
 use pm_components::target::Target;
-use pm_pages::{Screen, WorkspaceState};
 use rustle::{Key, Modifiers};
 
-use crate::keys::Clip;
-
+use crate::app::asides::Aside;
 use crate::app::headless::Rig;
 use crate::snapshot::Shot;
 
@@ -228,21 +226,25 @@ fn arrows_and_home_follow_the_lines_as_drawn() {
     assert!(rest.starts_with("stores the offset."), "{rest:?}");
 }
 
-/// What is selected in a key box stays off the clipboard, while the same
-/// text selected in another field is copied.
+/// What is selected in a key box stays off the clipboard, and cutting it takes
+/// nothing out, as the box declares itself secure; the box still takes typing.
 #[test]
 fn a_key_box_keeps_its_text_off_the_clipboard() {
-    let rig = Rig::shot(Shot::Workspace);
+    let mut rig = Rig::shot(Shot::SettingsAccountsKey);
     let key = Target::Settings(SettingsEvent::KeyField);
-    assert!(WorkspaceState::is_secure(key) && Screen::is_text_field(key));
-    let field = rustle::TextFieldState::new("secret");
-    field.select_all();
-    rig.app.borrow_mut().clip_text(key, &field, Clip::Copy);
+    let aside = Some(Aside::Settings);
+    rig.click_in(aside, rig.aside_center(Aside::Settings, key));
+    assert!(rig.app.borrow().focus.is_focused(key));
+    rig.type_in(aside, "secret");
+    rig.hold(CONTROL);
+    rig.key_in(aside, Key::Character("a".into()));
+    rig.key_in(aside, Key::Character("c".into()));
+    rig.key_in(aside, Key::Character("x".into()));
+    rig.hold(Modifiers::NONE);
     assert_eq!(rig.clipboard.text.borrow().as_deref(), None);
-    rig.app
-        .borrow_mut()
-        .clip_text(Target::Composer(ComposerEvent::Prompt), &field, Clip::Copy);
-    assert_eq!(rig.clipboard.text.borrow().as_deref(), Some("secret"));
-    rig.app.borrow_mut().clip_text(key, &field, Clip::Cut);
-    assert_eq!(field.text(), "secret");
+    let text = rig.read(|screen| screen.text_field(key).map(rustle::TextFieldState::text));
+    assert!(
+        text.as_deref().is_some_and(|text| text.ends_with("secret")),
+        "{text:?}"
+    );
 }

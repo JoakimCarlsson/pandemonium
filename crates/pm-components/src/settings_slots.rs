@@ -352,32 +352,12 @@ pub(crate) fn saves_on_leaving(id: Target) -> bool {
     notes_cell(id).is_some()
 }
 
-/// Whether `id` names the box of a category's prompt, which holds several lines.
-pub(crate) fn is_prompt_field(id: Target) -> bool {
-    notes_cell(id).is_some_and(|(_, column)| column != DESCRIPTION_COLUMN)
-}
-
 /// Whether `id` names a box of the models or the orchestration page.
 pub(crate) fn is_slot_field(id: Target) -> bool {
     id == Target::Settings(SettingsEvent::SlotNewName)
         || id == Target::Settings(SettingsEvent::CategoryNewName)
         || id == Target::Settings(SettingsEvent::PresetName)
         || notes_cell(id).is_some()
-}
-
-/// What Enter in the box `id` of the models or the orchestration page presses.
-pub(crate) fn slot_submit(id: Target) -> Target {
-    if let Some((row, _)) = notes_cell(id) {
-        SLOT_CONTROLS
-            .cell(row, DESCRIBE_COLUMN, SLOT_COLUMNS)
-            .unwrap_or(id)
-    } else if id == Target::Settings(SettingsEvent::PresetName) {
-        Target::Settings(SettingsEvent::PresetSave)
-    } else if id == Target::Settings(SettingsEvent::CategoryNewName) {
-        Target::Settings(SettingsEvent::CategoryAdd)
-    } else {
-        Target::Settings(SettingsEvent::SlotAdd)
-    }
 }
 
 /// The name of the card of the category at `row` of the slots, which opens and closes its editor.
@@ -999,6 +979,7 @@ fn backups_node(state: &WorkspaceState, row: usize, slot: &SlotRow) {
 /// Emits the boxes of the category at `row`: what it is for on one line, then what it adds to a subagent's system prompt on several.
 fn notes_node(row: usize, notes: &SlotNotes) {
     let id = |column: usize| SLOT_CONTROLS.cell(row, column, SLOT_COLUMNS);
+    let describe = move |field: Target| id(DESCRIBE_COLUMN).unwrap_or(field);
     rustle::column_arranged(
         Modifier::new().fill_max_width(),
         Arrangement::SpacedBy(theme::sp(2)),
@@ -1010,6 +991,7 @@ fn notes_node(row: usize, notes: &SlotNotes) {
                         .variant(input::Variant::Bordered)
                         .size(Size::Sm)
                         .placeholder("What kind of work this category is for")
+                        .submits(describe(id))
                         .build();
                 });
             }
@@ -1033,6 +1015,7 @@ fn notes_node(row: usize, notes: &SlotNotes) {
                                 .variant(input::Variant::Multiline)
                                 .placeholder("Added to a subagent's system prompt")
                                 .rows(PROMPT_ROWS)
+                                .submits(describe(id))
                                 .build();
                         },
                     );
@@ -1245,6 +1228,7 @@ pub(crate) fn entry(field: &TextFieldState, id: Target, placeholder: &str, butto
             Input::new(field, id)
                 .size(Size::Sm)
                 .placeholder(placeholder)
+                .submits(button.1)
                 .modifier(Modifier::new().weight(1.0))
                 .build();
             button::small_button(button.0, button.1, Variant::Outline)
@@ -1741,7 +1725,7 @@ mod tests {
                 .text(),
             "Small changes."
         );
-        assert!(WorkspaceState::is_multiline(cell(4, PROMPT_COLUMN)));
+        assert!(state.text_field(cell(4, PROMPT_COLUMN)).is_some());
         assert!(state.text_field(cell(1, DESCRIPTION_COLUMN)).is_none());
         let listed: Vec<String> = state
             .model_rows()
@@ -1761,14 +1745,15 @@ mod tests {
     #[test]
     fn editing_the_description_sends_both_fields() {
         let description = cell(4, DESCRIPTION_COLUMN);
-        assert!(WorkspaceState::is_field(description));
+        let describe = cell(4, DESCRIBE_COLUMN);
         let state = with_categories()
             .settings_pressed(Target::Settings(SettingsEvent::SlotsScopeProject))
             .typed(description, " Slowly.");
+        assert!(state.text_field(description).is_some());
         assert!(state.settings_page.slots.notes_of("deep").unwrap().edited);
         let mut state = state.settings_pressed(description);
         assert!(state.take_outbox().is_empty());
-        let mut state = state.settings_pressed(WorkspaceState::submit_of(description));
+        let mut state = state.settings_pressed(describe);
         assert_eq!(
             sent(&mut state),
             SlotChange::Describe {
@@ -1778,7 +1763,7 @@ mod tests {
                 prompt: Some("Read every caller first.".to_owned()),
             }
         );
-        let mut state = state.settings_pressed(WorkspaceState::submit_of(description));
+        let mut state = state.settings_pressed(describe);
         assert!(state.take_outbox().is_empty());
     }
 
@@ -1838,9 +1823,7 @@ mod tests {
     fn an_added_category_is_described() {
         let state = with_categories()
             .typed(Target::Settings(SettingsEvent::CategoryNewName), "docs")
-            .settings_pressed(WorkspaceState::submit_of(Target::Settings(
-                SettingsEvent::CategoryNewName,
-            )));
+            .settings_pressed(Target::Settings(SettingsEvent::CategoryAdd));
         let rows = state.slot_rows();
         let added = rows.last().unwrap();
         assert_eq!(added.name, "docs");

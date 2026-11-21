@@ -304,10 +304,12 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) {
                 } else {
                     file_icon(&field.text(), 4.0);
                 }
+                crate::focus::request_focus_on(Target::Tree(TreeEvent::EntryField), field);
                 Input::new(field, Target::Tree(TreeEvent::EntryField))
                     .size(Size::Sm)
                     .invalid(problem.is_some())
                     .modifier(Modifier::new().weight(1.0))
+                    .submits(Target::Tree(TreeEvent::TreeNameSubmit))
                     .build();
             },
         );

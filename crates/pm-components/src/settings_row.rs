@@ -213,6 +213,9 @@ pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&TextFiel
                         Input::search(filter.0, filter.1)
                             .size(Size::Sm)
                             .placeholder("Type to narrow the list")
+                            .submits(Target::Settings(
+                                crate::areas::SettingsEvent::SettingsPickFirst,
+                            ))
                             .build();
                     },
                 );
@@ -258,12 +261,14 @@ pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&TextFiel
     );
 }
 
-/// Emits the box `field` is written in, answering to `id`, saying `placeholder` while empty.
+/// Emits the box `field` is written in, answering to `id`, saying `placeholder` while
+/// empty, handing in the press of `submit` on Enter.
 #[track_caller]
-pub fn text_box(field: &TextFieldState, id: Target, placeholder: &str) {
+pub fn text_box(field: &TextFieldState, id: Target, placeholder: &str, submit: Target) {
     Input::new(field, id)
         .size(Size::Sm)
         .placeholder(placeholder)
+        .submits(submit)
         .build();
 }
 
@@ -325,7 +330,7 @@ pub fn list(
                         Arrangement::Start,
                         Alignment::Start,
                         || {
-                            text_box(field.0, field.1, placeholder);
+                            text_box(field.0, field.1, placeholder, add.0);
                         },
                     );
                     button::action(add.1, add.0, Variant::Default);

@@ -276,6 +276,9 @@ pub fn adder(state: &WorkspaceState) {
         Target::Dialog(DialogEvent::AdderBody),
     )
     .width(WIDTH)
+    .modifier(crate::focus::keeps_keyboard_in(Target::Dialog(
+        DialogEvent::AdderField,
+    )))
     .build_with(|| panel(open));
 }
 
@@ -302,10 +305,12 @@ fn panel(open: &Adder) {
     );
     if open.step != Step::Choices {
         rustle::row_arranged(banded(), Arrangement::Start, Alignment::Center, || {
+            crate::focus::request_focus_on(Target::Dialog(DialogEvent::AdderField), &open.field);
             Input::new(&open.field, Target::Dialog(DialogEvent::AdderField))
                 .variant(input::Variant::Ghost)
                 .placeholder(open.placeholder())
                 .modifier(Modifier::new().weight(1.0))
+                .submits(Target::Dialog(DialogEvent::AdderSubmit))
                 .build();
         });
     }

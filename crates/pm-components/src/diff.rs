@@ -549,8 +549,10 @@ fn comment_box(state: &WorkspaceState, target: CommentTarget) {
                 theme::strong(13, Role::Text),
                 TextOverflow::Ellipsis,
             );
+            crate::focus::request_focus_on(Target::Diff(DiffEvent::CommentField), &target);
             Input::new(&state.comment_text, Target::Diff(DiffEvent::CommentField))
                 .placeholder("Tell the agent what to change")
+                .submits(Target::Diff(DiffEvent::CommentAdd))
                 .build();
             rustle::row_arranged(
                 Modifier::new().fill_max_width(),

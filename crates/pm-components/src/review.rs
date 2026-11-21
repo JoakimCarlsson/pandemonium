@@ -67,16 +67,20 @@ pub(crate) fn nothing(message: &str) {
 }
 
 /// Emits one of the tabs at the top of the panel, `icon`, a glyph that says
-/// its name when the pointer rests on it, drawn as `filled` while it is the one shown.
+/// its name when the pointer rests on it, drawn as `filled` while it is the one shown;
+/// a click gives the keyboard to the box `into` when there is one.
 #[track_caller]
-fn panel_tab(label: &str, icon: Icon, filled: Icon, id: Target, shown: bool) {
+fn panel_tab(label: &str, icon: Icon, filled: Icon, id: Target, shown: bool, into: Option<Target>) {
     let mark = if shown { filled } else { icon.clone() };
     let tone = if shown { Role::Text } else { Role::Muted };
-    Button::icon(icon, id)
+    let mut button = Button::icon(icon, id)
         .size(Size::Md)
         .mark(move || glyph(mark.clone(), 5.0, tone))
-        .tooltip(label)
-        .build();
+        .tooltip(label);
+    if let Some(field) = into {
+        button = button.on_click(crate::focus::pressing_into(id, field));
+    }
+    button.build();
 }
 
 /// Emits a small button showing only `icon`, answering to `id`, turning while `spinning`, saying what it does with `tooltip`.
@@ -278,6 +282,9 @@ fn message_box(state: &WorkspaceState) {
                     None => "Message (Ctrl+Enter to commit)".to_owned(),
                 })
                 .rows(4)
+                .breaks_lines_on_enter()
+                .submits(Target::Git(GitEvent::Commit))
+                .hurries(Target::Git(GitEvent::Commit))
                 .build();
         },
     );
@@ -512,7 +519,12 @@ fn branch_button(state: &WorkspaceState, session: &Session, working: bool) {
     let head = state
         .head_of(state.git.repository.as_deref())
         .unwrap_or_else(|| session.branch.clone());
-    button::small_button(&head, Target::Git(GitEvent::BranchButton), Variant::Ghost)
+    let branches = Target::Git(GitEvent::BranchButton);
+    button::small_button(&head, branches, Variant::Ghost)
+        .on_click(crate::focus::pressing_into(
+            branches,
+            Target::Git(GitEvent::BranchFilter),
+        ))
         .tone(Role::Text)
         .with_icon(phosphor::GIT_FORK)
         .monospace()
@@ -562,6 +574,7 @@ pub fn review(state: &WorkspaceState, session: &Session) {
                                             phosphor::fill::GIT_BRANCH,
                                             Target::Diff(DiffEvent::ReviewChanges),
                                             shown == ReviewTab::Changes,
+                                            None,
                                         );
                                     }
                                     panel_tab(
@@ -570,6 +583,7 @@ pub fn review(state: &WorkspaceState, session: &Session) {
                                         phosphor::fill::FOLDER,
                                         Target::Diff(DiffEvent::ReviewFiles),
                                         shown == ReviewTab::Files,
+                                        None,
                                     );
                                     panel_tab(
                                         "Search",
@@ -577,6 +591,7 @@ pub fn review(state: &WorkspaceState, session: &Session) {
                                         phosphor::fill::MAGNIFYING_GLASS,
                                         Target::Search(SearchEvent::ReviewSearch),
                                         shown == ReviewTab::Search,
+                                        Some(Target::Search(SearchEvent::ProjectSearchField)),
                                     );
                                 },
                             );

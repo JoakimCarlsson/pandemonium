@@ -9,7 +9,7 @@
 //! an area event such as [`Event::Sidebar`] with [`send`]), [`Operations::update`] runs any other change of the
 //! workspace, and the named operations do what only the app can, such as opening a menu
 //! where the pointer is, moving the window or talking to the servers. The app does what
-//! every event asks afterwards (saving, sending, the focus a reducer asked for) in one
+//! every event asks afterwards (saving and sending) in one
 //! place.
 //!
 //! Each control handles its own pointer gestures with rustle's modifiers and tells the app
@@ -124,8 +124,7 @@ pub trait Operations {
     fn pressed(&self, _press: Press) {}
     /// The primary button came up on the control it went down on, as `click` tells.
     /// Returns whether the click counts, which it does not after the press dragged something
-    /// or was taken by the control's own gesture; a click that counts gives the keyboard to
-    /// the field or page it is on.
+    /// or was taken by the control's own gesture.
     fn click_lands(&self, _click: Press) -> bool {
         false
     }
@@ -268,6 +267,21 @@ pub trait Operations {
     /// Opens the menu of the field `field` at `at`, the caret going to the byte `offset` of
     /// the code text under the pointer first unless it is inside the selection.
     fn open_field_menu(&self, _field: Target, _at: (f32, f32), _offset: Option<usize>) {}
+    /// Opens the menu of the text field `field` at `at`, the field telling whether it is
+    /// `secure`, keeping what it holds off the clipboard, and `multiline`.
+    fn open_text_field_menu(
+        &self,
+        _field: Target,
+        _at: (f32, f32),
+        _secure: bool,
+        _multiline: bool,
+    ) {
+    }
+    /// Takes the files or the picture on the clipboard as attachments of the prompt, as a
+    /// paste in the prompt offers them first, and says whether there were any.
+    fn paste_attachments(&self) -> bool {
+        false
+    }
     /// Opens the menu of the shell showing at `at`.
     fn open_terminal_menu(&self, _at: (f32, f32)) {}
     /// Opens the menu of the web page showing at `at`.
@@ -326,6 +340,11 @@ impl OnClick {
     /// workspace's reducer takes the press, as [`send`] hands it [`Event::pressing`] of `id`.
     pub fn or_send(given: Option<Self>, id: Target) -> Self {
         given.unwrap_or_else(|| Self::new(send(Event::pressing(id))))
+    }
+
+    /// Runs the lambda.
+    pub fn run(&self) {
+        (self.0)()
     }
 
     /// The lambda, to hand to [`Interactive::control`].

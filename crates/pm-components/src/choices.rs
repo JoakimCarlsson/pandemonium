@@ -1,6 +1,6 @@
 //! What the reader picks around the prompt box: the agent's settings, a command behind a slash, and where new work is done.
 
-use crate::areas::{ChatEvent, ComposerEvent, DialogEvent, DiffEvent, GitEvent, SearchEvent};
+use crate::areas::{ChatEvent, ComposerEvent};
 use crate::target::Target;
 use pm_harness::{Discovery, Setting, Slash};
 use pm_protocol::ExtensionCommand;
@@ -1358,12 +1358,6 @@ impl WorkspaceState {
             .collect()
     }
 
-    /// The box to give keyboard focus after `id` was pressed, when that opened a menu narrowed with a box.
-    pub fn menu_filter_focus(&self, id: Target) -> Option<Target> {
-        (matches!(id, Target::Composer(ComposerEvent::SettingChip(_))) && self.menu_filters())
-            .then_some(Target::Composer(ComposerEvent::MenuFilter))
-    }
-
     /// Chooses the value at `index` of the menu that is open.
     fn pick(&mut self, index: usize) {
         let Some(Picker::Setting(at)) = self.picker else {
@@ -1396,48 +1390,6 @@ impl WorkspaceState {
         if let Some((id, value)) = other {
             self.change(&id, &value);
         }
-    }
-
-    /// The box to give keyboard focus after `id` was pressed, when that is the prompt or the field for an answer of the reader's own.
-    pub fn refocus(id: Target) -> Option<Target> {
-        let slash_row =
-            matches!(id, Target::Composer(ComposerEvent::Slash(row)) if row < PRESSABLE_LIST_ROWS);
-        if id == Target::Chat(ChatEvent::TypeOwn) {
-            return Some(Target::Chat(ChatEvent::Other));
-        }
-        if matches!(id, Target::Chat(ChatEvent::EditQueued(_))) {
-            return Some(Target::Composer(ComposerEvent::Prompt));
-        }
-        if id == Target::Chat(ChatEvent::QueuedCancel) {
-            return Some(Target::Composer(ComposerEvent::Prompt));
-        }
-        if crate::adder::is_adder(id) {
-            return Some(Target::Dialog(DialogEvent::AdderField));
-        }
-        if crate::folder_picker::is_picker(id) {
-            return Some(Target::Dialog(DialogEvent::PickerField));
-        }
-        if crate::project_search::is_search_part(id)
-            && id != Target::Search(SearchEvent::ProjectSearchField)
-            && !matches!(
-                id,
-                Target::Search(SearchEvent::SearchGroup(_))
-                    | Target::Search(SearchEvent::SearchHit(_))
-            )
-        {
-            return Some(Target::Search(SearchEvent::ProjectSearchField));
-        }
-        if id == Target::Git(GitEvent::BranchButton) {
-            return Some(Target::Git(GitEvent::BranchFilter));
-        }
-        if matches!(id, Target::Diff(DiffEvent::CommentFile(_))) {
-            return Some(Target::Diff(DiffEvent::CommentField));
-        }
-        (slash_row
-            || id == Target::Composer(ComposerEvent::SlashButton)
-            || id == Target::Composer(ComposerEvent::Mention)
-            || id == Target::Chat(ChatEvent::Revise))
-        .then_some(Target::Composer(ComposerEvent::Prompt))
     }
 
     /// Chooses the effort at `index` of those the agent offers.
@@ -1549,10 +1501,6 @@ mod tests {
         let opened = Target::Composer(ComposerEvent::SettingChip(chip));
         let mut state = state.handle(Event::pressing(opened));
         assert!(state.menu_filters());
-        assert_eq!(
-            state.menu_filter_focus(opened),
-            Some(Target::Composer(ComposerEvent::MenuFilter))
-        );
         assert_eq!(state.menu_matches().len(), 150);
         state = state.typed(Target::Composer(ComposerEvent::MenuFilter), "QWEN 14");
         let left: Vec<String> = state
