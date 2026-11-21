@@ -1047,6 +1047,27 @@ pub fn pressed(modifier: Modifier, id: Target) -> Modifier {
         .control(id, send(Event::pressing(id)))
 }
 
+/// What pressing the link `id` of a text does, told to the app as a press and a click of a
+/// control named `id` are: the app hears of the press, and when it lets the click count,
+/// `id` is pressed.
+pub fn link_pressed(id: Target) -> impl Fn() + 'static {
+    let operations = operations();
+    let window = rustle::LOCAL_WINDOW_INFO.current();
+    move || {
+        let press = Press {
+            id,
+            area: Rect::default(),
+            at: (0.0, 0.0),
+            clicks: 1,
+            modifiers: window.keyboard_modifiers(),
+        };
+        operations.pressed(press);
+        if operations.click_lands(press) {
+            operations.send(Event::pressing(id));
+        }
+    }
+}
+
 /// `modifier` made [`pressed`] as `id` when there is one, or as it is when
 /// there is none: rows and controls that can be pressed only sometimes.
 #[track_caller]

@@ -112,7 +112,9 @@ impl<'a> Markdown<'a> {
         self
     }
 
-    /// Emits the source, its lines broken as the type measures them. The
+    /// Emits the source, its running text set as rustle's annotated text, which
+    /// the text layout breaks into lines; inline code is set in the lines as
+    /// chips and links are pressed through the text's own link areas. The
     /// source is parsed and laid out once for as long as nothing about it
     /// changes, and each block once for as long as it stays the same, so a
     /// reply that grows only lays out its last block again.
@@ -520,9 +522,9 @@ impl Layout<'_> {
         );
     }
 
-    /// Emits `spans` broken into lines that fit `width`, set in `pixels` tall
-    /// type, heavier throughout when `strong`, running text in `tone`, in a
-    /// column with `modifier`.
+    /// Emits `spans` as one text that wraps at `width`, whatever room its parent has, set in `pixels` tall type,
+    /// heavier throughout when `strong`, running text in `tone`, with `modifier`: inline
+    /// code as chips set in the lines, and links that can be pressed when links can.
     #[track_caller]
     fn text(
         &mut self,
@@ -533,54 +535,93 @@ impl Layout<'_> {
         tone: Role,
         width: f32,
     ) {
-        let mut lines: Vec<Vec<(String, Inline)>> = vec![Vec::new()];
-        let mut used = 0.0;
+        let mut builder = rustle::AnnotatedStringBuilder::new();
+        let mut chips = std::collections::HashMap::new();
         for span in spans {
-            if span.text == "\n" {
-                lines.push(Vec::new());
-                used = 0.0;
+            if span.inline.code {
+                let index = self
+                    .link(span.inline, tone)
+                    .map(|link| builder.push_link(link));
+                for piece in self.chip_pieces(&span.text, span.inline, pixels, strong, width) {
+                    let wide = self.measure(&piece, span.inline, pixels, strong) + CODE_PAD * 2.0;
+                    let id = chip_id(span.inline, wide);
+                    chips
+                        .entry(id.clone())
+                        .or_insert_with(|| chip(span.inline, pixels, strong, tone, wide));
+                    rustle::AppendInlineContent::append_inline_content(&mut builder, &id, &piece);
+                }
+                if let Some(index) = index {
+                    builder.pop_to(index);
+                }
                 continue;
             }
-            for word in span.text.split_inclusive(' ') {
-                let room = width - CODE_PAD * 2.0;
-                for piece in self.cut(word, span.inline, pixels, strong, room) {
-                    let fitted = self.measure(piece.trim_end(), span.inline, pixels, strong);
-                    let advance = self.measure(&piece, span.inline, pixels, strong);
-                    let current = lines.last().expect("there is always a line");
-                    if !current.is_empty() && used + opening(current, span.inline) + fitted > width
+            match self.link(span.inline, tone) {
+                Some(link) => builder.with_link(link, |builder| builder.append(&span.text)),
+                None => builder.with_style(running(span.inline, tone), |builder| {
+                    builder.append(&span.text)
+                }),
+            }
+        }
+        let text = builder.to_annotated_string();
+        let mut kind = theme::text_style(pixels, LEADING)
+            .color(theme::color(tone))
+            .wrap(rustle::TextWrap::Word);
+        if strong {
+            kind = kind.font_weight(rustle::FontWeight::SEMI_BOLD);
+        }
+        let wrapped_at = modifier
+            .wrap_content_width(rustle::BoxAlignment::TopStart, true)
+            .width_in(0.0, width);
+        rustle::basic_text_annotated(wrapped_at, &text, kind, &chips);
+    }
+
+    /// The link `inline` is the text of, drawn as running text set as `inline` over text in
+    /// `tone`, or as its chip draws it when it is code, when links can be pressed and it has
+    /// an address; nothing otherwise.
+    fn link(&self, inline: Inline, tone: Role) -> Option<rustle::LinkAnnotation> {
+        let id = crate::figures::link_target(self.links, inline.target)?;
+        let press = crate::events::link_pressed(id);
+        let style = if inline.code {
+            rustle::SpanStyle::new()
+        } else {
+            running(inline, tone)
+        };
+        Some(
+            rustle::LinkAnnotation::clickable(id.tag(), move |_| press())
+                .with_styles(rustle::TextLinkStyles::new(style)),
+        )
+    }
+
+    /// The pieces inline code saying `code` is set in as chips: all of it when its chip fits
+    /// `width`, and otherwise its words gathered into pieces that fit, a word too wide on its
+    /// own cut where it reaches the edge.
+    fn chip_pieces(
+        &mut self,
+        code: &str,
+        inline: Inline,
+        pixels: u32,
+        strong: bool,
+        width: f32,
+    ) -> Vec<String> {
+        let room = width - CODE_PAD * 2.0;
+        if self.measure(code, inline, pixels, strong) <= room {
+            return vec![code.to_owned()];
+        }
+        let mut pieces: Vec<String> = Vec::new();
+        for word in code.split_inclusive(' ') {
+            for cut in self.cut(word, inline, pixels, strong, room) {
+                match pieces.last_mut() {
+                    Some(last)
+                        if self.measure(&format!("{last}{cut}"), inline, pixels, strong)
+                            <= room =>
                     {
-                        lines.push(Vec::new());
-                        used = 0.0;
+                        last.push_str(&cut)
                     }
-                    let current = lines.last_mut().expect("there is always a line");
-                    if current.is_empty() && piece.trim().is_empty() {
-                        continue;
-                    }
-                    used += opening(current, span.inline) + advance;
-                    match current.last_mut() {
-                        Some((text, inline)) if *inline == span.inline => text.push_str(&piece),
-                        _ => current.push((piece, span.inline)),
-                    }
+                    _ => pieces.push(cut),
                 }
             }
         }
-        let height = pixels as f32 * LEADING;
-        let links = self.links;
-        rustle::column_arranged(modifier, Arrangement::Start, Alignment::Start, move || {
-            for runs in lines {
-                rustle::row_arranged(
-                    Modifier::new().height(height),
-                    Arrangement::Start,
-                    Alignment::Center,
-                    move || {
-                        for (content, inline) in runs {
-                            let pressed = crate::figures::link_press(links, inline.target);
-                            run(pressed, content, inline, pixels, strong, tone);
-                        }
-                    },
-                );
-            }
-        });
+        pieces
     }
 
     /// `word` cut into pieces no wider than `width`; one piece when it fits.
@@ -629,15 +670,61 @@ fn count_details(blocks: &[Block]) -> usize {
         .sum()
 }
 
-/// The room a run set as `inline` takes besides its text when it starts
-/// after `line`: the padding of inline code that opens a new run.
-fn opening(line: &[(String, Inline)], inline: Inline) -> f32 {
-    let opens = line.last().is_none_or(|(_, last)| *last != inline);
-    if inline.code && opens {
-        CODE_PAD * 2.0
-    } else {
-        0.0
+/// The name a chip of inline code set as `inline`, `wide` logical pixels wide, has among a
+/// text's inline contents.
+fn chip_id(inline: Inline, wide: f32) -> String {
+    format!(
+        "code {} {} {} {} {}",
+        inline.strong,
+        inline.emphasis,
+        inline.strike,
+        inline.link,
+        wide.to_bits()
+    )
+}
+
+/// The chip of inline code set as `inline` in a text of `pixels` tall type, heavier when
+/// `strong`, running text in `tone`, `wide` logical pixels wide: room as tall as a line of
+/// code in the middle of the line, holding its words on a shaded rounded backing, left out of
+/// the selection, which takes the code from the text the chip stands for.
+fn chip(
+    inline: Inline,
+    pixels: u32,
+    strong: bool,
+    tone: Role,
+    wide: f32,
+) -> rustle::InlineTextContent {
+    let room = rustle::Placeholder::new(
+        rustle::TextUnit::Sp(wide),
+        rustle::TextUnit::Sp(pixels as f32 * CODE_LEADING),
+        rustle::PlaceholderVerticalAlign::Center,
+    );
+    rustle::InlineTextContent::new(room, move |code| {
+        let code = code.to_owned();
+        rustle::disable_selection(|| chip_text(code, inline, pixels, strong, tone));
+    })
+}
+
+/// The style of running text set as `inline` over text in `tone`: heavier, leaning, struck
+/// through in the muted colour or underlined in the accent colour of a link, as it says.
+fn running(inline: Inline, tone: Role) -> rustle::SpanStyle {
+    let mut style = rustle::SpanStyle::new();
+    if inline.strong {
+        style = style.font_weight(rustle::FontWeight::SEMI_BOLD);
     }
+    if inline.emphasis {
+        style = style.italic();
+    }
+    if inline.strike {
+        style = style.strikethrough(true).color(theme::color(Role::Muted));
+    }
+    if inline.link {
+        style = style.underline(true).color(theme::color(Role::Accent));
+    }
+    if !inline.strike && !inline.link {
+        style = style.color(theme::color(tone));
+    }
+    style
 }
 
 /// The type of text set as `inline` in `pixels` tall type, heavier when `strong`.
@@ -665,22 +752,18 @@ fn setting(inline: Inline, pixels: u32, strong: bool) -> rustle::TextStyle {
     kind
 }
 
-/// Emits one run of `content` set as `inline`, in `tone` unless it is a link or struck, inside
-/// `modifier` (what makes a link pressable), on a shaded rounded backing when it is code.
+/// Emits the words `content` of a chip of inline code set as `inline`, in `tone` unless it
+/// is a link or struck, on a shaded rounded backing.
 #[track_caller]
-fn run(modifier: Modifier, content: String, inline: Inline, pixels: u32, strong: bool, tone: Role) {
+fn chip_text(content: String, inline: Inline, pixels: u32, strong: bool, tone: Role) {
     let colour = match inline {
         Inline { link: true, .. } => Role::Accent,
         Inline { strike: true, .. } => Role::Muted,
         _ => tone,
     };
     let kind = setting(inline, pixels, strong).color(theme::color(colour));
-    let modifier = match inline.code {
-        true => Modifier::new()
-            .background_rounded(theme::color(Role::SurfaceHover), Radius::Sm.px())
-            .chain(modifier)
-            .padding_xy(CODE_PAD, 0.0),
-        false => modifier,
-    };
+    let modifier = Modifier::new()
+        .background_rounded(theme::color(Role::SurfaceHover), Radius::Sm.px())
+        .padding_xy(CODE_PAD, 0.0);
     rustle::basic_text(modifier, content, kind, TextOverflow::Ellipsis);
 }

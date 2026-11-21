@@ -29,6 +29,7 @@ mod diff;
 mod drags;
 mod fields;
 mod keyboard;
+mod markdown;
 mod menus;
 mod panes;
 mod pauses;

@@ -241,7 +241,9 @@ One crate per layer, each depending only on the layers below it.
   runs: escape sequences parsed into a grid of cells with scrollback and
   selection. `pm-components` draws it as the terminal dock.
 - **Markdown:** `pm-markdown`: markdown parsed into blocks of styled spans;
-  `pm-components` lays them out as `Markdown`.
+  `pm-components` lays them out as `Markdown`, running text as rustle
+  annotated strings (`rustle::basic_text_annotated`): inline code as inline
+  content chips, links as link annotations pressed through the text.
 - **Code:** `pm-buffer` (a text with its lines indexed, places as language
   servers and syntax trees count them, the change an edit made, the word
   around a place and how much a press of one, two or three clicks takes hold

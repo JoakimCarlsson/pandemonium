@@ -239,14 +239,19 @@ fn image_size(image: &Image, drawing: &Drawing, width: f32) -> (f32, f32) {
     (across * fit, down * fit)
 }
 
-/// The modifier of a run or an image that is the face of the link numbered `target` from one, which answers to the link's name counted from `links` when links can be pressed; an empty modifier for no link.
-pub(crate) fn link_press(links: Option<Target>, target: impl Into<usize>) -> Modifier {
+/// The name of the link numbered `target` from one, counted from `links` when links can be pressed; nothing for no link.
+pub(crate) fn link_target(links: Option<Target>, target: impl Into<usize>) -> Option<Target> {
     match (links, target.into()) {
-        (Some(base), target) if target > 0 => {
-            let id = base.offset(target - 1);
-            events::pressed(Modifier::new(), id)
-        }
-        _ => Modifier::new(),
+        (Some(base), target) if target > 0 => Some(base.offset(target - 1)),
+        _ => None,
+    }
+}
+
+/// The modifier of an image that is the face of the link numbered `target` from one, which answers to the link's name counted from `links` when links can be pressed; an empty modifier for no link.
+pub(crate) fn link_press(links: Option<Target>, target: impl Into<usize>) -> Modifier {
+    match link_target(links, target) {
+        Some(id) => events::pressed(Modifier::new(), id),
+        None => Modifier::new(),
     }
 }
 

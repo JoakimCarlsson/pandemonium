@@ -55,29 +55,46 @@ pub fn spacer() {
     rustle::spacer(rustle::Modifier::new().weight(1.0));
 }
 
-/// Emits the lines of `content` wrapped to `width`, one text line each, set in `pixels` tall type with a line height of `ratio` times that, in `tone`, with a gap where it has a blank line.
+/// Emits `content` wrapped to `width`, set in `pixels` tall type with a line height of `ratio` times that, in `tone`, with a gap where it has a blank line.
 ///
-/// Lines break as the text is measured, so a word wider than `width` is cut where it must be. A line the wrapping broke at a space keeps it, so that text selected across it is copied as one line.
+/// Each run of lines between blank lines is one text that the text layout breaks at spaces, so a word wider than `width` is cut where it must be, and text selected across a line the wrapping broke is copied as one line.
 #[track_caller]
 pub fn paragraph(content: &str, pixels: u32, ratio: f32, tone: impl Into<Color>, width: f32) {
-    let kind = theme::text_style(pixels, ratio);
-    let tone = tone.into();
-    let lines = rustle::wrap_at_spaces(content, &kind, width.max(32.0));
+    let kind = theme::text_style(pixels, ratio).color(theme::color(tone.into()));
+    wrapped(content, kind, width.max(32.0), Some(theme::sp(3)));
+}
+
+/// Emits `content` set in `kind`, broken at spaces by the text layout into lines of at most
+/// `width` logical pixels, whatever room its parent has: Compose's `Text` in a box of that
+/// width. With a `blank` gap, each
+/// run of lines between blank lines is a text of its own and each blank line a gap that
+/// tall; without one, the whole of `content` is one text.
+#[track_caller]
+pub fn wrapped(content: &str, kind: rustle::TextStyle, width: f32, blank: Option<f32>) {
+    let kind = kind.wrap(rustle::TextWrap::Word);
+    let at = || {
+        Modifier::new()
+            .wrap_content_width(rustle::BoxAlignment::TopStart, true)
+            .width_in(0.0, width)
+    };
+    let Some(gap) = blank else {
+        rustle::text_styled(at(), content, kind);
+        return;
+    };
     rustle::column_arranged(
         Modifier::new(),
         Arrangement::Start,
         Alignment::Start,
         || {
-            for part in lines {
-                if part.end == part.start {
-                    rustle::spacer(Modifier::new().height(theme::sp(3)));
+            for run in content
+                .split('\n')
+                .collect::<Vec<_>>()
+                .split(|line| line.is_empty())
+            {
+                if run.is_empty() {
+                    rustle::spacer(Modifier::new().height(gap));
                 } else {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        &content[part.start..part.end],
-                        kind.color(theme::color(tone)),
-                        TextOverflow::Ellipsis,
-                    );
+                    rustle::text_styled(at(), run.join("\n"), kind);
                 }
             }
         },

@@ -5806,6 +5806,20 @@ const PREVIEW_BADGE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="8
 /// What a vector picture shown drawn in a snapshot holds.
 const PREVIEW_VECTOR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="240" height="160" viewBox="0 0 240 160"><rect width="240" height="160" rx="24" fill="#1f2937"/><circle cx="80" cy="80" r="44" fill="#f97316"/><path d="M140 40 L204 120 L140 120 Z" fill="#38bdf8"/></svg>"##;
 
+/// The workspace previewing the markdown file `path`, which says `source`, with no figures.
+#[cfg(test)]
+pub(crate) fn previewing(path: &str, source: &str) -> Screen {
+    load_installed_grammar("markdown");
+    let mut state = workspace_sample().handle(Event::Diff(DiffEvent::TabDiff));
+    state.open_viewer(path.to_owned(), false);
+    Screen::Workspace(state.with_file(
+        0,
+        path,
+        false,
+        Ok((Some(source.to_owned()), false, Some("markdown".to_owned()))),
+    ))
+}
+
 /// The workspace with the file at `path` open and shown rendered, as what it ends in says it is.
 fn previewed(path: &str) -> WorkspaceState {
     load_installed_grammar("markdown");
