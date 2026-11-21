@@ -372,7 +372,7 @@ fn the_browser_tools_keep_their_width_and_the_page_takes_the_rest() {
         let mut state = state.browser_tools_shown();
         state.browser_adopted_by(0);
         if let Some(browser) = state.browser.as_mut() {
-            browser.tools_width = tools_width;
+            browser.tools_width.set(tools_width);
         }
         let rig = Rig::new(Screen::Workspace(state), crate::app::headless::SIZE);
         let page = rig
@@ -391,4 +391,38 @@ fn the_browser_tools_keep_their_width_and_the_page_takes_the_rest() {
     let (page, tools) = laid(5000.0);
     assert_eq!(page.size.width, pm_components::browser::TOOLS_LEAST);
     assert_eq!(page.size.width + 1.0 + tools.size.width, row);
+}
+
+/// The shares a seam was dragged to are the layout's own: kept aside with the panes of the
+/// session left, held apart from those of the session shown, and found again on coming back.
+#[test]
+fn a_stashed_layout_keeps_its_shares() {
+    use pm_components::areas::{SidebarEvent, WindowEvent};
+    use pm_components::state::Page;
+    let mut rig = Rig::shot(Shot::Panes);
+    let Page::Session(open) = rig.state(|state| state.page) else {
+        panic!("the shot shows a session");
+    };
+    let before = rig.state(|state| state.panes.layout.ratios());
+    let seam = Target::Window(WindowEvent::SplitSash(0));
+    let from = rig.center(seam);
+    rig.drag(from, (from.0 + 40.0, from.1), 4);
+    let dragged = rig.state(|state| state.panes.layout.ratios());
+    assert_ne!(dragged, before, "the seam did not move");
+    let sessions = rig.state(|state| state.sessions.len());
+    let other = (0..sessions)
+        .filter(|index| *index != open)
+        .find(|index| rig.drawn(Target::Sidebar(SidebarEvent::Session(*index))))
+        .expect("the sidebar lists another session");
+    rig.click_on(Target::Sidebar(SidebarEvent::Session(other)));
+    assert_eq!(
+        rig.state(|state| state
+            .pane_stash
+            .get(&open)
+            .map(|panes| panes.layout.ratios())),
+        Some(dragged.clone()),
+        "the layout kept aside lost its shares"
+    );
+    rig.click_on(Target::Sidebar(SidebarEvent::Session(open)));
+    assert_eq!(rig.state(|state| state.panes.layout.ratios()), dragged);
 }

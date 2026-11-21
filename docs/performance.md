@@ -55,14 +55,15 @@ and a sampling profile:
   it without composing.
 - Every change, including a pane's width, composed the whole screen. The
   workspace's regions (title bar, sidebar, each pane, the dock, the plan and
-  review panels) are now `pm_components::revision::region` blocks keyed by
-  the screen's revision and their room, and a handle's drag changes only
-  sizes (`Model::resize`), so the regions whose room did not change keep what
-  they emitted. The title bar and the plan panel have since moved to blocks
-  keyed by their own state compared by value, so a keystroke or a streamed
-  reply leaves them too, and nothing composes the whole tree by hand any more:
-  fonts, ligatures, the theme, window sizes and whether the window floats are
-  snapshot state their readers follow.
+  review panels) became blocks keyed by their room, and a handle's drag
+  changes only sizes, so the regions whose room did not change keep what they
+  emitted. The title bar, the sidebar, the plan panel, the history page and the
+  extensions page are now keyed by their own state compared by value, so a
+  keystroke or a streamed reply leaves them too; the other regions read the
+  screen's state themselves. Panel sizes are held as observable state apart
+  from the screen, so a drag writes no screen, and nothing composes the whole
+  tree by hand: fonts, ligatures, the theme, window sizes and whether the
+  window floats are snapshot state their readers follow.
 
 Measured on the same machine (`dev` profile, milliseconds, p50 / p95 of the
 whole turn; before is the earlier interface with text sizes cached as a
@@ -84,8 +85,8 @@ measured 27.2 ms before and 2.4 ms after for the
 sidebar's handle, 41.8 ms and 5.8 ms for a seam, and 72.2 ms and 11.4 ms for
 streaming. What costs most now is composing the panes whose width changed
 (the conversation and the code view compose their visible rows again) and,
-while streaming, composing every region again, since any change of the screen
-moves its revision; then measuring and painting the whole tree, which rustle
+while streaming, composing again every region that reads the whole screen;
+then measuring and painting the whole tree, which rustle
 caches only per restartable scope.
 
 ## Measure a running window

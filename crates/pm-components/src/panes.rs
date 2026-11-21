@@ -68,8 +68,10 @@ pub enum Layout {
     Split {
         /// Which way the parts lie.
         axis: Axis,
-        /// The share of the space the first part takes.
-        ratio: f32,
+        /// The share of the space the first part takes, held as observable state: this
+        /// layout's own, which a copy of the layout, such as one kept aside for another
+        /// session, holds apart.
+        ratio: crate::Held<f32>,
         /// The left or upper part.
         first: Box<Layout>,
         /// The right or lower part.
@@ -223,7 +225,7 @@ impl Layout {
     fn split(axis: Axis, ratio: f32, first: Self, second: Self) -> Self {
         Self::Split {
             axis,
-            ratio,
+            ratio: crate::Held::new(ratio),
             first: Box::new(first),
             second: Box::new(second),
         }
@@ -289,7 +291,7 @@ impl Layout {
                 first,
                 second,
             } => {
-                let (one, two) = area.halves(*axis, *ratio);
+                let (one, two) = area.halves(*axis, ratio.get());
                 first.place(one, placed);
                 second.place(two, placed);
             }
@@ -306,7 +308,7 @@ impl Layout {
         let Self::Split { axis, ratio, .. } = self else {
             return None;
         };
-        let (one, two) = area.halves(*axis, *ratio);
+        let (one, two) = area.halves(*axis, ratio.get());
         if *count == index {
             return Some((self, area));
         }
@@ -318,6 +320,46 @@ impl Layout {
             return Some(found);
         }
         second.split_mut(index, two, count)
+    }
+
+    /// The split `index` counts to, in the same order as [`split_mut`](Self::split_mut), with the
+    /// part of `area` it cuts.
+    fn split_ref(&self, index: usize, area: Area, count: &mut usize) -> Option<(&Self, Area)> {
+        let Self::Split {
+            axis,
+            ratio,
+            first,
+            second,
+        } = self
+        else {
+            return None;
+        };
+        let (one, two) = area.halves(*axis, ratio.get());
+        if *count == index {
+            return Some((self, area));
+        }
+        *count += 1;
+        first
+            .split_ref(index, one, count)
+            .or_else(|| second.split_ref(index, two, count))
+    }
+
+    /// The share of the space the first side of each split takes, first side before second.
+    pub fn ratios(&self) -> Vec<f32> {
+        match self {
+            Self::Group(_) => Vec::new(),
+            Self::Split {
+                ratio,
+                first,
+                second,
+                ..
+            } => {
+                let mut ratios = vec![ratio.get()];
+                ratios.extend(first.ratios());
+                ratios.extend(second.ratios());
+                ratios
+            }
+        }
     }
 
     /// The layout with `item` taken out of its pane, and the pane taken out with it when that leaves it empty.
@@ -338,7 +380,7 @@ impl Layout {
                 ratio,
                 first,
                 second,
-            } => Self::joined(axis, ratio, first.without(item), second.without(item)),
+            } => Self::joined(axis, ratio.get(), first.without(item), second.without(item)),
         }
     }
 
@@ -369,7 +411,7 @@ impl Layout {
             } => {
                 let first = first.split_at(target, side, leaf.clone(), count);
                 let second = second.split_at(target, side, leaf, count);
-                Self::split(axis, ratio, first, second)
+                Self::split(axis, ratio.get(), first, second)
             }
         }
     }
@@ -401,7 +443,7 @@ impl Layout {
                 second,
             } => Self::joined(
                 axis,
-                ratio,
+                ratio.get(),
                 first.without_group(target, count),
                 second.without_group(target, count),
             ),
@@ -577,7 +619,7 @@ impl WorkspaceState {
     /// How wide the review panel is, in logical pixels: nothing while it is closed.
     fn review_room(&self) -> f32 {
         if self.review_session().is_some() && self.review {
-            self.review_width
+            self.sizes.review_width.get()
         } else {
             0.0
         }
@@ -814,9 +856,29 @@ impl WorkspaceState {
             return None;
         };
         Some(match axis {
-            Axis::Row => (area.width * *ratio, Grows::Right),
-            Axis::Column => (area.height * *ratio, Grows::Down),
+            Axis::Row => (area.width * ratio.get(), Grows::Right),
+            Axis::Column => (area.height * ratio.get(), Grows::Down),
         })
+    }
+
+    /// Gives the first side of the split whose handle is `index` `size` logical pixels, within
+    /// what leaves both sides room, in a window `window` logical pixels wide and tall, in the
+    /// share the held layout keeps as observable state; says whether it could, which it can
+    /// while the panes shown are laid out as the ones held.
+    pub(crate) fn hold_split(&self, index: usize, size: f32, window: (f32, f32)) -> bool {
+        if self.panes() != self.panes {
+            return false;
+        }
+        let area = self.pane_area(window);
+        let Some((Layout::Split { axis, ratio, .. }, cut)) =
+            self.panes.layout.split_ref(index, area, &mut 0)
+        else {
+            return false;
+        };
+        let extent = cut.extent(*axis);
+        let room = SMALLEST.min(extent / 2.0);
+        ratio.set(size.clamp(room, extent - room) / extent.max(1.0));
+        true
     }
 
     /// Gives the first side of the split whose handle is `index` `size` logical pixels, within what leaves both sides room, in a window `window` logical pixels wide and tall.
@@ -828,7 +890,7 @@ impl WorkspaceState {
         {
             let extent = cut.extent(*axis);
             let room = SMALLEST.min(extent / 2.0);
-            *ratio = size.clamp(room, extent - room) / extent.max(1.0);
+            ratio.set(size.clamp(room, extent - room) / extent.max(1.0));
         }
         self.panes = panes;
     }

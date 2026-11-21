@@ -1947,7 +1947,7 @@ fn browser_finding(tools: bool) -> WorkspaceState {
     if tools {
         state = state.browser_tools_shown();
         if let Some(browser) = state.browser.as_mut() {
-            browser.tools_width = 300.0;
+            browser.tools_width.set(300.0);
         }
     }
     state
@@ -3428,10 +3428,10 @@ impl Shot {
                 Screen::Workspace(overview().with_change_menu(0, (1008.0, 238.0)))
             }
             Self::Resized => {
-                let mut state = terminal();
-                state.sidebar_width = 360.0;
-                state.review_width = 300.0;
-                state.terminal_height = 400.0;
+                let state = terminal();
+                state.sizes.sidebar_width.set(360.0);
+                state.sizes.review_width.set(300.0);
+                state.sizes.terminal_height.set(400.0);
                 Screen::Workspace(state)
             }
             Self::TerminalMenu => {
@@ -3445,10 +3445,10 @@ impl Shot {
                 Screen::Workspace(state.with_browser_menu((428.0, 116.0)))
             }
             Self::BrowserFind(narrow) => {
-                let mut state = browser_finding(false);
+                let state = browser_finding(false);
                 if narrow {
-                    state.sidebar_width = 360.0;
-                    state.review_width = 520.0;
+                    state.sizes.sidebar_width.set(360.0);
+                    state.sizes.review_width.set(520.0);
                 }
                 Screen::Workspace(state)
             }

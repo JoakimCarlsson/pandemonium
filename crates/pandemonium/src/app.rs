@@ -819,7 +819,9 @@ impl App {
     }
 
     /// Makes the panel whose handle `id` is dragged as big as it was when the drag began
-    /// plus how far the drag went, `by` logical pixels across and down.
+    /// plus how far the drag went, `by` logical pixels across and down: in the observable
+    /// state that holds its size, without writing the screen, and through the workspace only
+    /// for a split of panes laid out otherwise than the ones held.
     pub(super) fn sash_dragged(&mut self, id: Target, by: (f32, f32)) {
         let window = self.window_size();
         if self.sash_drag.is_none_or(|(held, ..)| held != id) {
@@ -829,11 +831,14 @@ impl App {
                 .map(|(size, grows)| (id, size, grows));
         }
         if let Some((id, size, grows)) = self.sash_drag {
-            self.model.resize(|state| {
-                *state = std::mem::take(state).in_workspace(|state| {
-                    state.with_sash_size(id, size + grows.by((0.0, 0.0), by), window)
-                })
-            });
+            let size = size + grows.by((0.0, 0.0), by);
+            if !self
+                .model
+                .read(|screen| screen.hold_sash_size(id, size, window))
+            {
+                self.model
+                    .change(|state| state.with_sash_size(id, size, window));
+            }
         }
     }
 

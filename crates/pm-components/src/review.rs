@@ -538,7 +538,7 @@ pub fn review(state: &WorkspaceState, session: &Session) {
     };
     rustle::row_arranged(
         Modifier::new()
-            .width(state.review_width)
+            .width(state.sizes.review_width.get())
             .fill_max_height()
             .background(theme::color(Role::Background)),
         Arrangement::Start,

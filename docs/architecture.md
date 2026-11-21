@@ -83,15 +83,21 @@ One crate per layer, each depending only on the layers below it.
   (`pm-components/src/tooltip.rs`, `Button::tooltip`), shown after a rest on
   the frame clock, at once in snapshots.
   The screen is one rustle state the window roots read, so a change composes
-  the root again. The title bar and the plan panel are skippable blocks keyed
-  by their own state compared by value (`TitleBar`, the plan's source and
-  scroll state) and their room, so a change elsewhere leaves them. The other
-  regions of the workspace (sidebar, each pane, the dock, the review panel and
-  the pages without panes) still take the whole workspace, so they are
-  `pm_components::revision::region` blocks keyed by the screen's revision and
-  the room they are given; dragging the handle between panels changes sizes
-  only (`Model::resize`), which leaves the revision, so only the regions whose
-  room changed are composed again.
+  the root again. The title bar, the sidebar, the plan panel, the history page
+  and the extensions page are skippable blocks keyed by their own state compared
+  by value (`TitleBar`, `SidebarState`, the plan's source and scroll state,
+  `HistoryState`, `ExtensionsState`), so a change elsewhere leaves them. The
+  other regions of the workspace (each pane, the dock, the review panel and the
+  page for starting work) still take the whole workspace, so they are
+  `pm_pages::observed::region` blocks that read the screen's state themselves
+  and are keyed by the room they are given. The sizes of panels are held apart
+  from the screen as observable state (`pm_components::Held`): the panels'
+  widths, the dock's height and whether it is maximized in `PanelSizes`, the
+  graph's height in `GitControls`, the browser tools' width in each `Browser`
+  and the share of each split in its own `Layout`, a copy of which holds its
+  own values. Dragging a handle sets only the size it drags
+  (`WorkspaceState::hold_sash_size`), writing no screen, so only the regions
+  whose room changed are composed again.
   What the views read besides the screen is snapshot state too, so a change of
   it composes its readers and nothing composes the tree by hand: the theme and
   each window's size (`Shared` in `app/host.rs`), whether the window floats and

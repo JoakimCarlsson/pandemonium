@@ -24,8 +24,8 @@ pub const WIDTHS: (f32, f32) = (300.0, 960.0);
 
 /// How wide the plan panel is when `room` logical pixels are left beside the sidebar and the review panel: as wide as it was dragged, or else nearly half of the room, kept within what a plan reads well in.
 pub fn width_in(state: &WorkspaceState, room: f32) -> f32 {
-    if state.plan_width > 0.0 {
-        state.plan_width.clamp(WIDTHS.0, WIDTHS.1)
+    if state.sizes.plan_width.get() > 0.0 {
+        state.sizes.plan_width.get().clamp(WIDTHS.0, WIDTHS.1)
     } else {
         (room * 0.45).clamp(300.0, 520.0)
     }

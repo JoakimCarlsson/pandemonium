@@ -291,8 +291,10 @@ struct SavedBrowserTab {
 /// The panes of the main area as they were left.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct SavedPanes {
-    /// How the area was cut.
-    layout: Layout,
+    /// How the area was cut, as it is written: a layout's shares are held as observable
+    /// state the window owns, so the view keeps their values only, which can go to the
+    /// thread that writes it.
+    layout: serde_json::Value,
     /// The pane last worked in, by position.
     focused: usize,
 }
@@ -430,17 +432,17 @@ impl View {
             changes_open: state.git.changes_open,
             graph_open: state.git.graph_open,
             graph_all: state.git.graph_all,
-            graph_height: state.git.graph_height,
-            terminal_maximized: state.terminal_maximized,
-            terminal_height: state.terminal_height,
-            sidebar_width: state.sidebar_width,
+            graph_height: state.git.graph_height.get(),
+            terminal_maximized: state.sizes.terminal_maximized.get(),
+            terminal_height: state.sizes.terminal_height.get(),
+            sidebar_width: state.sizes.sidebar_width.get(),
             recent_commands: state
                 .recent_commands
                 .iter()
                 .map(|action| action.key().to_owned())
                 .collect(),
-            review_width: state.review_width,
-            plan_width: state.plan_width,
+            review_width: state.sizes.review_width.get(),
+            plan_width: state.sizes.plan_width.get(),
             terminal: state.terminal,
             scroll: state.sidebar_scroll.offset(),
             agent: state.agent,
@@ -465,7 +467,7 @@ impl View {
                 })
                 .collect(),
             panes: Some(SavedPanes {
-                layout: state.panes.layout.clone(),
+                layout: serde_json::to_value(&state.panes.layout).unwrap_or_default(),
                 focused: state.panes.focused,
             }),
         }
@@ -525,12 +527,12 @@ impl View {
         state.open_tree = self.open_tree.iter().cloned().collect();
         state.closed_folders = self.closed_folders.iter().cloned().collect();
         state.terminal = self.terminal;
-        state.terminal_maximized = self.terminal_maximized;
+        state.sizes.terminal_maximized.set(self.terminal_maximized);
         if self.terminal_height > 0.0 {
-            state.terminal_height = self.terminal_height;
+            state.sizes.terminal_height.set(self.terminal_height);
         }
         if self.sidebar_width > 0.0 {
-            state.sidebar_width = self.sidebar_width;
+            state.sizes.sidebar_width.set(self.sidebar_width);
         }
         state.recent_commands = self
             .recent_commands
@@ -538,9 +540,9 @@ impl View {
             .filter_map(|key| pm_editor::Action::of_key(key))
             .collect();
         if self.review_width > 0.0 {
-            state.review_width = self.review_width;
+            state.sizes.review_width.set(self.review_width);
         }
-        state.plan_width = self.plan_width;
+        state.sizes.plan_width.set(self.plan_width);
         state.agent = self.agent.min(state.agent_slots().saturating_sub(1));
         state.prompt = prompt_field(&self.prompt);
         state
@@ -570,7 +572,7 @@ impl View {
         state.git.graph_open = self.graph_open;
         state.git.graph_all = self.graph_all;
         if self.graph_height > 0.0 {
-            state.git.graph_height = self.graph_height;
+            state.git.graph_height.set(self.graph_height);
         }
         state.review_tab = self.review_tab();
         state.sidebar_scroll.jump_to(self.scroll);
@@ -580,9 +582,11 @@ impl View {
             .scroll_to_item_offset(self.files_first_row, 0.0);
         state.scroll_diff_to(self.diff_scroll);
         state.refresh_files();
-        if let Some(saved) = &self.panes {
+        if let Some(saved) = &self.panes
+            && let Ok(layout) = serde_json::from_value::<Layout>(saved.layout.clone())
+        {
             state.panes = Panes {
-                layout: saved.layout.clone(),
+                layout,
                 focused: saved.focused,
                 parked: None,
             };

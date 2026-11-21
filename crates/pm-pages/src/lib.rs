@@ -2,6 +2,7 @@
 
 mod debugging;
 mod editing;
+pub mod observed;
 mod panes;
 mod screen;
 mod tasking;

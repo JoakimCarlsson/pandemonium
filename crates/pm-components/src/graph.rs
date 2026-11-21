@@ -423,7 +423,7 @@ impl rustle::Layout for SplitLayout {
 pub fn graph(state: &WorkspaceState) {
     let git = &state.git;
     let open = git.graph_open;
-    let height = git.graph_height.clamp(HEIGHTS.0, HEIGHTS.1);
+    let height = git.graph_height.get().clamp(HEIGHTS.0, HEIGHTS.1);
     rustle::column_arranged(
         Modifier::new().fill_max_width(),
         Arrangement::Start,

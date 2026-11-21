@@ -13,12 +13,14 @@ use rustle::{Alignment, Arrangement, row_arranged};
 use crate::theme::{Radius, Role};
 
 use crate::age::{self, Span};
+use crate::agent_list::AgentLook;
 use crate::input::{self, Input};
 use crate::parts::{clipped, glyph};
 use crate::sample::Session;
 use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::tile::Tile;
+use rustle::TextFieldState;
 
 /// How wide the search box is.
 const SEARCH_WIDTH: f32 = 500.0;
@@ -38,30 +40,94 @@ const AGE_WIDTH: f32 = 80.0;
 /// What the machine column says for a project on this machine.
 const LOCAL_MACHINE: &str = "local";
 
-/// Emits the history page for `state`.
+/// The row of one session as the history page shows it.
+#[derive(Clone, Debug, PartialEq)]
+struct HistoryRow {
+    /// The session's position among every session.
+    index: usize,
+    /// When it last changed, as the group it falls in.
+    span: Span,
+    /// Its title.
+    title: String,
+    /// The agent that works in it.
+    agent: AgentLook,
+    /// The name of its project, or nothing.
+    project: String,
+    /// The machine it ran on.
+    machine: String,
+    /// Its branch.
+    branch: String,
+    /// How long ago it changed, in words.
+    age: String,
+}
+
+/// What the history page shows, and nothing else, compared by value, so the page is
+/// composed again only when it changed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HistoryState {
+    /// The sessions that match the search, the one changed last first.
+    rows: Vec<HistoryRow>,
+    /// The search box.
+    search: TextFieldState,
+    /// How far the groups are scrolled.
+    scroll: rustle::ScrollState,
+}
+
+impl HistoryState {
+    /// What the history page of `state` shows.
+    pub fn of(state: &WorkspaceState) -> Self {
+        let now = age::now();
+        let rows = matching(state)
+            .into_iter()
+            .map(|index| {
+                let session: &Session = &state.sessions[index];
+                HistoryRow {
+                    index,
+                    span: Span::of(session.updated_at, now),
+                    title: session.title.clone(),
+                    agent: state.agent_look(session.agent),
+                    project: state
+                        .project_of(session)
+                        .map_or(String::new(), |project| project.name.clone()),
+                    machine: state
+                        .machine_of(session)
+                        .flatten()
+                        .unwrap_or_else(|| LOCAL_MACHINE.to_owned()),
+                    branch: session.branch.clone(),
+                    age: session.age(),
+                }
+            })
+            .collect();
+        Self {
+            rows,
+            search: state.history_search.clone(),
+            scroll: state.history_scroll.clone(),
+        }
+    }
+}
+
+/// Emits the history page `view` describes.
 #[track_caller]
-pub fn history(state: &WorkspaceState) {
-    let now = age::now();
-    let rows = matching(state);
+pub fn history(view: &HistoryState) {
     rustle::column_arranged(
         Modifier::new().weight(1.0),
         Arrangement::Start,
         Alignment::Start,
         || {
             heading();
-            search(state);
+            search(&view.search);
             rustle::column_arranged(
                 Modifier::new()
                     .fill_max_width()
                     .weight(1.0)
-                    .vertical_scroll(&state.history_scroll)
+                    .vertical_scroll(&view.scroll)
                     .fill_max_width()
                     .padding_xy(theme::sp(5), 0.0),
                 Arrangement::Start,
                 Alignment::Start,
                 || {
                     for span in Span::ALL {
-                        group(state, span, &rows, now);
+                        group(span, &view.rows);
                     }
                 },
             );
@@ -82,9 +148,9 @@ fn heading() {
     });
 }
 
-/// Emits the box the reader types into to narrow the list.
+/// Emits the box the reader types into to narrow the list, `field`.
 #[track_caller]
-fn search(state: &WorkspaceState) {
+fn search(field: &TextFieldState) {
     rustle::column_arranged(
         Modifier::new().padding_each(theme::sp(5), theme::sp(5), theme::sp(5), theme::sp(2)),
         Arrangement::Start,
@@ -100,16 +166,13 @@ fn search(state: &WorkspaceState) {
                 Alignment::Center,
                 || {
                     glyph(phosphor::MAGNIFYING_GLASS, 4.0, Role::Muted);
-                    Input::new(
-                        &state.history_search,
-                        Target::Sidebar(SidebarEvent::HistorySearch),
-                    )
-                    .variant(input::Variant::Ghost)
-                    .size(Size::Sm)
-                    .placeholder("Search history")
-                    .modifier(Modifier::new().weight(1.0))
-                    .submits(Target::Sidebar(SidebarEvent::History))
-                    .build();
+                    Input::new(field, Target::Sidebar(SidebarEvent::HistorySearch))
+                        .variant(input::Variant::Ghost)
+                        .size(Size::Sm)
+                        .placeholder("Search history")
+                        .modifier(Modifier::new().weight(1.0))
+                        .submits(Target::Sidebar(SidebarEvent::History))
+                        .build();
                 },
             );
         },
@@ -143,14 +206,10 @@ fn searchable(state: &WorkspaceState, index: usize) -> String {
     .to_lowercase()
 }
 
-/// Emits the heading and rows of `span`, when a session in `rows` falls in it.
+/// Emits the heading and rows of `span`, when one of `rows` falls in it.
 #[track_caller]
-fn group(state: &WorkspaceState, span: Span, rows: &[usize], now: u64) {
-    let members: Vec<usize> = rows
-        .iter()
-        .copied()
-        .filter(|&index| Span::of(state.sessions[index].updated_at, now) == span)
-        .collect();
+fn group(span: Span, rows: &[HistoryRow]) {
+    let members: Vec<&HistoryRow> = rows.iter().filter(|row| row.span == span).collect();
     if members.is_empty() {
         return;
     }
@@ -176,25 +235,17 @@ fn group(state: &WorkspaceState, span: Span, rows: &[usize], now: u64) {
                     );
                 },
             );
-            for index in members {
-                rustle::key(index, || row_of(state, index));
+            for row in members {
+                rustle::key(row.index, || row_of(row));
             }
         },
     );
 }
 
-/// Emits the row of the session at `index`: its title and agent, then where it ran and when.
+/// Emits the row `row` of a session: its title and agent, then where it ran and when.
 #[track_caller]
-fn row_of(state: &WorkspaceState, index: usize) {
-    let session: &Session = &state.sessions[index];
-    let project = state
-        .project_of(session)
-        .map_or("", |project| project.name.as_str());
-    let machine = state
-        .machine_of(session)
-        .flatten()
-        .unwrap_or_else(|| LOCAL_MACHINE.to_owned());
-    let agent = state.agent_look(session.agent);
+fn row_of(row: &HistoryRow) {
+    let index = row.index;
     let operations = crate::events::operations();
     Tile::new(Target::Sidebar(SidebarEvent::Session(index)))
         .on_context(move |at| operations.open_session_menu(index, at))
@@ -209,24 +260,24 @@ fn row_of(state: &WorkspaceState, index: usize) {
                 || {
                     rustle::basic_text(
                         Modifier::new().width_in(0.0, 560.0),
-                        &session.title,
+                        &row.title,
                         theme::line(14, Role::Text),
                         TextOverflow::Ellipsis,
                     );
                     glyph(phosphor::CARET_RIGHT, 4.0, Role::Subtle);
-                    glyph(agent.icon, 4.0, Role::Muted);
+                    glyph(row.agent.icon.clone(), 4.0, Role::Muted);
                     rustle::basic_text(
                         Modifier::new(),
-                        agent.name,
+                        &row.agent.name,
                         theme::line(14, Role::Muted),
                         TextOverflow::Ellipsis,
                     );
                 },
             );
-            cell(project, PROJECT_WIDTH, false);
-            cell(&machine, MACHINE_WIDTH, false);
-            cell(&session.branch, BRANCH_WIDTH, false);
-            cell(&session.age(), AGE_WIDTH, true);
+            cell(&row.project, PROJECT_WIDTH, false);
+            cell(&row.machine, MACHINE_WIDTH, false);
+            cell(&row.branch, BRANCH_WIDTH, false);
+            cell(&row.age, AGE_WIDTH, true);
         });
 }
 

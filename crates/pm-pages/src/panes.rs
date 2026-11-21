@@ -21,6 +21,7 @@ use rustle::{
 use rustle::{Icon, phosphor};
 use std::rc::Rc;
 
+use crate::observed::region;
 use pm_components::Menu;
 use pm_components::Size;
 use pm_components::browser;
@@ -30,7 +31,6 @@ use pm_components::file_icon::file_icon;
 use pm_components::open_files::Viewer;
 use pm_components::panes::{Area, Axis, Group, Item, Layout, Placed, Side};
 use pm_components::parts::{glyph, line, spacer};
-use pm_components::revision::region;
 use pm_components::sash::Sash;
 use pm_components::state::{Page, WorkspaceState};
 use pm_components::title_bar::TITLE_BAR_HEIGHT;
@@ -675,7 +675,7 @@ fn laid(
                 Modifier::new().fill_max_height().weight(1.0).clip(),
                 Split {
                     axis: *axis,
-                    ratio: *ratio,
+                    ratio: ratio.get(),
                 },
                 || {
                     row_arranged(side(), Arrangement::Start, Alignment::Start, || {

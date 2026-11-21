@@ -18,7 +18,7 @@ use pm_components::{adder, history, plan, review, settings, sidebar};
 
 pub use pm_components::state::{Outgoing, WorkspaceState};
 
-use pm_components::revision::region;
+use crate::observed::region;
 use pm_components::sash::Sash;
 use pm_components::state::Page;
 
@@ -57,7 +57,11 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
     let page = height - TITLE_BAR_HEIGHT;
     let reviewing = state.review_session().is_some() && state.review;
     let sidebar_width = state.sidebar_room();
-    let review_width = if reviewing { state.review_width } else { 0.0 };
+    let review_width = if reviewing {
+        state.sizes.review_width.get()
+    } else {
+        0.0
+    };
     let plan_width = state.plan_room(width);
     let paned = state.paned();
     let inner = state.inner_sizes();
@@ -83,8 +87,9 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
                         Alignment::Start,
                         || {
                             if state.sidebar_open {
-                                region((state.sidebar_width, height, inner), || {
-                                    sidebar::sidebar(state);
+                                let view = sidebar::SidebarState::of(state);
+                                rustle::skippable((view.clone(), scales), move || {
+                                    sidebar::sidebar(&view);
                                 });
                                 Sash::column(Target::Window(WindowEvent::SidebarSash))
                                     .between()
@@ -100,10 +105,19 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
                             );
                             match state.page {
                                 _ if paned => panes::main_area(state, (width, height)),
-                                Page::History => region(rooms, || history::history(state)),
-                                Page::Extensions => region(rooms, || {
-                                    pm_components::extensions::extensions(state);
-                                }),
+                                Page::History => {
+                                    let view = history::HistoryState::of(state);
+                                    rustle::skippable((view.clone(), scales), move || {
+                                        history::history(&view);
+                                    });
+                                }
+                                Page::Extensions => {
+                                    let view =
+                                        pm_components::extensions::ExtensionsState::of(state);
+                                    rustle::skippable((view.clone(), scales), move || {
+                                        pm_components::extensions::extensions(&view);
+                                    });
+                                }
                                 _ => region(rooms, || panes::starting_page(state, page)),
                             }
                             if let Some(source) = state.plan_shown() {

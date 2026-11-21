@@ -1566,8 +1566,6 @@ pub struct WorkspaceState {
     pub overview_scroll: rustle::ScrollState,
     /// Whether the terminal is open.
     pub terminal: bool,
-    /// Whether the terminal is taller than usual.
-    pub terminal_maximized: bool,
     /// Whether the sidebar of projects and sessions is showing.
     pub sidebar_open: bool,
     /// Which tab of the dock is showing.
@@ -1582,8 +1580,6 @@ pub struct WorkspaceState {
     pub problems_scroll: rustle::ScrollState,
     /// The problem of the list the reader pressed, whose place is to be shown.
     pub problem_picked: Option<usize>,
-    /// How tall the terminal dock is while it is not maximized, in logical pixels.
-    pub terminal_height: f32,
     /// How many columns and lines the dock's window last held.
     pub terminal_size: (u16, u16),
     /// The name the next shell gets in this window.
@@ -1624,12 +1620,8 @@ pub struct WorkspaceState {
     pub sidebar_scroll: rustle::ScrollState,
     /// The submodule of the project the new session page starts work in, or nothing for the project itself.
     pub new_in: Option<String>,
-    /// How wide the sidebar is, in logical pixels.
-    pub sidebar_width: f32,
-    /// How wide the review panel is, in logical pixels.
-    pub review_width: f32,
-    /// How wide the plan panel was dragged to be, in logical pixels, or zero while it takes the width it would by itself.
-    pub plan_width: f32,
+    /// How big the panels around the main area are, as observable state.
+    pub sizes: crate::panel_sizes::PanelSizes,
     /// The panel for adding a project, if it is open.
     pub adder: Option<Adder>,
     /// The window for choosing a folder, if it is open.
@@ -1850,12 +1842,10 @@ impl WorkspaceState {
             sessions,
             page,
             review: true,
-            terminal_height: crate::terminal::HEIGHT,
             terminal_size: crate::dock::FIRST_SIZE,
             next_terminal: 1,
             sidebar_open: true,
-            sidebar_width: crate::sidebar::WIDTH,
-            review_width: crate::review::WIDTH,
+            sizes: crate::panel_sizes::PanelSizes::opening(),
             settings_servers: crate::settings_servers::ServerSettings {
                 agents: builtin.clone(),
                 ..Default::default()
@@ -1915,7 +1905,7 @@ impl WorkspaceState {
     /// How much room the sidebar takes from the left of the window, in logical pixels: its width while it shows and nothing while it is hidden.
     pub fn sidebar_room(&self) -> f32 {
         if self.sidebar_open {
-            self.sidebar_width
+            self.sizes.sidebar_width.get()
         } else {
             0.0
         }

@@ -29,7 +29,7 @@ fn region_where(rig: &Rig, last: bool, pick: impl Fn(&Screen, Target) -> bool) -
 #[test]
 fn the_sidebar_handle_resizes_it() {
     let mut rig = Rig::shot(Shot::Workspace);
-    let before = rig.state(|state| state.sidebar_width);
+    let before = rig.state(|state| state.sizes.sidebar_width.get());
     let from = rig.center(Target::Window(WindowEvent::SidebarSash));
     let to = (from.0 + 60.0, from.1);
     rig.move_to(from);
@@ -37,9 +37,15 @@ fn the_sidebar_handle_resizes_it() {
     rig.move_to(to);
     assert_eq!(rig.cursor(), rustle::CursorIcon::ColResize);
     rig.button_in(None, PointerButton::Primary, false, to);
-    assert_eq!(rig.state(|state| state.sidebar_width), before + 60.0);
+    assert_eq!(
+        rig.state(|state| state.sizes.sidebar_width.get()),
+        before + 60.0
+    );
     rig.move_to((to.0 + 100.0, to.1));
-    assert_eq!(rig.state(|state| state.sidebar_width), before + 60.0);
+    assert_eq!(
+        rig.state(|state| state.sizes.sidebar_width.get()),
+        before + 60.0
+    );
 }
 
 /// The rectangles a line one logical pixel wide fills in the accent colour within a
@@ -107,10 +113,13 @@ fn a_drag_moves_what_its_room_changed_and_keeps_the_rest() {
 #[test]
 fn the_review_handle_resizes_it() {
     let mut rig = Rig::shot(Shot::Workspace);
-    let before = rig.state(|state| state.review_width);
+    let before = rig.state(|state| state.sizes.review_width.get());
     let from = rig.center(Target::Window(WindowEvent::ReviewSash));
     rig.drag(from, (from.0 - 40.0, from.1), 4);
-    assert_eq!(rig.state(|state| state.review_width), before + 40.0);
+    assert_eq!(
+        rig.state(|state| state.sizes.review_width.get()),
+        before + 40.0
+    );
 }
 
 /// Dragging a project's header below another moves it there; a press that
@@ -328,10 +337,13 @@ fn a_click_on_the_gutter_comments_on_one_line() {
 #[test]
 fn the_terminal_handle_resizes_the_dock() {
     let mut rig = Rig::shot(Shot::Terminal);
-    let before = rig.state(|state| state.terminal_height);
+    let before = rig.state(|state| state.sizes.terminal_height.get());
     let from = rig.center(Target::Window(WindowEvent::TerminalSash));
     rig.drag(from, (from.0, from.1 - 40.0), 4);
-    assert_eq!(rig.state(|state| state.terminal_height), before + 40.0);
+    assert_eq!(
+        rig.state(|state| state.sizes.terminal_height.get()),
+        before + 40.0
+    );
 }
 
 /// The handles of the sidebar and the review panel lie in the row of panels centred on the
@@ -345,13 +357,13 @@ fn the_handles_lie_on_the_edges_they_resize() {
     let sidebar = rig
         .region(Target::Window(WindowEvent::SidebarSash))
         .expect("the sidebar's handle is laid out");
-    let edge = rig.state(|state| state.sidebar_width);
+    let edge = rig.state(|state| state.sizes.sidebar_width.get());
     assert_eq!(sidebar.origin.x + sidebar.size.width / 2.0, edge);
     assert_eq!((sidebar.origin.y, sidebar.size.height), (bar, height - bar));
     let review = rig
         .region(Target::Window(WindowEvent::ReviewSash))
         .expect("the review panel's handle is laid out");
-    let edge = width - rig.state(|state| state.review_width);
+    let edge = width - rig.state(|state| state.sizes.review_width.get());
     assert_eq!(review.origin.x + review.size.width / 2.0, edge);
     assert_eq!((review.origin.y, review.size.height), (bar, height - bar));
     let rig = Rig::shot(Shot::Terminal);
@@ -386,7 +398,7 @@ fn the_plan_handle_lies_on_its_edge_and_resizes_it() {
     let plan = rig.state(|state| state.plan_room(width));
     let review = rig.state(|state| {
         if state.review_session().is_some() && state.review {
-            state.review_width
+            state.sizes.review_width.get()
         } else {
             0.0
         }
@@ -421,7 +433,7 @@ fn a_split_lays_its_panes_out_by_its_share() {
                 axis: Axis::Column,
                 ratio: inner,
                 ..
-            } => (ratio, inner),
+            } => (ratio.get(), inner.get()),
             _ => panic!("the first side is split one above the other"),
         },
         _ => panic!("the panes are split side by side"),

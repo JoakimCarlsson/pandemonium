@@ -183,38 +183,47 @@ impl Sash {
 /// The sizes set by the handles inside panels rather than between them: the git graph's
 /// height, the browser tools' width, and the dock's height and whether it is maximized. A
 /// region of the screen keyed by its room holds these too, whichever panel it is, since a
-/// drag of these handles changes no revision.
+/// drag of these handles changes only sizes held apart from the screen.
 pub type InnerSizes = (f32, Option<f32>, f32, bool);
 
 impl WorkspaceState {
     /// The sizes the handles inside panels set; see [`InnerSizes`].
     pub fn inner_sizes(&self) -> InnerSizes {
         (
-            self.git.graph_height,
-            self.browser.as_ref().map(|browser| browser.tools_width),
-            self.terminal_height,
-            self.terminal_maximized,
+            self.git.graph_height.get(),
+            self.browser
+                .as_ref()
+                .map(|browser| browser.tools_width.get()),
+            self.sizes.terminal_height.get(),
+            self.sizes.terminal_maximized.get(),
         )
     }
 
     /// How big the panel the handle `id` resizes is now, in a window `window` logical pixels wide and tall, and which way the handle is pulled to grow it.
     pub fn sash(&self, id: Target, window: (f32, f32)) -> Option<(f32, Grows)> {
         match id {
-            Target::Window(WindowEvent::SidebarSash) => Some((self.sidebar_width, Grows::Right)),
-            Target::Window(WindowEvent::ReviewSash) => Some((self.review_width, Grows::Left)),
+            Target::Window(WindowEvent::SidebarSash) => {
+                Some((self.sizes.sidebar_width.get(), Grows::Right))
+            }
+            Target::Window(WindowEvent::ReviewSash) => {
+                Some((self.sizes.review_width.get(), Grows::Left))
+            }
             Target::Window(WindowEvent::PlanSash) => Some((
-                plan::width_in(self, window.0 - self.sidebar_room() - self.review_width),
+                plan::width_in(
+                    self,
+                    window.0 - self.sidebar_room() - self.sizes.review_width.get(),
+                ),
                 Grows::Left,
             )),
             Target::Window(WindowEvent::TerminalSash) => Some((
                 terminal::height(self, window.1 - crate::title_bar::TITLE_BAR_HEIGHT),
                 Grows::Up,
             )),
-            Target::Git(GitEvent::GraphSash) => Some((self.git.graph_height, Grows::Up)),
+            Target::Git(GitEvent::GraphSash) => Some((self.git.graph_height.get(), Grows::Up)),
             Target::Browser(BrowserEvent::BrowserSash) => self
                 .browser
                 .as_ref()
-                .map(|browser| (browser.tools_width, Grows::Left)),
+                .map(|browser| (browser.tools_width.get(), Grows::Left)),
             Target::Window(WindowEvent::SplitSash(index)) => self.split_sash(index, window),
             _ => None,
         }
@@ -222,32 +231,79 @@ impl WorkspaceState {
 
     /// The state with the panel the handle `id` resizes made `size` logical pixels big, within what that panel allows in a window `window` logical pixels wide and tall.
     pub fn with_sash_size(mut self, id: Target, size: f32, window: (f32, f32)) -> Self {
-        match id {
-            Target::Window(WindowEvent::SidebarSash) => {
-                self.sidebar_width = size.clamp(sidebar::WIDTHS.0, sidebar::WIDTHS.1)
-            }
-            Target::Window(WindowEvent::ReviewSash) => {
-                self.review_width = size.clamp(review::WIDTHS.0, review::WIDTHS.1)
-            }
-            Target::Window(WindowEvent::PlanSash) => {
-                self.plan_width = size.clamp(plan::WIDTHS.0, plan::WIDTHS.1)
-            }
-            Target::Window(WindowEvent::TerminalSash) => {
-                self.terminal_maximized = false;
-                let page = window.1 - crate::title_bar::TITLE_BAR_HEIGHT;
-                self.terminal_height = size.clamp(terminal::HEIGHTS.0, terminal::tallest(page));
-            }
-            Target::Git(GitEvent::GraphSash) => {
-                self.git.graph_height = size.clamp(graph::HEIGHTS.0, graph::HEIGHTS.1)
-            }
-            Target::Browser(BrowserEvent::BrowserSash) => {
-                if let Some(browser) = self.browser.as_mut() {
-                    browser.tools_width = size.clamp(crate::browser::TOOLS_LEAST, window.0);
-                }
-            }
-            Target::Window(WindowEvent::SplitSash(index)) => self.resize_split(index, size, window),
-            _ => {}
+        if !self.hold_sash_size(id, size, window)
+            && let Target::Window(WindowEvent::SplitSash(index)) = id
+        {
+            self.resize_split(index, size, window);
         }
         self
+    }
+
+    /// Makes the panel the handle `id` resizes `size` logical pixels big, within what that
+    /// panel allows in a window `window` logical pixels wide and tall, in the observable
+    /// state that holds its size, without the workspace itself changing; says whether it
+    /// could. A split it cannot reach that way, because the panes shown are laid out
+    /// otherwise than the ones held, is left for [`with_sash_size`](Self::with_sash_size).
+    pub fn hold_sash_size(&self, id: Target, size: f32, window: (f32, f32)) -> bool {
+        match id {
+            Target::Window(WindowEvent::SidebarSash) => {
+                self.sizes
+                    .sidebar_width
+                    .set(size.clamp(sidebar::WIDTHS.0, sidebar::WIDTHS.1));
+            }
+            Target::Window(WindowEvent::ReviewSash) => {
+                self.sizes
+                    .review_width
+                    .set(size.clamp(review::WIDTHS.0, review::WIDTHS.1));
+            }
+            Target::Window(WindowEvent::PlanSash) => {
+                self.sizes
+                    .plan_width
+                    .set(size.clamp(plan::WIDTHS.0, plan::WIDTHS.1));
+            }
+            Target::Window(WindowEvent::TerminalSash) => {
+                self.sizes.terminal_maximized.set(false);
+                let page = window.1 - crate::title_bar::TITLE_BAR_HEIGHT;
+                self.sizes
+                    .terminal_height
+                    .set(size.clamp(terminal::HEIGHTS.0, terminal::tallest(page)));
+            }
+            Target::Git(GitEvent::GraphSash) => {
+                self.git
+                    .graph_height
+                    .set(size.clamp(graph::HEIGHTS.0, graph::HEIGHTS.1));
+            }
+            Target::Browser(BrowserEvent::BrowserSash) => {
+                if let Some(browser) = self.browser.as_ref() {
+                    browser
+                        .tools_width
+                        .set(size.clamp(crate::browser::TOOLS_LEAST, window.0));
+                }
+            }
+            Target::Window(WindowEvent::SplitSash(index)) => {
+                return self.hold_split(index, size, window);
+            }
+            _ => {}
+        }
+        true
+    }
+
+    /// Every size held as observable state, in a fixed order: the panels', the graph's, the
+    /// browser tools' and the share of each split of the panes held, for a block that follows
+    /// any of them changing.
+    pub fn held_sizes(&self) -> Vec<f32> {
+        let mut sizes = vec![
+            self.sizes.sidebar_width.get(),
+            self.sizes.review_width.get(),
+            self.sizes.plan_width.get(),
+            self.sizes.terminal_height.get(),
+            f32::from(u8::from(self.sizes.terminal_maximized.get())),
+            self.git.graph_height.get(),
+            self.browser
+                .as_ref()
+                .map_or(-1.0, |browser| browser.tools_width.get()),
+        ];
+        sizes.extend(self.panes.layout.ratios());
+        sizes
     }
 }

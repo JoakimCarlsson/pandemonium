@@ -94,8 +94,8 @@ pub struct GitControls {
     pub stashes: Vec<pm_git::Stash>,
     /// The merge, rebase or cherry-pick the open session's folder is stopped in, if it is in one.
     pub operation: Option<pm_git::Operation>,
-    /// How tall the graph is when it is open, in logical pixels.
-    pub graph_height: f32,
+    /// How tall the graph is when it is open, in logical pixels, held as observable state.
+    pub graph_height: crate::Held<f32>,
     /// Whether the list of branches is open.
     pub branch_menu: bool,
     /// The branches of the repository the list shows, the one checked out first.
@@ -151,7 +151,7 @@ impl Default for GitControls {
             branching: None,
             stashes: Vec::new(),
             operation: None,
-            graph_height: crate::graph::HEIGHT,
+            graph_height: crate::Held::new(crate::graph::HEIGHT),
             branch_menu: false,
             branches: Vec::new(),
             repository: None,

@@ -148,8 +148,8 @@ pub struct Browser {
     pub tools_page: Option<rustle::ImageData>,
     /// Whether the developer tools are open beside the page.
     pub tools: bool,
-    /// How wide the developer tools are when open, in logical pixels.
-    pub tools_width: f32,
+    /// How wide the developer tools are when open, in logical pixels, held as observable state.
+    pub tools_width: crate::Held<f32>,
     /// Whether the question about clearing cookies and site data is open.
     pub clearing: bool,
     /// How many times the reader opened the browser or brought it forward: its address
@@ -189,7 +189,7 @@ impl Browser {
             strip_fit: std::cell::Cell::new(usize::MAX),
             tools_page: None,
             tools: false,
-            tools_width: TOOLS_WIDTH,
+            tools_width: crate::Held::new(TOOLS_WIDTH),
             clearing: false,
             asked: 0,
         }
@@ -213,7 +213,7 @@ impl Browser {
         }
         browser.active = active.min(browser.tabs.len() - 1);
         if tools_width > 0.0 {
-            browser.tools_width = tools_width;
+            browser.tools_width.set(tools_width);
         }
         if tools {
             browser.tools = true;
@@ -840,7 +840,7 @@ pub fn browser_view(state: &WorkspaceState, width: f32) {
                             browser,
                             Target::Browser(BrowserEvent::BrowserToolsBody),
                             &browser.tools_page,
-                            tools_size(browser.tools_width),
+                            tools_size(browser.tools_width.get()),
                             &covered,
                         );
                     }

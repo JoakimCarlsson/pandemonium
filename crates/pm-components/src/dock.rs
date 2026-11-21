@@ -364,7 +364,7 @@ impl WorkspaceState {
             && self.bottom_tab() == BottomTab::Terminal
         {
             self.terminal = false;
-            self.terminal_maximized = false;
+            self.sizes.terminal_maximized.set(false);
         }
         Some(tab)
     }
@@ -378,7 +378,9 @@ impl WorkspaceState {
             Target::Terminal(TerminalEvent::BottomProblems)
             | Target::Terminal(TerminalEvent::BottomProblemsCount) => self.show_problems(),
             Target::Terminal(TerminalEvent::MaximizeTerminal) => {
-                self.terminal_maximized = !self.terminal_maximized
+                self.sizes
+                    .terminal_maximized
+                    .set(!self.sizes.terminal_maximized.get());
             }
             Target::Terminal(TerminalEvent::TerminalTab(index))
                 if index < self.docked().map_or(0, |session| session.terminals.len()) =>

@@ -62,17 +62,6 @@ pub fn submodule_rows(state: &WorkspaceState) -> Vec<(usize, String)> {
         .collect()
 }
 
-/// The submodule of its project a session is listed under: the one it works in, when its project still lists it.
-fn listed_under<'a>(state: &'a WorkspaceState, session: &Session) -> Option<&'a str> {
-    let submodule = session.submodule.as_deref()?;
-    state
-        .project_of(session)?
-        .submodules
-        .iter()
-        .find(|path| *path == submodule)
-        .map(String::as_str)
-}
-
 /// Emits the session activity or attention indicator, with its meaning on hover.
 #[track_caller]
 pub fn status_icon(status: Status) {
@@ -107,11 +96,117 @@ pub fn status_icon(status: Status) {
     });
 }
 
-/// The session the page shows, by position, if it shows one.
-fn open_session(state: &WorkspaceState) -> Option<usize> {
-    match state.page {
-        Page::Session(open) => Some(open),
-        _ => None,
+/// The row of one session as the sidebar shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SessionRow {
+    /// The session's position among every session.
+    pub position: usize,
+    /// The project it belongs to, by position, if any.
+    pub project: Option<usize>,
+    /// The submodule of its project it is listed under, when its project still lists it.
+    pub listed_under: Option<String>,
+    /// The indicator it shows.
+    pub status: Status,
+    /// Its title.
+    pub title: String,
+    /// How long ago it was last updated, in words.
+    pub age: String,
+}
+
+impl SessionRow {
+    /// The row of the session at `position` of `state`.
+    fn of(state: &WorkspaceState, position: usize, session: &Session) -> Self {
+        let listed_under = session.submodule.as_deref().and_then(|submodule| {
+            state
+                .project_of(session)?
+                .submodules
+                .iter()
+                .find(|path| *path == submodule)
+                .cloned()
+        });
+        Self {
+            position,
+            project: session.project,
+            listed_under,
+            status: session.shown(),
+            title: session.title.clone(),
+            age: session.age(),
+        }
+    }
+}
+
+/// What the sidebar shows, and nothing else, compared by value, so the sidebar is composed
+/// again only when it changed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SidebarState {
+    /// What the main area shows, which the rows that lead there are filled for.
+    page: Page,
+    /// The submodule the page for new work starts in, if one.
+    new_in: Option<String>,
+    /// The projects, by position.
+    projects: Vec<Project>,
+    /// The rows of the sessions that are not closed and belong to a project.
+    members: Vec<SessionRow>,
+    /// The rows of the chats that belong to no project and are open.
+    chats: Vec<SessionRow>,
+    /// The projects in the order they are listed.
+    order: Vec<usize>,
+    /// The project being dragged, by position, if one is.
+    dragged: Option<usize>,
+    /// The project whose menu hangs from its button, by position, if one does.
+    menu: Option<usize>,
+    /// How wide the sidebar is, in logical pixels.
+    width: f32,
+    /// How far the list is scrolled.
+    scroll: rustle::ScrollState,
+}
+
+impl SidebarState {
+    /// What the sidebar of `state` shows.
+    pub fn of(state: &WorkspaceState) -> Self {
+        let members = state
+            .sessions
+            .iter()
+            .enumerate()
+            .filter(|(_, session)| session.project.is_some() && !session.closed)
+            .map(|(position, session)| SessionRow::of(state, position, session))
+            .collect();
+        let chats = state
+            .open_chats()
+            .into_iter()
+            .map(|position| SessionRow::of(state, position, &state.sessions[position]))
+            .collect();
+        Self {
+            page: state.page,
+            new_in: state.new_in.clone(),
+            projects: state.projects.clone(),
+            members,
+            chats,
+            order: state.display_order(),
+            dragged: state.project_drag.map(|drag| drag.from),
+            menu: state
+                .project_menu
+                .filter(|open| open.at.is_none())
+                .map(|open| open.project),
+            width: state.sizes.sidebar_width.get(),
+            scroll: state.sidebar_scroll.clone(),
+        }
+    }
+
+    /// The session the page shows, by position, if it shows one.
+    fn open_session(&self) -> Option<usize> {
+        match self.page {
+            Page::Session(open) => Some(open),
+            _ => None,
+        }
+    }
+
+    /// The position among every submodule row of the first submodule of the project at `index`.
+    fn first_submodule(&self, index: usize) -> usize {
+        self.projects[..index.min(self.projects.len())]
+            .iter()
+            .map(|project| project.submodules.len())
+            .sum()
     }
 }
 
@@ -146,21 +241,22 @@ fn glyph_row(tile: Tile, icon: Icon, label: &str, selected: bool) {
     });
 }
 
-/// Emits the row of one session under its project, set in `indent` steps.
+/// Emits the row of one session, `row`, set in `indent` steps.
 #[track_caller]
-fn session_row(index: usize, session: &Session, selected: bool, indent: f32) {
+fn session_row(row: &SessionRow, selected: bool, indent: f32) {
     let operations = crate::events::operations();
+    let index = row.position;
     tile(
         Target::Sidebar(SidebarEvent::Session(index)),
         selected,
         Modifier::new().padding_each(theme::sp(indent), 0.0, theme::sp(2), 0.0),
     )
-    .modifier(session.project.map_or_else(Modifier::new, project_place))
+    .modifier(row.project.map_or_else(Modifier::new, project_place))
     .on_context(move |at| operations.open_session_menu(index, at))
     .build_with(|| {
-        status_icon(session.shown());
-        clipped(&session.title, 14, Role::Text);
-        line(session.age(), 12, 1.4, Role::Subtle);
+        status_icon(row.status);
+        clipped(&row.title, 14, Role::Text);
+        line(&row.age, 12, 1.4, Role::Subtle);
     });
 }
 
@@ -212,14 +308,14 @@ fn submodule_row(project: &Project, relative: &str, position: usize, starting: b
 /// Emits the submodules of the project at `index` that sit directly in `parent`, each with the sessions working in it and the submodules inside it, behind a line that ties them to what holds them; nothing when there are none.
 #[track_caller]
 fn submodule_tree(
-    state: &WorkspaceState,
+    view: &SidebarState,
     index: usize,
     parent: Option<&str>,
-    members: &[(usize, &Session)],
+    members: &[&SessionRow],
     first: usize,
 ) {
-    let project = &state.projects[index];
-    let open = open_session(state);
+    let project = &view.projects[index];
+    let open = view.open_session();
     let blocks: Vec<(usize, &String)> = project
         .submodules
         .iter()
@@ -247,8 +343,8 @@ fn submodule_tree(
                         let name = parent
                             .and_then(|parent| path.strip_prefix(parent))
                             .map_or(path.as_str(), |rest| rest.trim_start_matches('/'));
-                        let starting = state.page == Page::New(index)
-                            && state.new_in.as_deref() == Some(path.as_str());
+                        let starting = view.page == Page::New(index)
+                            && view.new_in.as_deref() == Some(path.as_str());
                         rustle::key(first + offset, || {
                             rustle::column_arranged(
                                 Modifier::new().fill_max_width(),
@@ -256,14 +352,12 @@ fn submodule_tree(
                                 Alignment::Start,
                                 || {
                                     submodule_row(project, name, first + offset, starting);
-                                    for &(position, session) in
-                                        members.iter().filter(|(_, session)| {
-                                            listed_under(state, session) == Some(path.as_str())
-                                        })
-                                    {
-                                        session_row(position, session, open == Some(position), 3.5);
+                                    for row in members.iter().filter(|row| {
+                                        row.listed_under.as_deref() == Some(path.as_str())
+                                    }) {
+                                        session_row(row, open == Some(row.position), 3.5);
                                     }
-                                    submodule_tree(state, index, Some(path), members, first);
+                                    submodule_tree(view, index, Some(path), members, first);
                                 },
                             );
                         });
@@ -276,21 +370,17 @@ fn submodule_tree(
 
 /// Emits one project: its header, its sessions and a row to start new work, then each submodule with the sessions working in it.
 #[track_caller]
-fn project(state: &WorkspaceState, index: usize) {
-    let project = &state.projects[index];
-    let members: Vec<(usize, &Session)> = state
-        .sessions
+fn project(view: &SidebarState, index: usize) {
+    let project = &view.projects[index];
+    let members: Vec<&SessionRow> = view
+        .members
         .iter()
-        .enumerate()
-        .filter(|(_, session)| session.project == Some(index) && !session.closed)
+        .filter(|row| row.project == Some(index))
         .collect();
-    let first_submodule = submodule_rows(state)
-        .iter()
-        .position(|(held, _)| *held == index)
-        .unwrap_or(0);
-    let dragged = state.project_drag.is_some_and(|drag| drag.from == index);
-    let open = open_session(state);
-    let starting = state.page == Page::New(index) && state.new_in.is_none();
+    let first_submodule = view.first_submodule(index);
+    let dragged = view.dragged == Some(index);
+    let open = view.open_session();
+    let starting = view.page == Page::New(index) && view.new_in.is_none();
     let section = Modifier::new()
         .fill_max_width()
         .padding_each(0.0, 0.0, 0.0, theme::sp(3));
@@ -304,7 +394,7 @@ fn project(state: &WorkspaceState, index: usize) {
         let opens = Rc::clone(&operations);
         tile(
             Target::Sidebar(SidebarEvent::Project(index)),
-            state.page == Page::Project(index),
+            view.page == Page::Project(index),
             Modifier::new().padding_xy(theme::sp(2), 0.0),
         )
         .modifier(project_place(index))
@@ -318,20 +408,15 @@ fn project(state: &WorkspaceState, index: usize) {
             )
             .on_click(move || operations.open_project_menu(index, None))
             .dropdown(
-                state
-                    .project_menu
-                    .filter(|open| open.project == index && open.at.is_none())
-                    .map(|_| crate::arrange::project_menu(crate::Menu::dropdown())),
+                (view.menu == Some(index))
+                    .then(|| crate::arrange::project_menu(crate::Menu::dropdown())),
             )
             .build();
         });
-        for &(position, session) in members
-            .iter()
-            .filter(|(_, session)| listed_under(state, session).is_none())
-        {
-            session_row(position, session, open == Some(position), 3.5);
+        for row in members.iter().filter(|row| row.listed_under.is_none()) {
+            session_row(row, open == Some(row.position), 3.5);
         }
-        submodule_tree(state, index, None, &members, first_submodule);
+        submodule_tree(view, index, None, &members, first_submodule);
         let inner = Modifier::new().padding_each(theme::sp(3), 0.0, 0.0, 0.0);
         let new_in = tile(Target::Sidebar(SidebarEvent::NewIn(index)), starting, inner)
             .modifier(project_place(index));
@@ -341,12 +426,11 @@ fn project(state: &WorkspaceState, index: usize) {
 
 /// Emits the chats that belong to no project, under a heading of their own, or nothing while no chat is open.
 #[track_caller]
-fn chats(state: &WorkspaceState) {
-    let members = state.open_chats();
-    if members.is_empty() {
+fn chats(view: &SidebarState) {
+    if view.chats.is_empty() {
         return;
     }
-    let open = open_session(state);
+    let open = view.open_session();
     rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
@@ -355,24 +439,23 @@ fn chats(state: &WorkspaceState) {
         Alignment::Start,
         || {
             heading("Chats");
-            for position in members {
-                let session = &state.sessions[position];
-                session_row(position, session, open == Some(position), 2.0);
+            for row in &view.chats {
+                session_row(row, open == Some(row.position), 2.0);
             }
         },
     );
 }
 
-/// Emits the whole sidebar for `state`.
+/// Emits the whole sidebar `view` describes.
 #[track_caller]
-pub fn sidebar(state: &WorkspaceState) {
-    state.sidebar_scroll.set_scrollbar(rustle::ScrollbarStyle {
+pub fn sidebar(view: &SidebarState) {
+    view.scroll.set_scrollbar(rustle::ScrollbarStyle {
         visibility: rustle::ScrollbarVisibility::Hidden,
         ..theme::scrollbar()
     });
     rustle::column_arranged(
         Modifier::new()
-            .width(state.sidebar_width)
+            .width(view.width)
             .fill_max_height()
             .background(theme::color(Role::Sidebar))
             .border_right_hairline(theme::color(Role::Border))
@@ -394,7 +477,7 @@ pub fn sidebar(state: &WorkspaceState) {
                         phosphor::CHAT_CIRCLE,
                         "New chat",
                         Target::Sidebar(SidebarEvent::NewChat),
-                        state.page == Page::Chat,
+                        view.page == Page::Chat,
                     );
                     entry(
                         phosphor::PLUS,
@@ -406,13 +489,13 @@ pub fn sidebar(state: &WorkspaceState) {
                         phosphor::CLOCK_COUNTER_CLOCKWISE,
                         "History",
                         Target::Sidebar(SidebarEvent::History),
-                        state.page == Page::History,
+                        view.page == Page::History,
                     );
                     entry(
                         phosphor::CODE,
                         "Extensions",
                         Target::Settings(SettingsEvent::Extensions),
-                        state.page == Page::Extensions,
+                        view.page == Page::Extensions,
                     );
                 },
             );
@@ -420,15 +503,15 @@ pub fn sidebar(state: &WorkspaceState) {
                 Modifier::new()
                     .weight(1.0)
                     .fill_max_width()
-                    .vertical_scroll(&state.sidebar_scroll)
+                    .vertical_scroll(&view.scroll)
                     .padding_xy(theme::sp(2), 0.0),
                 Arrangement::Start,
                 Alignment::Start,
                 || {
-                    chats(state);
+                    chats(view);
                     heading("Workspaces");
-                    for index in state.display_order() {
-                        rustle::key(index, || project(state, index));
+                    for &index in &view.order {
+                        rustle::key(index, || project(view, index));
                     }
                 },
             );
@@ -453,7 +536,7 @@ pub fn drag_ghost(state: &WorkspaceState) {
             rustle::row_arranged(
                 Modifier::new()
                     .height(theme::sp(9))
-                    .width(state.sidebar_width - 16.0)
+                    .width(state.sizes.sidebar_width.get() - 16.0)
                     .shadow_layers(&theme::MEDIUM_SHADOW, Radius::Md.px())
                     .panel(Radius::Md)
                     .padding_xy(theme::sp(2), 0.0),

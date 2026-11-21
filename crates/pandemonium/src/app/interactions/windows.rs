@@ -340,3 +340,16 @@ fn typing_leaves_the_title_bar_alone() {
     rig.click_on(Target::Sidebar(SidebarEvent::SidebarToggle));
     assert_ne!(bar(&rig), before, "the sidebar left the title bar's state");
 }
+
+/// Typing in the prompt leaves the sidebar's own state as it was, so the sidebar's block,
+/// keyed on that state, is not composed again.
+#[test]
+fn typing_leaves_the_sidebar_alone() {
+    use pm_components::areas::ComposerEvent;
+    let mut rig = Rig::shot(Shot::Workspace);
+    let view = |rig: &Rig| rig.state(pm_components::sidebar::SidebarState::of);
+    rig.click_on(Target::Composer(ComposerEvent::Prompt));
+    let before = view(&rig);
+    rig.type_text("hello");
+    assert_eq!(view(&rig), before, "typing changed the sidebar's state");
+}

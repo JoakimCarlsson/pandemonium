@@ -363,16 +363,13 @@ fn heading() {
     });
 }
 
-/// Emits the box the reader types into to narrow the list.
+/// Emits the box the reader types into to narrow the list, `field`.
 #[track_caller]
-fn search(state: &WorkspaceState) {
-    Input::search(
-        &state.extensions_page.search,
-        Target::Settings(SettingsEvent::ExtensionsSearch),
-    )
-    .size(Size::Lg)
-    .placeholder("Search extensions")
-    .build();
+fn search(field: &TextFieldState) {
+    Input::search(field, Target::Settings(SettingsEvent::ExtensionsSearch))
+        .size(Size::Lg)
+        .placeholder("Search extensions")
+        .build();
 }
 
 /// Emits the icon an extension's files are shown with, once it is installed and has one; a plain code file otherwise.
@@ -637,20 +634,43 @@ fn entry(extension: &ExtensionInfo, place: usize) {
     );
 }
 
-/// Emits the extensions page for `state`.
+/// What the extensions page shows, and nothing else, compared by value, so the page is
+/// composed again only when it changed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExtensionsState {
+    /// What the page remembers: the search, the scroll, the extension waiting and the problem.
+    page: ExtensionsPage,
+    /// The extensions that match the search, in the order they are listed.
+    listed: Vec<ExtensionInfo>,
+    /// Whether the server said which extensions there are.
+    known: bool,
+}
+
+impl ExtensionsState {
+    /// What the extensions page of `state` shows.
+    pub fn of(state: &WorkspaceState) -> Self {
+        Self {
+            page: state.extensions_page.clone(),
+            listed: state.listed_extensions().into_iter().cloned().collect(),
+            known: !state.extensions.is_empty(),
+        }
+    }
+}
+
+/// Emits the extensions page `view` describes.
 #[track_caller]
-pub fn extensions(state: &WorkspaceState) {
-    let listed = state.listed_extensions();
+pub fn extensions(view: &ExtensionsState) {
+    let listed = &view.listed;
     let bounded = Modifier::new().width_in(0.0, PAGE_WIDTH).fill_max_width();
-    scrolled_page(heading, &state.extensions_page.scroll, bounded, || {
-        search(state);
-        if let Some(problem) = &state.extensions_page.problem {
+    scrolled_page(heading, &view.page.scroll, bounded, || {
+        search(&view.page.search);
+        if let Some(problem) = &view.page.problem {
             line(problem.clone(), 12, 1.4, Role::Danger);
         }
-        if let Some(preview) = &state.extensions_page.preview {
+        if let Some(preview) = &view.page.preview {
             preview_card(preview);
         }
-        if state.extensions.is_empty() {
+        if !view.known {
             line(
                 "Asking the server which extensions there are…",
                 13,

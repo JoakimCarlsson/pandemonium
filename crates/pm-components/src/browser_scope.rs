@@ -218,7 +218,7 @@ pub(crate) fn saved_parts(browser: &Browser) -> SavedBrowserParts {
             locked: tab.locked,
         })
         .collect();
-    (tabs, active, browser.tools, browser.tools_width)
+    (tabs, active, browser.tools, browser.tools_width.get())
 }
 
 #[cfg(test)]

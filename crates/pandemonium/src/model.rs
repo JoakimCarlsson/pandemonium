@@ -3,34 +3,35 @@
 //!
 //! Every change composes the roots again, and the block of the main window's root
 //! that follows the screen runs the app's reaction to it as a side effect. The
-//! title bar and the plan panel are composed again only when their own state,
-//! compared by value, changed. The other regions of the screen take the whole
-//! workspace, so the model still counts the changes, as the screen's revision,
-//! except those that only resize panels, and those regions are keyed by the
-//! revision and by their own size ([`pm_components::revision::region`]) so they
-//! are composed again only when the screen or their room changed.
+//! title bar, the sidebar, the plan panel, the history page and the extensions page
+//! are composed again only when their own state, compared by value, changed. The
+//! other regions of the screen take the whole workspace and read the screen's state
+//! themselves ([`pm_pages::observed`]), so they are composed again when the screen
+//! or their room changed. The sizes of panels are held apart from the screen as
+//! observable state, so dragging a handle writes no screen and leaves every region
+//! whose room did not change as it was.
 
-use std::cell::Cell;
-use std::rc::Rc;
-
+use pm_pages::observed::ScreenState;
 use pm_pages::{Screen, WorkspaceState};
 
 /// The screen as a rustle state. Every clone is a handle to the same screen.
 #[derive(Clone)]
 pub struct Model {
-    /// The screen, read by the root of every window, which a change composes again.
+    /// The screen, read by the root of every window and by each region that shows it, which
+    /// a change composes again.
     state: rustle::State<Screen>,
-    /// The screen's revision: how many changes there were that are not only of the
-    /// sizes of panels.
-    revision: Rc<Cell<u64>>,
+    /// A handle to the same state that the views are given, so the regions of the screen
+    /// read it themselves.
+    observed: ScreenState,
 }
 
 impl Model {
     /// A model holding `screen`.
     pub fn new(screen: Screen) -> Self {
+        let state = rustle::mutable_state(screen);
         Self {
-            state: rustle::mutable_state(screen),
-            revision: Rc::new(Cell::new(0)),
+            observed: ScreenState::new(state.clone()),
+            state,
         }
     }
 
@@ -39,10 +40,9 @@ impl Model {
         self.state.with(read)
     }
 
-    /// Changes the screen in place through `change` and moves its revision on.
+    /// Changes the screen in place through `change`, which composes again what read it.
     pub fn update(&self, change: impl FnOnce(&mut Screen)) {
         self.state.update(change);
-        self.revision.set(self.revision.get() + 1);
     }
 
     /// Replaces the workspace the screen shows with what `change` makes of it,
@@ -51,17 +51,9 @@ impl Model {
         self.update(|screen| *screen = std::mem::take(screen).in_workspace(change));
     }
 
-    /// Changes only the sizes of panels in the screen through `change`, leaving its
-    /// revision, so only the regions whose room changed are
-    /// composed again. `change` must change nothing but such sizes.
-    pub fn resize(&self, change: impl FnOnce(&mut Screen)) {
-        self.state.update(change);
-    }
-
-    /// The screen's revision: how many changes there were that are not only of the
-    /// sizes of panels.
-    pub fn revision(&self) -> u64 {
-        self.revision.get()
+    /// The handle to the screen's state the views are given.
+    pub fn observed(&self) -> ScreenState {
+        self.observed.clone()
     }
 }
 
@@ -78,14 +70,37 @@ mod tests {
         assert!(model.read(|screen| *screen != Screen::default()));
     }
 
-    /// A change moves the revision on and a resize leaves it.
+    /// A block that reads the screen runs again for a change of the screen, and not for a
+    /// panel resized through the size it holds apart from the screen.
     #[test]
-    fn only_a_resize_leaves_the_revision() {
+    fn only_a_held_resize_leaves_the_screen() {
+        use pm_components::areas::WindowEvent;
+        use pm_components::target::Target;
+        use std::cell::Cell;
+        use std::rc::Rc;
         let model = Model::new(Screen::default());
-        let before = model.revision();
-        model.resize(|_| {});
-        assert_eq!(model.revision(), before);
+        let runs = Rc::new(Cell::new(0));
+        let (reading, counted) = (model.clone(), Rc::clone(&runs));
+        let mut ui = rustle::Embedded::without_renderer(
+            move || {
+                let (reading, counted) = (reading.clone(), Rc::clone(&counted));
+                rustle::skippable((), move || {
+                    reading.read(|_| ());
+                    counted.set(counted.get() + 1);
+                });
+            },
+            || {},
+        );
+        ui.resize((100, 100), 1.0);
+        ui.update();
+        let before = runs.get();
+        let sash = Target::Window(WindowEvent::SidebarSash);
+        assert!(model.read(|screen| screen.hold_sash_size(sash, 300.0, (1280.0, 800.0))));
+        ui.update();
+        assert_eq!(runs.get(), before);
+        assert_eq!(model.read(|screen| screen.sizes.sidebar_width.get()), 300.0);
         model.update(|_| {});
-        assert_eq!(model.revision(), before + 1);
+        ui.update();
+        assert_eq!(runs.get(), before + 1);
     }
 }

@@ -104,10 +104,10 @@ pub fn tallest(page: f32) -> f32 {
 
 /// How tall the dock is on a page `page` logical pixels tall.
 pub fn height(state: &WorkspaceState, page: f32) -> f32 {
-    let height = if state.terminal_maximized {
-        (page * MAXIMIZED).max(state.terminal_height)
+    let height = if state.sizes.terminal_maximized.get() {
+        (page * MAXIMIZED).max(state.sizes.terminal_height.get())
     } else {
-        state.terminal_height
+        state.sizes.terminal_height.get()
     };
     height.clamp(HEIGHTS.0, tallest(page))
 }
@@ -164,7 +164,7 @@ pub fn terminal(state: &WorkspaceState, session: &Session, width: f32, page: f32
                             .build();
                         }
                         Button::icon(
-                            if state.terminal_maximized {
+                            if state.sizes.terminal_maximized.get() {
                                 phosphor::ARROWS_IN_SIMPLE
                             } else {
                                 phosphor::ARROWS_OUT_SIMPLE

@@ -314,14 +314,14 @@ fn wake_handlers(shared: &Shared) {
 }
 
 /// Has the app follow each change of the screen: a skippable block reads the screen's
-/// state, so it runs again only when the screen changed and not when the root is composed
-/// for anything else, and its side effect runs [`App::screen_changed`] once after each
+/// state and every size held as observable state, so it runs again only when the screen or
+/// a size changed and not when the root is composed for anything else, and its side effect runs [`App::screen_changed`] once after each
 /// such run. The root reads the screen itself, so the block needs no scope of its own.
 fn screen_effect(shared: &Shared) {
     let model = shared.model.clone();
     let app = shared.app();
     rustle::skippable((), move || {
-        model.read(|_| ());
+        model.read(|screen| screen.held_sizes());
         rustle::side_effect(move || with_app(&app, App::screen_changed));
     });
 }
@@ -540,11 +540,10 @@ pub(super) fn main_view(shared: &Shared) {
     watch_window(shared, None);
     let tokens = shared.tokens.get();
     let size = shared.sizes.with(|sizes| sizes[0]);
-    let revision = shared.model.revision();
     let restored = shared.restored.get();
     shared.under_operations(None, || {
         focus::provide_restored(restored, || {
-            pm_components::revision::provide(revision, || {
+            pm_pages::observed::provide(shared.model.observed(), || {
                 shared
                     .model
                     .read(|screen| scene::main_root(screen, size.0, size.1, tokens));
