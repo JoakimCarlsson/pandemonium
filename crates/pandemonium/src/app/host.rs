@@ -626,8 +626,8 @@ impl App {
     /// What rustle's external handler runs whenever the loop is woken for the app: drains
     /// what woke it. The agents' work and the servers' answers are taken in and what the
     /// reader asked of them delivered; the app catches up with an event the interface
-    /// finished handling (a press a popup's dismissal waited on closes what it closes, the
-    /// text typed and the focus moved are followed), with what rustle scrolled by itself,
+    /// finished handling (the text typed and the focus moved are followed), with what rustle
+    /// scrolled by itself,
     /// and with a frame drawn; then it follows what that changed.
     pub(super) fn on_wake(&mut self) {
         self.window_opened();
@@ -635,9 +635,6 @@ impl App {
         self.work.poll(&self.model);
         if self.model.read(Screen::has_outbox) {
             self.deliver();
-        }
-        if std::mem::take(&mut self.dismissal) {
-            self.dismiss(None);
         }
         self.pressed_in_conversation = false;
         if std::mem::take(&mut self.event_pending) {

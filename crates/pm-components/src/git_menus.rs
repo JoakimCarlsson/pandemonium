@@ -13,12 +13,10 @@ use crate::branch_tasks::BranchTask;
 use crate::git_prompts::{Prompt, StashAction};
 use crate::state::{Outgoing, WorkspaceState};
 use crate::tree_actions::TreeTarget;
+use rustle::Rect;
 
 /// How wide the menus of source control are, in style units, so that the longest row, such as the one that discards changes to many files, keeps its padding.
 const MENU_WIDTH: f32 = 68.0;
-
-/// How tall the menu on changed files is, in logical pixels, to keep it inside the window.
-pub const CHANGE_MENU_HEIGHT: f32 = 11.0 * 32.0 + 4.0 * 9.0 + 10.0;
 
 /// Which menu is open.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -42,8 +40,28 @@ pub enum MenuKind {
 pub struct OpenMenu {
     /// Which menu it is.
     pub kind: MenuKind,
-    /// Where its corner is, in logical pixels.
-    pub at: (f32, f32),
+    /// Where it opens.
+    pub place: MenuPlace,
+}
+
+/// Where a menu of source control opens.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MenuPlace {
+    /// Where the pointer was, in logical pixels in the window.
+    At((f32, f32)),
+    /// Hanging from the control that opened it, at a rectangle of the window.
+    Under(Rect),
+}
+
+impl MenuKind {
+    /// How far the menu's corner is moved from the point it opens at, in logical pixels: a
+    /// little left of and below the pointer for the menus the secondary button opens.
+    fn offset(self) -> (f32, f32) {
+        match self {
+            Self::Change | Self::Tree | Self::History(_) => (-8.0, 12.0),
+            Self::Commit | Self::Source | Self::Refs => (0.0, 0.0),
+        }
+    }
 }
 
 /// What a row of a menu does.
@@ -178,18 +196,20 @@ fn row_if(label: impl Into<String>, command: Command, enabled: bool) -> Entry {
 }
 
 impl WorkspaceState {
-    /// Whether `id` names a row of the menu that is open.
-    pub fn is_menu_row(&self, id: Target) -> bool {
-        (self.git.menu.is_some()
-            && matches!(id, Target::Git(GitEvent::GitMenuRow(row)) if row < 40))
-            || self.settings_menu_row(id)
-            || self.is_tab_menu_row(id)
-            || self.is_terminal_menu_row(id)
-            || self.is_browser_menu_row(id)
+    /// The state with the menu `kind` open where the pointer was, at `at` in the window, and
+    /// the others closed.
+    pub fn with_git_menu(self, kind: MenuKind, at: (f32, f32)) -> Self {
+        self.with_git_menu_placed(kind, MenuPlace::At(at))
     }
 
-    /// The state with the menu `kind` open at `at`, and the others closed.
-    pub fn with_git_menu(mut self, kind: MenuKind, at: (f32, f32)) -> Self {
+    /// The state with the menu `kind` open hanging from the control at `control`, a
+    /// rectangle of the window, and the others closed.
+    pub fn with_git_menu_under(self, kind: MenuKind, control: Rect) -> Self {
+        self.with_git_menu_placed(kind, MenuPlace::Under(control))
+    }
+
+    /// The state with the menu `kind` open at `place`, and the others closed.
+    fn with_git_menu_placed(mut self, kind: MenuKind, place: MenuPlace) -> Self {
         if self.review_session().is_none() {
             return self;
         }
@@ -197,7 +217,7 @@ impl WorkspaceState {
         if kind == MenuKind::Source {
             self.ask_stashes();
         }
-        self.git.menu = Some(OpenMenu { kind, at });
+        self.git.menu = Some(OpenMenu { kind, place });
         self
     }
 
@@ -495,24 +515,22 @@ impl WorkspaceState {
 
     /// Emits the menu that is open, and nothing when none is.
     pub fn git_menu_node(&self) {
-        if let Some(open) = self.git.menu {
-            self.git_menu(open.kind, open.at).build();
-        }
+        let Some(open) = self.git.menu else {
+            return;
+        };
+        let menu = match open.place {
+            MenuPlace::At((x, y)) => {
+                let (dx, dy) = open.kind.offset();
+                Menu::new(x, y).offset(dx, dy)
+            }
+            MenuPlace::Under(control) => Menu::dropdown(control),
+        };
+        self.git_menu(open.kind, menu).build();
     }
 
-    /// The point at which the menu `kind`, opened from the control occupying `trigger` as `(x, y, width, height)`, lies below it or above it inside a window `window` wide and tall.
-    pub fn git_menu_below(
-        &self,
-        kind: MenuKind,
-        trigger: (f32, f32, f32, f32),
-        window: (f32, f32),
-    ) -> (f32, f32) {
-        self.git_menu(kind, (0.0, 0.0)).below(trigger, window).at()
-    }
-
-    /// The menu `kind` with its rows, its corner at `at`.
-    fn git_menu(&self, kind: MenuKind, at: (f32, f32)) -> Menu {
-        let mut menu = Menu::new(at.0, at.1).width(MENU_WIDTH);
+    /// The menu `kind` with its rows, opening where `menu` does.
+    fn git_menu(&self, kind: MenuKind, menu: Menu) -> Menu {
+        let mut menu = menu.width(MENU_WIDTH);
         let mut position = 0;
         for entry in self.menu_entries(kind) {
             match entry {

@@ -195,7 +195,7 @@ pub use changes::Changes;
 pub use checkbox::Checkbox;
 pub use code_box::CodeBox;
 pub use conflict::Conflict;
-pub use context_menu::{EDITOR_MENU_HEIGHT, EditorCommand, is_menu_item};
+pub use context_menu::EditorCommand;
 pub use input::Input;
 pub use markdown::Markdown;
 pub use menu::Menu;

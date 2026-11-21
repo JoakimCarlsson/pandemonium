@@ -25,8 +25,6 @@ use std::time::{Duration, Instant};
 
 use pm_components::EditorCommand;
 
-use pm_components::assist::{list_height, signature_height};
-
 use pm_components::line_edits::LineEdit;
 use pm_components::listing::{LISTING_HEIGHT, LISTING_WIDTH, QUICK_INSET};
 
@@ -96,65 +94,55 @@ impl App {
         self.window_size().1
     }
 
-    /// Hangs the list of completions under the word it completes, or above it when it would run past the bottom of the window, as the last frame drew the word.
+    /// Notes where the line of the word the list of completions completes is, as the last
+    /// frame drew it: the word's left edge and the line's top, which the list hangs from.
     pub(super) fn place_completion(&mut self) {
-        let Some((start, height)) = self.model.read(|state| {
+        let Some(start) = self.model.read(|state| {
             state
                 .shown_document()
                 .and_then(|document| document.completion.as_ref())
                 .filter(|completion| !completion.loading)
-                .map(|completion| (completion.start, list_height(completion)))
+                .map(|completion| completion.start)
         }) else {
             return;
         };
-        let Some((x, top, line)) = self.editor_point(start) else {
+        let Some(at) = self.line_point(start) else {
             return;
-        };
-        let below = top + line + GAP;
-        let at = if below + height > self.window_height() {
-            (x, (top - height - GAP).max(0.0))
-        } else {
-            (x, below)
         };
         let placed = self.model.read(|state| {
             state
                 .shown_document()
                 .and_then(|document| document.completion.as_ref())
-                .is_some_and(|completion| {
-                    (completion.at.0 - at.0).abs() < 0.5 && (completion.at.1 - at.1).abs() < 0.5
-                })
+                .is_some_and(|completion| same_point(completion.at, at))
         });
         if !placed {
             self.model.change(|state| state.with_completion_at(at));
         }
     }
 
-    /// Hangs the signature of the call the caret is in just above the caret's line, or below it at the top of the window, as the last frame drew the line.
+    /// Notes where the line of the caret is while the signature of the call the caret is in
+    /// shows, as the last frame drew it: the caret's left edge and the line's top, which the
+    /// signature hangs from.
     pub(super) fn place_signature(&mut self) {
-        let Some((caret, height)) = self.model.read(|screen| match screen {
-            Screen::Workspace(state) => state.shown_document().and_then(|document| {
-                document
-                    .signature
-                    .as_ref()
-                    .map(|signature| (document.field.caret(), signature_height(signature)))
-            }),
+        let Some(caret) = self.model.read(|screen| match screen {
+            Screen::Workspace(state) => state
+                .shown_document()
+                .and_then(|document| document.signature.as_ref().map(|_| document.field.caret())),
         }) else {
             return;
         };
-        let Some((x, top, line)) = self.editor_point(caret) else {
+        let Some(at) = self.line_point(caret) else {
             return;
         };
-        let at = if top - height - GAP >= 0.0 {
-            (x, top - height - GAP)
-        } else {
-            (x, top + line + GAP)
-        };
-        let placed = self.model.read(|state| {
-            (state.signature_at.0 - at.0).abs() < 0.5 && (state.signature_at.1 - at.1).abs() < 0.5
-        });
-        if !placed {
+        if !self.model.read(|state| same_point(state.signature_at, at)) {
             self.model.change(|state| state.with_signature_at(at));
         }
+    }
+
+    /// The left edge of the byte `offset` of the file shown and the top of its line, as the
+    /// last frame drew them.
+    fn line_point(&self, offset: usize) -> Option<(f32, f32)> {
+        self.editor_point(offset).map(|(x, top, _)| (x, top))
     }
 
     /// Saves the file shown once it has gone unchanged long enough with changes to save, when the editor saves by itself, and says when to look again while it has yet to.
@@ -244,7 +232,7 @@ impl App {
         let Some(caret) = self.editor_caret() else {
             return;
         };
-        let at = self.below(caret);
+        let at = self.line_point(caret).unwrap_or((48.0, 96.0));
         self.model.change(|state| state.completion_requested(at));
     }
 
@@ -301,12 +289,6 @@ impl App {
                 .field(Target::Editor(EditorEvent::EditorField))
                 .map(pm_editor::Field::caret)
         })
-    }
-
-    /// Where something hung under the line of the byte `offset` of the file shown goes: at its left edge, just below its line, as the last frame drew them.
-    fn below(&self, offset: usize) -> (f32, f32) {
-        self.editor_point(offset)
-            .map_or((48.0, 96.0), |(x, top, line)| (x, top + line + GAP))
     }
 
     /// Where something up to `height` logical pixels tall hangs by the line of the byte `offset` of the file shown: below it, or above it when it would run past the bottom of the window.
@@ -1066,44 +1048,6 @@ impl App {
         }
     }
 
-    /// Closes the list over the file and the box for a new name when the press at `on` is outside them.
-    pub(super) fn press_beside_code(&mut self, on: Option<pm_components::target::Target>) {
-        let on_listing = on.is_some_and(|id| {
-            id == Target::Editor(EditorEvent::ListingBody)
-                || id == Target::Editor(EditorEvent::ListingFilter)
-                || matches!(id, Target::Editor(EditorEvent::ListingRow(_)))
-        });
-        if !on_listing && self.model.read(|screen| screen.listing_open()) {
-            self.model.change(|state| state.listing_closed());
-        }
-        let on_box = on.is_some_and(|id| {
-            id == Target::Editor(EditorEvent::RenameSymbol)
-                || id == Target::Editor(EditorEvent::RenameBox)
-        });
-        if !on_box && self.model.read(|screen| screen.renaming_open()) {
-            self.model.change(|state| state.rename_closed());
-        }
-        let on_color_box = on.is_some_and(|id| {
-            id == Target::Editor(EditorEvent::ColorHex)
-                || id == Target::Editor(EditorEvent::ColorBox)
-                || matches!(
-                    id,
-                    Target::Editor(EditorEvent::ColorFormat(_))
-                        | Target::Editor(EditorEvent::ColorSwatch(_))
-                )
-        });
-        if !on_color_box && self.model.read(|screen| screen.color_picker_open()) {
-            self.model.change(|state| state.color_picker_closed());
-        }
-        let on_line_box = on.is_some_and(|id| {
-            id == Target::Editor(EditorEvent::GoToLine)
-                || id == Target::Editor(EditorEvent::GoToLineBox)
-        });
-        if !on_line_box && self.model.read(|screen| screen.going_to_open()) {
-            self.model.change(|state| state.go_to_line_closed());
-        }
-    }
-
     /// Gives the keyboard back to the file shown once the box for a new name or a line to go to it was lent to has closed.
     pub(super) fn settle_rename_focus(&mut self) {
         let focused = self.focus.focused();
@@ -1435,4 +1379,9 @@ impl App {
         }
         next
     }
+}
+
+/// Whether the points `a` and `b` are the same, to within half a logical pixel.
+fn same_point(a: (f32, f32), b: (f32, f32)) -> bool {
+    (a.0 - b.0).abs() < 0.5 && (a.1 - b.1).abs() < 0.5
 }

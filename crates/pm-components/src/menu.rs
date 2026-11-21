@@ -1,19 +1,36 @@
-//! The menu: a floating list of actions opened at a point.
+//! The menu: a floating list of actions opened at a point or hanging from the control that
+//! opened it.
 
 use crate::events::{Event, send};
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
 use rustle::{Alignment, Arrangement, TextOverflow};
-use rustle::{CursorIcon, Modifier};
+use rustle::{CursorIcon, Modifier, Rect};
 use std::rc::Rc;
 
 use crate::Surface;
 use crate::events::Interactive;
+use crate::popups::{Dismissal, at_window, dropdown};
+use crate::state::WorkspaceState;
 use crate::theme::{Radius, Role, sp};
 
 /// How far a menu opened from a control hangs from it, in logical pixels.
 const MENU_GAP: f32 = 4.0;
+
+/// Where a menu opens.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Place {
+    /// With its corner at a point of the window, in logical pixels, moved by an offset.
+    At {
+        /// The point, in the window.
+        point: (f32, f32),
+        /// How far the corner is moved from the point.
+        offset: (f32, f32),
+    },
+    /// Hanging from the control at a rectangle of the window, as a dropdown menu does.
+    Dropdown(Rect),
+}
 
 /// One row of a menu, or the rule between groups of rows.
 #[derive(Clone, Debug)]
@@ -35,13 +52,14 @@ pub enum Entry {
 
 /// A menu being described: where it opens and what it holds.
 ///
-/// Build it with [`Menu::new`], add rows with [`Menu::item`] and
-/// [`Menu::separator`], and emit it with [`Menu::build`]. It floats over
-/// everything at its point, kept inside the window.
+/// Build it with [`Menu::new`] or [`Menu::dropdown`], add rows with [`Menu::item`] and
+/// [`Menu::separator`], and emit it with [`Menu::build`]. It floats over everything at its
+/// point, or under the control that opened it, kept inside the window; Escape or a
+/// press outside it closes it.
 #[derive(Clone, Debug)]
 pub struct Menu {
-    /// Where its top-left corner is, in logical pixels.
-    at: (f32, f32),
+    /// Where it opens.
+    place: Place,
     /// The rows, top to bottom.
     entries: Vec<Entry>,
     /// How wide it is, in style units.
@@ -65,10 +83,33 @@ impl std::fmt::Debug for Pick {
 }
 
 impl Menu {
-    /// An empty menu opening with its corner at `x`, `y` logical pixels.
+    /// An empty menu opening with its corner at `x`, `y` logical pixels in the window.
     pub fn new(x: f32, y: f32) -> Self {
+        Self::placed(Place::At {
+            point: (x, y),
+            offset: (0.0, 0.0),
+        })
+    }
+
+    /// An empty menu hanging from the control at `control`, a rectangle of the window: below
+    /// it with their left edges together, their right edges together when it would leave the
+    /// window on the right, and above the control when there is no room below.
+    pub fn dropdown(control: Rect) -> Self {
+        Self::placed(Place::Dropdown(control))
+    }
+
+    /// The menu with its corner moved `dx`, `dy` logical pixels from the point it opens at.
+    pub fn offset(mut self, dx: f32, dy: f32) -> Self {
+        if let Place::At { offset, .. } = &mut self.place {
+            *offset = (dx, dy);
+        }
+        self
+    }
+
+    /// An empty menu opening at `place`.
+    fn placed(place: Place) -> Self {
         Self {
-            at: (x, y),
+            place,
             entries: Vec::new(),
             width: 52.0,
             row: 8.0,
@@ -125,58 +166,14 @@ impl Menu {
             })
     }
 
-    /// The menu opened from the control occupying `trigger`, as `(x, y, width, height)` in logical pixels, inside a window `window` wide and tall:
-    /// below the control with their left edges together, or their right edges together when it would leave the window on the right,
-    /// and above the control when there is more room above it than below.
-    pub fn below(mut self, trigger: (f32, f32, f32, f32), window: (f32, f32)) -> Self {
-        let (x, y, width, height) = trigger;
-        let (menu_width, menu_height) = self.extent();
-        let left = if x + menu_width <= window.0 {
-            x
-        } else {
-            x + width - menu_width
-        };
-        let room_below = window.1 - (y + height + MENU_GAP);
-        let top = if menu_height <= room_below || room_below >= y - MENU_GAP {
-            y + height + MENU_GAP
-        } else {
-            y - MENU_GAP - menu_height
-        };
-        self.at = (
-            left.min(window.0 - menu_width).max(0.0),
-            top.min(window.1 - menu_height).max(0.0),
-        );
-        self
-    }
-
-    /// Where its top-left corner is, in logical pixels.
-    pub fn at(&self) -> (f32, f32) {
-        self.at
-    }
-
-    /// How wide and how tall the menu is, in logical pixels, at the spacing scale being built for.
-    fn extent(&self) -> (f32, f32) {
-        let step = 4.0 * crate::theme::step_scale();
-        let rows: f32 = self
-            .entries
-            .iter()
-            .map(|entry| match entry {
-                Entry::Item { .. } => self.row * step,
-                Entry::Separator => step * 2.25,
-            })
-            .sum();
-        (self.width * step, rows + step * 0.5)
-    }
-
-    /// Emits the menu over everything, with its corner at its point, kept inside the window; a
-    /// press outside it asks the app to close what a press elsewhere closes.
+    /// Emits the menu over everything where it opens, kept inside the window, as a focusable
+    /// popup that Escape or a press outside it closes.
     #[track_caller]
     pub fn build(self) {
-        let (x, y) = self.at;
         let (width, height) = (self.width, self.row);
         let entries = self.entries;
         let on_pick = self.on_pick;
-        crate::popups::at_window(x, y, true, move || {
+        let content = move || {
             Surface::new()
                 .modifier(Modifier::new().width(theme::sp(width)))
                 .inner(Modifier::new().padding(theme::sp(1)))
@@ -185,7 +182,12 @@ impl Menu {
                         menu_row(entry, height, on_pick.clone());
                     }
                 });
-        });
+        };
+        let dismissal = Dismissal::focusable(WorkspaceState::without_menu);
+        match self.place {
+            Place::At { point, offset } => at_window(point, offset, dismissal, content),
+            Place::Dropdown(control) => dropdown(control, MENU_GAP, dismissal, content),
+        }
     }
 }
 

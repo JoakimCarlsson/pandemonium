@@ -6,9 +6,6 @@ use crate::browser::{Command, ZoomStep};
 use crate::state::WorkspaceState;
 use crate::target::Target;
 
-/// How tall the menu over a page is, in logical pixels, to keep it inside the window.
-pub const BROWSER_MENU_HEIGHT: f32 = 19.0 * 26.0 + 6.0 * 9.0 + 10.0;
-
 /// What a row of the menu over a page does.
 #[derive(
     Clone, Copy, Debug, serde::Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize,
@@ -140,11 +137,6 @@ impl WorkspaceState {
         state
     }
 
-    /// Whether `id` is a row of the menu over a page while it is open.
-    pub fn is_browser_menu_row(&self, id: Target) -> bool {
-        self.browser_menu.is_some() && BrowserCommand::of(id).is_some()
-    }
-
     /// Carries out `command` on the page and closes the menu over it.
     pub fn browser_command(mut self, command: BrowserCommand) -> Self {
         self.browser_menu = None;
@@ -189,6 +181,7 @@ pub fn browser_menu(open: BrowserMenu) {
     };
     let operations = crate::events::operations();
     let menu = Menu::new(open.at.0, open.at.1)
+        .offset(-8.0, 4.0)
         .width(68.0)
         .row_height(6.5)
         .on_pick(move |row| {

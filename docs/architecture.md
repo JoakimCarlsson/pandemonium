@@ -70,11 +70,14 @@ One crate per layer, each depending only on the layers below it.
   by rustle's `SvgPainter` (`pandemonium/src/work/picture.rs`), whose text is
   set with the interface's font database and whose embedded images are drawn. What floats
   over the screen is rustle popups (`pm-components/src/popups.rs`): popovers
-  placed against the box they are declared in, menus and code assists at a
-  window point, kept inside the window's frame clear of its shadow band by a
-  `PopupPositionProvider`; a press outside one that a press elsewhere closes
-  calls its `on_dismiss_request`, which asks the app (`Operations::dismiss_requested`)
-  to close what that press closes. Tooltips are rustle's `tooltip_area`
+  and the quick input placed against the box they are declared in, menus at a
+  window point or hanging from the control that opened them as a dropdown
+  menu does, and the code assists hanging from the line they are about,
+  each placed by a `PopupPositionProvider` and kept inside the window's frame
+  clear of its shadow band. Each popup closes itself: menus and popovers are
+  focusable, so Escape or a press outside calls their own
+  `on_dismiss_request`, and the boxes typed in over the code close on a press
+  outside that goes on to what it landed on (`Dismissal`). Tooltips are rustle's `tooltip_area`
   (`pm-components/src/tooltip.rs`, `Button::tooltip`), shown after a rest on
   the frame clock, at once in snapshots.
   The screen is one rustle state the window roots read, so a change composes

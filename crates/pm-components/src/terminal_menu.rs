@@ -7,9 +7,6 @@ use pm_editor::{Action, Keymap};
 use crate::Menu;
 use crate::state::{Outgoing, WorkspaceState};
 
-/// How tall the menu over a shell is, in logical pixels, to keep it inside the window.
-pub const TERMINAL_MENU_HEIGHT: f32 = 6.0 * 26.0 + 3.0 * 9.0 + 10.0;
-
 /// What a row of the menu over a shell does.
 #[derive(
     Clone, Copy, Debug, serde::Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize,
@@ -96,11 +93,6 @@ impl WorkspaceState {
         state
     }
 
-    /// Whether `id` is a row of the menu over a shell while it is open.
-    pub fn is_terminal_menu_row(&self, id: Target) -> bool {
-        self.terminal_menu.is_some() && TerminalCommand::of(id).is_some()
-    }
-
     /// Carries out `command` on the shell showing and closes the menu over it; pasting is the caller's, which holds the clipboard.
     pub fn terminal_command(mut self, command: TerminalCommand) -> Self {
         self.terminal_menu = None;
@@ -149,6 +141,7 @@ pub fn terminal_menu(open: TerminalMenu, keymap: &Keymap) {
     };
     let operations = crate::events::operations();
     let menu = Menu::new(open.at.0, open.at.1)
+        .offset(-8.0, 4.0)
         .width(64.0)
         .row_height(6.5)
         .on_pick(move |row| {

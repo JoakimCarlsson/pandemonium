@@ -171,7 +171,7 @@ impl WorkspaceState {
         self
     }
 
-    /// Notes where the signature of the call the caret is in hangs, in logical pixels of the window.
+    /// Notes where the line of the caret is, the caret's left edge and the line's top in logical pixels of the window, which the signature of the call the caret is in hangs over.
     pub fn with_signature_at(mut self, at: (f32, f32)) -> Self {
         self.signature_at = at;
         self

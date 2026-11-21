@@ -962,7 +962,7 @@ pub fn composer(
                 Modifier::new().fill_max_width(),
                 Placement::Above,
                 2.0,
-                false,
+                crate::popups::Dismissal::Never,
                 || {
                     rustle::column_arranged(
                         Modifier::new()

@@ -129,13 +129,11 @@ fn a_press_answers_only_the_question_it_was_for() {
     );
 }
 
-/// Whether the question bar of `safety` is drawn over a page 400 logical pixels wide at the time `now`.
-fn overlay_shown(safety: &Safety, now: Instant) -> bool {
+/// Whether the question bar of `safety` is drawn over a page 400 logical pixels wide.
+fn overlay_shown(safety: &Safety) -> bool {
     let safety = safety.clone();
     let laid = crate::tagged::lay_out(400.0, 300.0, None, move || {
-        rustle::stack_with(rustle::Modifier::new(), || {
-            safety.question_overlay(400.0, now)
-        });
+        rustle::stack_with(rustle::Modifier::new(), || safety.question_overlay(400.0));
     });
     laid.drawn(Target::Browser(BrowserEvent::BrowserQuestionBar))
 }
@@ -153,7 +151,7 @@ fn the_bar_takes_presses_and_leaves_the_page_where_it_is() {
     let start = Instant::now();
     let mut safety = Safety::default();
     assert!(safety.press_at(Target::Browser(BrowserEvent::BrowserQuestionBar), start));
-    assert!(!overlay_shown(&safety, start));
+    assert!(!overlay_shown(&safety));
     safety.ask_at(asked(3, "https://a.example"), start);
     assert!(safety.press_at(
         Target::Browser(BrowserEvent::BrowserQuestionBar),
@@ -167,7 +165,7 @@ fn the_bar_takes_presses_and_leaves_the_page_where_it_is() {
     safety.ask_at(asked(4, "https://a.example"), start);
     assert_eq!(safety.bars(), 0.0);
     assert!(!bars_shown(&safety));
-    assert!(overlay_shown(&safety, start));
+    assert!(overlay_shown(&safety));
 }
 
 /// A question the helper cancelled is no longer asked, and no answer is sent for it.

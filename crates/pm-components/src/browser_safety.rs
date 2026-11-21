@@ -211,15 +211,29 @@ impl Safety {
         }
     }
 
-    /// Emits the bar with the first question, when there is one, laid over the top of the page, which is `width` logical pixels wide, at the time `now`; Allow is drawn faint and cannot be pressed until [`ALLOW_DELAY`] has passed. The page's box is the layer it is placed in.
+    /// How long the first question still waits at the time `now` before pressing Allow does anything, when there is a question.
+    pub fn allow_wait(&self, now: Instant) -> Option<Duration> {
+        let (_, since) = self.shown?;
+        Some(ALLOW_DELAY.saturating_sub(now.saturating_duration_since(since)))
+    }
+
+    /// Emits the bar with the first question, when there is one, laid over the top of the page, which is `width` logical pixels wide, at the top start of the page's box, in the layer of the bar for finding in the page; Allow is drawn faint and cannot be pressed until [`ALLOW_DELAY`] has passed, which an effect waits for on the frame clock.
     #[track_caller]
-    pub fn question_overlay(&self, width: f32, now: Instant) {
+    pub fn question_overlay(&self, width: f32) {
+        let ready = rustle::remember(|| None::<u64>);
         let Some(asked) = self.questions.first() else {
             return;
         };
+        let id = asked.id;
+        let wait = self.allow_wait(Instant::now()).unwrap_or_default();
+        let readied = ready.clone();
+        rustle::launched_effect(id, move |scope| async move {
+            scope.delay(wait).await;
+            readied.set(Some(id));
+        });
         question_bar(
             Modifier::new()
-                .offset(0.0, 0.0)
+                .align(rustle::BoxAlignment::TopStart)
                 .width(width)
                 .z_index(40)
                 .control(
@@ -228,7 +242,7 @@ impl Safety {
                 ),
             asked,
             self.questions.len() - 1,
-            self.allow_ready(now),
+            ready.get() == Some(id),
         );
     }
 }

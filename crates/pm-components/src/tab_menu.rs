@@ -7,9 +7,6 @@ use crate::Menu;
 use crate::open_files::{Contents, Viewer};
 use crate::state::{Outgoing, ReviewTab, WorkspaceState};
 
-/// How tall the menu on a tab is, in logical pixels, to keep it inside the window.
-pub const TAB_MENU_HEIGHT: f32 = 15.0 * 26.0 + 7.0 * 9.0 + 10.0;
-
 /// What a row of the menu on a tab does.
 #[derive(
     Clone, Copy, Debug, serde::Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize,
@@ -83,11 +80,6 @@ impl WorkspaceState {
             self.tab_menu = Some(TabMenu { index, at });
         }
         self
-    }
-
-    /// Whether `id` is a row of the menu on a tab while it is open.
-    pub fn is_tab_menu_row(&self, id: Target) -> bool {
-        self.tab_menu.is_some() && TabCommand::of(id).is_some()
     }
 
     /// The folder of the session the review panel is about on its machine.
@@ -281,6 +273,7 @@ pub fn tab_menu(viewer: &Viewer, open: TabMenu, count: usize, local: bool) {
         ("Open in Terminal", Do::OpenInTerminal, in_folder, false),
     ];
     Menu::new(open.at.0, open.at.1)
+        .offset(-8.0, 12.0)
         .width(62.0)
         .row_height(6.5)
         .rows(rows.map(|(label, command, on, rule)| (label, None, command.id(), on, rule)))

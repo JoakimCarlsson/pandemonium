@@ -193,10 +193,6 @@ pub trait Operations {
     fn sash_released(&self) {}
     /// The minimap is pressed or dragged `down` logical pixels from its top, of its `height`.
     fn minimap_dragged(&self, _down: f32, _height: f32) {}
-    /// A press landed outside a popup that a press elsewhere closes: its
-    /// `on_dismiss_request`. The holder closes what that press closes once the press tells
-    /// what it landed on.
-    fn dismiss_requested(&self) {}
     /// Whether the control `id` can be dragged elsewhere in the window: a project's header,
     /// a pane's tab or a row of the project's files.
     fn carries(&self, _id: Target) -> bool {

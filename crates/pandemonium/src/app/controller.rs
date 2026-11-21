@@ -224,11 +224,6 @@ impl Operations for Controller {
         self.with(|app| app.minimap_dragged(down, height));
     }
 
-    /// Closes what a press outside a popup closes.
-    fn dismiss_requested(&self) {
-        self.with(App::dismiss_requested);
-    }
-
     /// Whether the control can be carried elsewhere in the window.
     fn carries(&self, id: Target) -> bool {
         let Some(app) = self.app.upgrade() else {

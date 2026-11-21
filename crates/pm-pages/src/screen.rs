@@ -283,11 +283,6 @@ impl Screen {
         }
     }
 
-    /// Whether `id` names a row of the menu of the source control panel that is open.
-    pub fn is_menu_row(&self, id: Target) -> bool {
-        matches!(self, Self::Workspace(state) if state.is_menu_row(id))
-    }
-
     /// Whether the server is busy with something asked about the open session's folder.
     pub fn git_working(&self) -> bool {
         matches!(self, Self::Workspace(state) if state.git.working)
@@ -324,11 +319,6 @@ impl Screen {
     /// Whether a list of commands is showing over the prompt.
     pub fn slash_open(&self) -> bool {
         matches!(self, Self::Workspace(state) if state.slash_open())
-    }
-
-    /// Whether a menu of a setting, or the offer to put files back, is open.
-    pub fn picker_open(&self) -> bool {
-        matches!(self, Self::Workspace(state) if state.picker.is_some() || state.restoring.is_some() || state.git.branch_menu)
     }
 
     /// Whether the offer to put files back as they were before a turn is open.

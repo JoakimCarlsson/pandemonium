@@ -11,7 +11,7 @@ use pm_browser::{
 use pm_components::browser::{Command, Pointer, ZoomStep};
 use pm_components::browser_keys::{Shortcut, shortcut_of};
 use pm_components::browser_links::{Route, route};
-use pm_components::browser_menu::{BROWSER_MENU_HEIGHT, BrowserCommand};
+use pm_components::browser_menu::BrowserCommand;
 use pm_components::browser_safety::{Answer, Certificate, Download, Question, Safety, Saving};
 use pm_components::browser_tabs::{TabInfo, changes_page, locked_message};
 use pm_components::elements::Element;
@@ -486,20 +486,8 @@ impl App {
             .collect()
     }
 
-    /// Where a menu over the page opens for a press at `at`, in the window's frame: just
-    /// under it and inside the window.
-    pub(super) fn browser_menu_place(&self, (x, y): (f32, f32)) -> (f32, f32) {
-        let (width, height) = self.window_size();
-        (
-            (x - 8.0).min(width - 260.0).max(0.0),
-            (y + 4.0).min(height - BROWSER_MENU_HEIGHT - 8.0).max(0.0),
-        )
-    }
-
-    /// Opens the menu over the page just under `at`, in the window's frame, and inside the
-    /// window.
+    /// Opens the menu over the page where the pointer was, at `at` in the window's frame.
     pub(super) fn open_browser_menu(&mut self, at: (f32, f32)) {
-        let at = self.browser_menu_place(at);
         self.model.change(|state| state.with_browser_menu(at));
     }
 
@@ -549,7 +537,7 @@ impl App {
                 }
             }
             BrowserPointing::History(back) => {
-                self.note_press(None);
+                self.note_press();
                 if !self.browser_history(back, true) {
                     self.step_through_history(back);
                 }

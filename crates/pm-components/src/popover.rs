@@ -13,7 +13,8 @@ use rustle::phosphor;
 use rustle::{Alignment, Arrangement, row_arranged};
 
 use crate::parts::{glyph, line};
-use crate::popups::Placement;
+use crate::popups::{Dismissal, Placement};
+use crate::state::WorkspaceState;
 use crate::{Surface, surface};
 
 /// One entry of a popover, kept until it is built.
@@ -175,7 +176,14 @@ pub fn anchored_end(button: impl FnOnce(), popover: Option<impl FnOnce()>) {
 /// Emits `button` with `popover`, when there is one, hanging a little way from it at `placement`; a press elsewhere asks the app to close it.
 #[track_caller]
 fn hang(placement: Placement, button: impl FnOnce(), popover: Option<impl FnOnce()>) {
-    crate::popups::anchored(Modifier::new(), placement, 2.0, true, button, popover);
+    crate::popups::anchored(
+        Modifier::new(),
+        placement,
+        2.0,
+        Dismissal::focusable(WorkspaceState::without_open_picker),
+        button,
+        popover,
+    );
 }
 
 /// Emits one row of a popover: a name over what choosing it means, with a tick on the one that is current.

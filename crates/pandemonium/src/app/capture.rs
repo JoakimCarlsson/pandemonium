@@ -17,7 +17,7 @@ impl App {
     /// Opens the menu of what can be added to the prompt from the page just under where its
     /// button was clicked.
     pub(super) fn open_browser_capture_menu(&mut self) {
-        let Some(at) = self.clicked_at().map(|at| self.browser_menu_place(at)) else {
+        let Some(at) = self.clicked_at() else {
             return;
         };
         self.model

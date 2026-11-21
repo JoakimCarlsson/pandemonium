@@ -22,22 +22,18 @@ use std::time::{Duration, Instant};
 
 use crate::model::Model;
 
-use pm_components::arrange::{is_project_menu_item, is_session_menu_item};
-
 use pm_components::events::Change;
 
-use pm_components::git_menus::{CHANGE_MENU_HEIGHT, MenuKind};
+use pm_components::git_menus::MenuKind;
 use pm_components::line_edits::LineEdit;
-use pm_components::message_menu::is_message_menu_item;
 use pm_components::open_files::STRIP;
-use pm_components::panes::split_row_of;
 use pm_components::sash::Grows;
 
 use pm_buffer::Reach;
+use pm_components::EditorCommand;
 use pm_components::pointing::{CodePointer, Press, Stroke};
 use pm_components::theme::{Appearance, ThemeFamily};
-use pm_components::tree_actions::{TREE_MENU_HEIGHT, TreeTarget};
-use pm_components::{EDITOR_MENU_HEIGHT, EditorCommand, is_menu_item};
+use pm_components::tree_actions::TreeTarget;
 use pm_editor::Edit;
 use pm_pages::{Screen, WorkspaceState};
 use rustle::{Key, KeyEvent, Modifiers};
@@ -131,9 +127,6 @@ pub struct App {
     /// went down on, where it was laid out and where the pointer was, in the window, which a
     /// menu it opens hangs from.
     anchor: Option<Press>,
-    /// Whether a popup asked to be dismissed by a press outside it, which the press closes
-    /// once it tells what it landed on.
-    dismissal: bool,
     /// Whether the conversation said the primary button went down inside it, for the press
     /// being handled, so its selection stays.
     pressed_in_conversation: bool,
@@ -371,7 +364,6 @@ impl App {
             focus,
             modifiers: Modifiers::default(),
             anchor: None,
-            dismissal: false,
             pressed_in_conversation: false,
             list_pressed: None,
             sash_drag: None,
@@ -917,14 +909,10 @@ impl App {
             || (id == Target::Window(WindowEvent::TitleBar) && self.window.is_some())
     }
 
-    /// Follows a press of either button, on the control `on` or on no control: the field
-    /// the reader was typing in when the window last closed no longer takes the keyboard by
-    /// itself, and what a popup's press outside it closes closes.
-    fn note_press(&mut self, on: Option<Target>) {
+    /// Follows a press of either button: the field the reader was typing in when the window
+    /// last closed no longer takes the keyboard by itself.
+    fn note_press(&mut self) {
         self.refocus = None;
-        if std::mem::take(&mut self.dismissal) {
-            self.dismiss(on);
-        }
     }
 
     /// Takes a press of the primary button on a control, as its view tells it while the
@@ -932,7 +920,7 @@ impl App {
     /// maximizes it when it is the second in a row; anything else is pressed.
     pub(super) fn pressed(&mut self, press: Press) {
         self.anchor = Some(press);
-        self.note_press(Some(press.id));
+        self.note_press();
         if press.id == Target::Window(WindowEvent::TitleBar) && self.title_bar_pressed(press.clicks)
         {
             return;
@@ -943,7 +931,7 @@ impl App {
 
     /// Takes a press of the primary button at `at` in the window that no control took.
     pub(super) fn pressed_elsewhere(&mut self, at: (f32, f32)) {
-        self.note_press(None);
+        self.note_press();
         let at = self.framed_point(at);
         self.press_at(None, at);
     }
@@ -952,7 +940,7 @@ impl App {
     /// menu opens.
     pub(super) fn context_pressed(&mut self, press: Press) {
         self.anchor = Some(press);
-        self.note_press(Some(press.id));
+        self.note_press();
     }
 
     /// Notes that the primary button went down inside the conversation, as the conversation
@@ -965,7 +953,7 @@ impl App {
     /// where nothing else took it: the page of the browser that holds the keyboard steps
     /// through its history, or else the app through the places visited.
     pub(super) fn history_pressed(&mut self, back: bool) {
-        self.note_press(None);
+        self.note_press();
         if !(self.on_aside.is_none() && self.browser_history(back, false)) {
             self.step_through_history(back);
         }
@@ -1005,43 +993,6 @@ impl App {
             });
         }
         if on.is_none() && self.model.read(Screen::restore_offered) {
-            self.model
-                .update(|state| *state = std::mem::take(state).without_picker());
-        }
-    }
-
-    /// Notes that a press outside a popup asked it to be dismissed, as the popup's
-    /// `on_dismiss_request` asks while the interface handles the press, before the press
-    /// reaches what it landed on, which closes what it closes.
-    pub(super) fn dismiss_requested(&mut self) {
-        self.dismissal = true;
-    }
-
-    /// Closes what a press outside a popup closes, the press being on `on`: a menu, unless
-    /// the press is on one of its rows; the list over the file, the boxes for a new name, a
-    /// colour and a line to go to, unless it is on them; and the setting menus and the list
-    /// of branches when it is on no control at all.
-    fn dismiss(&mut self, on: Option<Target>) {
-        self.press_beside_code(on);
-        if self.model.read(|screen| screen.list_menu_open())
-            && !on.is_some_and(|id| {
-                is_project_menu_item(id)
-                    || is_session_menu_item(id)
-                    || is_message_menu_item(id)
-                    || split_row_of(id).is_some()
-                    || self.model.read(|screen| screen.is_menu_row(id))
-            })
-        {
-            self.model.update(|state| {
-                *state = std::mem::take(state).in_workspace(|state| state.without_menu())
-            });
-        }
-        if self.model.read(|screen| screen.menu().is_some()) && !on.is_some_and(is_menu_item) {
-            self.model.update(|state| {
-                *state = std::mem::take(state).in_workspace(|state| state.without_menu())
-            });
-        }
-        if on.is_none() && self.model.read(|screen| screen.picker_open()) {
             self.model
                 .update(|state| *state = std::mem::take(state).without_picker());
         }
@@ -1141,121 +1092,86 @@ impl App {
         self.anchor.map(|press| self.framed_point(press.at))
     }
 
-    /// Opens the menu of the `index`-th server of the settings page just under `at`, in the
-    /// window's frame.
-    pub(super) fn open_settings_menu(&mut self, index: usize, (x, y): (f32, f32)) {
+    /// Opens the menu of the `index`-th server of the settings page where its button was
+    /// clicked, at `at` in the window's frame.
+    pub(super) fn open_settings_menu(&mut self, index: usize, at: (f32, f32)) {
         self.model.update(|state| {
-            *state = std::mem::take(state)
-                .in_workspace(|state| state.with_settings_menu(index, (x - 190.0, y + 14.0)))
+            *state = std::mem::take(state).in_workspace(|state| state.with_settings_menu(index, at))
         });
     }
 
-    /// Opens the menu on the tab of the open file at `index` just under `at`, in the window's
-    /// frame, and inside the window.
-    pub(super) fn open_tab_menu(&mut self, index: usize, (x, y): (f32, f32)) {
-        let (width, height) = self.window_size();
-        let at = (
-            (x - 8.0).min(width - 256.0).max(0.0),
-            (y + 12.0)
-                .min(height - pm_components::tab_menu::TAB_MENU_HEIGHT - 8.0)
-                .max(0.0),
-        );
+    /// Opens the menu on the tab of the open file at `index` where the pointer was, at `at`
+    /// in the window's frame.
+    pub(super) fn open_tab_menu(&mut self, index: usize, at: (f32, f32)) {
         self.model.update(|state| {
             *state = std::mem::take(state).in_workspace(|state| state.with_tab_menu(index, at))
         });
     }
 
-    /// Opens the menu of the project at `project` just under `at`, in the window's frame.
-    pub(super) fn open_project_menu(&mut self, project: usize, (x, y): (f32, f32)) {
+    /// Opens the menu of the project at `project` where the pointer was, at `at` in the
+    /// window's frame.
+    pub(super) fn open_project_menu(&mut self, project: usize, at: (f32, f32)) {
         self.model.update(|state| {
             *state = state
                 .clone()
-                .in_workspace(|state| state.with_project_menu(project, (x - 8.0, y + 12.0)))
+                .in_workspace(|state| state.with_project_menu(project, at))
         });
     }
 
-    /// Where a menu `menu_height` tall opens for a press at `at`, in the window's frame: just
-    /// under it and inside the window.
-    fn menu_under(&self, (x, y): (f32, f32), menu_height: f32) -> (f32, f32) {
-        let (width, height) = self.window_size();
-        (
-            (x - 8.0).min(width - 216.0).max(0.0),
-            (y + 12.0).min(height - menu_height - 8.0).max(0.0),
-        )
-    }
-
-    /// Opens the menu on changed files just under `at`, in the window's frame, and inside the
-    /// window, over the file at `index`.
+    /// Opens the menu on changed files where the pointer was, at `at` in the window's frame,
+    /// over the file at `index`.
     pub(super) fn open_change_menu(&mut self, index: usize, at: (f32, f32)) {
-        let at = self.menu_under(at, CHANGE_MENU_HEIGHT);
         self.model.update(|state| {
             *state = std::mem::take(state).in_workspace(|state| state.with_change_menu(index, at));
         });
     }
 
-    /// Opens the menu on changed files just under `at`, in the window's frame, and inside the
-    /// window, over the folder at `position` of their tree.
+    /// Opens the menu on changed files where the pointer was, at `at` in the window's frame,
+    /// over the folder at `position` of their tree.
     pub(super) fn open_folder_change_menu(&mut self, position: usize, at: (f32, f32)) {
-        let at = self.menu_under(at, CHANGE_MENU_HEIGHT);
         self.model.update(|state| {
             *state = std::mem::take(state)
                 .in_workspace(|state| state.with_folder_change_menu(position, at));
         });
     }
 
-    /// Opens the menu on the project's files just under `at`, in the window's frame, and
-    /// inside the window, over `target`.
+    /// Opens the menu on the project's files where the pointer was, at `at` in the window's
+    /// frame, over `target`.
     pub(super) fn open_tree_menu(&mut self, target: TreeTarget, at: (f32, f32)) {
-        let at = self.menu_under(at, TREE_MENU_HEIGHT);
         self.model.update(|state| {
             *state = std::mem::take(state).in_workspace(|state| state.with_tree_menu(target, at));
         });
     }
 
-    /// Opens the menu `kind` of the source control panel from the control `trigger`, below it
-    /// or above it, or just under `at`, in the window's frame, when it comes from no control.
+    /// Opens the menu `kind` of the source control panel hanging from the control `trigger`,
+    /// where the press on it laid it out, or where the pointer was, at `at` in the window's
+    /// frame, when it comes from no control.
     pub(super) fn open_git_menu(
         &mut self,
         kind: MenuKind,
         trigger: Option<Target>,
         at: Option<(f32, f32)>,
     ) {
-        let window = self.window_size();
         let control = self
             .anchor
             .filter(|press| Some(press.id) == trigger)
-            .map(|press| {
-                let rect = self.framed(press.area);
-                (
-                    rect.origin.x,
-                    rect.origin.y,
-                    rect.size.width,
-                    rect.size.height,
-                )
-            });
-        let at = if let Some(control) = control {
-            self.model
-                .read(|screen| screen.git_menu_below(kind, control, window))
-        } else {
-            let Some((x, y)) = at else {
-                return;
-            };
-            match kind {
-                MenuKind::History(_) => (x - 8.0, y + 12.0),
-                _ => (x - 190.0, y + 14.0),
-            }
+            .map(|press| self.framed(press.area));
+        let open: Box<dyn FnOnce(WorkspaceState) -> WorkspaceState> = match (control, at) {
+            (Some(control), _) => Box::new(move |state| state.with_git_menu_under(kind, control)),
+            (None, Some(at)) => Box::new(move |state| state.with_git_menu(kind, at)),
+            (None, None) => return,
         };
-        self.model.update(|state| {
-            *state = std::mem::take(state).in_workspace(|state| state.with_git_menu(kind, at))
-        });
+        self.model
+            .update(|state| *state = std::mem::take(state).in_workspace(open));
     }
 
-    /// Opens the menu of the session at `session` just under `at`, in the window's frame.
-    pub(super) fn open_session_menu(&mut self, session: usize, (x, y): (f32, f32)) {
+    /// Opens the menu of the session at `session` where the pointer was, at `at` in the
+    /// window's frame.
+    pub(super) fn open_session_menu(&mut self, session: usize, at: (f32, f32)) {
         self.model.update(|state| {
             *state = state
                 .clone()
-                .in_workspace(|state| state.with_session_menu(session, (x - 8.0, y + 12.0)))
+                .in_workspace(|state| state.with_session_menu(session, at))
         });
     }
 
@@ -1356,15 +1272,6 @@ impl App {
         if !inside {
             self.edit_field(id, Edit::Place(offset, false));
         }
-        let (x, y) = if id == Target::Editor(EditorEvent::EditorField) {
-            let (width, height) = self.window_size();
-            (
-                x.min(width - 272.0).max(0.0),
-                y.min(height - EDITOR_MENU_HEIGHT - 8.0).max(0.0),
-            )
-        } else {
-            (x, y)
-        };
         self.model.update(|state| {
             *state = std::mem::take(state).in_workspace(|state| state.with_menu(id, (x, y)))
         });
@@ -1920,12 +1827,7 @@ impl App {
                 self.handle(Event::Diff(DiffEvent::CommentCancel))
             }
             Key::Escape if self.text_drag.is_some() => self.drag_text_cancelled(),
-            Key::Escape if self.model.read(|screen| screen.menu().is_some()) => {
-                self.model.update(|state| {
-                    *state = std::mem::take(state).in_workspace(|state| state.without_menu())
-                });
-            }
-            Key::Escape if self.model.read(|screen| screen.picker_open()) => {
+            Key::Escape if self.model.read(Screen::restore_offered) => {
                 self.model
                     .update(|state| *state = std::mem::take(state).without_picker());
             }

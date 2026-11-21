@@ -228,16 +228,6 @@ impl WorkspaceState {
         self.with_git_menu(MenuKind::Change, at)
     }
 
-    /// Whether pressing `id` leaves the list of branches open.
-    pub fn keeps_branches(id: Target) -> bool {
-        id == Target::Git(GitEvent::BranchButton)
-            || id == Target::Git(GitEvent::BranchBody)
-            || id == Target::Git(GitEvent::BranchFilter)
-            || id == Target::Git(GitEvent::BranchCreate)
-            || matches!(id, Target::Git(GitEvent::BranchPick(row)) if row < BRANCH_ROWS)
-            || matches!(id, Target::Git(GitEvent::RepositoryBranch(row)) if row < REPOSITORY_ROWS)
-    }
-
     /// Whether a menu of the panel, a question or the list of branches is open.
     pub fn review_overlay_open(&self) -> bool {
         self.git.menu.is_some() || self.git.prompt.is_some() || self.git.branch_menu

@@ -1,17 +1,19 @@
 //! What floats over the screen, on rustle popups: popovers placed against what opened them,
-//! and menus opened at a point of the window, kept inside the window and clear of the band
-//! around it that holds its shadow. A popup a press elsewhere closes asks the app through
-//! its `on_dismiss_request`.
+//! menus opened at a point of the window or hanging from the control that opened them, kept
+//! inside the window and clear of the band around it that holds its shadow. Each popup that
+//! closes closes itself through its own `on_dismiss_request`, as its [`Dismissal`] says.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use rustle::{
-    Modifier, Offset, PopupPositionProvider, PopupProperties, Rect, Size,
+    DropdownMenuPositionProvider, Modifier, Offset, PointerEventPass, PointerEventType,
+    PopupPositionProvider, PopupProperties, PositionAtPoint, Rect, Size,
     popup_position_provider_at_position, popup_with,
 };
 
 use crate::events;
-
+use crate::state::WorkspaceState;
 /// Where a popover opens against what opened it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Placement {
@@ -23,6 +25,66 @@ pub enum Placement {
     Below,
     /// Below it, their right edges lined up.
     BelowEnd,
+}
+
+/// Which side of a line of text a popup hangs on when there is room there.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Side {
+    /// Under the line; above it when it would run past the bottom of the window.
+    Below,
+    /// Over the line; under it when it would run past the top of the window.
+    Above,
+}
+
+/// Places a popup against a line of text of the window, by the popup's own size: under or
+/// over the line as `side` says, `gap` logical pixels from it, its left edge at the line's
+/// point, and kept inside the window's frame as a popup at a point is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ByLine {
+    /// The left edge of the place on the line and the top of the line, in the window.
+    pub at: (f32, f32),
+    /// How tall the line is, in logical pixels.
+    pub height: f32,
+    /// The space between the line and the popup, in logical pixels.
+    pub gap: f32,
+    /// The side the popup hangs on when there is room there.
+    pub side: Side,
+}
+
+impl PopupPositionProvider for ByLine {
+    /// Under or over the line, flipped to the other side when the popup does not fit, then
+    /// kept inside the window's frame.
+    fn calculate_position(&self, anchor: Rect, window: Size, popup: Size) -> Offset {
+        let (x, top) = self.at;
+        let below = top + self.height + self.gap;
+        let above = top - popup.height - self.gap;
+        let y = match self.side {
+            Side::Below if below + popup.height > window.height => above.max(0.0),
+            Side::Below => below,
+            Side::Above if above >= 0.0 => above,
+            Side::Above => below,
+        };
+        at_point((x, y), (0.0, 0.0)).calculate_position(anchor, window, popup)
+    }
+}
+
+/// Places a popup beside its anchor, `gap` logical pixels past its right edge with their top
+/// edges together, kept inside the window's frame as a popup at a point is.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Beside {
+    /// The space between the anchor and the popup, in logical pixels.
+    pub gap: f32,
+}
+
+impl PopupPositionProvider for Beside {
+    /// Past the anchor's right edge, at its top.
+    fn calculate_position(&self, anchor: Rect, window: Size, popup: Size) -> Offset {
+        let at = (
+            anchor.origin.x + anchor.size.width + self.gap,
+            anchor.origin.y,
+        );
+        at_point(at, (0.0, 0.0)).calculate_position(anchor, window, popup)
+    }
 }
 
 /// Places a popover against its anchor as a [`Placement`] says, `gap` logical pixels away.
@@ -53,73 +115,233 @@ impl PopupPositionProvider for Against {
     }
 }
 
-/// Emits `content` as a popup where `placed` puts it; when `dismissed_elsewhere`, a press
-/// outside it asks the app to work out what that press closes. Escape is the app's own key.
+/// How a popup is dismissed: Compose's `PopupProperties` with its `onDismissRequest`.
+#[derive(Clone)]
+pub enum Dismissal {
+    /// Nothing dismisses it: it stays until the state that shows it changes, and lets every
+    /// press outside it through, as a card over the text or a drag's ghost does.
+    Never,
+    /// A focusable popup, as Compose's menus and popovers are: Escape and a press outside it
+    /// call the lambda, and the press goes no further.
+    Focusable(Rc<dyn Fn()>),
+    /// A popup that is not focusable, as a box typed in over the text is: a press outside it
+    /// calls the lambda and goes on to what it landed on, and the keys stay with what holds
+    /// focus.
+    Outside(Rc<dyn Fn()>),
+}
+
+impl Dismissal {
+    /// A focusable popup that `change` closes, run on the workspace when Escape or a press
+    /// outside it asks it to be dismissed.
+    pub fn focusable(change: impl Fn(WorkspaceState) -> WorkspaceState + 'static) -> Self {
+        Self::Focusable(closing(change))
+    }
+
+    /// A popup that is not focusable that `change` closes, run on the workspace when a press
+    /// outside it asks it to be dismissed.
+    pub fn outside(change: impl Fn(WorkspaceState) -> WorkspaceState + 'static) -> Self {
+        Self::Outside(closing(change))
+    }
+
+    /// The popup's properties and the lambda its dismissal calls, if any.
+    fn split(self) -> (PopupProperties, Option<Rc<dyn Fn()>>) {
+        let (focusable, on_dismiss_request) = match self {
+            Self::Never => (false, None),
+            Self::Focusable(dismiss) => (true, Some(dismiss)),
+            Self::Outside(dismiss) => (false, Some(dismiss)),
+        };
+        let dismissed = on_dismiss_request.is_some();
+        let properties = PopupProperties {
+            focusable,
+            dismiss_on_back_press: dismissed,
+            dismiss_on_click_outside: dismissed,
+            clipping_enabled: true,
+        };
+        (properties, on_dismiss_request)
+    }
+}
+
+/// The controls that open a popover and close it again, as the anchor of Compose's
+/// `ExposedDropdownMenuBox` does: a press on one of them is left to the control, which
+/// toggles the popover, rather than dismissing the popover as a press outside it.
+///
+/// A focusable rustle popup takes the presses, clicks and drags outside it but not the
+/// pointer buttons a control follows itself, which is how the app's controls tell their
+/// clicks, so the press that dismissed a popover would reach its opener and open it again.
+/// The opener notes a press on it in the first pass of the pointer's events, which comes
+/// before the popup hears of the press, and forgets it in the last pass, which comes after.
+#[derive(Clone, Default)]
+pub struct Opener(Rc<Cell<bool>>);
+
+impl Opener {
+    /// An opener kept across compositions, for the popover emitted where it is called.
+    #[track_caller]
+    pub fn remember() -> Self {
+        rustle::remember(Self::default).get()
+    }
+
+    /// `modifier` made one of the controls that open the popover.
+    pub fn on(&self, modifier: Modifier) -> Modifier {
+        let (pressed, handled) = (Rc::clone(&self.0), Rc::clone(&self.0));
+        modifier
+            .on_pointer_event(
+                PointerEventType::Press,
+                PointerEventPass::Initial,
+                move |_| pressed.set(true),
+            )
+            .on_pointer_event(
+                PointerEventType::Press,
+                PointerEventPass::Final,
+                move |_| handled.set(false),
+            )
+    }
+
+    /// Whether the press being handled landed on one of the controls.
+    fn pressed(&self) -> bool {
+        self.0.get()
+    }
+}
+
+impl Dismissal {
+    /// The dismissal, left out for a press on one of the controls of `opener`, which toggle
+    /// the popover themselves.
+    pub fn except_from(self, opener: &Opener) -> Self {
+        let wrap = |dismiss: Rc<dyn Fn()>| -> Rc<dyn Fn()> {
+            let opener = opener.clone();
+            Rc::new(move || {
+                if !opener.pressed() {
+                    dismiss();
+                }
+            })
+        };
+        match self {
+            Self::Never => Self::Never,
+            Self::Focusable(dismiss) => Self::Focusable(wrap(dismiss)),
+            Self::Outside(dismiss) => Self::Outside(wrap(dismiss)),
+        }
+    }
+}
+
+/// The lambda that runs `change` on the workspace, through the operations the view is
+/// composed under: what a popup's `on_dismiss_request` does to close it.
+fn closing(change: impl Fn(WorkspaceState) -> WorkspaceState + 'static) -> Rc<dyn Fn()> {
+    let operations = events::operations();
+    let change = Rc::new(change);
+    Rc::new(move || {
+        let change = Rc::clone(&change);
+        operations.update(Box::new(move |state| change(state)));
+    })
+}
+
+/// Emits `content` as a popup where `placed` puts it, over everything and kept inside the
+/// window, dismissed as `dismissal` says: Compose's
+/// `Popup(popupPositionProvider, onDismissRequest, properties)`.
 #[track_caller]
-fn float(
+pub fn float(
     placed: impl PopupPositionProvider + 'static,
-    dismissed_elsewhere: bool,
+    dismissal: Dismissal,
     content: impl FnOnce(),
 ) {
-    let dismiss = dismissed_elsewhere.then(|| {
-        let operations = events::operations();
-        Rc::new(move || operations.dismiss_requested()) as Rc<dyn Fn()>
-    });
-    let properties = PopupProperties {
-        focusable: false,
-        dismiss_on_back_press: false,
-        dismiss_on_click_outside: dismissed_elsewhere,
-        clipping_enabled: true,
-    };
-    popup_with(placed, dismiss, properties, content);
+    let (properties, on_dismiss_request) = dismissal.split();
+    popup_with(placed, on_dismiss_request, properties, content);
 }
 
 /// Emits `trigger` in a box with `modifier` and, while `popover` is given, the popover as a
 /// popup placed against the box as `placement` says, `gap` style steps away, over
-/// everything and kept inside the window. When `dismissed_elsewhere`, a press outside the
-/// popover asks the app to close what a press elsewhere closes.
+/// everything and kept inside the window, dismissed as `dismissal` says except by a press on
+/// the box, whose controls toggle the popover themselves.
 #[track_caller]
 pub fn anchored(
     modifier: Modifier,
     placement: Placement,
     gap: f32,
-    dismissed_elsewhere: bool,
+    dismissal: Dismissal,
     trigger: impl FnOnce(),
     popover: Option<impl FnOnce()>,
 ) {
     let gap = crate::theme::sp(gap);
-    rustle::stack_with(modifier, move || {
+    let opener = Opener::remember();
+    let dismissal = dismissal.except_from(&opener);
+    rustle::stack_with(opener.on(modifier), move || {
         trigger();
         if let Some(popover) = popover {
-            float(Against { placement, gap }, dismissed_elsewhere, popover);
+            float(Against { placement, gap }, dismissal, popover);
         }
     });
 }
 
-/// Emits `content` as a popup with its top left at (`x`, `y`) in the window, over
-/// everything, kept inside the window's frame clear of the band around it that holds its
-/// shadow, where a press resizes the window instead of reaching it; taking no room where it
-/// is declared. When `dismissed_elsewhere`, a press outside it asks the app to close what a
-/// press elsewhere closes: a menu opened where the pointer was.
+/// Emits `content` as a popup with its top left at (`x`, `y`) in the window moved by
+/// `offset`, over everything, kept inside the window's frame clear of the band around it
+/// that holds its shadow, where a press resizes the window instead of reaching it; taking
+/// no room where it is declared, and dismissed as `dismissal` says: Compose's popup placed
+/// by `rememberPopupPositionProviderAtPosition`, for a menu opened where the pointer was.
 #[track_caller]
-pub fn at_window(x: f32, y: f32, dismissed_elsewhere: bool, content: impl FnOnce()) {
+pub fn at_window(at: (f32, f32), offset: (f32, f32), dismissal: Dismissal, content: impl FnOnce()) {
+    float(at_point(at, offset), dismissal, content);
+}
+
+/// Places a popup with its top left at `at` in the window moved by `offset`, kept inside the
+/// window's frame clear of the band around it that holds its shadow: Compose's
+/// `rememberPopupPositionProviderAtPosition(position, offset, windowMargin)`.
+pub fn at_point(at: (f32, f32), offset: (f32, f32)) -> PositionAtPoint {
+    let mut placed =
+        popup_position_provider_at_position(Offset::new(at.0, at.1), crate::shadow_margin());
+    placed.offset = Offset::new(offset.0, offset.1);
+    placed
+}
+
+/// Places a popup as Compose's `DropdownMenuPositionProvider` places a dropdown menu, against
+/// the control that opened it rather than the box the popup is declared in.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct HangingFrom {
+    /// Where the control is, in the window.
+    control: Rect,
+    /// How the menu hangs from the control.
+    dropdown: DropdownMenuPositionProvider,
+}
+
+impl PopupPositionProvider for HangingFrom {
+    /// Where the dropdown provider puts the popup against the control.
+    fn calculate_position(&self, _: Rect, window: Size, popup: Size) -> Offset {
+        self.dropdown
+            .calculate_position(self.control, window, popup)
+    }
+}
+
+/// Emits `content` as a popup hanging `gap` logical pixels under `control`, a rectangle of the
+/// window holding the control that opened it, their left edges together, or their right edges
+/// together and above the control where the window has no room: Compose's `DropdownMenu`,
+/// placed by its `DropdownMenuPositionProvider`, and dismissed as `dismissal` says.
+///
+/// Compose declares the menu in the box of the control that opens it. A rustle popup tells the
+/// rows and strips that ask what it holds for its intrinsic size the size of its content, so
+/// one declared in a control of such a row would widen the control there; the menu is declared
+/// over the window instead and given the control's place.
+#[track_caller]
+pub fn dropdown(control: Rect, gap: f32, dismissal: Dismissal, content: impl FnOnce()) {
     float(
-        popup_position_provider_at_position(Offset::new(x, y), crate::shadow_margin()),
-        dismissed_elsewhere,
+        HangingFrom {
+            control,
+            dropdown: DropdownMenuPositionProvider {
+                content_offset: Offset::new(0.0, gap),
+                vertical_margin: 0.0,
+            },
+        },
+        dismissal,
         content,
     );
 }
 
 /// Emits `content` as a popup placed `offset` logical pixels from the top left of the box it
-/// is declared in, over everything and kept inside the window. When `dismissed_elsewhere`,
-/// a press outside it asks the app to close what a press elsewhere closes.
-pub fn in_box_at(offset: (f32, f32), dismissed_elsewhere: bool, content: impl FnOnce()) {
+/// is declared in, over everything and kept inside the window, dismissed as `dismissal` says.
+#[track_caller]
+pub fn in_box_at(offset: (f32, f32), dismissal: Dismissal, content: impl FnOnce()) {
     float(
         rustle::AlignmentOffsetPositionProvider {
             alignment: rustle::BoxAlignment::TopStart,
             offset: Offset::new(offset.0, offset.1),
         },
-        dismissed_elsewhere,
+        dismissal,
         content,
     );
 }
@@ -141,5 +363,56 @@ mod tests {
             Size::new(120.0, 50.0),
         );
         assert_eq!(at, Offset::new(20.0, 148.0));
+    }
+
+    /// A list hanging under a line goes over it when it would run past the bottom of the
+    /// window, and a card over a line goes under it at the top of the window.
+    #[test]
+    fn a_popup_by_a_line_flips_to_the_side_with_room() {
+        let window = Size::new(800.0, 600.0);
+        let popup = Size::new(200.0, 100.0);
+        let hung = |side, top| {
+            ByLine {
+                at: (50.0, top),
+                height: 20.0,
+                gap: 2.0,
+                side,
+            }
+            .calculate_position(Rect::default(), window, popup)
+        };
+        assert_eq!(hung(Side::Below, 100.0), Offset::new(50.0, 122.0));
+        assert_eq!(hung(Side::Below, 500.0), Offset::new(50.0, 398.0));
+        assert_eq!(hung(Side::Above, 300.0), Offset::new(50.0, 198.0));
+        assert_eq!(hung(Side::Above, 50.0), Offset::new(50.0, 72.0));
+    }
+
+    /// A menu hanging from a control near the window's right edge lines up its right edge with
+    /// the control's, and goes over the control near the bottom.
+    #[test]
+    fn a_dropdown_hangs_from_its_control() {
+        let placed = HangingFrom {
+            control: Rect::new(Offset::new(700.0, 560.0), Size::new(30.0, 20.0)),
+            dropdown: DropdownMenuPositionProvider {
+                content_offset: Offset::new(0.0, 4.0),
+                vertical_margin: 0.0,
+            },
+        };
+        let at = placed.calculate_position(
+            Rect::default(),
+            Size::new(800.0, 600.0),
+            Size::new(200.0, 100.0),
+        );
+        assert_eq!(at, Offset::new(530.0, 456.0));
+    }
+
+    /// The documentation beside a list starts just past the list's right edge, level with it.
+    #[test]
+    fn a_popup_beside_its_anchor_starts_past_its_right_edge() {
+        let at = Beside { gap: 4.0 }.calculate_position(
+            Rect::new(Offset::new(100.0, 80.0), Size::new(300.0, 120.0)),
+            Size::new(1280.0, 800.0),
+            Size::new(380.0, 160.0),
+        );
+        assert_eq!(at, Offset::new(404.0, 80.0));
     }
 }

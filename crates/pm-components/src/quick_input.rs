@@ -48,7 +48,7 @@ const SHADOW: [rustle::Shadow; 1] = [crate::theme::box_shadow(0.0, 10.0, 32.0, 0
 /// What a row of the quick input holds, emitted when the row is drawn.
 type Cells<'a> = Box<dyn FnOnce() + 'a>;
 
-/// Emits the quick input for `listing`: its field, then the rows around the one picked, or what keeps it empty.
+/// Emits the quick input for `listing` as a popup at its place in the box it is declared in: its field, then the rows around the one picked, or what keeps it empty.
 #[track_caller]
 pub fn quick_input(listing: &Listing) {
     let shown = listing.items.rows();
@@ -69,81 +69,81 @@ pub fn quick_input(listing: &Listing) {
     rustle::launched_effect((picked, count), move |_| async move {
         crate::rows_in_view::keep_in_view(&shown_list, picked);
     });
-    rustle::column_arranged(
-        Modifier::new()
-            .offset(listing.at.0, listing.at.1)
-            .z_index(60)
-            .width(LISTING_WIDTH)
-            .shadow_layers(&SHADOW, Radius::Lg.px())
-            .panel(Radius::Lg)
-            .clip()
-            .control(
-                Target::Editor(EditorEvent::ListingBody),
-                send(Event::Editor(EditorEvent::ListingBody)),
-            ),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            if let Some(filter) = listing.items.filter() {
+    crate::popups::in_box_at(listing.at, crate::popups::Dismissal::Never, || {
+        rustle::column_arranged(
+            Modifier::new()
+                .width(LISTING_WIDTH)
+                .shadow_layers(&SHADOW, Radius::Lg.px())
+                .panel(Radius::Lg)
+                .clip()
+                .control(
+                    Target::Editor(EditorEvent::ListingBody),
+                    send(Event::Editor(EditorEvent::ListingBody)),
+                ),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                if let Some(filter) = listing.items.filter() {
+                    rustle::column_arranged(
+                        Modifier::new().fill_max_width().padding_each(
+                            theme::sp(1.5),
+                            theme::sp(1.5),
+                            theme::sp(1.5),
+                            theme::sp(1),
+                        ),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            crate::focus::request_focus_on(
+                                Target::Editor(EditorEvent::ListingFilter),
+                                filter,
+                            );
+                            Input::new(filter, Target::Editor(EditorEvent::ListingFilter))
+                                .size(Size::Sm)
+                                .placeholder(listing.items.placeholder())
+                                .modifier(Modifier::new().fill_max_width().height(FIELD_HEIGHT))
+                                .on_submit(crate::quick_input::take_picked())
+                                .hurries(Target::Editor(EditorEvent::ListingPrompt))
+                                .build();
+                        },
+                    );
+                }
                 rustle::column_arranged(
                     Modifier::new().fill_max_width().padding_each(
                         theme::sp(1.5),
+                        0.0,
                         theme::sp(1.5),
-                        theme::sp(1.5),
-                        theme::sp(1),
+                        theme::sp(1.75),
                     ),
                     Arrangement::Start,
                     Alignment::Start,
                     || {
-                        crate::focus::request_focus_on(
-                            Target::Editor(EditorEvent::ListingFilter),
-                            filter,
-                        );
-                        Input::new(filter, Target::Editor(EditorEvent::ListingFilter))
-                            .size(Size::Sm)
-                            .placeholder(listing.items.placeholder())
-                            .modifier(Modifier::new().fill_max_width().height(FIELD_HEIGHT))
-                            .on_submit(crate::quick_input::take_picked())
-                            .hurries(Target::Editor(EditorEvent::ListingPrompt))
-                            .build();
-                    },
-                );
-            }
-            rustle::column_arranged(
-                Modifier::new().fill_max_width().padding_each(
-                    theme::sp(1.5),
-                    0.0,
-                    theme::sp(1.5),
-                    theme::sp(1.75),
-                ),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    if let Some(said) = status {
-                        rustle::row_arranged(
+                        if let Some(said) = status {
+                            rustle::row_arranged(
+                                Modifier::new()
+                                    .fill_max_width()
+                                    .height(ROW)
+                                    .padding_xy(theme::sp(1.5), 0.0),
+                                Arrangement::Start,
+                                Alignment::Center,
+                                || line(said, 13, 1.4, Role::Muted),
+                            );
+                        }
+                        rustle::lazy_list_with(
                             Modifier::new()
                                 .fill_max_width()
-                                .height(ROW)
-                                .padding_xy(theme::sp(1.5), 0.0),
-                            Arrangement::Start,
-                            Alignment::Center,
-                            || line(said, 13, 1.4, Role::Muted),
+                                .height_in(0.0, QUICK_SHOWN as f32 * ROW),
+                            &list,
+                            rustle::LazyContent::new(),
+                            count,
+                            |place| place,
+                            |place| quick_row(listing, place, shown[place], place == picked),
                         );
-                    }
-                    rustle::lazy_list_with(
-                        Modifier::new()
-                            .fill_max_width()
-                            .height_in(0.0, QUICK_SHOWN as f32 * ROW),
-                        &list,
-                        rustle::LazyContent::new(),
-                        count,
-                        |place| place,
-                        |place| quick_row(listing, place, shown[place], place == picked),
-                    );
-                },
-            );
-        },
-    );
+                    },
+                );
+            },
+        );
+    });
 }
 
 /// What the quick input says when nothing of `items` is left to pick.

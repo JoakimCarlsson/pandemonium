@@ -211,6 +211,7 @@ fn over(state: &WorkspaceState, height: f32, reviewing: bool) {
 #[track_caller]
 fn project_menu(open: ProjectMenu) {
     Menu::new(open.at.0, open.at.1)
+        .offset(-8.0, 12.0)
         .item(
             "New session",
             None,
@@ -233,7 +234,7 @@ fn session_menu(state: &WorkspaceState, open: SessionMenu) {
     let held = state.sessions.get(open.session);
     let on_branch = held.is_some_and(|held| held.on_branch);
     let chat = held.is_some_and(|held| held.is_chat());
-    let mut menu = Menu::new(open.at.0, open.at.1).item(
+    let mut menu = Menu::new(open.at.0, open.at.1).offset(-8.0, 12.0).item(
         "Copy path",
         None,
         Target::Menu(MenuEvent::SessionMenuCopyPath),

@@ -27,6 +27,7 @@ use crate::button::Variant;
 use crate::git_controls::Primary;
 use crate::graph::graph;
 use crate::parts::{clipped, glyph, line, spacer, wrap};
+use crate::popups::Opener;
 use crate::sample::Session;
 use crate::size::Size;
 use crate::state::{ReviewTab, WorkspaceState};
@@ -415,9 +416,9 @@ fn changes(state: &WorkspaceState, session: &Session) {
     );
 }
 
-/// Emits the rows of the list of repositories of `session`'s folder, when it has submodules: its own and each submodule, nested ones set in under the one they are in, each with what it has checked out on a button that opens its branches; the one the panel works on is picked.
+/// Emits the rows of the list of repositories of `session`'s folder, when it has submodules: its own and each submodule, nested ones set in under the one they are in, each with what it has checked out on a button of `branches` that opens its branches; the one the panel works on is picked.
 #[track_caller]
-fn repositories(state: &WorkspaceState, session: &Session) {
+fn repositories(state: &WorkspaceState, session: &Session, branches: &Opener) {
     let repositories = state.repositories();
     if repositories.len() < 2 {
         return;
@@ -497,6 +498,7 @@ fn repositories(state: &WorkspaceState, session: &Session) {
                             Variant::Ghost,
                         )
                         .monospace()
+                        .modifier(branches.on(Modifier::new()))
                         .tooltip("Checkout Branch…")
                         .build();
                     });
@@ -505,8 +507,8 @@ fn repositories(state: &WorkspaceState, session: &Session) {
     );
 }
 
-/// Emits the button that shows the branch the repository the panel works on is on and opens the list of branches, or, outside a repository, only says so.
-fn branch_button(state: &WorkspaceState, session: &Session, working: bool) {
+/// Emits the button that shows the branch the repository the panel works on is on and opens the list of branches, one of the controls of `opener`, or, outside a repository, only says so.
+fn branch_button(state: &WorkspaceState, session: &Session, working: bool, opener: &Opener) {
     if session.branch.is_empty() {
         let said = if session.unknown {
             "Reading the folder…"
@@ -521,6 +523,7 @@ fn branch_button(state: &WorkspaceState, session: &Session, working: bool) {
         .unwrap_or_else(|| session.branch.clone());
     let branches = Target::Git(GitEvent::BranchButton);
     button::small_button(&head, branches, Variant::Ghost)
+        .modifier(opener.on(Modifier::new()))
         .on_click(crate::focus::pressing_into(
             branches,
             Target::Git(GitEvent::BranchFilter),
@@ -541,6 +544,7 @@ fn branch_button(state: &WorkspaceState, session: &Session, working: bool) {
 /// Emits the review panel for `session`. A chat has no branch, worktree or diff, so its panel leaves out source control: it lists the files of its scratch folder, or searches them.
 #[track_caller]
 pub fn review(state: &WorkspaceState, session: &Session) {
+    let branches = Opener::remember();
     let versioned = !session.is_chat();
     let shown = match state.review_tab {
         ReviewTab::Changes if !versioned => ReviewTab::Files,
@@ -603,11 +607,11 @@ pub fn review(state: &WorkspaceState, session: &Session) {
                         });
                         if versioned {
                             parts::bar(10, 3, 2, || {
-                                branch_button(state, session, state.git.working)
+                                branch_button(state, session, state.git.working, &branches)
                             });
                         }
                         if shown == ReviewTab::Changes {
-                            repositories(state, session);
+                            repositories(state, session, &branches);
                         }
                         match shown {
                             ReviewTab::Changes => changes(state, session),
@@ -617,7 +621,7 @@ pub fn review(state: &WorkspaceState, session: &Session) {
                     },
                 );
                 if versioned && state.git.branch_menu {
-                    branch_menu(state);
+                    branch_menu(state, &branches);
                 }
             });
         },

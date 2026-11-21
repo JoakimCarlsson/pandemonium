@@ -32,6 +32,7 @@ mod keyboard;
 mod menus;
 mod panes;
 mod pointer;
+mod popups;
 mod scrolling;
 mod selection;
 mod smoke;

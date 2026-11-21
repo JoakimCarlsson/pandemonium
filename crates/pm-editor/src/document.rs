@@ -25,7 +25,8 @@ pub struct Completions {
     pub shown: Vec<usize>,
     /// The one picked, as a position in `shown`.
     pub picked: usize,
-    /// Where the list hangs, below the word, in logical pixels of the window.
+    /// Where the word's line is, in logical pixels of the window: the word's left edge and the
+    /// line's top, which the list hangs under, or over when there is no room under it.
     pub at: (f32, f32),
     /// The version of the text they were asked for at.
     pub asked: i32,

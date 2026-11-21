@@ -269,6 +269,7 @@ fn strip_buttons(state: &WorkspaceState) {
 #[track_caller]
 pub(crate) fn pane_menu(at: (f32, f32)) {
     Menu::new(at.0, at.1)
+        .offset(-190.0, 14.0)
         .item(
             "Split pane right",
             None,

@@ -1775,7 +1775,9 @@ pub struct WorkspaceState {
     pub going_to: Option<crate::line_edits::GoingTo>,
     /// The waiting prompt whose text is being edited in place, when one is.
     pub editing_queued: Option<crate::queued::EditingQueued>,
-    /// Where the signature of the call the caret is in hangs, in logical pixels of the window.
+    /// Where the line of the caret is while the signature of the call the caret is in shows,
+    /// in logical pixels of the window: the caret's left edge and the line's top, which the
+    /// signature hangs over.
     pub signature_at: (f32, f32),
     /// The bar for finding and replacing in the file shown, when open.
     pub finding: Option<crate::find::Finding>,
@@ -1998,21 +2000,6 @@ impl WorkspaceState {
 
     /// The state after `action` was pressed, before the shell and the caret follow the press.
     fn after_press(mut self, action: Target) -> Self {
-        if !Self::keeps_picker(action) {
-            self.picker = None;
-        }
-        if !Self::keeps_activity(action) {
-            self.activity = None;
-        }
-        if !Self::keeps_branches(action) {
-            self.git.branch_menu = false;
-        }
-        if !self.is_menu_row(action) {
-            self.git.menu = None;
-        }
-        if !self.settings_menu_row(action) {
-            self.settings_servers.menu = None;
-        }
         if let Target::Editor(event) = action {
             match event {
                 EditorEvent::CompletionRow(place) => return self.completion_taken(Some(place)),
@@ -2353,6 +2340,25 @@ impl WorkspaceState {
         self.settings_servers.menu = None;
         self.tab_menu = None;
         self.pane_menu = None;
+        self
+    }
+
+    /// The state with no popover of a chip above the prompt open: what pressing outside the
+    /// popover, or Escape, leaves.
+    pub fn without_open_picker(mut self) -> Self {
+        self.picker = None;
+        self
+    }
+
+    /// The state with the panel over the conversation's chips closed.
+    pub fn without_activity(mut self) -> Self {
+        self.activity = None;
+        self
+    }
+
+    /// The state with the list of branches of the changes panel closed.
+    pub fn without_branch_menu(mut self) -> Self {
+        self.git.branch_menu = false;
         self
     }
 

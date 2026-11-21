@@ -16,8 +16,9 @@ use rustle::{CursorIcon, Modifier};
 
 use crate::events::Interactive;
 use crate::marked::{CaretLook, Mark, Paint, marked_line};
-use crate::popups::at_window;
+use crate::popups::{Beside, ByLine, Dismissal, Side, at_point, at_window, float};
 use crate::theme::{Radius, Role, sp};
+use rustle::PopupPositionProvider;
 
 use crate::color_picker::{COLOR_FORMATS_SHOWN, ColorPicking};
 use crate::editor::COMPLETIONS_SHOWN;
@@ -71,21 +72,22 @@ fn kind_mark(kind: CompletionKind) -> (&'static str, Role) {
     }
 }
 
-/// Emits a raised box at `at` in the window, the frame of what floats over the file, holding `content`.
+/// Emits a raised box as a popup where `placed` puts it, the frame of what floats over the
+/// file, holding `content` and dismissed as `dismissal` says.
 ///
 /// `size` is what bounds the box (its width, its greatest height), `target` the name it answers
-/// to, with which a press outside it asks the app to close what a press elsewhere closes,
-/// `padding` the room inside its edge and `arrangement` how its column spreads what it holds.
+/// to, `padding` the room inside its edge and `arrangement` how its column spreads what it holds.
 #[track_caller]
 fn floating(
-    at: (f32, f32),
+    placed: impl PopupPositionProvider + 'static,
+    dismissal: Dismissal,
     size: Modifier,
     target: Option<Target>,
     padding: Modifier,
     arrangement: Arrangement,
     content: impl FnOnce(),
 ) {
-    at_window(at.0, at.1, target.is_some(), move || {
+    float(placed, dismissal, move || {
         framed(size, target, padding, arrangement, content);
     });
 }
@@ -213,8 +215,12 @@ fn completion_row(place: usize, item: &pm_protocol::Completion, picked: bool) {
     );
 }
 
-/// Emits the list of `completion`, the rows around the one picked, or nothing when it has none.
-fn completion_list(completion: &Completions) {
+/// Emits the list of `completion`, the rows around the one picked, or nothing when it has none:
+/// a popup hanging under the line of the word it completes, `row_height` logical pixels tall,
+/// or over it when it would run past the bottom of the window, with what `docs` emits placed
+/// against it.
+#[track_caller]
+fn completion_list(completion: &Completions, row_height: f32, docs: impl FnOnce()) {
     if completion.shown.is_empty() {
         return;
     }
@@ -222,27 +228,40 @@ fn completion_list(completion: &Completions) {
         .picked
         .saturating_sub(COMPLETIONS_SHOWN - 1)
         .min(completion.shown.len().saturating_sub(COMPLETIONS_SHOWN));
-    floating(
-        completion.at,
-        Modifier::new().width(LIST_WIDTH),
-        Some(Target::Editor(EditorEvent::CompletionBody)),
-        Modifier::new().padding(theme::sp(1)),
-        Arrangement::Start,
-        || {
-            for (place, index) in completion
-                .shown
-                .iter()
-                .enumerate()
-                .skip(first)
-                .take(COMPLETIONS_SHOWN)
-            {
-                if let Some(item) = completion.items.get(*index) {
-                    completion_row(place, item, place == completion.picked);
-                }
-            }
-        },
-    );
+    let placed = ByLine {
+        at: completion.at,
+        height: row_height,
+        gap: LINE_GAP,
+        side: Side::Below,
+    };
+    float(placed, Dismissal::Never, || {
+        rustle::stack_with(Modifier::new(), || {
+            framed(
+                Modifier::new().width(LIST_WIDTH),
+                Some(Target::Editor(EditorEvent::CompletionBody)),
+                Modifier::new().padding(theme::sp(1)),
+                Arrangement::Start,
+                || {
+                    for (place, index) in completion
+                        .shown
+                        .iter()
+                        .enumerate()
+                        .skip(first)
+                        .take(COMPLETIONS_SHOWN)
+                    {
+                        if let Some(item) = completion.items.get(*index) {
+                            completion_row(place, item, place == completion.picked);
+                        }
+                    }
+                },
+            );
+            docs();
+        });
+    });
 }
+
+/// The space between a line of the file and what hangs from it, in logical pixels.
+const LINE_GAP: f32 = 2.0;
 
 /// How wide the documentation beside the list of completions is, in logical pixels.
 const DOCS_WIDTH: f32 = 380.0;
@@ -250,7 +269,8 @@ const DOCS_WIDTH: f32 = 380.0;
 /// How many lines of the documentation of a completion are read at most.
 const DOCS_LINES: usize = 40;
 
-/// Emits the documentation of the completion picked in `completion`, beside the list, when it is `shown` and the language server sent any: its detail as code, then what it says.
+/// Emits the documentation of the completion picked in `completion` as a popup beside the list it is declared in, when it is `shown` and the language server sent any: its detail as code, then what it says.
+#[track_caller]
 fn completion_docs(completion: &Completions, shown: bool, language: Option<&str>) {
     if !shown {
         return;
@@ -267,7 +287,8 @@ fn completion_docs(completion: &Completions, shown: bool, language: Option<&str>
     };
     let width = DOCS_WIDTH - 26.0;
     floating(
-        (completion.at.0 + LIST_WIDTH + 4.0, completion.at.1),
+        Beside { gap: 4.0 },
+        Dismissal::Never,
         Modifier::new()
             .width(DOCS_WIDTH)
             .height_in(0.0, sp(list_height(completion).max(160.0) / 4.0)),
@@ -478,16 +499,26 @@ fn hover_card(
         );
     };
     if downward {
-        at_window(card.at.0, line_bottom + CARD_GAP, false, body);
+        at_window(
+            (card.at.0, line_bottom + CARD_GAP),
+            (0.0, 0.0),
+            Dismissal::Never,
+            body,
+        );
     } else {
-        at_window(card.at.0, card.at.1 - CARD_GAP - room, false, || {
-            column_arranged(
-                Modifier::new().width(CARD_WIDTH).height(room),
-                Arrangement::End,
-                Alignment::Start,
-                body,
-            );
-        });
+        at_window(
+            (card.at.0, card.at.1 - CARD_GAP - room),
+            (0.0, 0.0),
+            Dismissal::Never,
+            || {
+                column_arranged(
+                    Modifier::new().width(CARD_WIDTH).height(room),
+                    Arrangement::End,
+                    Alignment::Start,
+                    body,
+                );
+            },
+        );
     }
 }
 
@@ -551,12 +582,13 @@ pub fn assist(state: &WorkspaceState, height: f32) {
         );
     }
     if let Some(completion) = document.completion.as_ref().filter(|held| !held.loading) {
-        completion_list(completion);
-        completion_docs(
-            completion,
-            state.editor.completion_documentation,
-            document.language.as_deref(),
-        );
+        completion_list(completion, state.editor.row_height(), || {
+            completion_docs(
+                completion,
+                state.editor.completion_documentation,
+                document.language.as_deref(),
+            )
+        });
     }
     if let Some(listing) = state.listing_shown() {
         listing_or_quick(listing);
@@ -575,21 +607,13 @@ pub fn assist(state: &WorkspaceState, height: f32) {
         .as_ref()
         .filter(|_| document.completion.is_none())
     {
-        signature_card(signature, state.signature_at);
+        signature_card(signature, state.signature_at, state.editor.row_height());
     }
 }
 
-/// How tall the card with the signature of the call the caret is in is, in logical pixels.
-pub fn signature_height(signature: &pm_protocol::Signature) -> f32 {
-    if signature.documentation.is_some() {
-        52.0
-    } else {
-        30.0
-    }
-}
-
-/// Emits the signature of the call the caret is in, the parameter the caret is at marked, with the first line of what its documentation says, at `at` in the window.
-fn signature_card(signature: &pm_protocol::Signature, at: (f32, f32)) {
+/// Emits the signature of the call the caret is in, the parameter the caret is at marked, with the first line of what its documentation says, as a popup over the caret's line, whose left edge and top are `at` in the window and which is `row_height` logical pixels tall, or under it when there is no room over it.
+#[track_caller]
+fn signature_card(signature: &pm_protocol::Signature, at: (f32, f32), row_height: f32) {
     let mut marks = Vec::new();
     if let Some((start, end)) = signature.active {
         marks.push(Mark::new(start..end, Role::Accent, Paint::Ink));
@@ -609,7 +633,13 @@ fn signature_card(signature: &pm_protocol::Signature, at: (f32, f32)) {
         })
         .map(|line| line.replace('`', ""));
     floating(
-        at,
+        ByLine {
+            at,
+            height: row_height,
+            gap: LINE_GAP,
+            side: Side::Above,
+        },
+        Dismissal::Never,
         Modifier::new().width_in(0.0, CARD_WIDTH + 120.0),
         None,
         Modifier::new().padding_xy(theme::sp(2), theme::sp(1)),
@@ -645,20 +675,26 @@ fn signature_card(signature: &pm_protocol::Signature, at: (f32, f32)) {
 
 /// Emits the box the number of the line to go to is typed in, saying how many lines there are.
 fn go_to_line_box(going: &GoingTo, lines: usize) {
-    small_box(going.at, 260.0, EditorEvent::GoToLineBox, || {
-        Input::new(&going.field, Target::Editor(EditorEvent::GoToLine))
-            .modifier(Modifier::new().fill_max_width())
-            .size(Size::Sm)
-            .placeholder("Line number")
-            .submits(Target::Editor(EditorEvent::GoToLineSubmit))
-            .build();
-        line(
-            format!("Go to a line from 1 to {lines}"),
-            11,
-            1.4,
-            Role::Subtle,
-        );
-    });
+    small_box(
+        going.at,
+        260.0,
+        EditorEvent::GoToLineBox,
+        WorkspaceState::go_to_line_closed,
+        || {
+            Input::new(&going.field, Target::Editor(EditorEvent::GoToLine))
+                .modifier(Modifier::new().fill_max_width())
+                .size(Size::Sm)
+                .placeholder("Line number")
+                .submits(Target::Editor(EditorEvent::GoToLineSubmit))
+                .build();
+            line(
+                format!("Go to a line from 1 to {lines}"),
+                11,
+                1.4,
+                Role::Subtle,
+            );
+        },
+    );
 }
 
 /// Emits a line of the list over the file, `content` in `pixels` and `tone`, cut short at the edge of the room it is given; in the font for code when `code`.
@@ -888,7 +924,8 @@ fn listing_panel(listing: &Listing) {
         .saturating_sub(LISTING_SHOWN - 1)
         .min(count.saturating_sub(LISTING_SHOWN));
     floating(
-        listing.at,
+        at_point(listing.at, (0.0, 0.0)),
+        Dismissal::outside(WorkspaceState::listing_closed),
         Modifier::new().width(LISTING_WIDTH),
         Some(Target::Editor(EditorEvent::ListingBody)),
         Modifier::new().padding(theme::sp(1)),
@@ -957,33 +994,47 @@ fn rename_box(renaming: &Renaming) {
     } else {
         "Enter to rename, Escape to cancel"
     };
-    small_box(renaming.at, 320.0, EditorEvent::RenameBox, || {
-        Input::new(&renaming.field, Target::Editor(EditorEvent::RenameSymbol))
-            .modifier(Modifier::new().fill_max_width())
-            .size(Size::Sm)
-            .invalid(renaming.problem.is_some())
-            .submits(Target::Editor(EditorEvent::RenameSymbolSubmit))
-            .build();
-        let tone = if renaming.problem.is_some() {
-            Role::Danger
-        } else {
-            Role::Subtle
-        };
-        line(
-            renaming.problem.clone().unwrap_or_else(|| hint.to_owned()),
-            11,
-            1.4,
-            tone,
-        );
-    });
+    small_box(
+        renaming.at,
+        320.0,
+        EditorEvent::RenameBox,
+        WorkspaceState::rename_closed,
+        || {
+            Input::new(&renaming.field, Target::Editor(EditorEvent::RenameSymbol))
+                .modifier(Modifier::new().fill_max_width())
+                .size(Size::Sm)
+                .invalid(renaming.problem.is_some())
+                .submits(Target::Editor(EditorEvent::RenameSymbolSubmit))
+                .build();
+            let tone = if renaming.problem.is_some() {
+                Role::Danger
+            } else {
+                Role::Subtle
+            };
+            line(
+                renaming.problem.clone().unwrap_or_else(|| hint.to_owned()),
+                11,
+                1.4,
+                tone,
+            );
+        },
+    );
 }
 
 /// Emits a small raised box at `at`, `width` logical pixels wide, answering to `target` and
-/// holding `content` one theme step apart: the frame of the boxes typed in over the file.
+/// holding `content` one theme step apart: the frame of the boxes typed in over the file, which
+/// `closed` closes when a press lands outside it.
 #[track_caller]
-fn small_box(at: (f32, f32), width: f32, target: EditorEvent, content: impl FnOnce()) {
+fn small_box(
+    at: (f32, f32),
+    width: f32,
+    target: EditorEvent,
+    closed: fn(WorkspaceState) -> WorkspaceState,
+    content: impl FnOnce(),
+) {
     floating(
-        at,
+        at_point(at, (0.0, 0.0)),
+        Dismissal::outside(closed),
         Modifier::new().width(width),
         Some(Target::Editor(target)),
         Modifier::new().padding(theme::sp(1.5)),
@@ -1004,60 +1055,66 @@ fn color_box(picking: &ColorPicking) {
     } else {
         None
     };
-    small_box(picking.at, 260.0, EditorEvent::ColorBox, || {
-        rustle::row_arranged(
-            Modifier::new().fill_max_width(),
-            Arrangement::SpacedBy(theme::sp(2)),
-            Alignment::Center,
-            || {
-                rustle::spacer(
-                    Modifier::new()
-                        .size(theme::sp(7), theme::sp(7))
-                        .background_rounded(
-                            theme::color(Color::rgba(red, green, blue, alpha)),
-                            Radius::Sm.px(),
-                        )
-                        .outlined(Radius::Sm),
-                );
-                Input::new(&picking.hex, Target::Editor(EditorEvent::ColorHex))
-                    .size(Size::Sm)
-                    .invalid(crate::color_picker::color_of(&picking.hex.text()).is_none())
-                    .modifier(Modifier::new().weight(1.0))
-                    .submits(Target::Editor(EditorEvent::ColorHexSubmit))
-                    .build();
-            },
-        );
-        if let Some(said) = status {
-            parts::note(1.5, 1, said, 11, Role::Subtle);
-        }
-        for (place, format) in picking.formats.iter().take(COLOR_FORMATS_SHOWN).enumerate() {
-            let id = Target::Editor(EditorEvent::ColorFormat(place));
+    small_box(
+        picking.at,
+        260.0,
+        EditorEvent::ColorBox,
+        WorkspaceState::color_picker_closed,
+        || {
             rustle::row_arranged(
-                pickable(id, false, 6.5)
-                    .control(id, send(Event::pressing(id)))
-                    .padding_xy(theme::sp(1.5), 0.0),
-                Arrangement::Start,
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(theme::sp(2)),
                 Alignment::Center,
                 || {
-                    rustle::basic_text(
-                        Modifier::new(),
-                        &format.label,
-                        theme::code(13, Role::Text),
-                        TextOverflow::Ellipsis,
-                    )
+                    rustle::spacer(
+                        Modifier::new()
+                            .size(theme::sp(7), theme::sp(7))
+                            .background_rounded(
+                                theme::color(Color::rgba(red, green, blue, alpha)),
+                                Radius::Sm.px(),
+                            )
+                            .outlined(Radius::Sm),
+                    );
+                    Input::new(&picking.hex, Target::Editor(EditorEvent::ColorHex))
+                        .size(Size::Sm)
+                        .invalid(crate::color_picker::color_of(&picking.hex.text()).is_none())
+                        .modifier(Modifier::new().weight(1.0))
+                        .submits(Target::Editor(EditorEvent::ColorHexSubmit))
+                        .build();
                 },
             );
-        }
-        line(
-            picking.formats.first().map_or_else(
-                || "Type a colour as hex".to_owned(),
-                |format| format!("Enter writes {}", format.label),
-            ),
-            11,
-            1.4,
-            Role::Subtle,
-        );
-    });
+            if let Some(said) = status {
+                parts::note(1.5, 1, said, 11, Role::Subtle);
+            }
+            for (place, format) in picking.formats.iter().take(COLOR_FORMATS_SHOWN).enumerate() {
+                let id = Target::Editor(EditorEvent::ColorFormat(place));
+                rustle::row_arranged(
+                    pickable(id, false, 6.5)
+                        .control(id, send(Event::pressing(id)))
+                        .padding_xy(theme::sp(1.5), 0.0),
+                    Arrangement::Start,
+                    Alignment::Center,
+                    || {
+                        rustle::basic_text(
+                            Modifier::new(),
+                            &format.label,
+                            theme::code(13, Role::Text),
+                            TextOverflow::Ellipsis,
+                        )
+                    },
+                );
+            }
+            line(
+                picking.formats.first().map_or_else(
+                    || "Type a colour as hex".to_owned(),
+                    |format| format!("Enter writes {}", format.label),
+                ),
+                11,
+                1.4,
+                Role::Subtle,
+            );
+        },
+    );
 }
 
 /// How tall the list of completions of `completion` is, in logical pixels.

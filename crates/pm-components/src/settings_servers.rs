@@ -342,11 +342,6 @@ impl WorkspaceState {
         self
     }
 
-    /// Whether `id` names a row of the menu of a server that is open.
-    pub(crate) fn settings_menu_row(&self, id: Target) -> bool {
-        self.settings_servers.menu.is_some() && MENU_ROWS.contains(&id)
-    }
-
     /// Switches the `index`-th tool server on or off and has the server keep the list; one an extension brings is left as it is, as it has no switch.
     fn toggle_server(&mut self, index: usize) {
         if let Some(tool) = self
@@ -514,7 +509,7 @@ fn server_menu_of(state: &WorkspaceState) -> Option<Menu> {
             Some(("Remove", SettingsEvent::SettingsMenuRemove, false)),
         ],
     };
-    let menu = Menu::new(open.at.0, open.at.1);
+    let menu = Menu::new(open.at.0, open.at.1).offset(-190.0, 14.0);
     Some(entries.into_iter().fold(menu, |menu, entry| match entry {
         Some((label, event, off)) => menu.item(label, None, Target::Settings(event), off),
         None => menu.separator(),

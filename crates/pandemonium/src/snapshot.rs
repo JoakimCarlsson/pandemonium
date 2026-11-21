@@ -1117,9 +1117,13 @@ fn color_picker() -> WorkspaceState {
         )
 }
 
+/// The space between a line of the file and the list hanging from it, in logical pixels.
+const LINE_GAP: f32 = 2.0;
+
 /// The Rust file with `self.names.` typed into `count` and the language server's completions open under it.
 fn completing() -> WorkspaceState {
     let state = code();
+    let row = state.editor.row_height();
     let anchor = "        self.names.len()";
     let at = state
         .shown_document()
@@ -1134,7 +1138,7 @@ fn completing() -> WorkspaceState {
             field: Target::Editor(EditorEvent::EditorField),
             edit: Edit::Paste("i".to_owned()),
         }))
-        .completion_requested((236.0, 548.0));
+        .completion_requested((236.0, 548.0 - row - LINE_GAP));
     let version = state
         .shown_document()
         .map_or(0, |document| document.version);
@@ -1532,7 +1536,7 @@ fn signing() -> WorkspaceState {
             field: Target::Editor(EditorEvent::EditorField),
             edit: Edit::Place(caret, false),
         }))
-        .with_signature_at((470.0, 362.0));
+        .with_signature_at((470.0, 409.0));
     let version = state
         .shown_document()
         .map_or(0, |document| document.version);
@@ -2153,13 +2157,17 @@ pub enum Trigger {
 }
 
 impl Trigger {
-    /// The menu the control opens and where the control is, as `(x, y, width, height)` in logical pixels.
-    fn control(self) -> (MenuKind, (f32, f32, f32, f32)) {
-        match self {
+    /// The menu the control opens and where the control is, in logical pixels.
+    fn control(self) -> (MenuKind, rustle::Rect) {
+        let (kind, (x, y, width, height)) = match self {
             Self::Changes => (MenuKind::Source, (1245.0, 130.0, 26.0, 28.0)),
             Self::ChangesCompact => (MenuKind::Source, (1245.0, 112.0, 26.0, 24.0)),
             Self::Refs => (MenuKind::Refs, (1065.0, 774.0, 66.0, 24.0)),
-        }
+        };
+        (
+            kind,
+            rustle::Rect::new(rustle::Offset::new(x, y), rustle::Size::new(width, height)),
+        )
     }
 
     /// How closely the window is set for the shot.
@@ -3020,7 +3028,7 @@ impl Shot {
             Self::CompareSaved => Screen::Workspace(compared(Compare::Saved)),
             Self::ComparePicking => Screen::Workspace(compared(Compare::Picking)),
             Self::CompareFile => Screen::Workspace(compared(Compare::File)),
-            Self::TabMenu => Screen::Workspace(code().with_tab_menu(0, (500.0, 52.0))),
+            Self::TabMenu => Screen::Workspace(code().with_tab_menu(0, (508.0, 40.0))),
             Self::Finder => {
                 let mut state = code();
                 state.files = [
@@ -3216,7 +3224,7 @@ impl Shot {
                 }));
                 let selected = if unread { 3 } else { 0 };
                 state = state.handle(Event::Sidebar(SidebarEvent::Session(selected)));
-                Screen::Workspace(state.with_session_menu(selected, (220.0, 160.0)))
+                Screen::Workspace(state.with_session_menu(selected, (228.0, 148.0)))
             }
             Self::Workspace | Self::Selecting => Screen::Workspace(workspace()),
             Self::SessionAccount => {
@@ -3279,15 +3287,18 @@ impl Shot {
             Self::SourceMenu(trigger) => {
                 let state = source();
                 let (kind, control) = trigger.control();
-                let at = state.git_menu_below(kind, control, (WIDTH as f32, HEIGHT as f32));
                 let mut window = state.window.clone();
                 window.appearance.density = trigger.density();
-                Screen::Workspace(state.with_window_settings(window).with_git_menu(kind, at))
+                Screen::Workspace(
+                    state
+                        .with_window_settings(window)
+                        .with_git_menu_under(kind, control),
+                )
             }
             Self::HistoryMenu => {
                 let mut state = source();
                 state.git.graph_all = true;
-                Screen::Workspace(state.with_git_menu(MenuKind::History(2), (1000.0, 600.0)))
+                Screen::Workspace(state.with_git_menu(MenuKind::History(2), (1008.0, 588.0)))
             }
             Self::BranchLocal => {
                 let mut state = source();
@@ -3345,14 +3356,14 @@ impl Shot {
             Self::Refused => Screen::Workspace(
                 source().git_failed("Could not switch branch: fatal: a branch named 'main' already exists"),
             ),
-            Self::ChangeMenu => Screen::Workspace(picked().with_change_menu(0, (1000.0, 250.0))),
-            Self::ChangeMenuMany => Screen::Workspace(many_changes().with_change_menu(0, (1000.0, 250.0))),
+            Self::ChangeMenu => Screen::Workspace(picked().with_change_menu(0, (1008.0, 238.0))),
+            Self::ChangeMenuMany => Screen::Workspace(many_changes().with_change_menu(0, (1008.0, 238.0))),
             Self::TreeMenu => Screen::Workspace(files().with_tree_menu(
                 TreeTarget {
                     path: "crates/pandemonium/src/session.rs".to_owned(),
                     folder: false,
                 },
-                (1000.0, 250.0),
+                (1008.0, 238.0),
             )),
             Self::TreePicked => {
                 let file = |path: &str| TreeTarget {
@@ -3364,7 +3375,7 @@ impl Shot {
                         .tree_row_picked(file(".env"), Choosing::Toggle)
                         .tree_row_picked(file("Cargo.toml"), Choosing::Range)
                         .tree_row_picked(file("README.md"), Choosing::Toggle)
-                        .with_tree_menu(file("README.md"), (1000.0, 250.0)),
+                        .with_tree_menu(file("README.md"), (1008.0, 238.0)),
                 )
             }
             Self::TreeDragging => {
@@ -3420,7 +3431,7 @@ impl Shot {
                 Screen::Workspace(state.handle(Event::Diff(DiffEvent::ChangedFile(0))))
             }
             Self::OverviewChangeMenu => {
-                Screen::Workspace(overview().with_change_menu(0, (1000.0, 250.0)))
+                Screen::Workspace(overview().with_change_menu(0, (1008.0, 238.0)))
             }
             Self::Resized => {
                 let mut state = terminal();
@@ -3432,12 +3443,12 @@ impl Shot {
             Self::TerminalMenu => {
                 let mut state = terminal();
                 state.select_in_terminal((1, 0), (2, 20));
-                Screen::Workspace(state.with_terminal_menu((420.0, 560.0)))
+                Screen::Workspace(state.with_terminal_menu((428.0, 556.0)))
             }
             Self::BrowserMenu => {
                 let mut state = workspace_sample();
                 state.open_browser("http://localhost:5173");
-                Screen::Workspace(state.with_browser_menu((420.0, 120.0)))
+                Screen::Workspace(state.with_browser_menu((428.0, 116.0)))
             }
             Self::BrowserFind(narrow) => {
                 let mut state = browser_finding(false);
@@ -3536,7 +3547,7 @@ impl Shot {
                 Screen::Workspace(state)
             }
             Self::ProjectMenu => {
-                Screen::Workspace(workspace().with_project_menu(1, (236.0, 250.0)))
+                Screen::Workspace(workspace().with_project_menu(1, (244.0, 238.0)))
             }
             Self::Dragging => Screen::Workspace(workspace().dragged_over(0, 2, (150.0, 470.0))),
             Self::Welcome => Screen::Workspace(welcome()),
@@ -3559,7 +3570,7 @@ impl Shot {
             Self::ChatMenu => {
                 let state = chats();
                 let open = state.open_chats()[0];
-                Screen::Workspace(state.with_session_menu(open, (236.0, 250.0)))
+                Screen::Workspace(state.with_session_menu(open, (244.0, 238.0)))
             }
             Self::SettingsAccountsKey => {
                 let state = welcome();
@@ -3600,7 +3611,7 @@ impl Shot {
                 state.open_viewer("README.md".to_owned(), false);
                 Screen::Workspace(state)
             }
-            Self::PaneMenu => Screen::Workspace(code().with_pane_menu((690.0, 44.0))),
+            Self::PaneMenu => Screen::Workspace(code().with_pane_menu((880.0, 30.0))),
             Self::PanesDragging => Screen::Workspace(code().pane_dragged(
                 code_item(),
                 Some((0, Side::Right)),
@@ -3966,7 +3977,7 @@ impl Shot {
             Self::CaptureMenu => {
                 let mut state = workspace_sample();
                 state.open_browser("http://localhost:5173");
-                Screen::Workspace(state.with_browser_capture_menu((420.0, 60.0)))
+                Screen::Workspace(state.with_browser_capture_menu((428.0, 56.0)))
             }
             Self::CapturesSent => {
                 let mut state = workspace_sample();
@@ -4104,7 +4115,7 @@ impl Shot {
                             tool_listing("GitHub", "github", "https://api.githubcopilot.com/mcp/"),
                         ]),
                     )
-                    .with_settings_menu(0, (711.0, 357.0)),
+                    .with_settings_menu(0, (901.0, 343.0)),
             ),
             Self::SettingsForm => Screen::Workspace(
                 welcome()

@@ -93,7 +93,7 @@ impl App {
     /// Opens the menu over the message `message` at `at`, in the window, as a secondary press
     /// there asks, and closes any other menu; with no message, only closes the menus.
     pub(super) fn open_message_menu(&mut self, message: Option<usize>, at: (f32, f32)) {
-        self.note_press(None);
+        self.note_press();
         let at = self.framed_point(at);
         let selected = self.text_selection().is_some();
         self.model.update(|state| {

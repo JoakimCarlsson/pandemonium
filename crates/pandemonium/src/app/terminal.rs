@@ -6,7 +6,7 @@ use pm_components::pointing::{Stroke, TerminalPointer};
 use pm_components::target::Target;
 use pm_components::terminal::{cell_size, fitting};
 use pm_components::terminal_keys;
-use pm_components::terminal_menu::{TERMINAL_MENU_HEIGHT, TerminalCommand};
+use pm_components::terminal_menu::TerminalCommand;
 use pm_editor::{Action, Pressed};
 
 use rustle::Rect;
@@ -150,14 +150,9 @@ impl App {
         self.deliver();
     }
 
-    /// Opens the menu over the shell's window just under `at`, in the window's frame, and
-    /// inside the window.
-    pub(super) fn open_terminal_menu(&mut self, (x, y): (f32, f32)) {
-        let (width, height) = self.window_size();
-        let at = (
-            (x - 8.0).min(width - 264.0).max(0.0),
-            (y + 4.0).min(height - TERMINAL_MENU_HEIGHT - 8.0).max(0.0),
-        );
+    /// Opens the menu over the shell's window where the pointer was, at `at` in the window's
+    /// frame.
+    pub(super) fn open_terminal_menu(&mut self, at: (f32, f32)) {
         self.model.change(|state| state.with_terminal_menu(at));
     }
 

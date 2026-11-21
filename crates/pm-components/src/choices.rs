@@ -53,44 +53,6 @@ pub(crate) struct FileListing {
 const MENU_FILTER_AFTER: usize = 12;
 
 impl WorkspaceState {
-    /// Whether pressing `action` leaves the open menu open or works it.
-    pub fn keeps_picker(action: Target) -> bool {
-        action == Target::Composer(ComposerEvent::Location)
-            || crate::continue_chat::is_continue_part(action)
-            || action == Target::Composer(ComposerEvent::MenuBody)
-            || action == Target::Composer(ComposerEvent::MenuFilter)
-            || action == Target::Composer(ComposerEvent::MenuFilterPick)
-            || action == Target::Composer(ComposerEvent::Account)
-            || action == Target::Composer(ComposerEvent::GoalChip)
-            || matches!(
-                action,
-                Target::Composer(ComposerEvent::MenuPick(_))
-                    | Target::Composer(ComposerEvent::AccountRow(_))
-                    | Target::Composer(ComposerEvent::SettingChip(_))
-                    | Target::Composer(ComposerEvent::Element(_))
-                    | Target::Composer(ComposerEvent::Capture(_))
-                    | Target::Composer(ComposerEvent::SettingPick(_))
-                    | Target::Composer(ComposerEvent::Effort(_))
-                    | Target::Composer(ComposerEvent::Place(_))
-                    | Target::Composer(ComposerEvent::DevContainer)
-                    | Target::Composer(ComposerEvent::Branch(_))
-            )
-    }
-
-    /// Whether pressing `action` leaves the open panel above the conversation's chips open.
-    pub fn keeps_activity(action: Target) -> bool {
-        action == Target::Chat(ChatEvent::PlanChip)
-            || action == Target::Chat(ChatEvent::ApprovalsChip)
-            || action == Target::Chat(ChatEvent::SubagentsChip)
-            || action == Target::Chat(ChatEvent::ShellsChip)
-            || matches!(
-                action,
-                Target::Chat(ChatEvent::Step { .. })
-                    | Target::Chat(ChatEvent::Copy(_))
-                    | Target::Chat(ChatEvent::SubagentStop { .. })
-            )
-    }
-
     /// What the agent about to be spoken to lets the reader change: the open session's, or the chosen agent's.
     pub fn settings_now(&self) -> &[Setting] {
         match self.open() {

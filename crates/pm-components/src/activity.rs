@@ -19,7 +19,7 @@ use crate::Tally;
 use crate::button::Variant;
 use crate::icons::spinner;
 use crate::parts::{clipped, line};
-use crate::popups::{Placement, anchored};
+use crate::popups::{Dismissal, Placement, anchored};
 use crate::sample::{Session, Step};
 use crate::size::Size;
 use crate::state::{Activity, WorkspaceState};
@@ -179,7 +179,7 @@ pub fn activity(state: &WorkspaceState, session: &Session, width: f32) {
         Modifier::new().padding_each(0.0, 0.0, 0.0, theme::sp(2)),
         Placement::Above,
         2.0,
-        false,
+        Dismissal::focusable(WorkspaceState::without_activity),
         || chips(state, session, plan_items, awaiting, working_agents),
         open.map(|open| move || panel(state, session, open, width)),
     );

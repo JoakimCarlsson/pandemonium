@@ -829,9 +829,7 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) {
                     let over = Rc::clone(&covered);
                     find_bar(search, page_width, beside, move |hovered| over.set(hovered));
                 }
-                browser
-                    .safety
-                    .question_overlay(page_width, std::time::Instant::now());
+                browser.safety.question_overlay(page_width);
             });
         },
     );

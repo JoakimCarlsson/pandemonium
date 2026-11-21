@@ -96,18 +96,6 @@ pub struct ContextMenu {
     pub multiline: bool,
 }
 
-/// Whether `id` names a row of the menu.
-pub fn is_menu_item(id: Target) -> bool {
-    use MenuEvent::*;
-    matches!(
-        id,
-        Target::Menu(MenuUndo | MenuRedo | MenuCut | MenuCopy | MenuPaste | MenuSelectAll)
-    ) || EditorCommand::of(id).is_some()
-}
-
-/// How tall the menu over the file shown is, in logical pixels, to keep it inside the window.
-pub const EDITOR_MENU_HEIGHT: f32 = 18.0 * 26.0 + 3.0 * 9.0 + 10.0;
-
 /// Emits the menu over the file shown, opened at `open`: the language server's ways around the code when `coding`, what the selection allows, and the file's place on this machine when it is on this machine, `local`; `keymap` names the keys of each command.
 pub fn editor_menu(
     field: &pm_editor::Field,

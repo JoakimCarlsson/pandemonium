@@ -439,20 +439,25 @@ pub fn drag_ghost(state: &WorkspaceState) {
     let Some(project) = state.projects.get(drag.from) else {
         return;
     };
-    crate::popups::at_window(sp(2.0), drag.at.1 - ROW / 2.0, false, || {
-        rustle::row_arranged(
-            Modifier::new()
-                .height(theme::sp(9))
-                .width(state.sidebar_width - 16.0)
-                .shadow_layers(&theme::MEDIUM_SHADOW, Radius::Md.px())
-                .panel(Radius::Md)
-                .padding_xy(theme::sp(2), 0.0),
-            Arrangement::SpacedBy(theme::sp(3)),
-            Alignment::Center,
-            || {
-                Avatar::of(project).build();
-                clipped(&project.name, 14, Role::Text);
-            },
-        );
-    });
+    crate::popups::at_window(
+        (sp(2.0), drag.at.1 - ROW / 2.0),
+        (0.0, 0.0),
+        crate::popups::Dismissal::Never,
+        || {
+            rustle::row_arranged(
+                Modifier::new()
+                    .height(theme::sp(9))
+                    .width(state.sidebar_width - 16.0)
+                    .shadow_layers(&theme::MEDIUM_SHADOW, Radius::Md.px())
+                    .panel(Radius::Md)
+                    .padding_xy(theme::sp(2), 0.0),
+                Arrangement::SpacedBy(theme::sp(3)),
+                Alignment::Center,
+                || {
+                    Avatar::of(project).build();
+                    clipped(&project.name, 14, Role::Text);
+                },
+            );
+        },
+    );
 }

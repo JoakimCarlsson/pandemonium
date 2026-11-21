@@ -40,7 +40,7 @@ impl App {
     /// strips [`resize_edges`](pm_components::resize_edges) lays over the frame, a press on
     /// no control of the window's content.
     pub(super) fn edge_pressed(&mut self, edge: ResizeEdge) {
-        self.note_press(None);
+        self.note_press();
         self.press_on(None);
         if let Some(window) = self.window.clone() {
             window.drag_resize(edge);

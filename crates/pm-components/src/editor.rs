@@ -447,7 +447,7 @@ impl WorkspaceState {
         self
     }
 
-    /// Asks the language server what could be written at the caret of the file shown, the list hanging at `at`.
+    /// Asks the language server what could be written at the caret of the file shown, the list hanging from the line whose point is `at`: the word's left edge and the line's top, in logical pixels of the window.
     pub fn completion_requested(mut self, at: (f32, f32)) -> Self {
         let Some((session, viewer)) = self.shown_mut() else {
             return self;
@@ -469,7 +469,7 @@ impl WorkspaceState {
         self
     }
 
-    /// Notes where the list of completions hangs, in logical pixels of the window.
+    /// Notes where the line the list of completions hangs from is: the word's left edge and the line's top, in logical pixels of the window.
     pub fn with_completion_at(mut self, at: (f32, f32)) -> Self {
         if let Some(document) = self.shown_document_mut()
             && let Some(completion) = &mut document.completion
