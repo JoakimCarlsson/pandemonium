@@ -1,10 +1,12 @@
 //! The history page: every session of every project, newest first, grouped by when it last changed and narrowed by a search.
 
 use crate::areas::SidebarEvent;
-use crate::kit::{self, Frame};
+use crate::parts;
 use crate::target::Target;
 use crate::theme;
+use crate::theme::Frame;
 use rustle::Modifier;
+use rustle::TextOverflow;
 use rustle::phosphor;
 use rustle::{Alignment, Arrangement, row_arranged};
 
@@ -41,48 +43,61 @@ const LOCAL_MACHINE: &str = "local";
 pub fn history(state: &WorkspaceState) {
     let now = age::now();
     let rows = matching(state);
-    kit::column(Modifier::new().weight(1.0), 0, || {
-        heading();
-        search(state);
-        kit::column(
-            Modifier::new()
-                .fill_max_width()
-                .weight(1.0)
-                .vertical_scroll(&state.history_scroll)
-                .fill_max_width()
-                .padding_xy(theme::sp(5), 0.0),
-            0,
-            || {
-                for span in Span::ALL {
-                    group(state, span, &rows, now);
-                }
-            },
-        );
-    });
+    rustle::column_arranged(
+        Modifier::new().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            heading();
+            search(state);
+            rustle::column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .weight(1.0)
+                    .vertical_scroll(&state.history_scroll)
+                    .fill_max_width()
+                    .padding_xy(theme::sp(5), 0.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    for span in Span::ALL {
+                        group(state, span, &rows, now);
+                    }
+                },
+            );
+        },
+    );
 }
 
 /// Emits the bar across the top naming the page.
 #[track_caller]
 fn heading() {
-    kit::bar(12, 5, 0, || {
-        kit::text(Modifier::new(), "History", kit::strong(14, Role::Text));
+    parts::bar(12, 5, 0, || {
+        rustle::basic_text(
+            Modifier::new(),
+            "History",
+            theme::strong(14, Role::Text),
+            TextOverflow::Ellipsis,
+        );
     });
 }
 
 /// Emits the box the reader types into to narrow the list.
 #[track_caller]
 fn search(state: &WorkspaceState) {
-    kit::column(
+    rustle::column_arranged(
         Modifier::new().padding_each(theme::sp(5), theme::sp(5), theme::sp(5), theme::sp(2)),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            kit::row(
+            rustle::row_arranged(
                 Modifier::new()
                     .width(SEARCH_WIDTH)
                     .height(theme::sp(10))
                     .panel(Radius::Lg)
                     .padding_xy(theme::sp(3), 0.0),
-                2,
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Center,
                 || {
                     glyph(phosphor::MAGNIFYING_GLASS, 4.0, Role::Muted);
                     Input::new(
@@ -138,19 +153,26 @@ fn group(state: &WorkspaceState, span: Span, rows: &[usize], now: u64) {
     if members.is_empty() {
         return;
     }
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .padding_each(0.0, theme::sp(5), 0.0, 0.0),
-        0.5,
+        Arrangement::SpacedBy(theme::sp(0.5)),
+        Alignment::Start,
         || {
-            kit::row(
+            rustle::row_arranged(
                 Modifier::new()
                     .height(theme::sp(8))
                     .padding_xy(theme::sp(3), 0.0),
-                0,
+                Arrangement::Start,
+                Alignment::Center,
                 || {
-                    kit::text(Modifier::new(), span.title(), kit::strong(14, Role::Text));
+                    rustle::basic_text(
+                        Modifier::new(),
+                        span.title(),
+                        theme::strong(14, Role::Text),
+                        TextOverflow::Ellipsis,
+                    );
                 },
             );
             for index in members {
@@ -174,21 +196,32 @@ fn row_of(state: &WorkspaceState, index: usize) {
     let agent = state.agent_look(session.agent);
     let operations = crate::events::operations();
     Tile::new(Target::Sidebar(SidebarEvent::Session(index)))
-        .on_context(move || operations.open_session_menu(index))
+        .on_context(move |at| operations.open_session_menu(index, at))
         .height(12.0)
         .modifier(Modifier::new().fill_max_width())
         .inner(Modifier::new().padding_xy(theme::sp(3), 0.0))
         .build_with(|| {
-            kit::row(Modifier::new().weight(1.0), 2, || {
-                kit::text(
-                    Modifier::new().width_in(0.0, 560.0),
-                    &session.title,
-                    kit::line(14, Role::Text),
-                );
-                glyph(phosphor::CARET_RIGHT, 4.0, Role::Subtle);
-                glyph(agent.icon, 4.0, Role::Muted);
-                kit::text(Modifier::new(), agent.name, kit::line(14, Role::Muted));
-            });
+            rustle::row_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Center,
+                || {
+                    rustle::basic_text(
+                        Modifier::new().width_in(0.0, 560.0),
+                        &session.title,
+                        theme::line(14, Role::Text),
+                        TextOverflow::Ellipsis,
+                    );
+                    glyph(phosphor::CARET_RIGHT, 4.0, Role::Subtle);
+                    glyph(agent.icon, 4.0, Role::Muted);
+                    rustle::basic_text(
+                        Modifier::new(),
+                        agent.name,
+                        theme::line(14, Role::Muted),
+                        TextOverflow::Ellipsis,
+                    );
+                },
+            );
             cell(project, PROJECT_WIDTH, false);
             cell(&machine, MACHINE_WIDTH, false);
             cell(&session.branch, BRANCH_WIDTH, false);

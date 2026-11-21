@@ -1,8 +1,8 @@
 //! The avatar: a project's colour with its first letter, at a measure per size.
 
-use crate::kit;
 use crate::theme;
 use rustle::Modifier;
+use rustle::TextOverflow;
 use rustle::{Alignment, Arrangement, Color, row_arranged};
 
 use crate::theme::Radius;
@@ -63,12 +63,13 @@ impl Avatar {
             .background_rounded(theme::color(self.color), Radius::Md.px());
         let initial = self.initial;
         row_arranged(own, Arrangement::Center, Alignment::Center, move || {
-            kit::text(
+            rustle::basic_text(
                 Modifier::new(),
                 initial,
                 theme::text_style(font, 1.2)
                     .font_weight(rustle::FontWeight::SEMI_BOLD)
                     .color(theme::color(Color::WHITE)),
+                TextOverflow::Ellipsis,
             );
         });
     }

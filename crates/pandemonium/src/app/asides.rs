@@ -9,9 +9,9 @@ use pm_components::events::Event;
 use pm_components::target::Target;
 use std::rc::Rc;
 
+use pm_components::focus::FocusRequesters;
 use pm_components::folder_picker::is_picker;
 
-use super::pointer::PointerState;
 use pm_components::settings::is_settings;
 use pm_pages::Screen;
 use rustle::WindowOptions;
@@ -111,15 +111,25 @@ pub(super) fn is_aside(id: Target) -> bool {
     Aside::ALL.iter().any(|aside| aside.owns(id))
 }
 
-/// A window and what it alone keeps: its native window once open, the
-/// controls the pointer is over and the pointer as its events left it.
+/// Asks rustle, from inside the folder picker's window's composition, to give the
+/// picker's filter in `requesters` the keyboard each time the picker opens, `serial` naming
+/// the opening: the request comes from the window that paints the filter, so rustle gives
+/// focus there and not in the window that happens to be active.
+#[track_caller]
+pub(super) fn focus_picker_filter(requesters: &FocusRequesters, serial: Option<u64>) {
+    let requesters = requesters.clone();
+    rustle::disposable_effect(serial, move || {
+        if serial.is_some() {
+            requesters.request_focus(Target::Dialog(DialogEvent::PickerField));
+        }
+        || {}
+    });
+}
+
+/// A window and what it alone keeps: its native window once open.
 pub(super) struct Surface {
     /// The window, once rustle opened it.
     window: Option<Rc<dyn Port>>,
-    /// The controls the pointer is over in the window, the one it came over last at the end.
-    hovered: Vec<Target>,
-    /// The pointer as the window's events so far left it.
-    pointer: PointerState,
 }
 
 impl App {
@@ -146,8 +156,6 @@ impl App {
                 (true, false, Some(window)) => {
                     *self.surface_of(aside) = Some(Surface {
                         window: Some(window),
-                        hovered: Vec::new(),
-                        pointer: PointerState::default(),
                     });
                 }
                 (false, true, _) => {
@@ -159,7 +167,7 @@ impl App {
         self.raise_picker();
     }
 
-    /// Brings the folder picker's window to the front and focuses its filter when the picker was opened again while it showed, or was just opened.
+    /// Brings the folder picker's window to the front when the picker was opened again while it showed, or was just opened; the window's own composition gives its filter the keyboard (see [`focus_picker_filter`]).
     fn raise_picker(&mut self) {
         let serial = self.model.read(Screen::folder_picker_serial);
         if serial == self.raised_picker {
@@ -172,8 +180,6 @@ impl App {
         if serial.is_none() {
             return;
         }
-        self.focus.focus(Target::Dialog(DialogEvent::PickerField));
-        self.recompose = true;
         if let Some(window) = self.window_of(Aside::Picker) {
             window.set_minimized(false);
             window.focus_window();
@@ -191,7 +197,7 @@ impl App {
     }
 
     /// Runs `act` with the window of `aside` standing in for the main one: its
-    /// window, frame, pointer and edge are swapped in for the time `act` runs.
+    /// window and frame are swapped in for the time `act` runs.
     pub(super) fn in_aside(&mut self, aside: Aside, act: impl FnOnce(&mut Self)) {
         let Some(mut surface) = self.surface_of(aside).take() else {
             return;
@@ -209,7 +215,5 @@ impl App {
     /// Trades the main window's surface with `surface`.
     fn swap_surface(&mut self, surface: &mut Surface) {
         std::mem::swap(&mut self.window, &mut surface.window);
-        std::mem::swap(&mut self.hovered, &mut surface.hovered);
-        std::mem::swap(&mut self.pointer, &mut surface.pointer);
     }
 }

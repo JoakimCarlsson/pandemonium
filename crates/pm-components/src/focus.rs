@@ -1,17 +1,17 @@
-//! Keyboard focus as the views see it: rustle's [`Focus`](rustle::Focus), driven by the
-//! control the app's state holder keeps focus on.
+//! Keyboard focus as the views see it: rustle's [`Focus`](rustle::Focus), one for each
+//! control, kept in a registry the app holds.
 //!
 //! Rustle owns focus: Tab walks the focus targets in the order they were painted, a press
-//! on a text field gives it focus, Escape and a press elsewhere take it away. The app keeps
-//! which control holds it as a [`Target`], the domain key its reducers ask about (which
-//! field Enter submits, which row the keys act on). The two follow each other the way a
-//! Compose screen hoists focus: every focusable control remembers a rustle focus, asks for
-//! it while the app keeps focus on the control and frees it otherwise (a `FocusRequester`
-//! driven by state from an effect), and tells the app through
-//! [`on_focus_changed`](rustle::Modifier::on_focus_changed) when rustle moved it. The app's
-//! side is provided to the views with [`provide`] as [`FocusKeys`].
+//! on a text field gives it focus, Escape and a press elsewhere take it away. The app
+//! holds a [`FocusRequesters`] with one rustle focus for each [`Target`], the way a
+//! Compose screen holds its `FocusRequester`s, and provides it to the views with
+//! [`provide`]. A view attaches the focus of its control to its focus target, focusable
+//! or text field; the app asks which control holds focus by reading rustle's state of
+//! those focuses, asks for focus with [`FocusRequesters::request_focus`] and lets it go
+//! with [`FocusRequesters::free_focus`].
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use rustle::{
@@ -20,106 +20,121 @@ use rustle::{
 
 use crate::target::Target;
 
-/// The app's focus as the views see it: the control it keeps focus on, and what it is
-/// told when rustle's focus comes to a control or leaves it.
-#[derive(Clone)]
-pub struct FocusKeys {
-    /// The control the app keeps focus on.
-    pub held: Option<Target>,
-    /// Called with a control and whether rustle's focus came to it (true) or left it.
-    pub on_moved: Rc<dyn Fn(Target, bool)>,
-    /// Asks the app to keep focus on a control that is not composed yet, such as a row of
-    /// a long list scrolled into view for it: its focus is requested once it is composed.
-    pub request: Rc<dyn Fn(Target)>,
+/// The rustle focus of every control, by its [`Target`], made the first time it is asked
+/// for and kept for as long as the registry lives, so a control has the same focus
+/// wherever and whenever it is composed, and focus can be asked for before it is.
+#[derive(Clone, Default)]
+pub struct FocusRequesters {
+    /// The focus of each control asked for so far.
+    entries: Rc<RefCell<BTreeMap<Target, Focus>>>,
 }
 
-impl FocusKeys {
-    /// Focus kept on `held`, with nothing told when it moves, for views drawn with no app
-    /// behind them, such as snapshots and a component's own tests.
-    pub fn resting(held: Option<Target>) -> Self {
-        Self {
-            held,
-            on_moved: Rc::new(|_, _| {}),
-            request: Rc::new(|_| {}),
-        }
-    }
-}
-
-impl PartialEq for FocusKeys {
-    /// Whether both keep focus on the same control and tell the same holder.
+impl PartialEq for FocusRequesters {
+    /// Whether both are the same registry.
     fn eq(&self, other: &Self) -> bool {
-        self.held == other.held
-            && Rc::ptr_eq(&self.on_moved, &other.on_moved)
-            && Rc::ptr_eq(&self.request, &other.request)
+        Rc::ptr_eq(&self.entries, &other.entries)
     }
 }
 
-/// The app's focus the views composed below see.
-static LOCAL_FOCUS_KEYS: CompositionLocal<FocusKeys> =
-    CompositionLocal::new(|| FocusKeys::resting(None));
+impl FocusRequesters {
+    /// A registry holding no focus yet.
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-/// Composes `content` with the app's focus `keys`.
-pub fn provide<R>(keys: FocusKeys, content: impl FnOnce() -> R) -> R {
-    LOCAL_FOCUS_KEYS.provide(keys, content)
-}
+    /// The rustle focus of the control `id`, made now if it was never asked for.
+    pub fn focus_of(&self, id: Target) -> Focus {
+        self.entries.borrow_mut().entry(id).or_default().clone()
+    }
 
-/// The app's focus as the view being composed sees it.
-pub fn keys() -> FocusKeys {
-    LOCAL_FOCUS_KEYS.current()
-}
+    /// Whether rustle's focus is on the control `id`. Read while composing, it composes
+    /// the reader again when that changes.
+    pub fn is_focused(&self, id: Target) -> bool {
+        self.focus_of(id).is_focused()
+    }
 
-/// The control the app keeps focus on, as the view being composed sees it.
-pub fn held() -> Option<Target> {
-    LOCAL_FOCUS_KEYS.current().held
-}
+    /// The control rustle's focus is on, the first in target order when windows beside
+    /// the main one each hold one.
+    pub fn focused(&self) -> Option<Target> {
+        self.focused_where(|_| true)
+    }
 
-/// Whether the app keeps focus on `id`, as the view being composed sees it.
-pub fn is_held(id: Target) -> bool {
-    held() == Some(id)
-}
+    /// The first control, in target order, that rustle's focus is on and `keep` accepts.
+    pub fn focused_where(&self, keep: impl Fn(Target) -> bool) -> Option<Target> {
+        let entries: Vec<(Target, Focus)> = self
+            .entries
+            .borrow()
+            .iter()
+            .map(|(id, focus)| (*id, focus.clone()))
+            .collect();
+        entries
+            .into_iter()
+            .find(|(id, focus)| keep(*id) && focus.is_focused())
+            .map(|(id, _)| id)
+    }
 
-/// Remembers the rustle [`Focus`] of the control `id`, keyed by `id` so a control keeps its
-/// focus wherever it is composed, asked for while the app keeps focus on `id` and `wanted`
-/// holds, and freed otherwise: a `FocusRequester` driven by state from an effect.
-#[track_caller]
-pub fn follow_focus(id: Target, wanted: bool) -> Focus {
-    let focus = rustle::key(id, rustle::remember_focus);
-    let wanted = wanted && is_held(id);
-    let held = focus.clone();
-    rustle::side_effect(move || {
-        if wanted && !held.is_focused() {
-            held.request_focus();
-        } else if !wanted && held.is_focused() {
-            held.free_focus();
+    /// Asks rustle to give focus to the control `id`, in the window that painted it.
+    pub fn request_focus(&self, id: Target) {
+        self.focus_of(id).request_focus();
+    }
+
+    /// Asks rustle to take focus from the control holding it, if any, so nothing holds it.
+    pub fn free_focus(&self) {
+        if let Some(id) = self.focused() {
+            self.free_focus_of(id);
         }
-    });
-    focus
+    }
+
+    /// Asks rustle to take focus from the control `id`, if it holds it then.
+    pub fn free_focus_of(&self, id: Target) {
+        self.focus_of(id).free_focus();
+    }
 }
 
-/// The modifier that tells the app when rustle's focus comes to the control `id`, or
-/// leaves it. Put it before (outside) the focusable it observes.
-pub fn reports_focus(id: Target) -> Modifier {
-    let on_moved = LOCAL_FOCUS_KEYS.current().on_moved;
-    Modifier::new().on_focus_changed(move |focused| on_moved(id, focused))
+thread_local! {
+    /// The registry views composed with none provided share.
+    static RESTING: FocusRequesters = FocusRequesters::new();
 }
 
-/// The modifier that makes the control `id` a focus target: Tab reaches it in paint order,
-/// it holds rustle's focus while the app keeps focus on it, and tells the app when rustle
-/// moves focus to it or away. A press does not give it focus, as in Compose.
-#[track_caller]
+/// The focus registry the views composed below see.
+static LOCAL_FOCUS_REQUESTERS: CompositionLocal<FocusRequesters> =
+    CompositionLocal::new(|| RESTING.with(FocusRequesters::clone));
+
+/// Composes `content` with the focus registry `requesters`.
+pub fn provide<R>(requesters: FocusRequesters, content: impl FnOnce() -> R) -> R {
+    LOCAL_FOCUS_REQUESTERS.provide(requesters, content)
+}
+
+/// The focus registry the view being composed sees.
+pub fn requesters() -> FocusRequesters {
+    LOCAL_FOCUS_REQUESTERS.current()
+}
+
+/// The rustle focus of the control `id`, from the registry the view being composed sees.
+pub fn focus_of(id: Target) -> Focus {
+    requesters().focus_of(id)
+}
+
+/// Whether rustle's focus is on the control `id`, read so the view being composed is
+/// composed again when that changes.
+pub fn is_focused(id: Target) -> bool {
+    focus_of(id).is_focused()
+}
+
+/// The modifier that makes the control `id` a focus target holding its registry focus:
+/// Tab reaches it in paint order, and a press does not give it focus, as in Compose.
 pub fn focus_target(id: Target) -> Modifier {
-    let focus = follow_focus(id, true);
-    reports_focus(id).focus_target(&focus)
+    Modifier::new().focus_target(&focus_of(id))
 }
 
-/// The modifier that lets the area `id` hold rustle's keyboard focus while the app keeps
-/// focus on it, for an area that takes text the app handles itself, such as the code
-/// editor, a shell or a web page: the window keeps its input method on while the area has
-/// the keyboard, what the input method composes and commits there goes to the app through
-/// the area's text input session, and the app's own key handler sees the keys first.
+/// The modifier that lets the area `id` hold rustle's keyboard focus, for an area that
+/// takes text the app handles itself, such as the code editor, a shell or a web page: the
+/// window keeps its input method on while the area has the keyboard, what the input method
+/// composes and commits there goes to the app through the area's text input session, and
+/// the app's own key handler sees the keys first.
 #[track_caller]
 pub fn keyboard_focus(id: Target) -> Modifier {
-    let focus = follow_focus(id, true);
+    let focus = focus_of(id);
     let session = rustle::key(id, rustle::remember_platform_text_input_session);
     let origin = rustle::key(id, || {
         rustle::remember(|| Rc::new(Cell::new(Offset::default())))
@@ -132,7 +147,7 @@ pub fn keyboard_focus(id: Target) -> Modifier {
     };
     let started = session.clone();
     rustle::side_effect(move || started.start_input_method(request));
-    reports_focus(id)
+    Modifier::new()
         .focusable(&focus, |_| false)
         .platform_text_input(&session)
         .on_globally_positioned(move |area| origin.set(area.origin))

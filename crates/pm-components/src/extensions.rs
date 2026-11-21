@@ -1,16 +1,19 @@
 //! The extensions page: what the server on this machine has installed, then what it can install, narrowed by a search, each a row saying what the extension gives the files of a project and whether it works, and the button that installs one from a folder.
 
 use crate::areas::SettingsEvent;
+use crate::button;
 use crate::icons::artwork_with;
-use crate::kit::{self, Frame};
 use crate::overview::scrolled_page;
+use crate::parts;
 use crate::target::Target;
+use crate::theme::Frame;
 use crate::theme::{self, family_from_colours, set_extension_families};
 use crate::theme::{Radius, Role, sp};
 use pm_protocol::{ExtensionAssets, ExtensionCommand, ExtensionInfo};
 use rustle::Modifier;
 use rustle::TextFieldState;
 use rustle::phosphor;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
 use crate::Checkbox;
 use crate::button::Variant;
@@ -351,13 +354,14 @@ impl WorkspaceState {
 /// Emits the title of the page and the button that installs an extension from a folder.
 #[track_caller]
 fn heading() {
-    kit::bar(12, 5, 0, || {
-        kit::text(
+    parts::bar(12, 5, 0, || {
+        rustle::basic_text(
             Modifier::new().weight(1.0),
             "Extensions",
-            kit::strong(14, Role::Text),
+            theme::strong(14, Role::Text),
+            TextOverflow::Ellipsis,
         );
-        kit::action(
+        button::action(
             "Install Extension…",
             Target::Settings(SettingsEvent::InstallExtension),
             Variant::Ghost,
@@ -402,12 +406,12 @@ fn mark(extension: &ExtensionInfo) {
 #[track_caller]
 pub(crate) fn row(extension: &ExtensionInfo, action: Target) {
     let button = match (extension.busy.is_some(), extension.installed) {
-        (true, _) => kit::small_button("Installing", action, Variant::Ghost).disabled(true),
+        (true, _) => button::small_button("Installing", action, Variant::Ghost).disabled(true),
         (false, true) if extension.update.is_some() => {
-            kit::small_button("Update", action, Variant::Outline)
+            button::small_button("Update", action, Variant::Outline)
         }
-        (false, true) => kit::small_button("Uninstall", action, Variant::Ghost),
-        (false, false) => kit::small_button("Install", action, Variant::Outline),
+        (false, true) => button::small_button("Uninstall", action, Variant::Ghost),
+        (false, false) => button::small_button("Install", action, Variant::Outline),
     };
     let (said, tone) = standing(extension);
     let about = if extension.description.is_empty() {
@@ -416,42 +420,55 @@ pub(crate) fn row(extension: &ExtensionInfo, action: Target) {
         format!("{}  {}", extension.description, endings(extension))
     };
     let brings = wrapped(&extension.provides, ROW_LINE);
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .fill_max_width()
             .padding_xy(theme::sp(4), theme::sp(3)),
-        3,
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Center,
         || {
             mark(extension);
-            kit::column(Modifier::new().weight(1.0).clip(), 0, || {
-                kit::row(Modifier::new(), 2, || {
-                    kit::text(
+            rustle::column_arranged(
+                Modifier::new().weight(1.0).clip(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    rustle::row_arranged(
                         Modifier::new(),
-                        &extension.name,
-                        kit::strong(14, Role::Text),
+                        Arrangement::SpacedBy(theme::sp(2)),
+                        Alignment::Center,
+                        || {
+                            rustle::basic_text(
+                                Modifier::new(),
+                                &extension.name,
+                                theme::strong(14, Role::Text),
+                                TextOverflow::Ellipsis,
+                            );
+                            if !extension.version.is_empty() {
+                                rustle::basic_text(
+                                    Modifier::new(),
+                                    &extension.version,
+                                    theme::code(12, Role::Subtle),
+                                    TextOverflow::Ellipsis,
+                                );
+                            }
+                            if extension.local {
+                                line("your own", 12, 1.4, Role::Subtle);
+                            }
+                        },
                     );
-                    if !extension.version.is_empty() {
-                        kit::text(
-                            Modifier::new(),
-                            &extension.version,
-                            kit::code(12, Role::Subtle),
-                        );
+                    line(about, 12, 1.4, Role::Muted);
+                    for said in brings {
+                        line(said, 12, 1.4, Role::Subtle);
                     }
-                    if extension.local {
-                        line("your own", 12, 1.4, Role::Subtle);
+                    if let Some(owner) = &extension.owner {
+                        line(format!("From the {owner} extension"), 12, 1.4, Role::Subtle);
                     }
-                });
-                line(about, 12, 1.4, Role::Muted);
-                for said in brings {
-                    line(said, 12, 1.4, Role::Subtle);
-                }
-                if let Some(owner) = &extension.owner {
-                    line(format!("From the {owner} extension"), 12, 1.4, Role::Subtle);
-                }
-                if !said.is_empty() {
-                    line(said, 12, 1.4, tone);
-                }
-            });
+                    if !said.is_empty() {
+                        line(said, 12, 1.4, tone);
+                    }
+                },
+            );
             button.build();
         },
     );
@@ -460,16 +477,18 @@ pub(crate) fn row(extension: &ExtensionInfo, action: Target) {
 /// Emits one line saying what a capability lets an extension do, with the switch, answering to `id`, that allows it or not.
 #[track_caller]
 fn permission(capability: &str, allowed: bool, id: Target) {
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .fill_max_width()
             .padding_xy(0.0, theme::sp(1)),
-        3,
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Center,
         || {
-            kit::text(
+            rustle::basic_text(
                 Modifier::new().weight(1.0),
                 describe_capability(capability),
-                kit::line(12, Role::Muted),
+                theme::line(12, Role::Muted),
+                TextOverflow::Ellipsis,
             );
             Checkbox::new(allowed, id)
                 .variant(CheckboxVariant::Switch)
@@ -483,14 +502,15 @@ fn permissions(extension: &ExtensionInfo, place: usize) {
     if extension.kind != "extension" || !extension.installed || extension.requests.is_empty() {
         return;
     }
-    kit::column(
+    rustle::column_arranged(
         Modifier::new().fill_max_width().padding_each(
             theme::sp(4),
             0.0,
             theme::sp(4),
             theme::sp(3),
         ),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
             line("Allowed to", 12, 1.4, Role::Subtle);
             for (which, asked) in extension.requests.iter().enumerate() {
@@ -512,14 +532,20 @@ fn preview_card(preview: &Preview) {
     let extension = &preview.extension;
     let title = format!("Install {} {}", extension.name, extension.version);
     let title = title.trim_end();
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .panel(Radius::Lg)
             .padding_xy(theme::sp(4), theme::sp(4)),
-        3,
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Start,
         || {
-            kit::text(Modifier::new(), title, kit::strong(14, Role::Text));
+            rustle::basic_text(
+                Modifier::new(),
+                title,
+                theme::strong(14, Role::Text),
+                TextOverflow::Ellipsis,
+            );
             if !extension.description.is_empty() {
                 line(extension.description.clone(), 12, 1.4, Role::Muted);
             }
@@ -534,7 +560,7 @@ fn preview_card(preview: &Preview) {
                     Target::Settings(SettingsEvent::PreviewGrant(which)),
                 );
             }
-            kit::confirm_row(
+            button::confirm_row(
                 "Install",
                 Target::Settings(SettingsEvent::PreviewInstall),
                 true,
@@ -569,47 +595,57 @@ fn lined_group(title: &str, inside: bool, rows: impl FnOnce()) {
     if rows.is_empty() {
         return;
     }
-    kit::column(Modifier::new().fill_max_width(), 2, move || {
-        line(title.to_owned(), 12, 1.4, Role::Subtle);
-        kit::column(
-            Modifier::new().fill_max_width().panel(Radius::Lg).clip(),
-            0,
-            move || {
-                let last = rows.len() - 1;
-                let color = theme::color(Role::Border);
-                for (at, built) in rows.into_iter().enumerate() {
-                    if at == last {
-                        rustle::emit(built);
-                        continue;
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
+        move || {
+            line(title.to_owned(), 12, 1.4, Role::Subtle);
+            rustle::column_arranged(
+                Modifier::new().fill_max_width().panel(Radius::Lg).clip(),
+                Arrangement::Start,
+                Alignment::Start,
+                move || {
+                    let last = rows.len() - 1;
+                    let color = theme::color(Role::Border);
+                    for (at, built) in rows.into_iter().enumerate() {
+                        if at == last {
+                            rustle::emit(built);
+                            continue;
+                        }
+                        if inside {
+                            rustle::column_arranged(
+                                Modifier::new().fill_max_width().border_bottom(1.0, color),
+                                Arrangement::Start,
+                                Alignment::Start,
+                                move || rustle::emit(built),
+                            );
+                        } else {
+                            rustle::emit(built);
+                            rustle::horizontal_divider(Modifier::new(), 1.0, color);
+                        }
                     }
-                    let lined = Modifier::new()
-                        .fill_max_width()
-                        .draw_with_content(move |canvas| underlined(canvas, color))
-                        .padding_each(0.0, 0.0, 0.0, if inside { 0.0 } else { 1.0 });
-                    kit::column(lined, 0, move || rustle::emit(built));
-                }
-            },
-        );
-    });
-}
-
-/// Draws the content of `canvas`, then a one pixel line in `color` along its bottom edge.
-fn underlined(canvas: &mut rustle::Canvas, color: rustle::Color) {
-    canvas.draw_content();
-    let (width, height) = (canvas.width(), canvas.height());
-    canvas.rect(0.0, height - 1.0, width, 1.0, color);
+                },
+            );
+        },
+    );
 }
 
 /// Emits the row of the extension listed at `place`, with the switches of what it is allowed under it.
 #[track_caller]
 fn entry(extension: &ExtensionInfo, place: usize) {
-    kit::column(Modifier::new().fill_max_width(), 0, || {
-        row(
-            extension,
-            Target::Settings(SettingsEvent::ExtensionRow(place)),
-        );
-        permissions(extension, place);
-    });
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            row(
+                extension,
+                Target::Settings(SettingsEvent::ExtensionRow(place)),
+            );
+            permissions(extension, place);
+        },
+    );
 }
 
 /// Emits the extensions page for `state`.

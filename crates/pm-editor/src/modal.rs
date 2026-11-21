@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
-use pm_field::Edit;
+use crate::Edit;
 use pm_treesitter::{Syntax, TextObject};
 use pm_vim::{
     Buffer, Clipboard, Indent, Keystroke, Outcome, Selection, Shape, SyntaxNode, TypingRules, View,

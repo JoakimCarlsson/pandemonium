@@ -1,11 +1,11 @@
 //! The rows of settings on each page of the settings window, the page of what a search found, and what pressing a row's control or writing in its box does.
 
 use crate::areas::SettingsEvent;
-use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
 use rustle::Modifier;
 use rustle::TextFieldState;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
 use crate::parts::line;
 use crate::settings::Section;
@@ -323,17 +323,26 @@ pub(crate) fn setting_row(state: &WorkspaceState, setting: Setting, room: f32) {
 #[track_caller]
 pub(crate) fn ruled<T>(items: Vec<T>, emit: impl Fn(T)) {
     let last = items.len().saturating_sub(1);
-    kit::column(Modifier::new().fill_max_width(), 0, || {
-        for (place, item) in items.into_iter().enumerate() {
-            let modifier = Modifier::new().fill_max_width();
-            let modifier = if place < last {
-                modifier.ruled(theme::Side::Bottom)
-            } else {
-                modifier
-            };
-            kit::column(modifier, 0, || emit(item));
-        }
-    });
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for (place, item) in items.into_iter().enumerate() {
+                let modifier = Modifier::new().fill_max_width();
+                let modifier = if place < last {
+                    modifier
+                        .border_bottom(1.0, theme::color(Role::Border))
+                        .padding_each(0.0, 0.0, 0.0, 1.0)
+                } else {
+                    modifier
+                };
+                rustle::column_arranged(modifier, Arrangement::Start, Alignment::Start, || {
+                    emit(item)
+                });
+            }
+        },
+    );
 }
 
 /// Emits the rows of the settings on the page `section` that show in `state`, `room` logical pixels across.
@@ -350,20 +359,28 @@ pub(crate) fn page_rows(state: &WorkspaceState, section: Section, room: f32) {
 /// Emits `title` over the rows `rows` emits of a group of settings, as the pages that hold several groups set it.
 #[track_caller]
 pub(crate) fn group(title: &str, rows: impl FnOnce()) {
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .padding_each(0.0, theme::sp(2), 0.0, 0.0),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            kit::row(
+            rustle::row_arranged(
                 Modifier::new()
                     .fill_max_width()
-                    .ruled(theme::Side::Bottom)
+                    .border_bottom(1.0, theme::color(Role::Border))
+                    .padding_each(0.0, 0.0, 0.0, 1.0)
                     .padding_each(0.0, 0.0, 0.0, theme::sp(1)),
-                0,
+                Arrangement::Start,
+                Alignment::Center,
                 || {
-                    kit::text(Modifier::new(), title, kit::strong(12, Role::Muted));
+                    rustle::basic_text(
+                        Modifier::new(),
+                        title,
+                        theme::strong(12, Role::Muted),
+                        TextOverflow::Ellipsis,
+                    );
                 },
             );
             rows();

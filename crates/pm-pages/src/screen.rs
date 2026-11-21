@@ -1,6 +1,6 @@
 //! The workspace screen and the actions and auxiliary windows it exposes.
 
-use pm_components::areas::{ChatEvent, DialogEvent, EditorEvent, GitEvent};
+use pm_components::areas::{DialogEvent, EditorEvent, GitEvent};
 use pm_components::events::Change;
 use pm_components::target::Target;
 
@@ -104,20 +104,6 @@ impl Screen {
         }
     }
 
-    /// The message of the open session whose area is under the window point `at`, if any.
-    pub fn message_at(&self, at: (f32, f32)) -> Option<usize> {
-        self.places().shown().into_iter().find_map(|(id, rect)| {
-            let inside = at.0 >= rect.origin.x
-                && at.1 >= rect.origin.y
-                && at.0 < rect.origin.x + rect.size.width
-                && at.1 < rect.origin.y + rect.size.height;
-            match id {
-                Target::Chat(ChatEvent::MessageArea(index)) if inside => Some(index),
-                _ => None,
-            }
-        })
-    }
-
     /// Where the areas the app asks about by name were drawn in the latest frame.
     pub fn places(&self) -> pm_components::bounds::Places {
         match self {
@@ -214,17 +200,6 @@ impl Screen {
         matches!(self, Self::Workspace(state) if state.untracked())
     }
 
-    /// The screen after the wheel turned `delta` logical pixels at `x` in a
-    /// window `height` logical pixels tall.
-    pub fn scrolled(self, x: f32, delta: f32, height: f32) -> Self {
-        match self {
-            Self::Workspace(state) if x < state.sidebar_room() => {
-                Self::Workspace(state.scrolled(delta, height))
-            }
-            other => other,
-        }
-    }
-
     /// Whether the reader scrolled what the screen follows since it last looked.
     pub fn scrolls_moved(&self) -> bool {
         let Self::Workspace(state) = self;
@@ -236,12 +211,6 @@ impl Screen {
     pub fn follow_scrolls(&mut self) -> bool {
         let Self::Workspace(state) = self;
         state.follow_scrolls()
-    }
-
-    /// Whether the pointer holds the bar of one of the screen's scrolling areas.
-    pub fn scrollbar_held(&self) -> bool {
-        let Self::Workspace(state) = self;
-        state.scrollbar_held()
     }
 
     /// Whether the conversation is shown at its end, give or take a pixel.

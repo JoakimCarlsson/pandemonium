@@ -1,8 +1,7 @@
 //! The tile: a row of a list that holds its children side by side, answers to a press and fills under the pointer and while it is selected.
 
 use crate::events::Interactive;
-use crate::events::{Event, OnClick, send};
-use crate::kit;
+use crate::events::{Event, OnContext, send};
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
@@ -42,7 +41,7 @@ pub struct Tile {
     /// workspace's reducer takes the press otherwise.
     on_click: Option<Picked>,
     /// What a secondary press on it does, when it has a menu of its own.
-    on_context: Option<OnClick>,
+    on_context: Option<Menu>,
 }
 
 /// What clicking a tile does, told the modifier keys held, as its builder keeps it.
@@ -53,6 +52,17 @@ impl std::fmt::Debug for Picked {
     /// Writes that there is a lambda, which has nothing else to show.
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("Picked")
+    }
+}
+
+/// What a secondary press on a tile does, as its builder keeps it.
+#[derive(Clone)]
+struct Menu(OnContext);
+
+impl std::fmt::Debug for Menu {
+    /// Writes that there is a lambda, which has nothing else to show.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Menu")
     }
 }
 
@@ -75,9 +85,10 @@ impl Tile {
     }
 
     /// The tile running `on_context` when the secondary button goes down on it: what opens
-    /// its menu, in place of the menu of the conversation's text.
-    pub fn on_context(mut self, on_context: impl Fn() + 'static) -> Self {
-        self.on_context = Some(OnClick::new(on_context));
+    /// its menu, told where the pointer is in the window, in place of what a secondary press does
+    /// beneath it.
+    pub fn on_context(mut self, on_context: impl Fn((f32, f32)) + 'static) -> Self {
+        self.on_context = Some(Menu(Rc::new(on_context)));
         self
     }
 
@@ -85,8 +96,8 @@ impl Tile {
     #[track_caller]
     fn reacting(&self) -> Modifier {
         match self.on_context.clone() {
-            Some(on_context) => {
-                Modifier::new().control_menu(self.id, self.clicked(), on_context.lambda())
+            Some(Menu(on_context)) => {
+                Modifier::new().control_menu(self.id, self.clicked(), move |at| on_context(at))
             }
             None => Modifier::new().control_with(self.id, self.clicked()),
         }
@@ -161,14 +172,17 @@ impl Tile {
     /// Emits the tile holding `content`: it fills under the pointer unless it is selected, and darker while pressed.
     #[track_caller]
     pub fn build_with(self, content: impl FnOnce()) {
-        let looks = kit::selectable(self.selected)
+        let looks = theme::selectable(self.selected)
             .active(Role::SurfaceActive)
             .radius(self.radius);
         let reacting = self.reacting();
         let modifier = self.modifier.chain(
             Modifier::new()
                 .height(theme::sp(self.height))
-                .indicated(looks, theme::Focused::Held(crate::focus::is_held(self.id)))
+                .indicated(
+                    looks,
+                    theme::Focused::Control(crate::focus::is_focused(self.id)),
+                )
                 .cursor(CursorIcon::Pointer)
                 .chain(reacting)
                 .chain(self.inner),

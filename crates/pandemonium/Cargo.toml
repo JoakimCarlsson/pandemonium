@@ -29,8 +29,7 @@ pm-browser = { path = "../pm-browser" }
 pm-update.workspace = true
 pm-vim.workspace = true
 rustle = { git = "https://github.com/JoakimCarlsson/rustle", version = "0.1.0" }
-rustle-wgpu = { git = "https://github.com/JoakimCarlsson/rustle", version = "0.1.0" }
-pm-field = { version = "0.15.0-rc.4", path = "../pm-field" }
+pm-buffer.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "0.6.15"

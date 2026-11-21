@@ -1,13 +1,14 @@
 //! The resolver of a file that a merge, a rebase or a cherry-pick stopped on: each place where the two sides disagree with both sides shown and a choice to take ours, theirs or both, and under them the result, which is the file itself, edited by hand, until the file is marked resolved and staged.
 
 use crate::areas::SearchEvent;
-use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
+use crate::theme::Frame;
 use rustle::Modifier;
+use rustle::{Alignment, Arrangement, TextOverflow};
 use std::ops::Range;
 
-use pm_field::Edit;
+use pm_editor::Edit;
 
 use crate::Button;
 use crate::button::Variant;
@@ -260,12 +261,13 @@ impl<'a> Conflict<'a> {
     /// Emits a row `height` pixels tall, padded `pad` steps at each end, holding `content` centred across it.
     #[track_caller]
     fn line_row(height: f32, pad: f32, content: impl FnOnce()) {
-        kit::row(
+        rustle::row_arranged(
             Modifier::new()
                 .fill_max_width()
                 .height(height)
                 .padding_xy(theme::sp(pad), 0.0),
-            0,
+            Arrangement::Start,
+            Alignment::Center,
             content,
         );
     }
@@ -286,26 +288,32 @@ impl<'a> Conflict<'a> {
                 Modifier::new().fill_max_width(),
             )
         };
-        kit::column(own.clip(), 0, || {
+        rustle::column_arranged(own.clip(), Arrangement::Start, Alignment::Start, || {
             Self::line_row(LABEL, 2.0, || line(name, 11, 1.4, Role::Muted));
-            kit::column(tinted.background(theme::color(tint.alpha(0.12))), 0, || {
-                for content in text_of.lines().take(MOST_LINES) {
-                    Self::line_row(row, 2.0, || {
-                        kit::text(
-                            Modifier::new().weight(1.0),
-                            crate::diff_syntax::shown(content),
-                            theme::code_style(font, 1.4)
-                                .color(theme::color(Role::Text))
-                                .max_lines(1),
-                        );
-                    });
-                }
-                if more > 0 {
-                    Self::line_row(row, 2.0, || {
-                        line(format!("… {more} more lines"), 11, 1.4, Role::Subtle);
-                    });
-                }
-            });
+            rustle::column_arranged(
+                tinted.background(theme::color(tint.alpha(0.12))),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    for content in text_of.lines().take(MOST_LINES) {
+                        Self::line_row(row, 2.0, || {
+                            rustle::basic_text(
+                                Modifier::new().weight(1.0),
+                                crate::diff_syntax::shown(content),
+                                theme::code_style(font, 1.4)
+                                    .color(theme::color(Role::Text))
+                                    .max_lines(1),
+                                TextOverflow::Ellipsis,
+                            );
+                        });
+                    }
+                    if more > 0 {
+                        Self::line_row(row, 2.0, || {
+                            line(format!("… {more} more lines"), 11, 1.4, Role::Subtle);
+                        });
+                    }
+                },
+            );
         });
     }
 
@@ -319,13 +327,19 @@ impl<'a> Conflict<'a> {
         };
         let own = Modifier::new().fill_max_width();
         match self.layout {
-            Layout::SideBySide => kit::row_top(
+            Layout::SideBySide => rustle::row_arranged(
                 own.height_intrinsic(rustle::IntrinsicSize::Max)
                     .padding_xy(theme::sp(3), 0.0),
-                2,
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Start,
                 both,
             ),
-            Layout::Stacked => kit::column(own.padding_xy(theme::sp(3), 0.0), 0, both),
+            Layout::Stacked => rustle::column_arranged(
+                own.padding_xy(theme::sp(3), 0.0),
+                Arrangement::Start,
+                Alignment::Start,
+                both,
+            ),
         }
     }
 
@@ -335,13 +349,14 @@ impl<'a> Conflict<'a> {
         let region = card.region;
         let ours = format!("Ours · {}", name_or(&region.ours_name, "HEAD"));
         let theirs = format!("Theirs · {}", name_or(&region.theirs_name, "incoming"));
-        kit::column(
+        rustle::column_arranged(
             Modifier::new()
                 .fill_max_width()
                 .height(self.card_height(region, row) - SPACE)
                 .outlined(Radius::Lg)
                 .clip(),
-            0,
+            Arrangement::Start,
+            Alignment::Start,
             || {
                 Self::label_bar(format!(
                     "Conflict {} of {} · line {}",
@@ -350,11 +365,12 @@ impl<'a> Conflict<'a> {
                     region.line + 1
                 ));
                 self.sides(region, &ours, &theirs, row);
-                kit::row(
+                rustle::row_arranged(
                     Modifier::new()
                         .height(BUTTONS)
                         .padding_xy(theme::sp(3), 0.0),
-                    2,
+                    Arrangement::SpacedBy(theme::sp(2)),
+                    Alignment::Center,
                     || {
                         for choice in Choice::ALL {
                             Button::new(
@@ -387,15 +403,22 @@ impl<'a> Conflict<'a> {
             (true, 1) => "1 conflict left".to_owned(),
             (true, left) => format!("{left} conflicts left"),
         };
-        kit::row(
+        rustle::row_arranged(
             Modifier::new()
                 .fill_max_width()
                 .height(STRIP)
-                .ruled(theme::Side::Bottom)
+                .border_bottom(1.0, theme::color(Role::Border))
+                .padding_each(0.0, 0.0, 0.0, 1.0)
                 .padding_xy(theme::sp(4), 0.0),
-            3,
+            Arrangement::SpacedBy(theme::sp(3)),
+            Alignment::Center,
             || {
-                kit::text(Modifier::new(), name, kit::strong(13, Role::Text));
+                rustle::basic_text(
+                    Modifier::new(),
+                    name,
+                    theme::strong(13, Role::Text),
+                    TextOverflow::Ellipsis,
+                );
                 line(
                     said,
                     12,
@@ -459,69 +482,79 @@ impl<'a> Conflict<'a> {
         let drawing = Drawing::new(state, None);
         let lines = index.map_or(0, |index| drawing.row_count(index, &whole) + 1);
         let count = regions.len() + 1 + lines;
-        kit::column(Modifier::new().weight(1.0), 0, || {
-            self.strip(resolver, regions.len(), text_now.is_some());
-            kit::column(
-                Modifier::new()
-                    .fill_max_width()
-                    .weight(1.0)
-                    .clip()
-                    .background(theme::color(Role::Background)),
-                0,
-                || {
-                    rustle::lazy_list_keyed(
-                        Modifier::new().fill_max_width().weight(1.0),
-                        &excerpts.scroll,
-                        count,
-                        |item| item,
-                        |item| {
-                            let after = item.saturating_sub(regions.len());
-                            match regions.get(item) {
-                                Some(region) => kit::column(
-                                    Modifier::new().fill_max_width().padding(theme::sp(3)),
-                                    0,
-                                    || {
-                                        self.card(
-                                            &Card {
-                                                region,
-                                                place: item,
-                                                count: regions.len(),
-                                            },
-                                            row,
-                                        );
+        rustle::column_arranged(
+            Modifier::new().weight(1.0),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                self.strip(resolver, regions.len(), text_now.is_some());
+                rustle::column_arranged(
+                    Modifier::new()
+                        .fill_max_width()
+                        .weight(1.0)
+                        .clip()
+                        .background(theme::color(Role::Background)),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        rustle::lazy_list_keyed(
+                            Modifier::new().fill_max_width().weight(1.0),
+                            &excerpts.scroll,
+                            count,
+                            |item| item,
+                            |item| {
+                                let after = item.saturating_sub(regions.len());
+                                match regions.get(item) {
+                                    Some(region) => rustle::column_arranged(
+                                        Modifier::new().fill_max_width().padding(theme::sp(3)),
+                                        Arrangement::Start,
+                                        Alignment::Start,
+                                        || {
+                                            self.card(
+                                                &Card {
+                                                    region,
+                                                    place: item,
+                                                    count: regions.len(),
+                                                },
+                                                row,
+                                            );
+                                        },
+                                    ),
+                                    None if after == 0 => Self::label_bar("Result"),
+                                    None => match index {
+                                        Some(index) if after < lines => {
+                                            drawing.row(index, (usize::MAX, 0), &whole, after - 1);
+                                        }
+                                        _ => block_gap(),
                                     },
-                                ),
-                                None if after == 0 => Self::label_bar("Result"),
-                                None => match index {
-                                    Some(index) if after < lines => {
-                                        drawing.row(index, (usize::MAX, 0), &whole, after - 1);
-                                    }
-                                    _ => block_gap(),
-                                },
-                            }
-                        },
-                    );
-                },
-            );
-        });
+                                }
+                            },
+                        );
+                    },
+                );
+            },
+        );
     }
 
     /// Emits a bar `LABEL` pixels tall on the surface colour, ruled along its bottom, that says `words`: the head of a conflict's card and the label over the result.
     #[track_caller]
     fn label_bar(words: impl Into<String>) {
-        kit::row(
+        rustle::row_arranged(
             Modifier::new()
                 .fill_max_width()
                 .height(LABEL)
                 .background(theme::color(Role::Surface))
-                .ruled(theme::Side::Bottom)
+                .border_bottom(1.0, theme::color(Role::Border))
+                .padding_each(0.0, 0.0, 0.0, 1.0)
                 .padding_xy(theme::sp(3), 0.0),
-            0,
+            Arrangement::Start,
+            Alignment::Center,
             || {
-                kit::text(
+                rustle::basic_text(
                     Modifier::new().weight(1.0),
                     words,
-                    kit::strong(12, Role::Text),
+                    theme::strong(12, Role::Text),
+                    TextOverflow::Ellipsis,
                 );
             },
         );

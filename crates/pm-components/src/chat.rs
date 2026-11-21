@@ -1,7 +1,12 @@
 //! The conversation with an agent: its messages and the prompt box.
 
 use crate::areas::ChatEvent;
-use crate::kit::{self, Frame};
+use crate::button;
+use crate::events;
+use crate::icons;
+use crate::parts;
+use crate::theme::Frame;
+use rustle::TextOverflow;
 
 use crate::target::Target;
 use crate::theme;
@@ -43,25 +48,30 @@ fn paragraph(content: &str, tone: Role, width: f32) {
     let kind = theme::text_style(14, 1.57).color(theme::color(tone));
     let room = width.max(32.0);
     let lines = rustle::wrap_at_spaces(content, &kind, room);
-    kit::column(Modifier::new(), 0, || {
-        for run in lines.split(|part| part.end == part.start) {
-            match (run.first(), run.last()) {
-                (Some(first), Some(last)) => rustle::text_styled(
-                    Modifier::new().width_in(0.0, room),
-                    content[first.start..last.end].trim_end_matches('\n'),
-                    kind,
-                ),
-                _ => rustle::spacer(Modifier::new().height(theme::sp(3))),
+    rustle::column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for run in lines.split(|part| part.end == part.start) {
+                match (run.first(), run.last()) {
+                    (Some(first), Some(last)) => rustle::text_styled(
+                        Modifier::new().width_in(0.0, room),
+                        content[first.start..last.end].trim_end_matches('\n'),
+                        kind,
+                    ),
+                    _ => rustle::spacer(Modifier::new().height(theme::sp(3))),
+                }
             }
-        }
-    });
+        },
+    );
 }
 
 /// Emits one line of `content` in `pixels` tall type in `tone`, cut short at the edge of the box it
 /// sits in.
 #[track_caller]
 fn chat_line(content: impl Into<String>, pixels: u32, tone: Role) {
-    rustle::text_styled(Modifier::new(), content, kit::line(pixels, tone));
+    rustle::text_styled(Modifier::new(), content, theme::line(pixels, tone));
 }
 
 /// Emits `actions` in a row with `modifier`: buttons that show under a message while the
@@ -74,38 +84,48 @@ fn message_actions(
     modifier: Modifier,
     actions: &[(Icon, &str, ChatEvent, bool)],
 ) {
-    kit::row(modifier, 1, || {
-        for (icon, tooltip, event, disabled) in actions {
-            let id = Target::Chat(*event);
-            rustle::key(id, || {
-                let hovered = message.collect_is_hovered_as_state();
-                let held = crate::focus::is_held(id);
-                Button::icon(icon.clone(), id)
-                    .disabled(*disabled)
-                    .tone(Role::Subtle)
-                    .modifier(Modifier::new().draw_with_content(move |canvas| {
-                        if held || hovered.get() {
-                            canvas.draw_content();
-                        }
-                    }))
-                    .tooltip(*tooltip)
-                    .build();
-            });
-        }
-    });
+    rustle::row_arranged(
+        modifier,
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
+        || {
+            for (icon, tooltip, event, disabled) in actions {
+                let id = Target::Chat(*event);
+                rustle::key(id, || {
+                    let hovered = message.collect_is_hovered_as_state();
+                    let focused = crate::focus::is_focused(id);
+                    Button::icon(icon.clone(), id)
+                        .disabled(*disabled)
+                        .tone(Role::Subtle)
+                        .modifier(Modifier::new().alpha(if focused || hovered.get() {
+                            1.0
+                        } else {
+                            0.0
+                        }))
+                        .tooltip(*tooltip)
+                        .build();
+                });
+            }
+        },
+    );
 }
 
 /// Emits the offer to put the files back as they were before a message of the reader's, in place of the buttons under it.
 fn restore_offer() {
-    kit::row(Modifier::new().align(BoxAlignment::BottomEnd), 2, || {
-        chat_line("Restore files to before this turn?", 12, Role::Muted);
-        kit::action(
-            "Restore",
-            Target::Chat(ChatEvent::RestoreFiles),
-            Variant::Destructive,
-        );
-        kit::action("Cancel", Target::Chat(ChatEvent::KeepFiles), Variant::Ghost);
-    });
+    rustle::row_arranged(
+        Modifier::new().align(BoxAlignment::BottomEnd),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            chat_line("Restore files to before this turn?", 12, Role::Muted);
+            button::action(
+                "Restore",
+                Target::Chat(ChatEvent::RestoreFiles),
+                Variant::Destructive,
+            );
+            button::action("Cancel", Target::Chat(ChatEvent::KeepFiles), Variant::Ghost);
+        },
+    );
 }
 
 /// Emits a message the reader wrote, at `index` of `session`: a filled bubble at the right, with buttons under it to show what the turn changed, to put the files back as they were before it and to write it again.
@@ -115,19 +135,21 @@ fn user_message(state: &WorkspaceState, session: &Session, index: usize, width: 
     let restoring = state.restoring == Some(index);
     let (typed, elements) = crate::elements::split(&message.text);
     let over_message = remember_mutable_interaction_source();
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .hoverable(&over_message)
             .message_area(index),
-        1,
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Start,
         || {
-            kit::column(
+            rustle::column_arranged(
                 Modifier::new()
                     .align(BoxAlignment::BottomEnd)
                     .background_rounded(theme::color(Role::SurfaceHover), Radius::Xl2.px())
                     .padding_xy(theme::sp(4), theme::sp(2.5)),
-                2,
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Start,
                 || {
                     if !message.attachments.is_empty() {
                         crate::composer::sent_files(state, &message.attachments);
@@ -194,19 +216,25 @@ fn side_note(side: &Side, content: &str, index: usize, width: f32) {
         Side::Fallback { .. } => (phosphor::LIGHTNING, "Switched to a backup model", None),
     };
     let inner = width - 34.0;
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .interaction_group()
             .message_area(index)
             .outlined(Radius::Xl)
             .padding_xy(theme::sp(4), theme::sp(3)),
-        2,
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
         || {
-            kit::row(Modifier::new(), 2, || {
-                glyph(icon, 3.5, Role::Subtle);
-                chat_line(heading, 12, Role::Subtle);
-            });
+            rustle::row_arranged(
+                Modifier::new(),
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Center,
+                || {
+                    glyph(icon, 3.5, Role::Subtle);
+                    chat_line(heading, 12, Role::Subtle);
+                },
+            );
             if let Some(question) = asked {
                 paragraph(question, Role::Muted, inner);
             }
@@ -276,47 +304,54 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
         let count = (from..to)
             .filter(|position| !crate::steps::is_inside_card(&message.steps, *position))
             .count();
-        kit::column(Modifier::new(), 1, || {
-            kit::row(
-                kit::pressed(
-                    Modifier::new()
-                        .align(BoxAlignment::TopStart)
-                        .height(theme::sp(7)),
-                    Target::Chat(ChatEvent::Turn(index)),
-                ),
-                1.5,
-                || {
-                    glyph(kit::chevron(open), 3.5, Role::Subtle);
-                    line(
-                        format!(
-                            "{label} · {count} step{}",
-                            if count == 1 { "" } else { "s" }
-                        ),
-                        12,
-                        1.4,
-                        Role::Subtle,
-                    );
-                },
-            );
-            if open {
-                steps(
-                    &message.steps,
-                    from..to,
-                    index,
-                    |position| page.is_some_and(|open| held.contains(&(open, index, position))),
-                    &root,
-                    width,
+        rustle::column_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(theme::sp(1)),
+            Alignment::Start,
+            || {
+                rustle::row_arranged(
+                    events::pressed(
+                        Modifier::new()
+                            .align(BoxAlignment::TopStart)
+                            .height(theme::sp(7)),
+                        Target::Chat(ChatEvent::Turn(index)),
+                    ),
+                    Arrangement::SpacedBy(theme::sp(1.5)),
+                    Alignment::Center,
+                    || {
+                        glyph(icons::chevron(open), 3.5, Role::Subtle);
+                        line(
+                            format!(
+                                "{label} · {count} step{}",
+                                if count == 1 { "" } else { "s" }
+                            ),
+                            12,
+                            1.4,
+                            Role::Subtle,
+                        );
+                    },
                 );
-            }
-        });
+                if open {
+                    steps(
+                        &message.steps,
+                        from..to,
+                        index,
+                        |position| page.is_some_and(|open| held.contains(&(open, index, position))),
+                        &root,
+                        width,
+                    );
+                }
+            },
+        );
     };
     let over_message = remember_mutable_interaction_source();
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .hoverable(&over_message)
             .message_area(index),
-        3,
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Start,
         || {
             let mut shown = 0;
             let mut recorded = 0;
@@ -386,22 +421,32 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                 answered(answers, width);
             }
             if !message.bullets.is_empty() {
-                kit::column(Modifier::new(), 1.5, || {
-                    for bullet in &message.bullets {
-                        kit::row_top(Modifier::new(), 2.5, || {
-                            rustle::spacer(
-                                Modifier::new()
-                                    .padding_each(0.0, theme::sp(2.5), 0.0, 0.0)
-                                    .size(theme::sp(1), theme::sp(1))
-                                    .background_rounded(
-                                        theme::color(Role::Subtle),
-                                        Radius::Full.px(),
-                                    ),
+                rustle::column_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(theme::sp(1.5)),
+                    Alignment::Start,
+                    || {
+                        for bullet in &message.bullets {
+                            rustle::row_arranged(
+                                Modifier::new(),
+                                Arrangement::SpacedBy(theme::sp(2.5)),
+                                Alignment::Start,
+                                || {
+                                    rustle::spacer(
+                                        Modifier::new()
+                                            .padding_each(0.0, theme::sp(2.5), 0.0, 0.0)
+                                            .size(theme::sp(1), theme::sp(1))
+                                            .background_rounded(
+                                                theme::color(Role::Subtle),
+                                                Radius::Full.px(),
+                                            ),
+                                    );
+                                    paragraph(bullet, Role::Muted, width - 14.0);
+                                },
                             );
-                            paragraph(bullet, Role::Muted, width - 14.0);
-                        });
-                    }
-                });
+                        }
+                    },
+                );
             }
             let writing = session.status == Status::Working && index + 1 == session.messages.len();
             let mut actions = Vec::new();
@@ -431,10 +476,15 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
             if message.steps.is_empty()
                 && let Some(duration) = message.duration.as_deref().filter(|took| !took.is_empty())
             {
-                kit::row(Modifier::new(), 2, || {
-                    glyph(phosphor::TIMER, 3.5, Role::Subtle);
-                    chat_line(duration, 12, Role::Subtle);
-                });
+                rustle::row_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(theme::sp(2)),
+                    Alignment::Center,
+                    || {
+                        glyph(phosphor::TIMER, 3.5, Role::Subtle);
+                        chat_line(duration, 12, Role::Subtle);
+                    },
+                );
             }
         },
     );
@@ -456,21 +506,23 @@ fn header(state: &WorkspaceState, session: &Session) {
         Some(model) => format!("{agent} · {model}"),
         None => agent.clone(),
     };
-    kit::bar(10, 5, 3, || {
+    parts::bar(10, 5, 3, || {
         status_icon(session.shown());
         clipped(&session.title, 14, Role::Text);
         if !session.branch.is_empty() {
-            kit::row(
+            rustle::row_arranged(
                 Modifier::new()
                     .background_rounded(theme::color(Role::Surface), Radius::Md.px())
                     .padding_xy(theme::sp(2), 0.0),
-                1,
+                Arrangement::SpacedBy(theme::sp(1)),
+                Alignment::Center,
                 || {
                     glyph(phosphor::GIT_FORK, 3.0, Role::Muted);
-                    kit::text(
+                    rustle::basic_text(
                         Modifier::new(),
                         &session.branch,
                         theme::mono_style(11, 1.6).color(theme::color(Role::Muted)),
+                        TextOverflow::Ellipsis,
                     );
                 },
             );
@@ -484,66 +536,86 @@ fn header(state: &WorkspaceState, session: &Session) {
 #[track_caller]
 pub fn chat(state: &WorkspaceState, session: &Session, width: f32, above: f32) {
     let text_width = width.min(COLUMN) - GUTTER * 2.0;
-    kit::column(Modifier::new().weight(1.0), 0, || {
-        header(state, session);
-        crate::pull_request_bar::bar(session);
-        conversation_text(state, || {
-            conversation(state, session, Modifier::new().fill_max_size(), text_width)
-        });
-        column_arranged(
-            Modifier::new()
-                .fill_max_width()
-                .wrap_content_height(BoxAlignment::TopStart, true)
-                .padding_each(0.0, 0.0, 0.0, theme::sp(5)),
-            Arrangement::Start,
-            Alignment::Center,
-            || {
-                kit::column(
-                    Modifier::new()
-                        .width_in(0.0, COLUMN)
-                        .fill_max_width()
-                        .padding_xy(theme::sp(6), 0.0),
-                    0,
-                    || {
-                        queued(state, session, text_width);
-                        if let Some(draft) = session.inquiry.as_ref() {
-                            kit::column(
-                                Modifier::new()
-                                    .padding_each(0.0, 0.0, 0.0, theme::sp(2))
-                                    .fill_max_width(),
-                                0,
-                                || {
-                                    inquiry(
-                                        draft,
-                                        &state.figures,
-                                        &state.preview_offer(),
-                                        text_width,
-                                    )
-                                },
+    rustle::column_arranged(
+        Modifier::new().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            header(state, session);
+            crate::pull_request_bar::bar(session);
+            conversation_text(state, || {
+                conversation(state, session, Modifier::new().fill_max_size(), text_width)
+            });
+            column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .wrap_content_height(BoxAlignment::TopStart, true)
+                    .padding_each(0.0, 0.0, 0.0, theme::sp(5)),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    rustle::column_arranged(
+                        Modifier::new()
+                            .width_in(0.0, COLUMN)
+                            .fill_max_width()
+                            .padding_xy(theme::sp(6), 0.0),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            queued(state, session, text_width);
+                            if let Some(draft) = session.inquiry.as_ref() {
+                                rustle::column_arranged(
+                                    Modifier::new()
+                                        .padding_each(0.0, 0.0, 0.0, theme::sp(2))
+                                        .fill_max_width(),
+                                    Arrangement::Start,
+                                    Alignment::Start,
+                                    || {
+                                        inquiry(
+                                            draft,
+                                            &state.figures,
+                                            &state.preview_offer(),
+                                            text_width,
+                                        )
+                                    },
+                                );
+                            }
+                            activity(state, session, text_width);
+                            composer(
+                                state,
+                                "Reply to the agent, or type / for commands",
+                                Some(session),
+                                2,
+                                above,
                             );
-                        }
-                        activity(state, session, text_width);
-                        composer(
-                            state,
-                            "Reply to the agent, or type / for commands",
-                            Some(session),
-                            2,
-                            above,
-                        );
-                    },
-                );
-            },
-        );
-    });
+                        },
+                    );
+                },
+            );
+        },
+    );
 }
 
 /// Emits `content`, the conversation's list, as the selectable text of the conversation: a
-/// selection container holding the workspace's selection of it, filling the rest of the column.
+/// selection container holding the workspace's selection of it, filling the rest of the
+/// column, which tells the app when the primary button goes down inside it, so a press there
+/// keeps its selection.
 fn conversation_text(state: &WorkspaceState, content: impl FnOnce()) {
+    let operations = crate::events::operations();
+    let pressed = Modifier::new().on_pointer_event(
+        rustle::PointerEventType::Press,
+        rustle::PointerEventPass::Initial,
+        move |event| {
+            if event.button == Some(rustle::PointerButton::Primary) {
+                operations.conversation_pressed();
+            }
+        },
+    );
     rustle::selection_container_with(
         state
             .chat_bounds
-            .track(Modifier::new().fill_max_width().weight(1.0)),
+            .track(Modifier::new().fill_max_width().weight(1.0))
+            .chain(pressed),
         &state.chat_selection,
         content,
     );
@@ -599,13 +671,14 @@ fn conversation(state: &WorkspaceState, session: &Session, modifier: Modifier, w
         |index| (page, newest_first(index)),
         |index| {
             rustle::stack_with(Modifier::new().fill_max_width(), || {
-                kit::column(
+                rustle::column_arranged(
                     Modifier::new()
                         .align(BoxAlignment::TopCenter)
                         .width_in(0.0, COLUMN)
                         .fill_max_width()
                         .padding_xy(theme::sp(6), 0.0),
-                    0,
+                    Arrangement::Start,
+                    Alignment::Start,
                     || entry(state, session, newest_first(index), width),
                 );
             });
@@ -644,10 +717,15 @@ fn working(session: &Session) {
     } else {
         "Thinking…"
     };
-    kit::row(Modifier::new(), 2, || {
-        status_icon(session.shown());
-        line(label, 13, 1.4, Role::Muted);
-    });
+    rustle::row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            status_icon(session.shown());
+            line(label, 13, 1.4, Role::Muted);
+        },
+    );
 }
 
 /// Everything outside a message that what it emits depends on, so a message is composed

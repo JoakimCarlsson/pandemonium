@@ -1,11 +1,15 @@
 //! The pages of the settings panel that list servers: the agents that can be started and the tool servers every agent is started with, each with the ones added, a form to add or change one, and what the public registry offers.
 
 use crate::areas::SettingsEvent;
-use crate::kit::{self, Frame};
+use crate::button;
+use crate::events;
+use crate::icons;
 use crate::target::Target;
 use crate::theme;
+use crate::theme::Frame;
 use pm_protocol::{McpServer, ToolListing};
 use rustle::TextFieldState;
+use rustle::TextOverflow;
 use rustle::phosphor;
 use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{BoxAlignment, Modifier};
@@ -584,45 +588,62 @@ pub(crate) fn name_tone(on: bool) -> Role {
 /// Emits the words `content` breaks into, one line under another, in no more than `room` logical pixels across.
 #[track_caller]
 pub(crate) fn paragraph(content: &str, room: f32) {
-    kit::column(Modifier::new(), 0, || {
-        for words in wrap(content, 13, room.min(PARAGRAPH_WIDTH)) {
-            line(words, 13, 1.5, Role::Muted);
-        }
-    });
+    rustle::column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for words in wrap(content, 13, room.min(PARAGRAPH_WIDTH)) {
+                line(words, 13, 1.5, Role::Muted);
+            }
+        },
+    );
 }
 
 /// Emits the breadcrumb over the title of `section`'s page, and the title.
 pub(crate) fn page_title(section: Section) {
-    kit::column(Modifier::new(), 1, || {
-        if let Some(parent) = section.parent() {
-            line(parent.title(), 12, 1.4, Role::Muted);
-        }
-        kit::text(
-            Modifier::new(),
-            section.title(),
-            theme::text_style(22, 1.3)
-                .font_weight(rustle::FontWeight::MEDIUM)
-                .color(theme::color(Role::Text))
-                .max_lines(1),
-        );
-    });
+    rustle::column_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Start,
+        || {
+            if let Some(parent) = section.parent() {
+                line(parent.title(), 12, 1.4, Role::Muted);
+            }
+            rustle::basic_text(
+                Modifier::new(),
+                section.title(),
+                theme::text_style(22, 1.3)
+                    .font_weight(rustle::FontWeight::MEDIUM)
+                    .color(theme::color(Role::Text))
+                    .max_lines(1),
+                TextOverflow::Ellipsis,
+            );
+        },
+    );
 }
 
 /// Emits what the right side of the window holds under the title of `section`: what it is for, then its settings, `room` logical pixels across, scrolled as the page showing is.
 #[track_caller]
 pub(crate) fn body(state: &WorkspaceState, section: Section, room: f32) {
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .weight(1.0)
             .clip()
             .vertical_scroll(&state.settings_servers.scroll)
             .fill_max_width()
             .padding_each(theme::sp(8), 0.0, theme::sp(8), theme::sp(6)),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            kit::column(Modifier::new().fill_max_width(), 4, || {
-                section_content(state, section, room);
-            });
+            rustle::column_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(theme::sp(4)),
+                Alignment::Start,
+                || {
+                    section_content(state, section, room);
+                },
+            );
         },
     );
 }
@@ -673,7 +694,12 @@ fn section_content(state: &WorkspaceState, section: Section, room: f32) {
 /// Emits the overview of the Agents page: a card for each page inside it, with how much is set in it.
 #[track_caller]
 fn explore(state: &WorkspaceState) {
-    kit::text(Modifier::new(), "Explore", kit::strong(15, Role::Text));
+    rustle::basic_text(
+        Modifier::new(),
+        "Explore",
+        theme::strong(15, Role::Text),
+        TextOverflow::Ellipsis,
+    );
     for part in crate::settings::AGENT_PAGES {
         card(part, count_of(state, part));
     }
@@ -693,18 +719,28 @@ fn release_note(state: &WorkspaceState, room: f32) {
             false,
         ),
     };
-    kit::row(Modifier::new().fill_max_width(), 3, || {
-        kit::row(Modifier::new().weight(1.0), 0, || {
-            wrapped_note(&said, (room - 160.0).max(120.0));
-        });
-        if newer {
-            kit::action(
-                "Open Release Page",
-                Target::Settings(SettingsEvent::SettingsRelease),
-                Variant::Outline,
+    rustle::row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Center,
+        || {
+            rustle::row_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    wrapped_note(&said, (room - 160.0).max(120.0));
+                },
             );
-        }
-    });
+            if newer {
+                button::action(
+                    "Open Release Page",
+                    Target::Settings(SettingsEvent::SettingsRelease),
+                    Variant::Outline,
+                );
+            }
+        },
+    );
 }
 
 /// How many servers `section` lists, in words.
@@ -725,15 +761,18 @@ fn count_of(state: &WorkspaceState, section: Section) -> String {
 pub(crate) fn boxed(rows: impl FnOnce()) {
     let rows = rustle::collect(rows);
     let last = rows.len().saturating_sub(1);
-    kit::column(
+    rustle::column_arranged(
         Modifier::new().fill_max_width().panel(Radius::Lg).clip(),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
             for (place, mut held) in rows.into_iter().enumerate() {
                 let ruled = if place == last {
                     Modifier::new()
                 } else {
-                    Modifier::new().ruled(theme::Side::Bottom)
+                    Modifier::new()
+                        .border_bottom(1.0, theme::color(Role::Border))
+                        .padding_each(0.0, 0.0, 0.0, 1.0)
                 };
                 held.modifier = Modifier::new()
                     .fill_max_width()
@@ -769,26 +808,33 @@ pub(crate) fn card(section: Section, count: String) {
         .inner(Modifier::new().outlined(Radius::Lg).padding(theme::sp(4)))
         .alignment(Alignment::Start)
         .build_with(|| {
-            kit::column(Modifier::new().weight(1.0), 1, || {
-                spread(|| {
-                    kit::text(
-                        Modifier::new(),
-                        section.title(),
-                        kit::strong(14, Role::Text),
-                    );
-                    note(&count);
-                });
-                note(about);
-            });
+            rustle::column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::SpacedBy(theme::sp(1)),
+                Alignment::Start,
+                || {
+                    spread(|| {
+                        rustle::basic_text(
+                            Modifier::new(),
+                            section.title(),
+                            theme::strong(14, Role::Text),
+                            TextOverflow::Ellipsis,
+                        );
+                        note(&count);
+                    });
+                    note(about);
+                },
+            );
         });
 }
 
 /// Emits a row of a boxed list: what `content` emits side by side, three theme steps apart, with three theme steps of room around it and `inset` theme steps before it.
 #[track_caller]
 pub(crate) fn flat_row(inset: u32, content: impl FnOnce()) {
-    kit::row(
+    rustle::row_arranged(
         Modifier::new().padding_each(theme::sp(inset), theme::sp(3), theme::sp(3), theme::sp(3)),
-        3,
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Center,
         content,
     );
 }
@@ -807,13 +853,28 @@ pub(crate) fn spread(content: impl FnOnce()) {
 /// Emits the words of a row of a list, taking the room its controls leave: `title` in `tone` followed by what `badges` emits, over what `under` emits.
 #[track_caller]
 pub(crate) fn titled(title: &str, tone: Role, badges: impl FnOnce(), under: impl FnOnce()) {
-    kit::column(Modifier::new().weight(1.0).clip(), 1, || {
-        kit::row(Modifier::new(), 2, || {
-            kit::text(Modifier::new(), title, kit::strong(13, tone));
-            badges();
-        });
-        under();
-    });
+    rustle::column_arranged(
+        Modifier::new().weight(1.0).clip(),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Start,
+        || {
+            rustle::row_arranged(
+                Modifier::new(),
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Center,
+                || {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        title,
+                        theme::strong(13, tone),
+                        TextOverflow::Ellipsis,
+                    );
+                    badges();
+                },
+            );
+            under();
+        },
+    );
 }
 
 /// Emits the page of the tool servers, `room` logical pixels across: what it is for, the search box, the form while one is open, the servers that are installed and what the registry offers.
@@ -824,7 +885,7 @@ fn list(state: &WorkspaceState, room: f32) {
     let adding = form.is_some_and(|form| form.index.is_none());
     let needle = state.needle();
     paragraph(summary(Section::McpServers), room);
-    kit::small_button(
+    button::small_button(
         "Learn more about MCP servers",
         Target::Settings(SettingsEvent::SettingsDocs),
         Variant::Ghost,
@@ -910,17 +971,23 @@ pub(crate) fn search_box(state: &WorkspaceState, section: Section) {
 /// Emits the name of a list with how many rows it holds; while `fold` holds whether the list is open and the toggle that opens and folds it, the name answers to the toggle after a chevron saying which it is.
 #[track_caller]
 fn heading(title: &str, count: usize, fold: Option<(bool, Target)>) {
-    kit::row(
-        kit::pressable(
+    rustle::row_arranged(
+        events::pressable(
             Modifier::new().height(theme::sp(9)),
             fold.map(|(_, toggle)| toggle),
         ),
-        2,
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
         || {
             if let Some((open, _)) = fold {
-                glyph(kit::chevron(open), 4.0, Role::Muted);
+                glyph(icons::chevron(open), 4.0, Role::Muted);
             }
-            kit::text(Modifier::new(), title, kit::strong(15, Role::Text));
+            rustle::basic_text(
+                Modifier::new(),
+                title,
+                theme::strong(15, Role::Text),
+                TextOverflow::Ellipsis,
+            );
             Badge::new(count.to_string()).build();
         },
     );
@@ -943,7 +1010,7 @@ pub(crate) fn add_heading(
 ) {
     spread(|| {
         heading(title, count, fold);
-        kit::small_button("Add Server", add, Variant::Outline)
+        button::small_button("Add Server", add, Variant::Outline)
             .disabled(adding)
             .build();
     });
@@ -958,11 +1025,16 @@ pub(crate) fn note(message: &str) {
 /// Emits a quiet note saying `message`, broken into lines no more than `room` logical pixels across.
 #[track_caller]
 pub(crate) fn wrapped_note(message: &str, room: f32) {
-    kit::column(Modifier::new(), 0, || {
-        for words in wrap(message, 12, room) {
-            line(words, 12, 1.4, Role::Muted);
-        }
-    });
+    rustle::column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for words in wrap(message, 12, room) {
+                line(words, 12, 1.4, Role::Muted);
+            }
+        },
+    );
 }
 
 /// How a tool server is reached, in the words of its row: what kind it is, where, and how many variables it takes.
@@ -1081,17 +1153,22 @@ fn offered_rows(state: &WorkspaceState) -> Offered {
 fn offer(shown: OfferedRow) {
     flat_row(3, || {
         titled(&shown.title, Role::Text, || {}, || note(&shown.description));
-        kit::row(Modifier::new(), 3, || {
-            if let Some(install) = INSTALLS.id(shown.index) {
-                if shown.installed {
-                    kit::small_button("Installed", install, Variant::Outline)
-                        .disabled(true)
-                        .build();
-                } else {
-                    kit::action(shown.action, install, Variant::Default);
+        rustle::row_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(theme::sp(3)),
+            Alignment::Center,
+            || {
+                if let Some(install) = INSTALLS.id(shown.index) {
+                    if shown.installed {
+                        button::small_button("Installed", install, Variant::Outline)
+                            .disabled(true)
+                            .build();
+                    } else {
+                        button::action(shown.action, install, Variant::Default);
+                    }
                 }
-            }
-        });
+            },
+        );
     });
 }
 
@@ -1110,37 +1187,44 @@ fn installed_row(shown: InstalledRow) {
                 if !shown.description.is_empty() {
                     note(&shown.description);
                 }
-                kit::text(
+                rustle::basic_text(
                     Modifier::new(),
                     shown.detail.as_str(),
-                    kit::line(11, Role::Subtle),
+                    theme::line(11, Role::Subtle),
+                    TextOverflow::Ellipsis,
                 );
             },
         );
-        kit::row(Modifier::new(), 2, || {
-            if shown.switchable {
-                switch(shown.enabled, SERVER_SWITCHES.id(shown.place));
-            }
-            if let Some(more) = SERVER_MORES.id(shown.place) {
-                let operations = crate::events::operations();
-                let index = shown.place;
-                Button::icon(phosphor::DOTS_THREE, more)
-                    .on_click(move || operations.open_settings_menu(index))
-                    .build();
-            }
-        });
+        rustle::row_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Center,
+            || {
+                if shown.switchable {
+                    switch(shown.enabled, SERVER_SWITCHES.id(shown.place));
+                }
+                if let Some(more) = SERVER_MORES.id(shown.place) {
+                    let operations = crate::events::operations();
+                    let index = shown.place;
+                    Button::icon(phosphor::DOTS_THREE, more)
+                        .on_click(move || operations.open_settings_menu(index))
+                        .build();
+                }
+            },
+        );
     });
 }
 
 /// Emits the form: a labelled box for each part of a server, and the buttons that keep it or put it away.
 #[track_caller]
 fn form_node(form: &ServerForm) {
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .panel(Radius::Lg)
             .padding(theme::sp(4)),
-        3,
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Start,
         || {
             labelled(
                 "Name",
@@ -1160,7 +1244,7 @@ fn form_node(form: &ServerForm) {
                 Target::Settings(SettingsEvent::SettingsEnv),
                 "TOKEN=abc",
             );
-            kit::confirm_row(
+            button::confirm_row(
                 "Save",
                 Target::Settings(SettingsEvent::SettingsSave),
                 form.complete(),
@@ -1178,8 +1262,8 @@ pub(crate) fn form_buttons(modifier: Modifier, cancel: Target, save: Target, rea
         Arrangement::SpacedByAligned(theme::sp(2), Alignment::End),
         Alignment::Center,
         || {
-            kit::action("Cancel", cancel, Variant::Ghost);
-            kit::small_button("Save", save, Variant::Default)
+            button::action("Cancel", cancel, Variant::Ghost);
+            button::small_button("Save", save, Variant::Default)
                 .disabled(!ready)
                 .build();
         },

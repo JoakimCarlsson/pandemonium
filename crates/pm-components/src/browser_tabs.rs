@@ -1,10 +1,10 @@
 //! The tabs of the browser: what each tab holds, opening, showing and closing them, the lock that keeps agents out of a tab, and the strip that draws them.
 
 use crate::areas::BrowserEvent;
-use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
 use rustle::phosphor;
+use rustle::{Alignment, Arrangement};
 
 use std::ops::Range;
 
@@ -455,15 +455,17 @@ fn scroll_button(icon: rustle::Icon, id: BrowserEvent, disabled: bool) {
 pub fn tab_strip(browser: &Browser, width: f32) {
     let (shown, each) = browser.strip_window(width);
     let scrolls = shown.len() < browser.tabs.len();
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .height(TAB_STRIP)
             .fill_max_width()
             .clip()
             .background(theme::color(Role::Sidebar))
-            .ruled(theme::Side::Bottom)
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
             .padding_xy(theme::sp(2), 0.0),
-        1,
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
         || {
             if scrolls {
                 scroll_button(

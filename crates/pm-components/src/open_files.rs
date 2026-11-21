@@ -2,7 +2,7 @@
 
 use crate::areas::EditorEvent;
 use crate::target::Target;
-use pm_field::Edit;
+use pm_editor::Edit;
 
 use crate::git_prompts::Prompt;
 use crate::panes::Item;

@@ -1,13 +1,17 @@
 //! The debug tab of the dock: the controls over a program being debugged, its stack, its variables and watches, and its console.
 
 use crate::areas::DebugEvent;
+use crate::button;
 use crate::button::Variant;
-use crate::kit::{self, Frame};
+use crate::events;
+use crate::icons;
+use crate::parts;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
 use crate::theme::sp;
 use pm_protocol::{DebugCategory, DebugView, Standing};
+use rustle::TextOverflow;
 use rustle::phosphor;
 use rustle::{Alignment, Arrangement, Color, column_arranged};
 use rustle::{BoxAlignment, Modifier};
@@ -51,7 +55,7 @@ fn controls(run: &Run) {
         let running = view.standing == Standing::Running;
         (phosphor::PAUSE, DebugEvent::DebugPause, "Pause", running)
     };
-    kit::bar(9, 3, 1, || {
+    parts::bar(9, 3, 1, || {
         for (icon, event, tip, enabled) in [
             resume,
             (
@@ -86,14 +90,14 @@ fn controls(run: &Run) {
             (standing_words(view), Role::Subtle),
         ] {
             let own = Modifier::new().padding_each(theme::sp(2), 0.0, 0.0, 0.0);
-            kit::text(own, said, kit::line(12, role));
+            rustle::basic_text(own, said, theme::line(12, role), TextOverflow::Ellipsis);
         }
     });
 }
 
 /// One line of code-like text 12 pixels tall in `tone`, in the mono family with the reader's ligatures.
 fn code_line(tone: impl Into<Color>) -> rustle::TextStyle {
-    kit::line(12, tone)
+    theme::line(12, tone)
         .font_family(theme::mono())
         .ligatures(theme::code_ligatures())
 }
@@ -101,12 +105,20 @@ fn code_line(tone: impl Into<Color>) -> rustle::TextStyle {
 /// Emits `title` over a list of the tab, in a row `height` theme steps tall.
 #[track_caller]
 fn heading(title: &str, height: f32) {
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .height(theme::sp(height))
             .padding_xy(theme::sp(3), 0.0),
-        0,
-        || kit::text(Modifier::new(), title, kit::line(11, Role::Subtle)),
+        Arrangement::Start,
+        Alignment::Center,
+        || {
+            rustle::basic_text(
+                Modifier::new(),
+                title,
+                theme::line(11, Role::Subtle),
+                TextOverflow::Ellipsis,
+            )
+        },
     );
 }
 
@@ -117,22 +129,31 @@ fn section(title: &str, width: Option<f32>, body: impl FnOnce()) {
         Some(width) => Modifier::new().fill_max_height().width(width),
         None => Modifier::new().fill_max_height().weight(1.0),
     };
-    kit::column(size.ruled(theme::Side::Left), 0, || {
-        heading(title, 7.0);
-        body();
+    rustle::row_arranged(size, Arrangement::Start, Alignment::Start, || {
+        rustle::vertical_divider(Modifier::new(), 1.0, theme::color(Role::Border));
+        rustle::column_arranged(
+            Modifier::new().weight(1.0).fill_max_height(),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                heading(title, 7.0);
+                body();
+            },
+        );
     });
 }
 
 /// Emits a box scrolled as `scrolled` says, holding the rows `content` emits.
 #[track_caller]
 fn rows_box(scrolled: &rustle::ScrollState, content: impl FnOnce()) {
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .weight(1.0)
             .vertical_scroll(scrolled)
             .fill_max_width(),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         content,
     );
 }
@@ -149,19 +170,29 @@ fn list_row(id: Option<Target>, selected: bool, content: impl FnOnce()) {
             } else {
                 looks
             };
-            kit::pressed(own.indicated(looks, theme::Focused::Rustle).clip(), id)
+            events::pressed(own.indicated(looks, theme::Focused::Rustle).clip(), id)
         }
         None if selected => own.background(theme::color(Role::SurfaceSelected)).clip(),
         None => own.clip(),
     };
-    kit::row(own.padding_xy(theme::sp(3), 0.0), 2, content);
+    rustle::row_arranged(
+        own.padding_xy(theme::sp(3), 0.0),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        content,
+    );
 }
 
 /// Emits a row of a list that only says `said`, quietly.
 #[track_caller]
 fn note_row(said: &str) {
     list_row(None, false, || {
-        kit::text(Modifier::new(), said, kit::line(12, Role::Subtle))
+        rustle::basic_text(
+            Modifier::new(),
+            said,
+            theme::line(12, Role::Subtle),
+            TextOverflow::Ellipsis,
+        )
     });
 }
 
@@ -191,12 +222,18 @@ fn stack(state: &WorkspaceState, run: &Run) {
                         Some(Target::Debug(DebugEvent::DebugFrame(index))),
                         view.frame == Some(frame.id),
                         || {
-                            kit::text(
+                            rustle::basic_text(
                                 Modifier::new(),
                                 frame.name.clone(),
                                 code_line(Role::Text).max_lines(1),
+                                TextOverflow::Ellipsis,
                             );
-                            kit::text(Modifier::new(), place, kit::line(12, Role::Subtle));
+                            rustle::basic_text(
+                                Modifier::new(),
+                                place,
+                                theme::line(12, Role::Subtle),
+                                TextOverflow::Ellipsis,
+                            );
                         },
                     );
                 });
@@ -234,8 +271,8 @@ fn variable_parts(entry: &crate::debug::VariableRow, room: f32) {
         Role::Text
     };
     let name_kind = code_line(tone);
-    let equals_kind = kit::line(12, Role::Subtle);
-    let type_kind = kit::line(11, Role::Subtle);
+    let equals_kind = theme::line(12, Role::Subtle);
+    let type_kind = theme::line(11, Role::Subtle);
     let indent = entry.depth as f32 * 12.0;
     let typed = entry
         .kind
@@ -259,41 +296,58 @@ fn variable_parts(entry: &crate::debug::VariableRow, room: f32) {
     } else {
         1.0
     };
-    kit::row(Modifier::new().fill_max_width(), 2, || {
-        rustle::spacer(Modifier::new().width(indent));
-        if entry.reference != 0 {
-            rustle::stack_aligned(
-                Modifier::new().size(VARIABLE_CHEVRON * kept, VARIABLE_CHEVRON),
-                BoxAlignment::Center,
-                || icon(kit::chevron(entry.unfolded), 3.0 * kept, Role::Muted),
+    rustle::row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            rustle::spacer(Modifier::new().width(indent));
+            if entry.reference != 0 {
+                rustle::stack_aligned(
+                    Modifier::new().size(VARIABLE_CHEVRON * kept, VARIABLE_CHEVRON),
+                    BoxAlignment::Center,
+                    || icon(icons::chevron(entry.unfolded), 3.0 * kept, Role::Muted),
+                );
+            } else {
+                rustle::spacer(Modifier::new().width(VARIABLE_CHEVRON));
+            }
+            rustle::basic_text(
+                Modifier::new(),
+                entry.name.clone(),
+                name_kind,
+                TextOverflow::Ellipsis,
             );
-        } else {
-            rustle::spacer(Modifier::new().width(VARIABLE_CHEVRON));
-        }
-        kit::text(Modifier::new(), entry.name.clone(), name_kind);
-        if !entry.value.is_empty() {
-            kit::text(Modifier::new(), "=", equals_kind);
-            let value_kind = code_line(Role::SyntaxString);
-            kit::text(Modifier::new().weight(1.0), entry.value.clone(), value_kind);
-        }
-        if let Some(kind) = &entry.kind {
-            kit::text(
-                Modifier::new().width_in(0.0, typed * kept),
-                kind.clone(),
-                type_kind,
-            );
-        }
-    });
+            if !entry.value.is_empty() {
+                rustle::basic_text(Modifier::new(), "=", equals_kind, TextOverflow::Ellipsis);
+                let value_kind = code_line(Role::SyntaxString);
+                rustle::basic_text(
+                    Modifier::new().weight(1.0),
+                    entry.value.clone(),
+                    value_kind,
+                    TextOverflow::Ellipsis,
+                );
+            }
+            if let Some(kind) = &entry.kind {
+                rustle::basic_text(
+                    Modifier::new().width_in(0.0, typed * kept),
+                    kind.clone(),
+                    type_kind,
+                    TextOverflow::Ellipsis,
+                );
+            }
+        },
+    );
 }
 
 /// Emits the small field `id` of the tab over `held`, saying `placeholder` while empty, padded as the tab's fields are.
 #[track_caller]
 fn field(held: &rustle::TextFieldState, id: Target, placeholder: &str) {
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .padding_xy(theme::sp(2), theme::sp(1)),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
             Input::new(held, id)
                 .size(Size::Sm)
@@ -331,9 +385,24 @@ fn variables(state: &WorkspaceState, run: &Run) {
                 };
                 rustle::key(("watch", index), || {
                     list_row(None, false, || {
-                        kit::text(Modifier::new(), expression.clone(), code_line(Role::Text));
-                        kit::text(Modifier::new(), "=", kit::line(12, Role::Subtle));
-                        kit::text(Modifier::new().weight(1.0), shown.0, code_line(shown.1));
+                        rustle::basic_text(
+                            Modifier::new(),
+                            expression.clone(),
+                            code_line(Role::Text),
+                            TextOverflow::Ellipsis,
+                        );
+                        rustle::basic_text(
+                            Modifier::new(),
+                            "=",
+                            theme::line(12, Role::Subtle),
+                            TextOverflow::Ellipsis,
+                        );
+                        rustle::basic_text(
+                            Modifier::new().weight(1.0),
+                            shown.0,
+                            code_line(shown.1),
+                            TextOverflow::Ellipsis,
+                        );
                         Button::icon(
                             phosphor::X,
                             Target::Debug(DebugEvent::DebugWatchRemove(index)),
@@ -366,33 +435,40 @@ fn console_tone(category: DebugCategory) -> Role {
 #[track_caller]
 fn console(state: &WorkspaceState, run: &Run) {
     section("Console", None, || {
-        kit::column(Modifier::new().fill_max_width().weight(1.0), 0, || {
-            kit::column(
-                Modifier::new()
-                    .fill_max_width()
-                    .weight(1.0)
-                    .vertical_scroll_with(&state.debug.console_back, true)
-                    .fill_max_width()
-                    .padding_xy(theme::sp(3), 0.0),
-                0,
-                || {
-                    for entry in &run.view.lines {
-                        kit::text(
-                            Modifier::new(),
-                            entry.text.clone(),
-                            theme::code_style(12, 1.4)
-                                .color(theme::color(console_tone(entry.category)))
-                                .max_lines(1),
-                        );
-                    }
-                },
-            );
-            field(
-                &state.debug.console,
-                Target::Debug(DebugEvent::DebugConsoleField),
-                "Evaluate an expression",
-            );
-        });
+        rustle::column_arranged(
+            Modifier::new().fill_max_width().weight(1.0),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                rustle::column_arranged(
+                    Modifier::new()
+                        .fill_max_width()
+                        .weight(1.0)
+                        .vertical_scroll_with(&state.debug.console_back, true)
+                        .fill_max_width()
+                        .padding_xy(theme::sp(3), 0.0),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        for entry in &run.view.lines {
+                            rustle::basic_text(
+                                Modifier::new(),
+                                entry.text.clone(),
+                                theme::code_style(12, 1.4)
+                                    .color(theme::color(console_tone(entry.category)))
+                                    .max_lines(1),
+                                TextOverflow::Ellipsis,
+                            );
+                        }
+                    },
+                );
+                field(
+                    &state.debug.console,
+                    Target::Debug(DebugEvent::DebugConsoleField),
+                    "Evaluate an expression",
+                );
+            },
+        );
     });
 }
 
@@ -409,8 +485,13 @@ fn idle(state: &WorkspaceState) {
         Arrangement::SpacedBy(sp(3)),
         Alignment::Center,
         || {
-            kit::text(Modifier::new(), said, kit::line(13, Role::Subtle));
-            kit::action(
+            rustle::basic_text(
+                Modifier::new(),
+                said,
+                theme::line(13, Role::Subtle),
+                TextOverflow::Ellipsis,
+            );
+            button::action(
                 "Start debugging",
                 Target::Debug(DebugEvent::DebugStart),
                 Variant::Default,
@@ -422,14 +503,24 @@ fn idle(state: &WorkspaceState) {
 /// Emits the body of the debug tab.
 pub fn debug_tab(state: &WorkspaceState) {
     match &state.debug.run {
-        Some(run) => kit::column(Modifier::new().fill_max_width().weight(1.0), 0, || {
-            controls(run);
-            kit::row_top(Modifier::new().fill_max_width().weight(1.0), 0, || {
-                stack(state, run);
-                variables(state, run);
-                console(state, run);
-            });
-        }),
+        Some(run) => rustle::column_arranged(
+            Modifier::new().fill_max_width().weight(1.0),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                controls(run);
+                rustle::row_arranged(
+                    Modifier::new().fill_max_width().weight(1.0),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        stack(state, run);
+                        variables(state, run);
+                        console(state, run);
+                    },
+                );
+            },
+        ),
         None => idle(state),
     }
 }

@@ -43,7 +43,7 @@ use pm_components::settings_catalog::{OPEN_LIST, Setting as SettingsCatalogue};
 use pm_components::tagged::lay_out;
 use pm_components::theme::{Appearance, default_family};
 use pm_components::tree_actions::TreeTarget;
-use pm_field::Edit;
+use pm_editor::Edit;
 use pm_harness::{
     Alternative, Background, Choice, Diff, Discovery, Event as HarnessEvent, Input as Skip,
     Inquiry, Kind, Merge, Permission, Pick, PlanStep, Progress, Question, Setting, Skipped, Slash,

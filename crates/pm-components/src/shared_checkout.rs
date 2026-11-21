@@ -2,10 +2,10 @@
 //!
 //! Sessions share a checkout when their servers name the same canonical working tree for them on the same machine. Each worktree of a repository is a working tree of its own, so sessions in separate worktrees never share one, and chats, which work in scratch folders of their own, are left out.
 
-use crate::kit;
 use crate::theme;
 use rustle::Modifier;
 use rustle::phosphor;
+use rustle::{Alignment, Arrangement};
 
 use crate::theme::Role;
 
@@ -120,9 +120,10 @@ pub fn notice(state: &WorkspaceState, session: &Session) {
         return;
     }
     let words = shared_words(&titles);
-    kit::row(
+    rustle::row_arranged(
         Modifier::new().padding_xy(theme::sp(2.5), theme::sp(0.5)),
-        1.5,
+        Arrangement::SpacedBy(theme::sp(1.5)),
+        Alignment::Center,
         move || {
             glyph(phosphor::GIT_FORK, 3.5, Role::Warning);
             clipped(words, 12, Role::Muted);

@@ -1,8 +1,13 @@
 //! The diff view: every changed file stacked, the old and the new side by side, with notes on lines for the agent.
 
 use crate::areas::DiffEvent;
-use crate::kit::{self, Frame};
+use crate::button;
+use crate::events;
+use crate::icons;
+use crate::parts;
+use crate::theme::Frame;
 use crate::theme::Indicated;
+use rustle::TextOverflow;
 
 use crate::target::Target;
 use crate::theme;
@@ -201,15 +206,20 @@ pub fn diff_line(kind: Kind, content: &str, marks: Vec<Mark>) {
         })
         .collect::<Vec<_>>();
     let content = format!("{marker}{}", shown(content));
-    kit::row(own.padding_xy(theme::sp(3), 0.0), 0, move || {
-        marked_line(
-            Modifier::new(),
-            &content,
-            code_type(tone),
-            marks,
-            CaretLook::default(),
-        );
-    });
+    rustle::row_arranged(
+        own.padding_xy(theme::sp(3), 0.0),
+        Arrangement::Start,
+        Alignment::Center,
+        move || {
+            marked_line(
+                Modifier::new(),
+                &content,
+                code_type(tone),
+                marks,
+                CaretLook::default(),
+            );
+        },
+    );
 }
 
 /// The tint behind a line, the stronger one behind its number, and the colour of the number.
@@ -246,7 +256,7 @@ fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<Target>) {
                 Some(tint) => looks.idle(tint),
                 None => looks,
             };
-            kit::pressed(own.indicated(looks, theme::Focused::Rustle), id)
+            events::pressed(own.indicated(looks, theme::Focused::Rustle), id)
                 .chain(crate::events::comment_drag(id))
         }
         None => match tint {
@@ -260,9 +270,19 @@ fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<Target>) {
         Arrangement::End,
         Alignment::Start,
         move || {
-            kit::row(Modifier::new().height(theme::sp(5)), 0, move || {
-                kit::text(Modifier::new(), shown_number, code_type(tone));
-            });
+            rustle::row_arranged(
+                Modifier::new().height(theme::sp(5)),
+                Arrangement::Start,
+                Alignment::Center,
+                move || {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        shown_number,
+                        code_type(tone),
+                        TextOverflow::Ellipsis,
+                    );
+                },
+            );
         },
     );
 }
@@ -271,12 +291,13 @@ fn gutter(number: Option<usize>, kind: Option<Kind>, id: Option<Target>) {
 #[track_caller]
 fn code(content: &str, marks: Vec<Mark>, columns: usize) {
     let content = shown(content);
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .weight(1.0)
             .clip()
             .padding_xy(theme::sp(3), 0.0),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
             for piece in pieces(&content, columns) {
                 let within: Vec<Mark> = marks
@@ -289,9 +310,10 @@ fn code(content: &str, marks: Vec<Mark>, columns: usize) {
                     })
                     .collect();
                 let text = &content[piece];
-                kit::row(
+                rustle::row_arranged(
                     Modifier::new().fill_max_width().height(theme::sp(5)),
-                    0,
+                    Arrangement::Start,
+                    Alignment::Center,
                     move || {
                         marked_line(
                             Modifier::new().weight(1.0),
@@ -342,33 +364,42 @@ fn half(
     if let Some(fill) = fill {
         own = own.background(theme::color(fill));
     }
-    if new {
-        own = own.ruled(theme::Side::Left);
-    }
-    kit::row_top(own.clip(), 0, move || {
-        gutter(
-            number,
-            kind,
-            number.map(|line| Target::Diff(DiffEvent::Gutter { change, new, line })),
+    rustle::row_arranged(own, Arrangement::Start, Alignment::Start, move || {
+        if new {
+            rustle::vertical_divider(Modifier::new(), 1.0, theme::color(Role::Border));
+        }
+        rustle::row_arranged(
+            Modifier::new().weight(1.0).fill_max_height().clip(),
+            Arrangement::Start,
+            Alignment::Start,
+            move || {
+                gutter(
+                    number,
+                    kind,
+                    number.map(|line| Target::Diff(DiffEvent::Gutter { change, new, line })),
+                );
+                code(content, marks, columns);
+            },
         );
-        code(content, marks, columns);
     });
 }
 
 /// Emits the row of a hunk header.
 fn hunk_row(header: &str) {
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .fill_max_width()
             .height(theme::sp(5))
             .background(theme::color(Role::Surface))
             .padding_xy(theme::sp(3), 0.0),
-        0,
+        Arrangement::Start,
+        Alignment::Center,
         || {
-            kit::text(
+            rustle::basic_text(
                 Modifier::new().weight(1.0),
                 header,
                 code_type(Role::Subtle).max_lines(1),
+                TextOverflow::Ellipsis,
             );
         },
     );
@@ -398,11 +429,12 @@ fn diff_row(
     let lines = row_height(row_of, columns);
     match row_of {
         Row::Hunk(header) => hunk_row(header),
-        Row::Pair(old, new) => kit::row_top(
+        Row::Pair(old, new) => rustle::row_arranged(
             Modifier::new()
                 .fill_max_width()
                 .height(theme::sp(5.0 * lines as f32)),
-            0,
+            Arrangement::Start,
+            Alignment::Start,
             || {
                 for (entry, new) in [(old, false), (new, true)] {
                     half(
@@ -424,26 +456,32 @@ fn diff_row(
 #[track_caller]
 fn under(range: Option<Range>, card: impl FnOnce()) {
     let blank = || rustle::spacer(Modifier::new().weight(1.0));
-    kit::row_top(Modifier::new().fill_max_width(), 0, move || match range {
-        Some(range) if range.new => {
-            blank();
-            margined(card);
-        }
-        Some(_) => {
-            margined(card);
-            blank();
-        }
-        None => margined(card),
-    });
+    rustle::row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::Start,
+        Alignment::Start,
+        move || match range {
+            Some(range) if range.new => {
+                blank();
+                margined(card);
+            }
+            Some(_) => {
+                margined(card);
+                blank();
+            }
+            None => margined(card),
+        },
+    );
 }
 
 /// Emits the card `card` draws in a weighted share of its row, with two steps of margin on every side, the side margins kept out of the share.
 #[track_caller]
 fn margined(card: impl FnOnce()) {
     rustle::spacer(Modifier::new().width(theme::sp(2)));
-    kit::column(
+    rustle::column_arranged(
         Modifier::new().weight(1.0).padding_xy(0.0, theme::sp(2)),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         card,
     );
     rustle::spacer(Modifier::new().width(theme::sp(2)));
@@ -470,21 +508,23 @@ fn comment_card(index: usize, comment: &Comment, width: f32) {
     let body = wrap(&comment.text, 13, width);
     under(comment.range, || {
         card(false, Arrangement::Start, || {
-            kit::bar(8, 3, 2, || {
+            parts::bar(8, 3, 2, || {
                 line(about, 12, 1.4, Role::Subtle);
-                kit::column(
+                rustle::column_arranged(
                     Modifier::new()
                         .outlined(Radius::Full)
                         .padding_xy(theme::sp(2), 0.0),
-                    0,
+                    Arrangement::Start,
+                    Alignment::Start,
                     || line("Not sent", 11, 1.4, Role::Muted),
                 );
                 spacer();
                 Button::icon(phosphor::X, Target::Diff(DiffEvent::CommentRemove(index))).build();
             });
-            kit::column(
+            rustle::column_arranged(
                 Modifier::new().padding_xy(theme::sp(3), theme::sp(2.5)),
-                0,
+                Arrangement::Start,
+                Alignment::Start,
                 || {
                     for text in &body {
                         line(text, 13, 1.54, Role::Text);
@@ -503,29 +543,35 @@ fn comment_box(state: &WorkspaceState, target: CommentTarget) {
     let ready = !state.comment_text.text().trim().is_empty();
     under(target.range, || {
         card(true, Arrangement::SpacedBy(sp(2.5)), || {
-            kit::text(
+            rustle::basic_text(
                 Modifier::new(),
                 format!("Comment on {about}"),
-                kit::strong(13, Role::Text),
+                theme::strong(13, Role::Text),
+                TextOverflow::Ellipsis,
             );
             Input::new(&state.comment_text, Target::Diff(DiffEvent::CommentField))
                 .placeholder("Tell the agent what to change")
                 .build();
-            kit::row(Modifier::new().fill_max_width(), 2, || {
-                spacer();
-                kit::action(
-                    "Cancel",
-                    Target::Diff(DiffEvent::CommentCancel),
-                    Variant::Ghost,
-                );
-                kit::small_button(
-                    "Add comment",
-                    Target::Diff(DiffEvent::CommentAdd),
-                    Variant::Default,
-                )
-                .disabled(!ready)
-                .build();
-            });
+            rustle::row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Center,
+                || {
+                    spacer();
+                    button::action(
+                        "Cancel",
+                        Target::Diff(DiffEvent::CommentCancel),
+                        Variant::Ghost,
+                    );
+                    button::small_button(
+                        "Add comment",
+                        Target::Diff(DiffEvent::CommentAdd),
+                        Variant::Default,
+                    )
+                    .disabled(!ready)
+                    .build();
+                },
+            );
         });
     });
 }
@@ -547,7 +593,7 @@ const HEADER_MARKS: [f32; 2] = [3.5, 4.0];
 ///
 /// When they do not fit, the chevron and the icon give up their width, in proportion to it, as far as the overflow goes or until they have none; the name then takes what it needs of what is left, cut short at its edge, and the folder the rest, cut off at the header's edge.
 fn heading_parts(name: &str, directory: &str, open: bool, room: f32) {
-    let name_kind = kit::strong(13, Role::Text);
+    let name_kind = theme::strong(13, Role::Text);
     let directory_kind = theme::mono_style(11, 1.4).color(theme::color(Role::Subtle));
     let width = |text: &str, kind| rustle::layout_text(text, kind, None).size().width.ceil();
     let (name_width, directory_width) =
@@ -556,24 +602,41 @@ fn heading_parts(name: &str, directory: &str, open: bool, room: f32) {
     let gaps = sp(2) * 3.0;
     let over = (marks + name_width + directory_width + gaps - room).max(0.0);
     let kept = (1.0 - over / marks).clamp(0.0, 1.0);
-    kit::row(Modifier::new().width_in(0.0, room), 2, || {
-        kit::column(
-            Modifier::new().width(sp(HEADER_MARKS[0]) * kept).clip(),
-            0,
-            || {
-                icon(kit::chevron(open), HEADER_MARKS[0], Role::Muted);
-            },
-        );
-        kit::column(
-            Modifier::new().width(sp(HEADER_MARKS[1]) * kept).clip(),
-            0,
-            || file_icon(name, HEADER_MARKS[1]),
-        );
-        kit::text(Modifier::new(), name, name_kind);
-        kit::column(Modifier::new().clip(), 0, || {
-            kit::text(Modifier::new(), directory, directory_kind)
-        });
-    });
+    rustle::row_arranged(
+        Modifier::new().width_in(0.0, room),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            rustle::column_arranged(
+                Modifier::new().width(sp(HEADER_MARKS[0]) * kept).clip(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    icon(icons::chevron(open), HEADER_MARKS[0], Role::Muted);
+                },
+            );
+            rustle::column_arranged(
+                Modifier::new().width(sp(HEADER_MARKS[1]) * kept).clip(),
+                Arrangement::Start,
+                Alignment::Start,
+                || file_icon(name, HEADER_MARKS[1]),
+            );
+            rustle::basic_text(Modifier::new(), name, name_kind, TextOverflow::Ellipsis);
+            rustle::column_arranged(
+                Modifier::new().clip(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        directory,
+                        directory_kind,
+                        TextOverflow::Ellipsis,
+                    )
+                },
+            );
+        },
+    );
 }
 
 /// Emits the header of `change`, the change at `index`, unfolded when `open`, with the count of `notes` on it; when the header is too narrow the chevron and the file icon give up their room first, then the folder, which is cut off at the edge.
@@ -583,39 +646,52 @@ fn file_header(change: &Change, index: usize, open: bool, notes: usize) {
         .height(theme::sp(10))
         .background(theme::color(Role::Surface));
     if open {
-        own = own.ruled(theme::Side::Bottom);
+        own = own
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0);
     }
-    kit::row(own.padding_xy(theme::sp(3), 0.0), 2, || {
-        kit::row(
-            kit::pressed(
-                Modifier::new().weight(1.0).clip(),
-                Target::Diff(DiffEvent::DiffFold(index)),
-            ),
-            2,
-            || {
-                let name = change.name().to_owned();
-                let directory = change.directory().to_owned();
-                rustle::with_constraints(Modifier::new(), move |room| {
-                    heading_parts(&name, &directory, open, room.max_width);
-                });
-            },
-        );
-        if notes > 0 {
-            kit::row(Modifier::new(), 1, || {
-                icon(phosphor::CHAT_CIRCLE, 3.5, Role::Muted);
-                line(notes.to_string(), 11, 1.4, Role::Muted);
-            });
-        }
-        Tally::new(change.added(), change.removed())
-            .size(11)
+    rustle::row_arranged(
+        own.padding_xy(theme::sp(3), 0.0),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            rustle::row_arranged(
+                events::pressed(
+                    Modifier::new().weight(1.0).clip(),
+                    Target::Diff(DiffEvent::DiffFold(index)),
+                ),
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Center,
+                || {
+                    let name = change.name().to_owned();
+                    let directory = change.directory().to_owned();
+                    rustle::with_constraints(Modifier::new(), move |room| {
+                        heading_parts(&name, &directory, open, room.max_width);
+                    });
+                },
+            );
+            if notes > 0 {
+                rustle::row_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(theme::sp(1)),
+                    Alignment::Center,
+                    || {
+                        icon(phosphor::CHAT_CIRCLE, 3.5, Role::Muted);
+                        line(notes.to_string(), 11, 1.4, Role::Muted);
+                    },
+                );
+            }
+            Tally::new(change.added(), change.removed())
+                .size(11)
+                .build();
+            viewed_button(change.viewed, Target::Diff(DiffEvent::Viewed(index)));
+            Button::icon(
+                phosphor::CHAT_CIRCLE,
+                Target::Diff(DiffEvent::CommentFile(index)),
+            )
             .build();
-        viewed_button(change.viewed, Target::Diff(DiffEvent::Viewed(index)));
-        Button::icon(
-            phosphor::CHAT_CIRCLE,
-            Target::Diff(DiffEvent::CommentFile(index)),
-        )
-        .build();
-    });
+        },
+    );
 }
 
 /// One item of the diff's lazy list: a part of a changed file, named by the file's index among the session's changes.
@@ -808,11 +884,12 @@ impl Shown<'_> {
                 !self.state.closed_diffs.contains(&change.path),
                 notes_on(self.session, change).len(),
             ),
-            Item::Reading(_) => kit::row_top(
+            Item::Reading(_) => rustle::row_arranged(
                 Modifier::new()
                     .height(theme::sp(change.expected_rows() as f32 * ROW / 4.0))
                     .padding_xy(theme::sp(3), theme::sp(2)),
-                0,
+                Arrangement::Start,
+                Alignment::Start,
                 || line("Reading the diff…", 12, 1.4, Role::Subtle),
             ),
             Item::FileForm(_) | Item::Form(..) => {
@@ -852,16 +929,17 @@ fn framed(first: bool, last: bool, content: impl FnOnce()) {
     let radius = Radius::Lg.px();
     let reach = radius * 2.0 + 2.0;
     let edge = |at: bool| if at { 1.0 } else { 0.0 };
-    kit::column(
+    rustle::column_arranged(
         Modifier::new().fill_max_width().padding_each(
             theme::sp(4),
             if first { theme::sp(4) } else { 0.0 },
             theme::sp(4),
             0.0,
         ),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            kit::column(
+            rustle::column_arranged(
                 Modifier::new()
                     .fill_max_width()
                     .draw_with_content(move |canvas| {
@@ -875,7 +953,8 @@ fn framed(first: bool, last: bool, content: impl FnOnce()) {
                     })
                     .padding_each(1.0, edge(first), 1.0, edge(last))
                     .clip(),
-                0,
+                Arrangement::Start,
+                Alignment::Start,
                 content,
             );
         },
@@ -896,7 +975,8 @@ fn summary(session: &Session) {
         Modifier::new()
             .fill_max_width()
             .height(theme::sp(10))
-            .ruled(theme::Side::Bottom)
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
             .padding_xy(theme::sp(4), 0.0),
         crate::graph::SplitLayout {
             gap: sp(3),
@@ -914,7 +994,7 @@ fn summary(session: &Session) {
                 .size(12)
                 .build();
             line(format!("{viewed} of {count} viewed"), 12, 1.4, Role::Subtle);
-            kit::small_button(
+            button::small_button(
                 if waiting > 0 {
                     format!("Send to agent · {waiting}")
                 } else {
@@ -943,21 +1023,26 @@ pub fn diff(state: &WorkspaceState, session: &Session, width: f32) {
         width,
         column_width: ((width - 34.0) / 2.0 - 46.0).max(80.0),
     };
-    kit::column(Modifier::new().weight(1.0), 0, || {
-        summary(session);
-        rustle::lazy_list_with(
-            state
-                .diff_bounds
-                .track(Modifier::new().fill_max_width().weight(1.0))
-                .fill_max_width(),
-            &state.diff_list,
-            rustle::LazyContent::new().padding_each(0.0, theme::sp(4)),
-            shown.items.len(),
-            |at| {
-                let item = shown.items[at];
-                (session.changes[item.file()].path.as_str(), item)
-            },
-            |at| shown.item(at),
-        );
-    });
+    rustle::column_arranged(
+        Modifier::new().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            summary(session);
+            rustle::lazy_list_with(
+                state
+                    .diff_bounds
+                    .track(Modifier::new().fill_max_width().weight(1.0))
+                    .fill_max_width(),
+                &state.diff_list,
+                rustle::LazyContent::new().padding_each(0.0, theme::sp(4)),
+                shown.items.len(),
+                |at| {
+                    let item = shown.items[at];
+                    (session.changes[item.file()].path.as_str(), item)
+                },
+                |at| shown.item(at),
+            );
+        },
+    );
 }

@@ -5,9 +5,10 @@
 //! remote one alike.
 
 use crate::areas::DialogEvent;
-use crate::kit::{self, Frame};
+use crate::parts;
 use crate::target::Target;
 use crate::theme;
+use rustle::{Alignment, Arrangement, TextOverflow};
 use rustle::{Icon, phosphor};
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -336,25 +337,31 @@ impl FolderPicker {
     /// Emits what the window holds: the bar with the steps and the path, the places beside the folders, and the bar with the buttons.
     #[track_caller]
     pub fn view(&self) {
-        kit::column(Modifier::new().weight(1.0).fill_max_width(), 0, || {
-            self.heading();
-            self.bar();
-            kit::row_top(
-                Modifier::new().fill_max_width().weight(1.0).clip(),
-                0,
-                || {
-                    places();
-                    self.list();
-                },
-            );
-            self.footer();
-        });
+        rustle::column_arranged(
+            Modifier::new().weight(1.0).fill_max_width(),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                self.heading();
+                self.bar();
+                rustle::row_arranged(
+                    Modifier::new().fill_max_width().weight(1.0).clip(),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        places();
+                        self.list();
+                    },
+                );
+                self.footer();
+            },
+        );
     }
 
     /// Emits the line naming what the folder is for, and the machine it is on when that is not this one.
     #[track_caller]
     fn heading(&self) {
-        kit::bar(11, 4, 2, || {
+        parts::bar(11, 4, 2, || {
             line(self.title(), 13, 1.4, Role::Text);
             if let Some(machine) = self.machine.as_ref() {
                 line(format!("on {}", machine.name), 13, 1.4, Role::Subtle);
@@ -367,7 +374,7 @@ impl FolderPicker {
     fn bar(&self) {
         let crumbs = self.directory.as_deref().map(trail).unwrap_or_default();
         let last = crumbs.len().saturating_sub(1);
-        kit::bar(12, 3, 2, || {
+        parts::bar(12, 3, 2, || {
             step(
                 phosphor::ARROW_LEFT,
                 DialogEvent::PickerBack,
@@ -386,22 +393,34 @@ impl FolderPicker {
                 crumbs.len() < 2,
                 "Up",
             );
-            kit::row(Modifier::new().weight(1.0), 0.5, || {
-                for (index, (name, _)) in crumbs.iter().enumerate() {
-                    if index > 0 {
-                        icon(phosphor::CARET_RIGHT, 3.0, Role::Subtle);
+            rustle::row_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::SpacedBy(theme::sp(0.5)),
+                Alignment::Center,
+                || {
+                    for (index, (name, _)) in crumbs.iter().enumerate() {
+                        if index > 0 {
+                            icon(phosphor::CARET_RIGHT, 3.0, Role::Subtle);
+                        }
+                        let kind = if index == last {
+                            theme::strong(13, Role::Text)
+                        } else {
+                            theme::line(13, Role::Muted)
+                        };
+                        Tile::new(Target::Dialog(DialogEvent::PickerCrumb(index)))
+                            .height(7.0)
+                            .inner(Modifier::new().padding_xy(theme::sp(1.5), 0.0))
+                            .build_with(|| {
+                                rustle::basic_text(
+                                    Modifier::new(),
+                                    name.clone(),
+                                    kind,
+                                    TextOverflow::Ellipsis,
+                                )
+                            });
                     }
-                    let kind = if index == last {
-                        kit::strong(13, Role::Text)
-                    } else {
-                        kit::line(13, Role::Muted)
-                    };
-                    Tile::new(Target::Dialog(DialogEvent::PickerCrumb(index)))
-                        .height(7.0)
-                        .inner(Modifier::new().padding_xy(theme::sp(1.5), 0.0))
-                        .build_with(|| kit::text(Modifier::new(), name.clone(), kind));
-                }
-            });
+                },
+            );
             Input::new(&self.field, Target::Dialog(DialogEvent::PickerField))
                 .size(Size::Sm)
                 .placeholder("Filter folders")
@@ -413,14 +432,15 @@ impl FolderPicker {
     /// Emits the folders inside the one being looked into, one to a line, scrolled to where the picker says.
     #[track_caller]
     fn list(&self) {
-        kit::column(
+        rustle::column_arranged(
             Modifier::new()
                 .fill_max_height()
                 .weight(1.0)
                 .vertical_scroll(&self.scroll)
                 .fill_max_width()
                 .padding(theme::sp(2)),
-            0.5,
+            Arrangement::SpacedBy(theme::sp(0.5)),
+            Alignment::Start,
             || {
                 for (index, found) in self.entries().into_iter().enumerate() {
                     folder_row(&found.name, index == self.selected, index);
@@ -435,25 +455,33 @@ impl FolderPicker {
     /// Emits the bar under the folders: the key that closes the picker, and the buttons that close it and that take the folder.
     #[track_caller]
     fn footer(&self) {
-        kit::row(
-            Modifier::new()
-                .fill_max_width()
-                .height(theme::sp(14))
-                .ruled(theme::Side::Top)
-                .padding_xy(theme::sp(4), 0.0),
-            2,
+        rustle::column_arranged(
+            Modifier::new().fill_max_width().height(theme::sp(14)),
+            Arrangement::Start,
+            Alignment::Start,
             || {
-                popover::key_hint("Esc", "Close");
-                spacer();
-                Button::new("Cancel", Target::Dialog(DialogEvent::PickerClose))
-                    .variant(Variant::Ghost)
-                    .build();
-                Button::new(
-                    self.confirm_label(),
-                    Target::Dialog(DialogEvent::PickerConfirm),
-                )
-                .disabled(self.directory.is_none())
-                .build();
+                rustle::horizontal_divider(Modifier::new(), 1.0, theme::color(Role::Border));
+                rustle::row_arranged(
+                    Modifier::new()
+                        .fill_max_width()
+                        .weight(1.0)
+                        .padding_xy(theme::sp(4), 0.0),
+                    Arrangement::SpacedBy(theme::sp(2)),
+                    Alignment::Center,
+                    || {
+                        popover::key_hint("Esc", "Close");
+                        spacer();
+                        Button::new("Cancel", Target::Dialog(DialogEvent::PickerClose))
+                            .variant(Variant::Ghost)
+                            .build();
+                        Button::new(
+                            self.confirm_label(),
+                            Target::Dialog(DialogEvent::PickerConfirm),
+                        )
+                        .disabled(self.directory.is_none())
+                        .build();
+                    },
+                );
             },
         );
     }
@@ -471,18 +499,22 @@ fn step(glyph: Icon, event: DialogEvent, disabled: bool, tip: &str) {
 /// Emits the column of places that are one press away.
 #[track_caller]
 fn places() {
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_height()
             .width(PLACES_WIDTH)
-            .ruled(theme::Side::Right)
+            .border_right_hairline(theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 1.0, 0.0)
             .padding(theme::sp(2)),
-        0.5,
+        Arrangement::SpacedBy(theme::sp(0.5)),
+        Alignment::Start,
         || {
             let banded = Modifier::new()
                 .height(theme::sp(8))
                 .padding_xy(theme::sp(2), 0.0);
-            kit::row(banded, 0, || line("Places", 12, 1.4, Role::Subtle));
+            rustle::row_arranged(banded, Arrangement::Start, Alignment::Center, || {
+                line("Places", 12, 1.4, Role::Subtle)
+            });
             for (index, (name, _, glyph)) in PLACES.iter().enumerate() {
                 Tile::new(Target::Dialog(DialogEvent::PickerPlace(index)))
                     .height(8.0)
@@ -491,7 +523,12 @@ fn places() {
                     .inner(Modifier::new().padding_xy(theme::sp(2), 0.0))
                     .build_with(|| {
                         icon(glyph.clone(), 4.0, Role::Muted);
-                        kit::text(Modifier::new(), *name, kit::line(13, Role::Text));
+                        rustle::basic_text(
+                            Modifier::new(),
+                            *name,
+                            theme::line(13, Role::Text),
+                            TextOverflow::Ellipsis,
+                        );
                     });
             }
         },
@@ -508,7 +545,12 @@ fn folder_row(name: &str, selected: bool, index: usize) {
         .inner(Modifier::new().padding_xy(theme::sp(2.5), 0.0))
         .build_with(|| {
             icon(phosphor::FOLDER, 4.0, Role::Accent);
-            kit::text(Modifier::new().weight(1.0), name, kit::line(13, Role::Text));
+            rustle::basic_text(
+                Modifier::new().weight(1.0),
+                name,
+                theme::line(13, Role::Text),
+                TextOverflow::Ellipsis,
+            );
         });
 }
 

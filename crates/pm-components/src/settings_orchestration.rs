@@ -1,8 +1,9 @@
 //! The orchestration page of the settings window: the switch that starts new conversations in orchestrator mode, and the work categories the agent then hands work to, each a row like a slot of the models page with its model, effort, backups, description and prompt addition.
 
 use crate::areas::SettingsEvent;
-use crate::kit;
 use crate::target::Target;
+use crate::theme;
+use rustle::{Alignment, Arrangement, Modifier};
 
 use crate::settings::Section;
 use crate::settings_servers::{boxed, heading_only, note, paragraph};
@@ -94,10 +95,16 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     crate::settings_pages::page_rows(state, Section::Orchestration, room);
     provider_choice(state);
     error_note(state, room);
-    kit::flow(true, || {
-        heading_only("Categories", rows.len());
-        scope_choice(state);
-    });
+    rustle::flow_row_with(
+        Modifier::new().fill_max_width(),
+        rustle::FlowOptions::new(theme::sp(2), theme::sp(2))
+            .item_alignment(Alignment::Center)
+            .arrangement(Arrangement::SpaceBetween),
+        || {
+            heading_only("Categories", rows.len());
+            scope_choice(state);
+        },
+    );
     paragraph(CATEGORIES_NOTE, room);
     if !rows.is_empty() {
         boxed(|| {

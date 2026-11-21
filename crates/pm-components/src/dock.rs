@@ -5,7 +5,7 @@ use crate::target::Target;
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 
-use pm_field::Reach;
+use pm_buffer::Reach;
 use pm_terminal::{Emulator, Link};
 
 use crate::sample::Session;

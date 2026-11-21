@@ -1,10 +1,11 @@
 //! The usage page of the settings window: what the sessions of every connected server used over the last days, as headline totals, a bar for each day stacked by model, a row for each model and the sessions that used most.
 
-use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
+use crate::theme::Frame;
 use pm_protocol::{UsageDay, UsageModel, UsageReport, UsageSession, UsageTotals};
 use rustle::Modifier;
+use rustle::TextOverflow;
 use rustle::{
     Alignment, Arrangement, Color, ColorSpaces, FlowOptions, column_arranged, flow_row_with,
     row_arranged,
@@ -335,21 +336,23 @@ fn series_tone(place: usize) -> Color {
 /// Emits one headline figure, `width` logical pixels across: what it is, how much, and a quiet line saying more.
 #[track_caller]
 fn headline(title: &str, value: String, more: String, width: f32) {
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .width(width)
             .panel(Radius::Lg)
             .padding(theme::sp(3)),
-        0.5,
+        Arrangement::SpacedBy(theme::sp(0.5)),
+        Alignment::Start,
         || {
             line(title, 12, 1.4, Role::Muted);
-            kit::text(
+            rustle::basic_text(
                 Modifier::new(),
                 value,
                 theme::text_style(18, 1.3)
                     .font_weight(rustle::FontWeight::MEDIUM)
                     .color(theme::color(Role::Text))
                     .max_lines(1),
+                TextOverflow::Ellipsis,
             );
             line(more, 12, 1.4, Role::Muted);
         },
@@ -377,22 +380,26 @@ fn headlines(report: &UsageReport, room: f32) {
         1 => "in 1 session".to_owned(),
         count => format!("in {count} sessions"),
     };
-    kit::flow(false, || {
-        headline("Spend", spend.0, spend.1, width);
-        headline(
-            "Tokens",
-            tokens(total.tokens()),
-            format!("{} in · {} out", tokens(sent), tokens(total.output)),
-            width,
-        );
-        headline("Requests", total.requests.to_string(), sessions, width);
-        headline(
-            "Cache read",
-            cache_share(total).map_or_else(|| "—".to_owned(), |share| format!("{share}%")),
-            format!("{} of input", tokens(total.cache_read)),
-            width,
-        );
-    });
+    rustle::flow_row_with(
+        Modifier::new(),
+        rustle::FlowOptions::new(theme::sp(2), theme::sp(2)).item_alignment(Alignment::Center),
+        || {
+            headline("Spend", spend.0, spend.1, width);
+            headline(
+                "Tokens",
+                tokens(total.tokens()),
+                format!("{} in · {} out", tokens(sent), tokens(total.output)),
+                width,
+            );
+            headline("Requests", total.requests.to_string(), sessions, width);
+            headline(
+                "Cache read",
+                cache_share(total).map_or_else(|| "—".to_owned(), |share| format!("{share}%")),
+                format!("{} of input", tokens(total.cache_read)),
+                width,
+            );
+        },
+    );
 }
 
 /// Emits the bar of `day`, `width` logical pixels across: a part for each of `series` and one for the rest, the first at the bottom, as tall as their share of `most`; resting on it says the day and what it came to.
@@ -428,15 +435,20 @@ fn day_bar(day: &UsageDay, series: &[String], measure: Measure, most: u64, width
 /// Emits one entry of the chart's legend: a swatch of `tone` and the name it stands for.
 #[track_caller]
 fn legend_entry(name: &str, tone: Color) {
-    kit::row(Modifier::new(), 1.5, || {
-        rustle::spacer(
-            Modifier::new()
-                .width(8.0)
-                .height(8.0)
-                .background_rounded(theme::color(tone), Radius::Sm.px()),
-        );
-        line(name, 12, 1.4, Role::Muted);
-    });
+    rustle::row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(1.5)),
+        Alignment::Center,
+        || {
+            rustle::spacer(
+                Modifier::new()
+                    .width(8.0)
+                    .height(8.0)
+                    .background_rounded(theme::color(tone), Radius::Sm.px()),
+            );
+            line(name, 12, 1.4, Role::Muted);
+        },
+    );
 }
 
 /// Emits the chart of `report` in `room` logical pixels: what it measures and the most a day came to, a bar for each day stacked by model, the first and last day under them, and which colour is which model.
@@ -458,51 +470,63 @@ fn chart(report: &UsageReport, room: f32) {
     let others = report.models.len() > series.len();
     let ends =
         |day: Option<&UsageDay>| note(&day.map(|day| day_label(&day.day)).unwrap_or_default());
-    kit::column(Modifier::new().width(room), 2, || {
-        kit::row(Modifier::new().fill_max_width(), 3, || {
-            kit::text(
-                Modifier::new().weight(1.0),
-                title,
-                kit::strong(15, Role::Text),
+    rustle::column_arranged(
+        Modifier::new().width(room),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
+        || {
+            rustle::row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(theme::sp(3)),
+                Alignment::Center,
+                || {
+                    rustle::basic_text(
+                        Modifier::new().weight(1.0),
+                        title,
+                        theme::strong(15, Role::Text),
+                        TextOverflow::Ellipsis,
+                    );
+                    note(&format!("most {}", figure(most, measure)));
+                },
             );
-            note(&format!("most {}", figure(most, measure)));
-        });
-        row_arranged(
-            Modifier::new()
-                .width(room)
-                .height(CHART_HEIGHT + 1.0)
-                .ruled(theme::Side::Bottom)
-                .padding_each(0.0, 0.0, 0.0, 1.0),
-            Arrangement::SpaceBetween,
-            Alignment::End,
-            || {
-                for day in &report.days {
-                    day_bar(day, &series, measure, most, width);
-                }
-            },
-        );
-        row_arranged(
-            Modifier::new().fill_max_width(),
-            Arrangement::SpaceBetween,
-            Alignment::Center,
-            || {
-                ends(report.days.first());
-                ends(report.days.last());
-            },
-        );
-        flow_row_with(
-            Modifier::new(),
-            FlowOptions::new(theme::sp(3), theme::sp(3)).item_alignment(Alignment::Center),
-            || {
-                for (place, name) in series.iter().enumerate() {
-                    legend_entry(name, series_tone(place));
-                }
-                if others {
-                    legend_entry(OTHER, series_tone(MOST_SERIES));
-                }
-            },
-        );
-    });
+            row_arranged(
+                Modifier::new()
+                    .width(room)
+                    .height(CHART_HEIGHT + 1.0)
+                    .border_bottom(1.0, theme::color(Role::Border))
+                    .padding_each(0.0, 0.0, 0.0, 1.0)
+                    .padding_each(0.0, 0.0, 0.0, 1.0),
+                Arrangement::SpaceBetween,
+                Alignment::End,
+                || {
+                    for day in &report.days {
+                        day_bar(day, &series, measure, most, width);
+                    }
+                },
+            );
+            row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpaceBetween,
+                Alignment::Center,
+                || {
+                    ends(report.days.first());
+                    ends(report.days.last());
+                },
+            );
+            flow_row_with(
+                Modifier::new(),
+                FlowOptions::new(theme::sp(3), theme::sp(3)).item_alignment(Alignment::Center),
+                || {
+                    for (place, name) in series.iter().enumerate() {
+                        legend_entry(name, series_tone(place));
+                    }
+                    if others {
+                        legend_entry(OTHER, series_tone(MOST_SERIES));
+                    }
+                },
+            );
+        },
+    );
 }
 
 /// Emits a row of a boxed list holding what `content` emits, with room around it and a hairline under it unless it is the `last`.
@@ -511,9 +535,16 @@ fn padded(last: bool, content: impl FnOnce()) {
     let own = if last {
         Modifier::new()
     } else {
-        Modifier::new().ruled(theme::Side::Bottom)
+        Modifier::new()
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
     };
-    kit::row_top(own.padding(theme::sp(3)), 0, content);
+    rustle::row_arranged(
+        own.padding(theme::sp(3)),
+        Arrangement::Start,
+        Alignment::Start,
+        content,
+    );
 }
 
 /// How wide a row inside a boxed list is when the page is `room` logical pixels across.
@@ -615,12 +646,18 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     };
     page();
     paragraph(SUMMARY, room);
-    kit::flow(true, || {
-        choices(&RANGE_NAMES, picked, |option| USAGE_RANGES.id(option));
-        if let Some(said) = &status {
-            note(said);
-        }
-    });
+    rustle::flow_row_with(
+        Modifier::new().fill_max_width(),
+        rustle::FlowOptions::new(theme::sp(2), theme::sp(2))
+            .item_alignment(Alignment::Center)
+            .arrangement(Arrangement::SpaceBetween),
+        || {
+            choices(&RANGE_NAMES, picked, |option| USAGE_RANGES.id(option));
+            if let Some(said) = &status {
+                note(said);
+            }
+        },
+    );
     for (host, reason) in &usage.errors {
         let host = host.as_deref().unwrap_or("This machine");
         wrapped_note(&format!("{host}: {reason}"), room);

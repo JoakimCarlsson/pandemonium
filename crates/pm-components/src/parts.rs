@@ -1,9 +1,10 @@
-//! Small pieces the screens share: a line of text, a glyph, a check box.
+//! Small pieces the screens share: a line of text, a glyph, a check box, the
+//! note a list shows when it has nothing to show and the bar that tops a panel.
 
-use crate::kit;
 use crate::theme;
 use rustle::Color;
 use rustle::Modifier;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
 /// How wide, as a share of its height, a character of body text is taken to be.
 const CHARACTER_WIDTH: f32 = 0.53;
@@ -12,12 +13,13 @@ const CHARACTER_WIDTH: f32 = 0.53;
 /// in `tone`, ended with an ellipsis when the box it sits in is too narrow for it.
 #[track_caller]
 pub fn line(content: impl Into<String>, pixels: u32, ratio: f32, tone: impl Into<Color>) {
-    kit::text(
+    rustle::basic_text(
         Modifier::new(),
         content,
         theme::text_style(pixels, ratio)
             .color(theme::color(tone))
             .max_lines(1),
+        TextOverflow::Ellipsis,
     );
 }
 
@@ -25,13 +27,14 @@ pub fn line(content: impl Into<String>, pixels: u32, ratio: f32, tone: impl Into
 /// height of `ratio` times that: the title of a page or a dialog.
 #[track_caller]
 pub fn title(content: impl Into<String>, pixels: u32, ratio: f32) {
-    kit::text(
+    rustle::basic_text(
         Modifier::new(),
         content,
         theme::text_style(pixels, ratio)
             .font_weight(rustle::FontWeight::MEDIUM)
             .color(theme::color(theme::Role::Text))
             .max_lines(1),
+        TextOverflow::Ellipsis,
     );
 }
 
@@ -41,10 +44,11 @@ pub use crate::icons::icon as glyph;
 /// Emits a box that takes the room left in its row and cuts a line of `content` short at its edge.
 #[track_caller]
 pub fn clipped(content: impl Into<String>, pixels: u32, tone: impl Into<Color>) {
-    kit::text(
+    rustle::basic_text(
         Modifier::new().weight(1.0),
         content,
-        kit::line(pixels, tone),
+        theme::line(pixels, tone),
+        TextOverflow::Ellipsis,
     );
 }
 
@@ -62,19 +66,25 @@ pub fn paragraph(content: &str, pixels: u32, ratio: f32, tone: impl Into<Color>,
     let kind = theme::text_style(pixels, ratio);
     let tone = tone.into();
     let lines = rustle::wrap_at_spaces(content, &kind, width.max(32.0));
-    kit::column(Modifier::new(), 0, || {
-        for part in lines {
-            if part.end == part.start {
-                rustle::spacer(Modifier::new().height(theme::sp(3)));
-            } else {
-                kit::text(
-                    Modifier::new(),
-                    &content[part.start..part.end],
-                    kind.color(theme::color(tone)),
-                );
+    rustle::column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for part in lines {
+                if part.end == part.start {
+                    rustle::spacer(Modifier::new().height(theme::sp(3)));
+                } else {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        &content[part.start..part.end],
+                        kind.color(theme::color(tone)),
+                        TextOverflow::Ellipsis,
+                    );
+                }
             }
-        }
-    });
+        },
+    );
 }
 
 /// The lines `content` breaks into when each may hold as many characters of
@@ -93,4 +103,53 @@ pub fn wrap(content: &str, pixels: u32, width: f32) -> Vec<String> {
         }
     }
     lines
+}
+
+/// Emits one line of `words` `pixels` tall in `tone`, inset `x` theme steps
+/// at either end and `y` above and below: what a list, menu or view says
+/// when it has nothing to show, or is still busy.
+#[track_caller]
+pub fn note(
+    x: impl Into<f64>,
+    y: impl Into<f64>,
+    words: impl Into<String>,
+    pixels: u32,
+    tone: impl Into<Color>,
+) {
+    rustle::column_arranged(
+        Modifier::new().padding_xy(theme::sp(x), theme::sp(y)),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            rustle::basic_text(
+                Modifier::new(),
+                words,
+                theme::line(pixels, tone),
+                TextOverflow::Ellipsis,
+            )
+        },
+    );
+}
+
+/// Emits a bar across its parent `height` theme steps tall, ruled along its
+/// bottom and inset `inset` theme steps at either end, holding `content` in a
+/// row `gap` theme steps apart: the header that tops panels, lists and steps.
+#[track_caller]
+pub fn bar(
+    height: impl Into<f64>,
+    inset: impl Into<f64>,
+    gap: impl Into<f64>,
+    content: impl FnOnce(),
+) {
+    rustle::row_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .height(theme::sp(height))
+            .border_bottom(1.0, theme::color(theme::Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(inset), 0.0),
+        Arrangement::SpacedBy(theme::sp(gap)),
+        Alignment::Center,
+        content,
+    );
 }

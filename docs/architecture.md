@@ -40,11 +40,14 @@ One crate per layer, each depending only on the layers below it.
   roles Compose has a slot for, the type scale and the corners, rustle's
   `LOCAL_SCROLLBAR_STYLE` the scrollbar look, and one composition local the
   tokens rustle has no slot for (every role, syntax colours, font stacks).
-  `pm-components/src/kit.rs` is the app's small design system on top of it:
-  themed rows and columns with gaps in theme steps, single lines of text in
-  the type sizes and roles views use, the border-role dividing rule, and the
-  `Frame` modifiers for ruled, outlined and panelled boxes, each a thin
-  wrapper over the rustle composable or modifier it names.
+  Views call rustle's rows, columns and text composables directly with theme
+  values. The theme's own modules hold the rest of the design system:
+  `theme/typography.rs` the text styles of interface text and code, and
+  `theme/decoration.rs` the shadows and the `Frame` modifiers for outlined and
+  panelled boxes. The button is `button.rs`; `parts.rs` holds the small pieces
+  screens share (a line of text, a glyph, a check box, an empty list's note,
+  a panel's top bar), `icons.rs` the icons and `events.rs` the event lambdas
+  controls hand the app.
   Text is set in rustle `TextStyle`s (`theme::text_style`, `code_style`)
   with rustle's text composables; the conversation is selectable through
   rustle's `selection_container`, and the file tree, diff, conversation and
@@ -53,7 +56,7 @@ One crate per layer, each depending only on the layers below it.
   looks are rustle indications: the theme's `InteractionTones`, `FocusRing`
   and `FocusOutline` are `IndicationNodeFactory`s drawn from a remembered
   `MutableInteractionSource` that `theme::Indicated::indicated` feeds with
-  hovers, primary presses and focus (rustle's or the app's own); shadows are
+  hovers, primary presses and rustle's focus; shadows are
   rustle `Shadow` layers cast with `drop_shadow_with` (`theme::box_shadow`,
   `ShadowLayers`); spinners turn on an angle of rustle's
   `remember_infinite_transition`; buttons, cards, badges and surfaces are
@@ -132,15 +135,17 @@ One crate per layer, each depending only on the layers below it.
   over a floating frame's edges resize it (`resize_edges`). Every control carries
   the rustle `test_tag` of its `Target` (`Target::tag`), by which headless tests and
   snapshots find it (`pm-components/src/tagged.rs`). Keyboard focus is
-  rustle's: every control is a focus target Tab walks in paint order, and the
-  binary keeps the `Target` of the control holding it as the domain key its
-  logic asks about (`pm-components/src/focus.rs`): a control asks for rustle
-  focus while the app keeps focus on it and tells the app when rustle moved
-  focus (`on_focus_changed`). The file tree keeps its focused row composed and
+  rustle's alone: every control is a focus target Tab walks in paint order,
+  holding the rustle `Focus` of its `Target` from a registry the binary owns
+  and provides to every window (`focus::FocusRequesters`, as a Compose screen
+  holds its `FocusRequester`s, in `pm-components/src/focus.rs`). The binary
+  asks which control holds focus by reading those focuses, asks for focus with
+  `request_focus` and lets it go with `free_focus`; views draw focus from the
+  same state. The file tree keeps its focused row composed and
   scrolls the next row in when Tab leaves the rows drawn. Each window's root
   hands every key to the app first (`on_preview_key_event`), which matches on
   rustle's `KeyEvent`s and turns them into the values of the crates below
-  (`pm-field` edits, vim keystrokes, keymap chords) in `keys.rs`. The screen is hoisted in one
+  (`pm-editor` edits, vim keystrokes, keymap chords) in `keys.rs`. The screen is hoisted in one
   rustle state (`mutable_state`) that every window reads; pictures are
   rustle's `ImageData`.
   Text inputs (search boxes, filters, the prompt, settings boxes, the commit
@@ -151,16 +156,16 @@ One crate per layer, each depending only on the layers below it.
   placeholder, line limits, a hoisted scroll state). Rustle edits them, keeps
   their undo history, composes input-method text in them and keeps their caret
   in view; the model catches up with what was typed after each event
-  (`field_typed`). A field's rustle `Focus` follows the binary's focus
-  (`focus::follow_focus`), and the window root's key handler sees its keys
-  first, so the app's shortcuts, Enter and the clipboard keep working in it. `pm-field`'s `Field` stays the editing model of the code
+  (`field_typed`). A field holds its control's rustle `Focus` from the
+  registry (`focus::focus_of`), and the window root's key handler sees its keys
+  first, so the app's shortcuts, Enter and the clipboard keep working in it. `pm-editor`'s `Field` is the editing model of the code
   editor only (several carets, column selection, the editor's undo grouping,
   vim's programmatic edits): it is drawn line by line with rustle's
   `marked_text`, each line telling the state's `TextLines` its shaped layout
   and place (`on_text_layout`, `on_placed`), from which the binary finds the
   byte under the pointer, moves by visual line and places the input method's
-  candidates. The code editor, the shell and the browser page hold rustle
-  focus while the binary's focus is on them (`focus::keyboard_focus`), so the
+  candidates. The code editor, the shell and the browser page are focusables
+  holding their control's rustle focus (`focus::keyboard_focus`), so the
   window keeps its input method on; the shell's cursor cell reports where
   candidates go with `ime_caret`.
 - **Components:** `pm-components`: reusable controls (`Button`, `Chip`,
@@ -189,13 +194,16 @@ One crate per layer, each depending only on the layers below it.
 - **Markdown:** `pm-markdown`: markdown parsed into blocks of styled spans;
   `pm-components` lays them out as `Markdown`.
 - **Code:** `pm-buffer` (a text with its lines indexed, places as language
-  servers and syntax trees count them, and the change an edit made),
+  servers and syntax trees count them, the change an edit made, the word
+  around a place and how much a press of one, two or three clicks takes hold
+  of, which the code editor, the terminal and selections share),
   `pm-treesitter` (grammars compiled to WebAssembly and loaded at run time;
   highlighting with injections, indentation, bracket pairs and the outline from
   each language's queries; parsed in the window) and `pm-lsp` (the language
   index, installing languages and their servers, and the hub that runs language
   servers for the files clients have open; the server uses it), and `pm-editor`
-  (an open file being edited: its syntax tree and language server version kept
+  (an open file being edited: its text with several carets, selections and
+  undo history as a `Field` changed by `Edit`s, its syntax tree and language server version kept
   in step, completions, indentation as the language says, pairs, whole-line
   edits, several carets, find and replace, folding, how its lines differ from
   the last commit, formatting edits and modal editing; every rule returns the edits it calls for and
@@ -265,11 +273,17 @@ main window closes.
 
 What the app does with the windows goes through rustle's API:
 
-- **Pointer.** Each window's root carries `Modifier::on_pointer_event`
-  listeners for every button, the wheel, moves and the pointer leaving, consumed
-  or not. In the initial pass the app notes what the keyboard holds; in the
-  final pass, which comes after the controls' own gestures, it carries out its
-  part of the event with what the controls claimed (`app/controller.rs`).
+- **Pointer.** Each control handles its own gestures with rustle modifiers in
+  the view that draws it (`pm-components`, `pm-pages`) and tells the app what
+  happened through a typed operation (`pm_components::pointing`): a control's
+  press, click and secondary press with where they were and how many presses in
+  a row rustle counted; the byte of code text or the cell of the shell under the
+  pointer as it presses, drags, rests and turns the wheel; what a web page's
+  window hands on to the page; the place a carried control or files are over.
+  The bottom layer of each window's root takes only the presses nothing above
+  took and the mouse's back and forward buttons. The first operation of an
+  event notes what the keyboard holds and wakes the loop, so `App::on_wake`
+  catches up with the event (`app/controller.rs`).
 - **Keys and input methods.** The root's preview key handler hands every key to
   the app first. The code editor, the shell and a web page take text through a
   `PlatformTextInputSession` started by `pm_components::focus::keyboard_focus`:
@@ -284,8 +298,8 @@ What the app does with the windows goes through rustle's API:
 - **Waking.** The app's work and the servers' connections wake the loop with
   `rustle::external_waker`, and `rustle::set_external_handler` runs
   `App::on_wake`, which only drains what woke it: the work's results and the
-  outbox, an event the interface finished handling, and a frame drawn, which
-  `rustle::set_frame_observer` reports.
+  outbox, an event the interface finished handling, what rustle scrolled by
+  itself, and a frame drawn, which `rustle::set_frame_observer` reports.
 - **Idle work.** Everything else is an effect of the main window's root
   (`idle_effects` in `app/host.rs`), each keyed on the state it follows: what
   follows a change of the screen (settings written, the outbox delivered, the

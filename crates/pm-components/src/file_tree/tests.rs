@@ -3,13 +3,11 @@
 
 use crate::areas::TreeEvent;
 use crate::target::Target;
-use std::cell::Cell;
-use std::rc::Rc;
 
 use rustle::{Embedded, Key, KeyEvent, Modifiers};
 
 use super::*;
-use crate::focus::FocusKeys;
+use crate::focus::FocusRequesters;
 use crate::tagged::{Tagged, interface, tagged_in};
 use crate::theme::set_scales;
 
@@ -201,25 +199,13 @@ fn tab_walks_every_row_scrolling_hidden_ones_in() {
     let rows: Vec<Target> = (0..60)
         .map(|index| Target::Tree(TreeEvent::TreeFile(index)))
         .collect();
-    let held: Rc<Cell<Option<Target>>> = Rc::new(Cell::new(rows.first().copied()));
-    let (shown, keeps, asks) = (Rc::clone(&held), Rc::clone(&held), Rc::clone(&held));
+    let requesters = FocusRequesters::new();
+    requesters.request_focus(rows[0]);
+    let provided = requesters.clone();
     let tree = state.clone();
     let mut ui = Embedded::without_renderer(
         move || {
-            let keeps = Rc::clone(&keeps);
-            let asks = Rc::clone(&asks);
-            let keys = FocusKeys {
-                held: shown.get(),
-                on_moved: Rc::new(move |id, focused| {
-                    if focused {
-                        keeps.set(Some(id));
-                    } else if keeps.get() == Some(id) {
-                        keeps.set(None);
-                    }
-                }),
-                request: Rc::new(move |id| asks.set(Some(id))),
-            };
-            crate::focus::provide(keys, || {
+            crate::focus::provide(provided.clone(), || {
                 rustle::column_with(Modifier::new().fill_max_size(), || list(&tree))
             });
         },
@@ -227,11 +213,11 @@ fn tab_walks_every_row_scrolling_hidden_ones_in() {
     );
     ui.resize((380, 240), 1.0);
     settle(&mut ui);
-    let mut walked = vec![held.get().expect("the first row holds focus")];
+    let mut walked = vec![requesters.focused().expect("the first row holds focus")];
     for _ in 1..rows.len() {
         ui.key_event(KeyEvent::press(Key::Tab, Modifiers::NONE));
         settle(&mut ui);
-        walked.push(held.get().expect("a row holds focus"));
+        walked.push(requesters.focused().expect("a row holds focus"));
     }
     assert_eq!(walked, rows);
     assert!(
@@ -241,15 +227,15 @@ fn tab_walks_every_row_scrolling_hidden_ones_in() {
     state.files_list.scroll_to_item_offset(0, 0.0);
     settle(&mut ui);
     assert_eq!(
-        held.get(),
+        requesters.focused(),
         rows.last().copied(),
         "the focused row stays composed"
     );
-    let mut back = vec![held.get().expect("the last row holds focus")];
+    let mut back = vec![requesters.focused().expect("the last row holds focus")];
     for _ in 1..rows.len() {
         ui.key_event(KeyEvent::press(Key::Tab, Modifiers::SHIFT));
         settle(&mut ui);
-        back.push(held.get().expect("a row holds focus"));
+        back.push(requesters.focused().expect("a row holds focus"));
     }
     back.reverse();
     assert_eq!(back, rows);

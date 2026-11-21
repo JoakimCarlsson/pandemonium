@@ -1,11 +1,12 @@
 //! The tab chip: one tab of a strip inside a pane, with its glyph, its words, marks for what it is and a button that closes it.
 
-use crate::kit;
+use crate::events;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
 use crate::theme::{Radius, Role};
 use rustle::Modifier;
+use rustle::{Alignment, Arrangement};
 use rustle::{Icon, phosphor};
 
 use crate::Button;
@@ -99,11 +100,11 @@ impl TabChip {
         } else {
             Role::Muted
         };
-        let looks = kit::selectable(self.selected).radius(Radius::Md);
-        let own = kit::pressed(
+        let looks = theme::selectable(self.selected).radius(Radius::Md);
+        let own = events::pressed(
             Modifier::new().width(self.width).height(28.0).indicated(
                 looks,
-                theme::Focused::Held(crate::focus::is_held(self.select)),
+                theme::Focused::Control(crate::focus::is_focused(self.select)),
             ),
             self.select,
         )
@@ -112,17 +113,22 @@ impl TabChip {
             (self.variant, self.icon, self.label, self.locked, self.close);
         let hint = self.hint;
         let row = move || {
-            kit::row(own, 1, move || {
-                match variant {
-                    TabVariant::Agent => glyph(phosphor::SPARKLE, 3.5, Role::Accent),
-                    TabVariant::Page => glyph(icon, 3.5, tone),
-                }
-                clipped(label, 12, tone);
-                if locked {
-                    glyph(phosphor::LOCK_SIMPLE, 3.0, Role::Warning);
-                }
-                Button::icon(phosphor::X, close).size(Size::Xs).build();
-            });
+            rustle::row_arranged(
+                own,
+                Arrangement::SpacedBy(theme::sp(1)),
+                Alignment::Center,
+                move || {
+                    match variant {
+                        TabVariant::Agent => glyph(phosphor::SPARKLE, 3.5, Role::Accent),
+                        TabVariant::Page => glyph(icon, 3.5, tone),
+                    }
+                    clipped(label, 12, tone);
+                    if locked {
+                        glyph(phosphor::LOCK_SIMPLE, 3.0, Role::Warning);
+                    }
+                    Button::icon(phosphor::X, close).size(Size::Xs).build();
+                },
+            );
         };
         match hint {
             Some(hint) => crate::tooltip::with_tooltip(hint, row),

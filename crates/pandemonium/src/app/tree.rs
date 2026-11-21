@@ -7,27 +7,12 @@ use super::App;
 use crate::keys::{self, Clip};
 
 impl App {
-    /// The row of the project's files at `at`, or their root when it is the space under them.
-    fn tree_row_at(&self, at: (f32, f32)) -> Option<TreeTarget> {
-        let shown = self.model.read(|screen| screen.places().shown());
-        shown
-            .into_iter()
-            .filter(|(_, rect)| {
-                let rect = self.framed(*rect);
-                at.0 >= rect.origin.x
-                    && at.1 >= rect.origin.y
-                    && at.0 < rect.origin.x + rect.size.width
-                    && at.1 < rect.origin.y + rect.size.height
-            })
-            .find_map(|(id, _)| self.model.read(|screen| screen.tree_row_of(id)))
-    }
-
-    /// Follows the pointer to `at` while a row of the project's files is carried: the folder under the pointer is where the row would land.
-    pub(super) fn drag_tree(&mut self, at: (f32, f32)) {
+    /// Follows the pointer to `at` while a row of the project's files is carried, over the
+    /// row `over` when it is over one: the folder there is where the row would land.
+    pub(super) fn drag_tree(&mut self, at: (f32, f32), over: Option<TreeTarget>) {
         let Some(from) = self.tree_press.clone() else {
             return;
         };
-        let over = self.tree_row_at(at);
         self.model.update(|state| {
             *state = std::mem::take(state).in_workspace(|state| state.tree_dragged(from, over, at))
         });
@@ -106,9 +91,9 @@ impl App {
         self.deliver();
     }
 
-    /// Shows where files held over the window at `at` would land in the project's files; they are held nowhere when they left the window.
-    pub(super) fn files_hovered(&mut self, at: Option<(f32, f32)>) {
-        let over = at.and_then(|at| self.tree_row_at(at));
+    /// Shows where files held over the window at `at`, over the row `over` of the project's files when they are over one, would land; they are held nowhere when they left the window.
+    pub(super) fn files_hovered(&mut self, at: Option<(f32, f32)>, over: Option<TreeTarget>) {
+        let over = over.filter(|_| at.is_some());
         self.model.update(|state| {
             let taken = std::mem::take(state);
             *state = match at {
@@ -118,9 +103,9 @@ impl App {
         });
     }
 
-    /// Takes in the files of this machine at `paths` let go over the window at `at`: over the project's files they are brought into the folder there, and anywhere else they are attached to the prompt.
-    pub(super) fn files_dropped(&mut self, paths: Vec<String>, at: Option<(f32, f32)>) {
-        match at.and_then(|at| self.tree_row_at(at)) {
+    /// Takes in the files of this machine at `paths` let go over the window, over the row `over` of the project's files when they were let go on one: there they are brought into the folder of the row, and anywhere else they are attached to the prompt.
+    pub(super) fn files_dropped(&mut self, paths: Vec<String>, over: Option<TreeTarget>) {
+        match over {
             Some(over) => self.files_dropped_on(paths, Some(over)),
             None => {
                 self.model.update(|state| {

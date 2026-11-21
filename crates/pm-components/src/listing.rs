@@ -4,7 +4,7 @@ use crate::areas::SidebarEvent;
 
 use crate::events::Event;
 use pm_editor::Action;
-use pm_field::Edit;
+use pm_editor::Edit;
 use pm_protocol::{CodeAction, ExtensionCommand, Location, Seek, Task};
 use rustle::TextFieldState;
 

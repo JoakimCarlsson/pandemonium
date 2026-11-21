@@ -187,3 +187,38 @@ fn alt_shift_drag_selects_columns() {
 fn double_tap_timeout() -> std::time::Duration {
     std::time::Duration::from_millis(rustle::ViewConfiguration::default().double_tap_timeout_millis)
 }
+
+/// Holding Control over a word of the file shown underlines it, as what a press takes to
+/// its definition, with the pointing hand over the code, and letting go of Control takes
+/// the underline away.
+#[test]
+fn control_reaches_a_word_of_the_code() {
+    let mut rig = Rig::shot(Shot::Code);
+    let text = rig
+        .read(|screen| {
+            screen
+                .field(Target::Editor(EditorEvent::EditorField))
+                .map(|field| field.text().to_owned())
+        })
+        .expect("a file is shown");
+    let word = text.find("HashMap").expect("the word is in the file") + 2;
+    let reached = |rig: &Rig| {
+        rig.state(|state| {
+            state
+                .shown_document()
+                .and_then(|document| document.reach.clone())
+        })
+    };
+    rig.move_to(code_point(&rig, word));
+    assert_eq!(rig.cursor(), rustle::CursorIcon::Text);
+    rig.hold(rustle::Modifiers {
+        ctrl: true,
+        ..rustle::Modifiers::NONE
+    });
+    let underlined = reached(&rig).expect("the word is underlined");
+    assert!(underlined.contains(&word), "{underlined:?}");
+    assert_eq!(rig.cursor(), rustle::CursorIcon::Pointer);
+    rig.hold(rustle::Modifiers::NONE);
+    assert_eq!(reached(&rig), None);
+    assert_eq!(rig.cursor(), rustle::CursorIcon::Text);
+}

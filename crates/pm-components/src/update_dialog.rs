@@ -2,8 +2,8 @@
 
 use crate::Markdown;
 use crate::areas::DialogEvent;
+use crate::button;
 use crate::button::Variant;
-use crate::kit;
 use crate::parts::{line, spacer, title, wrap};
 use crate::state::{Outgoing, WorkspaceState};
 use crate::target::Target;
@@ -11,6 +11,7 @@ use crate::theme;
 use crate::theme::Role;
 use crate::update::{RUNNING, Update};
 use rustle::Modifier;
+use rustle::{Alignment, Arrangement};
 
 /// The space around the page's column, in logical pixels, which the notes' width is taken from.
 const MARGIN: f32 = 48.0;
@@ -159,20 +160,22 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
         UpdateRun::Downloading { .. } | UpdateRun::Installing
     );
     let installing = matches!(state.update_run, UpdateRun::Installing);
-    kit::row_top(
+    rustle::row_arranged(
         Modifier::new()
             .weight(1.0)
             .background(theme::color(Role::Background))
             .padding_xy(theme::sp(6), 0.0),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            kit::column(
+            rustle::column_arranged(
                 Modifier::new()
                     .fill_max_height()
                     .weight(1.0)
                     .fill_max_width()
                     .padding_xy(0.0, theme::sp(8)),
-                3,
+                Arrangement::SpacedBy(theme::sp(3)),
+                Alignment::Start,
                 || {
                     title(name, 22, 1.3);
                     line(format!("This is {RUNNING}{date}."), 13, 1.4, Role::Muted);
@@ -190,29 +193,39 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
                         spacer();
                     }
                     if let Some(said) = said {
-                        kit::column(Modifier::new(), 0, || {
-                            for words in wrap(&said, 13, text_width) {
-                                line(words, 13, 1.5, Role::Muted);
-                            }
-                        });
+                        rustle::column_arranged(
+                            Modifier::new(),
+                            Arrangement::Start,
+                            Alignment::Start,
+                            || {
+                                for words in wrap(&said, 13, text_width) {
+                                    line(words, 13, 1.5, Role::Muted);
+                                }
+                            },
+                        );
                     }
-                    kit::row(Modifier::new().fill_max_width(), 2, || {
-                        let page = Target::Dialog(DialogEvent::UpdatePage);
-                        kit::action("View on GitHub", page, Variant::Ghost);
-                        spacer();
-                        if !installing {
-                            let later = if busy { "Cancel" } else { "Later" };
-                            kit::action(
-                                later,
-                                Target::Dialog(DialogEvent::UpdateLater),
-                                Variant::Ghost,
-                            );
-                        }
-                        if !busy && blocker.is_none() {
-                            let now = Target::Dialog(DialogEvent::UpdateNow);
-                            kit::action("Update and Restart", now, Variant::Default);
-                        }
-                    });
+                    rustle::row_arranged(
+                        Modifier::new().fill_max_width(),
+                        Arrangement::SpacedBy(theme::sp(2)),
+                        Alignment::Center,
+                        || {
+                            let page = Target::Dialog(DialogEvent::UpdatePage);
+                            button::action("View on GitHub", page, Variant::Ghost);
+                            spacer();
+                            if !installing {
+                                let later = if busy { "Cancel" } else { "Later" };
+                                button::action(
+                                    later,
+                                    Target::Dialog(DialogEvent::UpdateLater),
+                                    Variant::Ghost,
+                                );
+                            }
+                            if !busy && blocker.is_none() {
+                                let now = Target::Dialog(DialogEvent::UpdateNow);
+                                button::action("Update and Restart", now, Variant::Default);
+                            }
+                        },
+                    );
                 },
             );
         },

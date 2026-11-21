@@ -1,9 +1,10 @@
 //! A file shown rendered rather than as its source: markdown laid out as a page, and pictures drawn whole.
 
 use crate::areas::EditorEvent;
-use crate::kit::{self, Frame};
+use crate::parts;
 use crate::target::Target;
 use crate::theme;
+use crate::theme::Frame;
 use crate::theme::{Radius, Role};
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, row_arranged};
@@ -92,20 +93,25 @@ pub fn switch(viewer: &Viewer) {
         return;
     }
     let shown = viewer.rendering() == Some(rendering);
-    kit::row(Modifier::new(), 1, || {
-        for (label, event, selected) in [
-            ("Preview", EditorEvent::PreviewShow, shown),
-            ("Source", EditorEvent::SourceShow, !shown),
-        ] {
-            rustle::key(label, || {
-                Button::new(label, Target::Editor(event))
-                    .variant(Variant::Ghost)
-                    .size(Size::Xs)
-                    .selected(selected)
-                    .build();
-            });
-        }
-    });
+    rustle::row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
+        || {
+            for (label, event, selected) in [
+                ("Preview", EditorEvent::PreviewShow, shown),
+                ("Source", EditorEvent::SourceShow, !shown),
+            ] {
+                rustle::key(label, || {
+                    Button::new(label, Target::Editor(event))
+                        .variant(Variant::Ghost)
+                        .size(Size::Xs)
+                        .selected(selected)
+                        .build();
+                });
+            }
+        },
+    );
 }
 
 /// Emits what the strip says about the picture of the file shown: how many pixels it has across and down.
@@ -144,7 +150,7 @@ pub fn rendered(viewer: &Viewer, figures: &Figures, (width, height): (f32, f32))
 /// Emits a line saying `message` where the rendering would be.
 #[track_caller]
 pub(crate) fn note(message: &str) {
-    kit::note(4, 4, message, 13, Role::Subtle);
+    parts::note(4, 4, message, 13, Role::Subtle);
 }
 
 /// Emits the markdown `source` of the file at `path` laid out as a page in the middle of a view `width` logical pixels wide, its links pressable and its diagrams and images drawn as `figures` holds them.
@@ -158,12 +164,17 @@ fn page(path: &str, source: &str, figures: &Figures, width: f32) {
         Arrangement::Center,
         Alignment::Start,
         || {
-            kit::column(Modifier::new().width(column), 0, || {
-                Markdown::new(source, column)
-                    .links(Target::Editor(EditorEvent::PreviewLink(0)))
-                    .figures(figures, Some(path))
-                    .build();
-            });
+            rustle::column_arranged(
+                Modifier::new().width(column),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    Markdown::new(source, column)
+                        .links(Target::Editor(EditorEvent::PreviewLink(0)))
+                        .figures(figures, Some(path))
+                        .build();
+                },
+            );
         },
     );
 }

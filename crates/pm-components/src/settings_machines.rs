@@ -1,12 +1,13 @@
 //! The servers page of the settings window: the server on this machine and the ones on other machines the window knows, each changed or taken out from its row, the form a server is added or changed with, and which one new projects go to.
 
 use crate::areas::SettingsEvent;
-use crate::kit;
+use crate::button;
 use crate::target::Target;
 use crate::theme;
 use pm_config::{KnownServer, Reach};
 use rustle::Modifier;
 use rustle::TextFieldState;
+use rustle::{Alignment, Arrangement};
 
 use crate::theme::Role;
 
@@ -188,10 +189,15 @@ pub(crate) fn labelled(label: &str, field: &TextFieldState, id: Target, placehol
 /// the two as wide as the form.
 #[track_caller]
 pub(crate) fn labelled_box(label: &str, field: impl FnOnce()) {
-    kit::column(Modifier::new().fill_max_width(), 1, || {
-        note(label);
-        field();
-    });
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Start,
+        || {
+            note(label);
+            field();
+        },
+    );
 }
 
 /// Emits the choices `names` of a form, the one at `picked` marked and each answering to what `id_of` names it, under the words `label` that say what is chosen.
@@ -202,10 +208,20 @@ pub(crate) fn labelled_choices(
     picked: usize,
     id_of: impl Fn(usize) -> Option<Target>,
 ) {
-    kit::column(Modifier::new(), 1, || {
-        note(label);
-        kit::row_top(Modifier::new(), 0, || choices(names, picked, id_of));
-    });
+    rustle::column_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Start,
+        || {
+            note(label);
+            rustle::row_arranged(
+                Modifier::new(),
+                Arrangement::Start,
+                Alignment::Start,
+                || choices(names, picked, id_of),
+            );
+        },
+    );
 }
 
 /// Emits a row of a list that can be changed: what `lines` emits, one line under another, then, while `buttons` holds them, the Edit and Remove buttons answering to the names in it, each left out when it has none.
@@ -215,16 +231,26 @@ pub(crate) fn editable_row(
     buttons: Option<(Option<Target>, Option<Target>)>,
 ) {
     flat_row(3, || {
-        kit::column(Modifier::new().weight(1.0), 0.5, lines);
+        rustle::column_arranged(
+            Modifier::new().weight(1.0),
+            Arrangement::SpacedBy(theme::sp(0.5)),
+            Alignment::Start,
+            lines,
+        );
         if let Some((edit, remove)) = buttons {
-            kit::row(Modifier::new(), 1, || {
-                if let Some(edit) = edit {
-                    kit::action("Edit", edit, Variant::Ghost);
-                }
-                if let Some(remove) = remove {
-                    kit::action("Remove", remove, Variant::Ghost);
-                }
-            });
+            rustle::row_arranged(
+                Modifier::new(),
+                Arrangement::SpacedBy(theme::sp(1)),
+                Alignment::Center,
+                || {
+                    if let Some(edit) = edit {
+                        button::action("Edit", edit, Variant::Ghost);
+                    }
+                    if let Some(remove) = remove {
+                        button::action("Remove", remove, Variant::Ghost);
+                    }
+                },
+            );
         }
     });
 }
@@ -242,9 +268,10 @@ fn form_node(form: &MachineForm) {
         ),
         Reach::Tunnel => ("Tunnel hostname", "e.g. build.example.com"),
     };
-    kit::column(
+    rustle::column_arranged(
         Modifier::new().fill_max_width().padding(theme::sp(3)),
-        3,
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Start,
         || {
             labelled(
                 "Name",

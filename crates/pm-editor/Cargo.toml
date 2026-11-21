@@ -6,7 +6,6 @@ license.workspace = true
 
 [dependencies]
 pm-buffer.workspace = true
-pm-field = { version = "0.15.0-rc.4", path = "../pm-field" }
 pm-lsp.workspace = true
 pm-protocol.workspace = true
 pm-treesitter.workspace = true

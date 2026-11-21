@@ -1,14 +1,16 @@
 //! The model servers page of the settings window: the OpenAI-compatible servers declared on the server's machine, each offered as an agent with its models, the form a server is added or changed with, and the models a server is found to offer, picked from to make its list.
 
 use crate::areas::SettingsEvent;
-use crate::kit::{self, Frame};
+use crate::button;
 use crate::target::Target;
 use crate::theme;
+use crate::theme::Frame;
 use crate::theme::sp;
 use pm_harness::{ModelServer, ServerWire};
 use rustle::Modifier;
 use rustle::TextFieldState;
 use rustle::phosphor;
+use rustle::{Alignment, Arrangement, TextOverflow};
 use rustle::{FlowOptions, flow_row_with};
 
 use crate::theme::{Radius, Role};
@@ -418,34 +420,49 @@ fn found_node(form: &ModelServerForm, room: f32) {
         return;
     }
     let listed = form.listed();
-    kit::column(Modifier::new().fill_max_width(), 2, || {
-        wrapped_note(
-            &format!(
-                "Found {} models; tick the ones to offer, or leave the list blank to offer every one.",
-                found.models.len()
-            ),
-            (room - 48.0).max(160.0),
-        );
-        flow_row_with(
-            Modifier::new()
-                .fill_max_width()
-                .background_rounded(theme::color(Role::Background), Radius::Md.px())
-                .outlined(Radius::Md)
-                .padding(theme::sp(3)),
-            FlowOptions::new(sp(3), sp(3)),
-            || {
-                for (place, model) in found.models.iter().enumerate() {
-                    let Some(pick) = FOUND_MODEL_PICKS.id(place) else {
-                        continue;
-                    };
-                    kit::row(Modifier::new(), 2, || {
-                        Checkbox::new(listed.contains(model), pick).build();
-                        kit::text(Modifier::new(), model.clone(), kit::code(12, Role::Text));
-                    });
-                }
-            },
-        );
-    });
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
+        || {
+            wrapped_note(
+                &format!(
+                    "Found {} models; tick the ones to offer, or leave the list blank to offer every one.",
+                    found.models.len()
+                ),
+                (room - 48.0).max(160.0),
+            );
+            flow_row_with(
+                Modifier::new()
+                    .fill_max_width()
+                    .background_rounded(theme::color(Role::Background), Radius::Md.px())
+                    .outlined(Radius::Md)
+                    .padding(theme::sp(3)),
+                FlowOptions::new(sp(3), sp(3)),
+                || {
+                    for (place, model) in found.models.iter().enumerate() {
+                        let Some(pick) = FOUND_MODEL_PICKS.id(place) else {
+                            continue;
+                        };
+                        rustle::row_arranged(
+                            Modifier::new(),
+                            Arrangement::SpacedBy(theme::sp(2)),
+                            Alignment::Center,
+                            || {
+                                Checkbox::new(listed.contains(model), pick).build();
+                                rustle::basic_text(
+                                    Modifier::new(),
+                                    model.clone(),
+                                    theme::code(12, Role::Text),
+                                    TextOverflow::Ellipsis,
+                                );
+                            },
+                        );
+                    }
+                },
+            );
+        },
+    );
 }
 
 /// Emits the form a model server is declared or changed with, `room` logical pixels across.
@@ -460,9 +477,10 @@ fn form_node(form: &ModelServerForm, room: f32) {
     } else {
         "sk-..."
     };
-    kit::column(
+    rustle::column_arranged(
         Modifier::new().fill_max_width().padding(theme::sp(3)),
-        3,
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Start,
         || {
             labelled(
                 "Name",
@@ -499,7 +517,7 @@ fn form_node(form: &ModelServerForm, room: f32) {
             );
             found_node(form, room);
             spread(|| {
-                kit::small_button(
+                button::small_button(
                     "Find models",
                     Target::Settings(SettingsEvent::ModelFind),
                     Variant::Outline,
@@ -549,18 +567,29 @@ fn server_row(index: usize, server: &ModelServer) {
     let name = label_of(server);
     editable_row(
         || {
-            kit::row(Modifier::new(), 2, || {
-                kit::text(Modifier::new(), name, kit::strong(13, Role::Text));
-                if let Some(said) = key_badge(server) {
-                    Badge::new(said).build();
-                }
-            });
+            rustle::row_arranged(
+                Modifier::new(),
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Center,
+                || {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        name,
+                        theme::strong(13, Role::Text),
+                        TextOverflow::Ellipsis,
+                    );
+                    if let Some(said) = key_badge(server) {
+                        Badge::new(said).build();
+                    }
+                },
+            );
             note(&detail_of(server));
             if !server.models.is_empty() {
-                kit::text(
+                rustle::basic_text(
                     Modifier::new().fill_max_width(),
                     server.models.join(", "),
-                    kit::line(11, Role::Subtle),
+                    theme::line(11, Role::Subtle),
+                    TextOverflow::Ellipsis,
                 );
             }
         },

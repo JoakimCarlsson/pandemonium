@@ -1,12 +1,14 @@
 //! The sidebar: ways to start and find work, the chats that belong to no project, and every project with its sessions.
 
 use crate::areas::{SettingsEvent, SidebarEvent};
-use crate::kit::{self, Frame};
+use crate::pointing::Over;
 use crate::target::Target;
 use crate::theme;
+use crate::theme::Frame;
 use crate::theme::ShadowLayers;
 use rustle::Modifier;
-use rustle::{Alignment, Arrangement, BoxAlignment, row_arranged};
+use rustle::TextOverflow;
+use rustle::{Alignment, Arrangement, BoxAlignment, IntrinsicSize, row_arranged};
 use rustle::{Icon, phosphor};
 use std::rc::Rc;
 
@@ -75,7 +77,9 @@ fn heading(words: &str) {
     let banded = Modifier::new()
         .height(theme::sp(9))
         .padding_xy(theme::sp(2), 0.0);
-    kit::row(banded, 0, || line(words, 12, 1.4, Role::Subtle));
+    rustle::row_arranged(banded, Arrangement::Start, Alignment::Center, || {
+        line(words, 12, 1.4, Role::Subtle)
+    });
 }
 
 /// Every submodule row of the sidebar, project by project in the order they were added: the project's position and the submodule's path. The place of a row in this list is what it answers to.
@@ -154,6 +158,12 @@ fn tile(id: Target, selected: bool, inner: Modifier) -> Tile {
         .inner(inner)
 }
 
+/// The modifier of a row of the project `index`, its header, its row for new work or one of
+/// its sessions, as a place a carried project header can be let go over.
+fn project_place(index: usize) -> Modifier {
+    crate::events::carried_over(false, move |_, _| Over::Project(index))
+}
+
 /// Emits one of the ways in at the top: a glyph and a label.
 #[track_caller]
 fn entry(icon: Icon, label: &str, id: Target, selected: bool) {
@@ -180,7 +190,8 @@ fn session_row(index: usize, session: &Session, selected: bool, indent: f32) {
         selected,
         Modifier::new().padding_each(theme::sp(indent), 0.0, theme::sp(2), 0.0),
     )
-    .on_context(move || operations.open_session_menu(index))
+    .modifier(session.project.map_or_else(Modifier::new, project_place))
+    .on_context(move |at| operations.open_session_menu(index, at))
     .build_with(|| {
         status_icon(session.shown());
         clipped(&session.title, 14, Role::Text);
@@ -212,16 +223,22 @@ fn submodule_row(project: &Project, relative: &str, position: usize, starting: b
     )
     .build_with(|| {
         Avatar::new(name, project.color()).size(Size::Xs).build();
-        kit::row(Modifier::new().weight(1.0).clip(), 1.5, || {
-            line(name, 13, 1.4, Role::Text);
-            if !folder.is_empty() {
-                kit::text(
-                    Modifier::new().weight(1.0),
-                    format!("{folder}/"),
-                    kit::line(12, Role::Subtle),
-                );
-            }
-        });
+        rustle::row_arranged(
+            Modifier::new().weight(1.0).clip(),
+            Arrangement::SpacedBy(theme::sp(1.5)),
+            Alignment::Center,
+            || {
+                line(name, 13, 1.4, Role::Text);
+                if !folder.is_empty() {
+                    rustle::basic_text(
+                        Modifier::new().weight(1.0),
+                        format!("{folder}/"),
+                        theme::line(12, Role::Subtle),
+                        TextOverflow::Ellipsis,
+                    );
+                }
+            },
+        );
         let plus = if starting { Role::Text } else { Role::Subtle };
         glyph(phosphor::PLUS, 3.5, plus);
     });
@@ -247,36 +264,47 @@ fn submodule_tree(
     if blocks.is_empty() {
         return;
     }
-    kit::column(
+    rustle::row_arranged(
         Modifier::new()
             .fill_max_width()
             .padding_each(theme::sp(SUBMODULE_RAIL), 0.0, 0.0, 0.0)
-            .draw_behind(theme::edge(
-                theme::Side::Left,
-                1.0,
-                theme::color(project.color()),
-            ))
-            .padding_each(1.0, 0.0, 0.0, 0.0),
-        0,
+            .height_intrinsic(IntrinsicSize::Min),
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            for (offset, path) in blocks {
-                let name = parent
-                    .and_then(|parent| path.strip_prefix(parent))
-                    .map_or(path.as_str(), |rest| rest.trim_start_matches('/'));
-                let starting = state.page == Page::New(index)
-                    && state.new_in.as_deref() == Some(path.as_str());
-                rustle::key(first + offset, || {
-                    kit::column(Modifier::new().fill_max_width(), 0, || {
-                        submodule_row(project, name, first + offset, starting);
-                        for &(position, session) in members.iter().filter(|(_, session)| {
-                            listed_under(state, session) == Some(path.as_str())
-                        }) {
-                            session_row(position, session, open == Some(position), 3.5);
-                        }
-                        submodule_tree(state, index, Some(path), members, first);
-                    });
-                });
-            }
+            rustle::vertical_divider(Modifier::new(), 1.0, theme::color(project.color()));
+            rustle::column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    for (offset, path) in blocks {
+                        let name = parent
+                            .and_then(|parent| path.strip_prefix(parent))
+                            .map_or(path.as_str(), |rest| rest.trim_start_matches('/'));
+                        let starting = state.page == Page::New(index)
+                            && state.new_in.as_deref() == Some(path.as_str());
+                        rustle::key(first + offset, || {
+                            rustle::column_arranged(
+                                Modifier::new().fill_max_width(),
+                                Arrangement::Start,
+                                Alignment::Start,
+                                || {
+                                    submodule_row(project, name, first + offset, starting);
+                                    for &(position, session) in
+                                        members.iter().filter(|(_, session)| {
+                                            listed_under(state, session) == Some(path.as_str())
+                                        })
+                                    {
+                                        session_row(position, session, open == Some(position), 3.5);
+                                    }
+                                    submodule_tree(state, index, Some(path), members, first);
+                                },
+                            );
+                        });
+                    }
+                },
+            );
         },
     );
 }
@@ -306,7 +334,7 @@ fn project(state: &WorkspaceState, index: usize) {
     } else {
         section
     };
-    kit::column(section, 0, || {
+    rustle::column_arranged(section, Arrangement::Start, Alignment::Start, || {
         let operations = crate::events::operations();
         let opens = Rc::clone(&operations);
         tile(
@@ -314,7 +342,8 @@ fn project(state: &WorkspaceState, index: usize) {
             state.page == Page::Project(index),
             Modifier::new().padding_xy(theme::sp(2), 0.0),
         )
-        .on_context(move || opens.open_project_menu(index))
+        .modifier(project_place(index))
+        .on_context(move |at| opens.open_project_menu(index, Some(at)))
         .build_with(|| {
             Avatar::of(project).build();
             clipped(&project.name, 14, Role::Text);
@@ -322,7 +351,7 @@ fn project(state: &WorkspaceState, index: usize) {
                 phosphor::DOTS_THREE,
                 Target::Sidebar(SidebarEvent::ProjectMore(index)),
             )
-            .on_click(move || operations.open_project_menu(index))
+            .on_click(move || operations.open_project_menu(index, None))
             .build();
         });
         for &(position, session) in members
@@ -333,7 +362,8 @@ fn project(state: &WorkspaceState, index: usize) {
         }
         submodule_tree(state, index, None, &members, first_submodule);
         let inner = Modifier::new().padding_each(theme::sp(3), 0.0, 0.0, 0.0);
-        let new_in = tile(Target::Sidebar(SidebarEvent::NewIn(index)), starting, inner);
+        let new_in = tile(Target::Sidebar(SidebarEvent::NewIn(index)), starting, inner)
+            .modifier(project_place(index));
         glyph_row(new_in, phosphor::PLUS, "New session", starting);
     });
 }
@@ -346,11 +376,12 @@ fn chats(state: &WorkspaceState) {
         return;
     }
     let open = open_session(state);
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .padding_each(0.0, 0.0, 0.0, theme::sp(3)),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
             heading("Chats");
             for position in members {
@@ -364,22 +395,33 @@ fn chats(state: &WorkspaceState) {
 /// Emits the whole sidebar for `state`.
 #[track_caller]
 pub fn sidebar(state: &WorkspaceState) {
-    kit::column(
+    let operations = crate::events::operations();
+    rustle::column_arranged(
         Modifier::new()
             .width(state.sidebar_width)
             .fill_max_height()
             .background(theme::color(Role::Sidebar))
-            .ruled(theme::Side::Right),
-        0,
+            .border_right_hairline(theme::color(Role::Border))
+            .pointer_input(move |event| {
+                let wheel = event.phase == rustle::PointerInputPhase::Scroll;
+                if wheel {
+                    operations.sidebar_scrolled(-event.scroll_delta.y);
+                }
+                wheel
+            })
+            .padding_each(0.0, 0.0, 1.0, 0.0),
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            kit::column(
+            rustle::column_arranged(
                 Modifier::new().fill_max_width().padding_each(
                     theme::sp(2),
                     theme::sp(3),
                     theme::sp(2),
                     theme::sp(2),
                 ),
-                0.5,
+                Arrangement::SpacedBy(theme::sp(0.5)),
+                Alignment::Start,
                 || {
                     entry(
                         phosphor::CHAT_CIRCLE,
@@ -408,13 +450,14 @@ pub fn sidebar(state: &WorkspaceState) {
                 },
             );
             rustle::stack_with(Modifier::new().weight(1.0).fill_max_width().clip(), || {
-                kit::column(
+                rustle::column_arranged(
                     Modifier::new()
                         .offset(0.0, -state.sidebar_scroll)
                         .wrap_content_height(BoxAlignment::TopStart, true)
                         .fill_max_width()
                         .padding_xy(theme::sp(2), 0.0),
-                    0,
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
                         chats(state);
                         heading("Workspaces");
@@ -438,14 +481,15 @@ pub fn drag_ghost(state: &WorkspaceState) {
         return;
     };
     crate::popups::at_window(sp(2.0), drag.at.1 - ROW / 2.0, false, || {
-        kit::row(
+        rustle::row_arranged(
             Modifier::new()
                 .height(theme::sp(9))
                 .width(state.sidebar_width - 16.0)
                 .shadow_layers(&theme::MEDIUM_SHADOW, Radius::Md.px())
                 .panel(Radius::Md)
                 .padding_xy(theme::sp(2), 0.0),
-            3,
+            Arrangement::SpacedBy(theme::sp(3)),
+            Alignment::Center,
             || {
                 Avatar::of(project).build();
                 clipped(&project.name, 14, Role::Text);

@@ -1,10 +1,10 @@
 //! The menu: a floating list of actions opened at a point.
 
 use crate::events::{Event, send};
-use crate::kit;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
+use rustle::{Alignment, Arrangement, TextOverflow};
 use rustle::{CursorIcon, Modifier};
 use std::rc::Rc;
 
@@ -233,20 +233,27 @@ fn menu_row(entry: Entry, height: f32, on_pick: Option<Pick>) {
                     .cursor(CursorIcon::Pointer)
                     .control(id, picked(id, on_pick))
             };
-            kit::row(modifier.padding_xy(theme::sp(2), 0.0), 4, move || {
-                kit::text(
-                    Modifier::new().weight(1.0),
-                    words,
-                    theme::text_style(13, 1.4).color(theme::color(Role::Text)),
-                );
-                if let Some(shortcut) = shortcut {
-                    kit::text(
-                        Modifier::new(),
-                        shortcut,
-                        theme::text_style(12, 1.4).color(theme::color(Role::Subtle)),
+            rustle::row_arranged(
+                modifier.padding_xy(theme::sp(2), 0.0),
+                Arrangement::SpacedBy(theme::sp(4)),
+                Alignment::Center,
+                move || {
+                    rustle::basic_text(
+                        Modifier::new().weight(1.0),
+                        words,
+                        theme::text_style(13, 1.4).color(theme::color(Role::Text)),
+                        TextOverflow::Ellipsis,
                     );
-                }
-            });
+                    if let Some(shortcut) = shortcut {
+                        rustle::basic_text(
+                            Modifier::new(),
+                            shortcut,
+                            theme::text_style(12, 1.4).color(theme::color(Role::Subtle)),
+                            TextOverflow::Ellipsis,
+                        );
+                    }
+                },
+            );
         }
     }
 }

@@ -2,8 +2,11 @@
 
 use crate::areas::EditorEvent;
 use crate::areas::SearchEvent;
+use crate::button;
 use crate::button::Variant;
-use crate::kit::{self, Frame};
+use crate::events;
+use crate::icons;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
 use crate::events::{Event, send};
 use crate::target::Target;
@@ -490,31 +493,40 @@ fn header(
 ) {
     let name = name_of(&file.path);
     let folder = file.path.strip_suffix(name).unwrap_or_default();
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .fill_max_width()
             .height(header_height(size))
             .background(theme::color(Role::Surface))
-            .ruled(theme::Side::Bottom)
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
             .padding_xy(theme::sp(3), 0.0),
-        2,
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
         || {
-            kit::row(
-                kit::pressed(
+            rustle::row_arranged(
+                events::pressed(
                     Modifier::new().weight(1.0).clip(),
                     Target::Search(SearchEvent::ExcerptsFile(position)),
                 ),
-                2,
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Center,
                 || {
                     if excerpts.folds() {
-                        glyph(kit::chevron(!file.closed), 3.5, Role::Muted);
+                        glyph(icons::chevron(!file.closed), 3.5, Role::Muted);
                     }
                     file_icon(name, 4.0);
-                    kit::text(Modifier::new(), name, kit::strong(13, Role::Text));
-                    kit::text(
+                    rustle::basic_text(
+                        Modifier::new(),
+                        name,
+                        theme::strong(13, Role::Text),
+                        TextOverflow::Ellipsis,
+                    );
+                    rustle::basic_text(
                         Modifier::new().weight(1.0).clip(),
                         folder,
-                        kit::line(12, Role::Subtle),
+                        theme::line(12, Role::Subtle),
+                        TextOverflow::Ellipsis,
                     );
                 },
             );
@@ -524,15 +536,21 @@ fn header(
             match &excerpts.source {
                 Source::Search { .. } => {
                     let hits: usize = file.blocks.iter().map(|block| block.hits.len()).sum();
-                    kit::text(
+                    rustle::basic_text(
                         Modifier::new(),
                         hits.to_string(),
-                        kit::line(11, Role::Muted),
+                        theme::line(11, Role::Muted),
+                        TextOverflow::Ellipsis,
                     );
                 }
                 _ => {
                     if let Some(mark) = file.mark {
-                        kit::text(Modifier::new(), mark, kit::line(11, mark_tone(mark)));
+                        rustle::basic_text(
+                            Modifier::new(),
+                            mark,
+                            theme::line(11, mark_tone(mark)),
+                            TextOverflow::Ellipsis,
+                        );
                     }
                     Tally::new(file.tally.0, file.tally.1).size(11).build();
                     if matches!(excerpts.source, Source::Revision { turn: Some(_), .. }) {
@@ -560,7 +578,7 @@ fn mark_tone(mark: &str) -> Role {
 
 /// Emits the button of the header of a timeline that puts the file back as it was in the state.
 pub(crate) fn restore_button() {
-    kit::small_button(
+    button::small_button(
         "Restore this version",
         Target::Search(SearchEvent::ExcerptsRestore),
         Variant::Default,
@@ -617,23 +635,25 @@ fn removed_row(content: &str, settings: &pm_editor::EditorSettings) {
     };
     let kind = theme::code_style(settings.font_size, 1.4).color(theme::color(Role::Muted));
     let shown = crate::diff_syntax::shown(content);
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .fill_max_width()
             .height(height)
             .background(theme::color(Role::Danger.alpha(0.12)))
             .clip(),
-        0,
+        Arrangement::Start,
+        Alignment::Center,
         move || {
             rustle::spacer(Modifier::new().width(BREAKPOINT_CELL + 3.0));
             rustle::spacer(numbers.padding_each(0.0, 0.0, theme::sp(3), 0.0));
-            kit::text(
+            rustle::basic_text(
                 Modifier::new()
                     .weight(1.0)
                     .clip()
                     .padding_xy(theme::sp(2), 0.0),
                 shown,
                 kind,
+                TextOverflow::Ellipsis,
             );
         },
     );
@@ -739,12 +759,24 @@ impl<'a> Drawing<'a> {
         };
         let context = self.context(index);
         let owner = context.owner;
-        kit::column(
+        let lines = &state.code_lines;
+        let on_press = crate::code_pointing::on_press(owner, lines);
+        let hover = if owner == Target::Editor(EditorEvent::EditorField) {
+            crate::code_pointing::hover(owner, lines)
+        } else {
+            Modifier::new()
+        };
+        rustle::column_arranged(
             Modifier::new()
                 .fill_max_width()
                 .cursor(CursorIcon::Text)
-                .control(owner, send(Event::pressing(owner))),
-            0,
+                .chain(hover)
+                .chain(crate::code_pointing::held(owner, lines))
+                .control_pointing(owner, send(Event::pressing(owner)), move |event| {
+                    on_press(event)
+                }),
+            Arrangement::Start,
+            Alignment::Start,
             || match row {
                 Row::Removed(text) => removed_row(text, &self.settings),
                 Row::Line(line) => self.line(document, index, block, *line, &context),
@@ -808,11 +840,12 @@ impl<'a> Drawing<'a> {
             );
         };
         if hit && self.matcher.is_none() {
-            kit::column(
+            rustle::column_arranged(
                 Modifier::new()
                     .fill_max_width()
                     .background(theme::color(Role::Success.alpha(0.12))),
-                0,
+                Arrangement::Start,
+                Alignment::Start,
                 shown,
             );
         } else {
@@ -918,10 +951,15 @@ pub(crate) fn file_list(state: &WorkspaceState, size: Size) {
         }
         Entry::Diff(place) => {
             let file = &excerpts.files[place];
-            kit::column(Modifier::new().fill_max_width(), 0, || {
-                diff_rows(file);
-                block_gap();
-            });
+            rustle::column_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    diff_rows(file);
+                    block_gap();
+                },
+            );
         }
         Entry::Row(place, step, at) => {
             let file = &excerpts.files[place];
@@ -943,12 +981,13 @@ pub(crate) fn file_list(state: &WorkspaceState, size: Size) {
             gone_block(&excerpts.files[place].blocks[step], &drawing.settings);
         }
     };
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .weight(1.0)
             .clip()
             .background(theme::color(Role::Background)),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
             rustle::lazy_list_keyed(
                 Modifier::new().fill_max_width().weight(1.0),
@@ -973,12 +1012,17 @@ pub(crate) const fn header_height(size: Size) -> f32 {
 
 /// Emits the lines a change took out of a file that is gone, drawn as taken out, with the space under them.
 fn gone_block(block: &Block, settings: &pm_editor::EditorSettings) {
-    kit::column(Modifier::new().fill_max_width(), 0, || {
-        for text in block.removed.iter().flat_map(|(_, lines)| lines.iter()) {
-            removed_row(text, settings);
-        }
-        block_gap();
-    });
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for text in block.removed.iter().flat_map(|(_, lines)| lines.iter()) {
+                removed_row(text, settings);
+            }
+            block_gap();
+        },
+    );
 }
 
 /// Emits the excerpts of a search.

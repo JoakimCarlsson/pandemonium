@@ -1,7 +1,9 @@
 //! The pictures a markdown source shows: diagrams written as fenced mermaid code, formulas written in TeX and images it names, each drawn or fetched into pixels and kept under a key.
 
-use crate::kit;
+use crate::events;
 use crate::target::Target;
+use crate::theme;
+use rustle::TextOverflow;
 use rustle::{Alignment, row_arranged};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -242,7 +244,7 @@ pub(crate) fn link_press(links: Option<Target>, target: impl Into<usize>) -> Mod
     match (links, target.into()) {
         (Some(base), target) if target > 0 => {
             let id = base.offset(target - 1);
-            kit::pressed(Modifier::new(), id)
+            events::pressed(Modifier::new(), id)
         }
         _ => Modifier::new(),
     }
@@ -275,10 +277,11 @@ pub(crate) fn images_node(
                         drawn(modifier, drawing, across, down);
                     }
                     _ if image.alt.is_empty() => {}
-                    _ => kit::text(
+                    _ => rustle::basic_text(
                         modifier,
                         &image.alt,
-                        kit::line(pixels.saturating_sub(1), Role::Subtle),
+                        theme::line(pixels.saturating_sub(1), Role::Subtle),
+                        TextOverflow::Ellipsis,
                     ),
                 }
             }

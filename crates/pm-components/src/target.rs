@@ -1,5 +1,5 @@
-//! The controls and areas of the window, each named by what it is: the typed target the
-//! app keeps focus on, finds a control by in tests and snapshots, and hands to its
+//! The controls and areas of the window, each named by what it is: the typed target whose
+//! rustle focus the app holds, finds a control by in tests and snapshots, and hands to its
 //! reducers when the control is pressed.
 //!
 //! Every control is named once, in the enum of the area it belongs to in
@@ -17,7 +17,7 @@ use crate::areas::{
     WindowEvent,
 };
 
-/// One control or area of the window the app keeps focus on, acts on, or finds in tests:
+/// One control or area of the window the app gives focus to, acts on, or finds in tests:
 /// the control, named in the enum of its area, wrapped in that area.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 pub enum Target {

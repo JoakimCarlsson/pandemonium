@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use pm_components::text_lines::Step;
 use pm_editor::LightbulbShown;
-use pm_field::{Edit, Motion};
+use pm_editor::{Edit, Motion};
 use rustle::{Key, KeyEvent};
 
 use super::App;
@@ -33,7 +33,7 @@ pub(super) struct TextDrag {
 impl App {
     /// Asks the language server whether it offers changes at the caret of the file shown once the caret has rested there long enough, and says when to look again while it has yet to.
     pub(super) fn editor_bulb_due(&mut self) -> Option<Instant> {
-        let here = if self.focus.current() == Some(Target::Editor(EditorEvent::EditorField)) {
+        let here = if self.focus.focused() == Some(Target::Editor(EditorEvent::EditorField)) {
             self.model.read(|state| {
                 if state.editor.lightbulb == LightbulbShown::Off {
                     return None;
@@ -91,8 +91,13 @@ impl App {
         }
     }
 
-    /// Takes the press in the file shown at the byte `byte`, at the point `at` of the window, as the start of carrying the selected text when it is on the selection and dragging text is on; says whether it did, in which case the press is not a selection of its own.
-    pub(super) fn drag_text_begins(&mut self, byte: usize, at: (f32, f32)) -> bool {
+    /// Takes the press in the file shown at the byte `byte`, at the point `at` of the window, as the start of carrying the selected text when it is on the selection and dragging text is on, a drag once the pointer moved `touch_slop` logical pixels; says whether it did, in which case the press is not a selection of its own.
+    pub(super) fn drag_text_begins(
+        &mut self,
+        byte: usize,
+        at: (f32, f32),
+        touch_slop: f32,
+    ) -> bool {
         let mut picked = false;
         self.model.update(|state| {
             picked = state.editor_drag_started(byte);
@@ -101,13 +106,13 @@ impl App {
             origin: at,
             byte,
             moving: false,
-            touch_slop: self.press_configuration.touch_slop,
+            touch_slop,
         });
         picked
     }
 
-    /// Carries the selected text being dragged to the point `x`, `y`: once the pointer has gone far enough it marks where the text would be dropped.
-    pub(super) fn drag_text_moved(&mut self, x: f32, y: f32) {
+    /// Carries the selected text being dragged to the point `(x, y)` of the window, over the shown offset `offset` of the file shown: once the pointer has gone far enough it marks where the text would be dropped.
+    pub(super) fn drag_text_moved(&mut self, (x, y): (f32, f32), offset: usize) {
         let Some(mut drag) = self.text_drag else {
             return;
         };
@@ -116,12 +121,6 @@ impl App {
         }
         drag.moving = true;
         self.text_drag = Some(drag);
-        let Some(offset) =
-            self.code_lines()
-                .offset_in(Target::Editor(EditorEvent::EditorField), x, y)
-        else {
-            return;
-        };
         self.model.update(|state| {
             let byte = state
                 .shown_document()

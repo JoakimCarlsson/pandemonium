@@ -1,7 +1,8 @@
 //! The settings window: the sections of settings down its left side and the one chosen on its right, filling a window of its own.
 
 use crate::areas::SettingsEvent;
-use crate::kit::{self, Frame};
+use crate::events;
+use crate::icons;
 use crate::theme::Indicated;
 
 use crate::target::Target;
@@ -392,11 +393,12 @@ pub fn settings(state: &WorkspaceState, width: f32) -> bool {
     } else {
         section
     };
-    kit::row_top(
+    rustle::row_arranged(
         Modifier::new()
             .fill_max_size()
             .background(theme::color(Role::Surface)),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
             navigation(state, section, folded, navigation_width);
             content(state, showing, width - navigation_width - 2.0 * PAGE_INSET);
@@ -409,31 +411,35 @@ pub fn settings(state: &WorkspaceState, width: f32) -> bool {
 #[track_caller]
 fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32) {
     let searching = state.settings_searching();
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_height()
             .width(width)
-            .ruled(theme::Side::Right)
+            .border_right_hairline(theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 1.0, 0.0)
             .padding(theme::sp(3)),
-        1,
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Start,
         || {
-            kit::row(
+            rustle::row_arranged(
                 Modifier::new()
                     .height(theme::sp(9))
                     .padding_xy(theme::sp(2), 0.0),
-                0,
+                Arrangement::Start,
+                Alignment::Center,
                 || {
                     line("Settings", 13, 1.4, Role::Subtle);
                 },
             );
             find(state, searching);
-            kit::column(
+            rustle::column_arranged(
                 Modifier::new()
                     .fill_max_width()
                     .weight(1.0)
                     .vertical_scroll(&state.settings_page.nav_scroll)
                     .fill_max_width(),
-                1,
+                Arrangement::SpacedBy(theme::sp(1)),
+                Alignment::Start,
                 || {
                     for section in
                         Section::ALL
@@ -462,11 +468,12 @@ fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32
 /// Emits the box searching settings, with the button clearing it while `searching`.
 #[track_caller]
 fn find(state: &WorkspaceState, searching: bool) {
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .fill_max_width()
             .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
-        1,
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
         || {
             Input::search(
                 &state.settings_page.find,
@@ -482,10 +489,10 @@ fn find(state: &WorkspaceState, searching: bool) {
                     theme::InteractionTones::new()
                         .hover(Role::SurfaceHover)
                         .radius(Radius::Sm),
-                    theme::Focused::Held(crate::focus::is_held(clear)),
+                    theme::Focused::Control(crate::focus::is_focused(clear)),
                 );
                 row_arranged(
-                    kit::pressable(own, Some(clear)),
+                    events::pressable(own, Some(clear)),
                     Arrangement::Center,
                     Alignment::Center,
                     || glyph(phosphor::X, 3.5, Role::Muted),
@@ -507,7 +514,7 @@ fn entry(section: Section, showing: bool, folded: bool, count: Option<usize>) {
         .inner(Modifier::new().padding_each(theme::sp(left), 0.0, theme::sp(2), 0.0))
         .build_with(|| {
             match section {
-                Section::Agents => glyph(kit::chevron(!folded), 4.0, tone),
+                Section::Agents => glyph(icons::chevron(!folded), 4.0, tone),
                 _ if nested => {}
                 _ => glyph(section.icon(), 4.0, tone),
             }
@@ -521,21 +528,23 @@ fn entry(section: Section, showing: bool, folded: bool, count: Option<usize>) {
 /// Emits the settings of `section` under its title, with `room` logical pixels across for them.
 #[track_caller]
 fn content(state: &WorkspaceState, section: Section, room: f32) {
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_height()
             .weight(1.0)
             .background(theme::color(Role::Background)),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            kit::row(
+            rustle::row_arranged(
                 Modifier::new().padding_each(
                     theme::sp(8),
                     theme::sp(6),
                     theme::sp(8),
                     theme::sp(4),
                 ),
-                0,
+                Arrangement::Start,
+                Alignment::Center,
                 || settings_servers::page_title(section),
             );
             settings_servers::body(state, section, room);

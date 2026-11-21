@@ -1,9 +1,12 @@
 //! Every file of the project as a tree of folders, folders first, with the files git sees changed marked.
 
 use crate::areas::TreeEvent;
-use crate::kit::{self, Frame};
+use crate::icons;
+use crate::theme::Frame;
 use crate::theme::ShadowLayers;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
+use crate::pointing::Over;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::sp;
@@ -158,6 +161,13 @@ fn look(
     }
 }
 
+/// The modifier of the row of the project's files standing for `target`, or of the space
+/// under them standing for their root, as a place a carried row and files from another
+/// application can be let go over.
+fn tree_place(target: TreeTarget) -> Modifier {
+    crate::events::carried_over(true, move |_, _| Over::Tree(target.clone()))
+}
+
 /// Emits one row: a name beside `icon`, the icon of what it is, `depth` levels down, with a chevron when `fold` says whether it is an open or closed folder, answering to `id` and standing for `target`, drawn as `look` says, and the letter it is marked with. Clicked with Shift, Control or Command it is picked among others; its menu opens on a secondary press.
 #[track_caller]
 fn entry_row(
@@ -171,6 +181,7 @@ fn entry_row(
 ) {
     let operations = crate::events::operations();
     let picked = target.clone();
+    let place = tree_place(target.clone());
     let tone = match look.changed.tone {
         _ if look.cut => Color::from(Role::Subtle),
         Some(tone) => tone,
@@ -188,12 +199,12 @@ fn entry_row(
         .on_pick(crate::events::picking(id, move |state, how| {
             state.tree_row_picked(picked.clone(), how)
         }))
-        .on_context(move || operations.open_tree_menu(target.clone()))
+        .on_context(move |at| operations.open_tree_menu(target.clone(), at))
         .selected(look.selected)
         .height(6.0)
         .gap(1.5)
         .radius(Radius::Sm)
-        .modifier(crate::bounds::placed(id, around))
+        .modifier(crate::bounds::placed(id, around).chain(place))
         .inner(Modifier::new().padding_each(
             theme::sp(3.0 + depth as f32 * INDENT),
             0.0,
@@ -202,13 +213,23 @@ fn entry_row(
         ))
         .build_with(|| {
             match fold {
-                Some(open) => icon_of(kit::chevron(open), 3.5, Role::Muted),
+                Some(open) => icon_of(icons::chevron(open), 3.5, Role::Muted),
                 None => rustle::spacer(Modifier::new().size(theme::sp(3.5), theme::sp(3.5))),
             }
             icon();
-            kit::text(Modifier::new().weight(1.0), name, kit::line(13, tone));
+            rustle::basic_text(
+                Modifier::new().weight(1.0),
+                name,
+                theme::line(13, tone),
+                TextOverflow::Ellipsis,
+            );
             if let Some(letter) = letter {
-                kit::text(Modifier::new(), letter, kit::code(11, tone));
+                rustle::basic_text(
+                    Modifier::new(),
+                    letter,
+                    theme::code(11, tone),
+                    TextOverflow::Ellipsis,
+                );
             }
         });
 }
@@ -229,7 +250,7 @@ pub fn drag_ghost(state: &WorkspaceState) {
     } else {
         format!("{count} items")
     };
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .offset(drag.at.0 + 12.0, drag.at.1 + 10.0)
             .z_index_unclipped(60)
@@ -237,7 +258,8 @@ pub fn drag_ghost(state: &WorkspaceState) {
             .shadow_layers(&theme::MEDIUM_SHADOW, Radius::Md.px())
             .panel(Radius::Md)
             .padding_xy(theme::sp(2), 0.0),
-        1.5,
+        Arrangement::SpacedBy(theme::sp(1.5)),
+        Alignment::Center,
         || {
             if count != 1 {
                 icon_of(phosphor::COPY, 4.0, Role::Muted);
@@ -246,7 +268,12 @@ pub fn drag_ghost(state: &WorkspaceState) {
             } else {
                 file_icon(name, 4.0);
             }
-            kit::text(Modifier::new(), &words, kit::line(13, Role::Text));
+            rustle::basic_text(
+                Modifier::new(),
+                &words,
+                theme::line(13, Role::Text),
+                TextOverflow::Ellipsis,
+            );
         },
     );
 }
@@ -258,7 +285,7 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) {
     };
     let problem = state.naming_problem();
     rustle::column_with(Modifier::new().fill_max_width(), || {
-        kit::row(
+        rustle::row_arranged(
             Modifier::new()
                 .fill_max_width()
                 .height(theme::sp(6))
@@ -268,7 +295,8 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) {
                     theme::sp(3),
                     0.0,
                 ),
-            2,
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Center,
             || {
                 rustle::spacer(Modifier::new().size(theme::sp(3.5), theme::sp(3.5)));
                 if folder {
@@ -286,15 +314,23 @@ fn name_lines(state: &WorkspaceState, folder: bool, depth: usize) {
         let Some(problem) = problem else {
             return;
         };
-        kit::column(
+        rustle::column_arranged(
             Modifier::new().padding_each(
                 theme::sp(3.0 + depth as f32 * INDENT + 8.0),
                 0.0,
                 theme::sp(3),
                 theme::sp(1),
             ),
-            0,
-            || kit::text(Modifier::new(), problem, kit::line(12, Role::Danger)),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                rustle::basic_text(
+                    Modifier::new(),
+                    problem,
+                    theme::line(12, Role::Danger),
+                    TextOverflow::Ellipsis,
+                )
+            },
         );
     });
 }
@@ -495,14 +531,14 @@ impl WorkspaceState {
 /// in tree order, scrolling it wholly into view and asking for focus on it, as a lazy list
 /// brings the item focus moves to into view; past the first or last row Tab is left alone.
 fn walks_rows(rows: Rc<Vec<(Target, usize)>>, list: rustle::LazyListState) -> Modifier {
-    let keys = crate::focus::keys();
+    let requesters = crate::focus::requesters();
     Modifier::new().on_key_event(move |event| {
         if !event.pressed || event.key != rustle::Key::Tab {
             return false;
         }
-        let Some(at) = keys
-            .held
-            .and_then(|held| rows.iter().position(|(id, _)| *id == held))
+        let Some(at) = rows
+            .iter()
+            .position(|(id, _)| requesters.focus_of(*id).is_focused())
         else {
             return false;
         };
@@ -515,18 +551,20 @@ fn walks_rows(rows: Rc<Vec<(Target, usize)>>, list: rustle::LazyListState) -> Mo
             return false;
         };
         keep_in_view(&list, index);
-        (keys.request)(id);
+        requesters.request_focus(id);
         true
     })
 }
 
-/// Keeps the item being composed composed while focus is on `id`, even scrolled out of view,
-/// as a focused item of a lazy list pins itself.
-fn pin_while_held(id: Target) {
-    let held = crate::focus::is_held(id);
+/// Keeps the item being composed composed while rustle's focus is on `id`, even scrolled
+/// out of view, as a focused item of a lazy list pins itself.
+fn pin_while_focused(id: Target) {
+    let focused = crate::focus::is_focused(id);
     let container = rustle::LOCAL_PINNABLE_CONTAINER.current();
-    rustle::disposable_effect(held, move || {
-        let handle = container.filter(|_| held).map(|container| container.pin());
+    rustle::disposable_effect(focused, move || {
+        let handle = container
+            .filter(|_| focused)
+            .map(|container| container.pin());
         move || drop(handle)
     });
 }
@@ -557,10 +595,10 @@ fn space(state: &WorkspaceState, index: usize) {
     let pressed = crate::events::send(crate::events::Event::Tree(TreeEvent::TreeSpace));
     rustle::spacer(crate::bounds::placed(
         Target::Tree(TreeEvent::TreeSpace),
-        around.control_menu(
+        around.chain(tree_place(TreeTarget::root())).control_menu(
             Target::Tree(TreeEvent::TreeSpace),
             move |_| pressed(),
-            move || operations.open_tree_menu(TreeTarget::root()),
+            move |at| operations.open_tree_menu(TreeTarget::root(), at),
         ),
     ));
 }
@@ -657,7 +695,7 @@ pub fn list(state: &WorkspaceState) {
         |index| {
             let item = &items[index];
             if let Some(id) = item.id() {
-                pin_while_held(id);
+                pin_while_focused(id);
             }
             match item {
                 Item::Field { folder, depth } => {

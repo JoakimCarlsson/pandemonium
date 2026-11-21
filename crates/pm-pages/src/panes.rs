@@ -8,13 +8,16 @@ use pm_components::theme::Indicated;
 use pm_components::theme::ShadowLayers;
 
 use pm_components::events::Interactive;
-use pm_components::events::{Event, send};
+use pm_components::events::{Event, OnContext, send};
+use pm_components::pointing::Over;
 use pm_components::target::Target;
 use pm_components::theme;
 use pm_components::theme::sp;
-use pm_components::theme::{Radius, Role, Side};
+use pm_components::theme::{Radius, Role};
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
-use rustle::{BoxAlignment, Canvas, CursorIcon, Modifier, remember_mutable_interaction_source};
+use rustle::{
+    BoxAlignment, CursorIcon, Modifier, Shape, ShapeModifier, remember_mutable_interaction_source,
+};
 use rustle::{Icon, phosphor};
 use std::rc::Rc;
 
@@ -46,33 +49,30 @@ const WELCOME_ABOVE: f32 = 127.0;
 /// The corner radius of the top of a tab, in logical pixels.
 const TAB_CORNER: f32 = 8.0;
 
-/// Fills the area of `canvas` with `color`, rounded at its top corners only.
-fn fill_top_rounded(canvas: &mut Canvas, color: rustle::Color) {
-    let (width, height) = (canvas.width(), canvas.height());
-    let corner = TAB_CORNER.min(width.min(height) / 2.0);
-    canvas.rounded_rect(0.0, 0.0, width, height, corner, color);
-    canvas.rect(0.0, height / 2.0, width, height / 2.0, color);
-}
-
 /// The box of a tab answering to `id`: rounded at the top, filled while it is the one its pane shows and while the pointer is on it otherwise, with its padding; as wide as what it holds, running past the end of a strip too narrow for it. A secondary press runs `on_context` when the tab has a menu.
 #[track_caller]
-fn tab_modifier(shown: bool, id: Target, on_context: Option<Rc<dyn Fn()>>) -> Modifier {
+fn tab_modifier(shown: bool, id: Target, on_context: Option<OnContext>) -> Modifier {
     let surface = pm_components::theme::color(Role::Surface);
     let hover = pm_components::theme::color(Role::SurfaceHover);
     let over = remember_mutable_interaction_source();
     let hovered = over.collect_is_hovered_as_state();
-    Modifier::new()
+    let fill = if shown {
+        Some(surface)
+    } else {
+        hovered.get().then_some(hover)
+    };
+    let own = Modifier::new()
         .wrap_content_width(BoxAlignment::CenterStart, true)
         .height(theme::sp(10))
-        .hoverable(&over)
-        .draw_behind(move |canvas: &mut Canvas| {
-            if shown {
-                fill_top_rounded(canvas, surface);
-            } else if hovered.get() {
-                fill_top_rounded(canvas, hover);
-            }
-        })
-        .cursor(CursorIcon::Pointer)
+        .hoverable(&over);
+    let own = match fill {
+        Some(fill) => own.background_shape(
+            fill,
+            Shape::rounded_corners(TAB_CORNER, TAB_CORNER, 0.0, 0.0),
+        ),
+        None => own,
+    };
+    own.cursor(CursorIcon::Pointer)
         .chain(match on_context {
             Some(on_context) => Modifier::new().control_menu(
                 id,
@@ -80,7 +80,7 @@ fn tab_modifier(shown: bool, id: Target, on_context: Option<Rc<dyn Fn()>>) -> Mo
                     let pressed = send(Event::pressing(id));
                     move |_| pressed()
                 },
-                move || on_context(),
+                move |at| on_context(at),
             ),
             None => Modifier::new().control(id, send(Event::pressing(id))),
         })
@@ -136,7 +136,7 @@ fn viewer_tab(viewer: &Viewer, index: usize, shown: bool) {
     row_arranged(
         tab_modifier(shown, Target::Editor(EditorEvent::FileTab(index)), {
             let operations = pm_components::events::operations();
-            Some(Rc::new(move || operations.open_tab_menu(index)))
+            Some(Rc::new(move |at| operations.open_tab_menu(index, at)))
         }),
         Arrangement::SpacedBy(sp(2)),
         Alignment::Center,
@@ -364,11 +364,7 @@ fn strip(state: &WorkspaceState, group: &Group, toggle: bool) {
             .fill_max_width()
             .height(theme::sp(12))
             .clip()
-            .draw_behind(theme::edge(
-                theme::Side::Bottom,
-                1.0,
-                theme::color(Role::Border),
-            ))
+            .border_bottom(1.0, theme::color(Role::Border))
             .padding_each(0.0, 0.0, 0.0, 1.0)
             .padding_xy(theme::sp(3), 0.0),
         Arrangement::SpacedBy(sp(1)),
@@ -483,6 +479,20 @@ fn empty_pane(state: &WorkspaceState, index: usize) {
     );
 }
 
+/// The modifier of the pane at position `index` as a place a carried tab can be let go over:
+/// the pane and the edge of it the pointer is near.
+fn pane_place(index: usize) -> Modifier {
+    pm_components::events::carried_over(false, move |at, rect| {
+        let area = Area {
+            x: rect.origin.x,
+            y: rect.origin.y,
+            width: rect.size.width,
+            height: rect.size.height,
+        };
+        Over::Pane(index, area.side_at(at))
+    })
+}
+
 /// Emits the pane `placed`: its strip of tabs over the tab it shows, the button for the terminal in its strip when `toggle`, its views given `extra` logical pixels of height beyond its own.
 #[track_caller]
 fn pane(state: &WorkspaceState, placed: &Placed, toggle: bool, extra: f32) {
@@ -499,7 +509,8 @@ fn pane(state: &WorkspaceState, placed: &Placed, toggle: bool, extra: f32) {
             .chain(pm_components::bounds::placed(
                 Target::Window(WindowEvent::Pane(placed.index)),
                 Modifier::new(),
-            )),
+            ))
+            .chain(pane_place(placed.index)),
         Arrangement::Start,
         Alignment::Start,
         || {
@@ -544,15 +555,9 @@ fn laid(
             second,
         } => {
             let (one_area, two_area) = area.halves(*axis, *ratio);
-            let (sized, edge) = match axis {
-                Axis::Row => (
-                    Modifier::new().fill_max_height().width(one_area.width),
-                    Side::Left,
-                ),
-                Axis::Column => (
-                    Modifier::new().fill_max_width().height(one_area.height),
-                    Side::Top,
-                ),
+            let sized = match axis {
+                Axis::Row => Modifier::new().fill_max_height().width(one_area.width),
+                Axis::Column => Modifier::new().fill_max_width().height(one_area.height),
             };
             let halves = || {
                 row_arranged(sized, Arrangement::Start, Alignment::Start, || {
@@ -562,12 +567,16 @@ fn laid(
                     Axis::Row => Modifier::new().fill_max_height(),
                     Axis::Column => Modifier::new().fill_max_width(),
                 };
-                let (left, top, right, bottom) = edge.padding(1.0);
+                match axis {
+                    Axis::Row => {
+                        rustle::vertical_divider(Modifier::new(), 1.0, theme::color(Role::Border))
+                    }
+                    Axis::Column => {
+                        rustle::horizontal_divider(Modifier::new(), 1.0, theme::color(Role::Border))
+                    }
+                }
                 row_arranged(
-                    across
-                        .weight(1.0)
-                        .draw_behind(theme::edge(edge, 1.0, theme::color(Role::Border)))
-                        .padding_each(left, top, right, bottom),
+                    across.weight(1.0),
                     Arrangement::Start,
                     Alignment::Start,
                     || laid(state, second, placed, next, (two_area, whole, extra)),

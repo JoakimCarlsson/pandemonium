@@ -1,8 +1,10 @@
 //! Markdown: a source laid out as paragraphs, headings, lists, code, quotes, fold-outs, rules and tables.
 
 use crate::events::{Event, send};
-use crate::kit::{self, Frame};
+use crate::icons;
 use crate::theme;
+use crate::theme::Frame;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
 use pm_markdown::{Block, Inline, Span};
 use rustle::{CursorIcon, Modifier};
@@ -131,48 +133,53 @@ impl<'a> Markdown<'a> {
             &drawn,
             self.place,
         ));
-        kit::column(Modifier::new(), 3, || {
-            rustle::key(whole, || {
-                rustle::skippable((whole, width.to_bits()), || {
-                    let blocks = pm_markdown::parse(self.source);
-                    let mut seen = 0;
-                    for block in &blocks {
-                        let first = seen;
-                        seen += count_details(std::slice::from_ref(block));
-                        let unfolded: Vec<usize> = self
-                            .unfolded
-                            .iter()
-                            .copied()
-                            .filter(|place| (first..seen).contains(place))
-                            .collect();
-                        let key = crate::figures::key_of((
-                            block,
-                            self.pixels,
-                            self.tone,
-                            self.details,
-                            first,
-                            &unfolded,
-                            self.links,
-                            &drawn,
-                        ));
-                        rustle::key(key, || {
-                            rustle::skippable((key, width.to_bits()), || {
-                                Layout {
-                                    pixels: self.pixels,
-                                    details: self.details,
-                                    unfolded,
-                                    seen: first,
-                                    links: self.links,
-                                    figures: self.figures,
-                                    place: self.place,
-                                }
-                                .block(block, self.tone, width);
+        rustle::column_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(theme::sp(3)),
+            Alignment::Start,
+            || {
+                rustle::key(whole, || {
+                    rustle::skippable((whole, width.to_bits()), || {
+                        let blocks = pm_markdown::parse(self.source);
+                        let mut seen = 0;
+                        for block in &blocks {
+                            let first = seen;
+                            seen += count_details(std::slice::from_ref(block));
+                            let unfolded: Vec<usize> = self
+                                .unfolded
+                                .iter()
+                                .copied()
+                                .filter(|place| (first..seen).contains(place))
+                                .collect();
+                            let key = crate::figures::key_of((
+                                block,
+                                self.pixels,
+                                self.tone,
+                                self.details,
+                                first,
+                                &unfolded,
+                                self.links,
+                                &drawn,
+                            ));
+                            rustle::key(key, || {
+                                rustle::skippable((key, width.to_bits()), || {
+                                    Layout {
+                                        pixels: self.pixels,
+                                        details: self.details,
+                                        unfolded,
+                                        seen: first,
+                                        links: self.links,
+                                        figures: self.figures,
+                                        place: self.place,
+                                    }
+                                    .block(block, self.tone, width);
+                                });
                             });
-                        });
-                    }
+                        }
+                    });
                 });
-            });
-        });
+            },
+        );
     }
 }
 
@@ -204,11 +211,16 @@ impl Layout<'_> {
     /// `modifier`, `width` wide, running text in `tone`.
     #[track_caller]
     fn blocks(&mut self, modifier: Modifier, gap: f32, blocks: &[Block], tone: Role, width: f32) {
-        kit::column(modifier, gap, || {
-            for block in blocks {
-                self.block(block, tone, width);
-            }
-        });
+        rustle::column_arranged(
+            modifier,
+            Arrangement::SpacedBy(theme::sp(gap)),
+            Alignment::Start,
+            || {
+                for block in blocks {
+                    self.block(block, tone, width);
+                }
+            },
+        );
     }
 
     /// Emits one block, `width` wide, running text in `tone`.
@@ -236,16 +248,22 @@ impl Layout<'_> {
             ),
             Block::Code { text, .. } => self.code(text, width),
             Block::Quote(blocks) => {
-                let own = barred(theme::sp(QUOTE_INDENT / 4.0 - 0.5));
-                kit::row_top(own, 0, || {
-                    self.blocks(
-                        Modifier::new(),
-                        3.0,
-                        blocks,
-                        Role::Muted,
-                        width - QUOTE_INDENT,
-                    );
-                });
+                let inset = theme::sp(QUOTE_INDENT / 4.0 - 0.5);
+                rustle::row_arranged(
+                    Modifier::new().height_intrinsic(rustle::IntrinsicSize::Min),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        rustle::vertical_divider(Modifier::new(), 2.0, theme::color(Role::Border));
+                        self.blocks(
+                            Modifier::new().padding_each(inset, 0.0, 0.0, 0.0),
+                            3.0,
+                            blocks,
+                            Role::Muted,
+                            width - QUOTE_INDENT,
+                        );
+                    },
+                );
             }
             Block::Details { summary, blocks } => self.fold_out(summary, blocks, tone, width),
             Block::Rule => rustle::horizontal_divider(
@@ -293,32 +311,50 @@ impl Layout<'_> {
             );
         }
         let pixels = self.pixels;
-        kit::column(
+        rustle::column_arranged(
             Modifier::new().fill_max_width().width_in(0.0, width),
-            2,
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Start,
             || {
-                kit::row_top(Modifier::new().fill_max_width().chain(head), 1.5, || {
-                    kit::row(Modifier::new().height(height), 0, || {
-                        glyph(kit::chevron(open), 3.5, Role::Subtle);
-                    });
-                    self.text(
-                        Modifier::new().weight(1.0),
-                        summary,
-                        pixels,
-                        true,
-                        tone,
-                        width - 20.0,
-                    );
-                });
+                rustle::row_arranged(
+                    Modifier::new().fill_max_width().chain(head),
+                    Arrangement::SpacedBy(theme::sp(1.5)),
+                    Alignment::Start,
+                    || {
+                        rustle::row_arranged(
+                            Modifier::new().height(height),
+                            Arrangement::Start,
+                            Alignment::Center,
+                            || {
+                                glyph(icons::chevron(open), 3.5, Role::Subtle);
+                            },
+                        );
+                        self.text(
+                            Modifier::new().weight(1.0),
+                            summary,
+                            pixels,
+                            true,
+                            tone,
+                            width - 20.0,
+                        );
+                    },
+                );
                 if !open {
                     self.seen += count_details(blocks);
                     return;
                 }
                 let bar = Modifier::new()
                     .padding_each(theme::sp(1.5), 0.0, 0.0, 0.0)
-                    .chain(barred(INDENT - 8.0));
-                kit::row_top(bar, 0, || {
-                    self.blocks(Modifier::new(), 3.0, blocks, tone, width - INDENT);
+                    .height_intrinsic(rustle::IntrinsicSize::Min);
+                rustle::row_arranged(bar, Arrangement::Start, Alignment::Start, || {
+                    rustle::vertical_divider(Modifier::new(), 2.0, theme::color(Role::Border));
+                    self.blocks(
+                        Modifier::new().padding_each(INDENT - 8.0, 0.0, 0.0, 0.0),
+                        3.0,
+                        blocks,
+                        tone,
+                        width - INDENT,
+                    );
                 });
             },
         );
@@ -329,33 +365,50 @@ impl Layout<'_> {
     fn list(&mut self, start: Option<u64>, items: &[Vec<Block>], tone: Role, width: f32) {
         let height = self.line_height();
         let pixels = self.pixels;
-        kit::column(Modifier::new(), 1.5, || {
-            for (index, item) in items.iter().enumerate() {
-                kit::row_top(Modifier::new(), 0, || {
-                    kit::row(
-                        Modifier::new().width(INDENT).height(height),
-                        0,
-                        || match start {
-                            Some(first) => line(
-                                format!("{}.", first + index as u64),
-                                pixels,
-                                LEADING,
-                                Role::Muted,
-                            ),
-                            None => rustle::spacer(
-                                Modifier::new()
-                                    .size(theme::sp(1), theme::sp(1))
-                                    .background_rounded(
-                                        theme::color(Role::Subtle),
-                                        Radius::Full.px(),
+        rustle::column_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(theme::sp(1.5)),
+            Alignment::Start,
+            || {
+                for (index, item) in items.iter().enumerate() {
+                    rustle::row_arranged(
+                        Modifier::new(),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            rustle::row_arranged(
+                                Modifier::new().width(INDENT).height(height),
+                                Arrangement::Start,
+                                Alignment::Center,
+                                || match start {
+                                    Some(first) => line(
+                                        format!("{}.", first + index as u64),
+                                        pixels,
+                                        LEADING,
+                                        Role::Muted,
                                     ),
-                            ),
+                                    None => rustle::spacer(
+                                        Modifier::new()
+                                            .size(theme::sp(1), theme::sp(1))
+                                            .background_rounded(
+                                                theme::color(Role::Subtle),
+                                                Radius::Full.px(),
+                                            ),
+                                    ),
+                                },
+                            );
+                            self.blocks(
+                                Modifier::new().weight(1.0),
+                                1.5,
+                                item,
+                                tone,
+                                width - INDENT,
+                            );
                         },
                     );
-                    self.blocks(Modifier::new().weight(1.0), 1.5, item, tone, width - INDENT);
-                });
-            }
-        });
+                }
+            },
+        );
     }
 
     /// Emits a block of code in a bordered box, its long lines broken to fit `width`.
@@ -372,11 +425,12 @@ impl Layout<'_> {
         }
         CodeBox::new(move || {
             for content in lines {
-                kit::row_top(
+                rustle::row_arranged(
                     Modifier::new().padding_xy(theme::sp(3.5), 0.0),
-                    0,
+                    Arrangement::Start,
+                    Alignment::Start,
                     move || {
-                        kit::text(Modifier::new(), content, kind);
+                        rustle::basic_text(Modifier::new(), content, kind, TextOverflow::Ellipsis);
                     },
                 );
             }
@@ -395,10 +449,15 @@ impl Layout<'_> {
             Some(Ok(drawing)) => diagram_node(drawing, width),
             Some(Err(_)) => {
                 let pixels = self.pixels;
-                kit::column(Modifier::new(), 1.5, || {
-                    self.code(source, width);
-                    line(failed, pixels - 2, 1.4, Role::Subtle);
-                });
+                rustle::column_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(theme::sp(1.5)),
+                    Alignment::Start,
+                    || {
+                        self.code(source, width);
+                        line(failed, pixels - 2, 1.4, Role::Subtle);
+                    },
+                );
             }
             None => self.code(source, width),
         }
@@ -417,10 +476,11 @@ impl Layout<'_> {
         let cell_width = ((width - 2.0) / columns as f32).floor();
         let pixels = self.pixels - 1;
         let own = Modifier::new().outlined(Radius::Lg).clip();
-        kit::column(own, 0, || {
-            kit::row_top(
+        rustle::column_arranged(own, Arrangement::Start, Alignment::Start, || {
+            rustle::row_arranged(
                 Modifier::new().background(theme::color(Role::Surface)),
-                0,
+                Arrangement::Start,
+                Alignment::Start,
                 || {
                     for cell in head {
                         self.cell(cell, pixels, true, tone, cell_width);
@@ -428,11 +488,21 @@ impl Layout<'_> {
                 },
             );
             for cells in rows {
-                kit::row_top(Modifier::new().ruled(theme::Side::Top), 0, || {
-                    for cell in cells {
-                        self.cell(cell, pixels, false, tone, cell_width);
-                    }
-                });
+                rustle::horizontal_divider(
+                    Modifier::new().width(cells.len() as f32 * cell_width),
+                    1.0,
+                    theme::color(Role::Border),
+                );
+                rustle::row_arranged(
+                    Modifier::new(),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        for cell in cells {
+                            self.cell(cell, pixels, false, tone, cell_width);
+                        }
+                    },
+                );
             }
         });
     }
@@ -440,11 +510,12 @@ impl Layout<'_> {
     /// Emits one cell of a table, `width` wide, set heavier when it is a heading.
     #[track_caller]
     fn cell(&mut self, spans: &[Span], pixels: u32, strong: bool, tone: Role, width: f32) {
-        kit::column(
+        rustle::column_arranged(
             Modifier::new()
                 .width(width)
                 .padding_xy(theme::sp(2.5), theme::sp(1.5)),
-            0,
+            Arrangement::Start,
+            Alignment::Start,
             || self.text(Modifier::new(), spans, pixels, strong, tone, width - 20.0),
         );
     }
@@ -495,14 +566,19 @@ impl Layout<'_> {
         }
         let height = pixels as f32 * LEADING;
         let links = self.links;
-        kit::column(modifier, 0, move || {
+        rustle::column_arranged(modifier, Arrangement::Start, Alignment::Start, move || {
             for runs in lines {
-                kit::row(Modifier::new().height(height), 0, move || {
-                    for (content, inline) in runs {
-                        let pressed = crate::figures::link_press(links, inline.target);
-                        run(pressed, content, inline, pixels, strong, tone);
-                    }
-                });
+                rustle::row_arranged(
+                    Modifier::new().height(height),
+                    Arrangement::Start,
+                    Alignment::Center,
+                    move || {
+                        for (content, inline) in runs {
+                            let pressed = crate::figures::link_press(links, inline.target);
+                            run(pressed, content, inline, pixels, strong, tone);
+                        }
+                    },
+                );
             }
         });
     }
@@ -551,18 +627,6 @@ fn count_details(blocks: &[Block]) -> usize {
             _ => 0,
         })
         .sum()
-}
-
-/// The modifier of a quote or an open fold-out: a two pixel bar in the border role down its
-/// left edge, with what it holds set `inset` logical pixels past the bar.
-fn barred(inset: f32) -> Modifier {
-    Modifier::new()
-        .draw_behind(theme::edge(
-            theme::Side::Left,
-            2.0,
-            theme::color(Role::Border),
-        ))
-        .padding_each(2.0 + inset, 0.0, 0.0, 0.0)
 }
 
 /// The room a run set as `inline` takes besides its text when it starts
@@ -618,5 +682,5 @@ fn run(modifier: Modifier, content: String, inline: Inline, pixels: u32, strong:
             .padding_xy(CODE_PAD, 0.0),
         false => modifier,
     };
-    kit::text(modifier, content, kind);
+    rustle::basic_text(modifier, content, kind, TextOverflow::Ellipsis);
 }

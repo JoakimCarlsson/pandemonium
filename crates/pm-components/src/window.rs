@@ -1,7 +1,8 @@
 //! The frame of a window beside the main one: the title bar that closes it over what it holds, with the border the window draws itself when it has no frame from the desktop.
 
-use crate::kit::{self, Frame};
 use crate::theme;
+use crate::theme::Frame;
+use rustle::{Alignment, Arrangement};
 use std::cell::Cell;
 
 use rustle::{Modifier, Shadow};
@@ -142,7 +143,7 @@ pub fn shadowed(frame: impl FnOnce()) {
     let own = own
         .clip_rounded(FRAME_RADIUS)
         .border(1.0, color(Role::Border), FRAME_RADIUS);
-    kit::column(own, 0, frame);
+    rustle::column_arranged(own, Arrangement::Start, Alignment::Start, frame);
 }
 
 /// A window's frame being described: what its body holds, and what is laid over the body.
@@ -206,16 +207,26 @@ impl<'a> Window<'a> {
             over,
             modifier,
         } = self;
-        kit::column(modifier.chain(own), 0, move || {
-            TitleBar::closing().build();
-            kit::column(Modifier::new().weight(1.0).fill_max_width(), 0, move || {
-                for child in body {
-                    child();
+        rustle::column_arranged(
+            modifier.chain(own),
+            Arrangement::Start,
+            Alignment::Start,
+            move || {
+                TitleBar::closing().build();
+                rustle::column_arranged(
+                    Modifier::new().weight(1.0).fill_max_width(),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    move || {
+                        for child in body {
+                            child();
+                        }
+                    },
+                );
+                for content in over {
+                    content();
                 }
-            });
-            for content in over {
-                content();
-            }
-        });
+            },
+        );
     }
 }

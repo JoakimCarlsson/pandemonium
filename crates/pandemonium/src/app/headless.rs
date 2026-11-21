@@ -723,7 +723,7 @@ impl Rig {
 
     /// What has the keyboard.
     pub(super) fn focused(&self) -> Option<Target> {
-        self.app.borrow().focus.current()
+        self.app.borrow().focus.focused()
     }
 
     /// Reads the screen through `read`.
@@ -799,7 +799,6 @@ impl Rig {
 
     /// The pointer shape the main window shows.
     pub(super) fn cursor(&self) -> rustle::CursorIcon {
-        let decided = self.app.borrow().shell.shared.cursor();
-        decided.unwrap_or_else(|| self.screens.main.cursor())
+        self.screens.main.cursor()
     }
 }

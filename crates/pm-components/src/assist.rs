@@ -2,12 +2,14 @@
 
 use crate::areas::EditorEvent;
 use crate::events::{Event, send};
-use crate::kit::{self, Frame};
+use crate::parts;
 use crate::target::Target;
 use crate::theme;
+use crate::theme::Frame;
 use crate::theme::Indicated;
 use crate::theme::ShadowLayers;
 use pm_protocol::CompletionKind;
+use rustle::TextOverflow;
 use rustle::phosphor;
 use rustle::{Alignment, Arrangement, Color, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
@@ -109,10 +111,35 @@ fn framed(
     column_arranged(own.chain(padding), arrangement, Alignment::Start, content);
 }
 
+/// `size` made the card about a word of the file shown: a control that tells the app the
+/// pointer came over it or left it, and that the primary button went down on it, to select
+/// its text, and came up again.
+#[track_caller]
+fn card_pointer(size: Modifier) -> Modifier {
+    let id = Target::Editor(EditorEvent::HoverCard);
+    let operations = crate::events::operations();
+    let held = std::rc::Rc::clone(&operations);
+    size.on_hover(move |over| operations.hover_card_hovered(over))
+        .control_pointing(id, send(Event::pressing(id)), move |event| {
+            if event.button == rustle::PointerButton::Primary {
+                match event.phase {
+                    rustle::PointerPhase::Press => held.hover_card_held(true),
+                    rustle::PointerPhase::Release => held.hover_card_held(false),
+                    _ => {}
+                }
+            }
+        })
+}
+
 /// Emits `content` in a box that takes the room left in its row and cuts it off at its edge.
 #[track_caller]
 fn clipped_box(content: impl FnOnce()) {
-    kit::column(Modifier::new().weight(1.0).clip(), 0, content);
+    rustle::column_arranged(
+        Modifier::new().weight(1.0).clip(),
+        Arrangement::Start,
+        Alignment::Start,
+        content,
+    );
 }
 
 /// The row of a list over the file `height` theme steps tall that answers to `id`, filled
@@ -130,7 +157,7 @@ fn pickable(id: Target, picked: bool, height: f64) -> Modifier {
     Modifier::new()
         .fill_max_width()
         .height(theme::sp(height))
-        .indicated(looks, theme::Focused::Held(crate::focus::is_held(id)))
+        .indicated(looks, theme::Focused::Control(crate::focus::is_focused(id)))
         .cursor(CursorIcon::Pointer)
 }
 
@@ -138,37 +165,48 @@ fn pickable(id: Target, picked: bool, height: f64) -> Modifier {
 fn completion_row(place: usize, item: &pm_protocol::Completion, picked: bool) {
     let id = Target::Editor(EditorEvent::CompletionRow(place));
     let (letter, tone) = kind_mark(item.kind);
-    kit::row(
+    rustle::row_arranged(
         pickable(id, picked, 6.0)
             .control(id, send(Event::pressing(id)))
             .padding_xy(theme::sp(1.5), 0.0),
-        2,
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
         || {
             row_arranged(
                 Modifier::new().size(theme::sp(4), theme::sp(4)),
                 Arrangement::Center,
                 Alignment::Center,
                 || {
-                    kit::text(
+                    rustle::basic_text(
                         Modifier::new(),
                         letter,
                         theme::code_style(11, 1.2).color(theme::color(tone)),
+                        TextOverflow::Ellipsis,
                     )
                 },
             );
             clipped_box(|| {
-                kit::text(
+                rustle::basic_text(
                     Modifier::new(),
                     item.label.clone(),
                     theme::code_style(12, 1.4).color(theme::color(Role::Text)),
+                    TextOverflow::Ellipsis,
                 )
             });
             if let Some(detail) = &item.detail {
                 let short: String = detail.chars().take(48).collect();
-                kit::column(
+                rustle::column_arranged(
                     Modifier::new().width_in(0.0, LIST_WIDTH * 0.45).clip(),
-                    0,
-                    || kit::text(Modifier::new(), short, kit::code(11, Role::Subtle)),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        rustle::basic_text(
+                            Modifier::new(),
+                            short,
+                            theme::code(11, Role::Subtle),
+                            TextOverflow::Ellipsis,
+                        )
+                    },
                 );
             }
         },
@@ -255,9 +293,14 @@ fn said_parts(said: &str, most: usize, language: Option<&str>, width: f32, linke
     for piece in pieces(said, most) {
         match piece {
             Piece::Code(fence, body) => {
-                kit::column(Modifier::new().clip(), 0, || {
-                    code_lines(&body, &fence, language, width);
-                });
+                rustle::column_arranged(
+                    Modifier::new().clip(),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        code_lines(&body, &fence, language, width);
+                    },
+                );
             }
             Piece::Prose(text) => {
                 let markdown = Markdown::new(&text, width).size(12).tone(Role::Muted);
@@ -409,8 +452,8 @@ fn hover_card(
     let room = sp(if downward { below } else { above }.min(CARD_HEIGHT) / 4.0);
     let body = move || {
         framed(
-            Modifier::new().width(CARD_WIDTH),
-            Some(Target::Editor(EditorEvent::HoverCard)),
+            card_pointer(Modifier::new().width(CARD_WIDTH)),
+            None,
             Modifier::new(),
             Arrangement::Start,
             || {
@@ -423,9 +466,12 @@ fn hover_card(
                         .padding_xy(theme::sp(3), theme::sp(2.5)),
                     selection,
                     || {
-                        kit::column(Modifier::new().fill_max_width(), 2, || {
-                            card_parts(card, language)
-                        })
+                        rustle::column_arranged(
+                            Modifier::new().fill_max_width(),
+                            Arrangement::SpacedBy(theme::sp(2)),
+                            Alignment::Start,
+                            || card_parts(card, language),
+                        )
                     },
                 );
             },
@@ -455,22 +501,27 @@ fn card_parts(card: &HoverCard, language: Option<&str>) {
             .unwrap_or_default();
         let mut lines = diagnostic.message.lines();
         let first = lines.next().unwrap_or_default();
-        kit::column(Modifier::new(), 0, || {
-            let tones = std::iter::once(severity_role(diagnostic.severity))
-                .chain(std::iter::repeat(Role::Muted));
-            for (words, tone) in std::iter::once(format!("{source}{first}"))
-                .chain(lines.take(4).map(str::to_owned))
-                .zip(tones)
-            {
-                rustle::text_styled(
-                    Modifier::new(),
-                    words,
-                    theme::text_style(12, 1.5)
-                        .color(theme::color(tone))
-                        .max_lines(1),
-                );
-            }
-        });
+        rustle::column_arranged(
+            Modifier::new(),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                let tones = std::iter::once(severity_role(diagnostic.severity))
+                    .chain(std::iter::repeat(Role::Muted));
+                for (words, tone) in std::iter::once(format!("{source}{first}"))
+                    .chain(lines.take(4).map(str::to_owned))
+                    .zip(tones)
+                {
+                    rustle::text_styled(
+                        Modifier::new(),
+                        words,
+                        theme::text_style(12, 1.5)
+                            .color(theme::color(tone))
+                            .max_lines(1),
+                    );
+                }
+            },
+        );
     }
     if let Some(said) = &card.text {
         if !card.diagnostics.is_empty() {
@@ -564,19 +615,29 @@ fn signature_card(signature: &pm_protocol::Signature, at: (f32, f32)) {
         Modifier::new().padding_xy(theme::sp(2), theme::sp(1)),
         Arrangement::SpacedBy(sp(0.5)),
         || {
-            kit::column(Modifier::new().clip(), 0, || {
-                marked_line(
-                    Modifier::new(),
-                    &words,
-                    theme::code_style(12, 1.5).color(theme::color(Role::Text)),
-                    marks,
-                    CaretLook::default(),
-                );
-            });
+            rustle::column_arranged(
+                Modifier::new().clip(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    marked_line(
+                        Modifier::new(),
+                        &words,
+                        theme::code_style(12, 1.5).color(theme::color(Role::Text)),
+                        marks,
+                        CaretLook::default(),
+                    );
+                },
+            );
             if let Some(said) = first_line {
-                kit::column(Modifier::new().clip(), 0, || {
-                    line(said, 11, 1.4, Role::Muted);
-                });
+                rustle::column_arranged(
+                    Modifier::new().clip(),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        line(said, 11, 1.4, Role::Muted);
+                    },
+                );
             }
         },
     );
@@ -605,16 +666,17 @@ fn cell(content: impl Into<String>, pixels: u32, tone: Role, code: bool) {
     let kind = theme::text_style(pixels, 1.4).color(theme::color(tone));
     let kind = if code { theme::in_mono(kind) } else { kind };
     let content = content.into();
-    clipped_box(move || kit::text(Modifier::new(), content, kind));
+    clipped_box(move || rustle::basic_text(Modifier::new(), content, kind, TextOverflow::Ellipsis));
 }
 
 /// Emits a line of the list over the file that keeps its own width, `content` in `pixels` and `tone`.
 #[track_caller]
 fn tag(content: impl Into<String>, pixels: u32, tone: Role) {
     let content = content.into();
-    kit::column(
+    rustle::column_arranged(
         Modifier::new().width_in(0.0, LISTING_WIDTH * 0.5).clip(),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         move || line(content, pixels, 1.4, tone),
     );
 }
@@ -712,9 +774,14 @@ pub(crate) fn listing_cells(items: &Items, index: usize) {
                 return;
             };
             rustle::spacer(Modifier::new().width(item.depth.min(8) as f32 * 14.0));
-            kit::column(Modifier::new().width(52.0).clip(), 0, || {
-                line(item.context.clone(), 11, 1.4, Role::SyntaxKeyword);
-            });
+            rustle::column_arranged(
+                Modifier::new().width(52.0).clip(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    line(item.context.clone(), 11, 1.4, Role::SyntaxKeyword);
+                },
+            );
             cell(item.name.clone(), 12, Role::Text, true);
         }
         Items::Places { locations, .. } | Items::Search { locations, .. } => {
@@ -827,9 +894,10 @@ fn listing_panel(listing: &Listing) {
         Arrangement::Start,
         || {
             if let Some((filter, hint)) = filter {
-                kit::column(
+                rustle::column_arranged(
                     Modifier::new().fill_max_width().padding(theme::sp(0.5)),
-                    0,
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
                         Input::new(filter, Target::Editor(EditorEvent::ListingFilter))
                             .modifier(Modifier::new().fill_max_width())
@@ -839,12 +907,13 @@ fn listing_panel(listing: &Listing) {
                     },
                 );
             }
-            kit::row(
+            rustle::row_arranged(
                 Modifier::new()
                     .fill_max_width()
                     .height(theme::sp(7))
                     .padding_xy(theme::sp(1.5), 0.0),
-                2,
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Center,
                 || {
                     cell(listing.items.title(), 12, Role::Text, false);
                     if count > 0 {
@@ -853,19 +922,20 @@ fn listing_panel(listing: &Listing) {
                 },
             );
             if let Some(said) = status {
-                kit::note(1.5, 1, said, 12, Role::Muted);
+                parts::note(1.5, 1, said, 12, Role::Muted);
             }
             let end = count.min(first + LISTING_SHOWN);
             for (place, index) in shown.iter().copied().enumerate().take(end).skip(first) {
                 let id = Target::Editor(EditorEvent::ListingRow(place));
-                kit::row(
+                rustle::row_arranged(
                     pickable(id, place == listing.picked, 6.5)
                         .control(id, {
                             let operations = crate::events::operations();
                             move || operations.take_listing(Some(place))
                         })
                         .padding_xy(theme::sp(1.5), 0.0),
-                    3,
+                    Arrangement::SpacedBy(theme::sp(3)),
+                    Alignment::Center,
                     || listing_cells(&listing.items, index),
                 );
             }
@@ -927,33 +997,46 @@ fn color_box(picking: &ColorPicking) {
         None
     };
     small_box(picking.at, 260.0, EditorEvent::ColorBox, || {
-        kit::row(Modifier::new().fill_max_width(), 2, || {
-            rustle::spacer(
-                Modifier::new()
-                    .size(theme::sp(7), theme::sp(7))
-                    .background_rounded(
-                        theme::color(Color::rgba(red, green, blue, alpha)),
-                        Radius::Sm.px(),
-                    )
-                    .outlined(Radius::Sm),
-            );
-            Input::new(&picking.hex, Target::Editor(EditorEvent::ColorHex))
-                .size(Size::Sm)
-                .invalid(crate::color_picker::color_of(&picking.hex.text()).is_none())
-                .modifier(Modifier::new().weight(1.0))
-                .build();
-        });
+        rustle::row_arranged(
+            Modifier::new().fill_max_width(),
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Center,
+            || {
+                rustle::spacer(
+                    Modifier::new()
+                        .size(theme::sp(7), theme::sp(7))
+                        .background_rounded(
+                            theme::color(Color::rgba(red, green, blue, alpha)),
+                            Radius::Sm.px(),
+                        )
+                        .outlined(Radius::Sm),
+                );
+                Input::new(&picking.hex, Target::Editor(EditorEvent::ColorHex))
+                    .size(Size::Sm)
+                    .invalid(crate::color_picker::color_of(&picking.hex.text()).is_none())
+                    .modifier(Modifier::new().weight(1.0))
+                    .build();
+            },
+        );
         if let Some(said) = status {
-            kit::note(1.5, 1, said, 11, Role::Subtle);
+            parts::note(1.5, 1, said, 11, Role::Subtle);
         }
         for (place, format) in picking.formats.iter().take(COLOR_FORMATS_SHOWN).enumerate() {
             let id = Target::Editor(EditorEvent::ColorFormat(place));
-            kit::row(
+            rustle::row_arranged(
                 pickable(id, false, 6.5)
                     .control(id, send(Event::pressing(id)))
                     .padding_xy(theme::sp(1.5), 0.0),
-                0,
-                || kit::text(Modifier::new(), &format.label, kit::code(13, Role::Text)),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        &format.label,
+                        theme::code(13, Role::Text),
+                        TextOverflow::Ellipsis,
+                    )
+                },
             );
         }
         line(

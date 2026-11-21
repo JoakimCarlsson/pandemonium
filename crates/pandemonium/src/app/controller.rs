@@ -1,12 +1,11 @@
 //! The app as the views' [`Operations`]: what the controls' lambdas ask of it and what
-//! the views report of the pointer, called by the interface while it handles the event.
+//! the controls' own gestures tell it, called by the interface while it handles the event.
 //!
-//! The interface runs these while the app is free, because rustle's event loop
-//! hands an event to the interface, whose roots hand the app its own part of it
-//! once the controls have handled it (see [`run`](super::run)). What an
-//! operation finds is kept in [`Claims`] for the rest of the app's handling of
-//! the same event, which clears them when it is done. Every operation wakes
-//! the loop, so the app is caught up with what it did once the event is handled.
+//! The interface runs these while the app is free, because rustle's event loop hands an
+//! event to the interface, whose controls hand the app what happened to them as typed
+//! operations (see [`run`](super::run)). The first operation of an event notes what the
+//! keyboard holds and wakes the loop, so the app is caught up with what the event did
+//! once it is handled: the text typed, the scrolls, the focus moved.
 
 use pm_components::areas::EditorEvent;
 use pm_components::target::Target;
@@ -17,26 +16,13 @@ use std::rc::{Rc, Weak};
 use pm_components::browser_menu::BrowserCommand;
 use pm_components::events::{Change, Operations};
 use pm_components::git_menus::MenuKind;
+use pm_components::pointing::{BrowserPointer, CodePointer, Over, Press, TerminalPointer};
 use pm_components::terminal_menu::TerminalCommand;
 use pm_components::tree_actions::TreeTarget;
 use pm_editor::Action;
 
 use super::App;
 use super::asides::Aside;
-
-/// What the controls under the pointer said about the event being handled.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub(super) struct Claims {
-    /// The control the primary button went down on.
-    pub(super) press: Option<Target>,
-    /// Whether a control's lambda opened a menu for the secondary button.
-    pub(super) context: bool,
-    /// The control the primary button went down and came up on.
-    pub(super) click: Option<Target>,
-    /// Whether an operation changed the app, so a frame is due even for an
-    /// event the app's own logic does not act on.
-    pub(super) acted: bool,
-}
 
 /// The app as the views of one window see it.
 pub(super) struct Controller {
@@ -55,18 +41,9 @@ impl Controller {
         })
     }
 
-    /// Runs `act`, which opens a menu, on the app, in the window the views are in, and
-    /// keeps that a menu was opened so the app's handling of a secondary press does not
-    /// open the menu of the conversation's text as well.
-    fn with_menu(&self, act: impl FnOnce(&mut App)) {
-        self.with(|app| {
-            app.claimed.context = true;
-            act(app);
-        });
-    }
-
-    /// Runs `act` on the app, in the window the views are in, and wakes rustle's loop
-    /// for the app the first time an operation acts during an event.
+    /// Runs `act` on the app, in the window the views are in; the first operation of an
+    /// event notes what the keyboard holds before it acts and wakes rustle's loop, so the
+    /// app catches up with the event once it is handled.
     ///
     /// # Panics
     ///
@@ -77,14 +54,29 @@ impl Controller {
             return;
         };
         let mut app = app.borrow_mut();
-        if !app.claimed.acted {
+        if !app.event_pending {
+            app.note_typing();
+            app.event_pending = true;
             (app.loop_wake)();
         }
-        app.claimed.acted = true;
+        app.acted = true;
         match self.aside {
             Some(aside) => app.in_aside(aside, act),
             None => act(&mut app),
         }
+    }
+
+    /// Runs `act` on the app, in the window the views are in, timed as a move of the
+    /// pointer in the main window.
+    fn with_move(&self, act: impl FnOnce(&mut App)) {
+        let main = self.aside.is_none();
+        self.with(|app| {
+            let received = app.timings.start();
+            act(app);
+            if main {
+                app.timings.pointer(received);
+            }
+        });
     }
 }
 
@@ -94,35 +86,92 @@ impl Operations for Controller {
         self.with(|app| app.update(change));
     }
 
-    /// Takes the press, the `clicks`-th in a row by `configuration`, and keeps the control
-    /// pressed so the app's handling of the press does not look for another.
-    fn pressed(
-        &self,
-        id: Target,
-        area: rustle::Rect,
-        clicks: u32,
-        configuration: rustle::ViewConfiguration,
-    ) {
-        self.with(|app| {
-            app.claimed.press = Some(id);
-            app.anchor = Some((id, area));
-            app.press_clicks = clicks;
-            app.press_configuration = configuration;
-            app.press(id);
-        });
+    /// Takes the press of the primary button on a control.
+    fn pressed(&self, press: Press) {
+        self.with(|app| app.pressed(press));
     }
 
-    /// Lets the click count when the press began on the control and dragged nothing, and
-    /// keeps the control clicked, whether it counts or not, so the app's handling of the
-    /// release does not look for another.
-    fn click_lands(&self, id: Target, area: rustle::Rect) -> bool {
+    /// Lets the click count when the press was not taken by the control's own gesture and
+    /// dragged nothing.
+    fn click_lands(&self, click: Press) -> bool {
         let mut lands = false;
-        self.with(|app| {
-            app.claimed.click = Some(id);
-            app.anchor = Some((id, area));
-            lands = app.click_lands(id);
-        });
+        self.with(|app| lands = app.click_lands(click));
         lands
+    }
+
+    /// Takes the press of the secondary button on a control with a menu of its own.
+    fn context_pressed(&self, press: Press) {
+        self.with(|app| app.context_pressed(press));
+    }
+
+    /// Takes the press of the primary button that no control took.
+    fn pressed_elsewhere(&self, at: (f32, f32)) {
+        self.with(|app| app.pressed_elsewhere(at));
+    }
+
+    /// Steps back or forward through history, as the mouse's buttons for that ask.
+    fn history_pressed(&self, back: bool) {
+        self.with(|app| app.history_pressed(back));
+    }
+
+    /// Places the caret, selects or carries text of the code as the button did.
+    fn code_pointer(&self, pointer: CodePointer) {
+        match pointer.stroke {
+            pm_components::pointing::Stroke::Move => {
+                self.with_move(|app| app.code_pointer(pointer));
+            }
+            _ => self.with(|app| app.code_pointer(pointer)),
+        }
+    }
+
+    /// Follows the pointer over the characters of the file shown.
+    fn code_hovered(&self, byte: Option<usize>) {
+        self.with_move(|app| app.code_hovered(byte));
+    }
+
+    /// Follows the pointer coming over the card about a word, or leaving it.
+    fn hover_card_hovered(&self, over: bool) {
+        self.with(|app| app.hover_card_hovered(over));
+    }
+
+    /// Follows the primary button held on the card about a word.
+    fn hover_card_held(&self, held: bool) {
+        self.with(|app| app.hover_card_held(held));
+    }
+
+    /// Opens a link or marks text of the shell as the button did.
+    fn terminal_pointer(&self, pointer: TerminalPointer) {
+        match pointer.stroke {
+            pm_components::pointing::Stroke::Move => {
+                self.with_move(|app| app.terminal_pointer(pointer));
+            }
+            _ => self.with(|app| app.terminal_pointer(pointer)),
+        }
+    }
+
+    /// Follows the pointer over the cells of the shell.
+    fn terminal_hovered(&self, cell: Option<(usize, usize)>) {
+        self.with_move(|app| app.terminal_hovered(cell));
+    }
+
+    /// Scrolls the shell back or forward.
+    fn terminal_wheel(&self, down: f32) {
+        self.with(|app| app.terminal_wheel(down));
+    }
+
+    /// Hands the pointer on to a web page.
+    fn browser_pointer(&self, pointer: BrowserPointer) {
+        self.with_move(|app| app.browser_pointer(pointer));
+    }
+
+    /// Scrolls the sidebar's list.
+    fn sidebar_scrolled(&self, down: f32) {
+        self.with(|app| app.sidebar_scrolled(down));
+    }
+
+    /// Notes that the press being handled is inside the conversation.
+    fn conversation_pressed(&self) {
+        self.with(App::conversation_pressed);
     }
 
     /// Offers the key to the app's own keys before whatever holds rustle's
@@ -165,27 +214,6 @@ impl Operations for Controller {
         app.editor_caret_area()
     }
 
-    /// Follows the pointer coming over the control `id` or leaving it, which is
-    /// how the app knows what the pointer is over.
-    fn hovered(&self, id: Target, over: bool) {
-        let Some(app) = self.app.upgrade() else {
-            return;
-        };
-        let Ok(mut app) = app.try_borrow_mut() else {
-            return;
-        };
-        let note = |app: &mut App| {
-            app.hovered.retain(|held| *held != id);
-            if over {
-                app.hovered.push(id);
-            }
-        };
-        match self.aside {
-            Some(aside) => app.in_aside(aside, note),
-            None => note(&mut app),
-        }
-    }
-
     /// Makes the panel whose handle `id` is dragged as big as the drag says.
     fn sash_dragged(&self, id: Target, by: (f32, f32)) {
         self.with(|app| app.sash_dragged(id, by));
@@ -223,8 +251,8 @@ impl Operations for Controller {
     }
 
     /// Follows the pointer carrying a control.
-    fn carry_moved(&self, at: (f32, f32)) {
-        self.with(|app| app.carry_moved(at));
+    fn carry_moved(&self, at: (f32, f32), over: Option<Over>) {
+        self.with(|app| app.carry_moved(at, over));
     }
 
     /// Puts what was carried where it was let go.
@@ -235,6 +263,11 @@ impl Operations for Controller {
     /// Starts or stretches the lines selected for a comment.
     fn comment_dragged(&self, id: Target) {
         self.with(|app| app.comment_dragged(id));
+    }
+
+    /// Stretches the lines selected for a comment.
+    fn comment_hovered(&self, id: Target) {
+        self.with(|app| app.comment_hovered(id));
     }
 
     /// Ends the selection of lines for a comment.
@@ -248,22 +281,21 @@ impl Operations for Controller {
     }
 
     /// Shows where files held over the window would land in the project's files.
-    fn files_held(&self, at: Option<(f32, f32)>) {
+    fn files_held(&self, at: Option<(f32, f32)>, over: Option<TreeTarget>) {
         self.with(|app| {
             let at = at.map(|at| app.framed_point(at));
-            app.files_hovered(at);
+            app.files_hovered(at, over);
         });
     }
 
     /// Takes in the files let go over the window where they were let go.
-    fn files_dropped(&self, paths: Vec<PathBuf>, at: (f32, f32)) {
+    fn files_dropped(&self, paths: Vec<PathBuf>, _at: (f32, f32), over: Option<TreeTarget>) {
         self.with(|app| {
-            let at = app.framed_point(at);
             let paths = paths
                 .iter()
                 .map(|path| path.to_string_lossy().into_owned())
                 .collect();
-            app.files_dropped(paths, Some(at));
+            app.files_dropped(paths, over);
         });
     }
 
@@ -337,68 +369,111 @@ impl Operations for Controller {
         self.with(App::attach);
     }
 
-    /// Opens the menu of a server of the settings.
+    /// Opens the menu of a server of the settings where its button was clicked.
     fn open_settings_menu(&self, index: usize) {
-        self.with(|app| app.open_settings_menu(index));
+        self.with(|app| {
+            if let Some(at) = app.clicked_at() {
+                app.open_settings_menu(index, at);
+            }
+        });
     }
 
-    /// Opens the menu of a project.
-    fn open_project_menu(&self, project: usize) {
-        self.with_menu(|app| app.open_project_menu(project));
+    /// Opens the menu of a project at the pointer, or where its button was clicked.
+    fn open_project_menu(&self, project: usize, at: Option<(f32, f32)>) {
+        self.with(|app| {
+            let at = match at {
+                Some(at) => Some(app.framed_point(at)),
+                None => app.clicked_at(),
+            };
+            if let Some(at) = at {
+                app.open_project_menu(project, at);
+            }
+        });
     }
 
     /// Opens a menu of the changes.
-    fn open_git_menu(&self, kind: MenuKind, trigger: Option<Target>) {
-        self.with_menu(|app| app.open_git_menu(kind, trigger));
+    fn open_git_menu(&self, kind: MenuKind, trigger: Option<Target>, at: Option<(f32, f32)>) {
+        self.with(|app| {
+            let at = at.map(|at| app.framed_point(at));
+            app.open_git_menu(kind, trigger, at);
+        });
     }
 
-    /// Opens the menu of the pane that has the keyboard.
+    /// Opens the menu of the pane that has the keyboard where its button was clicked.
     fn open_pane_menu(&self) {
-        self.with(App::open_pane_menu);
+        self.with(|app| {
+            if let Some(at) = app.clicked_at() {
+                app.open_pane_menu(at);
+            }
+        });
     }
 
     /// Opens the menu of a session.
-    fn open_session_menu(&self, session: usize) {
-        self.with_menu(|app| app.open_session_menu(session));
+    fn open_session_menu(&self, session: usize, at: (f32, f32)) {
+        self.with(|app| {
+            let at = app.framed_point(at);
+            app.open_session_menu(session, at);
+        });
     }
 
     /// Opens the menu of a changed file.
-    fn open_change_menu(&self, index: usize) {
-        self.with_menu(|app| app.open_change_menu(index));
+    fn open_change_menu(&self, index: usize, at: (f32, f32)) {
+        self.with(|app| {
+            let at = app.framed_point(at);
+            app.open_change_menu(index, at);
+        });
     }
 
     /// Opens the menu of a folder of changed files.
-    fn open_folder_change_menu(&self, position: usize) {
-        self.with_menu(|app| app.open_folder_change_menu(position));
+    fn open_folder_change_menu(&self, position: usize, at: (f32, f32)) {
+        self.with(|app| {
+            let at = app.framed_point(at);
+            app.open_folder_change_menu(position, at);
+        });
     }
 
     /// Opens the menu of a file's tab.
-    fn open_tab_menu(&self, index: usize) {
-        self.with_menu(|app| app.open_tab_menu(index));
+    fn open_tab_menu(&self, index: usize, at: (f32, f32)) {
+        self.with(|app| {
+            let at = app.framed_point(at);
+            app.open_tab_menu(index, at);
+        });
     }
 
     /// Opens the menu of a row of the project's files.
-    fn open_tree_menu(&self, target: TreeTarget) {
-        self.with_menu(|app| app.open_tree_menu(target));
+    fn open_tree_menu(&self, target: TreeTarget, at: (f32, f32)) {
+        self.with(|app| {
+            let at = app.framed_point(at);
+            app.open_tree_menu(target, at);
+        });
     }
 
     /// Opens the menu of a field.
-    fn open_field_menu(&self, field: Target) {
-        self.with_menu(|app| app.open_menu(field));
+    fn open_field_menu(&self, field: Target, at: (f32, f32), offset: Option<usize>) {
+        self.with(|app| {
+            let at = app.framed_point(at);
+            app.open_menu(field, at, offset);
+        });
     }
 
     /// Opens the menu of the shell.
-    fn open_terminal_menu(&self) {
-        self.with_menu(App::open_terminal_menu);
+    fn open_terminal_menu(&self, at: (f32, f32)) {
+        self.with(|app| {
+            let at = app.framed_point(at);
+            app.open_terminal_menu(at);
+        });
     }
 
     /// Opens the menu of the web page.
-    fn open_browser_menu(&self) {
-        self.with_menu(App::open_browser_menu);
+    fn open_browser_menu(&self, at: (f32, f32)) {
+        self.with(|app| {
+            let at = app.framed_point(at);
+            app.open_browser_menu(at);
+        });
     }
 
-    /// Opens the menu of the conversation's text.
-    fn open_message_menu(&self) {
-        self.with_menu(App::open_message_menu);
+    /// Opens the menu of a message of the conversation, or closes the menus open.
+    fn open_message_menu(&self, message: Option<usize>, at: (f32, f32)) {
+        self.with(|app| app.open_message_menu(message, at));
     }
 }

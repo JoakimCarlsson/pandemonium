@@ -87,15 +87,11 @@ pub(crate) fn scroll_marks(document: &Document, found: &[Range<usize>], settings
         .into_iter()
         .map(|(share, tone)| (share.clamp(0.0, 1.0), color(tone)))
         .collect();
-    rustle::spacer(
-        Modifier::new()
-            .match_parent_size()
-            .draw_behind(move |canvas| {
-                let left = canvas.width() - STRIP_WIDTH;
-                let height = canvas.height();
-                for (share, paint) in &painted {
-                    canvas.rect(left, height * share, STRIP_WIDTH, MARK_HEIGHT, *paint);
-                }
-            }),
-    );
+    rustle::canvas(Modifier::new().match_parent_size(), move |canvas| {
+        let left = canvas.width() - STRIP_WIDTH;
+        let height = canvas.height();
+        for (share, paint) in &painted {
+            canvas.rect(left, height * share, STRIP_WIDTH, MARK_HEIGHT, *paint);
+        }
+    });
 }

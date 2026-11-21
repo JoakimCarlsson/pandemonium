@@ -1,7 +1,8 @@
 //! The minimap: a map of the whole file drawn small beside it, each line a row of coloured blocks where the text is, with the stretch the view shows marked; pressing or dragging on it scrolls the file.
 
 use crate::areas::EditorEvent;
-use crate::kit::{self, Frame};
+use crate::events;
+use rustle::{Alignment, Arrangement};
 
 use crate::target::Target;
 use crate::theme;
@@ -169,30 +170,35 @@ pub(crate) fn minimap(
         .map_or((0, 0), |(low, high)| (*low, high + 1));
     let spans = document.minimap_highlights(low..high);
     let (slider_top, size) = geometry.slider(top, height);
-    let own = Modifier::new()
-        .width(WIDTH)
-        .fill_max_height()
-        .ruled(theme::Side::Left)
-        .clip();
-    let own = kit::pressed(own, Target::Editor(EditorEvent::Minimap))
-        .chain(crate::events::minimap_drag());
-    rustle::stack_with(own, || {
-        kit::column(
-            Modifier::new().offset(0.0, first as f32 * ROW - geometry.offset),
-            0,
-            || {
-                for index in &shown {
-                    row_of(document, *index, &spans[index - low]);
-                }
-            },
-        );
-        rustle::spacer(
-            Modifier::new()
-                .offset(0.0, slider_top)
-                .size(WIDTH, size)
-                .background(theme::color(Role::Muted.alpha(0.2))),
-        );
-    });
+    rustle::row_arranged(
+        Modifier::new().width(WIDTH).fill_max_height(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            rustle::vertical_divider(Modifier::new(), 1.0, theme::color(Role::Border));
+            let own = Modifier::new().weight(1.0).fill_max_height().clip();
+            let own = events::pressed(own, Target::Editor(EditorEvent::Minimap))
+                .chain(crate::events::minimap_drag());
+            rustle::stack_with(own, || {
+                rustle::column_arranged(
+                    Modifier::new().offset(0.0, first as f32 * ROW - geometry.offset),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        for index in &shown {
+                            row_of(document, *index, &spans[index - low]);
+                        }
+                    },
+                );
+                rustle::spacer(
+                    Modifier::new()
+                        .offset(0.0, slider_top)
+                        .size(WIDTH, size)
+                        .background(theme::color(Role::Muted.alpha(0.2))),
+                );
+            });
+        },
+    );
 }
 
 impl WorkspaceState {

@@ -1,15 +1,18 @@
 //! The browser pane: a page of the web beside the agent's work, with its address bar and, beside it, the developer tools of the page.
 
 use crate::areas::BrowserEvent;
+use crate::button;
 use crate::events::{Event, send};
-use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
+use rustle::Modifier;
 use rustle::TextFieldState;
 use rustle::phosphor;
-use rustle::{CursorIcon, Modifier};
+use rustle::{Alignment, Arrangement};
 
+use std::cell::Cell;
 use std::ops::{Deref, DerefMut};
+use std::rc::Rc;
 
 use crate::events::Interactive;
 use crate::icons::panel_right;
@@ -17,6 +20,7 @@ use crate::theme::Role;
 
 use crate::browser_address::address_of;
 use crate::browser_find::find_bar;
+use crate::browser_pointing::{PagePointer, cursor_of};
 use crate::browser_safety::{Answer, certificate_page};
 use crate::browser_tabs::{BrowserTab, SavedTab, TAB_STRIP, tab_strip};
 use crate::button::Variant;
@@ -609,13 +613,15 @@ fn toggled(on: bool) -> Variant {
 /// Emits the bar above the page of `browser`: back, forward, reload, the address, the zoom when it is not 100%, picking, capturing, the lock and the developer tools.
 fn toolbar(browser: &Browser) {
     let zoomed = (browser.zoom - 1.0).abs() > 0.005;
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .fill_max_width()
             .height(TOOLBAR)
-            .ruled(theme::Side::Bottom)
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
             .padding_xy(theme::sp(2), 0.0),
-        1,
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
         || {
             for (icon, id) in [
                 (phosphor::ARROW_LEFT, BrowserEvent::BrowserBack),
@@ -624,18 +630,23 @@ fn toolbar(browser: &Browser) {
             ] {
                 Button::icon(icon, Target::Browser(id)).build();
             }
-            kit::column(Modifier::new().weight(1.0), 0, || {
-                Input::new(
-                    &browser.address,
-                    Target::Browser(BrowserEvent::BrowserAddress),
-                )
-                .size(Size::Sm)
-                .placeholder("Search or enter an address")
-                .modifier(Modifier::new().fill_max_width())
-                .build();
-            });
+            rustle::column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    Input::new(
+                        &browser.address,
+                        Target::Browser(BrowserEvent::BrowserAddress),
+                    )
+                    .size(Size::Sm)
+                    .placeholder("Search or enter an address")
+                    .modifier(Modifier::new().fill_max_width())
+                    .build();
+                },
+            );
             if zoomed {
-                kit::action(
+                button::action(
                     format!("{}%", (browser.zoom * 100.0).round()),
                     Target::Browser(BrowserEvent::BrowserZoom),
                     Variant::Ghost,
@@ -684,30 +695,44 @@ fn toolbar(browser: &Browser) {
     );
 }
 
-/// Emits the window `id` of `browser`, `wide` by `tall` logical pixels: the certificate the page is stopped at, the newest `shown` picture, or what the tab says instead of a page.
+/// Emits the window `id` of `browser`, `wide` by `tall` logical pixels: the certificate the page is stopped at, the newest `shown` picture, or what the tab says instead of a page. The pointer over it is handed on to the page unless the question about clearing covers it or the pointer is over what is drawn over the page, as `covered` says.
 #[track_caller]
-fn surface(browser: &Browser, id: Target, shown: &Option<rustle::ImageData>, wide: f32, tall: f32) {
+fn surface(
+    browser: &Browser,
+    id: Target,
+    shown: &Option<rustle::ImageData>,
+    (wide, tall): (f32, f32),
+    covered: &Rc<Cell<bool>>,
+) {
     if id == Target::Browser(BrowserEvent::BrowserBody)
         && let Some(certificate) = browser.safety.certificate.as_ref()
     {
         certificate_page(certificate, wide, tall);
         return;
     }
+    let page = PagePointer::new(id, !browser.clearing, Rc::clone(covered));
+    let on_pointer = page.on_pointer();
     let body = Modifier::new()
         .width(wide)
         .height(tall)
         .clip()
-        .cursor(CursorIcon::Text)
-        .pressable_menu(id, send(Event::pressing(id)), {
-            let operations = crate::events::operations();
-            move || {
-                if id == Target::Browser(BrowserEvent::BrowserBody) {
-                    operations.open_browser_menu();
-                } else {
-                    operations.open_message_menu();
+        .cursor(cursor_of(browser.pointer))
+        .chain(page.modifier())
+        .pressable_pointing(
+            id,
+            send(Event::pressing(id)),
+            {
+                let operations = crate::events::operations();
+                move |at| {
+                    if id == Target::Browser(BrowserEvent::BrowserBody) {
+                        operations.open_browser_menu(at);
+                    } else {
+                        operations.open_message_menu(None, at);
+                    }
                 }
-            }
-        })
+            },
+            move |event| on_pointer(event),
+        )
         .chain(crate::bounds::placed(id, Modifier::new()))
         .chain(crate::focus::keyboard_focus(id));
     match shown {
@@ -716,7 +741,7 @@ fn surface(browser: &Browser, id: Target, shown: &Option<rustle::ImageData>, wid
         {
             rustle::image(body, shown, rustle::ContentScale::Crop)
         }
-        _ => kit::column(body, 0, || {
+        _ => rustle::column_arranged(body, Arrangement::Start, Alignment::Start, || {
             line(
                 browser.notice.as_deref().unwrap_or("Loading"),
                 12,
@@ -758,38 +783,46 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) {
         Some(tools) => ((width - tools - 1.0).max(0.0), tools + 1.0),
         None => (width, 0.0),
     };
-    kit::column(
+    let covered = rustle::remember(|| Rc::new(Cell::new(false))).get();
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .height(height)
             .background(theme::color(Role::Background)),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
             tab_strip(browser, width);
             toolbar(browser);
             browser.safety.bar_nodes();
             rustle::stack_with(Modifier::new().fill_max_width().height(room), || {
-                kit::row_top(Modifier::new().fill_max_width().height(room), 0, || {
-                    surface(
-                        browser,
-                        Target::Browser(BrowserEvent::BrowserBody),
-                        &browser.page,
-                        page_width,
-                        room,
-                    );
-                    if let Some(tools) = tools {
-                        divider(room);
+                rustle::row_arranged(
+                    Modifier::new().fill_max_width().height(room),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
                         surface(
                             browser,
-                            Target::Browser(BrowserEvent::BrowserToolsBody),
-                            &browser.tools_page,
-                            tools,
-                            room,
+                            Target::Browser(BrowserEvent::BrowserBody),
+                            &browser.page,
+                            (page_width, room),
+                            &covered,
                         );
-                    }
-                });
+                        if let Some(tools) = tools {
+                            divider(room);
+                            surface(
+                                browser,
+                                Target::Browser(BrowserEvent::BrowserToolsBody),
+                                &browser.tools_page,
+                                (tools, room),
+                                &covered,
+                            );
+                        }
+                    },
+                );
                 if let Some(search) = browser.search.as_ref() {
-                    find_bar(search, page_width, beside);
+                    let over = Rc::clone(&covered);
+                    find_bar(search, page_width, beside, move |hovered| over.set(hovered));
                 }
                 browser
                     .safety

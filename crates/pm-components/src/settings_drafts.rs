@@ -1,14 +1,16 @@
 //! The form on the pages of skills, instruction files and agent definitions that writes a new one from a template, in the project's folder or the reader's own, and opens it to be filled in.
 
 use crate::areas::SettingsEvent;
-use crate::kit::{self, Frame};
+use crate::button;
 use crate::target::Target;
 use crate::theme;
+use crate::theme::Frame;
 use pm_protocol::library::{
     APPENDS_PROMPT, Item, Kind, PromptFile, REPLACES_PROMPT, Scope, valid_name,
 };
 use rustle::Modifier;
 use rustle::TextFieldState;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
 use crate::theme::{Radius, Role};
 
@@ -264,11 +266,16 @@ pub(crate) fn prompt_node(state: &WorkspaceState, room: f32) {
             None => format!("{about} Not written yet."),
         };
         flat_row(3, || {
-            kit::column(Modifier::new().weight(1.0), 1, || {
-                line(title, 13, 1.4, Role::Text);
-                wrapped_note(&said, (room - 160.0).max(120.0));
-            });
-            kit::small_button(
+            rustle::column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::SpacedBy(theme::sp(1)),
+                Alignment::Start,
+                || {
+                    line(title, 13, 1.4, Role::Text);
+                    wrapped_note(&said, (room - 160.0).max(120.0));
+                },
+            );
+            button::small_button(
                 if found.is_some() { "Open" } else { "Write" },
                 id,
                 Variant::Outline,
@@ -277,35 +284,46 @@ pub(crate) fn prompt_node(state: &WorkspaceState, room: f32) {
             .build();
         });
     };
-    kit::column(Modifier::new().fill_max_width(), 2, || {
-        kit::row(Modifier::new().height(theme::sp(9)), 0, || {
-            kit::text(
-                Modifier::new(),
-                "System prompt",
-                kit::strong(15, Role::Text),
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
+        || {
+            rustle::row_arranged(
+                Modifier::new().height(theme::sp(9)),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        "System prompt",
+                        theme::strong(15, Role::Text),
+                        TextOverflow::Ellipsis,
+                    );
+                },
             );
-        });
-        boxed(|| {
-            prompt_row(
-                PromptFile::Replace,
-                "Replace crab's instructions",
-                "SYSTEM.md takes the place of crab's built-in instructions; its tools, skills and the project's details are still added.",
-                Target::Settings(SettingsEvent::PromptReplace),
-            );
-            prompt_row(
-                PromptFile::Append,
-                "Add to every prompt",
-                "APPEND_SYSTEM.md is added to the end of every prompt, subagents' too.",
-                Target::Settings(SettingsEvent::PromptAppend),
-            );
-        });
-    });
+            boxed(|| {
+                prompt_row(
+                    PromptFile::Replace,
+                    "Replace crab's instructions",
+                    "SYSTEM.md takes the place of crab's built-in instructions; its tools, skills and the project's details are still added.",
+                    Target::Settings(SettingsEvent::PromptReplace),
+                );
+                prompt_row(
+                    PromptFile::Append,
+                    "Add to every prompt",
+                    "APPEND_SYSTEM.md is added to the end of every prompt, subagents' too.",
+                    Target::Settings(SettingsEvent::PromptAppend),
+                );
+            });
+        },
+    );
 }
 
 /// Emits the button that opens the form for a new customization of `kind`, turned off while the form is open or nothing can be written.
 pub(crate) fn new_button(state: &WorkspaceState, kind: Kind) {
     let library = &state.settings_page.library;
-    kit::small_button(
+    button::small_button(
         new_label(kind),
         Target::Settings(SettingsEvent::DraftNew),
         Variant::Outline,
@@ -365,12 +383,13 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) {
         }
         (None, true) => None,
     };
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .panel(Radius::Lg)
             .padding(theme::sp(4)),
-        3,
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Start,
         || {
             labelled(
                 "Name",
@@ -396,7 +415,7 @@ pub(crate) fn draft_node(form: &DraftForm, room: f32) {
             if let Some(message) = message {
                 line(message, 12, 1.4, Role::Danger);
             }
-            kit::confirm_row(
+            button::confirm_row(
                 if form.busy { "Creating…" } else { "Create" },
                 Target::Settings(SettingsEvent::DraftCreate),
                 form.complete(),

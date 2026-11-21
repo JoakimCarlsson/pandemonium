@@ -2,8 +2,12 @@
 
 use crate::areas::GitEvent;
 use crate::areas::{DiffEvent, SearchEvent, TreeEvent};
-use crate::kit::{self, Frame};
-use crate::theme::Indicated;
+use crate::button;
+use crate::events;
+use crate::icons;
+use crate::parts;
+use crate::theme::{FocusOutline, Indicated};
+use rustle::TextOverflow;
 
 use crate::events::{Event, send};
 use crate::git_menus::MenuKind;
@@ -38,14 +42,15 @@ pub const WIDTHS: (f32, f32) = (260.0, 760.0);
 
 /// Emits the box that holds the rows of the panel's list, which `content` emits, and scrolls them.
 fn scrolling_list(state: &WorkspaceState, content: impl FnOnce()) {
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .weight(1.0)
             .vertical_scroll(&state.tree_scroll)
             .fill_max_width()
             .padding_xy(0.0, theme::sp(1)),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         content,
     );
 }
@@ -53,9 +58,10 @@ fn scrolling_list(state: &WorkspaceState, content: impl FnOnce()) {
 /// Emits a line telling the list has nothing to show.
 #[track_caller]
 pub(crate) fn nothing(message: &str) {
-    kit::row_top(
+    rustle::row_arranged(
         Modifier::new().padding_xy(theme::sp(4), theme::sp(3)),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || line(message, 13, 1.4, Role::Subtle),
     );
 }
@@ -84,11 +90,12 @@ pub(crate) fn small_icon_button(icon: Icon, id: Target, spinning: bool, tooltip:
 
 /// Emits the line above the tree: what it lists, and the buttons that make a file or folder, read it again and fold it.
 fn files_header(state: &WorkspaceState) {
-    kit::bar(10, 3, 2, || {
-        kit::text(
+    parts::bar(10, 3, 2, || {
+        rustle::basic_text(
             Modifier::new().weight(1.0),
             "Files",
-            kit::line(13, Role::Subtle),
+            theme::line(13, Role::Subtle),
+            TextOverflow::Ellipsis,
         );
         for (icon, id, spinning, tooltip) in [
             (
@@ -124,10 +131,15 @@ fn files_header(state: &WorkspaceState) {
 /// Emits every file of the project, as a tree, under the buttons that act on it.
 #[track_caller]
 fn files(state: &WorkspaceState) {
-    kit::column(Modifier::new().fill_max_width().weight(1.0), 0, || {
-        files_header(state);
-        file_tree::list(state);
-    });
+    rustle::column_arranged(
+        Modifier::new().fill_max_width().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            files_header(state);
+            file_tree::list(state);
+        },
+    );
 }
 
 /// Whether the button under the commit message does something now: it is neither stopped nor waiting.
@@ -151,25 +163,35 @@ fn primary_face(primary: &Primary) {
         Primary::Publish => (phosphor::ARROW_LINE_UP, "Publish Branch"),
         Primary::Busy(doing) => (phosphor::CIRCLE_DASHED, *doing),
     };
-    kit::row(Modifier::new(), 2, || {
-        if matches!(primary, Primary::Busy(_)) {
-            spinner(3.5, tone);
-        } else {
-            glyph(icon, 3.5, tone);
-        }
-        kit::text(Modifier::new(), words, kit::strong(13, tone));
-        if let Primary::Sync { ahead, behind } = primary {
-            for (count, arrow) in [
-                (*behind, phosphor::ARROW_DOWN),
-                (*ahead, phosphor::ARROW_UP),
-            ] {
-                if count > 0 {
-                    line(count.to_string(), 13, 1.4, tone);
-                    glyph(arrow, 3.0, tone);
+    rustle::row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            if matches!(primary, Primary::Busy(_)) {
+                spinner(3.5, tone);
+            } else {
+                glyph(icon, 3.5, tone);
+            }
+            rustle::basic_text(
+                Modifier::new(),
+                words,
+                theme::strong(13, tone),
+                TextOverflow::Ellipsis,
+            );
+            if let Primary::Sync { ahead, behind } = primary {
+                for (count, arrow) in [
+                    (*behind, phosphor::ARROW_DOWN),
+                    (*ahead, phosphor::ARROW_UP),
+                ] {
+                    if count > 0 {
+                        line(count.to_string(), 13, 1.4, tone);
+                        glyph(arrow, 3.0, tone);
+                    }
                 }
             }
-        }
-    });
+        },
+    );
 }
 
 /// Emits the control that commits, or syncs or publishes once there is nothing to commit, with the arrow that offers what else it can do.
@@ -181,7 +203,7 @@ fn commit_button(primary: &Primary) {
         if enabled {
             own.indicated(
                 theme::InteractionTones::new().hover(Role::SurfaceHover),
-                theme::Focused::Held(crate::focus::is_held(id)),
+                theme::Focused::Control(crate::focus::is_focused(id)),
             )
             .cursor(CursorIcon::Pointer)
             .control(id, move || on_click())
@@ -196,25 +218,31 @@ fn commit_button(primary: &Primary) {
     );
     let operations = crate::events::operations();
     let arrow = pressable(
-        Modifier::new().fill_max_height().ruled(theme::Side::Left),
+        Modifier::new().fill_max_height(),
         Target::Git(GitEvent::CommitChevron),
         Rc::new(move || {
-            operations.open_git_menu(MenuKind::Commit, Some(Target::Git(GitEvent::CommitChevron)))
+            operations.open_git_menu(
+                MenuKind::Commit,
+                Some(Target::Git(GitEvent::CommitChevron)),
+                None,
+            )
         }),
     )
     .padding_xy(theme::sp(2), 0.0);
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .fill_max_width()
             .padding_each(theme::sp(3), 0.0, theme::sp(3), theme::sp(2))
             .height(theme::sp(9))
             .background_rounded(theme::color(Role::SurfaceSelected), Radius::Md.px()),
-        0,
+        Arrangement::Start,
+        Alignment::Center,
         || {
             row_arranged(main, Arrangement::Center, Alignment::Center, || {
                 primary_face(primary)
             });
-            kit::row(arrow, 0, || {
+            rustle::vertical_divider(Modifier::new(), 1.0, theme::color(Role::Border));
+            rustle::row_arranged(arrow, Arrangement::Start, Alignment::Center, || {
                 glyph(
                     phosphor::CARET_DOWN,
                     3.0,
@@ -227,21 +255,20 @@ fn commit_button(primary: &Primary) {
 
 /// Emits the box the commit message is written in: several lines, wrapped to the panel.
 fn message_box(state: &WorkspaceState) {
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .padding_xy(theme::sp(3), theme::sp(2))
             .background_rounded(theme::color(Role::Background), Radius::Lg.px())
-            .indicated(
-                theme::FocusOutline {
-                    idle: theme::color(Role::Border),
-                    focused: theme::color(Role::Accent),
-                    radius: Radius::Lg,
-                },
-                theme::Focused::Held(crate::focus::is_held(Target::Git(GitEvent::CommitMessage))),
+            .focus_outline(
+                crate::focus::is_focused(Target::Git(GitEvent::CommitMessage)),
+                theme::color(Role::Border),
+                theme::color(Role::Accent),
+                Radius::Lg,
             )
             .padding(1.0),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
             Input::new(&state.message, Target::Git(GitEvent::CommitMessage))
                 .modifier(Modifier::new().fill_max_width())
@@ -260,21 +287,23 @@ fn message_box(state: &WorkspaceState) {
 fn section_heading(state: &WorkspaceState, primary: &Primary) {
     let open = state.git.changes_open;
     let committable = matches!(primary, Primary::Commit { stopped: None, .. });
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .fill_max_width()
             .height(theme::sp(8))
             .padding_xy(theme::sp(2), 0.0),
-        1,
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
         || {
-            kit::row(
-                kit::pressed(
+            rustle::row_arranged(
+                events::pressed(
                     Modifier::new().weight(1.0).fill_max_height(),
                     Target::Git(GitEvent::ChangesToggle),
                 ),
-                1,
+                Arrangement::SpacedBy(theme::sp(1)),
+                Alignment::Center,
                 || {
-                    glyph(kit::chevron(open), 3.5, Role::Subtle);
+                    glyph(icons::chevron(open), 3.5, Role::Subtle);
                     line("Changes", 13, 1.4, Role::Text);
                 },
             );
@@ -291,8 +320,11 @@ fn section_heading(state: &WorkspaceState, primary: &Primary) {
             let operations = crate::events::operations();
             Button::icon(phosphor::DOTS_THREE, Target::Git(GitEvent::ChangesMore))
                 .on_click(move || {
-                    operations
-                        .open_git_menu(MenuKind::Source, Some(Target::Git(GitEvent::ChangesMore)))
+                    operations.open_git_menu(
+                        MenuKind::Source,
+                        Some(Target::Git(GitEvent::ChangesMore)),
+                        None,
+                    )
                 })
                 .tooltip("More Actions…")
                 .build();
@@ -303,19 +335,25 @@ fn section_heading(state: &WorkspaceState, primary: &Primary) {
 /// Emits the banner saying what git refused to do, with a button that dismisses it, in a panel `width` logical pixels wide.
 #[track_caller]
 fn trouble(said: &str, width: f32) {
-    kit::row_top(
+    rustle::row_arranged(
         Modifier::new()
             .fill_max_width()
             .padding_each(theme::sp(3), 0.0, theme::sp(3), theme::sp(2))
             .background_rounded(theme::color(Role::Danger.alpha(0.12)), Radius::Md.px())
             .padding_xy(theme::sp(3), theme::sp(2)),
-        2,
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
         || {
-            kit::column(Modifier::new().weight(1.0), 0, || {
-                for words in wrap(said, 12, width - 24.0 - 56.0) {
-                    line(words, 12, 1.5, Role::Danger);
-                }
-            });
+            rustle::column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    for words in wrap(said, 12, width - 24.0 - 56.0) {
+                        line(words, 12, 1.5, Role::Danger);
+                    }
+                },
+            );
             Button::icon(phosphor::X, Target::Git(GitEvent::TroubleDismiss)).build();
         },
     );
@@ -337,27 +375,37 @@ fn changes(state: &WorkspaceState, session: &Session) {
         return;
     }
     let primary = state.primary();
-    kit::column(Modifier::new().fill_max_width().weight(1.0), 0, || {
-        kit::column(Modifier::new().fill_max_width().weight(1.0), 0, || {
-            section_heading(state, &primary);
-            if let Some(said) = state.git.trouble.as_deref() {
-                trouble(said, state.review_width);
-            }
-            if state.git.changes_open {
-                message_box(state);
-                commit_button(&primary);
-                scrolling_list(state, || {
-                    change_list::rows(state, session);
-                    if session.changes.is_empty() {
-                        nothing("No uncommitted changes.");
+    rustle::column_arranged(
+        Modifier::new().fill_max_width().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            rustle::column_arranged(
+                Modifier::new().fill_max_width().weight(1.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    section_heading(state, &primary);
+                    if let Some(said) = state.git.trouble.as_deref() {
+                        trouble(said, state.review_width);
                     }
-                });
-            } else {
-                spacer();
-            }
-        });
-        graph(state);
-    });
+                    if state.git.changes_open {
+                        message_box(state);
+                        commit_button(&primary);
+                        scrolling_list(state, || {
+                            change_list::rows(state, session);
+                            if session.changes.is_empty() {
+                                nothing("No uncommitted changes.");
+                            }
+                        });
+                    } else {
+                        spacer();
+                    }
+                },
+            );
+            graph(state);
+        },
+    );
 }
 
 /// Emits the rows of the list of repositories of `session`'s folder, when it has submodules: its own and each submodule, nested ones set in under the one they are in, each with what it has checked out on a button that opens its branches; the one the panel works on is picked.
@@ -386,18 +434,21 @@ fn repositories(state: &WorkspaceState, session: &Session) {
                 .count()
         })
     };
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
-            .ruled(theme::Side::Bottom)
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
             .padding_each(theme::sp(1), 0.0, theme::sp(1), theme::sp(2)),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            kit::row(
+            rustle::row_arranged(
                 Modifier::new()
                     .height(theme::sp(7))
                     .padding_xy(theme::sp(2), 0.0),
-                0,
+                Arrangement::Start,
+                Alignment::Center,
                 || line("Repositories", 12, 1.4, Role::Subtle),
             );
             for (place, repository) in repositories.iter().enumerate() {
@@ -433,7 +484,7 @@ fn repositories(state: &WorkspaceState, session: &Session) {
                         if changed > 0 {
                             line(changed.to_string(), 11, 1.4, Role::Subtle);
                         }
-                        kit::small_button(
+                        button::small_button(
                             &head,
                             Target::Git(GitEvent::RepositoryBranch(place)),
                             Variant::Ghost,
@@ -461,7 +512,7 @@ fn branch_button(state: &WorkspaceState, session: &Session, working: bool) {
     let head = state
         .head_of(state.git.repository.as_deref())
         .unwrap_or_else(|| session.branch.clone());
-    kit::small_button(&head, Target::Git(GitEvent::BranchButton), Variant::Ghost)
+    button::small_button(&head, Target::Git(GitEvent::BranchButton), Variant::Ghost)
         .tone(Role::Text)
         .with_icon(phosphor::GIT_FORK)
         .monospace()
@@ -483,63 +534,77 @@ pub fn review(state: &WorkspaceState, session: &Session) {
         ReviewTab::Changes if !versioned => ReviewTab::Files,
         tab => tab,
     };
-    rustle::stack_with(
+    rustle::row_arranged(
         Modifier::new()
             .width(state.review_width)
             .fill_max_height()
-            .background(theme::color(Role::Background))
-            .ruled(theme::Side::Left),
+            .background(theme::color(Role::Background)),
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            kit::column(Modifier::new().fill_max_size(), 0, || {
-                kit::bar(12, 3, 2, || {
-                    kit::row(Modifier::new().weight(1.0).clip(), 2, || {
-                        if versioned {
-                            panel_tab(
-                                "Source Control",
-                                phosphor::GIT_BRANCH,
-                                phosphor::fill::GIT_BRANCH,
-                                Target::Diff(DiffEvent::ReviewChanges),
-                                shown == ReviewTab::Changes,
+            rustle::vertical_divider(Modifier::new(), 1.0, theme::color(Role::Border));
+            rustle::stack_with(Modifier::new().weight(1.0).fill_max_height(), || {
+                rustle::column_arranged(
+                    Modifier::new().fill_max_size(),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        parts::bar(12, 3, 2, || {
+                            rustle::row_arranged(
+                                Modifier::new().weight(1.0).clip(),
+                                Arrangement::SpacedBy(theme::sp(2)),
+                                Alignment::Center,
+                                || {
+                                    if versioned {
+                                        panel_tab(
+                                            "Source Control",
+                                            phosphor::GIT_BRANCH,
+                                            phosphor::fill::GIT_BRANCH,
+                                            Target::Diff(DiffEvent::ReviewChanges),
+                                            shown == ReviewTab::Changes,
+                                        );
+                                    }
+                                    panel_tab(
+                                        "Files",
+                                        phosphor::FOLDER,
+                                        phosphor::fill::FOLDER,
+                                        Target::Diff(DiffEvent::ReviewFiles),
+                                        shown == ReviewTab::Files,
+                                    );
+                                    panel_tab(
+                                        "Search",
+                                        phosphor::MAGNIFYING_GLASS,
+                                        phosphor::fill::MAGNIFYING_GLASS,
+                                        Target::Search(SearchEvent::ReviewSearch),
+                                        shown == ReviewTab::Search,
+                                    );
+                                },
                             );
+                            if shown == ReviewTab::Changes && !session.changes.is_empty() {
+                                Button::icon(phosphor::GIT_DIFF, Target::Diff(DiffEvent::OpenDiff))
+                                    .tooltip("Open Diff")
+                                    .build();
+                            }
+                        });
+                        if versioned {
+                            parts::bar(10, 3, 2, || {
+                                branch_button(state, session, state.git.working)
+                            });
                         }
-                        panel_tab(
-                            "Files",
-                            phosphor::FOLDER,
-                            phosphor::fill::FOLDER,
-                            Target::Diff(DiffEvent::ReviewFiles),
-                            shown == ReviewTab::Files,
-                        );
-                        panel_tab(
-                            "Search",
-                            phosphor::MAGNIFYING_GLASS,
-                            phosphor::fill::MAGNIFYING_GLASS,
-                            Target::Search(SearchEvent::ReviewSearch),
-                            shown == ReviewTab::Search,
-                        );
-                    });
-                    if shown == ReviewTab::Changes && !session.changes.is_empty() {
-                        Button::icon(phosphor::GIT_DIFF, Target::Diff(DiffEvent::OpenDiff))
-                            .tooltip("Open Diff")
-                            .build();
-                    }
-                });
-                if versioned {
-                    kit::bar(10, 3, 2, || {
-                        branch_button(state, session, state.git.working)
-                    });
-                }
-                if shown == ReviewTab::Changes {
-                    repositories(state, session);
-                }
-                match shown {
-                    ReviewTab::Changes => changes(state, session),
-                    ReviewTab::Files => files(state),
-                    ReviewTab::Search => crate::project_search::panel(state),
+                        if shown == ReviewTab::Changes {
+                            repositories(state, session);
+                        }
+                        match shown {
+                            ReviewTab::Changes => changes(state, session),
+                            ReviewTab::Files => files(state),
+                            ReviewTab::Search => crate::project_search::panel(state),
+                        }
+                    },
+                );
+                if versioned && state.git.branch_menu {
+                    branch_menu(state);
                 }
             });
-            if versioned && state.git.branch_menu {
-                branch_menu(state);
-            }
         },
     );
 }

@@ -1,13 +1,14 @@
 //! The problems tab of the dock: what the language servers say is wrong with the files of the project, each a row that goes to its place.
 
 use crate::areas::TerminalEvent;
-use crate::kit;
+use crate::events;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
 use crate::theme::{Role, color};
 use pm_protocol::Severity;
 use rustle::Modifier;
+use rustle::{Alignment, Arrangement};
 
 use crate::parts::line;
 use crate::state::WorkspaceState;
@@ -48,40 +49,47 @@ fn problem_row(index: usize, problem: &pm_protocol::Problem) {
         .clip()
         .indicated(
             theme::InteractionTones::new().hover(Role::SurfaceHover),
-            theme::Focused::Held(crate::focus::is_held(id)),
+            theme::Focused::Control(crate::focus::is_focused(id)),
         );
-    let modifier = kit::pressed(modifier, id).padding_xy(theme::sp(3), 0.0);
+    let modifier = events::pressed(modifier, id).padding_xy(theme::sp(3), 0.0);
     let dot = color(severity_role(diagnostic.severity));
-    kit::row(modifier, 2, || {
-        rustle::spacer(
-            Modifier::new()
-                .size(theme::sp(2), theme::sp(2))
-                .background_rounded(dot, 4.0),
-        );
-        line(message.to_owned(), 12, 1.4, Role::Text);
-        if let Some(source) = &diagnostic.source {
-            line(source.clone(), 11, 1.4, Role::Subtle);
-        }
-        line(place, 11, 1.4, Role::Subtle);
-    });
+    rustle::row_arranged(
+        modifier,
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            rustle::spacer(
+                Modifier::new()
+                    .size(theme::sp(2), theme::sp(2))
+                    .background_rounded(dot, 4.0),
+            );
+            line(message.to_owned(), 12, 1.4, Role::Text);
+            if let Some(source) = &diagnostic.source {
+                line(source.clone(), 11, 1.4, Role::Subtle);
+            }
+            line(place, 11, 1.4, Role::Subtle);
+        },
+    );
 }
 
 /// Emits the tab: the list of problems, scrolled as the state says.
 pub fn problems_tab(state: &WorkspaceState) {
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .weight(1.0)
             .clip()
             .vertical_scroll(&state.problems_scroll)
             .fill_max_width(),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
             if state.current_problems().is_empty() {
-                kit::row(
+                rustle::row_arranged(
                     Modifier::new()
                         .height(theme::sp(7))
                         .padding_xy(theme::sp(3), 0.0),
-                    0,
+                    Arrangement::Start,
+                    Alignment::Center,
                     || line(NOTHING_WRONG, 12, 1.4, Role::Subtle),
                 );
                 return;

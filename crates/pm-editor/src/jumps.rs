@@ -1,6 +1,6 @@
 //! Jumping to a place in a document.
 
-use pm_field::Edit;
+use crate::Edit;
 use pm_protocol::Position;
 
 use crate::document::Document;

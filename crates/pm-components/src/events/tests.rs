@@ -6,9 +6,10 @@ use crate::target::Target;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use rustle::{Embedded, Key, KeyEvent, Modifier, Modifiers, Offset, PointerButton, Rect};
+use rustle::{Embedded, Key, KeyEvent, Modifier, Modifiers, Offset, PointerButton};
 
 use super::{Change, Interactive, Operations, activates, provide};
+use crate::pointing::Press;
 
 /// Operations that let every click count and keep what the views asked of them.
 #[derive(Default)]
@@ -24,17 +25,17 @@ impl Operations for Recording {
     fn update(&self, _: Change) {}
 
     /// Keeps the control pressed.
-    fn pressed(&self, id: Target, _: Rect, _: u32, _: rustle::ViewConfiguration) {
-        self.pressed.borrow_mut().push(id);
+    fn pressed(&self, press: Press) {
+        self.pressed.borrow_mut().push(press.id);
     }
 
     /// Lets every click count.
-    fn click_lands(&self, _: Target, _: Rect) -> bool {
+    fn click_lands(&self, _: Press) -> bool {
         true
     }
 
     /// Counts the menu asked for.
-    fn open_message_menu(&self) {
+    fn open_message_menu(&self, _: Option<usize>, _: (f32, f32)) {
         self.message_menus.set(self.message_menus.get() + 1);
     }
 }
@@ -51,7 +52,8 @@ struct Asked {
 
 /// A window 200 by 100 logical pixels holding one control 100 by 40 at its top left, made
 /// with [`Interactive::control_menu`] when `menu` and [`Interactive::control_with`]
-/// otherwise, under `operations`, with the app's focus kept on `focused`.
+/// otherwise, in the first message of a conversation, under `operations`, with rustle's
+/// focus given to `focused`.
 fn laid_out(
     operations: &Rc<Recording>,
     asked: &Rc<Asked>,
@@ -68,13 +70,18 @@ fn laid_out(
             let size = Modifier::new().size(100.0, 40.0);
             let modifier = if menu {
                 let menus = Rc::clone(&asked);
-                size.control_menu(Target::Window(WindowEvent::Control), on_click, move || {
+                size.control_menu(Target::Window(WindowEvent::Control), on_click, move |_| {
                     menus.menus.set(menus.menus.get() + 1)
                 })
             } else {
                 size.control_with(Target::Window(WindowEvent::Control), on_click)
             };
-            rustle::spacer(modifier);
+            rustle::column_arranged(
+                Modifier::new().fill_max_size().message_area(0),
+                rustle::Arrangement::Start,
+                rustle::Alignment::Start,
+                move || rustle::spacer(modifier),
+            );
         });
     })
 }

@@ -8,7 +8,7 @@ use crate::areas::{
 
 use crate::events::{Event, FieldEvent};
 use crate::target::Target;
-use pm_field::Edit;
+use pm_editor::Edit;
 use pm_harness::{Event as HarnessEvent, Setting, Slash};
 use rustle::TextFieldState;
 
@@ -2266,7 +2266,7 @@ impl WorkspaceState {
     }
 
     /// The code editor's field, which `id` names, while a text file is shown.
-    pub fn field(&self, id: Target) -> Option<&pm_field::Field> {
+    pub fn field(&self, id: Target) -> Option<&pm_editor::Field> {
         (id == Target::Editor(EditorEvent::EditorField))
             .then(|| self.shown_document().map(|document| &document.field))
             .flatten()
@@ -3450,49 +3450,6 @@ impl WorkspaceState {
             || self.open_index().is_some_and(|index| {
                 self.sessions[index].chat_back != self.chat_list.scroll().offset()
             })
-    }
-
-    /// Every scrolling area the state holds the scroll of.
-    fn scroll_states(&self) -> Vec<&rustle::ScrollState> {
-        let mut states = vec![
-            self.diff_list.scroll(),
-            &self.tree_scroll,
-            self.files_list.scroll(),
-            &self.plan_scroll,
-            &self.subagents_scroll,
-            &self.overview_scroll,
-            &self.problems_scroll,
-            &self.history_scroll,
-            self.chat_list.scroll(),
-            &self.menu_scroll,
-            &self.update_scroll,
-            &self.debug.stack_scroll,
-            &self.debug.variables_scroll,
-            &self.debug.console_back,
-            &self.git.graph_scroll,
-            &self.settings_page.nav_scroll,
-            &self.settings_servers.scroll,
-            &self.extensions_page.scroll,
-        ];
-        states.extend(
-            self.excerpts
-                .iter()
-                .map(|excerpts| excerpts.scroll.scroll()),
-        );
-        states.extend(self.folder_picker.iter().map(|picker| &picker.scroll));
-        for viewer in &self.git.viewers {
-            states.push(viewer.scroll.scroll());
-            states.push(&viewer.hover_scroll);
-        }
-        states
-    }
-
-    /// Whether the pointer holds the bar of one of the scrolling areas, so a
-    /// press that went to it is not taken as a press on what lies beneath.
-    pub fn scrollbar_held(&self) -> bool {
-        self.scroll_states()
-            .into_iter()
-            .any(rustle::ScrollState::is_scrollbar_dragged)
     }
 
     /// Whether the conversation is shown at its end, give or take a pixel.

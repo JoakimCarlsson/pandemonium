@@ -1,7 +1,7 @@
 //! The page of the agents and their accounts: a card for each agent with how it signs in, its switch, and its accounts or its API key.
 
 use crate::areas::SettingsEvent;
-use crate::kit;
+use crate::button;
 use crate::target::Target;
 use crate::theme;
 use pm_harness::SignIn;
@@ -307,23 +307,28 @@ fn header(
     let look = state.agent_look(index);
     let under = how_it_signs_in(sign_in, keyed, credentials);
     flat_row(3, || {
-        kit::row(Modifier::new().weight(1.0), 3, || {
-            emblem(look.icon, !shown);
-            titled(
-                name,
-                name_tone(shown),
-                || {
-                    if !shown {
-                        Badge::new("Hidden").tone(Role::Subtle).build();
-                    }
-                },
-                || {
-                    if !under.is_empty() {
-                        note(&under);
-                    }
-                },
-            );
-        });
+        rustle::row_arranged(
+            Modifier::new().weight(1.0),
+            Arrangement::SpacedBy(theme::sp(3)),
+            Alignment::Center,
+            || {
+                emblem(look.icon, !shown);
+                titled(
+                    name,
+                    name_tone(shown),
+                    || {
+                        if !shown {
+                            Badge::new("Hidden").tone(Role::Subtle).build();
+                        }
+                    },
+                    || {
+                        if !under.is_empty() {
+                            note(&under);
+                        }
+                    },
+                );
+            },
+        );
         switch(shown, AGENT_SWITCHES.id(index));
     });
 }
@@ -374,28 +379,33 @@ fn account_row(
             },
             || note(&status),
         );
-        kit::row(Modifier::new(), 2, || {
-            if signing.keyed {
-                if let Some(remove) = remove_key.filter(|_| status == pm_harness::SAVED_KEY) {
-                    kit::action("Remove key", remove, Variant::Ghost);
+        rustle::row_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Center,
+            || {
+                if signing.keyed {
+                    if let Some(remove) = remove_key.filter(|_| status == pm_harness::SAVED_KEY) {
+                        button::action("Remove key", remove, Variant::Ghost);
+                    }
+                    if let Some(set) = set_key {
+                        let label = if keyed_now { "Replace key" } else { "Add key" };
+                        button::action(label, set, Variant::Ghost);
+                    }
                 }
-                if let Some(set) = set_key {
-                    let label = if keyed_now { "Replace key" } else { "Add key" };
-                    kit::action(label, set, Variant::Ghost);
+                if signing.signs_in
+                    && let Some(sign_in) = sign_in
+                {
+                    let again = signed_in && !keyed_now;
+                    let label = if again { "Sign in again" } else { "Sign in" };
+                    button::action(label, sign_in, Variant::Ghost);
                 }
-            }
-            if signing.signs_in
-                && let Some(sign_in) = sign_in
-            {
-                let again = signed_in && !keyed_now;
-                let label = if again { "Sign in again" } else { "Sign in" };
-                kit::action(label, sign_in, Variant::Ghost);
-            }
-            if let Some(use_id) = use_id.filter(|_| !in_use) {
-                kit::action("Use", use_id, Variant::Outline);
-            }
-            more();
-        });
+                if let Some(use_id) = use_id.filter(|_| !in_use) {
+                    button::action("Use", use_id, Variant::Outline);
+                }
+                more();
+            },
+        );
     });
 }
 
@@ -514,7 +524,7 @@ fn account_rows(state: &WorkspaceState, index: usize, id: &str, signing: Signing
     }
     flat_row(ADD_INSET, || {
         if let Some(add) = ACCOUNT_ADDS.id(index) {
-            kit::small_button("Add account", add, Variant::Ghost)
+            button::small_button("Add account", add, Variant::Ghost)
                 .with_icon(phosphor::PLUS)
                 .build();
         }

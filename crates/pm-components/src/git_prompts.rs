@@ -1,11 +1,12 @@
 //! The questions the source control panel asks before it does something that cannot be taken back, and the lists it asks a choice from.
 
 use crate::areas::GitEvent;
-use crate::kit;
+use crate::button;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Role;
 use rustle::Modifier;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
 use crate::button::Variant;
 use crate::parts::{line, wrap};
@@ -269,19 +270,20 @@ fn question(title: String, words: &str, confirm: &str) {
 /// Emits the row of a question's buttons, pushed to its right end: the one that says no, then `confirm` when there is one.
 #[track_caller]
 pub(crate) fn buttons(cancel: Target, confirm: Option<(&str, Target, Variant)>) {
-    kit::row(
+    rustle::row_arranged(
         Modifier::new().fill_max_width().padding_each(
             theme::sp(5),
             0.0,
             theme::sp(5),
             theme::sp(5),
         ),
-        2,
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
         || {
             rustle::spacer(rustle::Modifier::new().weight(1.0));
-            kit::small_button("Cancel", cancel, Variant::Ghost).build();
+            button::small_button("Cancel", cancel, Variant::Ghost).build();
             if let Some((words, id, variant)) = confirm {
-                kit::small_button(words, id, variant).build();
+                button::small_button(words, id, variant).build();
             }
         },
     );
@@ -299,14 +301,24 @@ pub(crate) fn question_of(
     Modal::new(ids.outside, ids.inside)
         .width(WIDTH)
         .build_with(|| {
-            kit::column(Modifier::new().padding(theme::sp(5)), 2, || {
-                for title in wrap(&title, 15, WIDTH - 40.0) {
-                    kit::text(Modifier::new(), title, kit::strong(15, Role::Text));
-                }
-                for words in wrap(words, 13, WIDTH - 40.0) {
-                    line(words, 13, 1.5, Role::Muted);
-                }
-            });
+            rustle::column_arranged(
+                Modifier::new().padding(theme::sp(5)),
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Start,
+                || {
+                    for title in wrap(&title, 15, WIDTH - 40.0) {
+                        rustle::basic_text(
+                            Modifier::new(),
+                            title,
+                            theme::strong(15, Role::Text),
+                            TextOverflow::Ellipsis,
+                        );
+                    }
+                    for words in wrap(words, 13, WIDTH - 40.0) {
+                        line(words, 13, 1.5, Role::Muted);
+                    }
+                },
+            );
             buttons(ids.cancel, Some((confirm, ids.confirm, variant)));
         });
 }
@@ -329,11 +341,17 @@ fn naming_box(
     confirm: &str,
 ) {
     git_modal(|| {
-        kit::column(
+        rustle::column_arranged(
             Modifier::new().fill_max_width().padding(theme::sp(5)),
-            3,
+            Arrangement::SpacedBy(theme::sp(3)),
+            Alignment::Start,
             || {
-                kit::text(Modifier::new(), title, kit::strong(15, Role::Text));
+                rustle::basic_text(
+                    Modifier::new(),
+                    title,
+                    theme::strong(15, Role::Text),
+                    TextOverflow::Ellipsis,
+                );
                 Input::new(field, id)
                     .modifier(Modifier::new().fill_max_width())
                     .placeholder(placeholder)
@@ -351,9 +369,10 @@ fn naming_box(
 /// Emits `content` inset two steps at either side and below: a line of the list of stashes that is not a row.
 #[track_caller]
 fn stash_line(content: impl FnOnce()) {
-    kit::column(
+    rustle::column_arranged(
         Modifier::new().padding_each(theme::sp(2), 0.0, theme::sp(2), theme::sp(2)),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         content,
     );
 }
@@ -361,12 +380,18 @@ fn stash_line(content: impl FnOnce()) {
 /// Emits the list of stashes to `action` one of, with the button that leaves it.
 fn stash_list(state: &WorkspaceState, action: StashAction) {
     git_modal(|| {
-        kit::column(
+        rustle::column_arranged(
             Modifier::new().fill_max_width().padding(theme::sp(3)),
-            1,
+            Arrangement::SpacedBy(theme::sp(1)),
+            Alignment::Start,
             || {
                 stash_line(|| {
-                    kit::text(Modifier::new(), action.title(), kit::strong(15, Role::Text))
+                    rustle::basic_text(
+                        Modifier::new(),
+                        action.title(),
+                        theme::strong(15, Role::Text),
+                        TextOverflow::Ellipsis,
+                    )
                 });
                 if state.git.stashes.is_empty() {
                     stash_line(|| line("There are no stashes.", 13, 1.4, Role::Subtle));

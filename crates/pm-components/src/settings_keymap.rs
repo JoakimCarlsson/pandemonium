@@ -1,12 +1,13 @@
 //! The keymap page of the settings panel: the preset the keys start from, every action with its keys, and the reader's own keys recorded over the preset's.
 
 use crate::areas::SettingsEvent;
-use crate::kit;
+use crate::events;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
 use pm_editor::{Action, shown};
 use rustle::Modifier;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
 use crate::theme::{Radius, Role};
 
@@ -98,9 +99,10 @@ fn small(words: &str, id: Option<Target>) {
             .radius(Radius::Sm),
         theme::Focused::Rustle,
     );
-    kit::row(
-        kit::pressable(own, id).padding_xy(theme::sp(2), 0.0),
-        0,
+    rustle::row_arranged(
+        events::pressable(own, id).padding_xy(theme::sp(2), 0.0),
+        Arrangement::Start,
+        Alignment::Center,
         || line(words, 11, 1.4, Role::Muted),
     );
 }
@@ -117,10 +119,11 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: Option<Target>) {
         .background_rounded(theme::color(Role::Background), Radius::Sm.px())
         .border(1.0, theme::color(edge), Radius::Sm.px())
         .padding(1.0);
-    let code = kit::code(12, Role::Text);
-    kit::row(
-        kit::pressable(own, id).padding_xy(theme::sp(1.5), 0.0),
-        1,
+    let code = theme::code(12, Role::Text);
+    rustle::row_arranged(
+        events::pressable(own, id).padding_xy(theme::sp(1.5), 0.0),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
         move || {
             if let Some(so_far) = recording {
                 let said = if so_far.is_empty() {
@@ -128,7 +131,7 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: Option<Target>) {
                 } else {
                     format!("{} …", shown(&so_far.join(" ")))
                 };
-                kit::text(Modifier::new(), said, code);
+                rustle::basic_text(Modifier::new(), said, code, TextOverflow::Ellipsis);
             } else if keys.is_empty() {
                 line("Not bound", 12, 1.4, Role::Subtle);
             } else {
@@ -136,7 +139,12 @@ fn caps(keys: &[String], recording: Option<&[String]>, id: Option<Target>) {
                     if place > 0 {
                         line("or", 11, 1.4, Role::Subtle);
                     }
-                    kit::text(Modifier::new(), shown(binding), code);
+                    rustle::basic_text(
+                        Modifier::new(),
+                        shown(binding),
+                        code,
+                        TextOverflow::Ellipsis,
+                    );
                 }
             }
         },
@@ -231,7 +239,12 @@ pub(crate) fn rows(state: &WorkspaceState, room: f32) {
 /// Emits the heading `group` over a bordered box holding the row of each of `members`, ruled between them.
 #[track_caller]
 fn section(group: &str, members: &[Found]) {
-    kit::text(Modifier::new(), group, kit::strong(13, Role::Text));
+    rustle::basic_text(
+        Modifier::new(),
+        group,
+        theme::strong(13, Role::Text),
+        TextOverflow::Ellipsis,
+    );
     boxed(|| {
         for (place, entry) in members.iter().enumerate() {
             rustle::key(place, || action_row(entry));
@@ -242,30 +255,41 @@ fn section(group: &str, members: &[Found]) {
 /// Emits the row of `entry`: its title and clashes, then its keys and the controls that reset or clear them.
 fn action_row(entry: &Found) {
     let action = entry.action;
-    kit::row(
+    rustle::row_arranged(
         Modifier::new().padding_xy(theme::sp(4), theme::sp(2)),
-        6,
+        Arrangement::SpacedBy(theme::sp(6)),
+        Alignment::Center,
         || {
-            kit::column(Modifier::new().weight(1.0), 0.5, || {
-                line(action.title(), 13, 1.4, Role::Text);
-                if !entry.clashes.is_empty() {
-                    line(
-                        format!("Also bound to {}", entry.clashes.join(", ")),
-                        11,
-                        1.4,
-                        Role::Warning,
-                    );
-                }
-            });
-            kit::row(Modifier::new(), 1, || {
-                caps(&entry.keys, entry.recording, id_of(action, Part::Record));
-                if entry.own {
-                    small("Reset", id_of(action, Part::Reset));
-                }
-                if !entry.keys.is_empty() {
-                    small("Clear", id_of(action, Part::Clear));
-                }
-            });
+            rustle::column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::SpacedBy(theme::sp(0.5)),
+                Alignment::Start,
+                || {
+                    line(action.title(), 13, 1.4, Role::Text);
+                    if !entry.clashes.is_empty() {
+                        line(
+                            format!("Also bound to {}", entry.clashes.join(", ")),
+                            11,
+                            1.4,
+                            Role::Warning,
+                        );
+                    }
+                },
+            );
+            rustle::row_arranged(
+                Modifier::new(),
+                Arrangement::SpacedBy(theme::sp(1)),
+                Alignment::Center,
+                || {
+                    caps(&entry.keys, entry.recording, id_of(action, Part::Record));
+                    if entry.own {
+                        small("Reset", id_of(action, Part::Reset));
+                    }
+                    if !entry.keys.is_empty() {
+                        small("Clear", id_of(action, Part::Clear));
+                    }
+                },
+            );
         },
     );
 }

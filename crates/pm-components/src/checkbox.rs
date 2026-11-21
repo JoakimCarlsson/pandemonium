@@ -2,7 +2,7 @@
 //! drawn by rustle's check box and switch in the theme's colours. The box itself does
 //! not answer the pointer: the control around it, named by its id, does.
 
-use crate::kit;
+use crate::events;
 use crate::target::Target;
 use rustle::{CheckboxColors, CheckboxDefaults, Modifier, SwitchColors, ToggleableState};
 
@@ -84,7 +84,7 @@ impl Checkbox {
             ..CheckboxDefaults::colors()
         };
         rustle::tri_state_checkbox(
-            kit::pressed(Modifier::new().size(side, side), self.id),
+            events::pressed(Modifier::new().size(side, side), self.id),
             state,
             None,
             true,
@@ -103,7 +103,7 @@ impl Checkbox {
             unchecked_track_color: theme::color(Role::SurfaceHover),
         };
         rustle::switch_with(
-            kit::pressed(Modifier::new().size(theme::sp(9), theme::sp(5)), self.id),
+            events::pressed(Modifier::new().size(theme::sp(9), theme::sp(5)), self.id),
             self.checked,
             None,
             true,

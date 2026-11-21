@@ -1,7 +1,9 @@
 //! What keeps the reader safe in the browser pane: the questions a page asks about the reader's machine, a site whose certificate is not trusted, and the files a page downloaded.
 
 use crate::areas::BrowserEvent;
-use crate::kit::{self, Frame};
+use crate::button;
+use crate::theme::Frame;
+use rustle::TextOverflow;
 
 use crate::events::{Event, send};
 use crate::target::Target;
@@ -239,14 +241,16 @@ fn host_of(origin: &str) -> &str {
 /// Emits a bar as tall as [`BAR`] and as wide as its parent, with `modifier` around it, holding what `content` emits side by side: its words, then its buttons.
 #[track_caller]
 fn bar(modifier: Modifier, content: impl FnOnce()) {
-    kit::row(
+    rustle::row_arranged(
         modifier
             .height(BAR)
             .fill_max_width()
             .background(theme::color(Role::Surface))
-            .ruled(theme::Side::Bottom)
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
             .padding_xy(theme::sp(3), 0.0),
-        2,
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
         content,
     );
 }
@@ -263,12 +267,12 @@ fn question_bar(modifier: Modifier, asked: &Question, waiting: usize, ready: boo
     }
     bar(modifier, || {
         clipped(words, 13, Role::Text);
-        kit::action(
+        button::action(
             "Block",
             Target::Browser(BrowserEvent::BrowserBlock(asked.id)),
             Variant::Outline,
         );
-        kit::small_button(
+        button::small_button(
             "Allow",
             Target::Browser(BrowserEvent::BrowserAllow(asked.id)),
             if ready {
@@ -320,27 +324,43 @@ fn reason(error: &str) -> &'static str {
 #[track_caller]
 fn paragraph(content: &str, pixels: u32, tone: Role, room: f32) {
     let lines = wrap(content, pixels, room);
-    kit::column(Modifier::new(), 0, || {
-        for words in lines {
-            line(words, pixels, 1.45, tone);
-        }
-    });
+    rustle::column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for words in lines {
+                line(words, pixels, 1.45, tone);
+            }
+        },
+    );
 }
 
 /// Emits a row of the certificate's details: `name`, and what it says in `value`, set in the code face when `mono`.
 #[track_caller]
 fn detail(name: &str, value: &str, mono: bool) {
     let value = if value.is_empty() { "unknown" } else { value };
-    let kind = kit::line(12, Role::Text);
+    let kind = theme::line(12, Role::Text);
     let kind = if mono { theme::in_mono(kind) } else { kind };
-    kit::row_top(Modifier::new().fill_max_width(), 3, || {
-        kit::text(
-            Modifier::new().width(108.0),
-            name,
-            kit::line(12, Role::Muted),
-        );
-        kit::text(Modifier::new().weight(1.0), value, kind);
-    });
+    rustle::row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Start,
+        || {
+            rustle::basic_text(
+                Modifier::new().width(108.0),
+                name,
+                theme::line(12, Role::Muted),
+                TextOverflow::Ellipsis,
+            );
+            rustle::basic_text(
+                Modifier::new().weight(1.0),
+                value,
+                kind,
+                TextOverflow::Ellipsis,
+            );
+        },
+    );
 }
 
 /// Emits the page that stands in for a site whose certificate is not trusted, `width` by `height` logical pixels: what is wrong with the certificate and the buttons that go back or, deliberately, go on.
@@ -365,20 +385,22 @@ pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) {
         Arrangement::Center,
         Alignment::Center,
         || {
-            kit::column(
+            rustle::column_arranged(
                 Modifier::new()
                     .width(across)
                     .panel(Radius::Xl)
                     .padding(theme::sp(5)),
-                3,
+                Arrangement::SpacedBy(theme::sp(3)),
+                Alignment::Start,
                 || {
-                    kit::text(
+                    rustle::basic_text(
                         Modifier::new(),
                         "Not secure: certificate not trusted",
                         theme::text_style(18, 1.3)
                             .font_weight(rustle::FontWeight::SEMI_BOLD)
                             .color(theme::color(Role::Danger))
                             .max_lines(1),
+                        TextOverflow::Ellipsis,
                     );
                     paragraph(
                         &format!(
@@ -394,11 +416,12 @@ pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) {
                         Role::Muted,
                         room,
                     );
-                    kit::column(
+                    rustle::column_arranged(
                         Modifier::new()
                             .fill_max_width()
                             .padding_xy(0.0, theme::sp(2)),
-                        1,
+                        Arrangement::SpacedBy(theme::sp(1)),
+                        Alignment::Start,
                         || {
                             detail("Site", &certificate.url, false);
                             detail("Issued to", &certificate.subject, false);
@@ -407,18 +430,25 @@ pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) {
                             detail("SHA-256", &certificate.fingerprint, true);
                         },
                     );
-                    kit::row(Modifier::new(), 2, || {
-                        Button::new("Go back", Target::Browser(BrowserEvent::BrowserCertBack))
+                    rustle::row_arranged(
+                        Modifier::new(),
+                        Arrangement::SpacedBy(theme::sp(2)),
+                        Alignment::Center,
+                        || {
+                            Button::new("Go back", Target::Browser(BrowserEvent::BrowserCertBack))
+                                .build();
+                            let button = Button::new(
+                                proceed,
+                                Target::Browser(BrowserEvent::BrowserCertProceed),
+                            );
+                            if certificate.confirming {
+                                button.variant(Variant::Destructive)
+                            } else {
+                                button.variant(Variant::Outline).tone(Role::Danger)
+                            }
                             .build();
-                        let button =
-                            Button::new(proceed, Target::Browser(BrowserEvent::BrowserCertProceed));
-                        if certificate.confirming {
-                            button.variant(Variant::Destructive)
-                        } else {
-                            button.variant(Variant::Outline).tone(Role::Danger)
-                        }
-                        .build();
-                    });
+                        },
+                    );
                     paragraph(
                         if certificate.confirming {
                             "Press again to load the site. This is remembered for this site until the browser closes."

@@ -2,11 +2,11 @@
 //! rustle surface in the variant's shape, border and content colour, its fills by
 //! interaction state from rustle's interaction support.
 
-use crate::kit;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
 use crate::theme::sp;
+use rustle::TextOverflow;
 use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{Icon, phosphor};
 
@@ -315,7 +315,7 @@ impl Button {
         };
         own = own.indicated(
             self.looks(radius),
-            theme::Focused::Held(crate::focus::is_held(self.id)),
+            theme::Focused::Control(crate::focus::is_focused(self.id)),
         );
         own = if self.disabled {
             own.cursor(CursorIcon::NotAllowed)
@@ -338,7 +338,7 @@ impl Button {
         }
         inside = inside.indicated(
             theme::FocusRing { width: 2.0, radius },
-            theme::Focused::Held(crate::focus::is_held(self.id)),
+            theme::Focused::Control(crate::focus::is_focused(self.id)),
         );
         inside = match (self.label.is_some(), several) {
             (true, true) => inside.padding_xy(theme::sp(side), theme::sp(1.5)),
@@ -391,15 +391,35 @@ impl Button {
                     }
                     if let Some(words) = words {
                         if lines.len() > 1 {
-                            kit::column(Modifier::new(), 0, || {
-                                for part in &lines {
-                                    kit::text(Modifier::new(), part, kind);
-                                }
-                            });
+                            rustle::column_arranged(
+                                Modifier::new(),
+                                Arrangement::Start,
+                                Alignment::Start,
+                                || {
+                                    for part in &lines {
+                                        rustle::basic_text(
+                                            Modifier::new(),
+                                            part,
+                                            kind,
+                                            TextOverflow::Ellipsis,
+                                        );
+                                    }
+                                },
+                            );
                         } else if spread {
-                            kit::text(Modifier::new().weight(1.0), words, kind.max_lines(1));
+                            rustle::basic_text(
+                                Modifier::new().weight(1.0),
+                                words,
+                                kind.max_lines(1),
+                                TextOverflow::Ellipsis,
+                            );
                         } else {
-                            kit::text(Modifier::new(), words, kind);
+                            rustle::basic_text(
+                                Modifier::new(),
+                                words,
+                                kind,
+                                TextOverflow::Ellipsis,
+                            );
                         }
                     }
                     if let Some(name) = trailing {
@@ -477,6 +497,38 @@ impl Button {
         }
         looks
     }
+}
+
+/// A small button saying `label` in `variant`, answering to `id`: the size of
+/// the actions in rows, bars, footers and dialogs. Finish it with
+/// [`Button::build`] after any further settings.
+pub fn small_button(label: impl Into<String>, id: Target, variant: Variant) -> Button {
+    Button::new(label, id).variant(variant).size(Size::Sm)
+}
+
+/// Emits a small button saying `label` in `variant` that answers to `id`,
+/// with no further settings: [`small_button`] built at once.
+#[track_caller]
+pub fn action(label: impl Into<String>, id: Target, variant: Variant) {
+    small_button(label, id, variant).build();
+}
+
+/// Emits the buttons that end a form or a card, side by side: `label` in
+/// the default variant answering to `confirm`, turned off unless `ready`,
+/// then the ghost button saying "Cancel" that answers to `cancel`.
+#[track_caller]
+pub fn confirm_row(label: &str, confirm: Target, ready: bool, cancel: Target) {
+    row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            small_button(label, confirm, Variant::Default)
+                .disabled(!ready)
+                .build();
+            action("Cancel", cancel, Variant::Ghost);
+        },
+    );
 }
 
 #[cfg(test)]

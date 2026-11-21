@@ -4,7 +4,7 @@ use std::ops::Range;
 
 /// What kind of character a word is made of.
 #[derive(Clone, Copy, Eq, PartialEq)]
-pub(crate) enum Class {
+pub enum Class {
     /// Space.
     Space,
     /// Letters, digits and the underscore.
@@ -15,7 +15,7 @@ pub(crate) enum Class {
 
 impl Class {
     /// The class `character` belongs to, the characters of `extra` counting as letters.
-    pub(crate) fn of(character: char, extra: &str) -> Self {
+    pub fn of(character: char, extra: &str) -> Self {
         if character.is_whitespace() {
             Self::Space
         } else if character.is_alphanumeric() || character == '_' || extra.contains(character) {

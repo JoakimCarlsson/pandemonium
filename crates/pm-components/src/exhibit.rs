@@ -1,13 +1,15 @@
 //! What an agent puts in front of the reader to look at: the card of a diagram or a prototype it showed in the conversation, and the picture of a document it wrote, a prototype or the mockup of an answer, which the window has rendered sealed from the network.
 
 use crate::areas::ChatEvent;
+use crate::button;
 use crate::icons::icon_with;
-use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
+use crate::theme::Frame;
 use crate::theme::{Radius, Role, sp};
 use pm_harness::{Exhibit, ExhibitKind};
 use rustle::Modifier;
+use rustle::TextOverflow;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{Icon, phosphor};
 
@@ -175,8 +177,8 @@ impl Offer {
         };
         let hint = self.hint();
         let button = self.button().map(|(label, icon)| match form {
-            Marks::Words => kit::small_button(label, id, Variant::Outline).with_icon(icon),
-            Marks::Icons => kit::small_button(label, id, Variant::Outline),
+            Marks::Words => button::small_button(label, id, Variant::Outline).with_icon(icon),
+            Marks::Icons => button::small_button(label, id, Variant::Outline),
             Marks::Hidden => Button::icon(icon, id),
         });
         let spelled = form == Marks::Words || (form == Marks::Icons && button.is_none());
@@ -207,7 +209,7 @@ impl Offer {
 fn failure(reason: &str, id: Target, form: Marks) {
     let button = match form {
         Marks::Hidden => Button::icon(phosphor::ARROWS_CLOCKWISE, id),
-        _ => kit::small_button(RETRY_LABEL, id, Variant::Outline)
+        _ => button::small_button(RETRY_LABEL, id, Variant::Outline)
             .with_icon(phosphor::ARROWS_CLOCKWISE),
     };
     let hint = format!("{reason} · press to render it again");
@@ -243,7 +245,12 @@ fn caption(words: &str, tone: Role) {
         Alignment::Center,
         || {
             glyph(phosphor::GLOBE, 3.5, tone);
-            kit::text(Modifier::new(), words, kit::line(12, tone));
+            rustle::basic_text(
+                Modifier::new(),
+                words,
+                theme::line(12, tone),
+                TextOverflow::Ellipsis,
+            );
         },
     );
 }
@@ -372,10 +379,15 @@ impl<'a> Preview<'a> {
                         } else if let Some((_, id)) = retried {
                             failure(words, id, marks_in(width));
                         } else {
-                            kit::row(Modifier::new().padding_xy(theme::sp(3), 0.0), 1.5, || {
-                                glyph(phosphor::GLOBE, 3.5, Role::Subtle);
-                                line(words, 12, 1.4, Role::Subtle);
-                            });
+                            rustle::row_arranged(
+                                Modifier::new().padding_xy(theme::sp(3), 0.0),
+                                Arrangement::SpacedBy(theme::sp(1.5)),
+                                Alignment::Center,
+                                || {
+                                    glyph(phosphor::GLOBE, 3.5, Role::Subtle);
+                                    line(words, 12, 1.4, Role::Subtle);
+                                },
+                            );
                         }
                     },
                 );
@@ -448,27 +460,37 @@ impl<'a> ExhibitCard<'a> {
         let opens = self
             .open
             .filter(|_| self.exhibit.kind == ExhibitKind::Prototype);
-        kit::row(Modifier::new().fill_max_width(), 2, || {
-            glyph(icon, 3.5, Role::Subtle);
-            clipped(title, 13, Role::Text);
-            kit::text(Modifier::new(), kind, kit::line(12, Role::Subtle));
-            if let Some(id) = self.copy {
-                Button::icon(phosphor::COPY, id)
-                    .tooltip("Copy source")
-                    .build();
-            }
-            if let Some(id) = opens {
-                kit::small_button("Open", id, Variant::Outline)
-                    .with_icon(phosphor::ARROWS_OUT_SIMPLE)
-                    .disabled(outdated)
-                    .tooltip(if outdated {
-                        OPEN_NEEDS_UPDATE
-                    } else {
-                        "Open live in the browser pane · sealed from the network"
-                    })
-                    .build();
-            }
-        });
+        rustle::row_arranged(
+            Modifier::new().fill_max_width(),
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Center,
+            || {
+                glyph(icon, 3.5, Role::Subtle);
+                clipped(title, 13, Role::Text);
+                rustle::basic_text(
+                    Modifier::new(),
+                    kind,
+                    theme::line(12, Role::Subtle),
+                    TextOverflow::Ellipsis,
+                );
+                if let Some(id) = self.copy {
+                    Button::icon(phosphor::COPY, id)
+                        .tooltip("Copy source")
+                        .build();
+                }
+                if let Some(id) = opens {
+                    button::small_button("Open", id, Variant::Outline)
+                        .with_icon(phosphor::ARROWS_OUT_SIMPLE)
+                        .disabled(outdated)
+                        .tooltip(if outdated {
+                            OPEN_NEEDS_UPDATE
+                        } else {
+                            "Open live in the browser pane · sealed from the network"
+                        })
+                        .build();
+                }
+            },
+        );
     }
 
     /// Emits what the card shows of a diagram: the drawing once it arrived, its source as code until then, and the source with why it could not be drawn when it could not.
@@ -477,10 +499,15 @@ impl<'a> ExhibitCard<'a> {
         let source = fenced(&self.exhibit.content);
         match self.figures.get(&diagram_key(&self.exhibit.content)) {
             Some(Ok(drawing)) => diagram_node(drawing, inner),
-            Some(Err(reason)) => kit::column(Modifier::new(), 1.5, || {
-                Markdown::new(&source, inner).build();
-                crate::parts::paragraph(reason, 12, 1.4, Role::Danger, inner);
-            }),
+            Some(Err(reason)) => rustle::column_arranged(
+                Modifier::new(),
+                Arrangement::SpacedBy(theme::sp(1.5)),
+                Alignment::Start,
+                || {
+                    Markdown::new(&source, inner).build();
+                    crate::parts::paragraph(reason, 12, 1.4, Role::Danger, inner);
+                },
+            ),
             None => Markdown::new(&source, inner).build(),
         }
     }
@@ -506,11 +533,12 @@ impl<'a> ExhibitCard<'a> {
     #[track_caller]
     pub fn build(self) {
         let inner = (self.width - CARD_INSET).max(64.0);
-        kit::column(
+        rustle::column_arranged(
             Modifier::new()
                 .outlined(Radius::Xl)
                 .padding_xy(theme::sp(4), theme::sp(3)),
-            2.5,
+            Arrangement::SpacedBy(theme::sp(2.5)),
+            Alignment::Start,
             || {
                 self.heading();
                 self.body(inner);

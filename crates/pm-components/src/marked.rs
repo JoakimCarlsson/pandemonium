@@ -126,7 +126,7 @@ pub fn marked_line(
 /// also the piece of the field `owner` starting at byte `start` of its text,
 /// whose layout and place it tells `lines` once it is placed, with the caret,
 /// selection and composition given as [`Paint::Caret`], [`Paint::Selected`]
-/// and [`Paint::Underline`] marks (add them only while the app keeps focus on `owner`).
+/// and [`Paint::Underline`] marks (add them only while rustle's focus is on `owner`).
 /// `lines` then answers the app's questions about the text as drawn.
 pub fn marked_field_line(
     modifier: Modifier,

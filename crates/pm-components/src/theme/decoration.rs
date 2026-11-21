@@ -1,48 +1,10 @@
-//! The drawing values the theme gives boxes: a line along one side, a closure
-//! for [`Modifier::draw_behind`], and the app's soft shadows as rustle
-//! [`Shadow`] layers cast with [`Modifier::drop_shadow_with`].
+//! The drawing values the theme gives boxes: the app's soft shadows as rustle
+//! [`Shadow`] layers cast with [`Modifier::drop_shadow_with`], and the outline
+//! and raised panel ([`Frame`]) that cards, lists and popups are set on.
 
-use rustle::{Canvas, Color, Modifier, Offset, Shadow};
+use rustle::{Modifier, Offset, Shadow};
 
-/// One side of a box.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Side {
-    /// The top edge.
-    Top,
-    /// The right edge.
-    Right,
-    /// The bottom edge.
-    Bottom,
-    /// The left edge.
-    Left,
-}
-
-impl Side {
-    /// The padding, left, top, right and bottom, that keeps what a box holds
-    /// clear of a line `width` thick along this side.
-    pub fn padding(self, width: f32) -> (f32, f32, f32, f32) {
-        match self {
-            Self::Top => (0.0, width, 0.0, 0.0),
-            Self::Right => (0.0, 0.0, width, 0.0),
-            Self::Bottom => (0.0, 0.0, 0.0, width),
-            Self::Left => (width, 0.0, 0.0, 0.0),
-        }
-    }
-}
-
-/// Draws a line `width` thick in `color` along `side` of the area, as a CSS
-/// border on one side is drawn; follow it with the padding [`Side::padding`] gives.
-pub fn edge(side: Side, width: f32, color: Color) -> impl Fn(&mut Canvas) + 'static {
-    move |canvas| {
-        let (across, down) = (canvas.width(), canvas.height());
-        match side {
-            Side::Top => canvas.rect(0.0, 0.0, across, width, color),
-            Side::Right => canvas.rect(across - width, 0.0, width, down, color),
-            Side::Bottom => canvas.rect(0.0, down - width, across, width, color),
-            Side::Left => canvas.rect(0.0, 0.0, width, down, color),
-        }
-    }
-}
+use super::{Radius, Role, color};
 
 /// How much farther a shadow fades than its blur says, as a share of the blur:
 /// a CSS box shadow fades over about twice its blur radius, which is softer
@@ -84,16 +46,29 @@ impl ShadowLayers for Modifier {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+/// The app's frames for a box, chained onto a [`Modifier`] like its own
+/// methods: a one pixel outline and the raised panel that cards and popups
+/// sit on.
+pub trait Frame {
+    /// Outlines the box one pixel wide in the border role, its corners as
+    /// round as `radius`, and keeps what it holds inside the outline.
+    fn outlined(self, radius: Radius) -> Self;
 
-    /// The padding of a side keeps content clear of a line along that side only.
-    #[test]
-    fn a_side_pads_only_itself() {
-        assert_eq!(Side::Top.padding(2.0), (0.0, 2.0, 0.0, 0.0));
-        assert_eq!(Side::Right.padding(2.0), (0.0, 0.0, 2.0, 0.0));
-        assert_eq!(Side::Bottom.padding(2.0), (0.0, 0.0, 0.0, 2.0));
-        assert_eq!(Side::Left.padding(2.0), (2.0, 0.0, 0.0, 0.0));
+    /// Fills the box with the surface role and outlines it, both with corners
+    /// as round as `radius`: the panel cards, lists and popups are set on.
+    fn panel(self, radius: Radius) -> Self;
+}
+
+impl Frame for Modifier {
+    /// Adds a one pixel border-role outline and pads the box by one pixel.
+    fn outlined(self, radius: Radius) -> Self {
+        self.border(1.0, color(Role::Border), radius.px())
+            .padding(1.0)
+    }
+
+    /// Adds a rounded surface background, then [`Frame::outlined`].
+    fn panel(self, radius: Radius) -> Self {
+        self.background_rounded(color(Role::Surface), radius.px())
+            .outlined(radius)
     }
 }

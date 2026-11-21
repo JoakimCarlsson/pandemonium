@@ -1,8 +1,9 @@
 //! Words shown over a control once the pointer rests on it, on rustle's tooltip area: our
 //! box, kept to the left edge of the control above it, or below it where there is no room.
 
-use crate::kit::{self, Frame};
 use crate::theme;
+use crate::theme::Frame;
+use rustle::{Alignment, Arrangement, TextOverflow};
 use rustle::{CompositionLocal, Modifier, Offset, PopupPositionProvider, Rect, Size, tooltip_area};
 
 use crate::theme::{Radius, Role};
@@ -66,9 +67,14 @@ pub fn with_tooltip_in(modifier: Modifier, words: impl Into<String>, content: im
             let inner = Modifier::new()
                 .panel(Radius::Sm)
                 .padding_xy(theme::sp(1.5), theme::sp(0.75));
-            kit::column(inner, 0, || {
+            rustle::column_arranged(inner, Arrangement::Start, Alignment::Start, || {
                 for line in words.lines() {
-                    kit::text(Modifier::new(), line.to_owned(), kind);
+                    rustle::basic_text(
+                        Modifier::new(),
+                        line.to_owned(),
+                        kind,
+                        TextOverflow::Ellipsis,
+                    );
                 }
             });
         },

@@ -1,9 +1,9 @@
-//! A single line of editable text, the caret in it and what is selected.
+//! The text of the code editor with its carets, selections, composition and undo history.
 
 use std::ops::Range;
 
-use crate::reach::Reach;
-use crate::word::Class;
+use pm_buffer::Class;
+use pm_buffer::Reach;
 
 /// Where a caret moves to.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -133,7 +133,7 @@ impl Field {
 
     /// The byte range of the word at byte `byte`, as moving by words sees it.
     pub fn word_range_at(&self, byte: usize) -> std::ops::Range<usize> {
-        crate::word::word_at_with(&self.text, byte, &self.word_extra)
+        pm_buffer::word_at_with(&self.text, byte, &self.word_extra)
     }
 
     /// A field holding `text`, with the caret at its end and nothing selected.

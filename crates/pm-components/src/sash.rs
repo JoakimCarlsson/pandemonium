@@ -144,10 +144,12 @@ impl Sash {
                 Arrangement::Center,
                 Alignment::Center,
                 move || {
-                    let hovered = hovered.clone();
-                    rustle::spacer(
-                        line.draw_behind(group_line(theme::color(Role::Accent), hovered)),
-                    );
+                    let line = if hovered.get() {
+                        line.background(theme::color(Role::Accent))
+                    } else {
+                        line
+                    };
+                    rustle::spacer(line);
                 },
             );
         };
@@ -230,18 +232,5 @@ impl WorkspaceState {
             _ => {}
         }
         self
-    }
-}
-
-/// Fills the sash's line in `accent` while `hovered`, the pointer being over the sash
-/// around it, holds, read while drawing.
-fn group_line(
-    accent: rustle::Color,
-    hovered: rustle::State<bool>,
-) -> impl Fn(&mut rustle::Canvas) + 'static {
-    move |canvas| {
-        if hovered.get() {
-            canvas.rect(0.0, 0.0, canvas.width(), canvas.height(), accent);
-        }
     }
 }

@@ -14,9 +14,10 @@ use super::App;
 const PASTED: &str = "pasted";
 
 impl App {
-    /// Opens the menu of what can be added to the prompt from the page just under the pointer.
+    /// Opens the menu of what can be added to the prompt from the page just under where its
+    /// button was clicked.
     pub(super) fn open_browser_capture_menu(&mut self) {
-        let Some(at) = self.browser_menu_place() else {
+        let Some(at) = self.clicked_at().map(|at| self.browser_menu_place(at)) else {
             return;
         };
         self.model
@@ -38,7 +39,8 @@ impl App {
                 self.work.preview(paths);
             }
             if held {
-                self.focus.focus(Target::Composer(ComposerEvent::Prompt));
+                self.focus
+                    .request_focus(Target::Composer(ComposerEvent::Prompt));
             }
         }
     }

@@ -38,7 +38,8 @@ impl App {
             *state = std::mem::take(state).in_workspace(|state| state.with_attachments(&paths))
         });
         self.work.preview(paths);
-        self.focus.focus(Target::Composer(ComposerEvent::Prompt));
+        self.focus
+            .request_focus(Target::Composer(ComposerEvent::Prompt));
     }
 }
 

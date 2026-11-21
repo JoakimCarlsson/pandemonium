@@ -9,7 +9,7 @@
 
 use std::cell::Cell;
 
-use rustle::{FontWeight, TextStyle, TextWrap, Typography};
+use rustle::{Color, FontWeight, TextStyle, TextWrap, Typography};
 
 use super::{Role, color, mono, sans, text_scale};
 
@@ -120,6 +120,23 @@ pub fn typography() -> Typography {
         label_medium: text_style(12, 1.4).font_weight(FontWeight::MEDIUM),
         label_small: text_style(11, 1.4).font_weight(FontWeight::MEDIUM),
     }
+}
+
+/// One line of interface text `pixels` tall, in the sans family and `tone`.
+pub fn line(pixels: impl Into<f64>, tone: impl Into<Color>) -> TextStyle {
+    text_style(pixels, 1.4).color(color(tone)).max_lines(1)
+}
+
+/// One line of interface text `pixels` tall at medium weight, in the sans
+/// family and `tone`: titles and names that lead a row.
+pub fn strong(pixels: impl Into<f64>, tone: impl Into<Color>) -> TextStyle {
+    line(pixels, tone).font_weight(FontWeight::MEDIUM)
+}
+
+/// One line of text `pixels` tall in the mono family and `tone`: paths,
+/// hashes, keys and counts.
+pub fn code(pixels: impl Into<f64>, tone: impl Into<Color>) -> TextStyle {
+    mono_style(pixels, 1.4).color(color(tone)).max_lines(1)
 }
 
 #[cfg(test)]

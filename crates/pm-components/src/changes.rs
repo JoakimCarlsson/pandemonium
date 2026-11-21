@@ -1,12 +1,13 @@
 //! The changes of a commit or of a branch, and a file set against one of the states it was saved in, as one scrollable view of every file: each folded away from its header, and, in the folder, edited in place.
 
 use crate::areas::SearchEvent;
-use crate::kit::{self, Frame};
+use crate::button;
 use crate::target::Target;
 use crate::theme;
-use pm_field::Edit;
+use pm_editor::Edit;
 use rustle::Modifier;
 use rustle::phosphor;
+use rustle::{Alignment, Arrangement};
 
 use crate::Tally;
 use crate::button::Variant;
@@ -62,13 +63,15 @@ impl<'a> Changes<'a> {
         };
         let undoes =
             matches!(&excerpts.source, Source::Revision { turn: Some(_), .. }) && count > 0;
-        kit::row(
+        rustle::row_arranged(
             Modifier::new()
                 .fill_max_width()
                 .height(STRIP)
-                .ruled(theme::Side::Bottom)
+                .border_bottom(1.0, theme::color(Role::Border))
+                .padding_each(0.0, 0.0, 0.0, 1.0)
                 .padding_xy(theme::sp(4), 0.0),
-            3,
+            Arrangement::SpacedBy(theme::sp(3)),
+            Alignment::Center,
             move || {
                 if let Some(when) = when {
                     glyph(phosphor::CLOCK_COUNTER_CLOCKWISE, 3.5, Role::Muted);
@@ -88,7 +91,7 @@ impl<'a> Changes<'a> {
                     return;
                 }
                 if undoes {
-                    kit::small_button(
+                    button::small_button(
                         "Undo turn",
                         Target::Search(SearchEvent::ExcerptsUndoAll),
                         Variant::Ghost,
@@ -97,7 +100,7 @@ impl<'a> Changes<'a> {
                     .tooltip("Take everything this turn changed back out of the files")
                     .build();
                 }
-                kit::action(
+                button::action(
                     "Fold all",
                     Target::Search(SearchEvent::ExcerptsFoldAll),
                     Variant::Ghost,
@@ -109,10 +112,15 @@ impl<'a> Changes<'a> {
     /// Emits the view: the strip, then every file with its lines.
     #[track_caller]
     pub fn build(self) {
-        kit::column(Modifier::new().weight(1.0), 0, || {
-            self.strip();
-            file_list(self.state, Size::default());
-        });
+        rustle::column_arranged(
+            Modifier::new().weight(1.0),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                self.strip();
+                file_list(self.state, Size::default());
+            },
+        );
     }
 }
 

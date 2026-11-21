@@ -1,12 +1,13 @@
 //! Sticky scroll: the lines that open the blocks the first line in view is inside of, kept at the top of the file as it scrolls; pressing one goes to it.
 
 use crate::areas::EditorEvent;
-use crate::kit::{self, Frame};
+use crate::events;
 use crate::marked::{CaretLook, Mark, Paint, marked_line};
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
 use crate::theme::Role;
+use rustle::TextOverflow;
 use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{BoxAlignment, Modifier};
 
@@ -33,42 +34,49 @@ fn kept_line(document: &Document, index: usize, place: usize, settings: &EditorS
     let content = document.field.text()[line].to_string();
     let own = Modifier::new().fill_max_width().height(height).indicated(
         theme::InteractionTones::new().hover(Role::SurfaceHover),
-        theme::Focused::Held(crate::focus::is_held(id)),
+        theme::Focused::Control(crate::focus::is_focused(id)),
     );
-    kit::row(kit::pressed(own, id), 0, move || {
-        rustle::spacer(Modifier::new().width(3.0));
-        let gutter = Modifier::new().width(theme::sp(if numbers { 13 } else { 2 }));
-        row_arranged(
-            gutter.padding_each(0.0, 0.0, theme::sp(3), 0.0),
-            Arrangement::End,
-            Alignment::Center,
-            move || {
-                if numbers {
-                    kit::text(
+    rustle::row_arranged(
+        events::pressed(own, id),
+        Arrangement::Start,
+        Alignment::Center,
+        move || {
+            rustle::spacer(Modifier::new().width(3.0));
+            let gutter = Modifier::new().width(theme::sp(if numbers { 13 } else { 2 }));
+            row_arranged(
+                gutter.padding_each(0.0, 0.0, theme::sp(3), 0.0),
+                Arrangement::End,
+                Alignment::Center,
+                move || {
+                    if numbers {
+                        rustle::basic_text(
+                            Modifier::new(),
+                            (index + 1).to_string(),
+                            kind.color(theme::color(Role::Subtle)),
+                            TextOverflow::Ellipsis,
+                        );
+                    }
+                },
+            );
+            rustle::row_arranged(
+                Modifier::new()
+                    .weight(1.0)
+                    .clip()
+                    .padding_xy(theme::sp(2), 0.0),
+                Arrangement::Start,
+                Alignment::Start,
+                move || {
+                    marked_line(
                         Modifier::new(),
-                        (index + 1).to_string(),
-                        kind.color(theme::color(Role::Subtle)),
+                        &content,
+                        kind.color(theme::color(Role::Text)),
+                        marks,
+                        CaretLook::default(),
                     );
-                }
-            },
-        );
-        kit::row_top(
-            Modifier::new()
-                .weight(1.0)
-                .clip()
-                .padding_xy(theme::sp(2), 0.0),
-            0,
-            move || {
-                marked_line(
-                    Modifier::new(),
-                    &content,
-                    kind.color(theme::color(Role::Text)),
-                    marks,
-                    CaretLook::default(),
-                );
-            },
-        );
-    });
+                },
+            );
+        },
+    );
 }
 
 /// Emits the lines that open the blocks around the first line in view of `document`, scrolled so row `top` is at the top of its view, with lines holding `columns` characters when they wrap, as a box over the top of the view of the layer it is placed in; nothing when there are none or `settings` do not want them.
@@ -87,13 +95,15 @@ pub(crate) fn sticky(
     if lines.is_empty() {
         return;
     }
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .align(BoxAlignment::TopStart)
             .fill_max_width()
             .background(theme::color(Role::Background))
-            .ruled(theme::Side::Bottom),
-        0,
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0),
+        Arrangement::Start,
+        Alignment::Start,
         || {
             for (place, index) in lines.into_iter().enumerate() {
                 rustle::key(place, || kept_line(document, index, place, settings));

@@ -8,7 +8,7 @@
 use pm_components::target::Target;
 use std::time::Duration;
 
-use pm_components::focus::{self, FocusKeys};
+use pm_components::focus::{self, FocusRequesters};
 use pm_components::theme::{self, Appearance, ThemeFamily, Tokens};
 use rustle::{Offset, PixelRounding, PreviewOptions};
 
@@ -57,8 +57,8 @@ impl Shot {
 }
 
 /// Draws `content` as `shot` says into a PNG file at `path`, inside the
-/// theme of `shot` and a root that shows tooltips at once, with the
-/// app's focus on the shot's control and rustle's focus given to it.
+/// theme of `shot` and a root that shows tooltips at once, with rustle's
+/// focus given to the shot's control.
 ///
 /// # Errors
 ///
@@ -90,11 +90,14 @@ pub(crate) fn pixels(
     shot: &Shot,
     content: impl Fn() + 'static,
 ) -> Result<(u32, u32, Vec<u8>), Box<dyn std::error::Error>> {
-    rustle_wgpu::set_legible_text(false);
+    rustle::set_legible_text(false);
     let tokens = Tokens::new(&shot.family, shot.appearance);
-    let focused = shot.focused;
+    let requesters = FocusRequesters::new();
+    if let Some(id) = shot.focused {
+        requesters.request_focus(id);
+    }
     let root = move || {
-        focus::provide(FocusKeys::resting(focused), || {
+        focus::provide(requesters.clone(), || {
             theme::provide(tokens.clone(), || {
                 pm_components::tooltip::provide_tooltip_delay(0, || {
                     rustle::stack_with(rustle::Modifier::new().fill_max_size(), &content)
@@ -110,7 +113,7 @@ pub(crate) fn pixels(
         pointer: shot.pointer.map(|(x, y)| Offset::new(x, y)),
         transparent: shot.transparent,
         rounding: PixelRounding::Logical,
-        focused_tag: shot.focused.map(Target::tag),
+        focused_tag: None,
     };
     Ok(match &shot.preedit {
         Some(text) => rustle::preview_pixels_composing(
@@ -134,23 +137,12 @@ mod tests {
     fn hover_box() {
         let over = remember_mutable_interaction_source();
         let hovered = over.collect_is_hovered_as_state();
-        rustle::spacer(
-            Modifier::new()
-                .width(40.0)
-                .height(40.0)
-                .hoverable(&over)
-                .draw_behind(move |canvas| {
-                    if hovered.get() {
-                        canvas.rect(
-                            0.0,
-                            0.0,
-                            canvas.width(),
-                            canvas.height(),
-                            Color::rgb(255, 0, 0),
-                        );
-                    }
-                }),
-        );
+        let own = Modifier::new().width(40.0).height(40.0).hoverable(&over);
+        rustle::spacer(if hovered.get() {
+            own.background(Color::rgb(255, 0, 0))
+        } else {
+            own
+        });
     }
 
     /// A shot with the pointer resting over a hoverable area draws its hover look, and one

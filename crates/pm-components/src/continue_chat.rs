@@ -4,8 +4,8 @@
 
 use crate::areas::ChatEvent;
 use crate::areas::SidebarEvent;
+use crate::button;
 use crate::button::Variant;
-use crate::kit;
 
 use crate::areas::ComposerEvent;
 
@@ -219,9 +219,10 @@ impl WorkspaceState {
 /// Emits a line of the choice saying `words`, where rows would be.
 #[track_caller]
 fn said(words: &str) {
-    kit::row(
+    rustle::row_arranged(
         Modifier::new().padding_xy(theme::sp(2.5), theme::sp(1.5)),
-        0,
+        Arrangement::Start,
+        Alignment::Center,
         || line(words, 13, 1.4, Role::Subtle),
     );
 }
@@ -245,7 +246,7 @@ fn menu(state: &WorkspaceState, chat: &Session) {
     let listed = state.continuing.branches.as_deref();
     let ready = chosen.is_some() && listed.is_some_and(|branches| !branches.is_empty());
     menu.modifier(crate::composer::menu_body()).build_with(|| {
-        kit::column(crate::composer::ruled(), 0, || {
+        crate::composer::ruled(|| {
             heading("Branch from", None);
             match listed {
                 None => said("Reading the branches…"),
@@ -255,20 +256,24 @@ fn menu(state: &WorkspaceState, chat: &Session) {
                 }
             }
         });
-        row_arranged(
-            crate::composer::ruled().padding_xy(theme::sp(1), theme::sp(1.5)),
-            Arrangement::End,
-            Alignment::Start,
-            || {
-                kit::small_button(
-                    "Continue",
-                    Target::Chat(ChatEvent::ContinueStart),
-                    Variant::Default,
-                )
-                .disabled(!ready)
-                .build();
-            },
-        );
+        crate::composer::ruled(|| {
+            row_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .padding_xy(theme::sp(1), theme::sp(1.5)),
+                Arrangement::End,
+                Alignment::Start,
+                || {
+                    button::small_button(
+                        "Continue",
+                        Target::Chat(ChatEvent::ContinueStart),
+                        Variant::Default,
+                    )
+                    .disabled(!ready)
+                    .build();
+                },
+            );
+        });
     });
 }
 

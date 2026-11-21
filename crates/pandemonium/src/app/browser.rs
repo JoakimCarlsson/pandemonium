@@ -18,13 +18,12 @@ use pm_components::elements::Element;
 use pm_components::exhibit::{Helper, PREVIEW_NEEDS_BROWSER, PREVIEW_NEEDS_UPDATE, PreviewRequest};
 use pm_components::figures::Drawing;
 
-use super::pointer::{Button, PointerState};
+use pm_components::pointing::{BrowserPointer, BrowserPointing};
 use rustle::{Key, KeyEvent};
 
 use crate::keys;
 use pm_editor::{Action, Pressed};
 use pm_pages::Screen;
-use rustle::CursorIcon as Cursor;
 use rustle::ImageData;
 use rustle::Rect;
 
@@ -48,10 +47,9 @@ pub(super) struct Web {
     tools_shown: u64,
     /// The texture every frame of the page shown is drawn into, and the tools' one.
     textures: [rustle::ImageKey; 2],
-    /// Which window the primary button went down in, so the release goes to it too.
-    pressed_in: Option<Target>,
-    /// The last press, for counting clicks.
-    last_press: Option<(Instant, (i32, i32), u8)>,
+    /// Whether the primary and the secondary button went down on a page and are still held,
+    /// as the pages' windows told.
+    buttons: (bool, bool),
     /// The tab being shown and which window had the keyboard when the pages were last told.
     focused: Option<(Option<u32>, Option<Target>)>,
     /// Whether the engine could not start.
@@ -332,8 +330,9 @@ fn is_local(host: &str) -> bool {
     matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "0.0.0.0")
 }
 
-/// The engine's modifiers for the keyboard keys held and the buttons down.
-fn held(keys: rustle::Modifiers, pointer: PointerState) -> Held {
+/// The engine's modifiers for the keyboard keys held and the buttons down, the primary and
+/// the secondary.
+fn held(keys: rustle::Modifiers, (left, right): (bool, bool)) -> Held {
     let mut bits = 0;
     if keys.shift {
         bits |= Held::SHIFT;
@@ -347,10 +346,10 @@ fn held(keys: rustle::Modifiers, pointer: PointerState) -> Held {
     if keys.meta {
         bits |= Held::COMMAND;
     }
-    if pointer.left {
+    if left {
         bits |= Held::LEFT_BUTTON;
     }
-    if pointer.right {
+    if right {
         bits |= Held::RIGHT_BUTTON;
     }
     Held(bits)
@@ -405,19 +404,6 @@ fn typed(event: &KeyEvent, modifiers: Held) -> Typed {
     }
 }
 
-/// How the pointer looks in the window when the page asks for `shape`.
-fn cursor_of(pointer: Pointer) -> Cursor {
-    match pointer {
-        Pointer::Arrow => Cursor::Default,
-        Pointer::Hand => Cursor::Pointer,
-        Pointer::Text => Cursor::Text,
-        Pointer::Cross => Cursor::Crosshair,
-        Pointer::Wait => Cursor::Wait,
-        Pointer::ResizeHorizontal => Cursor::ColResize,
-        Pointer::ResizeVertical => Cursor::RowResize,
-    }
-}
-
 /// How a page's pointer shape is told to the window.
 fn pointer_of(shape: Shape) -> Pointer {
     match shape {
@@ -440,35 +426,6 @@ impl App {
     /// Whether the question about clearing cookies and site data is open, which covers the whole window.
     fn browser_clearing(&self) -> bool {
         self.model.read(|state| state.browser_clearing())
-    }
-
-    /// The window of a page the point `at` is over, and where in it, in logical pixels; nothing where the bar for finding or the question about clearing is drawn over the page.
-    fn browser_under(&self, at: (f32, f32)) -> Option<(Target, (i32, i32))> {
-        let inside = |rect: Rect| {
-            at.0 >= rect.origin.x
-                && at.1 >= rect.origin.y
-                && at.0 < rect.origin.x + rect.size.width
-                && at.1 < rect.origin.y + rect.size.height
-        };
-        if self
-            .browser_region(Target::Browser(BrowserEvent::BrowserFindBar))
-            .is_some_and(inside)
-            || self.browser_clearing()
-        {
-            return None;
-        }
-        [
-            Target::Browser(BrowserEvent::BrowserBody),
-            Target::Browser(BrowserEvent::BrowserToolsBody),
-        ]
-        .into_iter()
-        .find_map(|id| {
-            let rect = self.browser_region(id)?;
-            inside(rect).then_some((
-                id,
-                ((at.0 - rect.origin.x) as i32, (at.1 - rect.origin.y) as i32),
-            ))
-        })
     }
 
     /// The number of the tab being shown, while the browser is open.
@@ -496,7 +453,7 @@ impl App {
 
     /// Whether a page or its tools have the keyboard.
     fn browser_focused(&self) -> Option<Target> {
-        self.focus.current().filter(|id| {
+        self.focus.focused().filter(|id| {
             *id == Target::Browser(BrowserEvent::BrowserBody)
                 || *id == Target::Browser(BrowserEvent::BrowserToolsBody)
         })
@@ -507,9 +464,10 @@ impl App {
         self.model.change(|state| state.browser_command(command));
         if command == BrowserCommand::Find {
             self.focus
-                .focus(Target::Browser(BrowserEvent::BrowserFindField));
+                .request_focus(Target::Browser(BrowserEvent::BrowserFindField));
         } else {
-            self.focus.focus(Target::Browser(BrowserEvent::BrowserBody));
+            self.focus
+                .request_focus(Target::Browser(BrowserEvent::BrowserBody));
         }
     }
 
@@ -528,21 +486,20 @@ impl App {
             .collect()
     }
 
-    /// Where a menu over the page opens: just under the pointer and inside the window.
-    pub(super) fn browser_menu_place(&self) -> Option<(f32, f32)> {
-        let (x, y) = self.pointer.position?;
+    /// Where a menu over the page opens for a press at `at`, in the window's frame: just
+    /// under it and inside the window.
+    pub(super) fn browser_menu_place(&self, (x, y): (f32, f32)) -> (f32, f32) {
         let (width, height) = self.window_size();
-        Some((
+        (
             (x - 8.0).min(width - 260.0).max(0.0),
             (y + 4.0).min(height - BROWSER_MENU_HEIGHT - 8.0).max(0.0),
-        ))
+        )
     }
 
-    /// Opens the menu over the page just under the pointer and inside the window.
-    pub(super) fn open_browser_menu(&mut self) {
-        let Some(at) = self.browser_menu_place() else {
-            return;
-        };
+    /// Opens the menu over the page just under `at`, in the window's frame, and inside the
+    /// window.
+    pub(super) fn open_browser_menu(&mut self, at: (f32, f32)) {
+        let at = self.browser_menu_place(at);
         self.model.change(|state| state.with_browser_menu(at));
     }
 
@@ -554,105 +511,64 @@ impl App {
         self.focus_browser_address = true;
     }
 
-    /// Sends the pointer's move into the page under it, or out of the page it left.
-    pub(super) fn browser_moved(&mut self, at: (f32, f32)) {
-        let modifiers = held(self.modifiers, self.pointer);
-        match self.browser_under(at) {
-            Some((id, (x, y))) => {
-                if let Some(view) = self.browser_view_of(id) {
+    /// Hands what the pointer did over a page or its tools, as `pointer` tells, on to that
+    /// page: moves and the leaving of the pointer, the buttons, the wheel, and the mouse's
+    /// back and forward buttons, which step through the page's history, or else the app's.
+    pub(super) fn browser_pointer(&mut self, pointer: BrowserPointer) {
+        let (x, y) = (pointer.at.0 as i32, pointer.at.1 as i32);
+        let modifiers = held(self.modifiers, self.web.buttons);
+        match pointer.pointing {
+            BrowserPointing::Moved => {
+                if let Some(view) = self.browser_view_of(pointer.surface) {
                     view.pointer_moved(x, y, modifiers, false);
                 }
             }
-            None => {
-                for id in [
-                    Target::Browser(BrowserEvent::BrowserBody),
-                    Target::Browser(BrowserEvent::BrowserToolsBody),
-                ] {
-                    if let Some(view) = self.browser_view_of(id) {
-                        view.pointer_moved(0, 0, modifiers, true);
-                    }
+            BrowserPointing::Left => {
+                if let Some(view) = self.browser_view_of(pointer.surface) {
+                    view.pointer_moved(0, 0, modifiers, true);
+                }
+            }
+            BrowserPointing::Button {
+                secondary,
+                down,
+                clicks,
+            } => {
+                if down && self.model.read(Screen::list_menu_open) {
+                    return;
+                }
+                let button = if secondary { Mouse::Right } else { Mouse::Left };
+                if let Some(view) = self.browser_view_of(pointer.surface) {
+                    let clicks = i32::try_from(clicks).unwrap_or(i32::MAX);
+                    view.pointer_button(x, y, button, down, clicks, modifiers);
+                }
+                match secondary {
+                    true => self.web.buttons.1 = down,
+                    false => self.web.buttons.0 = down,
+                }
+            }
+            BrowserPointing::Wheel(dx, dy) => {
+                if let Some(view) = self.browser_view_of(pointer.surface) {
+                    view.scrolled(x, y, dx as i32, dy as i32, modifiers);
+                }
+            }
+            BrowserPointing::History(back) => {
+                self.note_press(None);
+                if !self.browser_history(back, true) {
+                    self.step_through_history(back);
                 }
             }
         }
     }
 
-    /// Sends a press or release of `button` into the page under the pointer, or into the one the press began in, with how many presses in a row it makes by rustle's default view configuration, as the window counts presses no area counts.
-    pub(super) fn browser_button(&mut self, button: Button, pressed: bool) {
-        let Some(at) = self.pointer.position else {
-            return;
-        };
-        if pressed && self.model.read(Screen::list_menu_open) {
-            return;
-        }
-        let target = if pressed {
-            self.browser_under(at)
-        } else {
-            self.web.pressed_in.and_then(|id| {
-                let rect = self.browser_region(id)?;
-                Some((
-                    id,
-                    ((at.0 - rect.origin.x) as i32, (at.1 - rect.origin.y) as i32),
-                ))
-            })
-        };
-        let Some((id, (x, y))) = target else {
-            return;
-        };
-        let clicks = if pressed {
-            let configuration = rustle::ViewConfiguration::default();
-            let within = Duration::from_millis(configuration.double_tap_timeout_millis);
-            let near = |last: (i32, i32)| {
-                ((last.0 - x) as f32).hypot((last.1 - y) as f32) < configuration.touch_slop
-            };
-            let count = match self.web.last_press {
-                Some((when, last, count)) if when.elapsed() < within && near(last) => count + 1,
-                _ => 1,
-            };
-            self.web.last_press = Some((Instant::now(), (x, y), count));
-            self.web.pressed_in = Some(id);
-            count
-        } else {
-            self.web.pressed_in = None;
-            self.web.last_press.map_or(1, |(_, _, count)| count)
-        };
-        let button = match button {
-            Button::Left => Mouse::Left,
-            Button::Right => Mouse::Right,
-        };
-        let modifiers = held(self.modifiers, self.pointer);
-        if let Some(view) = self.browser_view_of(id) {
-            view.pointer_button(x, y, button, pressed, i32::from(clicks), modifiers);
-        }
-    }
-
-    /// Scrolls the page under the pointer by `pixels` of wheel, and says whether there was one.
-    pub(super) fn browser_wheel(&mut self, dx: f32, dy: f32) -> bool {
-        let Some(at) = self.pointer.position else {
-            return false;
-        };
-        let Some((id, (x, y))) = self.browser_under(at) else {
-            return false;
-        };
-        let modifiers = held(self.modifiers, self.pointer);
-        if let Some(view) = self.browser_view_of(id) {
-            view.scrolled(x, y, dx as i32, dy as i32, modifiers);
-        }
-        true
-    }
-
-    /// Takes the mouse's back or forward button into the page, when the pointer is over the page or the page holds the keyboard and is on screen, and says whether it did.
-    pub(super) fn browser_history(&mut self, back: bool) -> bool {
+    /// Takes the mouse's back or forward button into the page, when the button went down
+    /// `over` the page or the page holds the keyboard and is on screen, and says whether it did.
+    pub(super) fn browser_history(&mut self, back: bool, over: bool) -> bool {
         if self
             .browser_region(Target::Browser(BrowserEvent::BrowserBody))
             .is_none()
         {
             return false;
         }
-        let over = self
-            .pointer
-            .position
-            .and_then(|at| self.browser_under(at))
-            .is_some_and(|(id, _)| id == Target::Browser(BrowserEvent::BrowserBody));
         if !over && self.browser_focused() != Some(Target::Browser(BrowserEvent::BrowserBody)) {
             return false;
         }
@@ -688,7 +604,7 @@ impl App {
             }
             return true;
         }
-        if self.focus.current() != Some(Target::Browser(BrowserEvent::BrowserFindField)) {
+        if self.focus.focused() != Some(Target::Browser(BrowserEvent::BrowserFindField)) {
             return false;
         }
         let shortcut = match event.key {
@@ -696,7 +612,8 @@ impl App {
                 self.model.update(|state| {
                     state.browser_find_closed();
                 });
-                self.focus.focus(Target::Browser(BrowserEvent::BrowserBody));
+                self.focus
+                    .request_focus(Target::Browser(BrowserEvent::BrowserBody));
                 return true;
             }
             Key::Enter if event.modifiers.shift => Shortcut::FindPrevious,
@@ -729,7 +646,7 @@ impl App {
             });
             if shortcut == Shortcut::Find {
                 self.focus
-                    .focus(Target::Browser(BrowserEvent::BrowserFindField));
+                    .request_focus(Target::Browser(BrowserEvent::BrowserFindField));
             }
             return true;
         }
@@ -744,7 +661,7 @@ impl App {
         {
             return false;
         }
-        let key = typed(event, held(modifiers, self.pointer));
+        let key = typed(event, held(modifiers, self.web.buttons));
         if let Some(view) = self.browser_view_of(id) {
             view.key(&key);
         }
@@ -762,22 +679,10 @@ impl App {
         if id == Target::Browser(BrowserEvent::BrowserBody) && shortcut_of(event).is_some() {
             return;
         }
-        let key = typed(event, held(event.modifiers, self.pointer));
+        let key = typed(event, held(event.modifiers, self.web.buttons));
         if let Some(view) = self.browser_view_of(id) {
             view.key(&key);
         }
-    }
-
-    /// How the pointer looks while it is over a page, as the page asks.
-    pub(super) fn browser_cursor(&self) -> Option<Cursor> {
-        let at = self.pointer.position?;
-        self.browser_under(at)?;
-        self.model.read(|state| {
-            state
-                .browser
-                .as_ref()
-                .map(|browser| cursor_of(browser.pointer))
-        })
     }
 
     /// The address to open for `address` of a page on `host`: a local one is carried to that machine's port, and what no transport can carry is said.
@@ -1375,7 +1280,8 @@ impl App {
                 self.model
                     .change(|state| state.browser_picked(*id, element.clone()));
                 if picked {
-                    self.focus.focus(Target::Composer(ComposerEvent::Prompt));
+                    self.focus
+                        .request_focus(Target::Composer(ComposerEvent::Prompt));
                 }
             }
             if found.is_some() || zoom.is_some() {
@@ -1421,7 +1327,7 @@ impl App {
             ImageData::keyed(texture, frame.width, frame.height, frame.rgba.as_slice())
         };
         let [page_texture, tools_texture] = self.web.textures;
-        let typing = self.focus.current() == Some(Target::Browser(BrowserEvent::BrowserAddress));
+        let typing = self.focus.focused() == Some(Target::Browser(BrowserEvent::BrowserAddress));
         let mut reports = Vec::new();
         for id in self.web.pages.keys().copied().collect::<Vec<_>>() {
             let host = self.browser_tab_host(id);

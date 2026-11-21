@@ -3,7 +3,8 @@
 //! sections.
 
 use crate::areas::ComposerEvent;
-use crate::kit::{self, Frame};
+use crate::theme::Frame;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
 use crate::target::Target;
 use crate::theme;
@@ -202,11 +203,12 @@ pub fn split(text: &str) -> (&str, Vec<String>) {
 pub fn sent_chips(labels: &[String]) {
     flow_row_with(Modifier::new(), FlowOptions::new(sp(2), sp(2)), || {
         for label in labels {
-            kit::row(
+            rustle::row_arranged(
                 Modifier::new()
                     .panel(Radius::Lg)
                     .padding_xy(theme::sp(2), theme::sp(1)),
-                1.5,
+                Arrangement::SpacedBy(theme::sp(1.5)),
+                Alignment::Center,
                 || {
                     crate::parts::glyph(
                         crate::captures::Capture::icon_of_label(label),
@@ -331,12 +333,13 @@ fn css_color(value: &str) -> Option<Color> {
 /// Emits a card of the popover: a small title over what `body` emits.
 #[track_caller]
 pub(crate) fn section(title: &str, body: impl FnOnce()) {
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .outlined(Radius::Lg)
             .padding(theme::sp(2.5)),
-        1.5,
+        Arrangement::SpacedBy(theme::sp(1.5)),
+        Alignment::Start,
         || {
             line(title, 11, 1.4, Role::Subtle);
             body();
@@ -359,15 +362,21 @@ pub(crate) fn words(content: &str, mono: bool, tone: Role, width: f32) {
     let kind = theme::text_style(12, 1.5);
     let kind = if mono { theme::in_mono(kind) } else { kind };
     let lines = rustle::wrap_at_spaces(&content, &kind, width);
-    kit::column(Modifier::new(), 0, || {
-        for piece in lines {
-            kit::text(
-                Modifier::new(),
-                &content[piece.start..piece.end],
-                kind.color(theme::color(tone)),
-            );
-        }
-    });
+    rustle::column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for piece in lines {
+                rustle::basic_text(
+                    Modifier::new(),
+                    &content[piece.start..piece.end],
+                    kind.color(theme::color(tone)),
+                    TextOverflow::Ellipsis,
+                );
+            }
+        },
+    );
 }
 
 /// Emits a row of a list: a name at the left and a value at the right, with a swatch of the colour
@@ -380,34 +389,54 @@ fn pair(name: &str, value: &str) {
     } else {
         VALUE_TEXT + 18.0
     };
-    kit::row_top(Modifier::new().fill_max_width(), 3, || {
-        kit::column(Modifier::new().width(NAME_WIDTH), 0, || {
-            words(name, false, Role::Muted, NAME_WIDTH);
-        });
-        kit::row_top(Modifier::new().weight(1.0), 1.5, || {
-            if let Some(tone) = swatch {
-                rustle::spacer(
-                    Modifier::new()
-                        .width(12.0)
-                        .height(12.0)
-                        .background_rounded(theme::color(tone), Radius::Sm.px())
-                        .outlined(Radius::Sm)
-                        .padding_each(0.0, theme::sp(0.5), 0.0, 0.0),
-                );
-            }
-            words(value, false, Role::Text, room);
-        });
-    });
+    rustle::row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Start,
+        || {
+            rustle::column_arranged(
+                Modifier::new().width(NAME_WIDTH),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    words(name, false, Role::Muted, NAME_WIDTH);
+                },
+            );
+            rustle::row_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::SpacedBy(theme::sp(1.5)),
+                Alignment::Start,
+                || {
+                    if let Some(tone) = swatch {
+                        rustle::spacer(
+                            Modifier::new()
+                                .width(12.0)
+                                .height(12.0)
+                                .background_rounded(theme::color(tone), Radius::Sm.px())
+                                .outlined(Radius::Sm)
+                                .padding_each(0.0, theme::sp(0.5), 0.0, 0.0),
+                        );
+                    }
+                    words(value, false, Role::Text, room);
+                },
+            );
+        },
+    );
 }
 
 /// Emits a list of rows, one for each name and value of `rows`.
 #[track_caller]
 fn pairs(rows: &[(String, String)]) {
-    kit::column(Modifier::new().fill_max_width(), 1.5, || {
-        for (name, value) in rows {
-            pair(name, value);
-        }
-    });
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(1.5)),
+        Alignment::Start,
+        || {
+            for (name, value) in rows {
+                pair(name, value);
+            }
+        },
+    );
 }
 
 /// Emits the popover of `element`: everything the prompt knows about it, in cards that scroll by
@@ -425,10 +454,15 @@ fn popover(element: &Element, state: &WorkspaceState) {
         Some(Modifier::new().padding_each(6.0, -1.0, 6.0, 6.0)),
         || {
             section("ELEMENT", || {
-                kit::column(Modifier::new(), 1, || {
-                    words(&element.opening_tag(), true, Role::Text, CARD_TEXT);
-                    words(&element.size(), false, Role::Muted, CARD_TEXT);
-                });
+                rustle::column_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(theme::sp(1)),
+                    Alignment::Start,
+                    || {
+                        words(&element.opening_tag(), true, Role::Text, CARD_TEXT);
+                        words(&element.size(), false, Role::Muted, CARD_TEXT);
+                    },
+                );
             });
             said_section("PATH", &element.selector, true);
             if let Some(component) = element.component_tag() {
@@ -490,11 +524,12 @@ pub(crate) fn chip_flow(content: impl FnOnce()) {
 /// filled while `selected`, beside one with a cross that answers to `remove`.
 #[track_caller]
 pub(crate) fn pill(label: String, icon: Icon, id: Target, remove: Target, selected: bool) {
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .background_rounded(theme::color(Role::SurfaceHover), Radius::Lg.px())
             .padding_each(0.0, 0.0, theme::sp(1), 0.0),
-        0.5,
+        Arrangement::SpacedBy(theme::sp(0.5)),
+        Alignment::Center,
         || {
             Button::new(label, id)
                 .variant(Variant::Ghost)
@@ -524,6 +559,15 @@ pub(crate) fn chip_popover(
     popover
         .modifier(crate::composer::menu_body())
         .build_with(|| {
-            kit::scrolled(&state.menu_scroll, sp(HEIGHT / 4.0), 2, content);
+            rustle::column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .height_in(0.0, sp(HEIGHT / 4.0))
+                    .vertical_scroll(&state.menu_scroll)
+                    .fill_max_width(),
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Start,
+                content,
+            );
         });
 }

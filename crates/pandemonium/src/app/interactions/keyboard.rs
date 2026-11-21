@@ -51,22 +51,22 @@ fn tab_walks_the_focus() {
     assert_eq!(rig.focused(), Some(Target::Composer(ComposerEvent::Prompt)));
 }
 
-/// Enter and Space press the control that has the keyboard, once the focus the app keeps
-/// on it is composed into rustle's.
+/// Enter and Space press the control that has the keyboard, once the app asked rustle
+/// to give that control's focus the keyboard.
 #[test]
 fn enter_and_space_press_what_has_the_keyboard() {
     let mut rig = Rig::shot(Shot::Workspace);
     rig.app
         .borrow_mut()
         .focus
-        .focus(Target::Diff(DiffEvent::TabDiff));
+        .request_focus(Target::Diff(DiffEvent::TabDiff));
     rig.settle();
     rig.key(Key::Enter);
     assert_eq!(rig.state(|state| state.tab), Tab::Diff);
     rig.app
         .borrow_mut()
         .focus
-        .focus(Target::Sidebar(SidebarEvent::Session(2)));
+        .request_focus(Target::Sidebar(SidebarEvent::Session(2)));
     rig.settle();
     rig.key(Key::Character(" ".into()));
     assert_eq!(rig.state(|state| state.page), Page::Session(2));

@@ -1,6 +1,6 @@
 //! The emulator: the bytes a shell prints, turned into what a terminal window shows.
 
-use pm_field::Reach;
+use pm_buffer::Reach;
 use vte::{Params, Parser, Perform};
 
 use crate::cell::{Cell, Color, Flags};
@@ -386,7 +386,7 @@ impl Emulator {
                 let text: String = self.absolute(line).iter().map(|cell| cell.ch).collect();
                 let starts: Vec<usize> = text.char_indices().map(|(at, _)| at).collect();
                 let word =
-                    pm_field::word_at(&text, starts.get(column).copied().unwrap_or(text.len()));
+                    pm_buffer::word_at(&text, starts.get(column).copied().unwrap_or(text.len()));
                 let first = starts.partition_point(|&at| at < word.start);
                 let last = starts
                     .partition_point(|&at| at < word.end)

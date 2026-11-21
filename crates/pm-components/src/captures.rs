@@ -4,7 +4,8 @@
 //! console as a fenced block that everything the page said is set off inside.
 
 use crate::areas::ComposerEvent;
-use crate::kit;
+use crate::theme;
+use rustle::{Alignment, Arrangement};
 
 use crate::target::Target;
 use crate::theme::Role;
@@ -206,11 +207,16 @@ fn cards(capture: &Capture, state: &WorkspaceState) {
             if capture.lines.is_empty() {
                 line("The console was empty.", 12, 1.4, Role::Muted);
             } else {
-                kit::column(Modifier::new(), 1, || {
-                    for text in &capture.lines {
-                        words(text, true, Role::Text, CARD_TEXT);
-                    }
-                });
+                rustle::column_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(theme::sp(1)),
+                    Alignment::Start,
+                    || {
+                        for text in &capture.lines {
+                            words(text, true, Role::Text, CARD_TEXT);
+                        }
+                    },
+                );
             }
         });
     }

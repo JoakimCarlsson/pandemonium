@@ -1,7 +1,11 @@
 //! The pages of the settings window that list what agents are given in a project: an overview, the skills, instructions, agent definitions and hooks found in the folders the agent reads, and the tools it may call, each with a switch that leaves it out of new sessions.
 
-use crate::kit;
+use crate::button;
+use crate::events;
+use crate::icons;
 use crate::target::Target;
+use crate::theme;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
 use std::path::Path;
 
@@ -454,7 +458,12 @@ fn context(state: &WorkspaceState, room: f32) {
             format!("Read for {read_for}; the app does not know how to read this agent's files.")
         }
     };
-    kit::column(Modifier::new(), 2, || wrapped_note(&said, room));
+    rustle::column_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
+        || wrapped_note(&said, room),
+    );
 }
 
 /// Emits what the page of `section`, one of the pages of what agents are given, holds under its
@@ -605,23 +614,29 @@ fn item_row(state: &WorkspaceState, index: usize, item: &Item) {
                 if !description.is_empty() {
                     note(&description);
                 }
-                kit::text(
+                rustle::basic_text(
                     Modifier::new().fill_max_width(),
                     detail,
-                    kit::line(11, Role::Subtle),
+                    theme::line(11, Role::Subtle),
+                    TextOverflow::Ellipsis,
                 );
             },
         );
-        kit::row(Modifier::new(), 2, || {
-            if item.kind.switchable(library.product) {
-                switch(on, ITEM_SWITCHES.id(index));
-            }
-            if let Some(open) = ITEM_OPENS.id(index) {
-                kit::small_button("Open", open, Variant::Outline)
-                    .disabled(!openable(state, item))
-                    .build();
-            }
-        });
+        rustle::row_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Center,
+            || {
+                if item.kind.switchable(library.product) {
+                    switch(on, ITEM_SWITCHES.id(index));
+                }
+                if let Some(open) = ITEM_OPENS.id(index) {
+                    button::small_button("Open", open, Variant::Outline)
+                        .disabled(!openable(state, item))
+                        .build();
+                }
+            },
+        );
     });
 }
 
@@ -705,11 +720,12 @@ fn set_row(set: &ToolSet, place: usize, open: bool, product: Option<Product>, wi
         None => source_label(set),
     };
     flat_row(3, || {
-        kit::row(
-            kit::pressable(Modifier::new().weight(1.0).clip(), SET_FOLDS.id(place)),
-            2,
+        rustle::row_arranged(
+            events::pressable(Modifier::new().weight(1.0).clip(), SET_FOLDS.id(place)),
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Center,
             || {
-                glyph(kit::chevron(open), 4.0, Role::Muted);
+                glyph(icons::chevron(open), 4.0, Role::Muted);
                 titled(
                     &set.name,
                     name_tone(on),
@@ -734,16 +750,22 @@ fn tool_row(
 ) {
     let on = set.tool_enabled(&tool.name, withheld);
     flat_row(10, || {
-        kit::column(Modifier::new().weight(1.0).clip(), 1, || {
-            kit::text(
-                Modifier::new(),
-                tool.name.clone(),
-                kit::code(12, name_tone(on)),
-            );
-            if let Some(first) = tool.description.lines().next() {
-                note(first);
-            }
-        });
+        rustle::column_arranged(
+            Modifier::new().weight(1.0).clip(),
+            Arrangement::SpacedBy(theme::sp(1)),
+            Alignment::Start,
+            || {
+                rustle::basic_text(
+                    Modifier::new(),
+                    tool.name.clone(),
+                    theme::code(12, name_tone(on)),
+                    TextOverflow::Ellipsis,
+                );
+                if let Some(first) = tool.description.lines().next() {
+                    note(first);
+                }
+            },
+        );
         if set.per_tool(product) {
             switch(on, id);
         }

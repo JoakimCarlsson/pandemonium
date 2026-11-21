@@ -2,9 +2,11 @@
 
 use crate::areas::ChatEvent;
 use crate::areas::DiffEvent;
-use crate::kit::{self, Frame};
+use crate::events;
+use crate::theme::Frame;
 use crate::theme::Indicated;
 use crate::theme::ShadowLayers;
+use rustle::{Alignment, Arrangement};
 
 use crate::target::Target;
 use crate::theme;
@@ -48,12 +50,13 @@ pub(crate) fn latest_plan(session: &Session) -> Option<&[pm_harness::PlanStep]> 
 
 /// Emits the card of the commands the agent left running, with how long each has gone on.
 fn shells(session: &Session) {
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .panel(Radius::Lg)
             .padding_xy(theme::sp(3.5), theme::sp(3)),
-        2,
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
         || {
             line(
                 format!("{} running", session.shells.len()),
@@ -62,16 +65,21 @@ fn shells(session: &Session) {
                 Role::Muted,
             );
             for shell in &session.shells {
-                kit::row(Modifier::new(), 2.5, || {
-                    spinner(3.5, Role::Muted);
-                    clipped(&shell.label, 13, Role::Text);
-                    line(
-                        elapsed(shell.started.elapsed().as_secs()),
-                        12,
-                        1.4,
-                        Role::Subtle,
-                    );
-                });
+                rustle::row_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(theme::sp(2.5)),
+                    Alignment::Center,
+                    || {
+                        spinner(3.5, Role::Muted);
+                        clipped(&shell.label, 13, Role::Text);
+                        line(
+                            elapsed(shell.started.elapsed().as_secs()),
+                            12,
+                            1.4,
+                            Role::Subtle,
+                        );
+                    },
+                );
             }
         },
     );
@@ -122,14 +130,15 @@ fn has_panel(session: &Session, open: Activity) -> bool {
 /// Emits the open panel `open` for `session`, `width` logical pixels wide, hanging over the chips.
 #[track_caller]
 fn panel(state: &WorkspaceState, session: &Session, open: Activity, width: f32) {
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .width(width)
             .shadow_layers(&theme::MEDIUM_SHADOW, Radius::Xl.px())
             .background_rounded(theme::color(Role::Background), Radius::Xl.px())
             .outlined(Radius::Xl)
             .padding(theme::sp(2)),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || match open {
             Activity::Plan => {
                 if let Some(items) = latest_plan(session) {
@@ -185,81 +194,86 @@ fn chips(
     awaiting: usize,
     working_agents: usize,
 ) {
-    kit::flow(false, || {
-        if awaiting > 0 {
-            chip(
-                format!("{awaiting} awaiting approval"),
-                Target::Chat(ChatEvent::ApprovalsChip),
-                state.activity == Some(Activity::Approvals),
-            )
-            .mark(|| {
-                rustle::spacer(
-                    Modifier::new()
-                        .size(theme::sp(1.5), theme::sp(1.5))
-                        .background_rounded(theme::color(Role::Danger), Radius::Full.px()),
+    rustle::flow_row_with(
+        Modifier::new(),
+        rustle::FlowOptions::new(theme::sp(2), theme::sp(2)).item_alignment(Alignment::Center),
+        || {
+            if awaiting > 0 {
+                chip(
+                    format!("{awaiting} awaiting approval"),
+                    Target::Chat(ChatEvent::ApprovalsChip),
+                    state.activity == Some(Activity::Approvals),
                 )
-            })
-            .build();
-        }
-        if let Some(items) = plan_items {
-            let done = items
-                .iter()
-                .filter(|item| item.progress == Progress::Done)
-                .count();
-            chip(
-                format!("{done}/{} tasks", items.len()),
-                Target::Chat(ChatEvent::PlanChip),
-                state.activity == Some(Activity::Plan),
-            )
-            .with_icon(phosphor::CHECK_CIRCLE)
-            .build();
-        }
-        if working_agents > 0 {
-            chip(
-                format!("{working_agents} running"),
-                Target::Chat(ChatEvent::SubagentsChip),
-                state.activity == Some(Activity::Subagents),
-            )
-            .mark(|| spinner(3.5, Role::Muted))
-            .build();
-        }
-        if !session.shells.is_empty() {
-            let count = session.shells.len();
-            chip(
-                format!(
-                    "{count} {} running",
-                    if count == 1 { "command" } else { "commands" }
-                ),
-                Target::Chat(ChatEvent::ShellsChip),
-                state.activity == Some(Activity::Shells),
-            )
-            .mark(|| spinner(3.5, Role::Muted))
-            .build();
-        }
-        if !session.changes.is_empty() {
-            kit::row(
-                kit::pressed(
-                    Modifier::new()
-                        .height(theme::sp(7))
-                        .indicated(
-                            theme::InteractionTones::new()
-                                .hover(Role::SurfaceHover)
-                                .radius(Radius::Full),
-                            theme::Focused::Held(crate::focus::is_held(Target::Diff(
-                                DiffEvent::OpenDiff,
-                            ))),
-                        )
-                        .outlined(Radius::Full),
-                    Target::Diff(DiffEvent::OpenDiff),
+                .mark(|| {
+                    rustle::spacer(
+                        Modifier::new()
+                            .size(theme::sp(1.5), theme::sp(1.5))
+                            .background_rounded(theme::color(Role::Danger), Radius::Full.px()),
+                    )
+                })
+                .build();
+            }
+            if let Some(items) = plan_items {
+                let done = items
+                    .iter()
+                    .filter(|item| item.progress == Progress::Done)
+                    .count();
+                chip(
+                    format!("{done}/{} tasks", items.len()),
+                    Target::Chat(ChatEvent::PlanChip),
+                    state.activity == Some(Activity::Plan),
                 )
-                .padding_xy(theme::sp(3), 0.0),
-                0,
-                || {
-                    Tally::new(session.added(), session.removed())
-                        .size(12)
-                        .build();
-                },
-            );
-        }
-    });
+                .with_icon(phosphor::CHECK_CIRCLE)
+                .build();
+            }
+            if working_agents > 0 {
+                chip(
+                    format!("{working_agents} running"),
+                    Target::Chat(ChatEvent::SubagentsChip),
+                    state.activity == Some(Activity::Subagents),
+                )
+                .mark(|| spinner(3.5, Role::Muted))
+                .build();
+            }
+            if !session.shells.is_empty() {
+                let count = session.shells.len();
+                chip(
+                    format!(
+                        "{count} {} running",
+                        if count == 1 { "command" } else { "commands" }
+                    ),
+                    Target::Chat(ChatEvent::ShellsChip),
+                    state.activity == Some(Activity::Shells),
+                )
+                .mark(|| spinner(3.5, Role::Muted))
+                .build();
+            }
+            if !session.changes.is_empty() {
+                rustle::row_arranged(
+                    events::pressed(
+                        Modifier::new()
+                            .height(theme::sp(7))
+                            .indicated(
+                                theme::InteractionTones::new()
+                                    .hover(Role::SurfaceHover)
+                                    .radius(Radius::Full),
+                                theme::Focused::Control(crate::focus::is_focused(Target::Diff(
+                                    DiffEvent::OpenDiff,
+                                ))),
+                            )
+                            .outlined(Radius::Full),
+                        Target::Diff(DiffEvent::OpenDiff),
+                    )
+                    .padding_xy(theme::sp(3), 0.0),
+                    Arrangement::Start,
+                    Alignment::Center,
+                    || {
+                        Tally::new(session.added(), session.removed())
+                            .size(12)
+                            .build();
+                    },
+                );
+            }
+        },
+    );
 }

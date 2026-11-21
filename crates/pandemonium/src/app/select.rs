@@ -8,7 +8,7 @@ use pm_components::areas::{EditorEvent, MenuEvent};
 use pm_components::events::Event;
 use pm_components::message_menu::is_message_menu_item;
 use pm_components::target::Target;
-use pm_field::Edit;
+use pm_editor::Edit;
 use pm_pages::{Screen, WorkspaceState};
 use rustle::{Key, KeyEvent, SelectionPoint};
 
@@ -16,29 +16,20 @@ use super::App;
 use crate::keys::{self, Clip};
 
 impl App {
-    /// Lets go of the selections a primary press lands outside of, as a press elsewhere
-    /// takes focus from a selection container: the conversation's unless the press is in
-    /// the conversation, the card's unless it is on the card, and neither when the press is
-    /// on a row of the menu over a message, which may act on the selection.
-    pub(super) fn text_press(&mut self) {
-        if self.pressed_on.is_some_and(is_message_menu_item) {
+    /// Lets go of the selections a primary press on `on`, or on no control, lands outside
+    /// of, as a press elsewhere takes focus from a selection container: the conversation's
+    /// unless the conversation said the press is in it, the card's unless it is on the card,
+    /// and neither when the press is on a row of the menu over a message, which may act on
+    /// the selection.
+    pub(super) fn text_press(&mut self, on: Option<Target>) {
+        let in_conversation = std::mem::take(&mut self.pressed_in_conversation);
+        if on.is_some_and(is_message_menu_item) {
             return;
         }
-        let in_conversation = self.pointer.position.is_some_and(|(x, y)| {
-            self.model
-                .read(Screen::conversation_area)
-                .map(|area| self.framed(area))
-                .is_some_and(|area| {
-                    x >= area.origin.x
-                        && y >= area.origin.y
-                        && x < area.origin.x + area.size.width
-                        && y < area.origin.y + area.size.height
-                })
-        });
         if !in_conversation {
             self.chat_selection().clear();
         }
-        if self.pressed_on != Some(Target::Editor(EditorEvent::HoverCard)) {
+        if on != Some(Target::Editor(EditorEvent::HoverCard)) {
             self.model.read(Screen::hover_selection).clear();
         }
     }
@@ -47,7 +38,7 @@ impl App {
     /// of it when a key asks for that outside a text field, and says whether
     /// it did.
     pub(super) fn text_key(&mut self, event: &KeyEvent) -> bool {
-        if self.focus.current().is_some_and(WorkspaceState::is_field) {
+        if self.focus.focused().is_some_and(WorkspaceState::is_field) {
             return false;
         }
         if matches!(keys::edit(event), Some(Edit::SelectAll)) {
@@ -99,16 +90,11 @@ impl App {
         }
     }
 
-    /// Opens the menu over the message under the pointer, when it is over
-    /// one, and closes any other menu.
-    pub(super) fn open_message_menu(&mut self) {
-        let Some(at) = self.pointer.position else {
-            return;
-        };
-        let (left, top) = self.framed_point((0.0, 0.0));
-        let message = self
-            .model
-            .read(|screen| screen.message_at((at.0 - left, at.1 - top)));
+    /// Opens the menu over the message `message` at `at`, in the window, as a secondary press
+    /// there asks, and closes any other menu; with no message, only closes the menus.
+    pub(super) fn open_message_menu(&mut self, message: Option<usize>, at: (f32, f32)) {
+        self.note_press(None);
+        let at = self.framed_point(at);
         let selected = self.text_selection().is_some();
         self.model.update(|state| {
             let closed = std::mem::take(state).in_workspace(|state| state.without_menu());

@@ -1,9 +1,9 @@
 //! The empty page of a new session or a new chat: pick an agent, then describe the work.
 
 use crate::areas::{DiffEvent, SidebarEvent};
-use crate::kit;
 use crate::target::Target;
 use crate::theme;
+use rustle::TextOverflow;
 use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with};
 use rustle::{BoxAlignment, Modifier, phosphor};
 
@@ -70,12 +70,13 @@ pub fn welcome(state: &WorkspaceState, above: f32) {
                     Arrangement::SpacedBy(sp(7)),
                     Alignment::Center,
                     || {
-                        kit::text(
+                        rustle::basic_text(
                             Modifier::new(),
                             heading(state),
                             theme::text_style(28, 1.25)
                                 .font_weight(rustle::FontWeight::SEMI_BOLD)
                                 .color(theme::color(Role::Text)),
+                            TextOverflow::Ellipsis,
                         );
                         flow_row_with(
                             Modifier::new().fill_max_width(),

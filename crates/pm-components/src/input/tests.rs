@@ -9,7 +9,7 @@ use std::rc::Rc;
 use rustle::{Embedded, Key, KeyEvent, Modifiers, PixelRounding};
 
 use super::*;
-use crate::focus::{self, FocusKeys};
+use crate::focus::{self, FocusRequesters};
 
 /// The heights a multiline input editing `field` was laid out at, in a
 /// window 640 by 240 logical pixels, with the keyboard on it.
@@ -25,10 +25,12 @@ fn show(field: &TextFieldState) -> Shown {
     let id = Target::Chat(ChatEvent::Choice(999));
     let heights: Rc<RefCell<Vec<f32>>> = Rc::default();
     let (field, told) = (field.clone(), Rc::clone(&heights));
+    let requesters = FocusRequesters::new();
+    requesters.request_focus(id);
     let mut ui = Embedded::without_renderer(
         move || {
             let told = Rc::clone(&told);
-            focus::provide(FocusKeys::resting(Some(id)), || {
+            focus::provide(requesters.clone(), || {
                 Input::new(&field, id)
                     .variant(Variant::Multiline)
                     .modifier(

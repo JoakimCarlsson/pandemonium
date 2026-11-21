@@ -50,15 +50,7 @@ pub fn icon(icon: Icon, steps: f32, tone: impl Into<Color>) {
 /// logical pixels on a side, tinted with `tone`, with `modifier` around it.
 #[track_caller]
 pub fn icon_with(modifier: Modifier, icon: Icon, pixels: f32, tone: impl Into<Color>) {
-    let color = theme::color(tone);
-    rustle::canvas(modifier.size(pixels, pixels), move |canvas| {
-        let side = canvas.width().min(canvas.height());
-        let (x, y) = (
-            (canvas.width() - side) / 2.0,
-            (canvas.height() - side) / 2.0,
-        );
-        canvas.path(&icon, x, y, side, side, color);
-    });
+    rustle::icon_with(modifier, icon, pixels, theme::color(tone));
 }
 
 /// Emits the SVG artwork `art` in a square `pixels` logical pixels on a side,
@@ -108,4 +100,14 @@ pub fn spinning_icon(icon: Icon, steps: f32, tone: impl Into<Color>) {
         sp(steps),
         tone,
     );
+}
+
+/// The caret that marks a foldable list or section: pointing down while it
+/// is `open`, right while it is folded.
+pub fn chevron(open: bool) -> Icon {
+    if open {
+        phosphor::CARET_DOWN
+    } else {
+        phosphor::CARET_RIGHT
+    }
 }

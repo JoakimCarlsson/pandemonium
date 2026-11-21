@@ -13,6 +13,7 @@ use pm_components::areas::DialogEvent;
 
 use pm_components::events::Event;
 use pm_components::events::FieldEvent;
+use pm_components::focus::FocusRequesters;
 use pm_components::target::Target;
 use std::cell::Cell;
 use std::rc::Rc;
@@ -32,10 +33,12 @@ use pm_components::open_files::STRIP;
 use pm_components::panes::split_row_of;
 use pm_components::sash::Grows;
 
+use pm_buffer::Reach;
+use pm_components::pointing::{CodePointer, Press, Stroke};
 use pm_components::theme::{Appearance, ThemeFamily};
 use pm_components::tree_actions::{TREE_MENU_HEIGHT, TreeTarget};
 use pm_components::{EDITOR_MENU_HEIGHT, EditorCommand, is_menu_item};
-use pm_field::{Edit, Gesture, Reach};
+use pm_editor::Edit;
 use pm_pages::{Screen, WorkspaceState};
 use rustle::{Key, KeyEvent, Modifiers};
 
@@ -45,9 +48,7 @@ mod capture;
 mod code;
 mod controller;
 mod editing;
-mod focus;
 mod frame;
-mod gesture;
 #[cfg(test)]
 mod headless;
 mod host;
@@ -56,15 +57,14 @@ mod interactions;
 mod panes;
 mod paste;
 mod performance;
-mod pointer;
 pub(crate) mod port;
 mod select;
+mod selecting;
 mod terminal;
 mod tree;
 mod vim;
 
-use self::gesture::CodeText;
-use self::pointer::{Button, PointerEvent, PointerState};
+use self::selecting::{Hold, Selected};
 use crate::keys;
 use crate::keys::Clip;
 use crate::view::View;
@@ -104,11 +104,9 @@ pub struct App {
     window: Option<Rc<dyn port::Port>>,
     /// Whether something changed outside the model that the windows must be composed again for.
     recompose: bool,
-    /// The control the app kept focus on when the windows were last composed, so focus kept
-    /// anywhere else since composes them again.
-    composed_focus: Option<Target>,
-    /// What the interface made of the event being handled.
-    claimed: controller::Claims,
+    /// Whether an operation of the views changed the app since it was last woken, so a
+    /// frame is due even for an event the app's own logic does not act on.
+    acted: bool,
     /// Optional CPU frame timings and pointer response measurements.
     timings: performance::Timings,
     /// The light and the dark theme the window is drawn in.
@@ -125,20 +123,20 @@ pub struct App {
     model: Model,
     /// Set by the model whenever it changes, so the screen is drawn again.
     dirty: Rc<Cell<bool>>,
-    /// The pointer as the events so far left it.
-    pointer: PointerState,
-    /// Which element holds keyboard focus.
-    focus: focus::KeptFocus,
+    /// The rustle focus of every control, which says which holds keyboard focus.
+    focus: FocusRequesters,
     /// Which modifier keys are held.
     modifiers: Modifiers,
-    /// The controls the pointer is over, the one it came over last at the end: what the
-    /// pointer is over, as the controls' hover tells it.
-    hovered: Vec<Target>,
-    /// The control the primary button last went down or clicked on and where it was laid
-    /// out, in the window, which a menu it opens hangs from.
-    anchor: Option<(Target, rustle::Rect)>,
-    /// The element the primary button went down on.
-    pressed_on: Option<Target>,
+    /// The control the primary button last went down or clicked on, or the secondary one
+    /// went down on, where it was laid out and where the pointer was, in the window, which a
+    /// menu it opens hangs from.
+    anchor: Option<Press>,
+    /// Whether a popup asked to be dismissed by a press outside it, which the press closes
+    /// once it tells what it landed on.
+    dismissal: bool,
+    /// Whether the conversation said the primary button went down inside it, for the press
+    /// being handled, so its selection stays.
+    pressed_in_conversation: bool,
     /// The row of the project's files or of the changed files the primary button last went down on, while nothing else was pressed since, so Ctrl+A picks every row of its list.
     list_pressed: Option<Target>,
     /// The handle on the edge of a panel being dragged, how big the panel was when the drag began, and which way the handle grows it.
@@ -153,8 +151,8 @@ pub struct App {
     on_aside: Option<asides::Aside>,
     /// The field a press began in, while the button is held, so dragging selects.
     dragging: Option<Target>,
-    /// What the press held in a field took, so dragging extends by the same amount.
-    field_gesture: Gesture<usize>,
+    /// What the press held in the code editor took, so dragging extends by the same amount.
+    code_hold: Option<Hold<usize>>,
     /// What was last copied in the file shown: its text, the indentation of the lines it came from and whether it is whole lines copied with nothing selected.
     copied: Option<(String, String, bool)>,
     /// The byte of the file a press with Alt and Shift held began at, while the button is held, so dragging selects a rectangle of text.
@@ -182,8 +180,6 @@ pub struct App {
     /// The text field that held the keyboard before the interface handled the
     /// current event, and what it held then.
     typed_before: Option<(Target, String)>,
-    /// What held the keyboard before the interface handled the current event.
-    focus_before_event: Option<Target>,
     /// The start of the current burst, limiting how long continuous typing delays saving.
     view_save_started: Option<Instant>,
     /// The field the reader was typing in when the window last closed, which takes the keyboard once it is drawn.
@@ -204,10 +200,6 @@ pub struct App {
     naming: bool,
     /// What held keyboard focus when the event loop last came to rest, for telling the screen which text field the reader left.
     focus_before: Option<Target>,
-    /// How many presses in a row the last press of a control made, as rustle counted them.
-    press_clicks: u32,
-    /// The view configuration in effect where the last pressed control was composed.
-    press_configuration: rustle::ViewConfiguration,
     /// Whether the window's own close button asked it to close and nothing is left to ask first.
     closing: bool,
     /// Whether the field narrowing the list over the file is to take the keyboard once it is drawn.
@@ -215,7 +207,9 @@ pub struct App {
     /// Whether the shell is to take the keyboard once it is drawn.
     focus_terminal: bool,
     /// What the press held in the shell's window took, so dragging marks the same amount.
-    terminal_gesture: Gesture<(usize, usize)>,
+    terminal_hold: Option<Hold<(usize, usize)>>,
+    /// The cell of the shell's window the pointer is over, as the window last told.
+    terminal_hover: Option<(usize, usize)>,
     /// The part of a line the wheel has scrolled the shell that was not enough to move it.
     terminal_scroll_rest: f32,
     /// The word of the file shown the pointer rests on, by where it starts, and since when.
@@ -224,6 +218,12 @@ pub struct App {
     hover_leaving: Option<Instant>,
     /// Whether the pointer has been on the card about a word since it opened, so leaving it takes it away at once.
     hover_entered: bool,
+    /// The byte of the file shown whose drawn character the pointer is over, as the code last told.
+    editor_hover: Option<usize>,
+    /// Whether the pointer is over the card about a word, as the card last told.
+    hover_card_over: bool,
+    /// Whether the primary button went down on the card about a word and is still held.
+    hover_card_held: bool,
     /// The chords pressed so far of a binding of more than one.
     pending: Vec<pm_editor::Chord>,
     /// The chords pressed so far while keys are recorded on the keymap page, as they are written.
@@ -360,13 +360,12 @@ impl App {
     ) -> Self {
         let model = Model::new(screen);
         let dirty = model.changes();
-        let focus = focus::KeptFocus::new();
+        let focus = FocusRequesters::new();
         Self {
             shell: host::Shell::new(model.clone(), focus.clone()),
             window: None,
             recompose: true,
-            composed_focus: None,
-            claimed: controller::Claims::default(),
+            acted: false,
             fonts_applied: (
                 window_settings.appearance.interface_font.clone(),
                 window_settings.appearance.code_font.clone(),
@@ -378,12 +377,11 @@ impl App {
             system_appearance: Appearance::Dark,
             model,
             dirty,
-            pointer: PointerState::default(),
             focus,
             modifiers: Modifiers::default(),
-            hovered: Vec::new(),
             anchor: None,
-            pressed_on: None,
+            dismissal: false,
+            pressed_in_conversation: false,
             list_pressed: None,
             sash_drag: None,
             settings_surface: None,
@@ -391,7 +389,7 @@ impl App {
             raised_picker: None,
             on_aside: None,
             dragging: None,
-            field_gesture: Gesture::default(),
+            code_hold: None,
             column_press: None,
             copied: None,
             composing_in: None,
@@ -401,7 +399,6 @@ impl App {
             view_writer: crate::view::Writer::default(),
             view_save_due: None,
             typed_before: None,
-            focus_before_event: None,
             view_save_started: None,
             project_press: None,
             project_dragging: false,
@@ -416,18 +413,20 @@ impl App {
             autofocused: false,
             naming: false,
             focus_before: None,
-            press_clicks: 1,
-            press_configuration: rustle::ViewConfiguration::default(),
             closing: false,
             focus_filter: false,
             focus_terminal: false,
-            terminal_gesture: Gesture::default(),
+            terminal_hold: None,
+            terminal_hover: None,
             terminal_scroll_rest: 0.0,
             web: browser::Web::default(),
             focus_browser_address: false,
             hover_rest: None,
             hover_leaving: None,
             hover_entered: false,
+            editor_hover: None,
+            hover_card_over: false,
+            hover_card_held: false,
             pending: Vec::new(),
             recorded: Vec::new(),
             record_deadline: None,
@@ -566,7 +565,7 @@ impl App {
                 self.show_editor_caret();
             }
             if let Some(next) = asked.focus {
-                self.focus.focus(next);
+                self.focus.request_focus(next);
             }
             self.focus_terminal = asked.keyboard_to_shell;
         }
@@ -595,10 +594,10 @@ impl App {
         }
     }
 
-    /// Counts a click on the control `id`: a click whose press was the second or later in a
-    /// row keeps the file its tab or row shows open.
-    fn note_click(&mut self, id: Target) {
-        if self.press_clicks >= 2 {
+    /// Counts a click on the control `id` whose press made `clicks` presses in a row: a click
+    /// whose press was the second or later in a row keeps the file its tab or row shows open.
+    fn note_click(&mut self, id: Target, clicks: u32) {
+        if clicks >= 2 {
             self.model.update(|state| {
                 *state = std::mem::take(state).in_workspace(|state| state.with_file_kept(id))
             });
@@ -730,7 +729,7 @@ impl App {
             return;
         }
         let work = &self.work;
-        let focused = self.focus.current();
+        let focused = self.focus.focused();
         let Some(view) = self.model.read(|screen| match screen {
             Screen::Workspace(state) => Some(View::capture(state, focused, |position| {
                 work.server_number(position)
@@ -747,20 +746,20 @@ impl App {
         self.saved_view = Some(view);
     }
 
-    /// Gives `focus` to the field in `refocus`, the one the reader was typing in when the
-    /// window last closed, once the view is no longer `resuming`: focus is kept on it until
-    /// rustle shows it holding focus, which is once the field is composed.
-    fn give_back_focus(refocus: &mut Option<Target>, focus: &focus::KeptFocus, resuming: bool) {
+    /// Gives rustle's focus to the field in `refocus`, the one the reader was typing in when
+    /// the window last closed, once the view is no longer `resuming`: focus is asked for
+    /// until rustle says the field holds it, which is once the field is composed.
+    fn give_back_focus(refocus: &mut Option<Target>, focus: &FocusRequesters, resuming: bool) {
         let Some(field) = *refocus else {
             return;
         };
         if resuming {
             return;
         }
-        if focus.shown_on(field) {
+        if focus.is_focused(field) {
             *refocus = None;
         } else {
-            focus.focus(field);
+            focus.request_focus(field);
         }
     }
 
@@ -795,29 +794,22 @@ impl App {
         self.attach_paths(paths);
     }
 
-    /// Scrolls what is under the pointer by `pixels` logical pixels, downwards when
-    /// positive, where the interface did not: the terminal or the sidebar's list.
-    fn scroll(&mut self, pixels: f32) {
-        if self.terminal_wheel(pixels) {
-            return;
-        }
-        let Some((x, _)) = self.pointer.position else {
-            return;
-        };
+    /// Scrolls the sidebar's list by `pixels` logical pixels, downwards when positive, as
+    /// the wheel turned over the sidebar.
+    pub(super) fn sidebar_scrolled(&mut self, pixels: f32) {
         let height = self.window_size().1;
-        self.model
-            .update(|state| *state = std::mem::take(state).scrolled(x, pixels, height));
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.scrolled(pixels, height))
+        });
     }
 
     /// Notes what holds the keyboard and, when it is a text field, what it
     /// holds, before the interface handles an event, so [`App::follow_typing`]
-    /// can tell whether the field changed while it did and the frame is
-    /// composed again when the keyboard moved.
+    /// can tell whether the field changed while it did.
     pub(super) fn note_typing(&mut self) {
-        self.focus_before_event = self.focus.current();
         self.typed_before = self
             .focus
-            .current()
+            .focused()
             .filter(|id| Screen::is_text_field(*id))
             .and_then(|id| {
                 self.model
@@ -855,11 +847,6 @@ impl App {
         if moved {
             self.deliver();
         }
-    }
-
-    /// The control the pointer is over: the one it came over last of those it is still over.
-    pub(super) fn under_pointer(&self) -> Option<Target> {
-        self.hovered.last().copied()
     }
 
     /// `at`, a point in the window, in the coordinates of the window's frame: past the band
@@ -910,14 +897,12 @@ impl App {
         (size.0 - band, size.1 - band)
     }
 
-    /// Whether `on` is a handle the composables drag themselves: a panel's handle or the
+    /// Whether `id` is a handle the composables drag themselves: a panel's handle or the
     /// minimap, whose press is not a press of anything else.
-    fn is_drag_handle(&self, on: Option<Target>) -> bool {
+    fn is_drag_handle(&self, id: Target) -> bool {
         let window = self.window_size();
-        on.is_some_and(|id| {
-            id == Target::Editor(EditorEvent::Minimap)
-                || self.model.read(|screen| screen.sash(id, window)).is_some()
-        })
+        id == Target::Editor(EditorEvent::Minimap)
+            || self.model.read(|screen| screen.sash(id, window)).is_some()
     }
 
     /// Makes the panel whose handle `id` is dragged as big as it was when the drag began
@@ -958,11 +943,9 @@ impl App {
         true
     }
 
-    /// Presses the lens at the end of a line of the file shown that the press is on, `on`, and says whether it is on one.
-    fn press_lens(&mut self, on: Option<Target>) -> bool {
-        let Some(at) = self.pointer.position else {
-            return false;
-        };
+    /// Presses the lens at the end of a line of the file shown that the press at `at`, in the
+    /// window's frame, is on, `on`, and says whether it is on one.
+    fn press_lens(&mut self, on: Option<Target>, at: (f32, f32)) -> bool {
         let Some(Target::Editor(EditorEvent::Lens(index))) = on else {
             return false;
         };
@@ -973,122 +956,129 @@ impl App {
         true
     }
 
-    /// Folds a pointer event in, takes focus from the focused element when
-    /// a press lands anywhere else, and acts on a press that ends on the
-    /// element it began on.
-    fn pointer(&mut self, event: PointerEvent) {
-        self.pointer.apply(event);
-        match event {
-            PointerEvent::Pressed(Button::Right) => {
-                if !self.claimed.context {
-                    self.open_message_menu();
-                }
-            }
-            PointerEvent::Pressed(Button::Left) => {
-                if self.model.read(Screen::scrollbar_held) {
-                    self.pressed_on = None;
-                } else if self.claimed.press.is_none() {
-                    self.press_clicks = 1;
-                    self.press_at(None);
-                }
-            }
-            PointerEvent::Moved(x, y) => {
-                self.editor_pointer_moved(x, y);
-                self.terminal_drag((x, y));
-                self.reach_terminal_link();
-                self.drag_text_moved(x, y);
-                if let Some(id) = self.dragging
-                    && let Some(offset) = self.code_lines().offset_in(id, x, y)
-                {
-                    self.drag_in_field(id, offset);
-                }
-            }
-            PointerEvent::Released(Button::Left) => {
-                self.sash_drag = None;
-                self.drag_text_released();
-                self.dragging = None;
-                self.column_press = None;
-                self.field_gesture.release();
-                if self.terminal_gesture.release() {
-                    self.copy_terminal_selection();
-                }
-                if self.claimed.click.is_some() {
-                    return;
-                }
-                let released_on = self.under_pointer();
-                if let (Some(pressed), Some(released)) = (self.pressed_on.take(), released_on)
-                    && pressed == released
-                {
-                    self.press_through(pressed);
-                }
-            }
-            _ => {}
+    /// Whether a press on the control `id` is taken by the control's own gesture, so its
+    /// click does nothing: a handle, the minimap, a line kept at the top, a lens, a file of
+    /// the excerpts that is not the one edited, and the bare title bar of a window.
+    fn takes_its_press(&self, id: Target) -> bool {
+        self.is_drag_handle(id)
+            || matches!(
+                id,
+                Target::Editor(EditorEvent::Sticky(_) | EditorEvent::Lens(_))
+                    | Target::Search(pm_components::areas::SearchEvent::ExcerptOwner(_))
+            )
+            || (id == Target::Window(WindowEvent::TitleBar) && self.window.is_some())
+    }
+
+    /// Follows a press of either button, on the control `on` or on no control: the field
+    /// the reader was typing in when the window last closed no longer takes the keyboard by
+    /// itself, and what a popup's press outside it closes closes.
+    fn note_press(&mut self, on: Option<Target>) {
+        self.refocus = None;
+        if std::mem::take(&mut self.dismissal) {
+            self.dismiss(on);
         }
     }
 
-    /// Takes a press of the primary button on the control `id`, as its view
-    /// tells it while the interface handles the press: a press on the bare
-    /// title bar moves the window, or maximizes it when it is the second.
-    pub(super) fn press(&mut self, id: Target) {
-        if id == Target::Window(WindowEvent::TitleBar) && self.title_bar_pressed() {
+    /// Takes a press of the primary button on a control, as its view tells it while the
+    /// interface handles the press: a press on the bare title bar moves the window, or
+    /// maximizes it when it is the second in a row; anything else is pressed.
+    pub(super) fn pressed(&mut self, press: Press) {
+        self.anchor = Some(press);
+        self.note_press(Some(press.id));
+        if press.id == Target::Window(WindowEvent::TitleBar) && self.title_bar_pressed(press.clicks)
+        {
             return;
         }
-        self.press_at(Some(id));
+        let at = self.framed_point(press.at);
+        self.press_at(Some(press.id), at);
     }
 
-    /// Takes a press of the primary button on `on`, or on nothing: a handle,
-    /// minimap, line kept at the top or lens takes hold of it; anything
-    /// else is pressed, closes what a press elsewhere closes, and takes the
-    /// keyboard or starts a selection when it is a field.
-    fn press_at(&mut self, on: Option<Target>) {
-        if self.is_drag_handle(on) || self.press_sticky(on) || self.press_lens(on) {
-            self.pressed_on = None;
+    /// Takes a press of the primary button at `at` in the window that no control took.
+    pub(super) fn pressed_elsewhere(&mut self, at: (f32, f32)) {
+        self.note_press(None);
+        let at = self.framed_point(at);
+        self.press_at(None, at);
+    }
+
+    /// Takes a press of the secondary button on a control with a menu of its own, before the
+    /// menu opens.
+    pub(super) fn context_pressed(&mut self, press: Press) {
+        self.anchor = Some(press);
+        self.note_press(Some(press.id));
+    }
+
+    /// Notes that the primary button went down inside the conversation, as the conversation
+    /// tells before the press reaches what it landed on.
+    pub(super) fn conversation_pressed(&mut self) {
+        self.pressed_in_conversation = true;
+    }
+
+    /// Takes a press of the mouse's back button, or of its forward button when not `back`,
+    /// where nothing else took it: the page of the browser that holds the keyboard steps
+    /// through its history, or else the app through the places visited.
+    pub(super) fn history_pressed(&mut self, back: bool) {
+        self.note_press(None);
+        if !(self.on_aside.is_none() && self.browser_history(back, false)) {
+            self.step_through_history(back);
+        }
+    }
+
+    /// Takes a press of the primary button on `on`, or on nothing, at `at` in the window's
+    /// frame: a handle, minimap, line kept at the top or lens takes hold of it; anything
+    /// else is pressed as [`press_on`](Self::press_on) presses it.
+    fn press_at(&mut self, on: Option<Target>, at: (f32, f32)) {
+        if on.is_some_and(|id| self.is_drag_handle(id))
+            || self.press_sticky(on)
+            || self.press_lens(on, at)
+        {
             return;
         }
-        self.terminal_press();
-        self.pressed_on = on;
-        self.list_pressed = self.pressed_on.filter(|id| {
+        self.press_on(on);
+    }
+
+    /// Presses `on`, or nothing: the press closes what a press elsewhere closes, holds a
+    /// row of a list for the keys that pick every row, and gives the keyboard to `on` when
+    /// it is a text field, taking it from anything else.
+    fn press_on(&mut self, on: Option<Target>) {
+        self.list_pressed = on.filter(|id| {
             self.model.read(|screen| {
                 screen.tree_row_of(*id).is_some()
                     || screen.change_row_of(*id).is_some()
                     || screen.change_folder_row_of(*id).is_some()
             })
         });
-        self.press_excerpt();
-        self.text_press();
-        if self.pressed_on != Some(Target::Tree(TreeEvent::EntryField))
+        self.text_press(on);
+        if on != Some(Target::Tree(TreeEvent::EntryField))
             && self.model.read(|screen| screen.is_naming())
         {
             self.model.update(|state| {
                 *state = std::mem::take(state).in_workspace(|state| state.without_naming())
             });
         }
-        if self.focus.current() != self.pressed_on {
-            self.focus.clear();
+        if self.focus.focused() != on {
+            self.focus.free_focus();
         }
-        if self.pressed_on.is_none() && self.model.read(Screen::restore_offered) {
+        if on.is_none() && self.model.read(Screen::restore_offered) {
             self.model
                 .update(|state| *state = std::mem::take(state).without_picker());
         }
-        if let Some(id) = self.pressed_on
-            && WorkspaceState::is_field(id)
-        {
-            self.press_in_field(id);
-        }
-        if self.pressed_on == Some(Target::Editor(EditorEvent::EditorField))
-            && self.editor_reach_pressed()
-        {
-            self.dragging = None;
+        if let Some(id) = on.filter(|id| Screen::is_text_field(*id)) {
+            self.focus.request_focus(id);
         }
     }
 
-    /// Closes what a press outside a popup closes, as the popup's `on_dismiss_request`
-    /// asks while the interface handles the press, before the control pressed hears of it:
-    /// a menu, unless the press is on one of its rows; the list over the file, the boxes
-    /// for a new name, a colour and a line to go to, unless it is on them; and the setting
-    /// menus and the list of branches when it is on no control at all.
+    /// Notes that a press outside a popup asked it to be dismissed, as the popup's
+    /// `on_dismiss_request` asks while the interface handles the press, before the press
+    /// reaches what it landed on, which closes what it closes.
     pub(super) fn dismiss_requested(&mut self) {
-        let on = self.under_pointer();
+        self.dismissal = true;
+    }
+
+    /// Closes what a press outside a popup closes, the press being on `on`: a menu, unless
+    /// the press is on one of its rows; the list over the file, the boxes for a new name, a
+    /// colour and a line to go to, unless it is on them; and the setting menus and the list
+    /// of branches when it is on no control at all.
+    fn dismiss(&mut self, on: Option<Target>) {
         self.press_beside_code(on);
         if self.model.read(|screen| screen.list_menu_open())
             && !on.is_some_and(|id| {
@@ -1114,19 +1104,20 @@ impl App {
         }
     }
 
-    /// Says whether a click on the control `id`, as its view tells it while the interface
-    /// handles the release, counts: when the press began on it and was not the start of a
-    /// drag. A click that counts gives the keyboard to the field, shell or page it is on.
-    pub(super) fn click_lands(&mut self, id: Target) -> bool {
+    /// Says whether `click`, a click of a control as its view tells it while the interface
+    /// handles the release, counts: when the press was not taken by the control's own
+    /// gesture and did not start a drag. A click that counts gives the keyboard to the
+    /// field, shell or page it is on.
+    pub(super) fn click_lands(&mut self, click: Press) -> bool {
+        self.anchor = Some(click);
         let dragging = self.project_dragging
             || self.pane_dragging
             || self.model.read(|screen| screen.tree_dragging());
-        if dragging || self.pressed_on != Some(id) {
+        if dragging || self.takes_its_press(click.id) {
             return false;
         }
-        self.pressed_on = None;
-        self.take_keyboard_on_click(id);
-        self.note_click(id);
+        self.take_keyboard_on_click(click.id);
+        self.note_click(click.id, click.clicks);
         true
     }
 
@@ -1138,16 +1129,8 @@ impl App {
             || id == Target::Browser(BrowserEvent::BrowserBody)
             || id == Target::Browser(BrowserEvent::BrowserToolsBody)
         {
-            self.focus.focus(id);
+            self.focus.request_focus(id);
         }
-    }
-
-    /// Carries out a press that began and ended on `id` that no control's view took as a
-    /// click, such as a press on the lines of a file in the excerpts: the field takes the
-    /// keyboard and the workspace the press.
-    fn press_through(&mut self, id: Target) {
-        self.take_keyboard_on_click(id);
-        self.handle(Event::pressing(id));
     }
 
     /// Carries out the menu row `row` on the field the menu is open over, and closes the menu.
@@ -1159,7 +1142,7 @@ impl App {
             *state = std::mem::take(state).in_workspace(|state| state.without_menu())
         });
         let field = open.field;
-        self.focus.focus(field);
+        self.focus.request_focus(field);
         let text = self.model.read(|screen| screen.text_field(field).cloned());
         match row {
             Target::Menu(MenuEvent::MenuUndo) if let Some(text) = &text => text.undo_state().undo(),
@@ -1179,22 +1162,24 @@ impl App {
         }
     }
 
-    /// Opens the menu of the `index`-th server of the settings page, just under the pointer and inside the window.
-    pub(super) fn open_settings_menu(&mut self, index: usize) {
-        let Some((x, y)) = self.pointer.position else {
-            return;
-        };
+    /// Where the control the last press or click was on had the pointer, in the window's
+    /// frame: where a menu opened by clicking a button opens.
+    pub(super) fn clicked_at(&self) -> Option<(f32, f32)> {
+        self.anchor.map(|press| self.framed_point(press.at))
+    }
+
+    /// Opens the menu of the `index`-th server of the settings page just under `at`, in the
+    /// window's frame.
+    pub(super) fn open_settings_menu(&mut self, index: usize, (x, y): (f32, f32)) {
         self.model.update(|state| {
             *state = std::mem::take(state)
                 .in_workspace(|state| state.with_settings_menu(index, (x - 190.0, y + 14.0)))
         });
     }
 
-    /// Opens the menu on the tab of the open file at `index`, just under the pointer and inside the window.
-    pub(super) fn open_tab_menu(&mut self, index: usize) {
-        let Some((x, y)) = self.pointer.position else {
-            return;
-        };
+    /// Opens the menu on the tab of the open file at `index` just under `at`, in the window's
+    /// frame, and inside the window.
+    pub(super) fn open_tab_menu(&mut self, index: usize, (x, y): (f32, f32)) {
         let (width, height) = self.window_size();
         let at = (
             (x - 8.0).min(width - 256.0).max(0.0),
@@ -1207,11 +1192,8 @@ impl App {
         });
     }
 
-    /// Opens the menu of the project at `project`, just under the pointer.
-    pub(super) fn open_project_menu(&mut self, project: usize) {
-        let Some((x, y)) = self.pointer.position else {
-            return;
-        };
+    /// Opens the menu of the project at `project` just under `at`, in the window's frame.
+    pub(super) fn open_project_menu(&mut self, project: usize, (x, y): (f32, f32)) {
         self.model.update(|state| {
             *state = state
                 .clone()
@@ -1219,55 +1201,58 @@ impl App {
         });
     }
 
-    /// Where a menu `menu_height` tall opens: just under the pointer and inside the window.
-    fn menu_under_pointer(&self, menu_height: f32) -> Option<(f32, f32)> {
-        let (x, y) = self.pointer.position?;
+    /// Where a menu `menu_height` tall opens for a press at `at`, in the window's frame: just
+    /// under it and inside the window.
+    fn menu_under(&self, (x, y): (f32, f32), menu_height: f32) -> (f32, f32) {
         let (width, height) = self.window_size();
-        Some((
+        (
             (x - 8.0).min(width - 216.0).max(0.0),
             (y + 12.0).min(height - menu_height - 8.0).max(0.0),
-        ))
+        )
     }
 
-    /// Opens the menu on changed files, just under the pointer and inside the window, over the file at `index`.
-    pub(super) fn open_change_menu(&mut self, index: usize) {
-        let Some(at) = self.menu_under_pointer(CHANGE_MENU_HEIGHT) else {
-            return;
-        };
+    /// Opens the menu on changed files just under `at`, in the window's frame, and inside the
+    /// window, over the file at `index`.
+    pub(super) fn open_change_menu(&mut self, index: usize, at: (f32, f32)) {
+        let at = self.menu_under(at, CHANGE_MENU_HEIGHT);
         self.model.update(|state| {
             *state = std::mem::take(state).in_workspace(|state| state.with_change_menu(index, at));
         });
     }
 
-    /// Opens the menu on changed files, just under the pointer and inside the window, over the folder at `position` of their tree.
-    pub(super) fn open_folder_change_menu(&mut self, position: usize) {
-        let Some(at) = self.menu_under_pointer(CHANGE_MENU_HEIGHT) else {
-            return;
-        };
+    /// Opens the menu on changed files just under `at`, in the window's frame, and inside the
+    /// window, over the folder at `position` of their tree.
+    pub(super) fn open_folder_change_menu(&mut self, position: usize, at: (f32, f32)) {
+        let at = self.menu_under(at, CHANGE_MENU_HEIGHT);
         self.model.update(|state| {
             *state = std::mem::take(state)
                 .in_workspace(|state| state.with_folder_change_menu(position, at));
         });
     }
 
-    /// Opens the menu on the project's files, just under the pointer and inside the window, over `target`.
-    pub(super) fn open_tree_menu(&mut self, target: TreeTarget) {
-        let Some(at) = self.menu_under_pointer(TREE_MENU_HEIGHT) else {
-            return;
-        };
+    /// Opens the menu on the project's files just under `at`, in the window's frame, and
+    /// inside the window, over `target`.
+    pub(super) fn open_tree_menu(&mut self, target: TreeTarget, at: (f32, f32)) {
+        let at = self.menu_under(at, TREE_MENU_HEIGHT);
         self.model.update(|state| {
             *state = std::mem::take(state).in_workspace(|state| state.with_tree_menu(target, at));
         });
     }
 
-    /// Opens the menu `kind` of the source control panel from the control `trigger`, below it or above it, or just under the pointer when it comes from no control.
-    pub(super) fn open_git_menu(&mut self, kind: MenuKind, trigger: Option<Target>) {
+    /// Opens the menu `kind` of the source control panel from the control `trigger`, below it
+    /// or above it, or just under `at`, in the window's frame, when it comes from no control.
+    pub(super) fn open_git_menu(
+        &mut self,
+        kind: MenuKind,
+        trigger: Option<Target>,
+        at: Option<(f32, f32)>,
+    ) {
         let window = self.window_size();
         let control = self
             .anchor
-            .filter(|(id, _)| Some(*id) == trigger)
-            .map(|(_, area)| {
-                let rect = self.framed(area);
+            .filter(|press| Some(press.id) == trigger)
+            .map(|press| {
+                let rect = self.framed(press.area);
                 (
                     rect.origin.x,
                     rect.origin.y,
@@ -1279,7 +1264,7 @@ impl App {
             self.model
                 .read(|screen| screen.git_menu_below(kind, control, window))
         } else {
-            let Some((x, y)) = self.pointer.position else {
+            let Some((x, y)) = at else {
                 return;
             };
             match kind {
@@ -1292,11 +1277,8 @@ impl App {
         });
     }
 
-    /// Opens the menu of the session at `session`, just under the pointer.
-    pub(super) fn open_session_menu(&mut self, session: usize) {
-        let Some((x, y)) = self.pointer.position else {
-            return;
-        };
+    /// Opens the menu of the session at `session` just under `at`, in the window's frame.
+    pub(super) fn open_session_menu(&mut self, session: usize, (x, y): (f32, f32)) {
         self.model.update(|state| {
             *state = state
                 .clone()
@@ -1304,20 +1286,18 @@ impl App {
         });
     }
 
-    /// Follows the pointer to `at` while a project header is carried: the project under the pointer is the one it would take the place of.
-    fn drag_project(&mut self, at: (f32, f32)) {
+    /// Follows the pointer to `at` while a project header is carried, over the project
+    /// `over` when it is over one: that project is the one it would take the place of.
+    fn drag_project(&mut self, at: (f32, f32), over: Option<usize>) {
         let Some(from) = self.project_press else {
             return;
         };
         self.project_dragging = true;
-        let hit = self.under_pointer();
         let over = self.model.read(|held| {
             let current = match held {
                 Screen::Workspace(state) => state.project_drag.map_or(from, |drag| drag.over),
             };
-            hit.and_then(|id| held.project_at(id))
-                .filter(|project| *project != from)
-                .unwrap_or(current)
+            over.filter(|project| *project != from).unwrap_or(current)
         });
         self.model.update(|state| {
             *state = std::mem::take(state).in_workspace(|state| state.dragged_over(from, over, at))
@@ -1325,23 +1305,26 @@ impl App {
     }
 
     /// Follows a press and drag on the number of the line `id` of a diff: the press starts
-    /// selecting lines for a comment there, and the drag stretches the lines to the number
-    /// under the pointer.
+    /// selecting lines for a comment there, which the numbers the pointer comes over then
+    /// stretch.
     pub(super) fn comment_dragged(&mut self, id: Target) {
-        if !self.model.read(|screen| screen.comment_dragging()) {
-            self.model.update(|state| {
-                *state = std::mem::take(state).in_workspace(|state| state.comment_drag_begun(id))
-            });
+        if self.model.read(|screen| screen.comment_dragging()) {
             return;
         }
-        if let Some(id) = self
-            .under_pointer()
-            .filter(|id| matches!(id, Target::Diff(DiffEvent::Gutter { .. })))
-        {
-            self.model.update(|state| {
-                *state = std::mem::take(state).in_workspace(|state| state.comment_drag_extended(id))
-            });
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.comment_drag_begun(id))
+        });
+    }
+
+    /// Stretches the lines selected for a comment to the number of the line `id` of a diff,
+    /// which the pointer came over, while they are being selected.
+    pub(super) fn comment_hovered(&mut self, id: Target) {
+        if !self.model.read(|screen| screen.comment_dragging()) {
+            return;
         }
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| state.comment_drag_extended(id))
+        });
     }
 
     /// Ends a selection of lines, which opens the box for a comment on them and gives it the keyboard.
@@ -1352,7 +1335,8 @@ impl App {
         self.model.update(|state| {
             *state = std::mem::take(state).in_workspace(|state| state.comment_drag_ended())
         });
-        self.focus.focus(Target::Diff(DiffEvent::CommentField));
+        self.focus
+            .request_focus(Target::Diff(DiffEvent::CommentField));
     }
 
     /// Ends a drag of a project header, putting the project where it was let go, and says whether there was a drag.
@@ -1368,23 +1352,21 @@ impl App {
         true
     }
 
-    /// Opens the menu over the field `id` at the pointer, after putting the
-    /// caret where the pointer is unless it is inside the selection.
-    pub(super) fn open_menu(&mut self, id: Target) {
-        let Some((x, y)) = self.pointer.position else {
-            return;
-        };
+    /// Opens the menu over the field `id` at `at`, in the window's frame, after putting the
+    /// caret at the byte `offset` of the code text under the pointer unless it is inside the
+    /// selection.
+    pub(super) fn open_menu(&mut self, id: Target, (x, y): (f32, f32), offset: Option<usize>) {
         if Screen::is_text_field(id) {
-            self.focus.focus(id);
+            self.focus.request_focus(id);
             self.model.update(|state| {
                 *state = std::mem::take(state).in_workspace(|state| state.with_menu(id, (x, y)))
             });
             return;
         }
-        let Some(offset) = self.code_lines().offset_in(id, x, y) else {
+        let Some(offset) = offset else {
             return;
         };
-        self.focus.focus(id);
+        self.focus.request_focus(id);
         let inside = self.model.read(|screen| {
             screen.field(id).is_some_and(|field| {
                 field
@@ -1409,49 +1391,84 @@ impl App {
         });
     }
 
-    /// Takes a press on the lines of a file in the excerpts that is not the one being edited: the file becomes the one edited and its caret goes where the pointer is.
-    fn press_excerpt(&mut self) {
-        let (Some(id), Some((x, y))) = (self.pressed_on, self.pointer.position) else {
-            return;
-        };
-        let Some(index) = self.model.read(|screen| screen.excerpt_owner_of(id)) else {
-            return;
-        };
-        let offset = self.code_lines().offset_in(id, x, y);
-        self.model.change(|state| state.excerpt_file_shown(index));
-        self.pressed_on = Some(Target::Editor(EditorEvent::EditorField));
-        self.focus.focus(Target::Editor(EditorEvent::EditorField));
-        if let Some(offset) = offset {
-            self.press_field_at(
-                Target::Editor(EditorEvent::EditorField),
-                offset,
-                Reach::Point,
-                false,
-            );
+    /// Carries out what the primary button did on the code text of a field, as `pointer`
+    /// tells: a press places the caret or selects, or makes a file of the excerpts the one
+    /// edited; a move with the button held stretches the selection or carries the selected
+    /// text; the release ends both.
+    pub(super) fn code_pointer(&mut self, pointer: CodePointer) {
+        match pointer.stroke {
+            Stroke::Down { clicks, modifiers } => self.code_pressed(pointer, clicks, modifiers),
+            Stroke::Move => {
+                let Some(offset) = pointer.offset else {
+                    return;
+                };
+                if pointer.owner == Target::Editor(EditorEvent::EditorField) {
+                    self.drag_text_moved(pointer.at, offset);
+                }
+                if self.dragging == Some(pointer.owner) {
+                    self.drag_in_field(pointer.owner, offset);
+                }
+            }
+            Stroke::Up => {
+                self.drag_text_released();
+                self.dragging = None;
+                self.column_press = None;
+                self.code_hold = None;
+            }
         }
     }
 
-    /// Takes a press inside the field `id`: focuses it. A text field places
-    /// its caret and selects by words and lines itself; in the code editor the
-    /// caret goes where the pointer is and a selection starts that dragging
-    /// extends, a second press soon after the first selecting the word under it
-    /// and a third the line, which dragging then extends by words or lines.
-    fn press_in_field(&mut self, id: Target) {
-        if Screen::is_text_field(id) {
-            self.focus.focus(id);
+    /// Takes the press `pointer` on code text, the `clicks`-th in a row with `modifiers`
+    /// held: on a file of the excerpts that is not the one edited, that file becomes the
+    /// one edited and its caret goes where the press is; in the code editor the caret goes
+    /// there and a selection starts that dragging extends, a second press soon after the
+    /// first selecting the word under it and a third the line, which dragging then extends
+    /// by words or lines. Alt adds a caret, Alt and Shift start a rectangle, Shift runs the
+    /// selection out to the press, a press on the selection starts carrying it, and Control
+    /// takes the reader to where the word under it is defined.
+    fn code_pressed(&mut self, pointer: CodePointer, clicks: u32, modifiers: Modifiers) {
+        let id = pointer.owner;
+        self.code_hold = None;
+        if let Some(index) = self.model.read(|screen| screen.excerpt_owner_of(id)) {
+            self.press_excerpt(index, pointer.offset);
             return;
         }
-        let Some((x, y)) = self.pointer.position else {
+        if id != Target::Editor(EditorEvent::EditorField) {
+            return;
+        }
+        let Some(offset) = pointer.offset else {
             return;
         };
-        let Some(offset) = self.code_lines().offset_in(id, x, y) else {
-            return;
-        };
-        self.focus.focus(id);
-        if id == Target::Editor(EditorEvent::EditorField)
-            && self.modifiers.alt
-            && self.modifiers.shift
-        {
+        self.focus.request_focus(id);
+        self.press_in_field(id, offset, pointer, clicks, modifiers);
+        if self.editor_reach_pressed(modifiers) {
+            self.dragging = None;
+        }
+    }
+
+    /// Takes a press on the lines of a file in the excerpts that is not the one being edited,
+    /// at the byte `offset` of its text: the file becomes the one edited and its caret goes
+    /// there.
+    fn press_excerpt(&mut self, index: usize, offset: Option<usize>) {
+        self.model.change(|state| state.excerpt_file_shown(index));
+        self.focus
+            .request_focus(Target::Editor(EditorEvent::EditorField));
+        if let Some(offset) = offset {
+            self.press_field_at(Target::Editor(EditorEvent::EditorField), offset, 1, false);
+        }
+    }
+
+    /// Takes the press `pointer` inside the code editor's field `id`, at the shown offset
+    /// `offset`, the `clicks`-th in a row with `modifiers` held.
+    fn press_in_field(
+        &mut self,
+        id: Target,
+        offset: usize,
+        pointer: CodePointer,
+        clicks: u32,
+        modifiers: Modifiers,
+    ) {
+        if modifiers.alt && modifiers.shift {
             let byte = self
                 .model
                 .read(|screen| screen.field(id).map(|field| field.to_text(offset)));
@@ -1462,28 +1479,27 @@ impl App {
             }
             return;
         }
-        if id == Target::Editor(EditorEvent::EditorField) && self.modifiers.alt {
+        if modifiers.alt {
             self.edit_field(id, Edit::AddSelection(offset, offset));
             return;
         }
-        let reach = Reach::of_clicks(u8::try_from(self.press_clicks).unwrap_or(u8::MAX));
-        if id == Target::Editor(EditorEvent::EditorField)
-            && reach == Reach::Point
-            && !self.modifiers.shift
-            && !self.modifiers.ctrl
-            && !self.modifiers.meta
+        if clicks <= 1
+            && !modifiers.shift
+            && !modifiers.ctrl
+            && !modifiers.meta
             && let Some(byte) = self
                 .model
                 .read(|screen| screen.field(id).map(|field| field.to_text(offset)))
-            && self.drag_text_begins(byte, (x, y))
+            && self.drag_text_begins(byte, pointer.at, pointer.touch_slop)
         {
             return;
         }
-        self.press_field_at(id, offset, reach, self.modifiers.shift);
+        self.press_field_at(id, offset, clicks, modifiers.shift);
     }
 
-    /// Starts the press in the field `id` at the shown offset `offset`, taking `reach` of the text, or running the selection there was out to it when `extending`.
-    fn press_field_at(&mut self, id: Target, offset: usize, reach: Reach, extending: bool) {
+    /// Starts the press in the field `id` at the shown offset `offset`, the `clicks`-th in a
+    /// row, or running the selection there was out to it when `extending`.
+    fn press_field_at(&mut self, id: Target, offset: usize, clicks: u32, extending: bool) {
         let Some((byte, anchor)) = self.model.read(|screen| {
             screen
                 .field(id)
@@ -1491,14 +1507,29 @@ impl App {
         }) else {
             return;
         };
-        let mut gesture = std::mem::take(&mut self.field_gesture);
-        let mut surface = CodeText { app: self, id };
-        match extending {
-            true => gesture.press_from(&mut surface, anchor, byte),
-            false => gesture.press(&mut surface, byte, reach),
-        }
-        self.field_gesture = gesture;
+        let (hold, selected) = match extending {
+            true => Hold::extending(anchor, byte),
+            false => Hold::press(byte, clicks, |reach, at| self.code_reach(id, reach, at)),
+        };
+        self.select_code(id, selected);
+        self.code_hold = Some(hold);
         self.dragging = Some(id);
+    }
+
+    /// The word or line `reach` takes around the byte `at` of the field `id`.
+    fn code_reach(&self, id: Target, reach: Reach, at: usize) -> (usize, usize) {
+        self.model
+            .read(|screen| screen.field(id).map(|field| field.reach_around(reach, at)))
+            .unwrap_or((at, at))
+    }
+
+    /// Puts the caret of the field `id` where `selected` says, or selects what it says.
+    fn select_code(&mut self, id: Target, selected: Selected<usize>) {
+        let (anchor, head) = match selected {
+            Selected::Point(at) => (at, at),
+            Selected::Span(anchor, head) => (anchor, head),
+        };
+        self.edit_field(id, Edit::Select(anchor, head));
     }
 
     /// Extends the press held in the field `id` to the shown offset `offset`.
@@ -1515,9 +1546,11 @@ impl App {
             self.show_editor_caret();
             return;
         }
-        let gesture = std::mem::take(&mut self.field_gesture);
-        gesture.drag(&mut CodeText { app: self, id }, byte);
-        self.field_gesture = gesture;
+        let Some(hold) = self.code_hold else {
+            return;
+        };
+        let selected = hold.drag(byte, |reach, at| self.code_reach(id, reach, at));
+        self.select_code(id, selected);
     }
 
     /// Moves the caret of the multiline field `id` by `by` lines as they are
@@ -1536,9 +1569,9 @@ impl App {
         };
         if several {
             let motion = if by < 0 {
-                pm_field::Motion::LineUp
+                pm_editor::Motion::LineUp
             } else {
-                pm_field::Motion::LineDown
+                pm_editor::Motion::LineDown
             };
             self.edit_field(id, Edit::Move(motion, extend));
             return;
@@ -1562,9 +1595,9 @@ impl App {
         };
         if several {
             let motion = if end {
-                pm_field::Motion::LineEnd
+                pm_editor::Motion::LineEnd
             } else {
-                pm_field::Motion::LineStart
+                pm_editor::Motion::LineStart
             };
             self.edit_field(id, Edit::Move(motion, extend));
             return;
@@ -1580,7 +1613,7 @@ impl App {
         if text.is_empty() && self.composing_in.is_none() {
             return;
         }
-        let target = self.focus.current().filter(|id| {
+        let target = self.focus.focused().filter(|id| {
             *id == Target::Terminal(TerminalEvent::TerminalBody)
                 || *id == Target::Editor(EditorEvent::EditorField)
         });
@@ -1599,7 +1632,7 @@ impl App {
         if self.commit_to_terminal(text) || self.commit_to_browser(text) {
             return;
         }
-        if self.focus.current() == Some(Target::Editor(EditorEvent::EditorField)) {
+        if self.focus.focused() == Some(Target::Editor(EditorEvent::EditorField)) {
             self.edit_field(
                 Target::Editor(EditorEvent::EditorField),
                 Edit::Paste(text.to_owned()),
@@ -1639,7 +1672,7 @@ impl App {
 
     /// Tells the screen which text field the reader left, when keyboard focus moved off one since the event loop last came to rest, so a field that saves on leaving does.
     fn tell_field_left(&mut self) {
-        let focused = self.focus.current();
+        let focused = self.focus.focused();
         if focused == self.focus_before {
             return;
         }
@@ -1790,7 +1823,7 @@ impl App {
 
     /// Whether the prompt box holds keyboard focus.
     fn in_prompt(&self) -> bool {
-        self.focus.current() == Some(Target::Composer(ComposerEvent::Prompt))
+        self.focus.focused() == Some(Target::Composer(ComposerEvent::Prompt))
     }
 
     /// Steps back or forward through what the window in front shows: the folders looked inside while the folder picker is in front, and the pages and views visited otherwise.
@@ -1815,7 +1848,7 @@ impl App {
         let Some(id) = self.list_pressed else {
             return false;
         };
-        if self.focus.current().is_some_and(WorkspaceState::is_field) {
+        if self.focus.focused().is_some_and(WorkspaceState::is_field) {
             return false;
         }
         if self.model.read(|screen| screen.tree_row_of(id).is_some()) && self.tree_key(event) {
@@ -1904,7 +1937,7 @@ impl App {
             Key::Character(_)
                 if let Some(digit) =
                     keys::character(event).and_then(|typed| typed.to_digit(10))
-                    && !self.focus.current().is_some_and(WorkspaceState::is_field)
+                    && !self.focus.focused().is_some_and(WorkspaceState::is_field)
                     && let Some(id) = self
                         .model
                         .read(|screen| screen.inquiry_hotkey(digit as usize)) =>
@@ -1956,9 +1989,9 @@ impl App {
                 self.model.update(|state| {
                     *state = std::mem::take(state).in_workspace(|state| state.without_naming())
                 });
-                self.focus.clear();
+                self.focus.free_focus();
             }
-            Key::Escape => self.focus.clear(),
+            Key::Escape => self.focus.free_focus(),
             _ => return self.focused_key(event),
         }
         true
@@ -1968,12 +2001,12 @@ impl App {
     /// a text field's Enter and clipboard keys and the code editor's keys. Enter or Space
     /// on a control goes on to the control.
     fn focused_key(&mut self, event: &KeyEvent) -> bool {
-        match self.focus.current() {
+        match self.focus.focused() {
             Some(id) if Screen::is_text_field(id) => self.text_field_key(id, event),
             Some(id) if WorkspaceState::is_field(id) => {
                 let multiline = self
                     .model
-                    .read(|screen| screen.field(id).is_some_and(pm_field::Field::is_multiline));
+                    .read(|screen| screen.field(id).is_some_and(pm_editor::Field::is_multiline));
                 let shift = event.modifiers.shift;
                 let hurried = event.modifiers.ctrl || event.modifiers.meta;
                 let breaks = shift || (Screen::enter_breaks_line(id) && !hurried);
@@ -2034,7 +2067,7 @@ impl App {
 }
 
 /// The byte offset in the text of `field` that the offset `shown` of what is shown stands for.
-fn field_text_offset(field: &pm_field::Field, shown: usize) -> usize {
+fn field_text_offset(field: &pm_editor::Field, shown: usize) -> usize {
     field.to_text(shown)
 }
 

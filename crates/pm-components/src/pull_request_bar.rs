@@ -1,12 +1,12 @@
 //! The bar under a session's header that tells how the pull request of its branch stands, with its checks and review, and offers what can be done next: push, open, update, mark ready, merge, reopen, and delete the branch from its remote. It names the review as the code host its repository is on does, and offers only pushing when that host is not supported.
 
 use crate::areas::GitEvent;
-use crate::kit::{self, Frame};
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Role;
 use pm_git::{CheckState, CodeHost, PullRequestStatus, ReviewDecision};
 use rustle::Modifier;
+use rustle::{Alignment, Arrangement};
 use rustle::{Icon, phosphor};
 
 use crate::Button;
@@ -80,10 +80,15 @@ fn tally(icon: Icon, tone: Role, count: usize) {
     if count == 0 {
         return;
     }
-    kit::row(Modifier::new(), 1, || {
-        glyph(icon, 3.5, tone);
-        line(count.to_string(), 12, 1.4, tone);
-    });
+    rustle::row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
+        || {
+            glyph(icon, 3.5, tone);
+            line(count.to_string(), 12, 1.4, tone);
+        },
+    );
 }
 
 /// Emits the button counting the checks by how they stand, whose tooltip names the first that failed; it opens the page of the checks.
@@ -118,11 +123,16 @@ fn checks(request: &PullRequestStatus) {
     .variant(Variant::Ghost)
     .size(Size::Xs)
     .mark(move || {
-        kit::row(Modifier::new(), 2, || {
-            tally(phosphor::CHECK_CIRCLE, Role::Success, counts.0);
-            tally(phosphor::X, Role::Danger, counts.1);
-            tally(phosphor::TIMER, Role::Warning, counts.2);
-        });
+        rustle::row_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Center,
+            || {
+                tally(phosphor::CHECK_CIRCLE, Role::Success, counts.0);
+                tally(phosphor::X, Role::Danger, counts.1);
+                tally(phosphor::TIMER, Role::Warning, counts.2);
+            },
+        );
     })
     .tooltip(format!("{summary}: Open the Checks"))
     .build();
@@ -216,46 +226,52 @@ pub fn bar(session: &Session) {
     let modifier = Modifier::new()
         .height(theme::sp(10))
         .clip()
-        .ruled(theme::Side::Bottom)
+        .border_bottom(1.0, theme::color(Role::Border))
+        .padding_each(0.0, 0.0, 0.0, 1.0)
         .padding_xy(theme::sp(5), 0.0);
-    kit::row(modifier, 3, || {
-        match (&session.pull_request, unsupported(session)) {
-            (Some(request), None) => {
-                let (said, tone) = standing(request);
-                let number = request.number;
-                Button::new("", Target::Git(GitEvent::PullOpen))
-                    .variant(Variant::Ghost)
-                    .size(Size::Xs)
-                    .mark(move || state_badge(number, said, tone))
-                    .tooltip(match host_name {
-                        Some(name) => format!("Open on {name}: {}", request.title),
-                        None => format!("Open: {}", request.title),
-                    })
-                    .build();
-                checks(request);
-                review(request);
+    rustle::row_arranged(
+        modifier,
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Center,
+        || {
+            match (&session.pull_request, unsupported(session)) {
+                (Some(request), None) => {
+                    let (said, tone) = standing(request);
+                    let number = request.number;
+                    Button::new("", Target::Git(GitEvent::PullOpen))
+                        .variant(Variant::Ghost)
+                        .size(Size::Xs)
+                        .mark(move || state_badge(number, said, tone))
+                        .tooltip(match host_name {
+                            Some(name) => format!("Open on {name}: {}", request.title),
+                            None => format!("Open: {}", request.title),
+                        })
+                        .build();
+                    checks(request);
+                    review(request);
+                }
+                (_, host) => {
+                    let said = match host {
+                        Some(host) if host.name.is_empty() => {
+                            "This code host is not supported yet".to_owned()
+                        }
+                        Some(host) => format!("{} is not supported yet", host.name),
+                        None => format!("No {}", noun(session)),
+                    };
+                    glyph(phosphor::GIT_DIFF, 3.5, Role::Muted);
+                    line(said, 12, 1.4, Role::Muted);
+                }
             }
-            (_, host) => {
-                let said = match host {
-                    Some(host) if host.name.is_empty() => {
-                        "This code host is not supported yet".to_owned()
-                    }
-                    Some(host) => format!("{} is not supported yet", host.name),
-                    None => format!("No {}", noun(session)),
-                };
-                glyph(phosphor::GIT_DIFF, 3.5, Role::Muted);
-                line(said, 12, 1.4, Role::Muted);
+            spacer();
+            match session.pull_busy {
+                Some(doing) => {
+                    glyph(phosphor::CIRCLE_DASHED, 3.5, Role::Muted);
+                    line(doing, 12, 1.4, Role::Muted);
+                }
+                None => actions(session),
             }
-        }
-        spacer();
-        match session.pull_busy {
-            Some(doing) => {
-                glyph(phosphor::CIRCLE_DASHED, 3.5, Role::Muted);
-                line(doing, 12, 1.4, Role::Muted);
-            }
-            None => actions(session),
-        }
-    });
+        },
+    );
 }
 
 impl WorkspaceState {

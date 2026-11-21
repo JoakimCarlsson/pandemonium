@@ -2,7 +2,7 @@
 
 use crate::areas::WindowEvent;
 use crate::areas::{DiffEvent, SidebarEvent, TerminalEvent};
-use crate::kit::{self, Frame};
+use crate::button;
 
 use crate::events::Interactive;
 use crate::events::{Event, send};
@@ -89,17 +89,19 @@ impl TitleBar {
             .fill_max_width()
             .height(TITLE_BAR_HEIGHT)
             .background(theme::color(Role::Sidebar))
-            .ruled(theme::Side::Bottom)
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
             .control(
                 Target::Window(WindowEvent::TitleBar),
                 send(Event::Window(WindowEvent::TitleBar)),
             );
         rustle::layout(own, BarLayout, move || {
-            kit::row(
+            rustle::row_arranged(
                 Modifier::new()
                     .fill_max_height()
                     .padding_xy(theme::sp(2), 0.0),
-                0.5,
+                Arrangement::SpacedBy(theme::sp(0.5)),
+                Alignment::Center,
                 || {
                     rustle::spacer(Modifier::new().width(DESKTOP_CONTROLS));
                     if navigation {
@@ -277,7 +279,7 @@ fn panel_mark(open: bool) {
 /// Emits the button that offers a newer release, saying `label`, answering to `id` and explaining `tip` on hover.
 #[track_caller]
 fn update_button(label: &str, id: WindowEvent, tip: &str) {
-    kit::small_button(label, Target::Window(id), Variant::Ghost)
+    button::small_button(label, Target::Window(id), Variant::Ghost)
         .tone(Role::Accent)
         .modifier(Modifier::new().padding_each(0.0, 0.0, theme::sp(1), 0.0))
         .tooltip(tip)
@@ -313,11 +315,12 @@ fn command_center(place: String) {
 
 /// Emits the buttons that minimize, maximize and close a window the desktop draws no frame around, or only the one that closes it when `close_only` is set.
 fn window_controls(close_only: bool) {
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .padding_xy(theme::sp(1.5), 0.0)
             .fill_max_height(),
-        0.5,
+        Arrangement::SpacedBy(theme::sp(0.5)),
+        Alignment::Center,
         || {
             let operations = crate::events::operations();
             if !close_only {

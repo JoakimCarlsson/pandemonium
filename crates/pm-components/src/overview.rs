@@ -1,12 +1,14 @@
 //! A project's overview: its sessions grouped by where they stand, and how its own repository is.
 
 use crate::areas::SidebarEvent;
+use crate::button;
 use crate::button::Variant;
 use crate::events::{Event, send};
-use crate::kit;
+use crate::parts;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
+use rustle::TextOverflow;
 use rustle::phosphor;
 use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
 use rustle::{CursorIcon, Modifier};
@@ -69,36 +71,55 @@ pub(crate) fn scrolled_page(
     bounded: Modifier,
     content: impl FnOnce(),
 ) {
-    kit::column(Modifier::new().weight(1.0), 0, || {
-        heading();
-        column_arranged(
-            Modifier::new()
-                .fill_max_width()
-                .weight(1.0)
-                .vertical_scroll(scroll)
-                .fill_max_width(),
-            Arrangement::Start,
-            Alignment::Center,
-            || {
-                let padded =
-                    bounded.padding_each(theme::sp(5), theme::sp(5), theme::sp(5), theme::sp(8));
-                kit::column(padded, 6, content);
-            },
-        );
-    });
+    rustle::column_arranged(
+        Modifier::new().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            heading();
+            column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .weight(1.0)
+                    .vertical_scroll(scroll)
+                    .fill_max_width(),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    let padded = bounded.padding_each(
+                        theme::sp(5),
+                        theme::sp(5),
+                        theme::sp(5),
+                        theme::sp(8),
+                    );
+                    rustle::column_arranged(
+                        padded,
+                        Arrangement::SpacedBy(theme::sp(6)),
+                        Alignment::Start,
+                        content,
+                    );
+                },
+            );
+        },
+    );
 }
 
 /// Emits the bar across the top: the project, where it lives, and the button that starts a session in it.
 #[track_caller]
 fn heading(state: &WorkspaceState, project: usize) {
-    kit::bar(12, 5, 3, || {
+    parts::bar(12, 5, 3, || {
         if let Some(held) = state.projects.get(project) {
             Avatar::of(held).build();
-            kit::text(Modifier::new(), &held.name, kit::strong(14, Role::Text));
+            rustle::basic_text(
+                Modifier::new(),
+                &held.name,
+                theme::strong(14, Role::Text),
+                TextOverflow::Ellipsis,
+            );
             clipped(&held.path, 12, Role::Subtle);
         }
         spacer();
-        kit::small_button(
+        button::small_button(
             "New session",
             Target::Sidebar(SidebarEvent::NewIn(project)),
             Variant::Default,
@@ -145,27 +166,37 @@ fn session_row(state: &WorkspaceState, index: usize) {
     let own = Modifier::new()
         .indicated(
             theme::InteractionTones::new().hover(Role::SurfaceHover),
-            theme::Focused::Held(crate::focus::is_held(id)),
+            theme::Focused::Control(crate::focus::is_focused(id)),
         )
         .cursor(CursorIcon::Pointer)
         .control_menu(
             id,
             move |_| pressed(),
-            move || operations.open_session_menu(index),
+            move |at| operations.open_session_menu(index, at),
         );
     card_row(own, || {
         status_icon(session.shown());
         clipped(&session.title, 14, Role::Text);
         crate::tooltip::with_tooltip(agent.name, || {
-            kit::row_top(Modifier::new(), 0, || {
-                glyph(agent.icon, 3.5, Role::Muted);
-            });
+            rustle::row_arranged(
+                Modifier::new(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    glyph(agent.icon, 3.5, Role::Muted);
+                },
+            );
         });
         if !session.changes.is_empty() {
             tally(session);
         }
         let branch = Modifier::new().width(BRANCH_WIDTH).clip();
-        kit::text(branch, &session.branch, kit::line(12, Role::Muted));
+        rustle::basic_text(
+            branch,
+            &session.branch,
+            theme::line(12, Role::Muted),
+            TextOverflow::Ellipsis,
+        );
         row_arranged(
             Modifier::new().width(AGE_WIDTH),
             Arrangement::End,
@@ -178,12 +209,27 @@ fn session_row(state: &WorkspaceState, index: usize) {
 /// Emits the lines `session` adds and takes away, in their colours.
 #[track_caller]
 fn tally(session: &Session) {
-    kit::row(Modifier::new(), 1.5, || {
-        let added = format!("+{}", session.added());
-        kit::text(Modifier::new(), added, kit::code(12, Role::Success));
-        let removed = format!("−{}", session.removed());
-        kit::text(Modifier::new(), removed, kit::code(12, Role::Danger));
-    });
+    rustle::row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(1.5)),
+        Alignment::Center,
+        || {
+            let added = format!("+{}", session.added());
+            rustle::basic_text(
+                Modifier::new(),
+                added,
+                theme::code(12, Role::Success),
+                TextOverflow::Ellipsis,
+            );
+            let removed = format!("−{}", session.removed());
+            rustle::basic_text(
+                Modifier::new(),
+                removed,
+                theme::code(12, Role::Danger),
+                TextOverflow::Ellipsis,
+            );
+        },
+    );
 }
 
 /// Emits the project's own folder: the branch it is on and how far it is from what it follows, and what is not committed.
@@ -256,10 +302,11 @@ fn commits(state: &WorkspaceState) {
         for commit in state.git.history.iter().take(COMMITS_SHOWN) {
             card_row(Modifier::new(), || {
                 glyph(phosphor::GIT_COMMIT, 4.0, Role::Subtle);
-                kit::text(
+                rustle::basic_text(
                     Modifier::new(),
                     commit.id.chars().take(SHORT_ID).collect::<String>(),
-                    kit::code(12, Role::Subtle),
+                    theme::code(12, Role::Subtle),
+                    TextOverflow::Ellipsis,
                 );
                 clipped(&commit.summary, 13, Role::Text);
             });
@@ -271,13 +318,14 @@ fn commits(state: &WorkspaceState) {
 /// box before its padding, holding what `content` emits.
 #[track_caller]
 fn card_row(modifier: Modifier, content: impl FnOnce()) {
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .fill_max_width()
             .height(theme::sp(11))
             .chain(modifier)
             .padding_xy(theme::sp(4), 0.0),
-        3,
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Center,
         content,
     );
 }

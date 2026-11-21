@@ -1,7 +1,7 @@
 //! The keys that work on whole lines and on the selection of the file shown: commenting, indenting, moving, duplicating and deleting lines, growing and shrinking the selection along the syntax tree, going to the next problem and to a line by its number.
 
 use pm_editor::{Case, Document, LineOrder};
-use pm_field::{Edit, Motion};
+use pm_editor::{Edit, Motion};
 
 use crate::state::WorkspaceState;
 

@@ -74,7 +74,7 @@ fn action_for(command: Command) -> Option<Action> {
 impl App {
     /// Sends a keypress to modal editing, when it is on and the file shown has the keyboard, and says whether it was taken.
     pub(super) fn vim_key(&mut self, event: &KeyEvent) -> bool {
-        if self.focus.current() != Some(Target::Editor(EditorEvent::EditorField))
+        if self.focus.focused() != Some(Target::Editor(EditorEvent::EditorField))
             || !self.model.read(|screen| screen.vim_on())
         {
             return false;

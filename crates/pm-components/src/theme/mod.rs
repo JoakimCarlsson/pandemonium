@@ -16,9 +16,11 @@
 //! - [`scheme`], [`fonts`], [`family`]: a theme, its font stacks, a family of two.
 //! - [`builtin`], [`extension`]: the shipped families and those extensions add.
 //! - [`typography`]: the rustle text styles of interface text and code, the
-//!   rustle `Typography` widgets read, and the ligature switch.
-//! - [`interaction`]: the theme's fills and rings for rustle's interaction support.
-//! - [`decoration`]: drawing rustle has no modifier for: a line along one side, shadows.
+//!   one-line styles views set their labels in, the rustle `Typography`
+//!   widgets read, and the ligature switch.
+//! - [`interaction`]: the theme's fills and rings for rustle's interaction support,
+//!   and the fills of a selectable row.
+//! - [`decoration`]: the app's shadows, and the outline and panel boxes are framed in.
 //!
 //! [`provide`] makes the theme the Compose way for a custom design system:
 //! rustle's `theme` with [`color_scheme`], [`typography()`] and [`shapes`], the
@@ -42,17 +44,17 @@ use rustle::{Color, CompositionLocal, FontFamily};
 
 pub use builtin::{default_family, families, family_named, shipped_families};
 pub use decoration::{
-    FLOATING_SHADOW, MEDIUM_SHADOW, SHADOW_SOFTNESS, ShadowLayers, Side, box_shadow, edge,
+    FLOATING_SHADOW, Frame, MEDIUM_SHADOW, SHADOW_SOFTNESS, ShadowLayers, box_shadow,
 };
 pub use extension::{family_from_colours, set_extension_families};
 pub use family::{Appearance, ThemeFamily};
 pub use fonts::Fonts;
-pub use interaction::{FocusOutline, FocusRing, Focused, Indicated, InteractionTones};
+pub use interaction::{FocusOutline, FocusRing, Focused, Indicated, InteractionTones, selectable};
 pub use role::Role;
 pub use scheme::Theme;
 pub use typography::{
-    code_ligatures, code_style, fixed_text_style, font_families, font_key, in_mono, mono_style,
-    set_code_ligatures, text_style, typography,
+    code, code_ligatures, code_style, fixed_text_style, font_families, font_key, in_mono, line,
+    mono_style, set_code_ligatures, strong, text_style, typography,
 };
 
 /// Logical pixels in one step of the spacing scale at the comfortable density.

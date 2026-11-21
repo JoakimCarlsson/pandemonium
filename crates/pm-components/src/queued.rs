@@ -3,11 +3,13 @@
 //! Each row shows the first few lines of its prompt, with the elements and captures it carries as chips, and only the first few rows are shown, so that a long prompt or many of them never push the prompt box out of the window; the whole of a prompt is read by editing it.
 
 use crate::areas::ChatEvent;
-use crate::kit::{self, Frame};
+use crate::button;
 use crate::target::Target;
 use crate::theme;
+use crate::theme::Frame;
 use rustle::Modifier;
 use rustle::TextFieldState;
+use rustle::{Alignment, Arrangement, TextOverflow};
 use rustle::{Color, Icon, phosphor};
 
 use crate::theme::{Radius, Role};
@@ -170,27 +172,38 @@ fn clamped(content: &str, tone: Role, width: f32) {
     let lines = rustle::wrap_at_spaces(content, &kind, width.max(32.0));
     let cut = lines.len() > SHOWN_LINES;
     let shown = lines.len().min(SHOWN_LINES);
-    kit::column(Modifier::new(), 0, || {
-        for (at, part) in lines.into_iter().take(shown).enumerate() {
-            let words = content[part.start..part.end].trim_end();
-            match (cut && at + 1 == shown, words.is_empty()) {
-                (true, _) => line(format!("{words}\u{2026}"), TEXT_PIXELS, TEXT_LEADING, tone),
-                (false, true) => rustle::spacer(Modifier::new().height(theme::sp(3))),
-                (false, false) => kit::text(Modifier::new(), words, kind.color(theme::color(tone))),
+    rustle::column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for (at, part) in lines.into_iter().take(shown).enumerate() {
+                let words = content[part.start..part.end].trim_end();
+                match (cut && at + 1 == shown, words.is_empty()) {
+                    (true, _) => line(format!("{words}\u{2026}"), TEXT_PIXELS, TEXT_LEADING, tone),
+                    (false, true) => rustle::spacer(Modifier::new().height(theme::sp(3))),
+                    (false, false) => rustle::basic_text(
+                        Modifier::new(),
+                        words,
+                        kind.color(theme::color(tone)),
+                        TextOverflow::Ellipsis,
+                    ),
+                }
             }
-        }
-    });
+        },
+    );
 }
 
 /// Emits what a row shows of a waiting prompt's `content` in a column `width` logical pixels wide: the elements and captures it carries as chips, as a sent message shows them, then the first lines of what the reader typed, in `tone`.
 #[track_caller]
 fn body(content: &str, tone: Role, width: f32) {
     let (typed, labels) = crate::elements::split(content);
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .weight(1.0)
             .padding_each(0.0, theme::sp(1), 0.0, 0.0),
-        1.5,
+        Arrangement::SpacedBy(theme::sp(1.5)),
+        Alignment::Start,
         || {
             if !labels.is_empty() {
                 crate::elements::sent_chips(&labels);
@@ -211,7 +224,7 @@ pub(crate) fn icon_button(icon: Icon, tooltip: &str, id: Target) {
 /// Emits a small ghost button saying `label` with `icon`, answering to `id`: the actions of a waiting prompt's row.
 #[track_caller]
 fn ghost(label: &str, id: Target, icon: Icon) {
-    kit::small_button(label, id, Variant::Ghost)
+    button::small_button(label, id, Variant::Ghost)
         .with_icon(icon)
         .build();
 }
@@ -219,12 +232,13 @@ fn ghost(label: &str, id: Target, icon: Icon) {
 /// Emits the box a row of a waiting prompt is drawn in, its contents aligned to the top, holding what `content` emits.
 #[track_caller]
 fn frame(content: impl FnOnce()) {
-    kit::row_top(
+    rustle::row_arranged(
         Modifier::new()
             .fill_max_width()
             .panel(Radius::Lg)
             .padding_each(theme::sp(3), theme::sp(1), theme::sp(1), theme::sp(1)),
-        2,
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
         content,
     );
 }
@@ -232,9 +246,10 @@ fn frame(content: impl FnOnce()) {
 /// Emits `name` in `tone`, lowered by a step to sit on the first line of a row's text.
 #[track_caller]
 fn leading_glyph(name: Icon, tone: Role) {
-    kit::row_top(
+    rustle::row_arranged(
         Modifier::new().padding_each(0.0, theme::sp(1), 0.0, 0.0),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || glyph(name, 3.5, tone),
     );
 }
@@ -254,29 +269,35 @@ fn waiting(index: usize, queued: &Queued, width: f32) {
         if !queued.files.is_empty() {
             let count = queued.files.len();
             let files = if count == 1 { "file" } else { "files" };
-            kit::row_top(
+            rustle::row_arranged(
                 Modifier::new().padding_each(0.0, theme::sp(1.5), 0.0, 0.0),
-                0,
+                Arrangement::Start,
+                Alignment::Start,
                 || line(format!("{count} {files}"), 12, 1.4, Role::Muted),
             );
         }
-        kit::row(Modifier::new(), 1, || {
-            icon_button(
-                phosphor::PENCIL_SIMPLE,
-                "Edit",
-                Target::Chat(ChatEvent::EditQueued(index)),
-            );
-            ghost(
-                "Send now",
-                Target::Chat(ChatEvent::Hurry(index)),
-                phosphor::LIGHTNING,
-            );
-            ghost(
-                "Remove",
-                Target::Chat(ChatEvent::RemoveQueued(index)),
-                phosphor::TRASH,
-            );
-        });
+        rustle::row_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(theme::sp(1)),
+            Alignment::Center,
+            || {
+                icon_button(
+                    phosphor::PENCIL_SIMPLE,
+                    "Edit",
+                    Target::Chat(ChatEvent::EditQueued(index)),
+                );
+                ghost(
+                    "Send now",
+                    Target::Chat(ChatEvent::Hurry(index)),
+                    phosphor::LIGHTNING,
+                );
+                ghost(
+                    "Remove",
+                    Target::Chat(ChatEvent::RemoveQueued(index)),
+                    phosphor::TRASH,
+                );
+            },
+        );
     });
 }
 
@@ -302,9 +323,10 @@ pub fn queued(state: &WorkspaceState, session: &Session, width: f32) {
         .as_ref()
         .filter(|open| open.scope == session.scope)
         .map(|open| open.id);
-    kit::column(
+    rustle::column_arranged(
         Modifier::new().padding_each(0.0, 0.0, 0.0, theme::sp(2)),
-        1,
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Start,
         || {
             let mut hidden = 0;
             for (index, waiting_prompt) in session.queued.iter().enumerate() {
@@ -324,9 +346,10 @@ pub fn queued(state: &WorkspaceState, session: &Session, width: f32) {
             if hidden > 0 {
                 let prompts = if hidden == 1 { "prompt" } else { "prompts" };
                 let said = format!("+{hidden} more {prompts} waiting");
-                kit::row_top(
+                rustle::row_arranged(
                     Modifier::new().padding_each(theme::sp(3), 0.0, 0.0, 0.0),
-                    0,
+                    Arrangement::Start,
+                    Alignment::Start,
                     || line(said, 12, 1.4, Role::Muted),
                 );
             }

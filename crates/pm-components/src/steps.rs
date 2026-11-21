@@ -1,14 +1,19 @@
 //! What an agent did on the way to a reply: the steps it took, its plan and its questions.
 
 use crate::areas::ChatEvent;
-use crate::kit::{self, Frame};
+use crate::button;
+use crate::events;
+use crate::icons;
+use crate::parts;
 use crate::target::Target;
 use crate::theme;
+use crate::theme::Frame;
 use pm_harness::{
     Diff, Kind as ToolKind, Merge, Permission, PlanStep, Progress, ToolState, Verdict, Worktree,
 };
+use rustle::TextOverflow;
 use rustle::phosphor;
-use rustle::{Alignment, row_arranged};
+use rustle::{Alignment, BoxAlignment, row_arranged};
 use rustle::{Arrangement, Modifier};
 
 use crate::Button;
@@ -80,42 +85,59 @@ fn step_line(
     id: Option<Target>,
     open: bool,
 ) {
-    let own = kit::pressable(
+    let own = events::pressable(
         Modifier::new()
             .fill_max_width()
             .height_in(theme::sp(8), f32::INFINITY),
         id,
     );
-    kit::row(own, 2.5, || {
-        kit::row(Modifier::new().size(theme::sp(4), theme::sp(4)), 0, mark);
-        line(verb, 13, 1.4, Role::Muted);
-        if let Some(target) = target {
-            clipped_mono(target, verb == "Ran");
-        } else {
-            rustle::spacer(Modifier::new().weight(1.0));
-        }
-        detail();
-        if id.is_some() {
-            glyph(kit::chevron(open), 3.5, Role::Subtle);
-        }
-    });
+    rustle::row_arranged(
+        own,
+        Arrangement::SpacedBy(theme::sp(2.5)),
+        Alignment::Center,
+        || {
+            rustle::row_arranged(
+                Modifier::new().size(theme::sp(4), theme::sp(4)),
+                Arrangement::Start,
+                Alignment::Center,
+                mark,
+            );
+            line(verb, 13, 1.4, Role::Muted);
+            if let Some(target) = target {
+                clipped_mono(target, verb == "Ran");
+            } else {
+                rustle::spacer(Modifier::new().weight(1.0));
+            }
+            detail();
+            if id.is_some() {
+                glyph(icons::chevron(open), 3.5, Role::Subtle);
+            }
+        },
+    );
 }
 
 /// Emits a box that takes the room left in its row and cuts a line of code short at its edge, on a chip when `chip` is set.
 fn clipped_mono(content: &str, chip: bool) {
-    let code = kit::code(12, Role::Text);
-    kit::row_top(Modifier::new().weight(1.0), 0, || {
-        let holder = Modifier::new().clip();
-        let holder = if chip {
-            Modifier::new()
-                .background_rounded(theme::color(Role::Surface), Radius::Md.px())
-                .clip()
-                .padding_xy(theme::sp(1.5), 0.0)
-        } else {
-            holder
-        };
-        kit::row_top(holder, 0, || kit::text(Modifier::new(), content, code));
-    });
+    let code = theme::code(12, Role::Text);
+    rustle::row_arranged(
+        Modifier::new().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            let holder = Modifier::new().clip();
+            let holder = if chip {
+                Modifier::new()
+                    .background_rounded(theme::color(Role::Surface), Radius::Md.px())
+                    .clip()
+                    .padding_xy(theme::sp(1.5), 0.0)
+            } else {
+                holder
+            };
+            rustle::row_arranged(holder, Arrangement::Start, Alignment::Start, || {
+                rustle::basic_text(Modifier::new(), content, code, TextOverflow::Ellipsis)
+            });
+        },
+    );
 }
 
 /// Emits the mark of how a tool got on: a turning ring, or the glyph that is its kind.
@@ -170,13 +192,19 @@ fn tool_detail(tool: &ToolUse) {
             .filter(|printed| !printed.starts_with("```"))
             .take(40)
         {
-            kit::row_top(Modifier::new().padding_xy(theme::sp(3.5), 0.0), 0, || {
-                kit::text(
-                    Modifier::new(),
-                    printed.replace('\t', "    "),
-                    theme::mono_style(12, 1.6).color(theme::color(Role::Muted)),
-                );
-            });
+            rustle::row_arranged(
+                Modifier::new().padding_xy(theme::sp(3.5), 0.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        printed.replace('\t', "    "),
+                        theme::mono_style(12, 1.6).color(theme::color(Role::Muted)),
+                        TextOverflow::Ellipsis,
+                    );
+                },
+            );
         }
     });
 }
@@ -234,19 +262,24 @@ fn tool_line(tool: &ToolUse, root: &str, id: Option<Target>, open: bool) {
         _ => {}
     };
     let expandable = id.is_some() && has_detail(tool);
-    kit::column(Modifier::new().fill_max_width(), 0, || {
-        step_line(
-            || tool_mark(tool),
-            verb,
-            shown,
-            detail,
-            id.filter(|_| expandable),
-            open,
-        );
-        if open {
-            tool_detail(tool);
-        }
-    });
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            step_line(
+                || tool_mark(tool),
+                verb,
+                shown,
+                detail,
+                id.filter(|_| expandable),
+                open,
+            );
+            if open {
+                tool_detail(tool);
+            }
+        },
+    );
 }
 
 /// How long something has gone on, in words: `42s` or `3m 05s`.
@@ -260,9 +293,10 @@ pub fn elapsed(seconds: u64) -> String {
 
 /// Emits the mark of how a subagent is getting on: a turning ring, a dot once it is done, or a cross.
 fn agent_mark(state: ToolState) {
-    kit::row(
+    rustle::row_arranged(
         Modifier::new().size(theme::sp(4), theme::sp(4)),
-        0,
+        Arrangement::Start,
+        Alignment::Center,
         || match state {
             ToolState::Running => spinner(3.5, Role::Muted),
             ToolState::Done => rustle::spacer(
@@ -287,14 +321,20 @@ fn worktree_chip(worktree: &Worktree) {
         Some(Merge::Conflicted { .. }) => ("conflict".to_owned(), Role::Danger),
         Some(Merge::Held { .. }) => ("not applied".to_owned(), Role::Warning),
     };
-    kit::row(chip_box(), 1, || {
-        glyph(phosphor::GIT_FORK, 3.0, role);
-        kit::text(
-            Modifier::new(),
-            words,
-            theme::text_style(12, 1.4).color(theme::color(role)),
-        );
-    });
+    rustle::row_arranged(
+        chip_box(),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
+        || {
+            glyph(phosphor::GIT_FORK, 3.0, role);
+            rustle::basic_text(
+                Modifier::new(),
+                words,
+                theme::text_style(12, 1.4).color(theme::color(role)),
+                TextOverflow::Ellipsis,
+            );
+        },
+    );
 }
 
 /// The modifier of a small chip on a subagent's row: a rounded quiet fill, inset at its ends.
@@ -308,15 +348,18 @@ fn chip_box() -> Modifier {
 #[track_caller]
 fn quiet_text(words: String) {
     let kind = theme::text_style(12, 1.4).color(theme::color(Role::Muted));
-    kit::row_top(chip_box(), 0, || kit::text(Modifier::new(), words, kind));
+    rustle::row_arranged(chip_box(), Arrangement::Start, Alignment::Start, || {
+        rustle::basic_text(Modifier::new(), words, kind, TextOverflow::Ellipsis)
+    });
 }
 
 /// Emits what a subagent has cost so far, `micros` millionths of a US dollar, as a muted amount cut short when the row runs out of room.
 fn cost_label(micros: u64) {
-    kit::text(
+    rustle::basic_text(
         Modifier::new().clip(),
         crate::spend::dollars(micros),
-        kit::line(12, Role::Subtle),
+        theme::line(12, Role::Subtle),
+        TextOverflow::Ellipsis,
     );
 }
 
@@ -373,19 +416,25 @@ pub fn subagents(
         (count, working) => format!("{count} subagents · {working} running"),
     };
     let rows = move |modifier: Modifier| {
-        kit::column(modifier.fill_max_width(), 0, || {
-            for (position, tool) in agents {
-                rustle::key(position, || {
-                    agent_row(all, message, opened, root, position, tool)
-                });
-            }
-        });
+        rustle::column_arranged(
+            modifier.fill_max_width(),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                for (position, tool) in agents {
+                    rustle::key(position, || {
+                        agent_row(all, message, opened, root, position, tool)
+                    });
+                }
+            },
+        );
     };
-    kit::column(
+    rustle::column_arranged(
         Modifier::new().fill_max_width().panel(Radius::Lg).clip(),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            kit::bar(10, 3.5, 2.5, || {
+            parts::bar(10, 3.5, 2.5, || {
                 glyph(phosphor::GIT_FORK, 4.0, Role::Muted);
                 line(title, 13, 1.4, Role::Text);
             });
@@ -441,65 +490,71 @@ fn agent_row(
     let open = opened(position);
     let id = Target::Chat(ChatEvent::Step { message, position });
     let described = tool.target.as_deref().unwrap_or(&tool.title);
-    kit::column(Modifier::new().fill_max_width(), 0, || {
-        Tile::new(id)
-            .height(10.0)
-            .gap(2.5)
-            .radius(Radius::Xs)
-            .inner(Modifier::new().padding_xy(theme::sp(3.5), 0.0))
-            .modifier(Modifier::new().fill_max_width())
-            .build_with(|| {
-                agent_mark(tool.state);
-                if tool.agent.as_deref() != Some("agent") {
-                    quiet_text(tool.agent.clone().unwrap_or_default());
-                }
-                if let Some(worktree) = tool.worktree.as_deref() {
-                    worktree_chip(worktree);
-                }
-                clipped(described, 13, Role::Text);
-                if let Some(runs_as) = tool.runs_as.clone() {
-                    quiet_text(runs_as);
-                }
-                if let Some(cost) = tool.cost {
-                    cost_label(cost);
-                }
-                line(
-                    match used.len() {
-                        1 => "1 tool".to_owned(),
-                        count => format!("{count} tools"),
-                    },
-                    12,
-                    1.4,
-                    Role::Subtle,
-                );
-                if tool.stoppable().is_some() {
-                    Button::icon(
-                        phosphor::STOP,
-                        Target::Chat(ChatEvent::SubagentStop { message, position }),
-                    )
-                    .size(Size::Xs)
-                    .tooltip("Stop this subagent")
-                    .build();
-                }
-                glyph(kit::chevron(open), 3.5, Role::Subtle);
-            });
-        if open && !used.is_empty() {
-            kit::column(
-                Modifier::new().fill_max_width().padding_each(
-                    theme::sp(10),
-                    0.0,
-                    theme::sp(3.5),
-                    theme::sp(2),
-                ),
-                1,
-                || {
-                    for tool in used {
-                        tool_line(tool, root, None, false);
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            Tile::new(id)
+                .height(10.0)
+                .gap(2.5)
+                .radius(Radius::Xs)
+                .inner(Modifier::new().padding_xy(theme::sp(3.5), 0.0))
+                .modifier(Modifier::new().fill_max_width())
+                .build_with(|| {
+                    agent_mark(tool.state);
+                    if tool.agent.as_deref() != Some("agent") {
+                        quiet_text(tool.agent.clone().unwrap_or_default());
                     }
-                },
-            );
-        }
-    });
+                    if let Some(worktree) = tool.worktree.as_deref() {
+                        worktree_chip(worktree);
+                    }
+                    clipped(described, 13, Role::Text);
+                    if let Some(runs_as) = tool.runs_as.clone() {
+                        quiet_text(runs_as);
+                    }
+                    if let Some(cost) = tool.cost {
+                        cost_label(cost);
+                    }
+                    line(
+                        match used.len() {
+                            1 => "1 tool".to_owned(),
+                            count => format!("{count} tools"),
+                        },
+                        12,
+                        1.4,
+                        Role::Subtle,
+                    );
+                    if tool.stoppable().is_some() {
+                        Button::icon(
+                            phosphor::STOP,
+                            Target::Chat(ChatEvent::SubagentStop { message, position }),
+                        )
+                        .size(Size::Xs)
+                        .tooltip("Stop this subagent")
+                        .build();
+                    }
+                    glyph(icons::chevron(open), 3.5, Role::Subtle);
+                });
+            if open && !used.is_empty() {
+                rustle::column_arranged(
+                    Modifier::new().fill_max_width().padding_each(
+                        theme::sp(10),
+                        0.0,
+                        theme::sp(3.5),
+                        theme::sp(2),
+                    ),
+                    Arrangement::SpacedBy(theme::sp(1)),
+                    Alignment::Start,
+                    || {
+                        for tool in used {
+                            tool_line(tool, root, None, false);
+                        }
+                    },
+                );
+            }
+        },
+    );
 }
 
 /// Emits the mark in front of a plan step: a filled check when done, a spinner while under way, an empty ring when not begun.
@@ -531,11 +586,12 @@ pub fn plan(items: &[PlanStep]) {
         .filter(|item| item.progress == Progress::Done)
         .count();
     let finished = done == items.len();
-    kit::column(
+    rustle::column_arranged(
         Modifier::new().fill_max_width().panel(Radius::Xl).clip(),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            kit::bar(12, 4, 3, || {
+            parts::bar(12, 4, 3, || {
                 glyph(
                     phosphor::CHECK_CIRCLE,
                     4.5,
@@ -548,11 +604,12 @@ pub fn plan(items: &[PlanStep]) {
                     Role::Text,
                 );
             });
-            kit::column(
+            rustle::column_arranged(
                 Modifier::new()
                     .fill_max_width()
                     .padding_xy(theme::sp(4), theme::sp(3.5)),
-                3,
+                Arrangement::SpacedBy(theme::sp(3)),
+                Alignment::Start,
                 || {
                     for item in items {
                         let (tone, struck) = match item.progress {
@@ -560,14 +617,27 @@ pub fn plan(items: &[PlanStep]) {
                             Progress::Doing => (Role::Text, false),
                             Progress::Pending => (Role::Muted, false),
                         };
-                        let kind = kit::line(13, tone);
+                        let kind = theme::line(13, tone);
                         let kind = if struck { kind.strikethrough() } else { kind };
-                        kit::row(Modifier::new().fill_max_width(), 3, || {
-                            kit::row(Modifier::new().size(theme::sp(4), theme::sp(4)), 0, || {
-                                plan_mark(item.progress)
-                            });
-                            kit::text(Modifier::new().weight(1.0).clip(), &item.text, kind);
-                        });
+                        rustle::row_arranged(
+                            Modifier::new().fill_max_width(),
+                            Arrangement::SpacedBy(theme::sp(3)),
+                            Alignment::Center,
+                            || {
+                                rustle::row_arranged(
+                                    Modifier::new().size(theme::sp(4), theme::sp(4)),
+                                    Arrangement::Start,
+                                    Alignment::Center,
+                                    || plan_mark(item.progress),
+                                );
+                                rustle::basic_text(
+                                    Modifier::new().weight(1.0).clip(),
+                                    &item.text,
+                                    kind,
+                                    TextOverflow::Ellipsis,
+                                );
+                            },
+                        );
                     }
                 },
             );
@@ -585,77 +655,95 @@ pub fn steps(
     root: &str,
     width: f32,
 ) {
-    kit::column(
-        Modifier::new()
-            .ruled(theme::Side::Left)
-            .padding_each(theme::sp(4), 0.0, 0.0, 0.0),
-        1,
-        || {
-            let mut agents: Vec<usize> = Vec::new();
-            let flush = |agents: &mut Vec<usize>| {
-                if let Some(&first) = agents.first() {
-                    rustle::key(("agents", first), || {
-                        subagents(all, agents, message, &opened, root, None)
-                    });
-                    agents.clear();
-                }
-            };
-            for position in range {
-                if is_inside_card(all, position) {
-                    continue;
-                }
-                let id = Target::Chat(ChatEvent::Step { message, position });
-                let open = opened(position);
-                match &all[position] {
-                    Step::Tool(tool) if tool.is_subagent() => agents.push(position),
-                    Step::Tool(tool) => {
-                        flush(&mut agents);
-                        rustle::key(position, || tool_line(tool, root, Some(id), open));
-                    }
-                    Step::Plan(items) => {
-                        flush(&mut agents);
-                        rustle::key(position, || plan(items));
-                    }
-                    Step::Thought(thought) => {
-                        flush(&mut agents);
-                        let words = match thought.seconds {
-                            Some(seconds) => format!("Thought for {seconds}s"),
-                            None => "Thinking".to_owned(),
-                        };
-                        rustle::key(position, || {
-                            kit::column(Modifier::new().fill_max_width(), 0, || {
-                                step_line(
-                                    || glyph(phosphor::SPARKLE, 3.5, Role::Subtle),
-                                    &words,
-                                    None,
-                                    || {},
-                                    Some(id),
-                                    open,
-                                );
-                                if open {
-                                    kit::column(
-                                        Modifier::new().padding_each(
-                                            theme::sp(4),
-                                            theme::sp(1),
-                                            0.0,
-                                            theme::sp(1),
-                                        ),
-                                        0,
-                                        || {
-                                            for piece in wrap(&thought.text, 13, width - 40.0) {
-                                                line(piece, 13, 1.6, Role::Subtle);
-                                            }
-                                        },
-                                    );
-                                }
-                            });
+    rustle::stack_with(Modifier::new(), || {
+        rustle::vertical_divider(
+            Modifier::new()
+                .match_parent_size()
+                .wrap_content_width(BoxAlignment::CenterStart, false),
+            1.0,
+            theme::color(Role::Border),
+        );
+        rustle::column_arranged(
+            Modifier::new()
+                .padding_each(1.0, 0.0, 0.0, 0.0)
+                .padding_each(theme::sp(4), 0.0, 0.0, 0.0),
+            Arrangement::SpacedBy(theme::sp(1)),
+            Alignment::Start,
+            || {
+                let mut agents: Vec<usize> = Vec::new();
+                let flush = |agents: &mut Vec<usize>| {
+                    if let Some(&first) = agents.first() {
+                        rustle::key(("agents", first), || {
+                            subagents(all, agents, message, &opened, root, None)
                         });
+                        agents.clear();
+                    }
+                };
+                for position in range {
+                    if is_inside_card(all, position) {
+                        continue;
+                    }
+                    let id = Target::Chat(ChatEvent::Step { message, position });
+                    let open = opened(position);
+                    match &all[position] {
+                        Step::Tool(tool) if tool.is_subagent() => agents.push(position),
+                        Step::Tool(tool) => {
+                            flush(&mut agents);
+                            rustle::key(position, || tool_line(tool, root, Some(id), open));
+                        }
+                        Step::Plan(items) => {
+                            flush(&mut agents);
+                            rustle::key(position, || plan(items));
+                        }
+                        Step::Thought(thought) => {
+                            flush(&mut agents);
+                            let words = match thought.seconds {
+                                Some(seconds) => format!("Thought for {seconds}s"),
+                                None => "Thinking".to_owned(),
+                            };
+                            rustle::key(position, || {
+                                rustle::column_arranged(
+                                    Modifier::new().fill_max_width(),
+                                    Arrangement::Start,
+                                    Alignment::Start,
+                                    || {
+                                        step_line(
+                                            || glyph(phosphor::SPARKLE, 3.5, Role::Subtle),
+                                            &words,
+                                            None,
+                                            || {},
+                                            Some(id),
+                                            open,
+                                        );
+                                        if open {
+                                            rustle::column_arranged(
+                                                Modifier::new().padding_each(
+                                                    theme::sp(4),
+                                                    theme::sp(1),
+                                                    0.0,
+                                                    theme::sp(1),
+                                                ),
+                                                Arrangement::Start,
+                                                Alignment::Start,
+                                                || {
+                                                    for piece in
+                                                        wrap(&thought.text, 13, width - 40.0)
+                                                    {
+                                                        line(piece, 13, 1.6, Role::Subtle);
+                                                    }
+                                                },
+                                            );
+                                        }
+                                    },
+                                );
+                            });
+                        }
                     }
                 }
-            }
-            flush(&mut agents);
-        },
-    );
+                flush(&mut agents);
+            },
+        );
+    });
 }
 
 /// What the card around a command and the command's own padding take from the card's width, in logical pixels.
@@ -668,31 +756,48 @@ const CARD_INSET: f32 = 34.0;
 #[track_caller]
 pub fn question(ask: &Permission, width: f32) {
     let title = theme::text_style(13, 1.4).color(theme::color(Role::Text));
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .panel(Radius::Xl)
             .padding_xy(theme::sp(4), theme::sp(3)),
-        2.5,
+        Arrangement::SpacedBy(theme::sp(2.5)),
+        Alignment::Start,
         || {
             line("Needs your approval", 12, 1.4, Role::Muted);
-            kit::column(Modifier::new(), 0, || {
-                for piece in rustle::wrap_at_spaces(&ask.title, &title, width - CARD_INSET) {
-                    kit::text(Modifier::new(), &ask.title[piece.start..piece.end], title);
-                }
-            });
+            rustle::column_arranged(
+                Modifier::new(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    for piece in rustle::wrap_at_spaces(&ask.title, &title, width - CARD_INSET) {
+                        rustle::basic_text(
+                            Modifier::new(),
+                            &ask.title[piece.start..piece.end],
+                            title,
+                            TextOverflow::Ellipsis,
+                        );
+                    }
+                },
+            );
             if let Some(command) = &ask.command {
                 let kind = theme::mono_style(12, 1.6).color(theme::color(Role::Text));
                 let shown = format!("$ {command}").replace('\t', "    ");
                 let room = width - COMMAND_INSET;
-                kit::column(
+                rustle::column_arranged(
                     Modifier::new()
                         .fill_max_width()
                         .background_rounded(theme::color(Role::Background), Radius::Lg.px())
                         .padding_xy(theme::sp(3), theme::sp(2)),
-                    0,
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
                         for piece in rustle::wrap_at_spaces(&shown, &kind, room) {
-                            kit::text(Modifier::new(), &shown[piece.start..piece.end], kind);
+                            rustle::basic_text(
+                                Modifier::new(),
+                                &shown[piece.start..piece.end],
+                                kind,
+                                TextOverflow::Ellipsis,
+                            );
                         }
                     },
                 );
@@ -712,17 +817,23 @@ fn answers(ask: &Permission, width: f32) {
     };
     let mut choices: Vec<(usize, &pm_harness::Choice)> = ask.choices.iter().enumerate().collect();
     choices.sort_by_key(|(_, choice)| order(&choice.verdict));
-    kit::footer(|| {
-        for (index, choice) in choices {
-            kit::small_button(
-                &choice.name,
-                Target::Chat(ChatEvent::Choice(index)),
-                variant_of(&choice.verdict),
-            )
-            .wrapped(width)
-            .build();
-        }
-    });
+    rustle::flow_row_with(
+        Modifier::new().fill_max_width(),
+        rustle::FlowOptions::new(theme::sp(2), theme::sp(2))
+            .arrangement(Arrangement::End)
+            .item_alignment(Alignment::Center),
+        || {
+            for (index, choice) in choices {
+                button::small_button(
+                    &choice.name,
+                    Target::Chat(ChatEvent::Choice(index)),
+                    variant_of(&choice.verdict),
+                )
+                .wrapped(width)
+                .build();
+            }
+        },
+    );
 }
 
 /// The look of the button that answers with `verdict`: quiet for a refusal, outlined for once and filled for the boldest, which goes ahead without asking again.

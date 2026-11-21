@@ -1,8 +1,8 @@
 //! What the window's keys mean to the app: which keys the app reacts to, and the text edits and clipboard actions a key event asks for. The app
 //! matches on rustle's [`KeyEvent`]s directly; these turn them into the plain values of the
-//! crates below it, such as [`pm_field::Edit`].
+//! crates below it, such as [`pm_editor::Edit`].
 
-use pm_field::{Edit, Motion};
+use pm_editor::{Edit, Motion};
 use rustle::{Key, KeyEvent};
 
 /// Whether the app reacts to the key of `event`: a character it typed, a named key it has

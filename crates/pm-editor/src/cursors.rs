@@ -1,6 +1,6 @@
 //! More than one caret: the next place the selected text comes again selected as well, every place it comes, and a caret added on the line above or below.
 
-use pm_field::Edit;
+use crate::Edit;
 
 use crate::document::Document;
 

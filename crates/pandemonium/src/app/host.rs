@@ -1,7 +1,7 @@
 //! The windows on rustle: the root composable the main window and the windows
 //! beside it show, which rustle's own event loop runs ([`run`]); the app's part
-//! of what happens in them, heard by each window's root (the pointer, through
-//! [`on_pointer_event`](rustle::Modifier::on_pointer_event), and the window's
+//! of what happens in them: what the controls tell it through their typed
+//! operations, and what each window's root hears of the window itself (its
 //! focus, size, scale and modifier keys and the desktop's appearance, through
 //! [`LOCAL_WINDOW_INFO`], [`LOCAL_DENSITY`](rustle::LOCAL_DENSITY) and
 //! [`is_system_in_dark_theme`](rustle::is_system_in_dark_theme)); and the effects
@@ -10,7 +10,7 @@
 
 use pm_components::areas::{BrowserEvent, ComposerEvent, EditorEvent, TerminalEvent, TreeEvent};
 use pm_components::target::Target;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::{Rc, Weak};
 use std::time::{Duration, Instant};
 
@@ -18,16 +18,12 @@ use pm_components::events::{self, Operations};
 use pm_components::focus;
 use pm_components::theme::Tokens;
 use pm_pages::Screen;
-use rustle::pointer::PointerEvent as Heard;
 use rustle::{
-    CursorIcon, LOCAL_WINDOW_INFO, Modifier, Modifiers, Offset, PointerButton, PointerEventPass,
-    PointerEventType, ShadowLayer, WindowHandle, WindowOptions, WindowShadow,
+    LOCAL_WINDOW_INFO, Modifiers, Offset, ShadowLayer, WindowHandle, WindowOptions, WindowShadow,
 };
 
 use super::asides::{self, Aside};
-use super::controller::{Claims, Controller};
-use super::focus::KeptFocus;
-use super::pointer::{Button, PointerEvent};
+use super::controller::Controller;
 use super::port::{NativePort, Port};
 use super::{App, frame as window_frame};
 use crate::model::Model;
@@ -69,17 +65,13 @@ pub(super) struct Shared {
     sizes: Rc<RefCell<[(f32, f32); 3]>>,
     /// The theme and appearance every window is drawn in.
     tokens: Rc<RefCell<Tokens>>,
-    /// The pointer shape the app decided on, over whatever the interface shows.
-    cursor: Rc<Cell<Option<CursorIcon>>>,
     /// The handles of the windows beside the main one, once composed.
     handles: Rc<RefCell<[Option<WindowHandle>; 2]>>,
     /// What the views of the main window and of each window beside it hand
     /// what the user does to them to, once the app is shared with them.
     operations: Rc<RefCell<Option<WindowOperations>>>,
-    /// The control the app keeps keyboard focus on, which the views follow.
-    focus: KeptFocus,
-    /// The control focus was kept on when the windows were last composed.
-    framed_focus: Rc<Cell<Option<Target>>>,
+    /// The rustle focus of every control, which the views of every window attach.
+    focus: focus::FocusRequesters,
     /// The app, once it is shared with the windows.
     app: Rc<RefCell<Weak<RefCell<App>>>>,
     /// How often the app asked for every window to be composed again, which the
@@ -92,7 +84,6 @@ pub(super) struct Shared {
 impl Shared {
     /// Hands what the user does to the views of every window to `app`.
     pub(super) fn attach(&self, app: &Rc<RefCell<App>>) {
-        self.focus.attach(app);
         *self.app.borrow_mut() = Rc::downgrade(app);
         *self.operations.borrow_mut() = Some([
             Controller::operations(app, None),
@@ -114,9 +105,7 @@ impl Shared {
             .borrow()
             .as_ref()
             .map(|operations| Rc::clone(&operations[aside.map_or(0, |aside| slot(aside) + 1)]));
-        let keys = self.focus.keys();
-        self.framed_focus.set(keys.held);
-        focus::provide(keys, || match operations {
+        focus::provide(self.focus.clone(), || match operations {
             Some(operations) => events::provide(operations, content),
             None => content(),
         });
@@ -126,12 +115,6 @@ impl Shared {
     #[cfg(test)]
     pub(super) fn reads<T>(&self, read: impl FnOnce(&pm_pages::Screen) -> T) -> T {
         self.model.read(read)
-    }
-
-    /// The pointer shape the app decided on over the main window, if it decided.
-    #[cfg(test)]
-    pub(super) fn cursor(&self) -> Option<CursorIcon> {
-        self.cursor.get()
     }
 
     /// Whether the app last said it quits.
@@ -168,18 +151,16 @@ pub(super) fn window_key(aside: Option<Aside>) -> scene::WindowKey {
 }
 
 impl Shell {
-    /// A shell for `model` and the focus kept in `focus`, with no window yet.
-    pub(super) fn new(model: Model, focus: KeptFocus) -> Self {
+    /// A shell for `model` and the focus of every control in `focus`, with no window yet.
+    pub(super) fn new(model: Model, focus: focus::FocusRequesters) -> Self {
         Self {
             shared: Shared {
                 model,
                 sizes: Rc::new(RefCell::new([(0.0, 0.0); 3])),
                 tokens: Rc::new(RefCell::new(Tokens::default())),
-                cursor: Rc::new(Cell::new(None)),
                 handles: Rc::new(RefCell::new([None, None])),
                 operations: Rc::new(RefCell::new(None)),
                 focus,
-                framed_focus: Rc::new(Cell::new(None)),
                 app: Rc::new(RefCell::new(Weak::new())),
                 composed: rustle::mutable_state(0),
                 idle: rustle::mutable_state(Idle::default()),
@@ -216,13 +197,6 @@ impl Shell {
     pub(super) fn set_tokens(&mut self, tokens: Tokens) {
         *self.shared.tokens.borrow_mut() = tokens;
         self.invalidate();
-    }
-
-    /// Sets the pointer shape the app decided on over the main window, composing again when it changed.
-    pub(super) fn set_cursor(&mut self, cursor: Option<CursorIcon>) {
-        if self.shared.cursor.replace(cursor) != cursor {
-            self.invalidate();
-        }
     }
 
     /// Records that the window of `aside`, or the main one, is `size` logical pixels across.
@@ -439,39 +413,41 @@ fn every(interval: Option<Duration>, app: &Weak<RefCell<App>>, act: fn(&mut App)
     });
 }
 
-/// Emits what the main window shows for what `shared` holds, under the root that hands the
-/// app the window's pointer and what it reads of the window.
+/// Emits what the main window shows for what `shared` holds, under the operations its
+/// views hand what the user does to, with what the app reads of the window.
 pub(super) fn main_view(shared: &Shared) {
     idle_effects(shared);
     watch_window(shared, None);
     let tokens = shared.tokens.borrow().clone();
     let size = shared.sizes.borrow()[0];
-    let cursor = shared.cursor.get();
     let revision = shared.model.revision();
     let _ = shared.composed.get();
     shared.under_operations(None, || {
-        rustle::stack_with(pointer_listener(shared, None), || {
-            pm_components::revision::provide(revision, || {
-                shared
-                    .model
-                    .read(|screen| scene::main_root(screen, size.0, size.1, tokens, cursor));
-            });
+        pm_components::revision::provide(revision, || {
+            shared
+                .model
+                .read(|screen| scene::main_root(screen, size.0, size.1, tokens));
         });
     });
 }
 
-/// Emits what the window of `aside` shows for what `shared` holds, under the root that
-/// hands the app the window's pointer and what it reads of the window.
+/// Emits what the window of `aside` shows for what `shared` holds, under the operations its
+/// views hand what the user does to, with what the app reads of the window; the folder
+/// picker's window gives its filter the keyboard each time the picker opens.
 pub(super) fn aside_view(shared: &Shared, aside: Aside) {
     watch_window(shared, Some(aside));
+    if aside == Aside::Picker {
+        asides::focus_picker_filter(
+            &shared.focus,
+            shared.model.read(Screen::folder_picker_serial),
+        );
+    }
     let tokens = shared.tokens.borrow().clone();
     let (width, height) = aside_size(shared, aside);
     let _ = shared.composed.get();
     shared.under_operations(Some(aside), || {
-        rustle::stack_with(pointer_listener(shared, Some(aside)), || {
-            shared.model.read(|screen| {
-                scene::aside_root(screen, window_key(Some(aside)), width, height, tokens);
-            });
+        shared.model.read(|screen| {
+            scene::aside_root(screen, window_key(Some(aside)), width, height, tokens);
         });
     });
 }
@@ -543,73 +519,6 @@ fn modifier_keys(modifiers: Modifiers) -> (bool, bool, bool, bool) {
     )
 }
 
-/// A pointer event as the app takes it once the interface has seen it, positions in
-/// logical pixels of the window.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum Pointing {
-    /// The pointer moved to this place.
-    Moved((f32, f32)),
-    /// The pointer left the window.
-    Left,
-    /// The wheel or a trackpad scrolled across and down by this much, the way the content moves.
-    Wheel(f32, f32),
-    /// A button went down, or up when not `pressed`.
-    Button(PointerButton, bool),
-}
-
-impl Pointing {
-    /// What the app takes of `event`, or nothing for an event it does not act on.
-    fn of(event: &Heard) -> Option<Self> {
-        let change = event.changes.first()?;
-        let at = (change.position.x, change.position.y);
-        Some(match event.event_type {
-            PointerEventType::Move => Self::Moved(at),
-            PointerEventType::Exit => Self::Left,
-            PointerEventType::Scroll => Self::Wheel(-change.scroll_delta.x, -change.scroll_delta.y),
-            PointerEventType::Press => Self::Button(event.button?, true),
-            PointerEventType::Release => Self::Button(event.button?, false),
-            _ => return None,
-        })
-    }
-}
-
-/// The modifier with which the root of the main window, or of `aside`'s, hands the app
-/// every pointer event the window gets, whether something in the window consumed it or
-/// not: in the initial pass the app notes what the keyboard holds before the interface
-/// handles the event, and in the final pass, once the controls have, it carries out its
-/// own part of it.
-#[track_caller]
-fn pointer_listener(shared: &Shared, aside: Option<Aside>) -> Modifier {
-    let app = shared.app();
-    rustle::remember(move || listening(&app, aside)).get()
-}
-
-/// The modifier [`pointer_listener`] remembers, which hands every pointer event of the
-/// window of `aside`, or of the main one, to `app`.
-fn listening(app: &Weak<RefCell<App>>, aside: Option<Aside>) -> Modifier {
-    let mut modifier = Modifier::new().fill_max_size();
-    for event_type in [
-        PointerEventType::Press,
-        PointerEventType::Release,
-        PointerEventType::Move,
-        PointerEventType::Exit,
-        PointerEventType::Scroll,
-    ] {
-        let noted = app.clone();
-        modifier = modifier.on_pointer_event(event_type, PointerEventPass::Initial, move |_| {
-            with_app(&noted, App::note_typing);
-        });
-        let heard = app.clone();
-        modifier = modifier.on_pointer_event(event_type, PointerEventPass::Final, move |event| {
-            let held = event.keyboard_modifiers;
-            if let Some(pointing) = Pointing::of(event) {
-                with_app(&heard, |app| app.pointer_heard(aside, pointing, held));
-            }
-        });
-    }
-    modifier
-}
-
 /// The shadow the main window casts around its frame while it floats.
 fn window_shadow() -> WindowShadow {
     WindowShadow {
@@ -646,8 +555,8 @@ impl App {
     /// screen.
     fn main_options(&self) -> WindowOptions {
         pm_components::set_shadow_outside(on_wayland());
-        rustle_wgpu::set_legible_text(false);
-        rustle_wgpu::set_frame_latency(frame_latency());
+        rustle::set_legible_text(false);
+        rustle::set_frame_latency(frame_latency());
         rustle::set_pixel_rounding(rustle::PixelRounding::Logical);
         let (width, height) = window_frame::with_band(self.opening_frame);
         WindowOptions {
@@ -701,7 +610,9 @@ impl App {
     /// What rustle's external handler runs whenever the loop is woken for the app: drains
     /// what woke it. The agents' work and the servers' answers are taken in and what the
     /// reader asked of them delivered; the app catches up with an event the interface
-    /// finished handling, and with a frame drawn; then it follows what that changed.
+    /// finished handling (a press a popup's dismissal waited on closes what it closes, the
+    /// text typed and the focus moved are followed), with what rustle scrolled by itself,
+    /// and with a frame drawn; then it follows what that changed.
     pub(super) fn on_wake(&mut self) {
         self.window_opened();
         self.work.discover();
@@ -709,15 +620,17 @@ impl App {
         if self.model.read(Screen::has_outbox) {
             self.deliver();
         }
+        if std::mem::take(&mut self.dismissal) {
+            self.dismiss(None);
+        }
+        self.pressed_in_conversation = false;
         if std::mem::take(&mut self.event_pending) {
             self.after_interface(None, |_| {});
-        } else if std::mem::take(&mut self.claimed).acted {
+        } else if std::mem::take(&mut self.acted) {
             self.recompose = true;
         }
-        if std::mem::take(&mut self.frame_pending)
-            && self.shell.shared.framed_focus.get() == self.focus.current()
-        {
-            self.focus.settle(asides::is_aside);
+        self.follow_scrolls();
+        if std::mem::take(&mut self.frame_pending) {
             self.browsing = self.browser_tick();
         }
         self.flush();
@@ -804,26 +717,21 @@ impl App {
     }
 
     /// Notes that the windows were composed and laid out, so the app is caught up with
-    /// the frame when it is next woken: rustle's focus taken in once the frame shows the
-    /// control focus is kept on.
+    /// the frame when it is next woken.
     pub(super) fn frame_composed(&mut self) {
         self.frame_pending = true;
     }
 
-    /// Composes every window again when anything asked for it since the last time or
-    /// focus is kept on another control than when they were last composed, and runs
-    /// what follows a composed frame with what was laid out last. A change of the screen
+    /// Composes every window again when anything asked for it since the last time, and
+    /// runs what follows a composed frame with what was laid out last. A change of the screen
     /// alone is composed through the screen's own state, without composing everything,
     /// so a change that only resized panels leaves the screen's revision and the regions
     /// whose room did not change keep what they emitted.
     pub(super) fn flush(&mut self) {
-        let focus = self.focus.current();
-        let forced = std::mem::take(&mut self.recompose) | (focus != self.composed_focus);
-        if forced || self.dirty.replace(false) {
-            if forced {
-                self.shell.invalidate();
-            }
-            self.composed_focus = focus;
+        if std::mem::take(&mut self.recompose) {
+            self.shell.invalidate();
+        } else {
+            self.dirty.set(false);
         }
         self.after_compose();
         self.publish_idle();
@@ -832,11 +740,8 @@ impl App {
     /// What the app does after the interface composed and laid out a frame:
     /// what the old frame did after painting, from what this one painted.
     pub(super) fn after_compose(&mut self) {
-        let focused = self.focus.current();
         self.sync_floating();
         self.fit_terminal();
-        let reaching = self.reaching() || self.reaching_terminal_link();
-        let browser_cursor = self.browser_cursor();
         if self.window.is_none() {
             return;
         }
@@ -844,45 +749,36 @@ impl App {
         model.read(|state| {
             if std::mem::take(&mut self.focus_terminal) {
                 self.focus
-                    .focus(Target::Terminal(TerminalEvent::TerminalBody));
+                    .request_focus(Target::Terminal(TerminalEvent::TerminalBody));
             }
             if std::mem::take(&mut self.focus_browser_address) {
                 self.focus
-                    .focus(Target::Browser(BrowserEvent::BrowserAddress));
+                    .request_focus(Target::Browser(BrowserEvent::BrowserAddress));
             }
             if std::mem::take(&mut self.focus_filter) {
-                self.focus.focus(Target::Editor(EditorEvent::ListingFilter));
+                self.focus
+                    .request_focus(Target::Editor(EditorEvent::ListingFilter));
             }
             Self::give_back_focus(&mut self.refocus, &self.focus, self.work.resuming());
             let starting = state.is_starting();
             if starting && !self.autofocused {
-                self.focus.focus(Target::Composer(ComposerEvent::Prompt));
+                self.focus
+                    .request_focus(Target::Composer(ComposerEvent::Prompt));
             }
             self.autofocused = starting;
             let naming = state.is_naming();
             if naming && !self.naming {
-                self.focus.focus(Target::Tree(TreeEvent::EntryField));
+                self.focus
+                    .request_focus(Target::Tree(TreeEvent::EntryField));
             }
             self.naming = naming;
         });
-        let cursor = match self.sash_drag {
-            Some((.., pm_components::sash::Grows::Up)) => Some(CursorIcon::RowResize),
-            Some(_) => Some(CursorIcon::ColResize),
-            None if reaching => Some(CursorIcon::Pointer),
-            None => browser_cursor,
-        };
-        if self.on_aside.is_none() {
-            self.shell.set_cursor(cursor);
-        }
         crate::startup::scene_painted();
         crate::startup::frame_presented();
         self.place_completion();
         self.place_signature();
         self.note_code_view();
         self.note_conversation(true);
-        if self.focus.current() != focused {
-            self.recompose = true;
-        }
     }
 
     /// Where the input method's candidates go for the code editor while it has the
@@ -891,7 +787,7 @@ impl App {
     pub(super) fn editor_caret_area(&self) -> Option<rustle::Rect> {
         let id = self
             .focus
-            .current()
+            .focused()
             .filter(|id| *id == Target::Editor(EditorEvent::EditorField))?;
         let caret = self
             .model
@@ -907,19 +803,15 @@ impl App {
     /// Carries out `act`, the app's part of an event of the main window, or of `aside`'s,
     /// once the interface has seen it, against the window it happened in; then catches the
     /// screen up with what the interface did to it (the text typed, the scrolls) and runs
-    /// what follows a frame, composing again when the keyboard moved.
+    /// what follows a frame.
     pub(super) fn after_interface(&mut self, aside: Option<Aside>, act: impl FnOnce(&mut Self)) {
         self.follow_typing();
-        let focus = self.focus_before_event;
         match aside {
             Some(aside) => self.in_aside(aside, act),
             None => act(self),
         }
-        self.claimed = Claims::default();
+        self.acted = false;
         self.follow_scrolls();
-        if self.focus.current() != focus {
-            self.recompose = true;
-        }
         self.flush();
     }
 
@@ -938,13 +830,12 @@ impl App {
             if !focused {
                 return;
             }
-            let held = app.focus.current();
             let elsewhere = match aside {
-                None => held.is_some_and(asides::is_aside),
-                Some(aside) => held.is_some_and(|id| !aside.owns(id)),
+                None => app.focus.focused_where(asides::is_aside),
+                Some(aside) => app.focus.focused_where(|id| !aside.owns(id)),
             };
-            if elsewhere {
-                app.focus.clear();
+            if let Some(id) = elsewhere {
+                app.focus.free_focus_of(id);
             }
         });
     }
@@ -994,65 +885,6 @@ impl App {
             app.system_appearance = super::appearance(dark);
             app.apply_appearance();
         });
-    }
-
-    /// Carries out `pointing`, a pointer event of the window of `aside`, or of the main one,
-    /// with `held` modifier keys, once the interface has handled it.
-    fn pointer_heard(&mut self, aside: Option<Aside>, pointing: Pointing, held: Modifiers) {
-        if held != self.modifiers {
-            self.hold_modifiers(held);
-        }
-        self.after_interface(aside, |app| app.pointing(pointing));
-    }
-
-    /// Carries out `pointing` against the window standing as the main one: the pointer
-    /// folded in, the browser told, the wheel scrolling what the interface does not, and
-    /// the buttons that go back and forward stepping through history.
-    fn pointing(&mut self, pointing: Pointing) {
-        let band = if self.on_aside.is_none() {
-            pm_components::shadow_margin()
-        } else {
-            0.0
-        };
-        match pointing {
-            Pointing::Moved(position) => {
-                let received = self.timings.start();
-                let at = (position.0 - band, position.1 - band);
-                self.pointer(PointerEvent::Moved(at.0, at.1));
-                self.browser_moved(at);
-                if self.on_aside.is_none() {
-                    self.timings.pointer(received);
-                }
-            }
-            Pointing::Left => self.pointer(PointerEvent::Left),
-            Pointing::Wheel(across, down) => {
-                if self.browser_wheel(across, down) {
-                    return;
-                }
-                self.scroll(-down);
-            }
-            Pointing::Button(button, pressed) => {
-                self.refocus = None;
-                let button = match button {
-                    PointerButton::Primary => Button::Left,
-                    PointerButton::Secondary => Button::Right,
-                    PointerButton::Back | PointerButton::Forward => {
-                        let back = button == PointerButton::Back;
-                        if pressed && !(self.on_aside.is_none() && self.browser_history(back)) {
-                            self.step_through_history(back);
-                        }
-                        return;
-                    }
-                    _ => return,
-                };
-                self.browser_button(button, pressed);
-                self.pointer(if pressed {
-                    PointerEvent::Pressed(button)
-                } else {
-                    PointerEvent::Released(button)
-                });
-            }
-        }
     }
 
     /// Notes a key of the window, before the interface handles it: what the keyboard

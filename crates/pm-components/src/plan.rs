@@ -1,15 +1,18 @@
 //! The plan an agent proposes before it starts: the panel that reads it and the band above the prompt that answers it.
 
 use crate::areas::ChatEvent;
-use crate::kit::{self, Frame};
+use crate::button;
+use crate::parts;
 use crate::target::Target;
 use crate::theme;
+use crate::theme::Frame;
 use crate::theme::sp;
 use crate::theme::{Radius, Role};
 use pm_harness::{Permission, Verdict};
 use rustle::Modifier;
 use rustle::phosphor;
 use rustle::{Alignment, FlowOptions, flow_row_with};
+use rustle::{Arrangement, TextOverflow};
 
 use crate::button::Variant;
 use crate::parts::{line, spacer};
@@ -31,30 +34,39 @@ pub fn width_in(state: &WorkspaceState, room: f32) -> f32 {
 /// Emits the panel `width` logical pixels wide that reads `source`, the plan the agent proposed, as markdown beside the conversation.
 #[track_caller]
 pub fn panel(state: &WorkspaceState, source: &str, width: f32) {
-    kit::column(
+    rustle::row_arranged(
         Modifier::new()
             .width(width)
             .fill_max_height()
-            .background(theme::color(Role::Background))
-            .ruled(theme::Side::Left),
-        0,
+            .background(theme::color(Role::Background)),
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            kit::bar(12, 4, 2, || {
-                line("Plan", 13, 1.4, Role::Muted);
-                spacer();
-                Button::icon(phosphor::X, Target::Chat(ChatEvent::ClosePlan)).build();
-            });
-            kit::column(
-                Modifier::new()
-                    .fill_max_width()
-                    .weight(1.0)
-                    .clip()
-                    .vertical_scroll(&state.plan_scroll)
-                    .fill_max_width()
-                    .padding_xy(theme::sp(4), theme::sp(4)),
-                0,
+            rustle::vertical_divider(Modifier::new(), 1.0, theme::color(Role::Border));
+            rustle::column_arranged(
+                Modifier::new().weight(1.0).fill_max_height(),
+                Arrangement::Start,
+                Alignment::Start,
                 || {
-                    Markdown::new(source, width - 33.0).build();
+                    parts::bar(12, 4, 2, || {
+                        line("Plan", 13, 1.4, Role::Muted);
+                        spacer();
+                        Button::icon(phosphor::X, Target::Chat(ChatEvent::ClosePlan)).build();
+                    });
+                    rustle::column_arranged(
+                        Modifier::new()
+                            .fill_max_width()
+                            .weight(1.0)
+                            .clip()
+                            .vertical_scroll(&state.plan_scroll)
+                            .fill_max_width()
+                            .padding_xy(theme::sp(4), theme::sp(4)),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            Markdown::new(source, width - 33.0).build();
+                        },
+                    );
                 },
             );
         },
@@ -64,7 +76,7 @@ pub fn panel(state: &WorkspaceState, source: &str, width: f32) {
 /// Emits the button answering with the choice at `index`, bold for the one that goes ahead without asking again.
 #[track_caller]
 fn answer(index: usize, name: &str, verdict: &Verdict) {
-    kit::action(
+    button::action(
         name,
         Target::Chat(ChatEvent::Choice(index)),
         crate::steps::variant_of(verdict),
@@ -79,24 +91,31 @@ pub fn proposal(ask: &Permission) -> bool {
     if ask.plan.is_none() {
         return false;
     }
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .panel(Radius::Xl)
             .padding_xy(theme::sp(4), theme::sp(3)),
-        2,
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
         || {
-            kit::row(Modifier::new().fill_max_width(), 0, || {
-                kit::text(
-                    Modifier::new().weight(1.0),
-                    "The agent proposed a plan",
-                    kit::line(14, Role::Text),
-                );
-                kit::action(
-                    "Open plan",
-                    Target::Chat(ChatEvent::OpenPlan),
-                    Variant::Ghost,
-                );
-            });
+            rustle::row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    rustle::basic_text(
+                        Modifier::new().weight(1.0),
+                        "The agent proposed a plan",
+                        theme::line(14, Role::Text),
+                        TextOverflow::Ellipsis,
+                    );
+                    button::action(
+                        "Open plan",
+                        Target::Chat(ChatEvent::OpenPlan),
+                        Variant::Ghost,
+                    );
+                },
+            );
             flow_row_with(
                 Modifier::new().fill_max_width(),
                 FlowOptions::new(sp(2), sp(2)).item_alignment(Alignment::Center),
@@ -110,7 +129,7 @@ pub fn proposal(ask: &Permission) -> bool {
                     {
                         answer(index, "Reject", &Verdict::Reject);
                     }
-                    kit::action("Revise…", Target::Chat(ChatEvent::Revise), Variant::Ghost);
+                    button::action("Revise…", Target::Chat(ChatEvent::Revise), Variant::Ghost);
                     spacer();
                     for (index, choice) in ask
                         .choices

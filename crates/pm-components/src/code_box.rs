@@ -1,9 +1,10 @@
 //! The code box: lines in the code font inside a bordered box that cuts them off at a height.
 
-use crate::kit::{self, Frame};
 use crate::theme;
+use crate::theme::Frame;
 use crate::theme::{Radius, Role};
 use rustle::Modifier;
+use rustle::{Alignment, Arrangement};
 
 /// A code box being described: the lines it holds and how tall it may grow.
 ///
@@ -81,6 +82,11 @@ impl<'a> CodeBox<'a> {
             .outlined(Radius::Lg)
             .clip()
             .chain(self.inner.unwrap_or_default());
-        kit::column(self.modifier.chain(own), 0, self.lines);
+        rustle::column_arranged(
+            self.modifier.chain(own),
+            Arrangement::Start,
+            Alignment::Start,
+            self.lines,
+        );
     }
 }

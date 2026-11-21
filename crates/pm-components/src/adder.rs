@@ -1,12 +1,13 @@
 //! Adding a project: the modal that offers a folder on this computer or a repository to clone, found through the accounts and organizations on GitHub.
 
 use crate::areas::DialogEvent;
-use crate::kit::{self, Frame};
+use crate::events;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
 use rustle::Modifier;
 use rustle::TextFieldState;
+use rustle::{Alignment, Arrangement};
 use rustle::{Icon, phosphor};
 
 use crate::Input;
@@ -280,17 +281,23 @@ fn panel(open: &Adder, scrolled: &rustle::ScrollState) {
     let banded = || {
         Modifier::new()
             .height(theme::sp(11))
-            .ruled(theme::Side::Bottom)
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
             .padding_xy(theme::sp(4), 0.0)
     };
-    kit::row(banded(), 2, || {
-        line("Add project", 13, 1.4, Role::Text);
-        if let (Some((login, _)), Step::Repositories) = (&open.owner, open.step) {
-            line(login.clone(), 13, 1.4, Role::Subtle);
-        }
-    });
+    rustle::row_arranged(
+        banded(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            line("Add project", 13, 1.4, Role::Text);
+            if let (Some((login, _)), Step::Repositories) = (&open.owner, open.step) {
+                line(login.clone(), 13, 1.4, Role::Subtle);
+            }
+        },
+    );
     if open.step != Step::Choices {
-        kit::row(banded(), 0, || {
+        rustle::row_arranged(banded(), Arrangement::Start, Alignment::Center, || {
             Input::new(&open.field, Target::Dialog(DialogEvent::AdderField))
                 .variant(input::Variant::Ghost)
                 .placeholder(open.placeholder())
@@ -298,13 +305,14 @@ fn panel(open: &Adder, scrolled: &rustle::ScrollState) {
                 .build();
         });
     }
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .height_in(0.0, sp(LIST_HEIGHT / 4.0))
             .vertical_scroll(scrolled)
             .fill_max_width()
             .padding(theme::sp(1.5)),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
             for (index, row) in open.rows().iter().enumerate() {
                 let id = if open.step == Step::Choices {
@@ -324,9 +332,10 @@ fn panel(open: &Adder, scrolled: &rustle::ScrollState) {
 /// Emits the line under the rows: a spinner and what is being waited for, or what is the matter.
 #[track_caller]
 pub(crate) fn status_line(status: Status) {
-    kit::row(
+    rustle::row_arranged(
         Modifier::new().padding_xy(theme::sp(2.5), theme::sp(2)),
-        3,
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Center,
         || match status {
             Status::Loading(message) => {
                 spinner(4.0, Role::Muted);
@@ -350,18 +359,24 @@ fn entry((icon, name, detail): &Row, id: Target, selected: bool) {
     };
     let looks = Modifier::new()
         .fill_max_width()
-        .indicated(looks, theme::Focused::Held(crate::focus::is_held(id)));
-    kit::row(
-        kit::pressed(looks, id).padding_xy(theme::sp(2.5), theme::sp(1.5)),
-        3,
+        .indicated(looks, theme::Focused::Control(crate::focus::is_focused(id)));
+    rustle::row_arranged(
+        events::pressed(looks, id).padding_xy(theme::sp(2.5), theme::sp(1.5)),
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Center,
         || {
             glyph(icon.clone(), 4.0, Role::Muted);
-            kit::column(Modifier::new().weight(1.0), 0, || {
-                line(name.clone(), 13, 1.4, Role::Text);
-                if !detail.is_empty() {
-                    line(detail.clone(), 12, 1.4, Role::Subtle);
-                }
-            });
+            rustle::column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    line(name.clone(), 13, 1.4, Role::Text);
+                    if !detail.is_empty() {
+                        line(detail.clone(), 12, 1.4, Role::Subtle);
+                    }
+                },
+            );
         },
     );
 }

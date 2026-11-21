@@ -1,9 +1,13 @@
 //! Finding and replacing text in the file shown: the bar over its top right corner, what it looks for, and the matches it steps through.
 
 use crate::areas::EditorEvent;
-use crate::kit::{self, Frame};
+use crate::button;
+use crate::events;
+use crate::icons;
+use crate::theme::Frame;
 use crate::theme::Indicated;
 use crate::theme::ShadowLayers;
+use rustle::TextOverflow;
 
 use crate::events::{Event, send};
 use crate::target::Target;
@@ -12,8 +16,8 @@ use rustle::phosphor;
 use rustle::{Alignment, Arrangement, row_arranged};
 use std::ops::Range;
 
+use pm_editor::Edit;
 use pm_editor::{Document, Query};
-use pm_field::Edit;
 use rustle::TextFieldState;
 use rustle::{BoxAlignment, Modifier};
 
@@ -323,17 +327,17 @@ pub(crate) fn switch(label: &str, id: Target, on: bool) {
     let mut own = Modifier::new()
         .width(theme::sp(6.5))
         .height(theme::sp(6))
-        .indicated(looks, theme::Focused::Held(crate::focus::is_held(id)));
+        .indicated(looks, theme::Focused::Control(crate::focus::is_focused(id)));
     if on {
         own = own
             .border(1.0, theme::color(Role::Accent), Radius::Sm.px())
             .padding(1.0);
     }
-    let own = kit::pressed(own, id);
+    let own = events::pressed(own, id);
     let kind =
         theme::mono_style(11, 1.2).color(theme::color(if on { Role::Text } else { Role::Subtle }));
     row_arranged(own, Arrangement::Center, Alignment::Center, || {
-        kit::text(Modifier::new(), label, kind);
+        rustle::basic_text(Modifier::new(), label, kind, TextOverflow::Ellipsis);
     });
 }
 
@@ -360,9 +364,9 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
         .ok()
         .and_then(|matches| document.selected_match(matches));
     let (said, tone) = tally(&found, selected, query.text.is_empty());
-    let toggle = kit::chevron(finding.replacing);
+    let toggle = icons::chevron(finding.replacing);
     let read_only = document.field.is_read_only();
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .wrap_content_width(BoxAlignment::TopEnd, true)
             .align(BoxAlignment::TopEnd)
@@ -375,59 +379,72 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
                 send(Event::Editor(EditorEvent::FindBar)),
             )
             .padding(theme::sp(1)),
-        1,
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Start,
         || {
-            kit::row(Modifier::new(), 1, || {
-                Button::icon(toggle, Target::Editor(EditorEvent::FindToggleReplace)).build();
-                Input::new(&finding.query, Target::Editor(EditorEvent::FindField))
-                    .size(Size::Sm)
-                    .placeholder("Find")
-                    .invalid(found.is_err())
-                    .modifier(Modifier::new().width(194.0))
-                    .build();
-                switch("Aa", Target::Editor(EditorEvent::FindCase), finding.case);
-                switch("ab", Target::Editor(EditorEvent::FindWord), finding.word);
-                switch(".*", Target::Editor(EditorEvent::FindRegex), finding.regex);
-                switch(
-                    "sel",
-                    Target::Editor(EditorEvent::FindInSelection),
-                    finding.scoped,
-                );
-                kit::text(
-                    Modifier::new().width(84.0).padding_xy(theme::sp(1), 0.0),
-                    said,
-                    kit::line(11, tone),
-                );
-                Button::icon(
-                    phosphor::ARROW_UP,
-                    Target::Editor(EditorEvent::FindPrevious),
-                )
-                .build();
-                Button::icon(phosphor::ARROW_DOWN, Target::Editor(EditorEvent::FindNext)).build();
-                Button::icon(phosphor::X, Target::Editor(EditorEvent::FindClose)).build();
-            });
-            if finding.replacing {
-                kit::row(Modifier::new(), 1, || {
-                    rustle::spacer(Modifier::new().width(theme::sp(7)));
-                    Input::new(
-                        &finding.replacement,
-                        Target::Editor(EditorEvent::ReplaceField),
+            rustle::row_arranged(
+                Modifier::new(),
+                Arrangement::SpacedBy(theme::sp(1)),
+                Alignment::Center,
+                || {
+                    Button::icon(toggle, Target::Editor(EditorEvent::FindToggleReplace)).build();
+                    Input::new(&finding.query, Target::Editor(EditorEvent::FindField))
+                        .size(Size::Sm)
+                        .placeholder("Find")
+                        .invalid(found.is_err())
+                        .modifier(Modifier::new().width(194.0))
+                        .build();
+                    switch("Aa", Target::Editor(EditorEvent::FindCase), finding.case);
+                    switch("ab", Target::Editor(EditorEvent::FindWord), finding.word);
+                    switch(".*", Target::Editor(EditorEvent::FindRegex), finding.regex);
+                    switch(
+                        "sel",
+                        Target::Editor(EditorEvent::FindInSelection),
+                        finding.scoped,
+                    );
+                    rustle::basic_text(
+                        Modifier::new().width(84.0).padding_xy(theme::sp(1), 0.0),
+                        said,
+                        theme::line(11, tone),
+                        TextOverflow::Ellipsis,
+                    );
+                    Button::icon(
+                        phosphor::ARROW_UP,
+                        Target::Editor(EditorEvent::FindPrevious),
                     )
-                    .size(Size::Sm)
-                    .placeholder("Replace")
-                    .modifier(Modifier::new().width(194.0))
                     .build();
-                    for (label, event) in [
-                        ("Replace", EditorEvent::ReplaceOne),
-                        ("Replace all", EditorEvent::ReplaceAll),
-                    ] {
-                        rustle::key(label, || {
-                            kit::small_button(label, Target::Editor(event), Variant::Ghost)
-                                .disabled(read_only)
-                                .build();
-                        });
-                    }
-                });
+                    Button::icon(phosphor::ARROW_DOWN, Target::Editor(EditorEvent::FindNext))
+                        .build();
+                    Button::icon(phosphor::X, Target::Editor(EditorEvent::FindClose)).build();
+                },
+            );
+            if finding.replacing {
+                rustle::row_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(theme::sp(1)),
+                    Alignment::Center,
+                    || {
+                        rustle::spacer(Modifier::new().width(theme::sp(7)));
+                        Input::new(
+                            &finding.replacement,
+                            Target::Editor(EditorEvent::ReplaceField),
+                        )
+                        .size(Size::Sm)
+                        .placeholder("Replace")
+                        .modifier(Modifier::new().width(194.0))
+                        .build();
+                        for (label, event) in [
+                            ("Replace", EditorEvent::ReplaceOne),
+                            ("Replace all", EditorEvent::ReplaceAll),
+                        ] {
+                            rustle::key(label, || {
+                                button::small_button(label, Target::Editor(event), Variant::Ghost)
+                                    .disabled(read_only)
+                                    .build();
+                            });
+                        }
+                    },
+                );
             }
         },
     );

@@ -1,13 +1,14 @@
 //! The popover: a raised surface that floats over a screen, with a heading and rows of choices.
 
+use crate::events;
 use crate::events::Interactive;
 use crate::events::{Event, send};
-use crate::kit;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
 use crate::theme::{Radius, Role};
 use rustle::Modifier;
+use rustle::TextOverflow;
 use rustle::phosphor;
 use rustle::{Alignment, Arrangement, row_arranged};
 
@@ -180,25 +181,35 @@ fn hang(placement: Placement, button: impl FnOnce(), popover: Option<impl FnOnce
 /// Emits one row of a popover: a name over what choosing it means, with a tick on the one that is current.
 #[track_caller]
 pub fn row(name: &str, description: &str, current: bool, id: Target) {
-    let looks = kit::selectable(current).radius(Radius::Lg);
-    let modifier = kit::pressed(
+    let looks = theme::selectable(current).radius(Radius::Lg);
+    let modifier = events::pressed(
         Modifier::new()
             .fill_max_width()
-            .indicated(looks, theme::Focused::Held(crate::focus::is_held(id))),
+            .indicated(looks, theme::Focused::Control(crate::focus::is_focused(id))),
         id,
     )
     .padding_xy(theme::sp(2.5), theme::sp(1.5));
-    kit::row(modifier, 3, || {
-        kit::column(Modifier::new().weight(1.0), 0, || {
-            line(name, 13, 1.4, Role::Text);
-            if !description.is_empty() {
-                line(description, 12, 1.4, Role::Subtle);
+    rustle::row_arranged(
+        modifier,
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Center,
+        || {
+            rustle::column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    line(name, 13, 1.4, Role::Text);
+                    if !description.is_empty() {
+                        line(description, 12, 1.4, Role::Subtle);
+                    }
+                },
+            );
+            if current {
+                glyph(phosphor::CHECK, 4.0, Role::Text);
             }
-        });
-        if current {
-            glyph(phosphor::CHECK, 4.0, Role::Text);
-        }
-    });
+        },
+    );
 }
 
 /// Emits the small heading line of a popover, with `hint` at its right: a key to press, and what it does.
@@ -223,20 +234,27 @@ pub fn heading(title: &str, hint: Option<(&str, &str)>) {
 /// Emits a key to press, in a small chip, and what it does.
 #[track_caller]
 pub fn key_hint(key: &str, does: &str) {
-    kit::row(Modifier::new(), 1.5, || {
-        kit::row_top(
-            Modifier::new()
-                .background_rounded(theme::color(Role::SurfaceHover), Radius::Md.px())
-                .padding_xy(theme::sp(1.5), 0.0),
-            0,
-            || {
-                kit::text(
-                    Modifier::new(),
-                    key,
-                    theme::mono_style(11, 1.6).color(theme::color(Role::Muted)),
-                )
-            },
-        );
-        line(does, 12, 1.4, Role::Subtle);
-    });
+    rustle::row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(1.5)),
+        Alignment::Center,
+        || {
+            rustle::row_arranged(
+                Modifier::new()
+                    .background_rounded(theme::color(Role::SurfaceHover), Radius::Md.px())
+                    .padding_xy(theme::sp(1.5), 0.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        key,
+                        theme::mono_style(11, 1.6).color(theme::color(Role::Muted)),
+                        TextOverflow::Ellipsis,
+                    )
+                },
+            );
+            line(does, 12, 1.4, Role::Subtle);
+        },
+    );
 }

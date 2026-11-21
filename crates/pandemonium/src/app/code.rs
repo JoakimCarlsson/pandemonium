@@ -37,13 +37,13 @@ use pm_components::tab_menu::TabCommand;
 use pm_components::theme::Appearance;
 use pm_components::title_bar::TITLE_BAR_HEIGHT;
 use pm_config::ThemeMode;
+use pm_editor::Edit;
 use pm_editor::{Action, Case, Chord, Keymap, LineOrder, Pressed};
-use pm_field::Edit;
 use pm_harness::Verdict;
 use pm_pages::Screen;
 use pm_protocol::{DebugAction, Seek};
 use pm_treesitter::TextObject;
-use rustle::{Key, KeyEvent};
+use rustle::{Key, KeyEvent, Modifiers};
 
 use super::App;
 use crate::keys;
@@ -89,27 +89,6 @@ impl App {
             line.rect.origin.y,
             line.rect.size.height,
         ))
-    }
-
-    /// The byte of the file shown under the point `x`, `y`, when the point is on a drawn character.
-    fn editor_byte_at(&self, x: f32, y: f32) -> Option<usize> {
-        let line = self
-            .code_lines()
-            .of(Target::Editor(EditorEvent::EditorField))
-            .into_iter()
-            .find(|held| {
-                y >= held.rect.origin.y && y < held.rect.origin.y + held.rect.size.height
-            })?;
-        if x < line.rect.origin.x || x > line.rect.origin.x + line.layout.size().width {
-            return None;
-        }
-        Some(
-            line.start
-                + line.layout.hit_test(rustle::Offset::new(
-                    x - line.rect.origin.x,
-                    y - line.rect.origin.y,
-                )),
-        )
     }
 
     /// How tall the window is, in logical pixels.
@@ -216,7 +195,7 @@ impl App {
 
     /// Asks the language server where the thing at the caret of the file shown is used once the caret has rested there long enough, and says when to look again while it has yet to.
     pub(super) fn editor_highlight_due(&mut self) -> Option<Instant> {
-        if self.focus.current() != Some(Target::Editor(EditorEvent::EditorField)) {
+        if self.focus.focused() != Some(Target::Editor(EditorEvent::EditorField)) {
             self.highlight_wait = None;
             return None;
         }
@@ -274,7 +253,7 @@ impl App {
         let Some(caret) = self.model.read(|screen| {
             screen
                 .field(Target::Editor(EditorEvent::EditorField))
-                .map(pm_field::Field::caret)
+                .map(pm_editor::Field::caret)
         }) else {
             return;
         };
@@ -320,7 +299,7 @@ impl App {
         self.model.read(|screen| {
             screen
                 .field(Target::Editor(EditorEvent::EditorField))
-                .map(pm_field::Field::caret)
+                .map(pm_editor::Field::caret)
         })
     }
 
@@ -379,7 +358,8 @@ impl App {
             _ => state,
         });
         if command == EditorCommand::Rename && self.model.read(|screen| screen.renaming_open()) {
-            self.focus.focus(Target::Editor(EditorEvent::RenameSymbol));
+            self.focus
+                .request_focus(Target::Editor(EditorEvent::RenameSymbol));
         }
         if command == EditorCommand::OpenTerminal {
             self.focus_terminal = true;
@@ -424,7 +404,7 @@ impl App {
 
     /// Whether `action` may be carried out where the keyboard is now.
     fn may_perform(&self, action: Action) -> bool {
-        let focused = self.focus.current();
+        let focused = self.focus.focused();
         action.everywhere()
             || focused == Some(Target::Editor(EditorEvent::EditorField))
             || (matches!(
@@ -559,9 +539,10 @@ impl App {
                 .field(Target::Editor(EditorEvent::EditorField))
                 .is_some()
         }) {
-            self.focus.focus(Target::Editor(EditorEvent::EditorField));
+            self.focus
+                .request_focus(Target::Editor(EditorEvent::EditorField));
         } else {
-            self.focus.clear();
+            self.focus.free_focus();
         }
     }
 
@@ -700,12 +681,14 @@ impl App {
             Action::Find | Action::Replace => {
                 let replacing = action == Action::Replace;
                 self.model.change(|state| state.find_opened(replacing));
-                self.focus.focus(Target::Editor(EditorEvent::FindField));
+                self.focus
+                    .request_focus(Target::Editor(EditorEvent::FindField));
                 self.show_editor_caret();
             }
             Action::ToggleFindInSelection => {
                 self.model.change(|state| state.find_scope_toggled());
-                self.focus.focus(Target::Editor(EditorEvent::FindField));
+                self.focus
+                    .request_focus(Target::Editor(EditorEvent::FindField));
                 self.show_editor_caret();
             }
             Action::FindNext | Action::FindPrevious => {
@@ -718,7 +701,8 @@ impl App {
                     .editor_caret()
                     .map_or((48.0, 96.0), |caret| self.hung(caret, 72.0));
                 self.model.change(|state| state.go_to_line_requested(at));
-                self.focus.focus(Target::Editor(EditorEvent::GoToLine));
+                self.focus
+                    .request_focus(Target::Editor(EditorEvent::GoToLine));
             }
             Action::Outline => {
                 let at = self.across_top();
@@ -738,7 +722,7 @@ impl App {
             Action::SearchProject => {
                 self.model.change(|state| state.project_search_opened());
                 self.focus
-                    .focus(Target::Search(SearchEvent::ProjectSearchField));
+                    .request_focus(Target::Search(SearchEvent::ProjectSearchField));
             }
             Action::Problems => {
                 self.model
@@ -880,11 +864,13 @@ impl App {
             }
             Action::HandOffConversation => {
                 self.model.change(|state| state.handoff_requested());
-                self.focus.focus(Target::Composer(ComposerEvent::Prompt));
+                self.focus
+                    .request_focus(Target::Composer(ComposerEvent::Prompt));
             }
             Action::AskOnTheSide => {
                 self.model.change(|state| state.btw_requested());
-                self.focus.focus(Target::Composer(ComposerEvent::Prompt));
+                self.focus
+                    .request_focus(Target::Composer(ComposerEvent::Prompt));
             }
             Action::CycleMode => self.model.change(|state| state.mode_cycled()),
             Action::AllowRequest | Action::AlwaysAllowRequest | Action::RejectRequest => {
@@ -912,7 +898,9 @@ impl App {
             Action::OpenSessionFolder => {
                 self.session_command(Target::Menu(MenuEvent::SessionMenuOpenFolder))
             }
-            Action::FocusPrompt => self.focus.focus(Target::Composer(ComposerEvent::Prompt)),
+            Action::FocusPrompt => self
+                .focus
+                .request_focus(Target::Composer(ComposerEvent::Prompt)),
             Action::NextTab | Action::PreviousTab => {
                 let delta = if action == Action::NextTab { 1 } else { -1 };
                 self.model.change(|state| state.tab_stepped(delta));
@@ -998,7 +986,7 @@ impl App {
 
     /// Takes a key pressed while the box for a new name or for a line to go to has the keyboard: Escape closes it and gives the keyboard back to the file. Says whether it took the key.
     pub(super) fn rename_key(&mut self, event: &KeyEvent) -> bool {
-        let focused = self.focus.current();
+        let focused = self.focus.focused();
         if event.key != Key::Escape
             || !(focused == Some(Target::Editor(EditorEvent::RenameSymbol))
                 || focused == Some(Target::Editor(EditorEvent::GoToLine))
@@ -1012,13 +1000,14 @@ impl App {
                 .go_to_line_closed()
                 .color_picker_closed()
         });
-        self.focus.focus(Target::Editor(EditorEvent::EditorField));
+        self.focus
+            .request_focus(Target::Editor(EditorEvent::EditorField));
         true
     }
 
     /// Takes a key pressed while the field narrowing the list over the file has the keyboard: the arrows move the pick and Escape closes the list. Says whether it took the key.
     pub(super) fn listing_key(&mut self, event: &KeyEvent) -> bool {
-        let focused = self.focus.current();
+        let focused = self.focus.focused();
         let held = focused == Some(Target::Editor(EditorEvent::ListingFilter)) || focused.is_none();
         if !held || !self.model.read(|screen| screen.listing_open()) {
             return false;
@@ -1043,7 +1032,7 @@ impl App {
 
     /// Takes a key pressed while the bar for finding has the keyboard: Escape closes it, Shift+Enter goes back a match, Ctrl+Alt+Enter replaces every match, and Alt with C, W or R switches matching case, whole words or regular expressions. Says whether it took the key.
     pub(super) fn find_key(&mut self, event: &KeyEvent) -> bool {
-        let focused = self.focus.current();
+        let focused = self.focus.focused();
         if focused != Some(Target::Editor(EditorEvent::FindField))
             && focused != Some(Target::Editor(EditorEvent::ReplaceField))
         {
@@ -1065,7 +1054,8 @@ impl App {
         match event.key {
             Key::Escape => {
                 self.model.change(|state| state.find_closed());
-                self.focus.focus(Target::Editor(EditorEvent::EditorField));
+                self.focus
+                    .request_focus(Target::Editor(EditorEvent::EditorField));
             }
             Key::Enter
                 if focused == Some(Target::Editor(EditorEvent::ReplaceField))
@@ -1139,7 +1129,7 @@ impl App {
 
     /// Gives the keyboard back to the file shown once the box for a new name or a line to go to it was lent to has closed.
     pub(super) fn settle_rename_focus(&mut self) {
-        let focused = self.focus.current();
+        let focused = self.focus.focused();
         let closed = (focused == Some(Target::Editor(EditorEvent::RenameSymbol))
             && !self.model.read(|screen| screen.renaming_open()))
             || (focused == Some(Target::Editor(EditorEvent::GoToLine))
@@ -1152,14 +1142,15 @@ impl App {
             || (focused == Some(Target::Editor(EditorEvent::ListingFilter))
                 && !self.model.read(|screen| screen.listing_open()));
         if closed {
-            self.focus.focus(Target::Editor(EditorEvent::EditorField));
+            self.focus
+                .request_focus(Target::Editor(EditorEvent::EditorField));
             self.show_editor_caret();
         }
     }
 
     /// Takes a key pressed while the file shown has the keyboard, when it is one of the keys for writing code, and says whether it was.
     pub(super) fn editor_key(&mut self, event: &KeyEvent) -> bool {
-        if self.focus.current() != Some(Target::Editor(EditorEvent::EditorField)) {
+        if self.focus.focused() != Some(Target::Editor(EditorEvent::EditorField)) {
             return false;
         }
         let modifiers = event.modifiers;
@@ -1193,7 +1184,7 @@ impl App {
         let several = self.model.read(|screen| {
             screen
                 .field(Target::Editor(EditorEvent::EditorField))
-                .is_some_and(pm_field::Field::has_others)
+                .is_some_and(pm_editor::Field::has_others)
         });
         if listing {
             let changed = |screen: Screen| -> Option<Screen> {
@@ -1273,27 +1264,26 @@ impl App {
         taken
     }
 
-    /// Notes where the pointer rests over the file shown, so the language server is asked about the word there once it has rested long enough. A card about a word stays while the pointer is on the word or on the card; it is taken away a moment after the pointer left the word, so the pointer can cross to the card, and at once when the pointer leaves the card itself.
-    pub(super) fn editor_pointer_moved(&mut self, x: f32, y: f32) {
-        let over = self.under_pointer();
-        let on_card = over.is_some_and(|id| {
-            id == Target::Editor(EditorEvent::HoverCard)
-                || matches!(id, Target::Editor(EditorEvent::HoverLink { .. }))
-        });
-        let selecting = self.pressed_on == Some(Target::Editor(EditorEvent::HoverCard))
+    /// Notes that the pointer is over the drawn character at `byte` of the file shown, or
+    /// over none, as the code tells, so the language server is asked about the word there
+    /// once it has rested long enough. A card about a word stays while the pointer is on the
+    /// word or on the card; it is taken away a moment after the pointer left the word, so the
+    /// pointer can cross to the card, and at once when the pointer leaves the card itself.
+    pub(super) fn code_hovered(&mut self, byte: Option<usize>) {
+        self.editor_hover = byte;
+        let selecting = self.hover_card_held
             && self
                 .model
                 .read(Screen::hover_selection)
                 .selection()
                 .is_some();
-        if on_card || selecting {
+        if self.hover_card_over || selecting {
             self.hover_rest = None;
             self.hover_leaving = None;
-            self.hover_entered |= on_card;
             return;
         }
-        let stretch = self.word_under(over, x, y);
-        self.reach(self.reach_under(over, x, y).filter(|_| self.modifiers.ctrl));
+        let stretch = self.word_at(byte);
+        self.reach(self.reach_at(byte).filter(|_| self.modifiers.ctrl));
         let word = stretch.map(|stretch| stretch.start);
         let shown = self.model.read(|state| {
             state
@@ -1320,41 +1310,47 @@ impl App {
         };
     }
 
-    /// The link of the file shown under the point `x`, `y`, where `over` is what the point is over, when it is on one: the bytes it covers and where it leads.
-    fn link_under_point(
+    /// Notes that the pointer came over the card about a word of the file shown, which keeps
+    /// it showing, or left it when not `over`, which counts as the pointer being where the
+    /// code last said it is.
+    pub(super) fn hover_card_hovered(&mut self, over: bool) {
+        self.hover_card_over = over;
+        if over {
+            self.hover_rest = None;
+            self.hover_leaving = None;
+            self.hover_entered = true;
+        } else {
+            self.code_hovered(self.editor_hover);
+        }
+    }
+
+    /// Notes that the primary button went down on the card about a word, to select its
+    /// text, or came up when not `held`.
+    pub(super) fn hover_card_held(&mut self, held: bool) {
+        self.hover_card_held = held;
+    }
+
+    /// The link of the file shown whose drawn character at `byte` the pointer is over, when
+    /// it is on one: the bytes it covers and where it leads.
+    fn link_at(
         &self,
-        over: Option<pm_components::target::Target>,
-        x: f32,
-        y: f32,
+        byte: Option<usize>,
     ) -> Option<(std::ops::Range<usize>, pm_protocol::LinkTarget)> {
-        let byte = (over == Some(Target::Editor(EditorEvent::EditorField)))
-            .then(|| self.editor_byte_at(x, y))
-            .flatten()?;
-        self.model.read(|screen| screen.link_under(byte))
+        self.model.read(|screen| screen.link_under(byte?))
     }
 
-    /// What Ctrl underlines under the point `x`, `y`: the link there, or else the word, which is what a press takes to its definition.
-    fn reach_under(
-        &self,
-        over: Option<pm_components::target::Target>,
-        x: f32,
-        y: f32,
-    ) -> Option<std::ops::Range<usize>> {
-        self.link_under_point(over, x, y)
+    /// What Ctrl underlines at the drawn character at `byte`: the link there, or else the
+    /// word, which is what a press takes to its definition.
+    fn reach_at(&self, byte: Option<usize>) -> Option<std::ops::Range<usize>> {
+        self.link_at(byte)
             .map(|(range, _)| range)
-            .or_else(|| self.word_under(over, x, y))
+            .or_else(|| self.word_at(byte))
     }
 
-    /// The word of the file shown under the point `x`, `y`, where `over` is what the point is over, when it is on one.
-    fn word_under(
-        &self,
-        over: Option<pm_components::target::Target>,
-        x: f32,
-        y: f32,
-    ) -> Option<std::ops::Range<usize>> {
-        let byte = (over == Some(Target::Editor(EditorEvent::EditorField)))
-            .then(|| self.editor_byte_at(x, y))
-            .flatten()?;
+    /// The word of the file shown whose drawn character at `byte` the pointer is over, when
+    /// it is on one.
+    fn word_at(&self, byte: Option<usize>) -> Option<std::ops::Range<usize>> {
+        let byte = byte?;
         self.model.read(|screen| {
             let field = screen.field(Target::Editor(EditorEvent::EditorField))?;
             let text = field.text();
@@ -1376,7 +1372,8 @@ impl App {
             .change(|state| state.color_picker_requested(index, at));
         self.deliver();
         if self.model.read(|screen| screen.color_picker_open()) {
-            self.focus.focus(Target::Editor(EditorEvent::ColorHex));
+            self.focus
+                .request_focus(Target::Editor(EditorEvent::ColorHex));
         }
     }
 
@@ -1392,40 +1389,36 @@ impl App {
         }
     }
 
-    /// Whether a word of the file shown is underlined as what a press takes to its definition.
-    pub(super) fn reaching(&self) -> bool {
-        self.model.read(|state| {
-            state
-                .shown_document()
-                .is_some_and(|document| document.reach.is_some())
-        })
+    /// The drawn character of the file shown the pointer is over, as the code last told,
+    /// unless the card about a word is over it.
+    fn editor_hovered(&self) -> Option<usize> {
+        self.editor_hover.filter(|_| !self.hover_card_over)
     }
 
     /// Underlines the word under the pointer while Ctrl is held, and takes the underline away when it is let go.
     pub(super) fn editor_modifiers_changed(&mut self) {
         let stretch = self
-            .pointer
-            .position
-            .filter(|_| self.modifiers.ctrl)
-            .and_then(|(x, y)| self.reach_under(self.under_pointer(), x, y));
+            .modifiers
+            .ctrl
+            .then(|| self.reach_at(self.editor_hovered()))
+            .flatten();
         self.reach(stretch);
     }
 
-    /// Takes the reader to where the word under the pointer is defined, when Ctrl is held as the file shown is pressed, and says whether it did.
-    pub(super) fn editor_reach_pressed(&mut self) -> bool {
-        if !self.modifiers.ctrl {
+    /// Takes the reader to where the word under the pointer is defined, when Ctrl is held in
+    /// `modifiers` as the file shown is pressed, and says whether it did.
+    pub(super) fn editor_reach_pressed(&mut self, modifiers: Modifiers) -> bool {
+        if !modifiers.ctrl {
             return false;
         }
-        let Some((x, y)) = self.pointer.position else {
-            return false;
-        };
-        if let Some((_, target)) = self.link_under_point(self.under_pointer(), x, y) {
+        let byte = self.editor_hovered();
+        if let Some((_, target)) = self.link_at(byte) {
             self.model
                 .change(|state| state.with_reach(None).link_followed(target));
             self.deliver();
             return true;
         }
-        let Some(stretch) = self.word_under(self.under_pointer(), x, y) else {
+        let Some(stretch) = self.word_at(byte) else {
             return false;
         };
         let at = self.hung(stretch.start, LISTING_HEIGHT);

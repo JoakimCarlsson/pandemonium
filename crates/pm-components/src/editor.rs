@@ -1,6 +1,6 @@
 //! Writing code in the file shown: edits kept in step with the syntax tree and the language server, new lines indented as the language says, completions at the caret and what the server says about a place.
 
-use pm_field::Edit;
+use pm_editor::Edit;
 use pm_protocol::{Completion, Diagnostic, Hover, Position};
 use pm_treesitter::Syntax;
 

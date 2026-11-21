@@ -1,8 +1,9 @@
 //! Finding text in the page of the browser: the search the engine runs, and the bar over the top right corner of the page that drives it.
 
 use crate::areas::BrowserEvent;
-use crate::kit::{self, Frame};
+use crate::theme::Frame;
 use crate::theme::ShadowLayers;
+use rustle::{Alignment, Arrangement};
 
 use crate::events::{Event, send};
 use crate::target::Target;
@@ -139,41 +140,50 @@ impl WorkspaceState {
 
 /// Emits the bar for finding in the page, over the top right corner of the page, which is `page` logical pixels wide and has `beside` logical pixels of the pane to its right; the line the text is typed in narrows to keep the bar inside a narrow page.
 ///
-/// It is placed in the layer that holds the page.
+/// It is placed in the layer that holds the page. `on_hover` is told when the pointer comes
+/// over the bar and when it leaves it, as the page under it is not under the pointer then.
 #[track_caller]
-pub fn find_bar(search: &PageSearch, page: f32, beside: f32) {
+pub fn find_bar(search: &PageSearch, page: f32, beside: f32, on_hover: impl Fn(bool) + 'static) {
     let (said, tone) = search.tally();
     let field = (page - 2.0 * EDGE - BAR_EXTRA).clamp(FIELD_LEAST, FIELD_WIDTH);
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .align(BoxAlignment::TopEnd)
             .offset(-sp((EDGE + beside) / 4.0), sp(2))
             .z_index(40)
             .shadow_layers(&SHADOW, Radius::Md.px())
             .panel(Radius::Md)
+            .on_hover(on_hover)
             .control(
                 Target::Browser(BrowserEvent::BrowserFindBar),
                 send(Event::Browser(BrowserEvent::BrowserFindBar)),
             )
             .padding(theme::sp(1)),
-        1,
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
         || {
-            kit::column(Modifier::new().width(field), 0, || {
-                Input::new(
-                    &search.query,
-                    Target::Browser(BrowserEvent::BrowserFindField),
-                )
-                .modifier(Modifier::new().fill_max_width())
-                .size(Size::Sm)
-                .placeholder("Find in page")
-                .invalid(!search.query.text().is_empty() && search.counted && search.total == 0)
-                .build();
-            });
-            kit::column(
+            rustle::column_arranged(
+                Modifier::new().width(field),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    Input::new(
+                        &search.query,
+                        Target::Browser(BrowserEvent::BrowserFindField),
+                    )
+                    .modifier(Modifier::new().fill_max_width())
+                    .size(Size::Sm)
+                    .placeholder("Find in page")
+                    .invalid(!search.query.text().is_empty() && search.counted && search.total == 0)
+                    .build();
+                },
+            );
+            rustle::column_arranged(
                 Modifier::new()
                     .width(COUNT_WIDTH)
                     .padding_xy(theme::sp(1), 0.0),
-                0,
+                Arrangement::Start,
+                Alignment::Start,
                 || {
                     line(said, 11, 1.4, tone);
                 },

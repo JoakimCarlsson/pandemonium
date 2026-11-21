@@ -1,10 +1,11 @@
 //! The changed files in groups: staged, tracked and untracked, each file with how it changed, a way to open it and a box that stages it.
 
 use crate::areas::{DiffEvent, GitEvent};
-use crate::kit;
+use crate::icons;
 use crate::target::Target;
 use crate::theme;
 use rustle::Modifier;
+use rustle::TextOverflow;
 use rustle::phosphor;
 use rustle::{Alignment, Arrangement, Color, row_arranged};
 
@@ -110,10 +111,11 @@ fn heading(changes: &[Change], group: Group, repository: Option<&str>) {
         Arrangement::SpaceBetween,
         Alignment::Center,
         || {
-            kit::text(
+            rustle::basic_text(
                 Modifier::new(),
                 format!("{} ({})", group.label(), files.len()),
                 theme::text_style(11, 1.4).color(theme::color(Role::Subtle)),
+                TextOverflow::Ellipsis,
             );
             if let Some(id) = group.id() {
                 Checkbox::new(staged == files.len(), id)
@@ -296,7 +298,7 @@ fn file_row(state: &WorkspaceState, change: &Change, index: usize, name: &str, d
         .on_pick(crate::events::picking(id, move |state, how| {
             state.change_picked(index, how)
         }))
-        .on_context(move || operations.open_change_menu(index))
+        .on_context(move |at| operations.open_change_menu(index, at))
         .selected(state.git.marked.contains(&index))
         .modifier(Modifier::new().clip())
         .build_with(|| {
@@ -304,18 +306,25 @@ fn file_row(state: &WorkspaceState, change: &Change, index: usize, name: &str, d
                 Some(_) => glyph(phosphor::GIT_BRANCH, 3.5, Role::Muted),
                 None => file_icon(name, 3.5),
             }
-            kit::text(Modifier::new().weight(1.0), name, kit::line(13, Role::Text));
+            rustle::basic_text(
+                Modifier::new().weight(1.0),
+                name,
+                theme::line(13, Role::Text),
+                TextOverflow::Ellipsis,
+            );
             if let Some(moved) = change.moved.as_ref() {
-                kit::text(
+                rustle::basic_text(
                     Modifier::new(),
                     commit_count(moved),
-                    kit::line(11, Role::Subtle),
+                    theme::line(11, Role::Subtle),
+                    TextOverflow::Ellipsis,
                 );
             }
-            kit::text(
+            rustle::basic_text(
                 Modifier::new(),
                 letter,
                 theme::mono_style(11, 1.4).color(theme::color(tone)),
+                TextOverflow::Ellipsis,
             );
             if change.moved.is_none() {
                 Button::icon(
@@ -370,9 +379,9 @@ fn folder_row(
         Target::Diff(DiffEvent::ChangeFolder(position)),
         3.0 + depth as f32 * INDENT,
     )
-    .on_context(move || operations.open_folder_change_menu(position))
+    .on_context(move |at| operations.open_folder_change_menu(position, at))
     .build_with(|| {
-        glyph(kit::chevron(open), 3.5, Role::Muted);
+        glyph(icons::chevron(open), 3.5, Role::Muted);
         Checkbox::new(
             !inside.is_empty() && staged == inside.len(),
             Target::Diff(DiffEvent::ChangeFolderStage(position)),
@@ -382,19 +391,21 @@ fn folder_row(
         if stops(changes, None).contains(&folder.path.as_str()) {
             glyph(phosphor::GIT_BRANCH, 3.5, Role::Muted);
         }
-        kit::text(
+        rustle::basic_text(
             Modifier::new().weight(1.0),
             &folder.name,
-            kit::line(13, Role::Text),
+            theme::line(13, Role::Text),
+            TextOverflow::Ellipsis,
         );
         if let Some(standing) = standings
             .iter()
             .find(|standing| standing.path == folder.path)
         {
-            kit::text(
+            rustle::basic_text(
                 Modifier::new(),
                 standing_label(standing),
-                kit::code(11, Role::Subtle),
+                theme::code(11, Role::Subtle),
+                TextOverflow::Ellipsis,
             );
         }
         Tally::new(added, removed).size(11).build();

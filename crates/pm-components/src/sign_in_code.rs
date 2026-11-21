@@ -1,11 +1,12 @@
 //! The code a sign-in waits for the reader to enter on a web page: the dialog that shows it while the sign-in runs, and what its buttons do.
 
 use crate::areas::DialogEvent;
-use crate::kit;
+use crate::button;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Role;
 use rustle::Modifier;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
 use crate::Modal;
 use crate::button::Variant;
@@ -87,32 +88,43 @@ pub fn code_dialog(state: &WorkspaceState) {
     )
     .width(WIDTH)
     .build_with(move || {
-        kit::column(Modifier::new().padding(theme::sp(5)), 2, || {
-            kit::text(Modifier::new(), title, kit::strong(15, Role::Text));
-            for words in wrap(&words, 13, WIDTH - 40.0) {
-                line(words, 13, 1.5, Role::Muted);
-            }
-            crate::parts::title(code, 24, 1.6);
-        });
-        kit::row(
+        rustle::column_arranged(
+            Modifier::new().padding(theme::sp(5)),
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Start,
+            || {
+                rustle::basic_text(
+                    Modifier::new(),
+                    title,
+                    theme::strong(15, Role::Text),
+                    TextOverflow::Ellipsis,
+                );
+                for words in wrap(&words, 13, WIDTH - 40.0) {
+                    line(words, 13, 1.5, Role::Muted);
+                }
+                crate::parts::title(code, 24, 1.6);
+            },
+        );
+        rustle::row_arranged(
             Modifier::new().fill_max_width().padding_each(
                 theme::sp(5),
                 0.0,
                 theme::sp(5),
                 theme::sp(5),
             ),
-            2,
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Center,
             || {
-                kit::action(
+                button::action(
                     "Hide",
                     Target::Dialog(DialogEvent::SignInCodeHide),
                     Variant::Ghost,
                 );
                 spacer();
                 let copy = Target::Dialog(DialogEvent::SignInCodeCopy);
-                kit::action("Copy code", copy, Variant::Ghost);
+                button::action("Copy code", copy, Variant::Ghost);
                 let open = Target::Dialog(DialogEvent::SignInCodeOpen);
-                kit::action("Open page", open, Variant::Default);
+                button::action("Open page", open, Variant::Default);
             },
         );
     });

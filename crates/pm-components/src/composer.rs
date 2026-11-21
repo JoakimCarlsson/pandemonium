@@ -2,9 +2,12 @@
 
 use crate::areas::ChatEvent;
 use crate::areas::ComposerEvent;
-use crate::kit::{self, Frame};
-use crate::theme::Indicated;
+use crate::events;
+use crate::parts;
+use crate::theme::Frame;
 use crate::theme::ShadowLayers;
+use crate::theme::{FocusOutline, Indicated};
+use rustle::TextOverflow;
 
 use crate::events::{Event, send};
 use crate::target::Target;
@@ -81,12 +84,21 @@ fn list_height(settings: &[Setting], above: f32, rows: u32) -> f32 {
     shown * ROW_HEIGHT
 }
 
-/// The modifier of a section of a menu set off from what is above it by a rule: `border_t()` with `mt(1)`.
-pub(crate) fn ruled() -> Modifier {
-    Modifier::new()
-        .fill_max_width()
-        .padding_each(0.0, theme::sp(1), 0.0, 0.0)
-        .ruled(theme::Side::Top)
+/// Emits `content` in a section of a menu across its parent, set off from
+/// what is above it by a rule: `border_t()` with `mt(1)`.
+#[track_caller]
+pub(crate) fn ruled(content: impl FnOnce()) {
+    rustle::column_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .padding_each(0.0, theme::sp(1), 0.0, 0.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            rustle::horizontal_divider(Modifier::new(), 1.0, theme::color(Role::Border));
+            content();
+        },
+    );
 }
 
 /// The modifier of the body of a menu over the prompt box: a press inside it keeps it open.
@@ -120,14 +132,15 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) {
         .modifier(menu_body())
         .build_with(|| {
             if filters {
-                kit::column(
+                rustle::column_arranged(
                     Modifier::new().fill_max_width().padding_each(
                         theme::sp(1),
                         0.0,
                         theme::sp(1),
                         theme::sp(1),
                     ),
-                    0,
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
                         Input::search(
                             &state.menu_filter,
@@ -144,22 +157,31 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) {
                 );
             }
             let height = sp(list_height(settings, above, rows) / 4.0);
-            kit::scrolled(&state.menu_scroll, height, 0, || {
-                for position in &shown {
-                    let Some(pick) = setting.picks.get(*position) else {
-                        continue;
-                    };
-                    crate::popover::row(
-                        &pick.name,
-                        &pick.description,
-                        pick.value == setting.current,
-                        Target::Composer(ComposerEvent::MenuPick(*position)),
-                    );
-                }
-                if shown.is_empty() {
-                    kit::note(2, 2, "Nothing matches", 13, Role::Muted);
-                }
-            });
+            rustle::column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .height_in(0.0, height)
+                    .vertical_scroll(&state.menu_scroll)
+                    .fill_max_width(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    for position in &shown {
+                        let Some(pick) = setting.picks.get(*position) else {
+                            continue;
+                        };
+                        crate::popover::row(
+                            &pick.name,
+                            &pick.description,
+                            pick.value == setting.current,
+                            Target::Composer(ComposerEvent::MenuPick(*position)),
+                        );
+                    }
+                    if shown.is_empty() {
+                        parts::note(2, 2, "Nothing matches", 13, Role::Muted);
+                    }
+                },
+            );
             if setting.category == "model"
                 && let Some(effort) = settings
                     .iter()
@@ -188,7 +210,7 @@ fn setting_menu(state: &WorkspaceState, index: usize, rows: u32, above: f32) {
 /// Emits a row of a menu set off from what is above it by a rule: `name` over `said`, ticked while `on`, answering to `id`.
 #[track_caller]
 fn ruled_row(name: &str, said: &str, on: bool, id: Target) {
-    kit::column(ruled(), 0, || crate::popover::row(name, said, on, id));
+    ruled(|| crate::popover::row(name, said, on, id));
 }
 
 /// Emits the menu of where new work is done, and the branch a worktree is made from.
@@ -220,7 +242,7 @@ fn location_menu(state: &WorkspaceState) {
             );
         }
         if worktree {
-            kit::column(ruled(), 0, || heading("Branch from", None));
+            ruled(|| heading("Branch from", None));
             branch_rows(&state.branches, state.base.as_ref());
         }
     });
@@ -370,20 +392,34 @@ fn agent_row(agent: &Setting) {
 /// Emits a line of a menu's footer: `name` with how it is set, `value`, in brackets, then what `control` emits to set it, under a rule when `rule`.
 #[track_caller]
 fn labelled(name: &str, value: &str, control: impl FnOnce(), rule: bool) {
-    let mut own = Modifier::new().fill_max_width().height(theme::sp(9));
-    if rule {
-        own = own.ruled(theme::Side::Top);
-    }
-    row_arranged(
-        own.padding_xy(theme::sp(2.5), 0.0),
-        Arrangement::SpaceBetween,
-        Alignment::Center,
+    rustle::column_arranged(
+        Modifier::new().fill_max_width().height(theme::sp(9)),
+        Arrangement::Start,
+        Alignment::Start,
         || {
-            kit::row(Modifier::new(), 1, || {
-                line(name, 13, 1.4, Role::Text);
-                line(format!("({value})"), 13, 1.4, Role::Subtle);
-            });
-            control();
+            if rule {
+                rustle::horizontal_divider(Modifier::new(), 1.0, theme::color(Role::Border));
+            }
+            row_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .weight(1.0)
+                    .padding_xy(theme::sp(2.5), 0.0),
+                Arrangement::SpaceBetween,
+                Alignment::Center,
+                || {
+                    rustle::row_arranged(
+                        Modifier::new(),
+                        Arrangement::SpacedBy(theme::sp(1)),
+                        Alignment::Center,
+                        || {
+                            line(name, 13, 1.4, Role::Text);
+                            line(format!("({value})"), 13, 1.4, Role::Subtle);
+                        },
+                    );
+                    control();
+                },
+            );
         },
     );
 }
@@ -432,7 +468,16 @@ fn above_list(title: &str, content: impl FnOnce()) {
 #[track_caller]
 fn scrolled_rows(state: &WorkspaceState, content: impl FnOnce()) {
     let height = sp(LIST_ROW_HEIGHT * LIST_ROWS as f32 / 4.0);
-    kit::scrolled(&state.menu_scroll, height, 0, content);
+    rustle::column_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .height_in(0.0, height)
+            .vertical_scroll(&state.menu_scroll)
+            .fill_max_width(),
+        Arrangement::Start,
+        Alignment::Start,
+        content,
+    );
 }
 
 /// The modifier of the row at `position` of a list above the prompt box, filled while it is
@@ -441,8 +486,8 @@ fn list_row(position: usize, chosen: bool, pressable: bool) -> Modifier {
     let looks = list_row_looks(chosen);
     let own = if pressable {
         let id = Target::Composer(ComposerEvent::Slash(position));
-        kit::pressed(
-            Modifier::new().indicated(looks, theme::Focused::Held(crate::focus::is_held(id))),
+        events::pressed(
+            Modifier::new().indicated(looks, theme::Focused::Control(crate::focus::is_focused(id))),
             id,
         )
     } else {
@@ -462,7 +507,7 @@ fn mention_list(state: &WorkspaceState) {
     if matches.is_empty() {
         if state.mention_query().is_some() {
             above_list("Files", || {
-                kit::note(2.5, 2, "No files found", 13, Role::Subtle)
+                parts::note(2.5, 2, "No files found", 13, Role::Subtle)
             });
         }
         return;
@@ -471,13 +516,19 @@ fn mention_list(state: &WorkspaceState) {
     above_list("Files", || {
         scrolled_rows(state, || {
             for (position, path) in matches.iter().enumerate() {
-                kit::row(list_row(position, position == chosen, true), 0, || {
-                    kit::text(
-                        Modifier::new().weight(1.0),
-                        path.as_str(),
-                        kit::code(13, Role::Text),
-                    );
-                });
+                rustle::row_arranged(
+                    list_row(position, position == chosen, true),
+                    Arrangement::Start,
+                    Alignment::Center,
+                    || {
+                        rustle::basic_text(
+                            Modifier::new().weight(1.0),
+                            path.as_str(),
+                            theme::code(13, Role::Text),
+                            TextOverflow::Ellipsis,
+                        );
+                    },
+                );
             }
         });
     });
@@ -495,18 +546,25 @@ fn slash_list(state: &WorkspaceState) {
         scrolled_rows(state, || {
             for (position, command) in matches.iter().enumerate() {
                 let own = list_row(position, position == chosen, position < PRESSABLE_LIST_ROWS);
-                kit::row(own, 3, || {
-                    kit::text(
-                        Modifier::new(),
-                        format!("/{}", command.name),
-                        theme::mono_style(13, 1.4).color(theme::color(Role::Text)),
-                    );
-                    kit::text(
-                        Modifier::new().weight(1.0),
-                        &command.description,
-                        kit::line(12, Role::Subtle),
-                    );
-                });
+                rustle::row_arranged(
+                    own,
+                    Arrangement::SpacedBy(theme::sp(3)),
+                    Alignment::Center,
+                    || {
+                        rustle::basic_text(
+                            Modifier::new(),
+                            format!("/{}", command.name),
+                            theme::mono_style(13, 1.4).color(theme::color(Role::Text)),
+                            TextOverflow::Ellipsis,
+                        );
+                        rustle::basic_text(
+                            Modifier::new().weight(1.0),
+                            &command.description,
+                            theme::line(12, Role::Subtle),
+                            TextOverflow::Ellipsis,
+                        );
+                    },
+                );
             }
         });
     });
@@ -523,16 +581,21 @@ const SENT_PICTURE: f32 = 160.0;
 pub fn attached_file(state: &WorkspaceState, path: &str, side: f32) {
     let name = path.rsplit('/').next().unwrap_or(path);
     let shown = state.previews.get(path).cloned();
-    kit::row(Modifier::new(), 2, || {
-        if let Some(shown) = shown {
-            rustle::image(
-                Modifier::new().width(side).height(side).clip(),
-                &shown,
-                rustle::ContentScale::Crop,
-            );
-        }
-        line(name, 12, 1.4, Role::Muted);
-    });
+    rustle::row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            if let Some(shown) = shown {
+                rustle::image(
+                    Modifier::new().width(side).height(side).clip(),
+                    &shown,
+                    rustle::ContentScale::Crop,
+                );
+            }
+            line(name, 12, 1.4, Role::Muted);
+        },
+    );
 }
 
 /// Emits the files attached to the prompt, each with a button that takes it off again; nothing when none is attached.
@@ -551,11 +614,12 @@ fn attachment_row(state: &WorkspaceState) {
         || {
             for (index, path) in state.attachments.iter().enumerate() {
                 rustle::key(index, || {
-                    kit::row(
+                    rustle::row_arranged(
                         Modifier::new()
                             .background_rounded(theme::color(Role::SurfaceHover), Radius::Lg.px())
                             .padding(theme::sp(1)),
-                        1.5,
+                        Arrangement::SpacedBy(theme::sp(1.5)),
+                        Alignment::Center,
                         || {
                             attached_file(state, path, THUMBNAIL);
                             Button::icon(
@@ -574,21 +638,26 @@ fn attachment_row(state: &WorkspaceState) {
 /// Emits the files sent with a message, each as large as the room beside the words allows.
 #[track_caller]
 pub fn sent_files(state: &WorkspaceState, files: &[String]) {
-    kit::column(Modifier::new(), 2, || {
-        for path in files {
-            match state.previews.get(path) {
-                Some(shown) => rustle::image(
-                    Modifier::new()
-                        .width(SENT_PICTURE)
-                        .height(SENT_PICTURE)
-                        .clip(),
-                    shown,
-                    rustle::ContentScale::Crop,
-                ),
-                None => attached_file(state, path, THUMBNAIL),
+    rustle::column_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
+        || {
+            for path in files {
+                match state.previews.get(path) {
+                    Some(shown) => rustle::image(
+                        Modifier::new()
+                            .width(SENT_PICTURE)
+                            .height(SENT_PICTURE)
+                            .clip(),
+                        shown,
+                        rustle::ContentScale::Crop,
+                    ),
+                    None => attached_file(state, path, THUMBNAIL),
+                }
             }
-        }
-    });
+        },
+    );
 }
 
 /// Emits the round button at the end of the strip, answering to `id` with `icon`, switched off while `disabled`.
@@ -612,7 +681,7 @@ fn send_buttons(working: bool, empty: bool) {
         return;
     }
     if working {
-        kit::small_button(
+        button::small_button(
             "Send now",
             Target::Composer(ComposerEvent::SendNow),
             button::Variant::Ghost,
@@ -665,22 +734,25 @@ fn sign_in_again(state: &WorkspaceState, session: &Session, reason: &str, accoun
         Some(account) => format!("Sign in to {agent} again ({account})"),
         None => format!("Sign in to {agent} again"),
     };
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .panel(Radius::Xl)
             .padding(theme::sp(4)),
-        3,
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Start,
         || {
-            kit::text(
+            rustle::basic_text(
                 Modifier::new(),
                 words,
                 theme::text_style(14.0, 1.5).color(theme::color(Role::Text)),
+                TextOverflow::Ellipsis,
             );
-            kit::text(
+            rustle::basic_text(
                 Modifier::new(),
                 reason,
                 theme::text_style(12.0, 1.5).color(theme::color(Role::Muted)),
+                TextOverflow::Ellipsis,
             );
             Button::new("Sign in", Target::Chat(ChatEvent::SessionSignIn))
                 .modifier(Modifier::new().fill_max_width())
@@ -698,21 +770,22 @@ fn strip(state: &WorkspaceState, session: Option<&Session>, rows: u32, above: f3
         && state.elements.is_empty()
         && state.captures.is_empty();
     let settings = state.settings_now();
-    kit::row(
+    rustle::row_arranged(
         Modifier::new().fill_max_width().padding_each(
             theme::sp(2.5),
             theme::sp(1),
             theme::sp(2.5),
             theme::sp(2.5),
         ),
-        1,
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
         || {
             let operations = crate::events::operations();
             Button::icon(phosphor::PLUS, Target::Composer(ComposerEvent::Attach))
                 .on_click(move || operations.attach())
                 .build();
             Button::icon(phosphor::AT, Target::Composer(ComposerEvent::Mention)).build();
-            kit::small_button(
+            button::small_button(
                 "/",
                 Target::Composer(ComposerEvent::SlashButton),
                 button::Variant::Ghost,
@@ -785,33 +858,38 @@ fn place(state: &WorkspaceState, session: Option<&Session>) {
     if chat.is_none() && !location {
         return;
     }
-    kit::row(Modifier::new().padding_xy(theme::sp(2.5), 0.0), 1, || {
-        if let Some(chat) = chat {
-            crate::continue_chat::chip(state, chat);
-            return;
-        }
-        let base = state
-            .base
-            .as_ref()
-            .filter(|base| state.branches.first() != Some(base));
-        let mut words = match (state.location, base) {
-            (Location::Worktree, Some(base)) => format!("Worktree from {base}"),
-            (Location::Worktree, None) => "Worktree".to_owned(),
-            (Location::Local, _) => "Local".to_owned(),
-        };
-        if state.container_for_new_work() {
-            words.push_str(" in a dev container");
-        }
-        let open = state.picker == Some(Picker::Location);
-        chip_menu(
-            &words,
-            phosphor::GIT_FORK,
-            Target::Composer(ComposerEvent::Location),
-            open,
-            false,
-            || location_menu(state),
-        );
-    });
+    rustle::row_arranged(
+        Modifier::new().padding_xy(theme::sp(2.5), 0.0),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
+        || {
+            if let Some(chat) = chat {
+                crate::continue_chat::chip(state, chat);
+                return;
+            }
+            let base = state
+                .base
+                .as_ref()
+                .filter(|base| state.branches.first() != Some(base));
+            let mut words = match (state.location, base) {
+                (Location::Worktree, Some(base)) => format!("Worktree from {base}"),
+                (Location::Worktree, None) => "Worktree".to_owned(),
+                (Location::Local, _) => "Local".to_owned(),
+            };
+            if state.container_for_new_work() {
+                words.push_str(" in a dev container");
+            }
+            let open = state.picker == Some(Picker::Location);
+            chip_menu(
+                &words,
+                phosphor::GIT_FORK,
+                Target::Composer(ComposerEvent::Location),
+                open,
+                false,
+                || location_menu(state),
+            );
+        },
+    );
 }
 
 /// Emits the prompt box for `state`: a few lines to write in, `placeholder`
@@ -843,56 +921,58 @@ pub fn composer(
         proposal(ask);
         return;
     }
-    kit::column(Modifier::new().fill_max_width(), 1.5, || {
-        if let Some(session) = session {
-            crate::shared_checkout::notice(state, session);
-        }
-        place(state, session);
-        crate::popups::anchored(
-            Modifier::new().fill_max_width(),
-            Placement::Above,
-            2.0,
-            false,
-            || {
-                kit::column(
-                    Modifier::new()
-                        .fill_max_width()
-                        .on_size_changed(|size| {
-                            PROMPT_BOX_WIDTH.with(|width| width.set(size.width))
-                        })
-                        .shadow_layers(&COMPOSER_SHADOW, Radius::Xl.px())
-                        .background_rounded(theme::color(Role::Surface), Radius::Xl.px())
-                        .indicated(
-                            theme::FocusOutline {
-                                idle: theme::color(Role::Border),
-                                focused: theme::color(Role::Accent),
-                                radius: Radius::Xl,
-                            },
-                            theme::Focused::Held(crate::focus::is_held(Target::Composer(
-                                ComposerEvent::Prompt,
-                            ))),
-                        )
-                        .padding(1.0),
-                    0,
-                    || {
-                        if let Some(ask) = ask {
-                            proposal(ask);
-                        }
-                        attachment_row(state);
-                        crate::elements::chips(state);
-                        crate::captures::chips(state);
-                        Input::new(&state.prompt, Target::Composer(ComposerEvent::Prompt))
-                            .scroll(&state.prompt_scroll)
-                            .modifier(Modifier::new().fill_max_width())
-                            .variant(input::Variant::Multiline)
-                            .placeholder(placeholder)
-                            .rows(rows)
-                            .build();
-                        strip(state, session, rows, above);
-                    },
-                );
-            },
-            lists_shown(state).then_some(|| slash_list(state)),
-        );
-    });
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(1.5)),
+        Alignment::Start,
+        || {
+            if let Some(session) = session {
+                crate::shared_checkout::notice(state, session);
+            }
+            place(state, session);
+            crate::popups::anchored(
+                Modifier::new().fill_max_width(),
+                Placement::Above,
+                2.0,
+                false,
+                || {
+                    rustle::column_arranged(
+                        Modifier::new()
+                            .fill_max_width()
+                            .on_size_changed(|size| {
+                                PROMPT_BOX_WIDTH.with(|width| width.set(size.width))
+                            })
+                            .shadow_layers(&COMPOSER_SHADOW, Radius::Xl.px())
+                            .background_rounded(theme::color(Role::Surface), Radius::Xl.px())
+                            .focus_outline(
+                                crate::focus::is_focused(Target::Composer(ComposerEvent::Prompt)),
+                                theme::color(Role::Border),
+                                theme::color(Role::Accent),
+                                Radius::Xl,
+                            )
+                            .padding(1.0),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            if let Some(ask) = ask {
+                                proposal(ask);
+                            }
+                            attachment_row(state);
+                            crate::elements::chips(state);
+                            crate::captures::chips(state);
+                            Input::new(&state.prompt, Target::Composer(ComposerEvent::Prompt))
+                                .scroll(&state.prompt_scroll)
+                                .modifier(Modifier::new().fill_max_width())
+                                .variant(input::Variant::Multiline)
+                                .placeholder(placeholder)
+                                .rows(rows)
+                                .build();
+                            strip(state, session, rows, above);
+                        },
+                    );
+                },
+                lists_shown(state).then_some(|| slash_list(state)),
+            );
+        },
+    );
 }

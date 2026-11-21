@@ -1,11 +1,15 @@
 //! A row of the settings window: what a setting is called and does beside, or above, its one control, and the button that puts it back as it comes once it was changed; with the controls a row is made of.
 
-use crate::kit::{self, Frame};
+use crate::button;
+use crate::events;
+use crate::icons;
 use crate::target::Target;
 use crate::theme;
+use crate::theme::Frame;
 use crate::theme::Indicated;
 use rustle::Modifier;
 use rustle::TextFieldState;
+use rustle::TextOverflow;
 use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{Icon, phosphor};
 
@@ -55,7 +59,7 @@ const FILTERED_FROM: usize = 10;
 /// colour while on and on the border colour while off.
 #[track_caller]
 pub fn switch(on: bool, id: Option<Target>) {
-    let modifier = kit::pressable(Modifier::new().size(SWITCH_WIDTH, theme::sp(5)), id);
+    let modifier = events::pressable(Modifier::new().size(SWITCH_WIDTH, theme::sp(5)), id);
     let colors = rustle::SwitchColors {
         checked_thumb_color: theme::color(Role::Text),
         checked_track_color: theme::color(Role::Success),
@@ -97,7 +101,7 @@ pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> Option<Ta
                         on,
                         || {},
                         rustle::SegmentedButtonDefaults::item_shape(index, count, base),
-                        kit::pressed(Modifier::new(), id),
+                        events::pressed(Modifier::new(), id),
                         true,
                         colors,
                         rustle::SegmentedButtonDefaults::border_stroke(
@@ -139,12 +143,13 @@ pub fn number(shown: String, smaller: Target, bigger: Target) {
     let button = |icon: Icon, id: Target| {
         Button::icon(icon, id).tone(Role::Text).build();
     };
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .height(theme::sp(8))
             .outlined(Radius::Md)
             .padding_xy(theme::sp(0.5), 0.0),
-        1,
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
         || {
             button(phosphor::MINUS, smaller);
             row_arranged(
@@ -152,7 +157,12 @@ pub fn number(shown: String, smaller: Target, bigger: Target) {
                 Arrangement::Center,
                 Alignment::Start,
                 || {
-                    kit::text(Modifier::new(), shown, kit::code(12, Role::Text));
+                    rustle::basic_text(
+                        Modifier::new(),
+                        shown,
+                        theme::code(12, Role::Text),
+                        TextOverflow::Ellipsis,
+                    );
                 },
             );
             button(phosphor::PLUS, bigger);
@@ -163,10 +173,10 @@ pub fn number(shown: String, smaller: Target, bigger: Target) {
 /// Emits the button saying `shown`, the choice picked, `width` logical pixels wide, that opens the list of choices, answering to `id`; its chevron points down while the list is `open`.
 #[track_caller]
 pub fn picker(shown: &str, width: f32, id: Target, open: bool) {
-    kit::small_button(shown, id, Variant::Field)
+    button::small_button(shown, id, Variant::Field)
         .width(width)
         .selected(open)
-        .trailing_icon(kit::chevron(open))
+        .trailing_icon(icons::chevron(open))
         .build();
 }
 
@@ -186,17 +196,19 @@ pub fn picker_shown(options: &[String], filter: &TextFieldState) -> Vec<usize> {
 pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&TextFieldState, Target)) {
     let shown = picker_shown(options, filter.0);
     let more = shown.len().saturating_sub(MOST_LISTED);
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
             .panel(Radius::Md)
             .padding(theme::sp(1)),
-        0.5,
+        Arrangement::SpacedBy(theme::sp(0.5)),
+        Alignment::Start,
         || {
             if options.len() >= FILTERED_FROM {
-                kit::column(
+                rustle::column_arranged(
                     Modifier::new().fill_max_width().padding(theme::sp(1)),
-                    0,
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
                         Input::search(filter.0, filter.1)
                             .size(Size::Sm)
@@ -226,11 +238,12 @@ pub fn picker_list(options: &[String], picked: Option<usize>, filter: (&TextFiel
                     });
             }
             if more > 0 {
-                kit::row(
+                rustle::row_arranged(
                     Modifier::new()
                         .height(theme::sp(6))
                         .padding_xy(theme::sp(2), 0.0),
-                    0,
+                    Arrangement::Start,
+                    Alignment::Center,
                     || {
                         line(
                             format!("{more} more; type to narrow"),
@@ -263,41 +276,63 @@ pub fn list(
     add: (Target, &str),
     placeholder: &str,
 ) {
-    kit::column(Modifier::new().fill_max_width(), 1, || {
-        for (place, text) in lines.iter().enumerate() {
-            kit::row(
-                Modifier::new()
-                    .fill_max_width()
-                    .height(theme::sp(6))
-                    .indicated(
-                        theme::InteractionTones::new()
-                            .hover(Role::SurfaceHover)
-                            .radius(Radius::Sm),
-                        theme::Focused::Rustle,
-                    )
-                    .padding_xy(theme::sp(2), 0.0),
-                2,
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Start,
+        || {
+            for (place, text) in lines.iter().enumerate() {
+                rustle::row_arranged(
+                    Modifier::new()
+                        .fill_max_width()
+                        .height(theme::sp(6))
+                        .indicated(
+                            theme::InteractionTones::new()
+                                .hover(Role::SurfaceHover)
+                                .radius(Radius::Sm),
+                            theme::Focused::Rustle,
+                        )
+                        .padding_xy(theme::sp(2), 0.0),
+                    Arrangement::SpacedBy(theme::sp(2)),
+                    Alignment::Center,
+                    || {
+                        rustle::row_arranged(
+                            Modifier::new().weight(1.0),
+                            Arrangement::Start,
+                            Alignment::Center,
+                            || {
+                                rustle::basic_text(
+                                    Modifier::new(),
+                                    text.as_str(),
+                                    theme::code(12, Role::Text),
+                                    TextOverflow::Ellipsis,
+                                );
+                            },
+                        );
+                        if let Some(remove) = remove_of(place) {
+                            Button::icon(phosphor::X, remove).size(Size::Xs).build();
+                        }
+                    },
+                );
+            }
+            rustle::row_arranged(
+                Modifier::new().padding_each(0.0, theme::sp(1), 0.0, 0.0),
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Center,
                 || {
-                    kit::row(Modifier::new().weight(1.0), 0, || {
-                        kit::text(Modifier::new(), text.as_str(), kit::code(12, Role::Text));
-                    });
-                    if let Some(remove) = remove_of(place) {
-                        Button::icon(phosphor::X, remove).size(Size::Xs).build();
-                    }
+                    rustle::column_arranged(
+                        Modifier::new().width(TEXT_WIDTH),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            text_box(field.0, field.1, placeholder);
+                        },
+                    );
+                    button::action(add.1, add.0, Variant::Default);
                 },
             );
-        }
-        kit::row(
-            Modifier::new().padding_each(0.0, theme::sp(1), 0.0, 0.0),
-            2,
-            || {
-                kit::column(Modifier::new().width(TEXT_WIDTH), 0, || {
-                    text_box(field.0, field.1, placeholder);
-                });
-                kit::action(add.1, add.0, Variant::Default);
-            },
-        );
-    });
+        },
+    );
 }
 
 /// Emits the button that puts a setting back as it comes, answering to `id`, when there is one.
@@ -382,54 +417,99 @@ impl<'a> SettingRow<'a> {
         let modifier = Modifier::new()
             .fill_max_width()
             .padding_xy(0.0, theme::sp(3));
-        kit::column(modifier, 2, move || {
-            if stacked {
-                kit::column(Modifier::new().fill_max_width(), 2, || {
-                    kit::row_top(Modifier::new().fill_max_width(), 2, || {
-                        about_words(&title, &about, words);
-                        reset_button(reset);
-                    });
-                    match control {
-                        Some((control, Some(_))) => {
-                            kit::row_top(Modifier::new().fill_max_width(), 0, control);
-                        }
-                        Some((control, None)) => {
-                            kit::column(Modifier::new().fill_max_width(), 0, control);
-                        }
-                        None => {}
-                    }
-                });
-            } else {
-                kit::row(Modifier::new().fill_max_width(), 6, || {
-                    about_words(&title, &about, words);
-                    kit::row(Modifier::new(), 2, || {
-                        reset_button(reset);
-                        match control {
-                            Some((control, Some(_))) => control(),
-                            Some((control, None)) => {
-                                kit::column(Modifier::new().width(TEXT_WIDTH), 0, control);
+        rustle::column_arranged(
+            modifier,
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Start,
+            move || {
+                if stacked {
+                    rustle::column_arranged(
+                        Modifier::new().fill_max_width(),
+                        Arrangement::SpacedBy(theme::sp(2)),
+                        Alignment::Start,
+                        || {
+                            rustle::row_arranged(
+                                Modifier::new().fill_max_width(),
+                                Arrangement::SpacedBy(theme::sp(2)),
+                                Alignment::Start,
+                                || {
+                                    about_words(&title, &about, words);
+                                    reset_button(reset);
+                                },
+                            );
+                            match control {
+                                Some((control, Some(_))) => {
+                                    rustle::row_arranged(
+                                        Modifier::new().fill_max_width(),
+                                        Arrangement::Start,
+                                        Alignment::Start,
+                                        control,
+                                    );
+                                }
+                                Some((control, None)) => {
+                                    rustle::column_arranged(
+                                        Modifier::new().fill_max_width(),
+                                        Arrangement::Start,
+                                        Alignment::Start,
+                                        control,
+                                    );
+                                }
+                                None => {}
                             }
-                            None => {}
-                        }
-                    });
-                });
-            }
-            if let Some(below) = below {
-                below();
-            }
-        });
+                        },
+                    );
+                } else {
+                    rustle::row_arranged(
+                        Modifier::new().fill_max_width(),
+                        Arrangement::SpacedBy(theme::sp(6)),
+                        Alignment::Center,
+                        || {
+                            about_words(&title, &about, words);
+                            rustle::row_arranged(
+                                Modifier::new(),
+                                Arrangement::SpacedBy(theme::sp(2)),
+                                Alignment::Center,
+                                || {
+                                    reset_button(reset);
+                                    match control {
+                                        Some((control, Some(_))) => control(),
+                                        Some((control, None)) => {
+                                            rustle::column_arranged(
+                                                Modifier::new().width(TEXT_WIDTH),
+                                                Arrangement::Start,
+                                                Alignment::Start,
+                                                control,
+                                            );
+                                        }
+                                        None => {}
+                                    }
+                                },
+                            );
+                        },
+                    );
+                }
+                if let Some(below) = below {
+                    below();
+                }
+            },
+        );
     }
 }
 
 /// Emits what a setting is called, `title`, over what it does, `about`, each wrapped to `words` logical pixels, in a column taking the room its row leaves.
 #[track_caller]
 fn about_words(title: &str, about: &str, words: f32) {
-    kit::column(Modifier::new().weight(1.0), 0.5, || {
-        for part in wrap(title, 13, words) {
-            line(part, 13, 1.4, Role::Text);
-        }
-        for part in wrap(about, 12, words) {
-            line(part, 12, 1.4, Role::Muted);
-        }
-    });
+    rustle::column_arranged(
+        Modifier::new().weight(1.0),
+        Arrangement::SpacedBy(theme::sp(0.5)),
+        Alignment::Start,
+        || {
+            for part in wrap(title, 13, words) {
+                line(part, 13, 1.4, Role::Text);
+            }
+            for part in wrap(about, 12, words) {
+                line(part, 12, 1.4, Role::Muted);
+            }
+        },
+    );
 }

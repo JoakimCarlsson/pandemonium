@@ -9,7 +9,7 @@
 use crate::target::Target;
 use rustle::{Embedded, Offset, PixelRounding, Rect};
 
-use crate::focus::{self, FocusKeys};
+use crate::focus::{self, FocusRequesters};
 
 /// A control or area laid out, found by the tag its [`Target`] gave it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -109,18 +109,23 @@ impl Laid {
     }
 }
 
-/// An interface of `content` with no window, `width` by `height` logical pixels, with the
-/// app's focus kept on `focused`, laid out at whole pixels in the default theme.
+/// An interface of `content` with no window, `width` by `height` logical pixels, with
+/// rustle's focus given to `focused`, laid out at whole pixels in the default theme.
 pub fn interface(
     width: f32,
     height: f32,
     focused: Option<Target>,
     content: impl Fn() + 'static,
 ) -> Embedded {
-    rustle_wgpu::set_legible_text(false);
+    rustle::set_legible_text(false);
     let tokens = crate::theme::Tokens::default();
+    let requesters = FocusRequesters::new();
+    if let Some(id) = focused {
+        requesters.request_focus(id);
+    }
+    let provided = requesters.clone();
     let root = move || {
-        focus::provide(FocusKeys::resting(focused), || {
+        focus::provide(provided.clone(), || {
             crate::theme::provide(tokens.clone(), &content)
         })
     };
@@ -128,13 +133,19 @@ pub fn interface(
     ui.set_pixel_rounding(PixelRounding::Logical);
     ui.resize((width.round() as u32, height.round() as u32), 1.0);
     ui.update();
+    if let Some(id) = focused
+        && !requesters.is_focused(id)
+        && ui.request_focus_on_tag(&id.tag())
+    {
+        ui.update();
+    }
     ui.invalidate();
     ui.update();
     ui
 }
 
-/// Lays `content` out at `width` by `height` logical pixels without drawing it, with the
-/// app's focus kept on `focused`, and returns its controls by tag.
+/// Lays `content` out at `width` by `height` logical pixels without drawing it, with
+/// rustle's focus given to `focused`, and returns its controls by tag.
 ///
 /// For tests and snapshots that ask which controls were laid out and where: no GPU is
 /// needed, text is measured with the fonts of this thread.

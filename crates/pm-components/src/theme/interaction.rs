@@ -1,16 +1,17 @@
 //! The theme's indications: how an interactive area shows the pointer over it,
-//! a press and keyboard focus. [`InteractionTones`], [`FocusRing`] and
-//! [`FocusOutline`] are rustle [`IndicationNodeFactory`]s that read an area's
-//! [`InteractionSource`] while drawing, so moving the pointer repaints without
-//! composing, and [`Indicated`] gives an area its remembered
-//! [`MutableInteractionSource`], fed by hovers, primary presses and focus, and
-//! draws one of them for it.
+//! a press and keyboard focus. [`InteractionTones`] and [`FocusRing`] are rustle
+//! [`IndicationNodeFactory`]s resolved when the area is painted: the fills follow
+//! the pointer and focus with rustle's interaction background, and the ring is
+//! drawn outside the area's bounds while it holds focus, so neither composes nor
+//! lays out again when the state changes. [`FocusOutline`] is a plain modifier, a
+//! border whose colour the focus known in composition picks. [`Indicated`] gives
+//! an area its remembered [`MutableInteractionSource`], fed by its focus, and
+//! shows an indication for it.
 
 use rustle::interaction_source::Interaction;
 use rustle::{
-    Color, FocusInteraction, Indication, IndicationNodeFactory, InteractionId, InteractionSource,
-    Modifier, MutableInteractionSource, PointerButton, PointerEventPass, PointerEventType,
-    PressInteraction, remember_mutable_interaction_source,
+    Color, FocusInteraction, Indication, IndicationNodeFactory, InteractionColors, InteractionId,
+    InteractionSource, Modifier, MutableInteractionSource, remember_mutable_interaction_source,
 };
 
 use super::{Radius, Role, color};
@@ -96,26 +97,26 @@ impl InteractionTones {
 }
 
 impl IndicationNodeFactory for InteractionTones {
-    /// Fills the area behind its content with the colour [`InteractionTones::fill`]
-    /// gives for what `interaction_source` reports, read while drawing.
+    /// Fills the area behind its content with rustle's
+    /// [`Modifier::interaction_background`], in the colours [`InteractionTones::fill`]
+    /// gives for the pointer over it and its press, and for the focus
+    /// `interaction_source` reports.
     fn create(&self, interaction_source: &InteractionSource) -> Modifier {
-        let tones = *self;
-        let pressed = interaction_source.collect_is_pressed_as_state();
-        let hovered = interaction_source.collect_is_hovered_as_state();
         let focused = interaction_source.collect_is_focused_as_state();
-        Modifier::new().draw_behind(move |canvas| {
-            let fill = tones.fill(pressed.get(), hovered.get(), focused.get());
-            if fill.a == 0 {
-                return;
-            }
-            let (width, height) = (canvas.width(), canvas.height());
-            canvas.rounded_rect(0.0, 0.0, width, height, tones.corner(), fill);
-        })
+        Modifier::new()
+            .interaction_focused_with(move || focused.get())
+            .interaction_background(InteractionColors {
+                idle: self.fill(false, false, false),
+                hovered: self.fill(false, true, false),
+                pressed: self.fill(true, true, false),
+                focused: self.fill(false, false, true),
+                corner_radius: self.corner(),
+            })
     }
 }
 
-/// A ring `width` pixels wide in the focus role around an area while it holds
-/// focus, outside corners rounded by `radius`.
+/// A ring `width` pixels wide in the focus role drawn around the outside of an area
+/// while it holds focus, outside corners rounded by `radius`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FocusRing {
     /// How wide the ring is, in logical pixels.
@@ -125,59 +126,59 @@ pub struct FocusRing {
 }
 
 impl IndicationNodeFactory for FocusRing {
-    /// Draws the content, then the ring while `interaction_source` reports focus.
+    /// Draws the ring over the area, `width` pixels outside its bounds with corners
+    /// `radius + width`, while the focus `interaction_source` reports is held when the
+    /// area is painted, and nothing otherwise; the area's size and layout never change.
     fn create(&self, interaction_source: &InteractionSource) -> Modifier {
-        let (width, corner) = (self.width, self.radius.px());
-        let ring = color(Role::Focused);
         let focused = interaction_source.collect_is_focused_as_state();
-        Modifier::new().draw_with_content(move |canvas| {
-            canvas.draw_content();
-            if !focused.get() {
-                return;
-            }
-            let (across, down) = (canvas.width(), canvas.height());
-            let corner = corner.min(across.min(down) / 2.0);
-            canvas.stroke_rect(
-                -width,
-                -width,
-                across + 2.0 * width,
-                down + 2.0 * width,
-                corner + width,
-                width,
-                ring,
-            );
-        })
+        let width = self.width;
+        let radius = self.radius.px();
+        let ring = color(Role::Focused);
+        Modifier::new()
+            .interaction_focused_with(move || focused.get())
+            .draw_over_interactive(move |canvas, now| {
+                if now.focused {
+                    let (across, down) = (canvas.width(), canvas.height());
+                    let corner = radius.min(across.min(down) / 2.0);
+                    canvas.stroke_rect(
+                        -width,
+                        -width,
+                        across + 2.0 * width,
+                        down + 2.0 * width,
+                        corner + width,
+                        width,
+                        ring,
+                    );
+                }
+            })
     }
 }
 
-/// A one pixel outline inside an area, in `idle`, or in `focused` while it holds
-/// focus, inside corners rounded by `radius`; follow it with a pixel of padding.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct FocusOutline {
-    /// The outline at rest.
-    pub idle: Color,
-    /// The outline while focused.
-    pub focused: Color,
-    /// How round the corners of the area are.
-    pub radius: Radius,
+/// A one pixel outline inside an area chosen by whether it holds focus.
+pub trait FocusOutline: Sized {
+    /// This modifier bordered one pixel wide in `focused_colour` when `focused` and in
+    /// `idle` otherwise, inside corners rounded by `radius`; follow it with a pixel of
+    /// padding.
+    fn focus_outline(
+        self,
+        focused: bool,
+        idle: Color,
+        focused_colour: Color,
+        radius: Radius,
+    ) -> Self;
 }
 
-impl IndicationNodeFactory for FocusOutline {
-    /// Draws the outline behind the content, in the colour of the focus
-    /// `interaction_source` reports.
-    fn create(&self, interaction_source: &InteractionSource) -> Modifier {
-        let outline = *self;
-        let focused = interaction_source.collect_is_focused_as_state();
-        Modifier::new().draw_behind(move |canvas| {
-            let line = if focused.get() {
-                outline.focused
-            } else {
-                outline.idle
-            };
-            let (across, down) = (canvas.width(), canvas.height());
-            let corner = outline.radius.px().min(across.min(down) / 2.0);
-            canvas.stroke_rect(0.0, 0.0, across, down, corner, 1.0, line);
-        })
+impl FocusOutline for Modifier {
+    /// Borders the area with rustle's [`Modifier::border`] in the colour `focused` picks.
+    fn focus_outline(
+        self,
+        focused: bool,
+        idle: Color,
+        focused_colour: Color,
+        radius: Radius,
+    ) -> Self {
+        let line = if focused { focused_colour } else { idle };
+        self.border(1.0, line, radius.px())
     }
 }
 
@@ -186,23 +187,23 @@ impl IndicationNodeFactory for FocusOutline {
 pub enum Focused {
     /// Rustle's keyboard focus, held by the first focusable inside the area.
     Rustle,
-    /// The app's own notion of focus, which holds the area when `true`.
-    Held(bool),
+    /// Rustle's focus of the control the area stands for, as the view read it from the
+    /// control's focus in the registry of [`crate::focus`]: held when `true`.
+    Control(bool),
 }
 
-/// Drawing an indication for an area from the interactions it reports.
+/// Showing an indication for an area from the focus it reports.
 pub trait Indicated: Sized {
-    /// This modifier with a remembered [`MutableInteractionSource`] told of the
-    /// pointer coming over the area and leaving it, of its primary presses and
-    /// releases and of its focus as `focused` says, and `indication` drawn from
-    /// it with [`Modifier::indication`].
+    /// This modifier with a remembered [`MutableInteractionSource`] told of its
+    /// focus as `focused` says, and `indication` shown from it with
+    /// [`Modifier::indication`].
     #[track_caller]
     fn indicated(self, indication: impl IndicationNodeFactory + 'static, focused: Focused) -> Self;
 }
 
 impl Indicated for Modifier {
-    /// Feeds a remembered source with [`Modifier::hoverable`], primary presses and
-    /// the focus `focused` names, and draws `indication` from it.
+    /// Feeds a remembered source with the focus `focused` names and shows
+    /// `indication` from it.
     #[track_caller]
     fn indicated(self, indication: impl IndicationNodeFactory + 'static, focused: Focused) -> Self {
         let source = remember_mutable_interaction_source();
@@ -211,38 +212,13 @@ impl Indicated for Modifier {
                 let changed = source.clone();
                 self.on_focus_changed(move |now| set_focused(&changed, now))
             }
-            Focused::Held(held) => {
+            Focused::Control(held) => {
                 let changed = source.clone();
                 rustle::side_effect(move || set_focused(&changed, held));
                 self
             }
         };
-        let (pressed, released) = (source.clone(), source.clone());
-        modifier
-            .hoverable(&source)
-            .on_pointer_event(
-                PointerEventType::Press,
-                PointerEventPass::Main,
-                move |event| {
-                    if event.button == Some(PointerButton::Primary)
-                        && let Some(change) = event.changes.first()
-                    {
-                        pressed.emit(PressInteraction::press(change.position));
-                    }
-                },
-            )
-            .on_pointer_event(
-                PointerEventType::Release,
-                PointerEventPass::Main,
-                move |event| {
-                    if event.button == Some(PointerButton::Primary) {
-                        for press in under_way(&released, started_press) {
-                            released.emit(PressInteraction::Release { press });
-                        }
-                    }
-                },
-            )
-            .indication(&source, Some(&Indication::new(indication)))
+        modifier.indication(&source, Some(&Indication::new(indication)))
     }
 }
 
@@ -256,14 +232,6 @@ fn under_way(
         .iter()
         .filter_map(started)
         .collect()
-}
-
-/// The id of `interaction` when it is a press that started.
-fn started_press(interaction: &Interaction) -> Option<InteractionId> {
-    match interaction {
-        Interaction::Press(PressInteraction::Press { id, .. }) => Some(*id),
-        _ => None,
-    }
 }
 
 /// The id of `interaction` when it is a focus that started.
@@ -286,6 +254,15 @@ fn set_focused(source: &MutableInteractionSource, focused: bool) {
         for focus in held {
             source.emit(FocusInteraction::Unfocus { focus });
         }
+    }
+}
+
+/// The fills of a row of a list that is filled while `selected`, and fills under the pointer only while it is not.
+pub fn selectable(selected: bool) -> InteractionTones {
+    if selected {
+        InteractionTones::new().idle(Role::SurfaceSelected)
+    } else {
+        InteractionTones::new().hover(Role::SurfaceHover)
     }
 }
 

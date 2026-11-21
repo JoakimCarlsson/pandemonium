@@ -1,9 +1,10 @@
 //! The quick input as it is drawn: a field over the command center it opens from, and under it the rows of what the field lists, the letters typed marked in their names and the keys of each command on caps.
 
 use crate::areas::EditorEvent;
-use crate::kit::{self, Frame};
+use crate::theme::Frame;
 use crate::theme::Indicated;
 use crate::theme::ShadowLayers;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
 use crate::events::{Event, send};
 use crate::target::Target;
@@ -54,7 +55,7 @@ pub fn quick_input(listing: &Listing) {
         .picked
         .saturating_sub(QUICK_SHOWN - 1)
         .min(count.saturating_sub(QUICK_SHOWN));
-    kit::column(
+    rustle::column_arranged(
         Modifier::new()
             .offset(listing.at.0, listing.at.1)
             .z_index(60)
@@ -66,17 +67,19 @@ pub fn quick_input(listing: &Listing) {
                 Target::Editor(EditorEvent::ListingBody),
                 send(Event::Editor(EditorEvent::ListingBody)),
             ),
-        0,
+        Arrangement::Start,
+        Alignment::Start,
         || {
             if let Some(filter) = listing.items.filter() {
-                kit::column(
+                rustle::column_arranged(
                     Modifier::new().fill_max_width().padding_each(
                         theme::sp(1.5),
                         theme::sp(1.5),
                         theme::sp(1.5),
                         theme::sp(1),
                     ),
-                    0,
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
                         Input::new(filter, Target::Editor(EditorEvent::ListingFilter))
                             .size(Size::Sm)
@@ -86,22 +89,24 @@ pub fn quick_input(listing: &Listing) {
                     },
                 );
             }
-            kit::column(
+            rustle::column_arranged(
                 Modifier::new().fill_max_width().padding_each(
                     theme::sp(1.5),
                     0.0,
                     theme::sp(1.5),
                     theme::sp(1.75),
                 ),
-                0,
+                Arrangement::Start,
+                Alignment::Start,
                 || {
                     if let Some(said) = status {
-                        kit::row(
+                        rustle::row_arranged(
                             Modifier::new()
                                 .fill_max_width()
                                 .height(ROW)
                                 .padding_xy(theme::sp(1.5), 0.0),
-                            0,
+                            Arrangement::Start,
+                            Alignment::Center,
                             || line(said, 13, 1.4, Role::Muted),
                         );
                     }
@@ -137,7 +142,12 @@ fn empty_words(items: &Items) -> String {
 /// Emits `content` in a line of `pixels` tall type in `tone`, in a box `modifier` shapes that cuts it short at its edge.
 #[track_caller]
 fn cut(modifier: Modifier, content: impl Into<String>, pixels: u32, tone: Role) {
-    kit::row_top(modifier.clip(), 0, || line(content, pixels, 1.4, tone));
+    rustle::row_arranged(
+        modifier.clip(),
+        Arrangement::Start,
+        Alignment::Start,
+        || line(content, pixels, 1.4, tone),
+    );
 }
 
 /// Emits the row at `place` among those shown, of the item at `index`, filled under the pointer and when `picked`.
@@ -300,23 +310,28 @@ fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
     };
     let own = Modifier::new().fill_max_width().height(ROW).indicated(
         looks.radius(Radius::Sm),
-        theme::Focused::Held(crate::focus::is_held(id)),
+        theme::Focused::Control(crate::focus::is_focused(id)),
     );
-    let own = if group.is_some_and(|(_, ruled)| ruled) {
-        own.ruled(theme::Side::Top)
-    } else {
-        own
-    };
-    kit::row(
-        own.cursor(CursorIcon::Pointer)
-            .control(id, {
-                let operations = crate::events::operations();
-                move || operations.take_listing(Some(place))
-            })
-            .padding_xy(theme::sp(1.5), 0.0),
-        1.5,
-        cells,
-    );
+    let ruled = group.is_some_and(|(_, ruled)| ruled);
+    rustle::column_arranged(own, Arrangement::Start, Alignment::Start, || {
+        if ruled {
+            rustle::horizontal_divider(Modifier::new(), 1.0, theme::color(Role::Border));
+        }
+        rustle::row_arranged(
+            Modifier::new()
+                .fill_max_width()
+                .weight(1.0)
+                .cursor(CursorIcon::Pointer)
+                .control(id, {
+                    let operations = crate::events::operations();
+                    move || operations.take_listing(Some(place))
+                })
+                .padding_xy(theme::sp(1.5), 0.0),
+            Arrangement::SpacedBy(theme::sp(1.5)),
+            Alignment::Center,
+            cells,
+        );
+    });
 }
 
 /// Emits `name` in a line of its own width, in a box `modifier` shapes that cuts it short at its edge, the characters `query` matches set heavier and in the accent.
@@ -331,21 +346,32 @@ fn marked(modifier: Modifier, name: &str, query: &str) {
             _ => runs.push((character.to_string(), lit)),
         }
     }
-    kit::row(modifier.clip(), 0, move || {
-        let kind = theme::text_style(13, 1.4);
-        for (run, lit) in runs {
-            if lit {
-                kit::text(
-                    Modifier::new(),
-                    run,
-                    kind.font_weight(rustle::FontWeight::SEMI_BOLD)
-                        .color(theme::color(Role::Accent)),
-                );
-            } else {
-                kit::text(Modifier::new(), run, kind.color(theme::color(Role::Text)));
+    rustle::row_arranged(
+        modifier.clip(),
+        Arrangement::Start,
+        Alignment::Center,
+        move || {
+            let kind = theme::text_style(13, 1.4);
+            for (run, lit) in runs {
+                if lit {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        run,
+                        kind.font_weight(rustle::FontWeight::SEMI_BOLD)
+                            .color(theme::color(Role::Accent)),
+                        TextOverflow::Ellipsis,
+                    );
+                } else {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        run,
+                        kind.color(theme::color(Role::Text)),
+                        TextOverflow::Ellipsis,
+                    );
+                }
             }
-        }
-    });
+        },
+    );
 }
 
 /// Emits the name of the group `group` begins, at the end of its first row, when the row begins one.
@@ -358,29 +384,40 @@ fn group_name(group: Option<(&str, bool)>) {
 
 /// Emits the keys `binding` is pressed with, such as `Ctrl+K Ctrl+I`, each on a cap of its own, joined by `+` within a chord and set apart between chords.
 fn keycaps(binding: &str) {
-    kit::row(Modifier::new(), 1.5, || {
-        for chord in binding.split(' ') {
-            kit::row(Modifier::new(), 0.5, || {
-                for (place, key) in chord.split('+').enumerate() {
-                    if place > 0 {
-                        line("+", 11, 1.0, Role::Subtle);
-                    }
-                    keycap(key);
-                }
-            });
-        }
-    });
+    rustle::row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(1.5)),
+        Alignment::Center,
+        || {
+            for chord in binding.split(' ') {
+                rustle::row_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(theme::sp(0.5)),
+                    Alignment::Center,
+                    || {
+                        for (place, key) in chord.split('+').enumerate() {
+                            if place > 0 {
+                                line("+", 11, 1.0, Role::Subtle);
+                            }
+                            keycap(key);
+                        }
+                    },
+                );
+            }
+        },
+    );
 }
 
 /// Emits one key, on a cap.
 fn keycap(key: &str) {
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .height(17.0)
             .background_rounded(theme::color(Role::Background), Radius::Sm.px())
             .outlined(Radius::Sm)
             .padding_xy(theme::sp(1.25), 0.0),
-        0,
+        Arrangement::Start,
+        Alignment::Center,
         || line(key, 11, 1.0, Role::Muted),
     );
 }

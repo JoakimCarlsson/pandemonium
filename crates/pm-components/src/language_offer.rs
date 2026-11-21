@@ -1,11 +1,12 @@
 //! The offer, at the top of a file, to install the language it is written in when the server's machine has not got it.
 
 use crate::areas::EditorEvent;
-use crate::kit::{self, Frame};
+use crate::button;
 use crate::target::Target;
 use crate::theme;
 use pm_protocol::ExtensionInfo;
 use rustle::Modifier;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
 use crate::theme::Role;
 
@@ -63,24 +64,27 @@ pub(crate) fn offer(state: &WorkspaceState, viewer: &Viewer) {
     };
     let idle = extension.busy.is_none();
     let retry = extension.problem.is_some();
-    kit::row(
+    rustle::row_arranged(
         Modifier::new()
             .background(theme::color(Role::Surface))
-            .ruled(theme::Side::Bottom)
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
             .padding_xy(theme::sp(4), theme::sp(1)),
-        3,
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Center,
         move || {
-            kit::text(
+            rustle::basic_text(
                 Modifier::new().weight(1.0).clip(),
                 words,
-                kit::line(12, Role::Muted),
+                theme::line(12, Role::Muted),
+                TextOverflow::Ellipsis,
             );
             if idle {
                 let install = Target::Editor(EditorEvent::OfferInstall);
                 let label = if retry { "Try again" } else { "Install" };
-                kit::action(label, install, Variant::Secondary);
+                button::action(label, install, Variant::Secondary);
                 let decline = Target::Editor(EditorEvent::OfferDecline);
-                kit::action("Not now", decline, Variant::Ghost);
+                button::action("Not now", decline, Variant::Ghost);
             }
         },
     );

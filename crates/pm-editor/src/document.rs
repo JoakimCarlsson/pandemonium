@@ -6,8 +6,8 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
+use crate::Field;
 use pm_buffer::{Change, Lines, Span};
-use pm_field::Field;
 use pm_protocol::{Completion, Diagnostic, TextChange};
 use pm_treesitter::{Editing, Kind, Syntax};
 

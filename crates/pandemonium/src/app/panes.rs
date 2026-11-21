@@ -1,7 +1,7 @@
 //! Dragging a tab of a pane to another pane, or to the edge of one to split it.
 
-use pm_components::areas::WindowEvent;
-use pm_components::panes::{Area, Item, Side};
+use pm_components::panes::{Item, Side};
+use pm_components::pointing::Over;
 use pm_components::target::Target;
 
 use super::App;
@@ -30,64 +30,52 @@ impl App {
             .model
             .read(|screen| screen.tree_row_of(id))
             .filter(|target| !target.is_root());
-        self.carry_moved(at);
+        self.carry_moved(at, None);
     }
 
-    /// Follows the pointer carrying a control to `at` in the window.
-    pub(super) fn carry_moved(&mut self, at: (f32, f32)) {
+    /// Follows the pointer carrying a control to `at` in the window, over `over` when the
+    /// place under it takes what is carried.
+    pub(super) fn carry_moved(&mut self, at: (f32, f32), over: Option<Over>) {
         let at = self.framed_point(at);
-        self.drag_project(at);
-        self.drag_pane(at);
-        self.drag_tree(at);
-    }
-
-    /// Puts what was carried where the pointer let go of it, with `modifiers` held, so the
-    /// press it began with clicks nothing.
-    pub(super) fn carry_ended(&mut self, modifiers: rustle::Modifiers) {
-        if self.drop_project() | self.drop_pane() | self.drop_tree(modifiers) {
-            self.pressed_on = None;
-        }
-    }
-
-    /// Opens the menu of panes just under the pointer, its right edge near it.
-    pub(super) fn open_pane_menu(&mut self) {
-        let Some((x, y)) = self.pointer.position else {
-            return;
+        let project = match over {
+            Some(Over::Project(project)) => Some(project),
+            _ => None,
         };
+        let pane = match over {
+            Some(Over::Pane(pane, side)) => Some((pane, side)),
+            _ => None,
+        };
+        let row = match over {
+            Some(Over::Tree(row)) => Some(row),
+            _ => None,
+        };
+        self.drag_project(at, project);
+        self.drag_pane(at, pane);
+        self.drag_tree(at, row);
+    }
+
+    /// Puts what was carried where the pointer let go of it, with `modifiers` held.
+    pub(super) fn carry_ended(&mut self, modifiers: rustle::Modifiers) {
+        self.drop_project();
+        self.drop_pane();
+        self.drop_tree(modifiers);
+    }
+
+    /// Opens the menu of panes just under `at`, in the window's frame, its right edge near it.
+    pub(super) fn open_pane_menu(&mut self, (x, y): (f32, f32)) {
         self.model.update(|state| {
             *state = std::mem::take(state)
                 .in_workspace(|state| state.with_pane_menu((x - 190.0, y + 14.0)))
         });
     }
 
-    /// The pane under `at`, by position, and the edge of it `at` is over.
-    fn pane_under(&self, at: (f32, f32)) -> Option<(usize, Side)> {
-        self.hovered.iter().find_map(|id| {
-            let Target::Window(WindowEvent::Pane(index)) = *id else {
-                return None;
-            };
-            let rect = self.place(*id)?;
-            let area = Area {
-                x: rect.origin.x,
-                y: rect.origin.y,
-                width: rect.size.width,
-                height: rect.size.height,
-            };
-            let inside = at.0 >= area.x
-                && at.1 >= area.y
-                && at.0 < area.x + area.width
-                && at.1 < area.y + area.height;
-            inside.then(|| (index, area.side_at(at)))
-        })
-    }
-
-    /// Follows the pointer to `at` while a tab of a pane is carried, over the pane and edge under the pointer.
-    pub(super) fn drag_pane(&mut self, at: (f32, f32)) {
+    /// Follows the pointer to `at` while a tab of a pane is carried, over the pane and edge
+    /// `over` when it is over one.
+    pub(super) fn drag_pane(&mut self, at: (f32, f32), over: Option<(usize, Side)>) {
         let Some(item) = self.pane_press.clone() else {
             return;
         };
         self.pane_dragging = true;
-        let over = self.pane_under(at);
         self.model.update(|state| {
             *state = std::mem::take(state).in_workspace(|state| state.pane_dragged(item, over, at))
         });

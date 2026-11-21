@@ -37,21 +37,25 @@ impl App {
     }
 
     /// Asks the desktop to resize the window by its edge or corner `edge`, pressed on the
-    /// strips [`resize_edges`](pm_components::resize_edges) lays over the frame.
+    /// strips [`resize_edges`](pm_components::resize_edges) lays over the frame, a press on
+    /// no control of the window's content.
     pub(super) fn edge_pressed(&mut self, edge: ResizeEdge) {
+        self.note_press(None);
+        self.press_on(None);
         if let Some(window) = self.window.clone() {
             window.drag_resize(edge);
         }
     }
 
     /// Moves the window when the primary button goes down on its bare title bar, and
-    /// maximizes or restores it when that is the second press there in a row. Says whether
-    /// the press was taken: there is a window.
-    pub(super) fn title_bar_pressed(&mut self) -> bool {
+    /// maximizes or restores it when that is the second press there in a row, as `clicks`,
+    /// the presses in a row rustle counted, says. Says whether the press was taken: there is
+    /// a window.
+    pub(super) fn title_bar_pressed(&mut self, clicks: u32) -> bool {
         let Some(window) = self.window.clone() else {
             return false;
         };
-        if self.press_clicks == 2 {
+        if clicks == 2 {
             window.set_maximized(!window.is_maximized());
         } else {
             window.drag_window();

@@ -1,18 +1,18 @@
 //! The input: a box holding editable text, one line or several, with a look per variant and a measure per size.
 //!
 //! The text is a rustle text field editing a [`TextFieldState`] the model holds,
-//! drawn in the input's type with its placeholder in the decoration. The app's
-//! focus decides whether the field has the keyboard: the field asks rustle for
-//! focus while the app keeps focus on it and frees it otherwise, and tells the
-//! app when rustle gave it focus or took it away (see [`crate::focus`]). Keys
+//! drawn in the input's type with its placeholder in the decoration. The field
+//! holds the rustle focus of its control from the registry the views are
+//! composed with (see [`crate::focus`]), so the app gives it the keyboard and
+//! reads whether it has it through that focus. Keys
 //! reach the app's own key handler around the window before the field edits
 //! its state itself.
 
 use crate::events::{Event, send};
-use crate::kit;
 use crate::target::Target;
 use crate::theme;
-use crate::theme::Indicated;
+use crate::theme::{FocusOutline, Indicated};
+use rustle::{Alignment, Arrangement};
 use rustle::{Color, Icon, phosphor};
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -195,7 +195,7 @@ impl<'a> Input<'a> {
         if boxed {
             own = own.background_rounded(theme::color(Role::Surface), Radius::Lg.px());
         }
-        let held = theme::Focused::Held(crate::focus::is_held(id));
+        let held = theme::Focused::Control(crate::focus::is_focused(id));
         if boxed || invalid {
             let (idle, focused) = if invalid {
                 (theme::role(Role::Danger), theme::role(Role::Danger))
@@ -203,14 +203,7 @@ impl<'a> Input<'a> {
                 (theme::role(Role::Border), theme::role(Role::Focused))
             };
             let radius = Radius::Lg;
-            own = own.indicated(
-                theme::FocusOutline {
-                    idle,
-                    focused,
-                    radius,
-                },
-                held,
-            );
+            own = own.focus_outline(crate::focus::is_focused(id), idle, focused, radius);
         }
         own = own.indicated(
             theme::FocusRing {
@@ -231,21 +224,26 @@ impl<'a> Input<'a> {
         };
         let (field, placeholder, leading) = (self.field, self.placeholder, self.leading);
         let secure = self.secure;
-        kit::row(self.modifier.chain(own), 2, move || {
-            if let Some(icon) = leading {
-                glyph(icon, 4.0, Role::Muted);
-            }
-            FieldText {
-                field,
-                id,
-                kind,
-                placeholder,
-                lines: None,
-                secure,
-                scroll: None,
-            }
-            .build(Modifier::new().weight(1.0));
-        });
+        rustle::row_arranged(
+            self.modifier.chain(own),
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Center,
+            move || {
+                if let Some(icon) = leading {
+                    glyph(icon, 4.0, Role::Muted);
+                }
+                FieldText {
+                    field,
+                    id,
+                    kind,
+                    placeholder,
+                    lines: None,
+                    secure,
+                    scroll: None,
+                }
+                .build(Modifier::new().weight(1.0));
+            },
+        );
     }
 
     /// Emits a multiline input: its wrapped lines in a column at least
@@ -271,9 +269,12 @@ impl<'a> Input<'a> {
             theme::sp(4),
             theme::sp(1),
         );
-        kit::column(self.modifier.chain(own), 0, move || {
-            text.build(Modifier::new().fill_max_width())
-        });
+        rustle::column_arranged(
+            self.modifier.chain(own),
+            Arrangement::Start,
+            Alignment::Start,
+            move || text.build(Modifier::new().fill_max_width()),
+        );
     }
 }
 
@@ -319,7 +320,7 @@ impl FieldText<'_> {
             max_lines: None,
             ..kind.color(theme::color(Color::from(Role::Subtle)))
         };
-        let focus = crate::focus::follow_focus(id, true);
+        let focus = crate::focus::focus_of(id);
         let composing = focus
             .preedit()
             .is_some_and(|preedit| !preedit.text.is_empty());
@@ -352,7 +353,6 @@ impl FieldText<'_> {
                 },
             );
         });
-        let modifier = modifier.chain(crate::focus::reports_focus(id));
         let options = BasicTextFieldOptions {
             text_style: Some(style),
             cursor_color: Some(style.color),
@@ -423,7 +423,7 @@ fn context_press(
                 field.edit(|buffer| buffer.place_cursor_before_char_at(index));
             }
         }
-        operations.open_field_menu(id);
+        operations.open_field_menu(id, crate::events::window_at(event), None);
     })
 }
 
@@ -431,8 +431,8 @@ fn context_press(
 fn editing(own: Modifier, id: Target) -> Modifier {
     let operations = crate::events::operations();
     own.cursor(CursorIcon::Text)
-        .pressable_menu(id, send(Event::pressing(id)), move || {
-            operations.open_field_menu(id)
+        .pressable_menu(id, send(Event::pressing(id)), move |at| {
+            operations.open_field_menu(id, at, None)
         })
 }
 

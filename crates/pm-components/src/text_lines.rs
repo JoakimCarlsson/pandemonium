@@ -74,6 +74,11 @@ impl DrawnLine {
     }
 }
 
+/// Where the point `at` of the window is from the top left of the area at `origin` in it.
+fn from_origin(origin: Offset, at: (f32, f32)) -> (f32, f32) {
+    (at.0 - origin.x, at.1 - origin.y)
+}
+
 /// What a [`TextLines`] holds.
 #[derive(Default)]
 struct Held {
@@ -212,6 +217,37 @@ impl TextLines {
                 piece.rect.origin.y + piece.rect.size.height - 0.5,
             ),
         ))
+    }
+
+    /// The byte of `owner` nearest the point `at` of the window, as
+    /// [`offset_in`](Self::offset_in) finds it.
+    pub fn offset_at_window(&self, owner: Target, at: (f32, f32)) -> Option<usize> {
+        let (x, y) = from_origin(self.0.origin.get(), at);
+        self.offset_in(owner, x, y)
+    }
+
+    /// The byte of `owner` whose drawn character is under the point `x`, `y`, when the
+    /// point is on one.
+    pub fn character_in(&self, owner: Target, x: f32, y: f32) -> Option<usize> {
+        let line = self.of(owner).into_iter().find(|held| {
+            y >= held.rect.origin.y && y < held.rect.origin.y + held.rect.size.height
+        })?;
+        if x < line.rect.origin.x || x > line.rect.origin.x + line.layout.size().width {
+            return None;
+        }
+        Some(
+            line.start
+                + line
+                    .layout
+                    .hit_test(Offset::new(x - line.rect.origin.x, y - line.rect.origin.y)),
+        )
+    }
+
+    /// The byte of `owner` whose drawn character is under the point `at` of the window, as
+    /// [`character_in`](Self::character_in) finds it.
+    pub fn character_at_window(&self, owner: Target, at: (f32, f32)) -> Option<usize> {
+        let (x, y) = from_origin(self.0.origin.get(), at);
+        self.character_in(owner, x, y)
     }
 
     /// The byte `by` rows below the byte `caret` of `owner`, as its rows are

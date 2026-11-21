@@ -1,7 +1,8 @@
 //! The list of branches under the branch of the repository the panel works on: to check one out, or to make a new one.
 
 use crate::areas::GitEvent;
-use crate::kit::{self, Frame};
+use crate::parts;
+use rustle::{Alignment, Arrangement};
 
 use crate::events::{Event, send};
 use crate::target::Target;
@@ -42,14 +43,15 @@ pub fn branch_menu(state: &WorkspaceState) {
                 send(Event::Git(GitEvent::BranchBody)),
             ))
             .build_with(|| {
-                kit::column(
+                rustle::column_arranged(
                     Modifier::new().fill_max_width().padding_each(
                         theme::sp(1),
                         theme::sp(1),
                         theme::sp(1),
                         theme::sp(2),
                     ),
-                    0,
+                    Arrangement::Start,
+                    Alignment::Start,
                     || {
                         Input::new(&git.filter, Target::Git(GitEvent::BranchFilter))
                             .placeholder("Search branches, or name a new one")
@@ -67,22 +69,38 @@ pub fn branch_menu(state: &WorkspaceState) {
                     );
                 }
                 if matching.is_empty() && typed.is_empty() {
-                    kit::note(2.5, 1.5, "No branches.", 13, Role::Subtle);
+                    parts::note(2.5, 1.5, "No branches.", 13, Role::Subtle);
                 }
                 if !typed.is_empty() && !git.exists() {
-                    kit::column(
+                    rustle::column_arranged(
                         Modifier::new()
                             .fill_max_width()
-                            .padding_each(0.0, theme::sp(1), 0.0, 0.0)
-                            .ruled(theme::Side::Top)
                             .padding_each(0.0, theme::sp(1), 0.0, 0.0),
-                        0,
+                        Arrangement::Start,
+                        Alignment::Start,
                         || {
-                            row(
-                                &format!("Create branch “{typed}”"),
-                                "From the commit this session is at",
-                                false,
-                                Target::Git(GitEvent::BranchCreate),
+                            rustle::horizontal_divider(
+                                Modifier::new(),
+                                1.0,
+                                theme::color(Role::Border),
+                            );
+                            rustle::column_arranged(
+                                Modifier::new().fill_max_width().padding_each(
+                                    0.0,
+                                    theme::sp(1),
+                                    0.0,
+                                    0.0,
+                                ),
+                                Arrangement::Start,
+                                Alignment::Start,
+                                || {
+                                    row(
+                                        &format!("Create branch “{typed}”"),
+                                        "From the commit this session is at",
+                                        false,
+                                        Target::Git(GitEvent::BranchCreate),
+                                    );
+                                },
                             );
                         },
                     );

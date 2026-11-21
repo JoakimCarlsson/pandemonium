@@ -1,6 +1,6 @@
 //! The stepper: stops along a track, the current one marked, each answering to a press.
 
-use crate::kit;
+use crate::events;
 use crate::target::Target;
 use crate::theme;
 use crate::theme::{Radius, Role};
@@ -54,7 +54,7 @@ impl Stepper {
                 for position in 0..stops {
                     let id = first.offset(position);
                     row_arranged(
-                        kit::pressed(Modifier::new().size(theme::sp(4), theme::sp(4)), id),
+                        events::pressed(Modifier::new().size(theme::sp(4), theme::sp(4)), id),
                         Arrangement::Center,
                         Alignment::Center,
                         move || {

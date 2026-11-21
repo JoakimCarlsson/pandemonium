@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
-use pm_field::Edit;
+use crate::Edit;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::document::Document;
