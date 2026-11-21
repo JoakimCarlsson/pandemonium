@@ -2,9 +2,8 @@
 //! when what it shows or the room it is given changed.
 //!
 //! The whole screen is one state that the root reads, so any change composes the root again.
-//! The host counts, as the revision, every change of the screen and every change it composes
-//! the windows for, but not a change of the size of a panel: dragging the handle between two
-//! panels moves only sizes. A region composed by [`region`] is keyed by the revision and by
+//! The host counts, as the revision, every change of the screen but not a change of the size
+//! of a panel: dragging the handle between two panels moves only sizes. A region composed by [`region`] is keyed by the revision and by
 //! the sizes it uses, so while a handle is dragged the regions whose room did not change are
 //! not composed again, and those that read the dragged size are.
 

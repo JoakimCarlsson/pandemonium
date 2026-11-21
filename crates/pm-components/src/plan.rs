@@ -31,9 +31,9 @@ pub fn width_in(state: &WorkspaceState, room: f32) -> f32 {
     }
 }
 
-/// Emits the panel `width` logical pixels wide that reads `source`, the plan the agent proposed, as markdown beside the conversation.
+/// Emits the panel `width` logical pixels wide that reads `source`, the plan the agent proposed, as markdown beside the conversation, scrolled by `scroll`. It takes nothing else, so it is composed again only when one of those changes.
 #[track_caller]
-pub fn panel(state: &WorkspaceState, source: &str, width: f32) {
+pub fn panel(scroll: &rustle::ScrollState, source: &str, width: f32) {
     rustle::row_arranged(
         Modifier::new()
             .width(width)
@@ -58,7 +58,7 @@ pub fn panel(state: &WorkspaceState, source: &str, width: f32) {
                             .fill_max_width()
                             .weight(1.0)
                             .clip()
-                            .vertical_scroll(&state.plan_scroll)
+                            .vertical_scroll(scroll)
                             .fill_max_width()
                             .padding_xy(theme::sp(4), theme::sp(4)),
                         Arrangement::Start,

@@ -56,6 +56,9 @@ pub(super) struct Idle {
     pub(super) release: bool,
     /// Whether the view changed since it was last written.
     pub(super) view_unsaved: bool,
+    /// The fingerprint of the view as the screen shows it while it is not written, which
+    /// the pause before writing it waits on, so a change of the view starts the pause again.
+    pub(super) view_shown: Option<u64>,
     /// How often the agents' work is to be looked at while it is under way.
     pub(super) polling: Option<Duration>,
     /// Whether the browser's pages are being pumped.
@@ -69,10 +72,12 @@ pub(super) struct Idle {
 pub(super) struct Shared {
     /// The screen the app holds.
     model: Model,
-    /// How large the main window and each window beside it are, in logical pixels.
-    sizes: Rc<RefCell<[(f32, f32); 3]>>,
-    /// The theme and appearance every window is drawn in.
-    tokens: Rc<RefCell<Tokens>>,
+    /// How large the main window and each window beside it are, in logical pixels, as
+    /// snapshot state each window's root reads.
+    sizes: rustle::State<[(f32, f32); 3]>,
+    /// The theme and appearance every window is drawn in, as snapshot state each window's
+    /// root reads and provides to what it composes.
+    tokens: rustle::State<Tokens>,
     /// The handles of the windows beside the main one, once composed.
     handles: Rc<RefCell<[Option<WindowHandle>; 2]>>,
     /// What the views of the main window and of each window beside it hand
@@ -82,9 +87,6 @@ pub(super) struct Shared {
     focus: focus::FocusRequesters,
     /// The app, once it is shared with the windows.
     app: Rc<RefCell<Weak<RefCell<App>>>>,
-    /// How often the app asked for every window to be composed again, which the
-    /// roots read so each such ask composes them again.
-    composed: rustle::State<u64>,
     /// What the app waits for while it is idle, as it last said.
     idle: rustle::State<Idle>,
     /// The field the views give the keyboard back to as it appears, as the app last said.
@@ -166,26 +168,18 @@ impl Shell {
         Self {
             shared: Shared {
                 model,
-                sizes: Rc::new(RefCell::new([(0.0, 0.0); 3])),
-                tokens: Rc::new(RefCell::new(Tokens::default())),
+                sizes: rustle::mutable_state([(0.0, 0.0); 3]),
+                tokens: rustle::mutable_state(Tokens::default()),
                 handles: Rc::new(RefCell::new([None, None])),
                 operations: Rc::new(RefCell::new(None)),
                 focus,
                 app: Rc::new(RefCell::new(Weak::new())),
-                composed: rustle::mutable_state(0),
                 idle: rustle::mutable_state(Idle::default()),
                 restored: rustle::mutable_state(None),
             },
             #[cfg(test)]
             headless_ports: Rc::new(RefCell::new(None)),
         }
-    }
-
-    /// Composes every window again, moving the screen's revision on so no
-    /// region keeps what it emitted.
-    pub(super) fn invalidate(&mut self) {
-        self.shared.model.revise();
-        self.shared.composed.update(|composed| *composed += 1);
     }
 
     /// The handle of `aside`'s window, while it is composed.
@@ -204,18 +198,20 @@ impl Shell {
         port.is_open().then(|| Rc::new(port) as Rc<dyn Port>)
     }
 
-    /// Sets the theme every window is drawn in.
+    /// Sets the theme every window is drawn in; the roots, which provide it, are composed
+    /// again only when it changed.
     pub(super) fn set_tokens(&mut self, tokens: Tokens) {
-        *self.shared.tokens.borrow_mut() = tokens;
-        self.invalidate();
+        if self.shared.tokens.with(|held| *held != tokens) {
+            self.shared.tokens.set(tokens);
+        }
     }
 
-    /// Records that the window of `aside`, or the main one, is `size` logical pixels across.
+    /// Records that the window of `aside`, or the main one, is `size` logical pixels across;
+    /// the window's root is composed again only when that changed.
     pub(super) fn set_size(&mut self, aside: Option<Aside>, size: (f32, f32)) {
         let index = aside.map_or(0, |aside| slot(aside) + 1);
-        let changed = std::mem::replace(&mut self.shared.sizes.borrow_mut()[index], size) != size;
-        if changed {
-            self.invalidate();
+        if self.shared.sizes.with(|sizes| sizes[index] != size) {
+            self.shared.sizes.update(|sizes| sizes[index] = size);
         }
     }
 
@@ -317,23 +313,56 @@ fn wake_handlers(shared: &Shared) {
     });
 }
 
+/// Has the app follow each change of the screen: a skippable block reads the screen's
+/// state, so it runs again only when the screen changed and not when the root is composed
+/// for anything else, and its side effect runs [`App::screen_changed`] once after each
+/// such run. The root reads the screen itself, so the block needs no scope of its own.
+fn screen_effect(shared: &Shared) {
+    let model = shared.model.clone();
+    let app = shared.app();
+    rustle::skippable((), move || {
+        model.read(|_| ());
+        rustle::side_effect(move || with_app(&app, App::screen_changed));
+    });
+}
+
+/// Has the app ask the language server for the names of the lines of the file shown that
+/// are in view, as an effect keyed on those lines and the version of the file while they
+/// are wanted: while the file shown can have them asked for at all, a block of its own
+/// reads the screen, the code view's scroll and its size, so a scroll or an edit composes
+/// only it again, and the effect waits for the frame that lays the view out before asking.
+fn names_effect(shared: &Shared) {
+    if !shared.model.read(|screen| screen.names_in_view_apply()) {
+        return;
+    }
+    let model = shared.model.clone();
+    let app = shared.app();
+    rustle::restartable((), move || {
+        let wanted = model.read(|screen| screen.names_in_view());
+        let asking = app.clone();
+        rustle::launched_effect(wanted.clone(), move |scope| async move {
+            if wanted.is_none() {
+                return;
+            }
+            scope.next_frame().await;
+            with_app(&asking, |app| {
+                app.ask_names_in_view();
+                app.flush();
+            });
+        });
+    });
+}
+
 /// The app's idle work as effects of the main window's root: what follows each change of
-/// the screen; the view written once changes pause, or at the latest a while after they
-/// began; for each thing that waits for a pause, an effect keyed on what it waits on that
-/// delays on the frame clock and then acts; the agents' work looked at, the browser's pages
-/// pumped and newer releases looked for at their intervals; the main window closed once the
-/// app quits; and the view saved when the root leaves the composition.
+/// the screen; for each thing that waits for a pause, an effect keyed on what it waits on
+/// that delays on the frame clock and then acts, the view written once changes of it pause
+/// among them, or at the latest a while after they began; the agents' work looked at, the
+/// browser's pages pumped and newer releases looked for at their intervals; the main window
+/// closed once the app quits; and the view saved when the root leaves the composition.
 fn idle_effects(shared: &Shared) {
     let app = shared.app();
-    let generation = shared.model.generation();
-    let changed = app.clone();
-    rustle::disposable_effect(generation, move || {
-        with_app(&changed, App::screen_changed);
-        || {}
-    });
-    rested(Some(generation), super::VIEW_SAVE_PAUSE, &app, |app, _| {
-        app.view_save_rested()
-    });
+    screen_effect(shared);
+    names_effect(shared);
     let leaving = app.clone();
     rustle::disposable_effect((), move || {
         move || {
@@ -354,6 +383,7 @@ fn idle_effects(shared: &Shared) {
             recording,
             release,
             view_unsaved,
+            view_shown,
             polling,
             pumping,
             quit,
@@ -385,6 +415,9 @@ fn idle_effects(shared: &Shared) {
             &app,
             App::recording_rested,
         );
+        rested(view_shown, super::VIEW_SAVE_PAUSE, &app, |app, _| {
+            app.view_save_rested()
+        });
         rested(
             view_unsaved.then_some(()),
             super::VIEW_SAVE_BURST,
@@ -505,10 +538,9 @@ pub(super) fn main_view(shared: &Shared) {
     idle_effects(shared);
     scroll_effects(shared);
     watch_window(shared, None);
-    let tokens = shared.tokens.borrow().clone();
-    let size = shared.sizes.borrow()[0];
+    let tokens = shared.tokens.get();
+    let size = shared.sizes.with(|sizes| sizes[0]);
     let revision = shared.model.revision();
-    let _ = shared.composed.get();
     let restored = shared.restored.get();
     shared.under_operations(None, || {
         focus::provide_restored(restored, || {
@@ -532,9 +564,8 @@ pub(super) fn aside_view(shared: &Shared, aside: Aside) {
             shared.model.read(Screen::folder_picker_serial),
         );
     }
-    let tokens = shared.tokens.borrow().clone();
+    let tokens = shared.tokens.get();
     let (width, height) = aside_size(shared, aside);
-    let _ = shared.composed.get();
     shared.under_operations(Some(aside), || {
         shared.model.read(|screen| {
             scene::aside_root(screen, window_key(Some(aside)), width, height, tokens);
@@ -545,7 +576,7 @@ pub(super) fn aside_view(shared: &Shared, aside: Aside) {
 /// How large the window of `aside` is, in logical pixels: as the desktop
 /// last said, or as it opens.
 pub(super) fn aside_size(shared: &Shared, aside: Aside) -> (f32, f32) {
-    match shared.sizes.borrow()[slot(aside) + 1] {
+    match shared.sizes.with(|sizes| sizes[slot(aside) + 1]) {
         (0.0, 0.0) => aside.opening_size(),
         size => size,
     }
@@ -691,9 +722,9 @@ impl App {
                 window_frame::with_band(window_frame::without_band((screen.width, screen.height)));
             WindowHandle::MAIN.set_size(rustle::Size::new(width, height));
         }
+        pm_components::theme::fonts_changed();
         let (all, mono) = pm_components::theme::font_families();
         self.model.change(|state| state.with_fonts(all, mono));
-        self.recompose = true;
         crate::startup::mark("renderer-ready");
     }
 
@@ -712,8 +743,6 @@ impl App {
         self.pressed_in_conversation = false;
         if std::mem::take(&mut self.event_pending) {
             self.after_interface(None, |_| {});
-        } else if std::mem::take(&mut self.acted) {
-            self.recompose = true;
         }
         if std::mem::take(&mut self.frame_pending) {
             self.browsing = self.browser_tick();
@@ -727,8 +756,8 @@ impl App {
         self.flush();
     }
 
-    /// What follows each change of the screen, as the root's effect keyed on the screen's
-    /// generation runs it: the rename box's focus, the settings the screen asked for, what
+    /// What follows each change of the screen, as the side effect of the block that reads
+    /// the screen runs it: the rename box's focus, the settings the screen asked for, what
     /// the reader asked of the agents and the folders, the settings written and the view's
     /// save put off until typing pauses, the place recorded, the field the reader left, the
     /// windows beside the main one followed and the browser's work looked at.
@@ -783,6 +812,7 @@ impl App {
             recording: self.recording_waiting(),
             release: self.release_checked(),
             view_unsaved: self.view_unsaved,
+            view_shown: self.view_unsaved.then(|| self.view_fingerprint()),
             polling,
             pumping: self.browsing,
             quit: self.closing || self.model.read(Screen::quitting),
@@ -803,15 +833,10 @@ impl App {
         self.frame_pending = true;
     }
 
-    /// Composes every window again when anything asked for it since the last time, and
-    /// runs what follows a composed frame with what was laid out last. A change of the screen
-    /// alone is composed through the screen's own state, without composing everything,
-    /// so a change that only resized panels leaves the screen's revision and the regions
-    /// whose room did not change keep what they emitted.
+    /// Runs what follows a composed frame with what was laid out last, and says what the
+    /// app waits on while it is idle. Nothing is composed from here: what the windows show
+    /// is snapshot state their composables read, so a change of it composes its readers.
     pub(super) fn flush(&mut self) {
-        if std::mem::take(&mut self.recompose) {
-            self.shell.invalidate();
-        }
         self.after_compose();
         self.publish_idle();
     }
@@ -830,7 +855,6 @@ impl App {
         crate::startup::frame_presented();
         self.place_completion();
         self.place_signature();
-        self.ask_names_in_view();
         self.note_conversation(true);
     }
 
@@ -859,7 +883,6 @@ impl App {
             Some(aside) => self.in_aside(aside, act),
             None => act(self),
         }
-        self.acted = false;
         self.flush();
     }
 

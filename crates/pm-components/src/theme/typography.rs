@@ -3,30 +3,37 @@
 //!
 //! Interface text follows the reader's text scale and is set in the theme's
 //! sans family; code keeps its size and is set in the mono family, joining
-//! characters into ligatures only while [`code_ligatures`] says so. Every
+//! characters into ligatures only while [`code_ligatures`] says so; the switch
+//! is snapshot state, so the composables that set code read it and are composed
+//! again when it changes. Every
 //! style starts in the text role on one unwrapped line; callers change it
 //! with rustle's own `TextStyle` methods.
-
-use std::cell::Cell;
 
 use rustle::{Color, FontWeight, TextStyle, TextWrap, Typography};
 
 use super::{Role, color, mono, sans, text_scale};
 
 thread_local! {
-    /// Whether code text joins characters such as `->` into its font's ligatures.
-    static CODE_LIGATURES: Cell<bool> = const { Cell::new(true) };
+    /// Whether code text joins characters such as `->` into its font's ligatures, as
+    /// snapshot state that every composable setting code reads.
+    static CODE_LIGATURES: rustle::State<bool> = rustle::mutable_state(true);
 }
 
 /// Lets code text join characters such as `->` into the ligatures its font
-/// has for them, or sets each character alone. Compose again after changing it.
+/// has for them, or sets each character alone; the composables that read the
+/// switch are composed again when it changes.
 pub fn set_code_ligatures(on: bool) {
-    CODE_LIGATURES.with(|held| held.set(on));
+    CODE_LIGATURES.with(|held| {
+        if held.get() != on {
+            held.set(on);
+        }
+    });
 }
 
-/// Whether code text joins characters into ligatures.
+/// Whether code text joins characters into ligatures, read as snapshot state so
+/// the composable reading it follows the switch.
 pub fn code_ligatures() -> bool {
-    CODE_LIGATURES.with(Cell::get)
+    CODE_LIGATURES.with(rustle::State::get)
 }
 
 /// A number that changes whenever text would be measured differently: fonts
@@ -207,6 +214,76 @@ mod tests {
         assert_eq!(interface.wrap, TextWrap::None);
         assert_eq!(code.font_size, 12.0);
         assert_eq!(code.line_height, 18.0);
+    }
+
+    /// How often a skippable block that sets code and one beside it that reads nothing
+    /// ambient ran, in a root that is never asked to compose again by hand.
+    fn code_and_bystander_runs(change: impl FnOnce()) -> ((u32, u32), (u32, u32), bool) {
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let code_runs = Rc::new(Cell::new(0));
+        let bystander_runs = Rc::new(Cell::new(0));
+        let joined = Rc::new(Cell::new(true));
+        let (code, bystander, seen) = (
+            Rc::clone(&code_runs),
+            Rc::clone(&bystander_runs),
+            Rc::clone(&joined),
+        );
+        let mut ui = rustle::Embedded::without_renderer(
+            move || {
+                let (code, seen) = (Rc::clone(&code), Rc::clone(&seen));
+                rustle::skippable((), move || {
+                    code.set(code.get() + 1);
+                    seen.set(code_style(13, 1.5).ligatures);
+                });
+                let bystander = Rc::clone(&bystander);
+                rustle::skippable((), move || bystander.set(bystander.get() + 1));
+            },
+            || {},
+        );
+        ui.resize((100, 100), 1.0);
+        ui.update();
+        let before = (code_runs.get(), bystander_runs.get());
+        change();
+        ui.update();
+        (
+            before,
+            (code_runs.get(), bystander_runs.get()),
+            joined.get(),
+        )
+    }
+
+    /// Switching ligatures off composes again the code that reads the switch, and nothing
+    /// that does not, with no one asking for the whole tree to be composed again.
+    #[test]
+    fn switching_ligatures_composes_only_the_code_again() {
+        let (before, after, joined) = code_and_bystander_runs(|| set_code_ligatures(false));
+        assert_eq!(after.0, before.0 + 1, "the code was not composed again");
+        assert_eq!(
+            after.1, before.1,
+            "a block reading no switch was composed again"
+        );
+        assert!(!joined, "the code kept its ligatures");
+    }
+
+    /// Choosing another code font composes again the code that is set in it.
+    #[test]
+    fn choosing_a_font_composes_the_code_again() {
+        let (before, after, _) =
+            code_and_bystander_runs(|| crate::theme::set_font_choice("", "Chosen Mono"));
+        assert_eq!(after.0, before.0 + 1, "the code was not composed again");
+        assert_eq!(
+            after.1, before.1,
+            "a block reading no font was composed again"
+        );
+    }
+
+    /// Saying the same ligature switch again composes nothing.
+    #[test]
+    fn the_same_switch_composes_nothing() {
+        let (before, after, joined) = code_and_bystander_runs(|| set_code_ligatures(true));
+        assert_eq!(after, before);
+        assert!(joined);
     }
 
     /// Code asked for at a weight code fonts lack is set in the interface family, and at the

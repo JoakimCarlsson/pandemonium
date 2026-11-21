@@ -59,7 +59,6 @@ impl Controller {
             app.event_pending = true;
             (app.loop_wake)();
         }
-        app.acted = true;
         match self.aside {
             Some(aside) => app.in_aside(aside, act),
             None => act(&mut app),

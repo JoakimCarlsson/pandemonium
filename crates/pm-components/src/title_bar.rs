@@ -41,7 +41,10 @@ pub const FRAMELESS: bool = cfg!(not(target_os = "macos"));
 const DESKTOP_CONTROLS: f32 = if FRAMELESS { 0.0 } else { 72.0 };
 
 /// A title bar being described: the place the command center names, when the window shows one.
-#[derive(Clone, Debug, Default)]
+///
+/// It is the title bar's own state, what the bar shows and nothing else, compared by value,
+/// so the bar is composed again only when it changed.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct TitleBar {
     /// What the command center says the window is pointed at; nothing leaves out everything but the controls of the window.
     place: Option<String>,

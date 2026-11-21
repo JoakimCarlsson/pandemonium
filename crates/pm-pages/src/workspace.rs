@@ -61,6 +61,7 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
     let plan_width = state.plan_room(width);
     let paned = state.paned();
     let inner = state.inner_sizes();
+    let scales = (theme::step_scale(), theme::text_scale());
     let frame = state.code_lines.frame(Modifier::new().fill_max_size());
     keyboard_asks(state);
     rustle::stack_with(frame, || {
@@ -72,7 +73,10 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
                 Arrangement::Start,
                 Alignment::Start,
                 || {
-                    region((width, height, inner), || TitleBar::of(state).build());
+                    let bar = TitleBar::of(state);
+                    rustle::skippable((bar.clone(), width, height, inner, scales), move || {
+                        bar.build();
+                    });
                     row_arranged(
                         Modifier::new().weight(1.0).fill_max_width(),
                         Arrangement::Start,
@@ -106,9 +110,12 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
                                 Sash::column(Target::Window(WindowEvent::PlanSash))
                                     .between()
                                     .build();
-                                region((plan_width, height, inner), || {
-                                    plan::panel(state, source, plan_width);
-                                });
+                                let scroll = state.plan_scroll.clone();
+                                let source = source.to_owned();
+                                rustle::skippable(
+                                    (source.clone(), scroll.clone(), plan_width, height, scales),
+                                    move || plan::panel(&scroll, &source, plan_width),
+                                );
                             }
                             if let Some(session) = state.review_session().filter(|_| reviewing) {
                                 Sash::column(Target::Window(WindowEvent::ReviewSash))

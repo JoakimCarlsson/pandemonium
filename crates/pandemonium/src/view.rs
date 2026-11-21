@@ -303,6 +303,12 @@ fn open() -> bool {
 }
 
 impl View {
+    /// A number that differs between two views that would be written differently, made from
+    /// what would be written without keeping it, for an effect keyed on the view.
+    pub fn fingerprint(&self) -> u64 {
+        crate::fingerprint::of(self)
+    }
+
     /// The browsers of the sessions other than the one that was open, by machine and server number.
     pub(crate) fn session_browsers(&self) -> &[SavedSessionBrowser] {
         &self.session_browsers

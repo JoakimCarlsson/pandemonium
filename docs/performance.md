@@ -58,7 +58,11 @@ and a sampling profile:
   review panels) are now `pm_components::revision::region` blocks keyed by
   the screen's revision and their room, and a handle's drag changes only
   sizes (`Model::resize`), so the regions whose room did not change keep what
-  they emitted.
+  they emitted. The title bar and the plan panel have since moved to blocks
+  keyed by their own state compared by value, so a keystroke or a streamed
+  reply leaves them too, and nothing composes the whole tree by hand any more:
+  fonts, ligatures, the theme, window sizes and whether the window floats are
+  snapshot state their readers follow.
 
 Measured on the same machine (`dev` profile, milliseconds, p50 / p95 of the
 whole turn; before is the earlier interface with text sizes cached as a

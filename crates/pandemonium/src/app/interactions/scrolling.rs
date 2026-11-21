@@ -310,3 +310,47 @@ fn the_quick_input_keeps_its_pick_in_view() {
         );
     }
 }
+
+/// Whether the language server is to be asked for the names of the lines in view now.
+fn names_wanted(rig: &Rig) -> bool {
+    rig.read(|screen| screen.names_in_view_wanted())
+}
+
+/// The names of the lines in view of a long file are asked for as the file shows and again
+/// after a scroll brings other lines into view, by the root's effect over the lines in view
+/// and the file's version rather than after every frame.
+#[test]
+fn the_names_in_view_are_asked_for_as_they_come_into_view() {
+    let mut rig = Rig::shot(Shot::Code);
+    rig.app.borrow().model.update(|screen| {
+        screen.editor.semantic_highlighting = true;
+        screen.editor.semantic_range_lines = 1;
+        screen.editor.semantic_range_margin = 0;
+        for viewer in &mut screen.git.viewers {
+            if let pm_components::open_files::Contents::Text(document) = &mut viewer.contents {
+                document.synced = true;
+                document.semantic_tokens_supported = true;
+                document.semantic_ranges_supported = true;
+            }
+        }
+    });
+    assert!(names_wanted(&rig), "the shot's file wants no names");
+    rig.settle();
+    assert!(!names_wanted(&rig), "the names in view were not asked for");
+    let area = rig.read(Screen::code_area).expect("the file is shown");
+    rig.move_to((area.origin.x + 100.0, area.origin.y + 100.0));
+    let top = |rig: &Rig| {
+        rig.read(|screen| {
+            screen
+                .shown_viewer()
+                .and_then(|viewer| viewer.scroll.first_visible_item())
+        })
+    };
+    let before = top(&rig);
+    rig.wheel(600.0);
+    assert_ne!(top(&rig), before, "the file did not scroll");
+    assert!(
+        !names_wanted(&rig),
+        "the lines scrolled into view were not asked for"
+    );
+}

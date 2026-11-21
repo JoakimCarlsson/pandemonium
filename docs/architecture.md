@@ -83,11 +83,21 @@ One crate per layer, each depending only on the layers below it.
   (`pm-components/src/tooltip.rs`, `Button::tooltip`), shown after a rest on
   the frame clock, at once in snapshots.
   The screen is one rustle state the window roots read, so a change composes
-  the root again. The regions of the workspace (title bar, sidebar, each pane,
-  the dock, the plan and review panels) are `pm_components::revision::region`
-  blocks keyed by the screen's revision and the room they are given; dragging
-  the handle between panels changes sizes only (`Model::resize`), which leaves
-  the revision, so only the regions whose room changed are composed again.
+  the root again. The title bar and the plan panel are skippable blocks keyed
+  by their own state compared by value (`TitleBar`, the plan's source and
+  scroll state) and their room, so a change elsewhere leaves them. The other
+  regions of the workspace (sidebar, each pane, the dock, the review panel and
+  the pages without panes) still take the whole workspace, so they are
+  `pm_components::revision::region` blocks keyed by the screen's revision and
+  the room they are given; dragging the handle between panels changes sizes
+  only (`Model::resize`), which leaves the revision, so only the regions whose
+  room changed are composed again.
+  What the views read besides the screen is snapshot state too, so a change of
+  it composes its readers and nothing composes the tree by hand: the theme and
+  each window's size (`Shared` in `app/host.rs`), whether the window floats and
+  where its shadow goes (`pm-components/src/window.rs`), the fonts chosen and
+  installed (`theme::set_font_choice`, `theme::fonts_changed`) and code
+  ligatures (`theme::set_code_ligatures`).
   Spinners read their angle while they are drawn, so they turn without
   composing (see `docs/performance.md`).
   There is no frame report: what the binary needs of the geometry comes from
@@ -354,10 +364,15 @@ What the app does with the windows goes through rustle's API:
   (`idle_effects` in `app/host.rs`), each keyed on the state it follows: what
   follows a change of the screen (settings written, the outbox delivered, the
   view's save put off, the place recorded, the windows beside the main one
-  followed) on the screen's generation; the card about a word, the highlight
+  followed) as the `side_effect` of a block that reads the screen, so it runs
+  once after each change; the names of the lines in view of a long file asked
+  of the language server by a `launched_effect` keyed on those lines and the
+  file's version, in a block that reads the screen and the code view's scroll
+  and size; the card about a word, the highlight
   and marker requests, autosave, recording keys and the view's save each as a
   `launched_effect` keyed on what it waits on (the word under the pointer, the
-  file, version and caret, the chords recorded, the screen's generation), so a
+  file, version and caret, the chords recorded, the fingerprint of the view as
+  it would be written), so a
   change starts its wait again, waiting with rustle's `delay` on the frame
   clock, which sets a timer and draws nothing meanwhile, and then acting when
   it still waits on the same thing; the agents' work looked at, the browser's

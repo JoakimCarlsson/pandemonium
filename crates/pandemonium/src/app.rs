@@ -103,11 +103,6 @@ pub struct App {
     shell: host::Shell,
     /// The window standing as the main one, once it is open.
     window: Option<Rc<dyn port::Port>>,
-    /// Whether something changed outside the model that the windows must be composed again for.
-    recompose: bool,
-    /// Whether an operation of the views changed the app since it was last woken, so a
-    /// frame is due even for an event the app's own logic does not act on.
-    acted: bool,
     /// Optional CPU frame timings and pointer response measurements.
     timings: performance::Timings,
     /// The light and the dark theme the window is drawn in.
@@ -328,8 +323,6 @@ impl App {
         Self {
             shell: host::Shell::new(model.clone(), focus.clone()),
             window: None,
-            recompose: true,
-            acted: false,
             fonts_applied: (
                 window_settings.appearance.interface_font.clone(),
                 window_settings.appearance.code_font.clone(),
@@ -447,8 +440,8 @@ impl App {
         }
     }
 
-    /// Asks the language server for the names of the lines of the file shown that are in view, when the file is long enough for those to be asked for first and they are not held.
-    fn ask_names_in_view(&mut self) {
+    /// Asks the language server for the names of the lines of the file shown that are in view, when the file is long enough for those to be asked for first and they are not held, as the root's effect over the lines in view and the file's version has it do.
+    pub(super) fn ask_names_in_view(&mut self) {
         if self.model.read(Screen::code_area).is_none() {
             return;
         }
@@ -582,7 +575,6 @@ impl App {
         }
         let tokens = self.tokens();
         self.shell.set_tokens(tokens);
-        self.recompose = true;
     }
 
     /// Writes what the reader chose for the agents' settings to disk when it differs from what was last written.
@@ -602,10 +594,25 @@ impl App {
         self.saved_choices = choices;
     }
 
-    /// Notes that the view changed since it was last written, so the root's effects write it
-    /// once typing pauses, or at the latest [`VIEW_SAVE_BURST`] after the first change.
+    /// Notes that the screen changed since the view was last written, so the root's effects
+    /// write it once changes of the view pause, or at the latest [`VIEW_SAVE_BURST`] after
+    /// the first change.
     fn defer_view_save(&mut self) {
         self.view_unsaved = true;
+    }
+
+    /// The fingerprint of the view as the screen shows it now, which the pause before the
+    /// view is written waits on. The app says it each time it says what it waits on, before
+    /// the windows are composed for what it handled, so a change of it is composed with the
+    /// change of the screen that made it.
+    fn view_fingerprint(&self) -> u64 {
+        let work = &self.work;
+        let focused = self.focus.focused();
+        self.model.read(|screen| match screen {
+            Screen::Workspace(state) => {
+                View::capture(state, focused, |position| work.server_number(position)).fingerprint()
+            }
+        })
     }
 
     /// Writes the view once the root's effect says typing paused or the burst ran long, when

@@ -27,12 +27,9 @@ pub(super) fn without_band(size: (f32, f32)) -> (f32, f32) {
 }
 
 impl App {
-    /// Tells the windows built next whether they float, with a band around them for their shadow, composing them again when that changed: they float unless the window is maximized or full screen.
+    /// Tells the windows whether they float, with a band around them for their shadow: they float unless the window is maximized or full screen. The frames read it as snapshot state, so they are composed again when it changed.
     pub(super) fn sync_floating(&mut self) {
         let floating = self.window.as_ref().is_some_and(|window| window.floats());
-        if floating != pm_components::framed() && FRAMELESS {
-            self.recompose = true;
-        }
         pm_components::set_floating(floating);
     }
 

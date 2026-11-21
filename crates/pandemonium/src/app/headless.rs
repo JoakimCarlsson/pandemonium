@@ -248,6 +248,9 @@ pub(super) struct Rig {
     pub(super) clipboard: Memory,
     /// The modifier keys held.
     modifiers: Modifiers,
+    /// How many times the main window's root was composed, which only a change of state
+    /// the root reads itself does.
+    roots: Rc<Cell<u32>>,
 }
 
 impl Rig {
@@ -272,13 +275,21 @@ impl Rig {
         let clipboard = Memory::default();
         rustle::set_clipboard(Rc::new(clipboard.clone()));
         app.apply_appearance();
-        app.recompose = true;
         let shared = app.shell.shared.clone();
         let app = Rc::new(RefCell::new(app));
         shared.attach(&app);
         let clock = Rc::new(Cell::new(Duration::ZERO));
         let main_shared = shared.clone();
-        let main = embedded(move || main_view(&main_shared), &clock, outer);
+        let roots = Rc::new(Cell::new(0));
+        let counted = Rc::clone(&roots);
+        let main = embedded(
+            move || {
+                counted.set(counted.get() + 1);
+                main_view(&main_shared);
+            },
+            &clock,
+            outer,
+        );
         let mut rig = Self {
             app,
             screens: Screens {
@@ -291,6 +302,7 @@ impl Rig {
             shared,
             clipboard,
             modifiers: Modifiers::default(),
+            roots,
         };
         rig.settle();
         rig
@@ -299,6 +311,11 @@ impl Rig {
     /// The app showing the screen of the snapshot `shot`, at the snapshots' size.
     pub(super) fn shot(shot: crate::snapshot::Shot) -> Self {
         Self::new(shot.screen(), SIZE)
+    }
+
+    /// How many times the main window's root was composed since the rig opened.
+    pub(super) fn root_passes(&self) -> u32 {
+        self.roots.get()
     }
 
     /// The time the main window's interface spent composing and laying out
@@ -344,7 +361,6 @@ impl Rig {
     /// with a delay, such as tooltips, the card about a word of code and the app's other
     /// pauses, and comes to rest.
     pub(super) fn wait(&mut self, ms: u64) {
-        self.app.borrow_mut().recompose = true;
         self.screens
             .clock
             .set(self.screens.clock.get() + Duration::from_millis(ms));
@@ -560,11 +576,7 @@ impl Rig {
         self.window().size.set(outer);
         resize(&mut self.screens.main, outer);
         self.settle();
-        {
-            let mut app = self.app.borrow_mut();
-            app.recompose = true;
-            app.flush();
-        }
+        self.app.borrow_mut().flush();
         self.update();
     }
 

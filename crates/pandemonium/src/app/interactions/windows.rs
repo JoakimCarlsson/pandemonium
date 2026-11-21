@@ -283,3 +283,60 @@ fn the_frame_tells_where_it_is_laid_out() {
     assert_eq!((corner.origin.x, corner.origin.y), (0.0, 0.0));
     assert_eq!(app.unframed(corner), frame);
 }
+
+/// Maximizing the window takes away the band its shadow is cast in, so the frame, composed
+/// again through the floating flag it reads with nothing asking for a whole recompose,
+/// spans the band's width more.
+#[test]
+fn maximizing_takes_the_band_away() {
+    if !FRAMELESS || pm_components::shadow_outside() {
+        return;
+    }
+    let mut rig = Rig::shot(Shot::Workspace);
+    let at = bare_title_bar(&rig);
+    let floating = rig
+        .region(Target::Window(WindowEvent::TitleBar))
+        .expect("the title bar is drawn");
+    rig.click(at);
+    rig.click(at);
+    assert!(rig.window().maximized.get());
+    assert_eq!(pm_components::shadow_margin(), 0.0);
+    let maximized = rig
+        .region(Target::Window(WindowEvent::TitleBar))
+        .expect("the title bar is drawn");
+    assert!(
+        (maximized.size.width - floating.size.width - 2.0 * pm_components::SHADOW_MARGIN).abs()
+            < 1.0,
+        "{floating:?} then {maximized:?}"
+    );
+}
+
+/// Moving the pointer over a bare stretch of the title bar changes no state the root
+/// reads, so the root is not composed again: nothing composes the tree by hand.
+#[test]
+fn a_move_that_changes_nothing_composes_no_root() {
+    let mut rig = Rig::shot(Shot::Workspace);
+    rig.wait(2100);
+    let at = bare_title_bar(&rig);
+    rig.move_to(at);
+    rig.wait(1000);
+    let before = rig.root_passes();
+    rig.move_to((at.0 + 4.0, at.1));
+    rig.move_to((at.0 + 8.0, at.1));
+    assert_eq!(rig.root_passes(), before);
+}
+
+/// Typing in the prompt leaves the title bar's own state as it was, so the block that
+/// shows it, keyed on that state, is not composed again; showing the sidebar changes it.
+#[test]
+fn typing_leaves_the_title_bar_alone() {
+    use pm_components::areas::ComposerEvent;
+    let mut rig = Rig::shot(Shot::Workspace);
+    let bar = |rig: &Rig| rig.state(pm_components::TitleBar::of);
+    rig.click_on(Target::Composer(ComposerEvent::Prompt));
+    let before = bar(&rig);
+    rig.type_text("hello");
+    assert_eq!(bar(&rig), before, "typing changed the title bar's state");
+    rig.click_on(Target::Sidebar(SidebarEvent::SidebarToggle));
+    assert_ne!(bar(&rig), before, "the sidebar left the title bar's state");
+}

@@ -112,6 +112,33 @@ impl WorkspaceState {
         Some(lines.first()?.saturating_sub(margin)..lines.last()? + 1 + margin)
     }
 
+    /// Whether the names of the lines in view of the file shown can be asked for alone at
+    /// all: semantic highlighting is on, the file is long enough and its language server
+    /// is open for it and answers for stretches. It reads no scroll, so a view can follow it
+    /// cheaply and look at the lines in view only while it holds.
+    pub fn names_in_view_apply(&self) -> bool {
+        let threshold = self.editor.semantic_range_lines;
+        self.editor.semantic_highlighting
+            && threshold > 0
+            && self.shown_document().is_some_and(|document| {
+                document.lines() >= threshold
+                    && document.synced
+                    && document.semantic_tokens_supported
+                    && document.semantic_ranges_supported
+            })
+    }
+
+    /// The lines in view, with the version of the file shown, while the language server
+    /// should be asked for their names alone (see [`names_in_view_wanted`](Self::names_in_view_wanted)),
+    /// for an effect keyed on what it asks for.
+    pub fn names_in_view(&self) -> Option<(std::ops::Range<usize>, i32)> {
+        let lines = self.names_view()?;
+        let document = self.shown_document()?;
+        document
+            .semantic_range_wanted(lines.clone())
+            .map(|_| (lines, document.version))
+    }
+
     /// Whether the language server should be asked for the names of the lines in view alone: the file is long, its names are not all held and the lines in view are not covered by what is.
     pub fn names_in_view_wanted(&self) -> bool {
         let Some(lines) = self.names_view() else {

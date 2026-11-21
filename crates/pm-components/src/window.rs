@@ -3,7 +3,6 @@
 use crate::theme;
 use crate::theme::Frame;
 use rustle::{Alignment, Arrangement};
-use std::cell::Cell;
 
 use rustle::{Modifier, Shadow};
 
@@ -29,31 +28,40 @@ pub const WINDOW_SHADOW: &[Shadow] = &[
 ];
 
 thread_local! {
-    /// Whether the windows of this thread are floating, which is when they are neither maximized nor full screen and so have room around them for a shadow.
-    static FLOATING: Cell<bool> = const { Cell::new(false) };
+    /// Whether the windows of this thread are floating, which is when they are neither maximized nor full screen and so have room around them for a shadow, as snapshot state the frames read.
+    static FLOATING: rustle::State<bool> = rustle::mutable_state(false);
 
-    /// Whether the desktop shows the shadow of a floating window of this thread outside the window, so that the window leaves no band for it.
-    static SHADOW_OUTSIDE: Cell<bool> = const { Cell::new(false) };
+    /// Whether the desktop shows the shadow of a floating window of this thread outside the window, so that the window leaves no band for it, as snapshot state the frames read.
+    static SHADOW_OUTSIDE: rustle::State<bool> = rustle::mutable_state(false);
 }
 
-/// Says whether the windows this thread builds from now on float, with room around them for their shadow.
+/// Writes `value` to the flag `flag` holds when it differs, so its readers are composed again only for a change.
+fn set_flag(flag: &'static std::thread::LocalKey<rustle::State<bool>>, value: bool) {
+    flag.with(|held| {
+        if held.get() != value {
+            held.set(value);
+        }
+    });
+}
+
+/// Says whether the windows of this thread float, with room around them for their shadow; the frames that read it are composed again when it changes.
 pub fn set_floating(floating: bool) {
-    FLOATING.with(|held| held.set(floating));
+    set_flag(&FLOATING, floating);
 }
 
-/// Says whether the shadow of a floating window is shown outside it, by the desktop, rather than in a band inside the window.
+/// Says whether the shadow of a floating window is shown outside it, by the desktop, rather than in a band inside the window; the frames that read it are composed again when it changes.
 pub fn set_shadow_outside(outside: bool) {
-    SHADOW_OUTSIDE.with(|held| held.set(outside));
+    set_flag(&SHADOW_OUTSIDE, outside);
 }
 
 /// Whether the shadow of a floating window is shown outside it, as [`set_shadow_outside`] last said.
 pub fn shadow_outside() -> bool {
-    SHADOW_OUTSIDE.with(Cell::get)
+    SHADOW_OUTSIDE.with(rustle::State::get)
 }
 
 /// Whether the windows draw their own frame and float, and so have rounded corners, a border and a shadow.
 pub fn framed() -> bool {
-    FRAMELESS && FLOATING.with(Cell::get)
+    FRAMELESS && FLOATING.with(rustle::State::get)
 }
 
 /// How wide the band around a window is that holds its shadow, in logical pixels: none when the desktop frames the window, it is maximized, or its shadow is shown outside it.
@@ -227,6 +235,46 @@ impl<'a> Window<'a> {
                     content();
                 }
             },
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use super::*;
+
+    /// A window that stops floating composes again what reads the band around it, and only
+    /// that, with no one asking for the whole tree to be composed again.
+    #[test]
+    fn floating_composes_again_only_what_reads_the_band() {
+        set_floating(true);
+        let banded = Rc::new(Cell::new((0, 0.0)));
+        let bystander = Rc::new(Cell::new(0));
+        let (band, other) = (Rc::clone(&banded), Rc::clone(&bystander));
+        let mut ui = rustle::Embedded::without_renderer(
+            move || {
+                let band = Rc::clone(&band);
+                rustle::skippable((), move || band.set((band.get().0 + 1, shadow_margin())));
+                let other = Rc::clone(&other);
+                rustle::skippable((), move || other.set(other.get() + 1));
+            },
+            || {},
+        );
+        ui.resize((100, 100), 1.0);
+        ui.update();
+        let (runs, margin) = banded.get();
+        assert_eq!(margin, if FRAMELESS { SHADOW_MARGIN } else { 0.0 });
+        set_floating(false);
+        ui.update();
+        let expected = if FRAMELESS { runs + 1 } else { runs };
+        assert_eq!(banded.get(), (expected, 0.0));
+        assert_eq!(
+            bystander.get(),
+            1,
+            "a block reading no band was composed again"
         );
     }
 }

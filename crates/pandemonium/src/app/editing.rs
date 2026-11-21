@@ -52,7 +52,7 @@ impl App {
         self.model.change(|state| state.lightbulb_requested());
     }
 
-    /// Has the shaper join characters into ligatures, or not, as the editor's settings say, drawing everything again when that changes.
+    /// Has the shaper join characters into ligatures, or not, as the editor's settings say; the composables that set code read the switch as snapshot state and are composed again when it changes.
     pub(super) fn follow_ligatures(&mut self) {
         let Some(on) = self
             .model
@@ -60,10 +60,7 @@ impl App {
         else {
             return;
         };
-        if pm_components::theme::code_ligatures() != on {
-            pm_components::theme::set_code_ligatures(on);
-            self.recompose = true;
-        }
+        pm_components::theme::set_code_ligatures(on);
     }
 
     /// Takes the press in the file shown at the byte `byte` as one on the selection that a

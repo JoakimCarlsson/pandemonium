@@ -2,9 +2,9 @@
 //! on, delaying on the frame clock the rig moves on, so each is seen to fire once its time
 //! has passed and not before.
 
-use pm_components::areas::{EditorEvent, SidebarEvent};
+use pm_components::areas::{ComposerEvent, EditorEvent, SidebarEvent, WindowEvent};
 use pm_components::target::Target;
-use rustle::Key;
+use rustle::{Key, PointerButton};
 
 use crate::app::headless::Rig;
 use crate::snapshot::Shot;
@@ -156,23 +156,63 @@ fn the_view_is_written_once_changes_pause() {
     assert!(!rig.app.borrow().view_unsaved, "never written");
 }
 
+/// A change that only resizes a panel is followed as every change of the screen is: the
+/// view is written with the new width once changes of it pause.
+#[test]
+fn a_resized_panel_is_written_with_the_view() {
+    let mut rig = Rig::shot(Shot::Workspace);
+    rig.wait(2100);
+    let from = rig.center(Target::Window(WindowEvent::SidebarSash));
+    let to = (from.0 + 60.0, from.1);
+    rig.move_to(from);
+    rig.button_in(None, PointerButton::Primary, true, from);
+    rig.move_to(to);
+    rig.button_in(None, PointerButton::Primary, false, to);
+    assert!(rig.app.borrow().view_unsaved, "the resize was not followed");
+    rig.wait(400);
+    assert!(!rig.app.borrow().view_unsaved, "never written");
+}
+
 /// While the view keeps changing it is still written once the longest wait for a pause
 /// has passed since it first changed.
 #[test]
 fn a_view_that_keeps_changing_is_written_after_a_while() {
     let mut rig = Rig::shot(Shot::Workspace);
+    rig.click_on(Target::Composer(ComposerEvent::Prompt));
     rig.wait(2100);
     for _ in 0..9 {
-        rig.click_on(Target::Sidebar(SidebarEvent::SidebarToggle));
+        rig.type_text("x");
         rig.wait(200);
     }
     assert!(
         rig.app.borrow().view_unsaved,
         "written while changes kept coming"
     );
-    rig.click_on(Target::Sidebar(SidebarEvent::SidebarToggle));
+    rig.type_text("x");
     rig.wait(200);
     assert!(!rig.app.borrow().view_unsaved, "never written");
+}
+
+/// A change of what the screen shows that leaves the view as it would be written, such as
+/// the sidebar shown or hidden, does not put off writing a view that changed before it.
+#[test]
+fn a_change_outside_the_view_does_not_put_off_writing_it() {
+    let mut rig = Rig::shot(Shot::Workspace);
+    rig.click_on(Target::Composer(ComposerEvent::Prompt));
+    rig.wait(2100);
+    rig.type_text("x");
+    rig.wait(200);
+    rig.app
+        .borrow()
+        .model
+        .update(|screen| screen.sidebar_open = !screen.sidebar_open);
+    rig.settle();
+    assert!(rig.app.borrow().view_unsaved);
+    rig.wait(150);
+    assert!(
+        !rig.app.borrow().view_unsaved,
+        "the sidebar put the write off"
+    );
 }
 
 /// While newer releases are looked for, the app asks again each time the wait between

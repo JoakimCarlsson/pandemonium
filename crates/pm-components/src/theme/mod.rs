@@ -65,8 +65,10 @@ thread_local! {
     static SCALES: Cell<(f32, f32)> = const { Cell::new((1.0, 1.0)) };
     /// The font stacks last resolved, the families chosen in settings, and the families they resolved to, once fonts are known.
     static RESOLVED: RefCell<Option<Resolved>> = const { RefCell::new(None) };
-    /// The interface and code families the reader chose in settings, by name; empty for the ones the app ships.
-    static CHOSEN: RefCell<(String, String)> = const { RefCell::new((String::new(), String::new())) };
+    /// The interface and code families the reader chose in settings, by name, empty for the ones the app ships, as snapshot state the composables setting text read.
+    static CHOSEN: rustle::State<(String, String)> = rustle::mutable_state((String::new(), String::new()));
+    /// The installed families as [`fonts_changed`] last found them, as snapshot state the composables setting text read; empty until it is first told.
+    static INSTALLED: rustle::State<Vec<String>> = rustle::mutable_state(Vec::new());
 }
 
 /// Font stacks with the families chosen in settings, and the installed families they resolved to: sans, then mono.
@@ -74,7 +76,12 @@ type Resolved = (Fonts, (String, String), FontFamily, FontFamily);
 
 /// Sets interface text in the family `sans` and code in `mono`, each by name, before the families of the theme's stacks; an empty name keeps the stack.
 pub fn set_font_choice(sans: &str, mono: &str) {
-    CHOSEN.with(|chosen| *chosen.borrow_mut() = (sans.to_owned(), mono.to_owned()));
+    let choice = (sans.to_owned(), mono.to_owned());
+    CHOSEN.with(|chosen| {
+        if chosen.with(|held| *held != choice) {
+            chosen.set(choice);
+        }
+    });
     fonts_changed();
 }
 
@@ -350,14 +357,19 @@ pub fn mono() -> FontFamily {
 
 /// The installed families `fonts`, after the families chosen in settings, resolve to, sans then mono, remembered once fonts are known.
 fn families_for(fonts: Fonts) -> (FontFamily, FontFamily) {
-    let chosen = CHOSEN.with(|chosen| chosen.borrow().clone());
+    let chosen = CHOSEN.with(rustle::State::get);
+    let announced = INSTALLED.with(rustle::State::get);
     if let Some((held, choice, sans, mono)) = RESOLVED.with(|resolved| resolved.borrow().clone())
         && held == fonts
         && choice == chosen
     {
         return (sans, mono);
     }
-    let installed = rustle::font_families();
+    let installed = if announced.is_empty() {
+        rustle::font_families()
+    } else {
+        announced
+    };
     let first = |choice: &str, stack: &[&str], fallback: FontFamily| {
         std::iter::once(choice)
             .filter(|name| !name.is_empty())
@@ -377,9 +389,15 @@ fn families_for(fonts: Fonts) -> (FontFamily, FontFamily) {
     (sans, mono)
 }
 
-/// Forgets the families the font stacks resolved to, after fonts were installed or the reader chose others.
+/// Forgets the families the font stacks resolved to, after fonts were installed or the reader chose others, and holds the families installed now, so the composables setting text are composed again when they changed.
 pub fn fonts_changed() {
     RESOLVED.with(|resolved| *resolved.borrow_mut() = None);
+    let installed = rustle::font_families();
+    INSTALLED.with(|held| {
+        if held.with(|families| *families != installed) {
+            held.set(installed);
+        }
+    });
 }
 
 #[cfg(test)]
