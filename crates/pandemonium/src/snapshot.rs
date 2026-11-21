@@ -1,39 +1,62 @@
 //! Drawing one frame to a PNG without opening a window.
 
+use pm_components::areas::WindowEvent;
+use pm_components::areas::{EditorEvent, SearchEvent};
+
+use pm_components::areas::TreeEvent;
+
+use pm_components::areas::TerminalEvent;
+
+use pm_components::areas::SidebarEvent;
+
+use pm_components::areas::SettingsEvent;
+
+use pm_components::areas::GitEvent;
+
+use pm_components::areas::DiffEvent;
+
+use pm_components::areas::DialogEvent;
+
+use pm_components::areas::ComposerEvent;
+
+use pm_components::areas::ChatEvent;
+
+use pm_components::areas::BrowserEvent;
+
+use pm_components::events::Event;
+use pm_components::events::FieldEvent;
+use pm_components::target::Target;
 use std::path::Path;
 
 use pm_components::Project;
-use pm_components::adder::{ADDER_BROWSE, ADDER_CLONE, ADDER_ROW_BASE, Found, Kind as Row};
-use pm_components::branch_tasks::{BRANCH_TASK_ROW_BASE, BranchTask};
+use pm_components::adder::{Found, Kind as Row};
+use pm_components::branch_tasks::BranchTask;
 use pm_components::browser_safety::{Certificate, Download, Question as Asked, Saving};
-use pm_components::diff::gutter_id;
-use pm_components::git_controls::{BRANCH_BUTTON, BRANCH_FILTER, Pick as Choosing};
+
+use pm_components::git_controls::Pick as Choosing;
 use pm_components::git_menus::MenuKind;
 use pm_components::git_prompts::Prompt;
-use pm_components::open_files::EDITOR_FIELD;
-use pm_components::panes::{Item, SPLIT_RIGHT, Side};
-use pm_components::settings::{SETTINGS_ADD, SETTINGS_FIND, Section};
+use pm_components::panes::{Item, Side};
+use pm_components::settings::Section;
 use pm_components::settings_catalog::{OPEN_LIST, Setting as SettingsCatalogue};
-use pm_components::settings_machines::{MACHINE_ADD, MACHINE_ADDRESS, MACHINE_NAME};
-use pm_components::state::{
-    CHAT_TEXT, COMMENT_ADD, COMMENT_FIELD, COMMIT_MESSAGE, DETAILS_BASE, FILE_BASE, RESTORE_BASE,
-    REVIEW_FILES, STAGE_BASE, SUBAGENTS_CHIP, TAB_CHAT,
-};
-use pm_components::state::{LOCATION, SETTINGS};
-use pm_components::tree_actions::{TREE_NEW_FOLDER, TreeTarget};
+
+use pm_components::tagged::lay_out;
+use pm_components::theme::{Appearance, default_family};
+use pm_components::tree_actions::TreeTarget;
+use pm_editor::Edit;
 use pm_harness::{
-    Alternative, Background, Choice, Diff, Discovery, Event, Input as Skip, Inquiry, Kind, Merge,
-    Permission, Pick, PlanStep, Progress, Question, Setting, Skipped, Slash, Standing, Tool,
-    ToolState, TrustRequest, Verdict, Worktree,
+    Alternative, Background, Choice, Diff, Discovery, Event as HarnessEvent, Input as Skip,
+    Inquiry, Kind, Merge, Permission, Pick, PlanStep, Progress, Question, Setting, Skipped, Slash,
+    Standing, Tool, ToolState, TrustRequest, Verdict, Worktree,
 };
-use pm_input::{FocusId, PointerState};
-use pm_pages::{ADD_PROJECT, HISTORY, PROMPT, SEND, Screen, TAB_DIFF, TERMINAL, WorkspaceState};
-use pm_renderer::{DrawList, Renderer};
-use pm_text::Edit;
-use pm_theme::{Appearance, default_family};
-use pm_ui::{Input, TextPoint, TextSelection};
+use pm_pages::{Screen, WorkspaceState};
+use rustle::SelectionPoint;
 
 use crate::scene;
+
+use self::offscreen::{Shot as Frame, write_png};
+
+mod offscreen;
 
 /// Logical width of the snapshot.
 const WIDTH: u32 = 1280;
@@ -97,6 +120,10 @@ pub const SETTINGS_SHOTS: [(&str, Section); 29] = [
     ("tools", Section::Tools),
     ("servers", Section::Servers),
 ];
+
+/// The two ends of a selection a snapshot shows, each as words of a text and how many
+/// characters into them it falls.
+type SelectedWords = ((&'static str, usize), (&'static str, usize));
 
 /// Which screen a snapshot shows.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -675,7 +702,7 @@ fn code() -> WorkspaceState {
     for id in ["rust", "markdown", "markdown-inline"] {
         load_installed_grammar(id);
     }
-    let mut state = workspace_sample().after(TAB_DIFF);
+    let mut state = workspace_sample().handle(Event::Diff(DiffEvent::TabDiff));
     state.open_viewer(CODE_PATH.to_owned(), false);
     let text = "use std::collections::HashMap;\nuse std::path::PathBuf;\n\n/// A session of an agent, with its **own** worktree.\n#[derive(Clone, Debug)]\npub struct Session {\n    pub id: u64,\n    pub root: PathBuf,\n    names: HashMap<String, usize>,\n}\n\nconst LIMIT: usize = 64;\n\nimpl Session {\n    /// Makes a session working in `root`.\n    pub fn new(id: u64, root: PathBuf) -> Self {\n        let names = HashMap::with_capacity(LIMIT);\n        let label: u32 = \"main\";\n        Self { id, root, names }\n    }\n\n    /// How many names the session knows.\n    pub fn count(&self) -> usize {\n        self.names.len()\n    }\n}\n";
     let state = state.with_file(
@@ -730,7 +757,10 @@ fn code() -> WorkspaceState {
         .with_diagnostics(&None, &directory, CODE_PATH, diagnostics);
     let caret = text.find("-> Self {").map_or(0, |at| at + "-> Self ".len());
     state
-        .edited(EDITOR_FIELD, Edit::Place(caret, false))
+        .handle(Event::Field(FieldEvent::Edited {
+            field: Target::Editor(EditorEvent::EditorField),
+            edit: Edit::Place(caret, false),
+        }))
         .with_blame(
             0,
             CODE_PATH,
@@ -779,7 +809,7 @@ fn written(path: &str, language: &str, grammars: &[&str], text: &str) -> Workspa
     for id in grammars {
         load_installed_grammar(id);
     }
-    let mut state = workspace_sample().after(TAB_DIFF);
+    let mut state = workspace_sample().handle(Event::Diff(DiffEvent::TabDiff));
     state.open_viewer(path.to_owned(), false);
     state.with_file(
         0,
@@ -803,7 +833,10 @@ fn project_search() -> WorkspaceState {
     };
     let mut state = code().project_search_opened();
     for character in "names".chars() {
-        state = state.project_search_typed(pm_text::Edit::Insert(character));
+        state = state.handle(Event::Field(FieldEvent::Typed {
+            field: Target::Search(SearchEvent::ProjectSearchField),
+            text: String::from(&character.to_string()),
+        }));
     }
     let session = state.review_index().unwrap_or_default();
     state.with_project_search(
@@ -1093,8 +1126,14 @@ fn completing() -> WorkspaceState {
         .and_then(|document| document.field.text().find(anchor))
         .map_or(0, |at| at + "        self.names.".len());
     let state = state
-        .edited(EDITOR_FIELD, Edit::Place(at, false))
-        .edited(EDITOR_FIELD, Edit::Paste("i".to_owned()))
+        .handle(Event::Field(FieldEvent::Edited {
+            field: Target::Editor(EditorEvent::EditorField),
+            edit: Edit::Place(at, false),
+        }))
+        .handle(Event::Field(FieldEvent::Edited {
+            field: Target::Editor(EditorEvent::EditorField),
+            edit: Edit::Paste("i".to_owned()),
+        }))
         .completion_requested((236.0, 548.0));
     let version = state
         .shown_document()
@@ -1185,7 +1224,10 @@ fn chat_search() -> WorkspaceState {
     };
     code()
         .sessions_requested((340.0, 0.0))
-        .listing_filtered(Edit::Paste("restore".to_owned()))
+        .handle(Event::Field(FieldEvent::Typed {
+            field: Target::Editor(EditorEvent::ListingFilter),
+            text: String::from("restore"),
+        }))
         .with_chats(
             "restore",
             vec![
@@ -1486,7 +1528,10 @@ fn signing() -> WorkspaceState {
         .unwrap_or_default();
     let caret = text.find("(LIMIT)").map_or(0, |at| at + 1);
     let mut state = state
-        .edited(EDITOR_FIELD, Edit::Place(caret, false))
+        .handle(Event::Field(FieldEvent::Edited {
+            field: Target::Editor(EditorEvent::EditorField),
+            edit: Edit::Place(caret, false),
+        }))
         .with_signature_at((470.0, 362.0));
     let version = state
         .shown_document()
@@ -1538,7 +1583,7 @@ fn diff_submodule() -> WorkspaceState {
         });
         session.changes.splice(0..0, [moved, edited]);
     }
-    state.after(TAB_DIFF)
+    state.handle(Event::Diff(DiffEvent::TabDiff))
 }
 
 /// The first session in a folder that holds the repositories `api` and `web`, with files edited in both and one of them staged, where each repository stands, and, when `picked`, `api` picked in the list of repositories.
@@ -1592,7 +1637,7 @@ fn changes_repositories(picked: bool) -> WorkspaceState {
     if picked {
         state.git.repository = Some("api".to_owned());
     }
-    state.after(TAB_DIFF)
+    state.handle(Event::Diff(DiffEvent::TabDiff))
 }
 
 /// The session of [`diff_submodule`] with its submodules listed as repositories, the folder's own picked, or, when `inside`, the submodule `vendor/inner` picked with its branches open.
@@ -1620,7 +1665,7 @@ fn branches_submodule(inside: bool) -> WorkspaceState {
 /// A JavaScript file open while JavaScript is not installed, so the offer to install it is above its lines.
 fn language_offer() -> WorkspaceState {
     let path = "scripts/build.js";
-    let mut state = workspace_sample().after(TAB_DIFF);
+    let mut state = workspace_sample().handle(Event::Diff(DiffEvent::TabDiff));
     state.extensions = sample_languages();
     state.open_viewer(path.to_owned(), false);
     state.with_file(
@@ -1659,7 +1704,7 @@ fn conflict() -> WorkspaceState {
     let theirs = "pub struct Session {\n    pub id: u64,\n    pub root: PathBuf,\n    titles: Vec<String>,\n}\n";
     let merged = "use std::path::PathBuf;\n\n/// A session of an agent.\n<<<<<<< HEAD\npub struct Session {\n    pub id: u64,\n    pub root: PathBuf,\n    checkpoints: Vec<Checkpoint>,\n}\n=======\npub struct Session {\n    pub id: u64,\n    pub root: PathBuf,\n    titles: Vec<String>,\n}\n>>>>>>> origin/main\n\nimpl Session {\n    pub fn new(id: u64, root: PathBuf) -> Self {\n<<<<<<< HEAD\n        Self { id, root, checkpoints: Vec::new() }\n=======\n        Self { id, root, titles: Vec::new() }\n>>>>>>> origin/main\n    }\n}\n";
     workspace_sample()
-        .after(TAB_DIFF)
+        .handle(Event::Diff(DiffEvent::TabDiff))
         .with_conflict(
             0,
             path,
@@ -1878,12 +1923,8 @@ fn browser_finding(tools: bool) -> WorkspaceState {
             pixels.extend_from_slice(&[shade, shade, shade, 255]);
         }
     }
-    let page = pm_renderer::Picture {
-        key: pm_renderer::Picture::live_key(pm_components::browser::PAGE_SURFACE, 1),
-        width,
-        height,
-        pixels: std::sync::Arc::new(pixels),
-    };
+    let page = rustle::ImageData::from_rgba(width, height, pixels)
+        .expect("as many pixels as the picture is large");
     state.browser_tab_painted(
         first,
         Some(page),
@@ -1894,10 +1935,10 @@ fn browser_finding(tools: bool) -> WorkspaceState {
     );
     state.browser_zoomed(first, 1.25);
     state.browser_find_opened();
-    let mut state = state.edited(
-        pm_components::browser::BROWSER_FIND_FIELD,
-        Edit::Paste("route".to_owned()),
-    );
+    let mut state = state.handle(Event::Field(FieldEvent::Typed {
+        field: Target::Browser(BrowserEvent::BrowserFindField),
+        text: String::from("route"),
+    }));
     state.browser_found(first, 2, 7);
     if tools {
         state = state.browser_tools_shown();
@@ -1909,7 +1950,7 @@ fn browser_finding(tools: bool) -> WorkspaceState {
 }
 
 /// The picture of a page with one text field that has the keyboard: a ring round the field, its text selected up to a caret.
-fn input_page(width: u32, height: u32) -> pm_renderer::Picture {
+fn input_page(width: u32, height: u32) -> rustle::ImageData {
     let (left, right, top, bottom) = (40_u32, 400_u32, 60_u32, 100_u32);
     let (selected_to, caret) = (260_u32, 262_u32);
     let mut pixels = Vec::with_capacity((width * height * 4) as usize);
@@ -1932,12 +1973,8 @@ fn input_page(width: u32, height: u32) -> pm_renderer::Picture {
             pixels.extend_from_slice(&pixel);
         }
     }
-    pm_renderer::Picture {
-        key: pm_renderer::Picture::live_key(pm_components::browser::PAGE_SURFACE, 1),
-        width,
-        height,
-        pixels: std::sync::Arc::new(pixels),
-    }
+    rustle::ImageData::from_rgba(width, height, pixels)
+        .expect("as many pixels as the picture is large")
 }
 
 /// The workspace with the browser on a page whose text field has the keyboard.
@@ -1961,7 +1998,7 @@ fn browser_input() -> WorkspaceState {
 
 /// The workspace on the second session, whose browser holds one tab, after the first session was left with several tabs open.
 fn browser_sessions() -> WorkspaceState {
-    let mut state = workspace_sample().after(FocusId(pm_components::state::SESSION_BASE));
+    let mut state = workspace_sample().handle(Event::Sidebar(SidebarEvent::Session(0)));
     state.open_browser("http://localhost:3000/");
     for address in [
         "http://localhost:5173/checkout",
@@ -1969,7 +2006,7 @@ fn browser_sessions() -> WorkspaceState {
     ] {
         state.browser_tab_opened(address, None, false, false);
     }
-    let mut state = state.after(FocusId(pm_components::state::SESSION_BASE + 1));
+    let mut state = state.handle(Event::Sidebar(SidebarEvent::Session(1)));
     state.open_browser("http://localhost:4173/preview");
     if let Some(id) = state.browser.as_ref().map(|browser| browser.active_id()) {
         state.browser_tab_painted(
@@ -2039,7 +2076,7 @@ fn browser_tabs(many: bool) -> WorkspaceState {
 
 /// The workspace on the diff of its first session, the words that changed inside its changed lines marked as the server tells them.
 fn word_diff() -> WorkspaceState {
-    let mut state = workspace_sample().after(TAB_DIFF);
+    let mut state = workspace_sample().handle(Event::Diff(DiffEvent::TabDiff));
     for change in &mut state.sessions[0].changes {
         let source = change
             .diff
@@ -2062,7 +2099,7 @@ fn word_diff() -> WorkspaceState {
 
 /// The workspace on the diff with every file but the first as the server lists them: with the lines they change counted and their diffs not yet read.
 fn diff_listed() -> WorkspaceState {
-    let mut state = workspace_sample().after(TAB_DIFF);
+    let mut state = workspace_sample().handle(Event::Diff(DiffEvent::TabDiff));
     for change in state.sessions[0].changes.iter_mut().skip(1) {
         let (added, removed) = (change.added(), change.removed());
         change.counts = Some((added, removed));
@@ -2087,7 +2124,7 @@ fn diff_opened() -> WorkspaceState {
         .collect();
     let asked: Vec<String> = read.iter().map(|file| file.path.clone()).collect();
     diff_listed()
-        .after(FocusId(FILE_BASE + 2))
+        .handle(Event::Diff(DiffEvent::ChangedFile(2)))
         .with_diffs(0, &asked, read)
 }
 
@@ -2139,32 +2176,64 @@ fn diff_compact() -> WorkspaceState {
     let state = workspace_sample();
     let mut window = state.window.clone();
     window.appearance.density = pm_config::Density::Compact;
-    let mut state = state.with_window_settings(window).after(TAB_DIFF);
+    let mut state = state
+        .with_window_settings(window)
+        .handle(Event::Diff(DiffEvent::TabDiff));
     let source: String = std::iter::once("@@ -0,0 +1,5000 @@".to_owned())
         .chain((1..=5000).map(|line| format!("+    let value_{line} = {line};")))
         .collect::<Vec<_>>()
         .join("\n");
     state.sessions[0].changes[0] = pm_components::sample::Change::new("src/long.rs", &source);
-    state.scrolled_diff(40_000.0, 200_000.0)
+    diff_scrolled_to_row(state, 0, 2497, 3.0)
 }
 
 /// The workspace on the diff with a comment kept on some lines and a box open to write another on a file.
 fn commenting() -> WorkspaceState {
     let state = workspace_sample()
-        .after(TAB_DIFF)
-        .comment_drag_begun(gutter_id(1, true, 23))
-        .comment_drag_extended(gutter_id(1, true, 26))
+        .handle(Event::Diff(DiffEvent::TabDiff))
+        .comment_drag_begun(Target::Diff(DiffEvent::Gutter {
+            change: 1,
+            new: true,
+            line: 23,
+        }))
+        .comment_drag_extended(Target::Diff(DiffEvent::Gutter {
+            change: 1,
+            new: true,
+            line: 26,
+        }))
         .comment_drag_ended()
-        .edited(
-            COMMENT_FIELD,
-            Edit::Paste("Return the id from checkpoint() and drop the unwrap.".to_owned()),
-        )
-        .after(COMMENT_ADD);
+        .handle(Event::Field(FieldEvent::Typed {
+            field: Target::Diff(DiffEvent::CommentField),
+            text: String::from("Return the id from checkpoint() and drop the unwrap."),
+        }))
+        .handle(Event::Diff(DiffEvent::CommentAdd));
+    let state = state
+        .comment_drag_begun(Target::Diff(DiffEvent::Gutter {
+            change: 1,
+            new: false,
+            line: 18,
+        }))
+        .comment_drag_extended(Target::Diff(DiffEvent::Gutter {
+            change: 1,
+            new: false,
+            line: 19,
+        }))
+        .comment_drag_ended();
+    diff_scrolled_to_row(state, 1, 1, 5.0)
+}
+
+/// `state` with the diff's list asked to bring the row at `row` of the file at `file`, counted from its hunk's header, to its top and scroll `past` logical pixels further, as a state holder places a lazy list by item before it is drawn.
+fn diff_scrolled_to_row(
+    state: WorkspaceState,
+    file: usize,
+    row: usize,
+    past: f32,
+) -> WorkspaceState {
+    let header = pm_components::diff::header_item(&state, &state.sessions[0], file);
     state
-        .comment_drag_begun(gutter_id(1, false, 18))
-        .comment_drag_extended(gutter_id(1, false, 19))
-        .comment_drag_ended()
-        .scrolled_diff(560.0, 5000.0)
+        .diff_list
+        .scroll_to_item_offset(header + 1 + row, past);
+    state
 }
 
 /// The commits of a graph with a branch that forks off and is merged back.
@@ -2253,13 +2322,13 @@ fn commits() -> Vec<pm_git::Commit> {
 /// The workspace on the diff with the source control panel filled in: a staged file, an untracked one, a message waiting and the graph.
 fn source() -> WorkspaceState {
     let mut state = workspace_sample()
-        .after(TAB_DIFF)
-        .after(FocusId(STAGE_BASE))
-        .after(FocusId(FILE_BASE + 1))
-        .edited(
-            COMMIT_MESSAGE,
-            Edit::Paste("Restore sessions from checkpoints".to_owned()),
-        )
+        .handle(Event::Diff(DiffEvent::TabDiff))
+        .handle(Event::Diff(DiffEvent::Stage(0)))
+        .handle(Event::Diff(DiffEvent::ChangedFile(1)))
+        .handle(Event::Field(FieldEvent::Typed {
+            field: Target::Git(GitEvent::CommitMessage),
+            text: String::from("Restore sessions from checkpoints"),
+        }))
         .with_history(0, commits());
     if let Some(session) = state.sessions.get_mut(0) {
         session.changes[3].untracked = true;
@@ -2271,8 +2340,8 @@ fn source() -> WorkspaceState {
 /// The workspace on the diff with the first and third changed files picked.
 fn picked() -> WorkspaceState {
     workspace_sample()
-        .after(TAB_DIFF)
-        .after(FocusId(FILE_BASE))
+        .handle(Event::Diff(DiffEvent::TabDiff))
+        .handle(Event::Diff(DiffEvent::ChangedFile(0)))
         .change_picked(2, Choosing::Toggle)
 }
 
@@ -2290,8 +2359,8 @@ fn many_changes() -> WorkspaceState {
             .collect();
     }
     state
-        .after(TAB_DIFF)
-        .after(FocusId(FILE_BASE))
+        .handle(Event::Diff(DiffEvent::TabDiff))
+        .handle(Event::Diff(DiffEvent::ChangedFile(0)))
         .changes_all_picked()
 }
 
@@ -2307,15 +2376,18 @@ fn branching() -> WorkspaceState {
         "origin/feat/editor",
     ];
     workspace_sample()
-        .after(TAB_DIFF)
-        .after(BRANCH_BUTTON)
+        .handle(Event::Diff(DiffEvent::TabDiff))
+        .handle(Event::Git(GitEvent::BranchButton))
         .with_session_branches(0, names.map(str::to_owned).to_vec())
-        .edited(BRANCH_FILTER, Edit::Paste("t".to_owned()))
+        .handle(Event::Field(FieldEvent::Typed {
+            field: Target::Git(GitEvent::BranchFilter),
+            text: String::from("t"),
+        }))
 }
 
 /// The workspace reading a file of the first session as it is in the last commit.
 fn reading() -> WorkspaceState {
-    let mut state = workspace_sample().after(TAB_DIFF);
+    let mut state = workspace_sample().handle(Event::Diff(DiffEvent::TabDiff));
     state.open_viewer("crates/pandemonium/src/session.rs".to_owned(), true);
     let text = "use std::path::PathBuf;\n\n/// A session of an agent.\npub struct Session {\n    pub id: SessionId,\n    pub root: PathBuf,\n}\n\nimpl Session {\n    pub fn new(id: SessionId, root: PathBuf) -> Self {\n        Self { id, root }\n    }\n}\n";
     state.with_file(
@@ -2328,7 +2400,7 @@ fn reading() -> WorkspaceState {
 
 /// The workspace with one file kept open after an edit and another being looked at.
 fn editing() -> WorkspaceState {
-    let mut state = workspace_sample().after(TAB_DIFF);
+    let mut state = workspace_sample().handle(Event::Diff(DiffEvent::TabDiff));
     state.open_viewer("crates/pandemonium/src/session.rs".to_owned(), false);
     let text = "use std::path::PathBuf;\n\n/// A session of an agent.\npub struct Session {\n    pub id: SessionId,\n    pub root: PathBuf,\n}\n\nimpl Session {\n    pub fn new(id: SessionId) -> Self {\n        let name = \"main\"; // 42\n\tlet tabbed = 1;\n        Self { id, root: PathBuf::from(name) }\n    }\n}\n";
     let state = state.with_file(
@@ -2337,7 +2409,10 @@ fn editing() -> WorkspaceState {
         false,
         Ok((Some(text.to_owned()), false, None)),
     );
-    let mut state = state.edited(EDITOR_FIELD, Edit::Paste("// edited\n".to_owned()));
+    let mut state = state.handle(Event::Field(FieldEvent::Edited {
+        field: Target::Editor(EditorEvent::EditorField),
+        edit: Edit::Paste("// edited\n".to_owned()),
+    }));
     state.open_viewer("crates/pandemonium/src/lib.rs".to_owned(), false);
     state.with_file(
         0,
@@ -2349,7 +2424,7 @@ fn editing() -> WorkspaceState {
 
 /// The overview of the first project: its sessions, its own folder on a branch ahead of what it follows with a change, and its latest commits.
 fn overview() -> WorkspaceState {
-    let mut state = workspace_sample().after(FocusId(pm_components::state::PROJECT_BASE));
+    let mut state = workspace_sample().handle(Event::Sidebar(SidebarEvent::Project(0)));
     let home = state.review_index().unwrap_or_default();
     if let Some(session) = state.sessions.get_mut(home) {
         session.branch = "main".to_owned();
@@ -2379,12 +2454,12 @@ fn submodules() -> WorkspaceState {
     {
         session.submodule = Some("vendor/inner".to_owned());
     }
-    state.after(FocusId(pm_components::state::NEW_IN_SUBMODULE_BASE + 1))
+    state.handle(Event::Sidebar(SidebarEvent::NewInSubmodule(1)))
 }
 
 /// The page for starting work with a file of the project open beside it.
 fn new_file() -> WorkspaceState {
-    let mut state = workspace_sample().after(FocusId(pm_components::state::NEW_IN_BASE));
+    let mut state = workspace_sample().handle(Event::Sidebar(SidebarEvent::NewIn(0)));
     state.open_viewer("src/main.rs".to_owned(), false);
     let session = state.review_index().unwrap_or_default();
     state.with_file(
@@ -2401,7 +2476,7 @@ fn new_file() -> WorkspaceState {
 
 /// The workspace with the project's files listed in the review panel.
 fn files() -> WorkspaceState {
-    let state = workspace_sample().after(REVIEW_FILES);
+    let state = workspace_sample().handle(Event::Diff(DiffEvent::ReviewFiles));
     let key = state.files_of.clone().unwrap_or_default();
     let paths = [
         "Cargo.toml",
@@ -2458,6 +2533,41 @@ fn input_stress(long_prompt: bool, long_chat: bool) -> WorkspaceState {
     state
 }
 
+/// The heaviest everyday workspace, for measuring interactions: the file shown,
+/// the conversation and the diff side by side in panes, a conversation of 40
+/// replies of 30 markdown paragraphs each, and the review panel open on a
+/// tree of 400 files.
+#[cfg(test)]
+pub(crate) fn heavy_workspace() -> WorkspaceState {
+    let mut state = code()
+        .pane_dragged(code_item(), Some((0, Side::Right)), (0.0, 0.0))
+        .pane_dropped()
+        .pane_dragged(Item::Diff, Some((0, Side::Bottom)), (0.0, 0.0))
+        .pane_dropped()
+        .handle(Event::Chat(ChatEvent::TabChat));
+    let mut reply = state.sessions[0]
+        .messages
+        .iter()
+        .find(|message| !message.from_user)
+        .expect("the sample has a reply")
+        .clone();
+    reply.text = "A paragraph of agent output with **formatting**, `code` and a [link](https://example.com) that wraps over a few lines at the width of the pane.\n\n- an item\n- another item\n\n".repeat(10);
+    reply.said.clear();
+    reply.steps.clear();
+    reply.answers.clear();
+    state.sessions[0].messages = vec![reply; 40];
+    state.review = true;
+    let key = state.files_of.clone().unwrap_or_default();
+    let files = (0..400)
+        .map(|index| format!("src/module-{:02}/file-{:03}.rs", index / 20, index))
+        .collect();
+    let mut state = state.with_files(&key, files, Vec::new(), Vec::new());
+    state.open_tree = std::iter::once("src".to_owned())
+        .chain((0..20).map(|index| format!("src/module-{index:02}")))
+        .collect();
+    state
+}
+
 /// A large expanded tree with stable names, optionally scrolled halfway down.
 fn large_files(scrolled: bool) -> WorkspaceState {
     let mut state = files();
@@ -2470,7 +2580,7 @@ fn large_files(scrolled: bool) -> WorkspaceState {
         .chain((0..100).map(|index| format!("src/module-{index:03}")))
         .collect();
     if scrolled {
-        state.tree_scroll = 120_000.0;
+        state.files_list.scroll_to_item_offset(4_999, 20.0);
     }
     state
 }
@@ -2501,7 +2611,7 @@ fn terminal() -> WorkspaceState {
 
 /// `state` with the terminal opened and a few commands run in its shell, as the shell would have drawn them.
 fn with_shell(state: WorkspaceState) -> WorkspaceState {
-    let mut state = state.after(TERMINAL);
+    let mut state = state.handle(Event::Terminal(TerminalEvent::Terminal));
     state.fit_terminal(75, 11);
     let printed = "\x1b[1;32mpandemonium\x1b[0m \x1b[34m~/code/pandemonium\x1b[0m $ git status\r\n\
 On branch \x1b[36mtask/227-checkpoints\x1b[0m\r\n\
@@ -2641,6 +2751,17 @@ fn held_captures() -> WorkspaceState {
 }
 
 impl Shot {
+    /// What an input method is composing in the prompt in this snapshot, which
+    /// then holds the keyboard whatever focus the snapshot was given, since only
+    /// a field with the keyboard shows a composition.
+    fn preedit(self) -> Option<&'static str> {
+        match self {
+            Self::Composing => Some("\u{a8}"),
+            Self::InputStressComposing => Some("\u{5b57}"),
+            _ => None,
+        }
+    }
+
     /// Whether this snapshot shows the folder picker's window instead of the main one.
     fn in_picker_window(self) -> bool {
         matches!(self, Self::Folders)
@@ -2722,17 +2843,15 @@ impl Shot {
         }
     }
 
-    /// The stretch of selectable text this snapshot shows selected, if any.
-    fn selection(self) -> Option<TextSelection> {
-        matches!(self, Self::Selecting | Self::MessageMenu).then_some(TextSelection {
-            id: CHAT_TEXT,
-            anchor: TextPoint { piece: 27, byte: 3 },
-            head: TextPoint { piece: 38, byte: 2 },
-        })
+    /// The stretch of the conversation's text this snapshot shows selected, if any: each end
+    /// as words of a text and how many characters into them it falls.
+    fn selection(self) -> Option<SelectedWords> {
+        matches!(self, Self::Selecting | Self::MessageMenu)
+            .then_some((("session.restore(target)?;", 3), ("Checkpoints", 2)))
     }
 
     /// The screen this snapshot is of.
-    fn screen(self) -> Screen {
+    pub(crate) fn screen(self) -> Screen {
         let workspace = workspace_sample;
         match self {
             Self::Code => Screen::Workspace(code()),
@@ -2854,7 +2973,7 @@ impl Shot {
                     code()
                         .with_editor_settings(editor)
                         .with_code_view(560.0, 7.2)
-                        .edited(EDITOR_FIELD, Edit::Place(600, false)),
+                        .handle(Event::Field(FieldEvent::Edited { field: Target::Editor(EditorEvent::EditorField), edit: Edit::Place(600, false) })),
                 )
             }
             Self::Completing => Screen::Workspace(completing()),
@@ -2866,7 +2985,7 @@ impl Shot {
                 state.sidebar_open = false;
                 Screen::Workspace(state)
             }
-            Self::EditorMenu => Screen::Workspace(code().with_menu(EDITOR_FIELD, (420.0, 200.0))),
+            Self::EditorMenu => Screen::Workspace(code().with_menu(Target::Editor(EditorEvent::EditorField), (420.0, 200.0))),
             Self::References => Screen::Workspace(references()),
             Self::Renaming => {
                 let state = code();
@@ -2916,31 +3035,19 @@ impl Shot {
                 ]
                 .map(str::to_owned)
                 .to_vec();
-                Screen::Workspace(state.file_finder_requested((340.0, 0.0)).edited(
-                    pm_components::listing::LISTING_FILTER,
-                    Edit::Paste("ses".to_owned()),
-                ))
+                Screen::Workspace(state.file_finder_requested((340.0, 0.0)).handle(Event::Field(FieldEvent::Typed { field: Target::Editor(EditorEvent::ListingFilter), text: String::from("ses") })))
             }
-            Self::QuickHelp => Screen::Workspace(code().file_finder_requested((340.0, 0.0)).edited(
-                pm_components::listing::LISTING_FILTER,
-                Edit::Paste("?".to_owned()),
-            )),
+            Self::QuickHelp => Screen::Workspace(code().file_finder_requested((340.0, 0.0)).handle(Event::Field(FieldEvent::Typed { field: Target::Editor(EditorEvent::ListingFilter), text: String::from("?") }))),
             Self::Themes => Screen::Workspace(code().choices_requested(
                 pm_components::quick_choices::Choosing::Theme,
                 (340.0, 0.0),
             )),
-            Self::GoLine => Screen::Workspace(code().file_finder_requested((340.0, 0.0)).edited(
-                pm_components::listing::LISTING_FILTER,
-                Edit::Paste(":12".to_owned()),
-            )),
+            Self::GoLine => Screen::Workspace(code().file_finder_requested((340.0, 0.0)).handle(Event::Field(FieldEvent::Typed { field: Target::Editor(EditorEvent::ListingFilter), text: String::from(":12") }))),
             Self::Tasks => Screen::Workspace(
                 code()
                     .with_tasks(0, sample_tasks(), None)
                     .commands_requested((340.0, 0.0))
-                    .edited(
-                        pm_components::listing::LISTING_FILTER,
-                        Edit::Paste("task".to_owned()),
-                    ),
+                    .handle(Event::Field(FieldEvent::Typed { field: Target::Editor(EditorEvent::ListingFilter), text: String::from("task") })),
             ),
             Self::RunButtons => Screen::Workspace(runnable()),
             Self::Toolchains => Screen::Workspace(
@@ -2955,15 +3062,12 @@ impl Shot {
                     .command_used(pm_editor::Action::FileFinder)
                     .command_used(pm_editor::Action::GoToLine)
                     .commands_requested((340.0, 0.0))
-                    .edited(
-                        pm_components::listing::LISTING_FILTER,
-                        Edit::Paste("go".to_owned()),
-                    ),
+                    .handle(Event::Field(FieldEvent::Typed { field: Target::Editor(EditorEvent::ListingFilter), text: String::from("go") })),
             ),
             Self::Folded => Screen::Workspace(
                 code().lines_edited(pm_components::line_edits::LineEdit::Fold),
             ),
-            Self::Sticky => Screen::Workspace(code().scrolled_viewer(360.0, 10_000.0)),
+            Self::Sticky => Screen::Workspace(code_scrolled(code(), 360.0)),
             Self::Cursors => {
                 let state = code();
                 let at = state
@@ -2972,7 +3076,7 @@ impl Shot {
                     .unwrap_or_default();
                 Screen::Workspace(
                     state
-                        .edited(EDITOR_FIELD, Edit::Place(at + 2, false))
+                        .handle(Event::Field(FieldEvent::Edited { field: Target::Editor(EditorEvent::EditorField), edit: Edit::Place(at + 2, false) }))
                         .lines_edited(pm_components::line_edits::LineEdit::SelectAllOccurrences),
                 )
             }
@@ -2991,29 +3095,29 @@ impl Shot {
             Self::Outline => Screen::Workspace(
                 code()
                     .outline_requested((340.0, 0.0))
-                    .edited(pm_components::listing::LISTING_FILTER, Edit::Paste("n".to_owned())),
+                    .handle(Event::Field(FieldEvent::Typed { field: Target::Editor(EditorEvent::ListingFilter), text: String::from("n") })),
             ),
             Self::Finding => Screen::Workspace(
                 code()
-                    .edited(EDITOR_FIELD, Edit::Place(0, false))
+                    .handle(Event::Field(FieldEvent::Edited { field: Target::Editor(EditorEvent::EditorField), edit: Edit::Place(0, false) }))
                     .find_opened(true)
-                    .find_typed(Edit::Paste("names".to_owned()))
+                    .handle(Event::Field(FieldEvent::Typed { field: Target::Editor(EditorEvent::FindField), text: String::from("names") }))
                     .find_stepped(false),
             ),
             Self::FindReopened => Screen::Workspace(
                 code()
                     .find_opened(false)
-                    .find_typed(Edit::Paste("names".to_owned()))
+                    .handle(Event::Field(FieldEvent::Typed { field: Target::Editor(EditorEvent::FindField), text: String::from("names") }))
                     .find_opened(false),
             ),
             Self::Extensions => Screen::Workspace(
                 welcome()
-                    .after(pm_components::extensions::EXTENSIONS)
+                    .handle(Event::Settings(SettingsEvent::Extensions))
                     .with_extensions(sample_languages()),
             ),
             Self::ExtensionInstall => Screen::Workspace(
                 welcome()
-                    .after(pm_components::extensions::EXTENSIONS)
+                    .handle(Event::Settings(SettingsEvent::Extensions))
                     .with_extensions(sample_languages())
                     .with_extension_preview(
                         "~/code/pandemonium/extensions/hello".to_owned(),
@@ -3021,32 +3125,30 @@ impl Shot {
                     ),
             ),
             Self::ComposerLong => {
-                let prompt = (1..=40).map(|line| format!("Prompt line {line}\n")).collect();
-                Screen::Workspace(
-                    workspace()
-                        .edited(PROMPT, Edit::Paste(prompt))
-                        .edited(PROMPT, Edit::ScrollTo(220.0)),
-                )
+                let prompt: String = (1..=40).map(|line| format!("Prompt line {line}\n")).collect();
+                let state = workspace().handle(Event::Field(FieldEvent::Typed { field: Target::Composer(ComposerEvent::Prompt), text: String::from(&prompt) }));
+                state.prompt_scroll.jump_to(220.0);
+                Screen::Workspace(state)
             }
             Self::SignedOut => {
                 let mut state = workspace();
                 state.sessions[0].login = Some("a1".to_owned());
-                Screen::Workspace(state.heard(0, Event::SignedOut {
+                Screen::Workspace(state.heard(0, HarnessEvent::SignedOut {
                     reason: "Failed to authenticate: OAuth session expired and could not be refreshed".to_owned(),
                     account: Some("work@example.com".to_owned()),
                 }))
             }
             Self::ToolSignIn => Screen::Workspace(
                 workspace()
-                    .heard(0, Event::Prompted {
+                    .heard(0, HarnessEvent::Prompted {
                         text: "Which issues are still open?".to_owned(),
                         files: Vec::new(),
                         checkpoint: false,
                         turn: 7,
                         saved: None,
                     })
-                    .heard(0, Event::Said("Let me look at the issue tracker.".to_owned()))
-                    .heard(0, Event::ToolSignIn(
+                    .heard(0, HarnessEvent::Said("Let me look at the issue tracker.".to_owned()))
+                    .heard(0, HarnessEvent::ToolSignIn(
                         "https://issues.example.com/oauth/authorize?response_type=code&client_id=crab&state=Gc7p".to_owned(),
                     )),
             ),
@@ -3107,13 +3209,13 @@ impl Shot {
                 state.sessions[2].title = "Unread response".into();
                 state.sessions[2].marked_unread = true;
                 state.sessions[3].title = "Unread error".into();
-                state = state.heard(3, Event::Failed("Connection lost".into()));
+                state = state.heard(3, HarnessEvent::Failed("Connection lost".into()));
                 state.sessions[4].title = "Needs input".into();
-                state = state.heard(4, Event::Ask(Permission {
+                state = state.heard(4, HarnessEvent::Ask(Permission {
                     ticket: 1, title: "Allow command?".into(), command: None, plan: None, choices: Vec::new(),
                 }));
                 let selected = if unread { 3 } else { 0 };
-                state = state.after(FocusId(pm_components::state::SESSION_BASE + selected as u64));
+                state = state.handle(Event::Sidebar(SidebarEvent::Session(selected)));
                 Screen::Workspace(state.with_session_menu(selected, (220.0, 160.0)))
             }
             Self::Workspace | Self::Selecting => Screen::Workspace(workspace()),
@@ -3136,14 +3238,14 @@ impl Shot {
                     body: Some("## Changes\n\n- Update from inside the app\n- Faster diffs".to_owned()),
                     blocker: None,
                 },
-            ).after(pm_components::title_bar::UPDATE)),
+            ).handle(Event::Window(WindowEvent::Update))),
             Self::MessageMenu => {
                 Screen::Workspace(workspace().with_message_menu(3, (520.0, 230.0), true))
             }
-            Self::Unfolded => Screen::Workspace(workspace().after(FocusId(DETAILS_BASE + 3000))),
+            Self::Unfolded => Screen::Workspace(workspace().handle(Event::Chat(ChatEvent::Details { message: 3, place: 0 }))),
             Self::Diff => {
                 load_installed_grammar("rust");
-                Screen::Workspace(workspace().after(TAB_DIFF))
+                Screen::Workspace(workspace().handle(Event::Diff(DiffEvent::TabDiff)))
             }
             Self::WordDiff => {
                 load_installed_grammar("rust");
@@ -3167,15 +3269,11 @@ impl Shot {
             Self::FilesScrolled => Screen::Workspace(large_files(true)),
             Self::InputStress => Screen::Workspace(input_stress(true, true)),
             Self::InputStressScrolled => {
-                let mut state = input_stress(true, true);
-                state.prompt.apply(pm_text::Edit::ScrollTo(700.0));
+                let state = input_stress(true, true);
+                state.prompt_scroll.jump_to(700.0);
                 Screen::Workspace(state)
             }
-            Self::InputStressComposing => {
-                let mut state = input_stress(true, true);
-                state.prompt.apply(pm_text::Edit::Compose("字".to_owned()));
-                Screen::Workspace(state)
-            }
+            Self::InputStressComposing => Screen::Workspace(input_stress(true, true)),
             Self::IgnoredFiles => Screen::Workspace(ignored_files()),
             Self::Source => Screen::Workspace(source()),
             Self::SourceMenu(trigger) => {
@@ -3240,7 +3338,7 @@ impl Shot {
                     .branch_asked(BranchTask::Delete)
                     .with_session_branches(0, names.map(str::to_owned).to_vec())
                     .with_branch_info(0, None, info.clone())
-                    .after(FocusId(BRANCH_TASK_ROW_BASE + 1));
+                    .handle(Event::Git(GitEvent::BranchTaskRow(1)));
                 Screen::Workspace(state.with_branch_info(0, Some("feat/session-titles".to_owned()), info))
             }
             Self::Stashing => Screen::Workspace(source().asked(Prompt::StashMessage)),
@@ -3297,7 +3395,7 @@ impl Shot {
                         .tree_hovered(Some(TreeTarget::root()), (1040.0, 500.0)),
                 )
             }
-            Self::Naming => Screen::Workspace(files().after(TREE_NEW_FOLDER)),
+            Self::Naming => Screen::Workspace(files().handle(Event::Tree(TreeEvent::TreeNewFolder))),
             Self::Discarding => Screen::Workspace(picked().asked(Prompt::Discard(vec![0, 2]))),
             Self::Branching => Screen::Workspace(branching()),
             Self::Reading => Screen::Workspace(reading()),
@@ -3319,7 +3417,7 @@ impl Shot {
                 let mut state = overview();
                 let path = state.review_session().unwrap().changes[0].path.clone();
                 state.closed_diffs.insert(path);
-                Screen::Workspace(state.after(FocusId(pm_components::state::FILE_BASE)))
+                Screen::Workspace(state.handle(Event::Diff(DiffEvent::ChangedFile(0))))
             }
             Self::OverviewChangeMenu => {
                 Screen::Workspace(overview().with_change_menu(0, (1000.0, 250.0)))
@@ -3410,20 +3508,19 @@ impl Shot {
             }
             Self::Composing => Screen::Workspace(
                 welcome()
-                    .edited(PROMPT, Edit::Paste("Varför försvinner sm".to_owned()))
-                    .edited(PROMPT, Edit::Compose("¨".to_owned())),
+                    .handle(Event::Field(FieldEvent::Typed { field: Target::Composer(ComposerEvent::Prompt), text: String::from("Varför försvinner sm") })),
             ),
             Self::DevContainer => Screen::Workspace(
                 welcome()
                     .with_devcontainer(0, true)
                     .with_branches(0, vec!["main".to_owned(), "next".to_owned()])
-                    .after(LOCATION)
-                    .after(FocusId(pm_components::state::PLACE_BASE + 2)),
+                    .handle(Event::Composer(ComposerEvent::Location))
+                    .handle(Event::Composer(ComposerEvent::DevContainer)),
             ),
             Self::New => Screen::Workspace(WorkspaceState::new(&projects())),
             Self::Empty => Screen::default(),
             Self::History | Self::HistoryScrolled => {
-                let mut state = workspace().after(HISTORY);
+                let mut state = workspace().handle(Event::Sidebar(SidebarEvent::History));
                 let template = state.sessions[0].clone();
                 let now = pm_components::age::now();
                 for index in 0..36 {
@@ -3434,7 +3531,7 @@ impl Shot {
                     state.sessions.push(session);
                 }
                 if self == Self::HistoryScrolled {
-                    state.history_scroll = f32::MAX;
+                    state.history_scroll.jump_to(f32::MAX);
                 }
                 Screen::Workspace(state)
             }
@@ -3446,9 +3543,9 @@ impl Shot {
             Self::WelcomeHidden => Screen::Workspace(hiding_local_agents(welcome())),
             Self::ChatNew => Screen::Workspace(chat_new()),
             Self::Chats => Screen::Workspace(chats()),
-            Self::ChatsHistory => Screen::Workspace(chats().after(HISTORY)),
+            Self::ChatsHistory => Screen::Workspace(chats().handle(Event::Sidebar(SidebarEvent::History))),
             Self::ChatContinue => {
-                let state = chats().after(pm_components::continue_chat::CONTINUE);
+                let state = chats().handle(Event::Chat(ChatEvent::Continue));
                 let project = state.continue_project().unwrap_or(0);
                 Screen::Workspace(state.with_branches(
                     project,
@@ -3469,25 +3566,23 @@ impl Shot {
                 let openrouter = state.agent_position("openrouter").unwrap_or_default();
                 Screen::Workspace(
                     state
-                        .after(SETTINGS)
-                        .after(Section::AgentServers.id())
-                        .after(
-                            pm_components::settings_agents::key_set_id(openrouter)
-                                .unwrap_or(SETTINGS),
-                        )
+                        .handle(Event::Sidebar(SidebarEvent::Settings))
+                        .handle(Event::pressing(Section::AgentServers.id()))
+                        .handle(Event::pressing(pm_components::settings_agents::key_set_id(openrouter)
+                                .unwrap_or(Target::Sidebar(SidebarEvent::Settings))))
                         .scrolled_settings(420.0, 420.0),
                 )
             }
             Self::SettingsAccountsCloud(_) => Screen::Workspace(
                 welcome()
-                    .after(SETTINGS)
-                    .after(Section::AgentServers.id())
+                    .handle(Event::Sidebar(SidebarEvent::Settings))
+                    .handle(Event::pressing(Section::AgentServers.id()))
                     .scrolled_settings(100_000.0, 100_000.0),
             ),
             Self::SettingsAccountsHidden => Screen::Workspace(
                 hiding_local_agents(welcome())
-                    .after(SETTINGS)
-                    .after(Section::AgentServers.id())
+                    .handle(Event::Sidebar(SidebarEvent::Settings))
+                    .handle(Event::pressing(Section::AgentServers.id()))
                     .scrolled_settings(420.0, 420.0),
             ),
             Self::WelcomeTerminal => Screen::Workspace(with_shell(welcome())),
@@ -3497,11 +3592,11 @@ impl Shot {
                     .pane_dropped()
                     .pane_dragged(Item::Diff, Some((0, Side::Bottom)), (0.0, 0.0))
                     .pane_dropped()
-                    .after(TAB_CHAT),
+                    .handle(Event::Chat(ChatEvent::TabChat)),
             ),
-            Self::PaneSplit => Screen::Workspace(code().after(SPLIT_RIGHT)),
+            Self::PaneSplit => Screen::Workspace(code().handle(Event::Window(WindowEvent::SplitRight))),
             Self::PaneSplitFile => {
-                let mut state = code().after(SPLIT_RIGHT);
+                let mut state = code().handle(Event::Window(WindowEvent::SplitRight));
                 state.open_viewer("README.md".to_owned(), false);
                 Screen::Workspace(state)
             }
@@ -3511,16 +3606,11 @@ impl Shot {
                 Some((0, Side::Right)),
                 (900.0, 420.0),
             )),
-            Self::Wrapped => Screen::Workspace(welcome().edited(
-                PROMPT,
-                Edit::Paste(
-                    "Why does the sidebar lose its scroll position whenever a project is added, and what would it take to keep it where the reader left it? Start with the state that stores the offset.\nThen write the fix.".to_owned(),
-                ),
-            )),
+            Self::Wrapped => Screen::Workspace(welcome().handle(Event::Field(FieldEvent::Typed { field: Target::Composer(ComposerEvent::Prompt), text: String::from("Why does the sidebar lose its scroll position whenever a project is added, and what would it take to keep it where the reader left it? Start with the state that stores the offset.\nThen write the fix.") }))),
             Self::Slashed => Screen::Workspace(
                 welcome()
-                    .edited(PROMPT, Edit::Paste("/c".to_owned()))
-                    .after(FocusId(4401)),
+                    .handle(Event::Field(FieldEvent::Typed { field: Target::Composer(ComposerEvent::Prompt), text: String::from("/c") }))
+                    .handle(Event::Composer(ComposerEvent::Slash(1))),
             ),
             Self::SlashScrolled => {
                 let mut state = welcome();
@@ -3530,7 +3620,7 @@ impl Shot {
                         description: format!("Description of the skill numbered {number}"),
                     })
                     .collect();
-                state = state.after(pm_components::state::SLASH_BUTTON);
+                state = state.handle(Event::Composer(ComposerEvent::SlashButton));
                 for _ in 0..13 {
                     state = state.slash_moved(1);
                 }
@@ -3539,10 +3629,15 @@ impl Shot {
             Self::SlashSession => {
                 let mut state = WorkspaceState::sample();
                 state.sessions[0].commands = claude_discovery().commands;
-                Screen::Workspace(state.edited(PROMPT, Edit::Paste("/".to_owned())))
+                Screen::Workspace(state.handle(Event::Field(FieldEvent::Typed { field: Target::Composer(ComposerEvent::Prompt), text: String::from("/") })))
             }
             Self::Scrolling => {
-                Screen::Workspace(welcome().after(FocusId(4200)).scrolled_menu(1000.0, 1000.0))
+                Screen::Workspace(scrolled(
+                    welcome().handle(Event::Composer(ComposerEvent::SettingChip(0))),
+                    |held| &held.menu_scroll,
+                    1000.0,
+                    1000.0,
+                ))
             }
             Self::Placing => {
                 let here = std::env::current_dir().unwrap_or_default();
@@ -3552,7 +3647,7 @@ impl Shot {
                 Screen::Workspace(
                     WorkspaceState::new(&projects)
                         .with_discovery(0, claude_discovery())
-                        .after(FocusId(4250)),
+                        .handle(Event::Composer(ComposerEvent::Location)),
                 )
             }
             Self::Live => Screen::Workspace(live(Turn::Finished)),
@@ -3565,7 +3660,7 @@ impl Shot {
                 let session = state.open_index().unwrap();
                 let state = state.heard(
                     session,
-                    Event::Answered(vec![
+                    HarnessEvent::Answered(vec![
                         (
                             "If a duck wore pants, how would it wear them?".to_owned(),
                             Some("Something else".to_owned()),
@@ -3579,7 +3674,7 @@ impl Shot {
                 );
                 Screen::Workspace(state.heard(
                     session,
-                    Event::Said("Thanks, going with that.".to_owned()),
+                    HarnessEvent::Said("Thanks, going with that.".to_owned()),
                 ))
             }
             Self::Inquiring => Screen::Workspace(live(Turn::Inquiring)),
@@ -3621,7 +3716,7 @@ impl Shot {
             }
             Self::Background | Self::Floating => Screen::Workspace(live(Turn::Background)),
             Self::Agents => {
-                Screen::Workspace(live(Turn::Background).after(FocusId(SUBAGENTS_CHIP.0)))
+                Screen::Workspace(live(Turn::Background).handle(Event::Chat(ChatEvent::SubagentsChip)))
             }
             Self::AgentsStoppable => {
                 let mut state = live(Turn::Background);
@@ -3635,7 +3730,7 @@ impl Shot {
                 for id in working {
                     state = state.heard(
                         session,
-                        Event::Subagent(pm_harness::Subagent {
+                        HarnessEvent::Subagent(pm_harness::Subagent {
                             id: id.clone(),
                             call: id,
                             agent: "scout".to_owned(),
@@ -3655,16 +3750,16 @@ impl Shot {
                         }),
                     );
                 }
-                Screen::Workspace(state.after(FocusId(SUBAGENTS_CHIP.0)))
+                Screen::Workspace(state.handle(Event::Chat(ChatEvent::SubagentsChip)))
             }
             Self::AgentsWorktrees => {
-                Screen::Workspace(live(Turn::Isolated).after(FocusId(SUBAGENTS_CHIP.0)))
+                Screen::Workspace(live(Turn::Isolated).handle(Event::Chat(ChatEvent::SubagentsChip)))
             }
             Self::AgentsExpanded | Self::AgentsScrolled => {
                 let mut state = live(Turn::Background);
                 let session = state.open_index().unwrap();
                 for index in 0..40 {
-                    state = state.heard(session, Event::Tool(Tool {
+                    state = state.heard(session, HarnessEvent::Tool(Tool {
                         parent: Some("a1".to_owned()),
                         id: format!("many-{index}"),
                         title: Some("Grep".to_owned()),
@@ -3679,9 +3774,9 @@ impl Shot {
                 }
                 let (reply, position, _) = state.sessions[session].subagents().into_iter()
                     .find(|(_, _, tool)| tool.id == "a1").unwrap();
-                state = state.after(SUBAGENTS_CHIP).after(FocusId(pm_components::state::STEP_BASE + (reply * 1000 + position) as u64));
+                state = state.handle(Event::Chat(ChatEvent::SubagentsChip)).handle(Event::Chat(ChatEvent::Step { message: reply, position }));
                 if matches!(self, Self::AgentsScrolled) {
-                    state.subagents_scroll = 10000.0;
+                    state.subagents_scroll.jump_to(10000.0);
                 }
                 Screen::Workspace(state)
             }
@@ -3692,7 +3787,7 @@ impl Shot {
                 state
                     .heard(
                         last,
-                        Event::Used(pm_harness::Usage {
+                        HarnessEvent::Used(pm_harness::Usage {
                             used: 84_000,
                             size: 200_000,
                             written: 0,
@@ -3700,7 +3795,7 @@ impl Shot {
                     )
                     .heard(
                         last,
-                        Event::Spent(pm_harness::Spent {
+                        HarnessEvent::Spent(pm_harness::Spent {
                             models: vec![
                                 pm_harness::ModelSpend {
                                     model: "claude-opus-4-5".to_owned(),
@@ -3727,7 +3822,7 @@ impl Shot {
                     )
                     .heard(
                         last,
-                        Event::Limits(pm_harness::Allowance(pm_harness::Limits {
+                        HarnessEvent::Limits(pm_harness::Allowance(pm_harness::Limits {
                             provider: "claude".to_owned(),
                             plan: None,
                             fetched_at_ms: 0,
@@ -3752,7 +3847,7 @@ impl Shot {
             )
             }
             Self::Goal => Screen::Workspace(goal()),
-            Self::GoalMenu => Screen::Workspace(goal().after(pm_components::state::GOAL_CHIP)),
+            Self::GoalMenu => Screen::Workspace(goal().handle(Event::Composer(ComposerEvent::GoalChip))),
             Self::Aside => Screen::Workspace(aside()),
             Self::Allowances => {
                 let used = |five: f64, week: f64| {
@@ -3780,27 +3875,30 @@ impl Shot {
             Self::QueuedHuge => Screen::Workspace(queued_huge()),
             Self::QueuedElements => Screen::Workspace(queued_elements()),
             Self::QueuedEditing => Screen::Workspace(
-                queued_long().after(FocusId(pm_components::queued::EDIT_QUEUED_BASE)),
+                queued_long().handle(Event::Chat(ChatEvent::EditQueued(0))),
             ),
             Self::Kept => Screen::Workspace(kept()),
             Self::LongLine => Screen::Workspace(long_line()),
             Self::Restored => Screen::Workspace(restored()),
-            Self::RestoredTop => Screen::Workspace(restored().scrolled_chat(-2000.0, 2000.0)),
-            Self::Restoring => Screen::Workspace(kept().after(FocusId(RESTORE_BASE))),
+            Self::RestoredTop => Screen::Workspace(scrolled(restored(), |held| held.chat_list.scroll(), 2000.0, 2000.0)),
+            Self::Restoring => Screen::Workspace(kept().handle(Event::Chat(ChatEvent::Restore(0)))),
             Self::TurnChanges => Screen::Workspace(turn_changes()),
-            Self::Picking => Screen::Workspace(welcome().after(FocusId(4200))),
-            Self::ManyModels => Screen::Workspace(many_models().after(FocusId(4200))),
+            Self::Picking => Screen::Workspace(welcome().handle(Event::Composer(ComposerEvent::SettingChip(0)))),
+            Self::ManyModels => Screen::Workspace(many_models().handle(Event::Composer(ComposerEvent::SettingChip(0)))),
             Self::ModelsFiltered => Screen::Workspace(
                 many_models()
-                    .after(FocusId(4200))
-                    .edited(pm_components::state::MENU_FILTER, Edit::Paste("gpt".to_owned())),
+                    .handle(Event::Composer(ComposerEvent::SettingChip(0)))
+                    .handle(Event::Field(FieldEvent::Typed { field: Target::Composer(ComposerEvent::MenuFilter), text: String::from("gpt") })),
             ),
             Self::Expanded => {
                 load_installed_grammar("rust");
                 Screen::Workspace(
-                    [201_000, 201_004, 201_005]
-                        .into_iter()
-                        .fold(live(Turn::Finished), |state, id| state.after(FocusId(id))),
+                    [0, 4, 5].into_iter().fold(live(Turn::Finished), |state, position| {
+                        state.handle(Event::Chat(ChatEvent::Step {
+                            message: 1,
+                            position,
+                        }))
+                    }),
                 )
             }
             Self::Attached => Screen::Workspace(
@@ -3816,8 +3914,8 @@ impl Shot {
             }
             Self::PaneBrowser => Screen::Workspace(
                 code()
-                    .after(SPLIT_RIGHT)
-                    .after(FocusId(pm_components::panes::PANE_PUT_BASE + 5 + 4)),
+                    .handle(Event::Window(WindowEvent::SplitRight))
+                    .handle(Event::Window(WindowEvent::PanePut { pane: 1, put: 4 })),
             ),
             Self::SplitStarted => {
                 let mut state = welcome();
@@ -3825,18 +3923,18 @@ impl Shot {
                 let state = state
                     .pane_dragged(Item::Browser, Some((0, Side::Right)), (0.0, 0.0))
                     .pane_dropped()
-                    .edited(PROMPT, Edit::Paste("hello".to_owned()))
-                    .after(SEND);
+                    .handle(Event::Field(FieldEvent::Typed { field: Target::Composer(ComposerEvent::Prompt), text: String::from("hello") }))
+                    .handle(Event::Composer(ComposerEvent::Send));
                 Screen::Workspace(state)
             }
             Self::StartedHandedOver => {
                 let mut state = with_shell(welcome());
                 state.open_browser("http://localhost:5173");
                 let mut state = state
-                    .edited(PROMPT, Edit::Paste("Fix the header".to_owned()))
-                    .after(SEND);
+                    .handle(Event::Field(FieldEvent::Typed { field: Target::Composer(ComposerEvent::Prompt), text: String::from("Fix the header") }))
+                    .handle(Event::Composer(ComposerEvent::Send));
                 state.rescope_browser();
-                Screen::Workspace(state.after(pm_components::browser::TAB_BROWSER))
+                Screen::Workspace(state.handle(Event::Browser(BrowserEvent::TabBrowser)))
             }
             Self::ElementsSent => {
                 let mut state = workspace_sample();
@@ -3851,7 +3949,7 @@ impl Shot {
                         pm_components::elements::message(&elements)
                     );
                 }
-                state.chat_back = 1.0e6;
+                state.chat_list.scroll().jump_to(1.0e6);
                 Screen::Workspace(state)
             }
             Self::Captures => Screen::Workspace(held_captures()),
@@ -3883,17 +3981,17 @@ impl Shot {
                         pm_components::captures::message(&captures)
                     );
                 }
-                state.chat_back = 1.0e6;
+                state.chat_list.scroll().jump_to(1.0e6);
                 Screen::Workspace(state)
             }
             Self::ElementScrolled => {
                 let mut state = picked_elements();
                 state.picker = Some(pm_components::state::Picker::Element(0));
-                state.menu_scroll = 330.0;
+                state.menu_scroll.jump_to(330.0);
                 Screen::Workspace(state)
             }
             Self::Missing => {
-                Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("@zzzzqq".to_owned())))
+                Screen::Workspace(welcome().handle(Event::Field(FieldEvent::Typed { field: Target::Composer(ComposerEvent::Prompt), text: String::from("@zzzzqq") })))
             }
             Self::SettingsOrigins(narrow) => {
                 let state = browser_settings_sample(Section::Browser);
@@ -3905,16 +4003,14 @@ impl Shot {
             Self::SettingsPage(Section::Usage, _) => Screen::Workspace(usage_sample()),
             Self::SettingsPage(section, _) => Screen::Workspace(browser_settings_sample(section)),
             Self::SettingsSearch(_) => Screen::Workspace(
-                settings_sample().edited(SETTINGS_FIND, Edit::Paste("font".to_owned())),
+                settings_sample().handle(Event::Field(FieldEvent::Typed { field: Target::Settings(SettingsEvent::SettingsFind), text: String::from("font") })),
             ),
             Self::SettingsPicker(narrow) => Screen::Workspace(
                 settings_sample()
-                    .after(Section::Appearance.id())
-                    .after(
-                        SettingsCatalogue::CodeFont
+                    .handle(Event::pressing(Section::Appearance.id()))
+                    .handle(Event::pressing(SettingsCatalogue::CodeFont
                             .id(OPEN_LIST)
-                            .unwrap_or(SETTINGS_FIND),
-                    )
+                            .unwrap_or(Target::Settings(SettingsEvent::SettingsFind))))
                     .scrolled_settings(if narrow { 560.0 } else { 0.0 }, 2000.0),
             ),
             Self::SettingsCompact(_) => {
@@ -3925,43 +4021,35 @@ impl Shot {
                 Screen::Workspace(
                     state
                         .with_window_settings(window)
-                        .after(Section::Appearance.id()),
+                        .handle(Event::pressing(Section::Appearance.id())),
                 )
             }
             Self::SettingsMachine(narrow) => Screen::Workspace(
                 settings_sample()
-                    .after(Section::Servers.id())
-                    .after(MACHINE_ADD)
-                    .edited(MACHINE_NAME, Edit::Paste("Lab".to_owned()))
-                    .edited(MACHINE_ADDRESS, Edit::Paste("100.64.0.9:6868".to_owned()))
+                    .handle(Event::pressing(Section::Servers.id()))
+                    .handle(Event::Settings(SettingsEvent::MachineAdd))
+                    .handle(Event::Field(FieldEvent::Typed { field: Target::Settings(SettingsEvent::MachineName), text: String::from("Lab") }))
+                    .handle(Event::Field(FieldEvent::Typed { field: Target::Settings(SettingsEvent::MachineAddress), text: String::from("100.64.0.9:6868") }))
                     .scrolled_settings(if narrow { 300.0 } else { 0.0 }, 2000.0),
             ),
             Self::SettingsDraft(narrow) => Screen::Workspace(
                 browser_settings_sample(Section::Skills)
-                    .after(pm_components::settings_drafts::DRAFT_NEW)
-                    .edited(
-                        pm_components::settings_drafts::DRAFT_NAME,
-                        Edit::Paste("ship-it".to_owned()),
-                    )
-                    .edited(
-                        pm_components::settings_drafts::DRAFT_DESCRIPTION,
-                        Edit::Paste("Tags a release once CI is green on every OS".to_owned()),
-                    )
-                    .after(
-                        pm_components::settings_drafts::draft_scope(
+                    .handle(Event::Settings(SettingsEvent::DraftNew))
+                    .handle(Event::Field(FieldEvent::Typed { field: Target::Settings(SettingsEvent::DraftName), text: String::from("ship-it") }))
+                    .handle(Event::Field(FieldEvent::Typed { field: Target::Settings(SettingsEvent::DraftDescription), text: String::from("Tags a release once CI is green on every OS") }))
+                    .handle(Event::pressing(pm_components::settings_drafts::draft_scope(
                             pm_protocol::library::Scope::User,
                         )
-                        .unwrap_or(pm_components::settings_drafts::DRAFT_NEW),
-                    )
+                        .unwrap_or(Target::Settings(SettingsEvent::DraftNew))))
                     .scrolled_settings(if narrow { 260.0 } else { 0.0 }, 2000.0),
             ),
             Self::SettingsModelServers(narrow) => Screen::Workspace(
                 welcome()
-                    .after(SETTINGS)
-                    .after(Section::ModelServers.id())
+                    .handle(Event::Sidebar(SidebarEvent::Settings))
+                    .handle(Event::pressing(Section::ModelServers.id()))
                     .with_model_servers(model_servers())
-                    .after(pm_components::settings_ids::MODEL_SERVER_EDITS.at(1))
-                    .after(pm_components::settings_models::MODEL_FIND)
+                    .handle(Event::pressing(pm_components::settings_rows::MODEL_SERVER_EDITS.at(1)))
+                    .handle(Event::Settings(SettingsEvent::ModelFind))
                     .with_found_models(
                         0,
                         Ok([
@@ -3974,32 +4062,32 @@ impl Shot {
                         .map(str::to_owned)
                         .to_vec()),
                     )
-                    .after(pm_components::settings_ids::FOUND_MODEL_PICKS.at(0))
-                    .after(pm_components::settings_ids::FOUND_MODEL_PICKS.at(2))
+                    .handle(Event::pressing(pm_components::settings_rows::FOUND_MODEL_PICKS.at(0)))
+                    .handle(Event::pressing(pm_components::settings_rows::FOUND_MODEL_PICKS.at(2)))
                     .scrolled_settings(if narrow { 520.0 } else { 220.0 }, 2000.0),
             ),
             Self::SettingsModelSlots(_) => Screen::Workspace(
                 welcome()
-                    .after(SETTINGS)
-                    .after(Section::ModelSlots.id())
+                    .handle(Event::Sidebar(SidebarEvent::Settings))
+                    .handle(Event::pressing(Section::ModelSlots.id()))
                     .with_model_slots(model_slots())
                     .scrolled_settings(0.0, 2000.0),
             ),
             Self::SettingsOrchestrationOpen(narrow) => Screen::Workspace(
                 orchestration_sample(false)
-                    .after(pm_components::settings_slots::card_id(7).unwrap_or(SETTINGS_FIND))
+                    .handle(Event::pressing(pm_components::settings_slots::card_id(7).unwrap_or(Target::Settings(SettingsEvent::SettingsFind))))
                     .scrolled_settings(if narrow { 400.0 } else { 150.0 }, 4000.0),
             ),
             Self::Orchestrating => {
-                Screen::Workspace(welcome().after(pm_components::state::ORCHESTRATE))
+                Screen::Workspace(welcome().handle(Event::Composer(ComposerEvent::Orchestrate)))
             }
             Self::ModelFallback => Screen::Workspace(model_fallback()),
             Self::SharedCheckout => Screen::Workspace(shared_checkout()),
-            Self::ServerModels => Screen::Workspace(server_models().after(FocusId(4200))),
+            Self::ServerModels => Screen::Workspace(server_models().handle(Event::Composer(ComposerEvent::SettingChip(0)))),
             Self::SettingsMcp => Screen::Workspace(
                 welcome()
-                    .after(SETTINGS)
-                    .after(Section::McpServers.id())
+                    .handle(Event::Sidebar(SidebarEvent::Settings))
+                    .handle(Event::pressing(Section::McpServers.id()))
                     .with_mcp_servers(vec![pm_protocol::McpServer {
                         name: "context7".to_owned(),
                         target: "https://mcp.context7.com/mcp".to_owned(),
@@ -4020,15 +4108,15 @@ impl Shot {
             ),
             Self::SettingsForm => Screen::Workspace(
                 welcome()
-                    .after(SETTINGS)
-                    .after(Section::AgentServers.id())
-                    .after(SETTINGS_ADD),
+                    .handle(Event::Sidebar(SidebarEvent::Settings))
+                    .handle(Event::pressing(Section::AgentServers.id()))
+                    .handle(Event::Settings(SettingsEvent::SettingsAdd)),
             ),
             Self::SettingsAccounts(_) | Self::SettingsAccountsScrolled => {
                 let agent = welcome().agent_id_at(0).unwrap_or_default();
                 let state = welcome()
-                    .after(SETTINGS)
-                    .after(Section::AgentServers.id())
+                    .handle(Event::Sidebar(SidebarEvent::Settings))
+                    .handle(Event::pressing(Section::AgentServers.id()))
                     .with_accounts(
                         vec![
                             (agent.clone(), "a1".to_owned(), "work@example.com".to_owned()),
@@ -4049,30 +4137,30 @@ impl Shot {
                     state
                 })
             }
-            Self::Adding => Screen::Workspace(welcome().after(ADD_PROJECT)),
-            Self::Loading => Screen::Workspace(welcome().after(ADD_PROJECT).after(ADDER_CLONE)),
+            Self::Adding => Screen::Workspace(welcome().handle(Event::Sidebar(SidebarEvent::AddProject))),
+            Self::Loading => Screen::Workspace(welcome().handle(Event::Sidebar(SidebarEvent::AddProject)).handle(Event::Dialog(DialogEvent::AdderClone))),
             Self::Owning => Screen::Workspace(
                 welcome()
-                    .after(ADD_PROJECT)
-                    .after(ADDER_CLONE)
+                    .handle(Event::Sidebar(SidebarEvent::AddProject))
+                    .handle(Event::Dialog(DialogEvent::AdderClone))
                     .with_owners(Ok(owners())),
             ),
             Self::Folders => Screen::Workspace(
                 welcome()
-                    .after(ADD_PROJECT)
-                    .after(ADDER_BROWSE)
+                    .handle(Event::Sidebar(SidebarEvent::AddProject))
+                    .handle(Event::Dialog(DialogEvent::AdderBrowse))
                     .with_folders("~", sample_folders()),
             ),
             Self::Cloning => Screen::Workspace(
                 welcome()
-                    .after(ADD_PROJECT)
-                    .after(ADDER_CLONE)
+                    .handle(Event::Sidebar(SidebarEvent::AddProject))
+                    .handle(Event::Dialog(DialogEvent::AdderClone))
                     .with_owners(Ok(owners()))
-                    .after(FocusId(ADDER_ROW_BASE))
+                    .handle(Event::Dialog(DialogEvent::AdderRow(0)))
                     .with_repositories("JoakimCarlsson", Ok(repositories())),
             ),
             Self::Slashing => {
-                Screen::Workspace(welcome().edited(PROMPT, Edit::Paste("/c".to_owned())))
+                Screen::Workspace(welcome().handle(Event::Field(FieldEvent::Typed { field: Target::Composer(ComposerEvent::Prompt), text: String::from("/c") })))
             }
         }
     }
@@ -4128,7 +4216,7 @@ fn repositories() -> Vec<Found> {
 
 /// The settings window on `section` with the embedded browser turned on, its download under way, and agent browsing restricted to two listed origins.
 fn browser_settings_sample(section: Section) -> WorkspaceState {
-    let mut state = settings_sample().after(section.id());
+    let mut state = settings_sample().handle(Event::pressing(section.id()));
     let mut window = state.window.clone();
     window.general.embedded_browser = true;
     window.general.restrict_agent_browsing = true;
@@ -4232,7 +4320,7 @@ fn settings_sample() -> WorkspaceState {
             body: None,
             blocker: None,
         })
-        .after(SETTINGS);
+        .handle(Event::Sidebar(SidebarEvent::Settings));
     with_library_sample(state)
 }
 
@@ -4408,7 +4496,7 @@ fn chats() -> WorkspaceState {
     state.sessions.push(explained);
     state.sessions.push(named);
     let open = state.sessions.len() - 2;
-    let state = state.after(FocusId(pm_components::state::SESSION_BASE + open as u64));
+    let state = state.handle(Event::Sidebar(SidebarEvent::Session(open)));
     let key = state.files_of.clone().unwrap_or_default();
     state.with_files(
         &key,
@@ -4561,7 +4649,7 @@ fn trusting(standing: Standing) -> WorkspaceState {
     let session = state.open_index().unwrap();
     state.heard(
         session,
-        Event::Trust(TrustRequest {
+        HarnessEvent::Trust(TrustRequest {
             ticket: 1,
             root: root.into(),
             standing,
@@ -4591,7 +4679,7 @@ enum Turn {
 
 /// The settings window on the usage page, covering thirty days, with the server of this machine having reported several days of three models and five sessions.
 fn usage_sample() -> WorkspaceState {
-    let state = settings_sample().after(Section::Usage.id());
+    let state = settings_sample().handle(Event::pressing(Section::Usage.id()));
     let days = state.settings_page.usage.days;
     state.with_usage_report(
         None,
@@ -4602,12 +4690,12 @@ fn usage_sample() -> WorkspaceState {
 
 /// The settings window on the orchestration page with the slots of [`model_slots`] told, and orchestrator mode for new conversations `on` or off.
 fn orchestration_sample(on: bool) -> WorkspaceState {
-    let state = welcome().after(SETTINGS);
+    let state = welcome().handle(Event::Sidebar(SidebarEvent::Settings));
     let mut machine = state.machine.clone();
     machine.agents.orchestrator = on;
     state
         .with_machine_settings(machine)
-        .after(Section::Orchestration.id())
+        .handle(Event::pressing(Section::Orchestration.id()))
         .with_model_slots(model_slots())
 }
 
@@ -4751,22 +4839,22 @@ fn model_slots() -> pm_harness::SlotBook {
 /// A conversation whose agent was answering when its model was overloaded, so the rest of the turn asked the `main` slot's backup, with the notice of the switch beside the reply.
 fn model_fallback() -> WorkspaceState {
     let state = live(Turn::Finished)
-        .edited(
-            PROMPT,
-            Edit::Paste("Now add a test for the clamp".to_owned()),
-        )
-        .after(SEND);
+        .handle(Event::Field(FieldEvent::Typed {
+            field: Target::Composer(ComposerEvent::Prompt),
+            text: String::from("Now add a test for the clamp"),
+        }))
+        .handle(Event::Composer(ComposerEvent::Send));
     let last = state.sessions.len() - 1;
     [
-        Event::Said("I'll start with the sidebar tests.".to_owned()),
-        Event::ModelFallback {
+        HarnessEvent::Said("I'll start with the sidebar tests.".to_owned()),
+        HarnessEvent::ModelFallback {
             slot: "main".to_owned(),
             from: "claude-opus-4-5".to_owned(),
             to: "openai/gpt-5".to_owned(),
             reason: "provider returned 529: overloaded".to_owned(),
         },
-        Event::Said(" The test rebuilds the list and checks the offset is kept.".to_owned()),
-        Event::Finished(None),
+        HarnessEvent::Said(" The test rebuilds the list and checks the offset is kept.".to_owned()),
+        HarnessEvent::Finished(None),
     ]
     .into_iter()
     .fold(state, |state, event| state.heard(last, event))
@@ -4791,24 +4879,21 @@ fn aside() -> WorkspaceState {
     let state = state
         .heard(
             last,
-            Event::Aside {
+            HarnessEvent::Aside {
                 question: "Which file keeps the sidebar's scroll offset?".to_owned(),
                 answer: "`crates/pm-components/src/state.rs`, in `sidebar_scroll`. It is clamped when the list is rebuilt.".to_owned(),
                 failed: false,
             },
         )
-        .edited(
-            PROMPT,
-            Edit::Paste("/handoff Add a test for the clamp".to_owned()),
-        )
-        .after(SEND);
+        .handle(Event::Field(FieldEvent::Typed { field: Target::Composer(ComposerEvent::Prompt), text: String::from("/handoff Add a test for the clamp") }))
+        .handle(Event::Composer(ComposerEvent::Send));
     [
-        Event::HandedOff {
+        HarnessEvent::HandedOff {
             prompt: "The sidebar lost its scroll position because the offset was clamped against a height measured before the list was rebuilt; the clamp now uses the new height. Add a test in pm-components that rebuilds the list and checks the offset is kept.".to_owned(),
             turn: "handoff-1".to_owned(),
         },
-        Event::Said("I'll add the test next to the other sidebar tests.".to_owned()),
-        Event::Finished(None),
+        HarnessEvent::Said("I'll add the test next to the other sidebar tests.".to_owned()),
+        HarnessEvent::Finished(None),
     ]
     .into_iter()
     .fold(state, |state, event| state.heard(last, event))
@@ -4820,7 +4905,7 @@ fn goal() -> WorkspaceState {
     let last = state.sessions.len() - 1;
     state.heard(
         last,
-        Event::Goal(pm_harness::Goal {
+        HarnessEvent::Goal(pm_harness::Goal {
             objective: "Make every test in the workspace pass".to_owned(),
             state: pm_harness::GoalState::Active,
             budget: Some(2_000_000),
@@ -4832,7 +4917,7 @@ fn goal() -> WorkspaceState {
 
 /// A conversation on a turn, with two prompts waiting behind it and a third being written.
 fn queued() -> WorkspaceState {
-    let waiting = |id: u64, text: &str, files: &[&str]| Event::Queued {
+    let waiting = |id: u64, text: &str, files: &[&str]| HarnessEvent::Queued {
         id,
         text: text.to_owned(),
         files: files.iter().map(|name| (*name).to_owned()).collect(),
@@ -4849,15 +4934,15 @@ fn queued() -> WorkspaceState {
     ]
     .into_iter()
     .fold(state, |state, event| state.heard(session, event))
-    .edited(
-        PROMPT,
-        Edit::Paste("Stop, the clamp lives in pm-ui".to_owned()),
-    )
+    .handle(Event::Field(FieldEvent::Typed {
+        field: Target::Composer(ComposerEvent::Prompt),
+        text: String::from("Stop, the clamp lives in pm-ui"),
+    }))
 }
 
 /// A conversation on a turn with a long, multi-line prompt waiting first and a short one with a file behind it.
 fn queued_long() -> WorkspaceState {
-    let waiting = |id: u64, text: &str, files: &[&str]| Event::Queued {
+    let waiting = |id: u64, text: &str, files: &[&str]| HarnessEvent::Queued {
         id,
         text: text.to_owned(),
         files: files.iter().map(|name| (*name).to_owned()).collect(),
@@ -4894,7 +4979,7 @@ fn queued_huge() -> WorkspaceState {
         .fold(state, |state, (index, text)| {
             state.heard(
                 session,
-                Event::Queued {
+                HarnessEvent::Queued {
                     id: index as u64 + 1,
                     text,
                     files: Vec::new(),
@@ -4923,7 +5008,7 @@ fn queued_elements() -> WorkspaceState {
     ]);
     state.heard(
         session,
-        Event::Queued {
+        HarnessEvent::Queued {
             id: 1,
             text: format!("Make the save button match the heading's colour\n\n{section}"),
             files: Vec::new(),
@@ -4933,11 +5018,11 @@ fn queued_elements() -> WorkspaceState {
 
 /// A conversation told as the server tells it after a restart, from what the harness saved: the offer first, then each turn with its tools, its context meter and its end, the stopped and the failed turns among them.
 fn restored() -> WorkspaceState {
-    let state = WorkspaceState::new(&projects()).edited(
-        PROMPT,
-        Edit::Paste("Why does the sidebar lose its scroll position?".to_owned()),
-    );
-    let state = state.after(SEND);
+    let state = WorkspaceState::new(&projects()).handle(Event::Field(FieldEvent::Typed {
+        field: Target::Composer(ComposerEvent::Prompt),
+        text: String::from("Why does the sidebar lose its scroll position?"),
+    }));
+    let state = state.handle(Event::Composer(ComposerEvent::Send));
     let session = state.open_index().unwrap();
     let tool = |id: &str, title: &str, kind, target: &str, state| Tool {
         id: id.to_owned(),
@@ -4952,7 +5037,7 @@ fn restored() -> WorkspaceState {
         worktree: None,
     };
     let done = |id: &str, output: &str, diff: Option<Diff>| {
-        Event::Tool(Tool {
+        HarnessEvent::Tool(Tool {
             id: id.to_owned(),
             title: None,
             kind: None,
@@ -4965,7 +5050,7 @@ fn restored() -> WorkspaceState {
             worktree: None,
         })
     };
-    let prompted = |text: &str, turn: u64| Event::Prompted {
+    let prompted = |text: &str, turn: u64| HarnessEvent::Prompted {
         text: text.to_owned(),
         files: Vec::new(),
         checkpoint: false,
@@ -4973,33 +5058,33 @@ fn restored() -> WorkspaceState {
         saved: None,
     };
     [
-        Event::Settings(claude_settings()),
-        Event::Commands(vec![Slash {
+        HarnessEvent::Settings(claude_settings()),
+        HarnessEvent::Commands(vec![Slash {
             name: "compact".to_owned(),
             description: "Summarise the conversation to free up context".to_owned(),
         }]),
         prompted("Why does the sidebar lose its scroll position?", 1),
-        Event::Tool(tool(
+        HarnessEvent::Tool(tool(
             "r1",
             "read",
             Kind::Read,
             "crates/pm-components/src/state.rs",
             ToolState::Running,
         )),
-        Event::Used(pm_harness::Usage {
+        HarnessEvent::Used(pm_harness::Usage {
             used: 9466,
             size: 1_000_000,
             written: 0,
         }),
         done("r1", "pub struct WorkspaceState { .. }", None),
-        Event::Tool(tool(
+        HarnessEvent::Tool(tool(
             "e1",
             "edit",
             Kind::Edit,
             "crates/pm-components/src/state.rs",
             ToolState::Running,
         )),
-        Event::Used(pm_harness::Usage {
+        HarnessEvent::Used(pm_harness::Usage {
             used: 9667,
             size: 1_000_000,
             written: 0,
@@ -5013,18 +5098,20 @@ fn restored() -> WorkspaceState {
                 new: "fn a() {}\nfn d() {}\nfn c() {}\n".to_owned(),
             }),
         ),
-        Event::Said("The offset is clamped against a stale height, so I changed it.".to_owned()),
-        Event::Used(pm_harness::Usage {
+        HarnessEvent::Said(
+            "The offset is clamped against a stale height, so I changed it.".to_owned(),
+        ),
+        HarnessEvent::Used(pm_harness::Usage {
             used: 9791,
             size: 1_000_000,
             written: 0,
         }),
-        Event::Finished(None),
+        HarnessEvent::Finished(None),
         prompted("Now count to a thousand out loud.", 5),
-        Event::Halted,
-        Event::Finished(None),
+        HarnessEvent::Halted,
+        HarnessEvent::Finished(None),
         prompted("Run the whole test suite again.", 8),
-        Event::Finished(Some("the model was overloaded".to_owned())),
+        HarnessEvent::Finished(Some("the model was overloaded".to_owned())),
     ]
     .into_iter()
     .fold(state, |state, event| state.heard(session, event))
@@ -5034,18 +5121,17 @@ fn restored() -> WorkspaceState {
 fn kept() -> WorkspaceState {
     let state = live(Turn::Finished);
     let session = state.open_index().unwrap_or(0);
-    state
-        .heard(
-            session,
-            Event::Prompted {
-                text: "Why does the sidebar lose its scroll position?".to_owned(),
-                files: Vec::new(),
-                checkpoint: true,
-                turn: 0,
-                saved: None,
-            },
-        )
-        .scrolled_chat(-400.0, 400.0)
+    let state = state.heard(
+        session,
+        HarnessEvent::Prompted {
+            text: "Why does the sidebar lose its scroll position?".to_owned(),
+            files: Vec::new(),
+            checkpoint: true,
+            turn: 0,
+            saved: None,
+        },
+    );
+    scrolled(state, |held| held.chat_list.scroll(), 400.0, 400.0)
 }
 
 /// A file a turn changed, at `path`, marked with `letter`, with the lines `diff`.
@@ -5096,7 +5182,7 @@ fn turn_changes() -> WorkspaceState {
 fn long_line() -> WorkspaceState {
     let state = live(Turn::Finished);
     let session = state.open_index().unwrap();
-    let prompted = |text: String| Event::Prompted {
+    let prompted = |text: String| HarnessEvent::Prompted {
         text,
         files: Vec::new(),
         checkpoint: false,
@@ -5129,14 +5215,14 @@ fn live(turn: Turn) -> WorkspaceState {
         worktree: None,
     };
     let mut state = WorkspaceState::new(&projects())
-        .edited(
-            PROMPT,
-            Edit::Paste("Why does the sidebar lose its scroll position?".to_owned()),
-        )
-        .after(SEND);
+        .handle(Event::Field(FieldEvent::Typed {
+            field: Target::Composer(ComposerEvent::Prompt),
+            text: String::from("Why does the sidebar lose its scroll position?"),
+        }))
+        .handle(Event::Composer(ComposerEvent::Send));
     let mut events = vec![
-        Event::Settings(claude_settings()),
-        Event::Commands(vec![
+        HarnessEvent::Settings(claude_settings()),
+        HarnessEvent::Commands(vec![
             Slash {
                 name: "compact".to_owned(),
                 description: "Summarise the conversation to free up context".to_owned(),
@@ -5150,11 +5236,11 @@ fn live(turn: Turn) -> WorkspaceState {
                 description: "Choose the model for this session".to_owned(),
             },
         ]),
-        Event::Thought(
+        HarnessEvent::Thought(
             "The scroll offset lives in the workspace state, so a rebuilt list should keep it."
                 .to_owned(),
         ),
-        Event::Plan(vec![
+        HarnessEvent::Plan(vec![
             PlanStep {
                 text: "Find where the offset is stored".to_owned(),
                 progress: Progress::Done,
@@ -5177,14 +5263,14 @@ fn live(turn: Turn) -> WorkspaceState {
                 blocked: false,
             },
         ]),
-        Event::Tool(tool(
+        HarnessEvent::Tool(tool(
             "1",
             "read",
             Kind::Read,
             "~/code/pandemonium/crates/pm-components/src/workspace/state.rs",
         )),
-        Event::Tool(tool("2", "grep", Kind::Search, "sidebar_scroll")),
-        Event::Tool(Tool {
+        HarnessEvent::Tool(tool("2", "grep", Kind::Search, "sidebar_scroll")),
+        HarnessEvent::Tool(Tool {
             diff: Some(Diff {
                 path: "~/code/pandemonium/src/lib.rs".to_owned(),
                 old: Some("fn a() {}\nfn b() {}\nfn c() {}\n".to_owned()),
@@ -5192,24 +5278,24 @@ fn live(turn: Turn) -> WorkspaceState {
             }),
             ..tool("3", "edit", Kind::Edit, "~/code/pandemonium/src/lib.rs")
         }),
-        Event::Tool(Tool {
+        HarnessEvent::Tool(Tool {
             output: Some("running 12 tests\ntest result: ok. 12 passed".to_owned()),
             ..tool("4", "bash", Kind::Execute, "cargo test")
         }),
-        Event::Said(
+        HarnessEvent::Said(
             "The offset is clamped against a height measured before the list is rebuilt."
                 .to_owned(),
         ),
-        Event::Tool(tool(
+        HarnessEvent::Tool(tool(
             "5",
             "read",
             Kind::Read,
             "~/code/pandemonium/README.md",
         )),
-        Event::Said("I changed the clamp to use the new height.".to_owned()),
+        HarnessEvent::Said("I changed the clamp to use the new height.".to_owned()),
     ];
     if turn == Turn::Asking {
-        events.push(Event::Ask(Permission {
+        events.push(HarnessEvent::Ask(Permission {
             ticket: 1,
             title: "Plan ready for review".to_owned(),
             command: None,
@@ -5241,7 +5327,7 @@ fn live(turn: Turn) -> WorkspaceState {
             name: name.to_owned(),
             verdict,
         };
-        events.push(Event::Ask(Permission {
+        events.push(HarnessEvent::Ask(Permission {
             ticket: 1,
             title: "Allow Claude to run a long read-only demo command? PR #186 is still open and adds shared pieces the savings flow needs (AreaHero, SaveCard, FollowUp, TileSearch, NumberedAccordion defaultIndex, SECTION_TITLE), so it matters which branch this runs on.".to_owned(),
             command: Some("printf '%s\\n' \"permission prompt demo\" \"line two of a deliberately long command\" && ls -la /home/jdaddy/Documents/repos/vault | head -n 5 && git -C /home/jdaddy/Documents/repos/vault log --oneline --decorate --max-count=3 && wc -l /home/jdaddy/Documents/repos/vault/AGENTS.md /home/jdaddy/Documents/repos/vault/Makefile 2>/dev/null && date --iso-8601=seconds".to_owned()),
@@ -5259,7 +5345,7 @@ fn live(turn: Turn) -> WorkspaceState {
             description: description.to_owned(),
             mockup: None,
         };
-        events.push(Event::Inquire(Inquiry {
+        events.push(HarnessEvent::Inquire(Inquiry {
             ticket: 1,
             questions: vec![
                 Question {
@@ -5297,7 +5383,7 @@ fn live(turn: Turn) -> WorkspaceState {
             ],
         }));
     } else if turn == Turn::Finished {
-        events.push(Event::Finished(None));
+        events.push(HarnessEvent::Finished(None));
     } else if matches!(turn, Turn::Background | Turn::Isolated) {
         let agent = |id: &str, title: &str| Tool {
             state: Some(ToolState::Running),
@@ -5309,19 +5395,19 @@ fn live(turn: Turn) -> WorkspaceState {
             ..tool(id, "Grep", Kind::Search, target)
         };
         events.extend([
-            Event::Tool(agent("a1", "Find every caller of Session::new")),
-            Event::Tool(agent(
+            HarnessEvent::Tool(agent("a1", "Find every caller of Session::new")),
+            HarnessEvent::Tool(agent(
                 "a2",
                 "Check how worktrees are located from a session root",
             )),
-            Event::Tool(child("c1", "a1", "Session::new")),
-            Event::Tool(child("c2", "a1", "Session::default")),
-            Event::Tool(child("c3", "a2", "worktree_root")),
-            Event::Tool(Tool {
+            HarnessEvent::Tool(child("c1", "a1", "Session::new")),
+            HarnessEvent::Tool(child("c2", "a1", "Session::default")),
+            HarnessEvent::Tool(child("c3", "a2", "worktree_root")),
+            HarnessEvent::Tool(Tool {
                 state: Some(ToolState::Running),
                 ..tool("s1", "Terminal", Kind::Execute, "cargo watch -x test")
             }),
-            Event::Background(Background {
+            HarnessEvent::Background(Background {
                 id: "s1".to_owned(),
                 label: "cargo watch -x test".to_owned(),
                 running: true,
@@ -5335,7 +5421,7 @@ fn live(turn: Turn) -> WorkspaceState {
             &["a1", "a2"]
         };
         events.extend(in_background.iter().map(|id| {
-            Event::Subagent(pm_harness::Subagent {
+            HarnessEvent::Subagent(pm_harness::Subagent {
                 id: (*id).to_owned(),
                 call: (*id).to_owned(),
                 agent: "explore".to_owned(),
@@ -5347,7 +5433,7 @@ fn live(turn: Turn) -> WorkspaceState {
                 spent: None,
             })
         }));
-        events.push(Event::Finished(None));
+        events.push(HarnessEvent::Finished(None));
     }
     let asked = state.sessions.len() - 1;
     for event in events {
@@ -5357,7 +5443,7 @@ fn live(turn: Turn) -> WorkspaceState {
 }
 
 /// What the agent says of the subagents of [`Turn::Background`] working in git worktrees of their own: the first ended and its changes were applied, the second still works, and a third ended with changes that conflicted.
-fn worktrees() -> Vec<Event> {
+fn worktrees() -> Vec<HarnessEvent> {
     let apart = |merge: Option<Merge>| {
         Some(Box::new(Worktree {
             path: "/home/reader/.cache/oh-my-crab/worktrees/c1/1/pandemonium".to_owned(),
@@ -5396,7 +5482,7 @@ fn worktrees() -> Vec<Event> {
             ..update("a3", Some(ToolState::Done), Some(conflicted))
         },
     ]
-    .map(Event::Tool)
+    .map(HarnessEvent::Tool)
     .to_vec()
 }
 
@@ -5416,14 +5502,23 @@ fn find_in_selection(replaced: bool) -> WorkspaceState {
     let start = text.find("    /// Makes a session").unwrap_or_default();
     let end = text.find("    /// How many names").unwrap_or_default();
     let state = state
-        .edited(EDITOR_FIELD, Edit::Select(start, end))
+        .handle(Event::Field(FieldEvent::Edited {
+            field: Target::Editor(EditorEvent::EditorField),
+            edit: Edit::Select(start, end),
+        }))
         .find_opened(replaced)
-        .find_typed(Edit::Paste("names".to_owned()));
+        .handle(Event::Field(FieldEvent::Typed {
+            field: Target::Editor(EditorEvent::FindField),
+            text: String::from("names"),
+        }));
     if !replaced {
         return state;
     }
     state
-        .replacement_typed(Edit::Paste("labels".to_owned()))
+        .handle(Event::Field(FieldEvent::Typed {
+            field: Target::Editor(EditorEvent::ReplaceField),
+            text: String::from("labels"),
+        }))
         .replaced_all()
 }
 
@@ -5434,7 +5529,10 @@ fn dragging_text(dropped: bool) -> WorkspaceState {
     let start = text.find("        let label").unwrap_or_default();
     let end = start + text[start..].find('\n').map_or(0, |at| at + 1);
     let target = text.find("        let names").unwrap_or_default();
-    state = state.edited(EDITOR_FIELD, Edit::Select(start, end));
+    state = state.handle(Event::Field(FieldEvent::Edited {
+        field: Target::Editor(EditorEvent::EditorField),
+        edit: Edit::Select(start, end),
+    }));
     state.editor_drag_started(start + 16);
     state.editor_drag_over(target);
     if dropped {
@@ -5448,7 +5546,10 @@ fn lightbulb() -> WorkspaceState {
     let state = code();
     let text = code_text(&state);
     let at = text.find("label: u32").unwrap_or_default() + 4;
-    let state = state.edited(EDITOR_FIELD, Edit::Place(at, false));
+    let state = state.handle(Event::Field(FieldEvent::Edited {
+        field: Target::Editor(EditorEvent::EditorField),
+        edit: Edit::Place(at, false),
+    }));
     let (version, line) = state
         .shown_document()
         .map_or((0, 0), |document| (document.version, document.line_of(at)));
@@ -5458,7 +5559,7 @@ fn lightbulb() -> WorkspaceState {
 /// A file of words with the letter pairs a font joins and of arrows and comparisons, set in a code font that has ligatures for the pairs of letters, joined or not as `joined` says; no code font with ligatures for arrows is installed where the snapshots are made, so the pairs of letters stand for them.
 fn ligatures(joined: bool) -> WorkspaceState {
     let path = "notes/operators.txt";
-    let mut state = workspace_sample().after(TAB_DIFF);
+    let mut state = workspace_sample().handle(Event::Diff(DiffEvent::TabDiff));
     state.editor.ligatures = joined;
     state.window.appearance.code_font = "DejaVu Sans".to_owned();
     state.open_viewer(path.to_owned(), false);
@@ -5477,7 +5578,7 @@ fn ligatures(joined: bool) -> WorkspaceState {
 /// A file with a line of Hebrew, a line of Arabic and lines of left-to-right text mixed with them, a word of the Hebrew line selected and a stretch of the mixed line from its left-to-right text into the start of its Hebrew.
 fn bidi() -> WorkspaceState {
     let path = "notes/mixed.txt";
-    let mut state = workspace_sample().after(TAB_DIFF);
+    let mut state = workspace_sample().handle(Event::Diff(DiffEvent::TabDiff));
     state.open_viewer(path.to_owned(), false);
     let text = "Left to right: hello world\nשלום עולם, זה טקסט בעברית\nmixed: abc שלום עולם def 123\nمرحبا بالعالم، هذا نص عربي\nAfter: the end\n";
     let state = state.with_file(0, path, false, Ok((Some(text.to_owned()), false, None)));
@@ -5485,8 +5586,14 @@ fn bidi() -> WorkspaceState {
     let from = text.find("abc").unwrap_or_default() + 2;
     let to = text.find("שלום עולם def").unwrap_or_default() + 6;
     state
-        .edited(EDITOR_FIELD, Edit::Select(hebrew, hebrew + 8))
-        .edited(EDITOR_FIELD, Edit::AddSelection(from, to))
+        .handle(Event::Field(FieldEvent::Edited {
+            field: Target::Editor(EditorEvent::EditorField),
+            edit: Edit::Select(hebrew, hebrew + 8),
+        }))
+        .handle(Event::Field(FieldEvent::Edited {
+            field: Target::Editor(EditorEvent::EditorField),
+            edit: Edit::AddSelection(from, to),
+        }))
 }
 
 /// How the file is compared in a snapshot.
@@ -5532,19 +5639,54 @@ fn compared(how: Compare) -> WorkspaceState {
     }
 }
 
+/// The numbers the snapshot command line took for the control to put focus on
+/// before controls were named by their targets, kept so the scripts and
+/// documents that pass them still work: `0` for none and `320` for the prompt.
+const NUMBERED_FOCUS: [(&str, Option<Target>); 2] = [
+    ("0", None),
+    ("320", Some(Target::Composer(ComposerEvent::Prompt))),
+];
+
+/// The control `argument` of the snapshot command line names for focus: a
+/// number of [`NUMBERED_FOCUS`], or a target as [`Target::from_name`] reads it,
+/// such as `Prompt` or `{"Session":2}`; nothing for anything else.
+pub fn focus_named(argument: &str) -> Option<Target> {
+    NUMBERED_FOCUS
+        .iter()
+        .find(|(number, _)| *number == argument)
+        .map_or_else(|| Target::from_name(argument), |(_, target)| *target)
+}
+
 /// Draws the screen as it looks `elapsed_ms` into the animations, with the
-/// pointer at `pointer` and focus on `focused` if given, in `appearance`, and
-/// writes it to `path` as a PNG. The pointer is taken to have rested where it
+/// pointer at `pointer` and focus on `focused` if given, in `appearance`, at
+/// `scale` physical pixels a logical one, and writes it to `path` as a PNG. The pointer is taken to have rested where it
 /// is since the start, so a tooltip under it shows once `elapsed_ms` is long
-/// enough.
+/// enough. The text engine is loaded before the screen is made, so the text of
+/// the vector pictures it draws is set with the interface's fonts.
 pub fn write(
     path: &Path,
     elapsed_ms: f32,
     pointer: Option<(f32, f32)>,
-    focused: Option<FocusId>,
+    focused: Option<Target>,
     appearance: Appearance,
     shot: Shot,
+    scale: f32,
 ) -> Result<(), String> {
+    let (frame, drawn) = prepare(elapsed_ms, pointer, focused, appearance, shot, scale);
+    write_png(path, &frame, drawn).map_err(|error| error.to_string())
+}
+
+/// Lays out `shot` and gives back how to draw it, `elapsed_ms` into the animations with the
+/// pointer at `pointer` and focus on `focused` in `appearance` at `scale`, and what to draw,
+/// as [`write`] draws it.
+fn prepare(
+    elapsed_ms: f32,
+    pointer: Option<(f32, f32)>,
+    focused: Option<Target>,
+    appearance: Appearance,
+    shot: Shot,
+    scale: f32,
+) -> (Frame, impl Fn() + 'static) {
     let (width, height) = if shot.narrow() {
         (NARROW_WIDTH, NARROW_HEIGHT)
     } else if shot.in_settings_window() {
@@ -5563,68 +5705,91 @@ pub fn write(
     };
     pm_components::set_floating(matches!(shot, Shot::Floating));
     let band = pm_components::shadow_margin();
-    let target = (width + 2 * band as u32, height + 2 * band as u32);
-    let paint = if shot.in_settings_window() {
-        scene::paint_settings
+    let target = (width as f32 + 2.0 * band, height as f32 + 2.0 * band);
+    let window = if shot.in_settings_window() {
+        Some(scene::SETTINGS_WINDOW)
     } else if shot.in_picker_window() {
-        scene::paint_picker
+        Some(scene::PICKER_WINDOW)
     } else {
-        scene::paint
+        None
     };
-    let mut renderer =
-        Renderer::headless(target.0, target.1, 1.0).map_err(|error| error.to_string())?;
-    renderer.set_band(band);
-    let mut shaper = scene::shaper();
-    let mut list = DrawList::new();
-    let input = Input {
-        pointer: PointerState {
-            position: pointer,
-            ..PointerState::default()
-        },
-        focused,
-        elapsed_ms,
-        selection: shot.selection(),
-        held_bar: None,
+    let preedit = shot.preedit();
+    let focused = if preedit.is_some() {
+        Some(Target::Composer(ComposerEvent::Prompt))
+    } else {
+        focused
     };
-    let family = default_family();
-    let theme = family.variant(appearance);
-    let mut screen = shot.screen();
+    let text_engine = rustle::Embedded::without_renderer(|| {}, || {});
+    let screen = shot.screen();
+    drop(text_engine);
     let Screen::Workspace(held) = &screen;
     let looks = &held.window.appearance;
-    if !looks.code_font.is_empty() || !looks.interface_font.is_empty() {
-        scene::set_fonts(&mut shaper, &looks.interface_font, &looks.code_font);
-    }
-    shaper.set_ligatures(held.editor.ligatures);
-    let resting = Input {
-        elapsed_ms: 0.0,
-        ..input
+    scene::set_fonts(&looks.interface_font, &looks.code_font);
+    pm_components::theme::set_code_ligatures(held.editor.ligatures);
+    lay_out(
+        target.0,
+        target.1,
+        focused,
+        content(screen.clone(), window, target),
+    );
+    let frame = Frame {
+        clock_ms: elapsed_ms,
+        pointer: pointer.map(|(x, y)| (x + band, y + band)),
+        focused,
+        family: default_family(),
+        appearance,
+        transparent: pm_components::framed(),
+        scale,
+        preedit: preedit.map(str::to_owned),
+        ..Frame::new(target.0, target.1)
     };
-    let rested = paint(
-        width as f32,
-        height as f32,
-        &screen,
-        &resting,
-        theme,
-        &mut shaper,
-        &mut DrawList::new(),
-    );
-    if let Some(measured) = screen.diff_resized(&rested.scrollers) {
-        screen = screen.measured_diff(measured);
+    let selection = shot.selection().map(|ends| (screen.chat_selection(), ends));
+    let drawn = content(screen, window, target);
+    let selected = move || {
+        drawn();
+        if let Some((held, ends)) = selection.clone() {
+            rustle::side_effect(move || select_words(&held, ends));
+        }
+    };
+    (frame, selected)
+}
+
+/// Selects in `held` from one of `ends` to the other, each words of a text and how many
+/// characters into them it falls, once the texts holding them have been placed.
+fn select_words(held: &rustle::SelectionState, ends: SelectedWords) {
+    let texts = held.texts();
+    if let (Some(anchor), Some(focus)) = (point_at(&texts, ends.0), point_at(&texts, ends.1)) {
+        held.select(anchor, focus);
     }
-    paint(
-        width as f32,
-        height as f32,
-        &screen,
-        &input,
-        theme,
-        &mut shaper,
-        &mut list,
-    );
-    let pixels = renderer
-        .snapshot(&list, &mut shaper, scene::ground(theme))
-        .ok_or("the renderer could not read its frame back")?;
-    image::save_buffer(path, &pixels, target.0, target.1, image::ColorType::Rgba8)
-        .map_err(|error| error.to_string())
+}
+
+/// The place in `texts`, the texts of a selection container in document order, `offset`
+/// characters into the first text holding `words`, or `None` when none holds them.
+fn point_at(texts: &[String], (words, offset): (&str, usize)) -> Option<SelectionPoint> {
+    texts.iter().enumerate().find_map(|(block, text)| {
+        let start = text.find(words)?;
+        Some(SelectionPoint {
+            block,
+            offset: text[..start].chars().count() + offset,
+        })
+    })
+}
+
+/// What a snapshot draws of `screen`: the window beside the main one `window`
+/// names, or the main window's frame inset by the band for its shadow, in a
+/// picture `target` logical pixels across.
+fn content(
+    screen: Screen,
+    window: Option<scene::WindowKey>,
+    target: (f32, f32),
+) -> impl Fn() + 'static {
+    move || {
+        scene::scale_for(&screen);
+        match window {
+            Some(key) => scene::aside_frame(&screen, key, target.0, target.1),
+            None => scene::main_frame(&screen, target.0, target.1),
+        }
+    }
 }
 
 /// What a markdown file shown rendered in a snapshot says.
@@ -5639,7 +5804,7 @@ const PREVIEW_VECTOR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="
 /// The workspace with the file at `path` open and shown rendered, as what it ends in says it is.
 fn previewed(path: &str) -> WorkspaceState {
     load_installed_grammar("markdown");
-    let mut state = workspace_sample().after(TAB_DIFF);
+    let mut state = workspace_sample().handle(Event::Diff(DiffEvent::TabDiff));
     state.open_viewer(path.to_owned(), false);
     match pm_components::preview::Rendering::of(path) {
         Some(pm_components::preview::Rendering::Picture) => {
@@ -5652,15 +5817,11 @@ fn previewed(path: &str) -> WorkspaceState {
                 false,
                 Ok((Some(PREVIEW_VECTOR.to_owned()), false, None)),
             )
-            .with_drawn(
-                0,
-                path,
-                false,
-                crate::work::picture::draw(path, PREVIEW_VECTOR),
-            ),
+            .with_drawn(0, path, false, crate::work::picture::draw(PREVIEW_VECTOR)),
         _ => {
             let palette = crate::work::picture::Palette::of(
-                pm_theme::default_family().variant(pm_theme::Appearance::Dark),
+                pm_components::theme::default_family()
+                    .variant(pm_components::theme::Appearance::Dark),
                 true,
             );
             pm_components::figures::figures_of(PREVIEW_MARKDOWN, Some(path))
@@ -5720,14 +5881,9 @@ fn mock_page(width: u32, height: u32, hue: [u8; 3]) -> pm_components::figures::D
             })
         })
         .collect();
-    let [red, green, blue] = hue.map(u64::from);
     pm_components::figures::Drawing {
-        picture: pm_renderer::Picture {
-            key: 0x5EA1_0000_0000 | red << 16 | green << 8 | blue,
-            width,
-            height,
-            pixels: std::sync::Arc::new(pixels),
-        },
+        picture: rustle::ImageData::from_rgba(width, height, pixels)
+            .expect("as many pixels as the picture is large"),
         density: 1.0,
     }
 }
@@ -5757,7 +5913,8 @@ fn exhibited(kind: pm_harness::ExhibitKind, pictured: bool) -> WorkspaceState {
         pm_components::figures::Wanted::Diagram(source) => crate::work::picture::diagram(
             &source,
             &crate::work::picture::Palette::of(
-                pm_theme::default_family().variant(pm_theme::Appearance::Dark),
+                pm_components::theme::default_family()
+                    .variant(pm_components::theme::Appearance::Dark),
                 true,
             ),
         ),
@@ -5776,10 +5933,10 @@ fn exhibited(kind: pm_harness::ExhibitKind, pictured: bool) -> WorkspaceState {
         worktree: None,
     };
     let state = [
-        Event::Tool(call),
-        Event::Show(exhibit),
-        Event::Said("That is how the offset is kept across a rebuild.".to_owned()),
-        Event::Finished(None),
+        HarnessEvent::Tool(call),
+        HarnessEvent::Show(exhibit),
+        HarnessEvent::Said("That is how the offset is kept across a rebuild.".to_owned()),
+        HarnessEvent::Finished(None),
     ]
     .into_iter()
     .fold(state, |state, event| state.heard(session, event));
@@ -5866,8 +6023,8 @@ fn inquiring_mockups(pictured: bool) -> WorkspaceState {
         }],
     };
     let state = state
-        .heard(session, Event::Inquire(inquiry))
-        .after(FocusId(pm_components::draft::PICK_BASE + 1));
+        .heard(session, HarnessEvent::Inquire(inquiry))
+        .handle(Event::Chat(ChatEvent::InquiryPick(1)));
     if !pictured {
         return state;
     }
@@ -5881,7 +6038,7 @@ fn inquiring_mockups(pictured: bool) -> WorkspaceState {
 }
 
 /// A picture that fades from red to blue, for a snapshot of a preview.
-fn gradient() -> pm_renderer::Picture {
+fn gradient() -> rustle::ImageData {
     let (width, height) = (200u32, 120u32);
     let pixels = (0..height)
         .flat_map(|y| {
@@ -5889,12 +6046,8 @@ fn gradient() -> pm_renderer::Picture {
                 .flat_map(move |x| [(255 * x / width) as u8, (255 * y / height) as u8, 200, 255])
         })
         .collect();
-    pm_renderer::Picture {
-        key: 1,
-        width,
-        height,
-        pixels: std::sync::Arc::new(pixels),
-    }
+    rustle::ImageData::from_rgba(width, height, pixels)
+        .expect("as many pixels as the picture is large")
 }
 
 /// A listing of the registry of tool servers, for a snapshot.
@@ -5912,16 +6065,63 @@ fn tool_listing(title: &str, name: &str, target: &str) -> pm_protocol::ToolListi
     }
 }
 
+/// `state` with the scrolling area `area` picks moved `by` logical pixels on
+/// from where it is, towards its end, and no further than `room`, as the reader
+/// scrolling it would before it is drawn: for a conversation, `by` is how much
+/// further back from its end it goes.
+fn scrolled(
+    mut state: WorkspaceState,
+    area: impl Fn(&WorkspaceState) -> &rustle::ScrollState,
+    by: f32,
+    room: f32,
+) -> WorkspaceState {
+    let scroll = area(&state);
+    scroll.jump_to((scroll.offset() + by).clamp(0.0, room));
+    state.follow_scrolls();
+    state
+}
+
+/// `state` with the file shown scrolled `by` logical pixels down from its
+/// top, the space of 8 above its first line counted, as the reader scrolling
+/// it would before it is drawn.
+fn code_scrolled(state: WorkspaceState, by: f32) -> WorkspaceState {
+    let (columns, row) = (state.wrap_columns(), state.editor.row_height());
+    state
+        .shown_viewer()
+        .expect("a file is shown")
+        .scroll_to_row((by - 8.0) / row, columns, row);
+    state
+}
+
+/// How far the page of the settings of `state` that lists servers is scrolled.
+fn settings_scroll(state: &WorkspaceState) -> &rustle::ScrollState {
+    &state.settings_servers.scroll
+}
+
+/// Fixtures that scroll an area of the workspace in a chain of changes.
+trait Scrolls {
+    /// The workspace with the settings page scrolled `by` logical pixels
+    /// further down, no further than `room`.
+    fn scrolled_settings(self, by: f32, room: f32) -> Self;
+}
+
+impl Scrolls for WorkspaceState {
+    fn scrolled_settings(self, by: f32, room: f32) -> Self {
+        scrolled(self, settings_scroll, by, room)
+    }
+}
+
 #[cfg(test)]
 mod offer_tests {
     use super::*;
-    use pm_components::language_offer::{OFFER_DECLINE, OFFER_INSTALL};
+    use pm_components::areas::EditorEvent;
+
     use pm_components::state::Outgoing;
 
     /// Pressing Install asks for the language, and once the server lists it installed the open file takes it.
     #[test]
     fn install_asks_and_the_file_takes_the_language() {
-        let mut state = language_offer().after(OFFER_INSTALL);
+        let mut state = language_offer().handle(Event::Editor(EditorEvent::OfferInstall));
         let asked = state.take_outbox().into_iter().any(|outgoing| {
             matches!(outgoing, Outgoing::InstallExtensions { ids } if ids == ["javascript"])
         });
@@ -5944,10 +6144,10 @@ mod offer_tests {
     /// Pressing Not now remembers the language, and it is not offered or installed from the bar after.
     #[test]
     fn declining_is_remembered() {
-        let mut state = language_offer().after(OFFER_DECLINE);
+        let mut state = language_offer().handle(Event::Editor(EditorEvent::OfferDecline));
         assert_eq!(state.window.general.declined_languages, ["javascript"]);
         state.take_outbox();
-        let mut state = state.after(OFFER_INSTALL);
+        let mut state = state.handle(Event::Editor(EditorEvent::OfferInstall));
         assert!(
             !state
                 .take_outbox()
@@ -5990,17 +6190,23 @@ mod performance_tests {
     #[global_allocator]
     static ALLOCATOR: Counting = Counting;
 
-    /// Measures a long conversation while an agent streams into it: each frame hears one chunk, then builds, lays out and paints.
+    /// Lays the main window out at the snapshot size, with `focused` holding focus, as a frame would.
+    fn laid(screen: &Screen, width: f32, focused: Option<Target>) -> pm_components::tagged::Laid {
+        super::lay_out(
+            width,
+            HEIGHT as f32,
+            focused,
+            super::content(screen.clone(), None, (width, HEIGHT as f32)),
+        )
+    }
+
+    /// Measures a long conversation while an agent streams into it: each frame hears one chunk, then composes and lays out.
     #[test]
     #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_streaming -- --ignored --nocapture --test-threads=1"]
     fn benchmark_streaming() {
         for (long_chat, paragraphs) in [(false, false), (true, false), (false, true)] {
             let state = input_stress(false, long_chat);
             let mut screen = Screen::Workspace(state);
-            let mut shaper = scene::shaper();
-            let mut cached = scene::Cached::default();
-            let theme = default_family().dark;
-            let mut list = DrawList::new();
             let (mut heard, mut painted) = (Vec::new(), Vec::new());
             let live_start = LIVE.load(Ordering::Relaxed);
             let mut live_before = 0;
@@ -6015,23 +6221,16 @@ mod performance_tests {
                     total_before = TOTAL.load(Ordering::Relaxed);
                 }
                 let started = std::time::Instant::now();
-                screen = screen.heard(
-                    0,
-                    pm_harness::Event::Said(format!(
-                        "chunk {version} of **streamed** words and `code`. "
-                    )),
-                );
+                screen = screen.in_workspace(|state| {
+                    state.heard(
+                        0,
+                        pm_harness::Event::Said(format!(
+                            "chunk {version} of **streamed** words and `code`. "
+                        )),
+                    )
+                });
                 let heard_at = started.elapsed();
-                std::hint::black_box(cached.paint(
-                    version,
-                    WIDTH as f32,
-                    HEIGHT as f32,
-                    &screen,
-                    &Input::default(),
-                    &theme,
-                    &mut shaper,
-                    &mut list,
-                ));
+                std::hint::black_box(laid(&screen, WIDTH as f32, None));
                 if version > 0 {
                     heard.push(heard_at.as_secs_f64() * 1000.0);
                     painted.push((started.elapsed() - heard_at).as_secs_f64() * 1000.0);
@@ -6052,120 +6251,42 @@ mod performance_tests {
         }
     }
 
-    /// Measures rebuilding the same screen against repainting retained geometry, without GPU submission.
+    /// Measures composing and laying out the same screen frame after frame, without GPU submission.
     #[test]
     #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_retained_screen -- --ignored --nocapture"]
     fn benchmark_retained_screen() {
         let screen = Shot::FilesScrolled.screen();
-        let mut shaper = scene::shaper();
-        let mut list = DrawList::new();
-        let theme = default_family().dark;
-        let mut cached = scene::Cached::default();
-        for retained in [false, true] {
-            let mut samples = Vec::new();
-            for frame in 0..61 {
-                let input = Input {
-                    pointer: PointerState {
-                        position: Some((1200.0, 220.0 + (frame % 20) as f32 * 24.0)),
-                        ..PointerState::default()
-                    },
-                    elapsed_ms: frame as f32 * 16.67,
-                    ..Input::default()
-                };
-                let started = std::time::Instant::now();
-                let output = if retained {
-                    cached.paint(
-                        0,
-                        WIDTH as f32,
-                        HEIGHT as f32,
-                        &screen,
-                        &input,
-                        &theme,
-                        &mut shaper,
-                        &mut list,
-                    )
-                } else {
-                    scene::paint(
-                        WIDTH as f32,
-                        HEIGHT as f32,
-                        &screen,
-                        &input,
-                        &theme,
-                        &mut shaper,
-                        &mut list,
-                    )
-                };
-                std::hint::black_box(output);
-                if frame > 0 {
-                    samples.push(started.elapsed().as_secs_f64() * 1000.0);
-                }
+        let mut samples = Vec::new();
+        for frame in 0..61 {
+            let started = std::time::Instant::now();
+            std::hint::black_box(laid(&screen, WIDTH as f32, None));
+            if frame > 0 {
+                samples.push(started.elapsed().as_secs_f64() * 1000.0);
             }
-            samples.sort_by(f64::total_cmp);
-            eprintln!(
-                "screen build+layout+paint retained={retained}: p50={:.2} p95={:.2} p99={:.2} ms",
-                samples[29], samples[56], samples[59]
-            );
         }
+        samples.sort_by(f64::total_cmp);
+        eprintln!(
+            "screen compose+layout: p50={:.2} p95={:.2} p99={:.2} ms",
+            samples[29], samples[56], samples[59]
+        );
     }
 
-    /// Model updates and viewport changes rebuild retained geometry and font changes can clear it.
+    /// Model updates and viewport changes lay the screen out again, and the same screen lays out the same.
     #[test]
     fn retained_screen_invalidates_for_content_and_viewport() {
-        let mut cached = scene::Cached::default();
-        let mut shaper = scene::shaper();
-        let mut list = DrawList::new();
         let mut state = files();
-        let theme = default_family().dark;
-        let input = Input::default();
-        let first = cached.paint(
-            0,
-            WIDTH as f32,
-            HEIGHT as f32,
-            &Screen::Workspace(state.clone()),
-            &input,
-            &theme,
-            &mut shaper,
-            &mut list,
-        );
+        let first = laid(&Screen::Workspace(state.clone()), WIDTH as f32, None);
         state.open_tree.insert("crates".to_owned());
         let screen = Screen::Workspace(state);
-        let changed = cached.paint(
-            1,
-            WIDTH as f32,
-            HEIGHT as f32,
-            &screen,
-            &input,
-            &theme,
-            &mut shaper,
-            &mut list,
-        );
-        assert!(changed.regions.len() > first.regions.len());
-        let resized = cached.paint(
-            1,
-            1000.0,
-            HEIGHT as f32,
-            &screen,
-            &input,
-            &theme,
-            &mut shaper,
-            &mut list,
-        );
-        assert_ne!(changed.regions, resized.regions);
-        cached.clear();
-        let rebuilt = cached.paint(
-            1,
-            1000.0,
-            HEIGHT as f32,
-            &screen,
-            &input,
-            &theme,
-            &mut shaper,
-            &mut list,
-        );
-        assert_eq!(resized.regions, rebuilt.regions);
+        let changed = laid(&screen, WIDTH as f32, None);
+        assert!(changed.nodes.len() > first.nodes.len());
+        let resized = laid(&screen, 1000.0, None);
+        assert_ne!(changed.nodes, resized.nodes);
+        let rebuilt = laid(&screen, 1000.0, None);
+        assert_eq!(resized.nodes, rebuilt.nodes);
     }
 
-    /// Measures editing and drawing independently for prompt size and conversation size.
+    /// Measures editing and laying out independently for prompt size and conversation size.
     #[test]
     #[ignore = "manual CPU benchmark: cargo test -p pandemonium benchmark_typing -- --ignored --nocapture"]
     fn benchmark_typing() {
@@ -6173,27 +6294,19 @@ mod performance_tests {
         {
             let state = input_stress(long_prompt, long_chat);
             let mut screen = Screen::Workspace(state);
-            let mut shaper = scene::shaper();
-            let mut cached = scene::Cached::default();
-            let theme = default_family().dark;
-            let mut list = DrawList::new();
             let mut samples = Vec::new();
             for version in 0..21 {
                 let started = std::time::Instant::now();
-                screen = screen.edited(PROMPT, pm_text::Edit::Insert('x'));
-                let input = Input {
-                    focused: Some(PROMPT),
-                    ..Input::default()
-                };
-                std::hint::black_box(cached.paint(
-                    version,
-                    WIDTH as f32,
-                    HEIGHT as f32,
+                screen = screen.in_workspace(|state| {
+                    state.handle(Event::Field(FieldEvent::Typed {
+                        field: Target::Composer(ComposerEvent::Prompt),
+                        text: String::from("x"),
+                    }))
+                });
+                std::hint::black_box(laid(
                     &screen,
-                    &input,
-                    &theme,
-                    &mut shaper,
-                    &mut list,
+                    WIDTH as f32,
+                    Some(Target::Composer(ComposerEvent::Prompt)),
                 ));
                 if version > 0 {
                     samples.push(started.elapsed().as_secs_f64() * 1000.0);
@@ -6211,56 +6324,41 @@ mod performance_tests {
 /// Writes one frame of the window with a live page open in the browser to a PNG, after sending a few events into the page when `interact`, and with the developer tools open when `tools`; prints the title the page ends with.
 pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Result<(), String> {
     use pm_browser::{Button as Mouse, Engine, Key as Typed, Modifiers as Held, View};
-    use pm_components::browser::{
-        BROWSER_BODY, BROWSER_TOOLS_BODY, PAGE_SURFACE, Pointer, TOOLS_SURFACE,
-    };
-    use pm_renderer::Picture;
+    use pm_components::browser::Pointer;
+    use rustle::ImageData;
     use std::time::Duration;
 
-    let (width, height) = (WIDTH, HEIGHT);
-    let theme_family = default_family();
-    let theme = theme_family.variant(Appearance::Dark);
-    let mut shaper = scene::shaper();
-    let mut renderer = Renderer::headless(width, height, 1.0).map_err(|error| error.to_string())?;
-    let mut list = DrawList::new();
-    let input = Input {
-        pointer: PointerState::default(),
-        focused: None,
-        elapsed_ms: 0.0,
-        selection: None,
-        held_bar: None,
-    };
+    let (width, height) = (WIDTH as f32, HEIGHT as f32);
     let mut workspace = workspace_sample();
     workspace.open_browser(url);
     if tools {
         workspace = workspace.browser_tools_shown();
     }
     let mut screen = Screen::Workspace(workspace);
-    let region = |output: &pm_ui::Output, id: FocusId| {
-        output
-            .regions
-            .iter()
-            .find(|region| region.id == id)
-            .map(|region| region.rect)
-    };
-    let output = scene::paint(
-        width as f32,
-        height as f32,
-        &screen,
-        &input,
-        theme,
-        &mut shaper,
-        &mut list,
+    let output = lay_out(
+        width,
+        height,
+        None,
+        content(screen.clone(), None, (width, height)),
     );
-    let body = region(&output, BROWSER_BODY).ok_or("the page has no window")?;
+    let region = |id: Target| output.region(id);
+    let body =
+        region(Target::Browser(BrowserEvent::BrowserBody)).ok_or("the page has no window")?;
     let engine = Engine::start().map_err(|error| error.to_string())?;
-    let page = View::open(&engine, url, body.width as u32, body.height as u32, 1.0)
-        .map_err(|error| error.to_string())?;
+    let page = View::open(
+        &engine,
+        url,
+        body.size.width as u32,
+        body.size.height as u32,
+        1.0,
+    )
+    .map_err(|error| error.to_string())?;
     let pump = |seconds: f64| std::thread::sleep(Duration::from_secs_f64(seconds));
     let tools_view = if tools {
-        let room = region(&output, BROWSER_TOOLS_BODY).ok_or("the tools have no window")?;
+        let room = region(Target::Browser(BrowserEvent::BrowserToolsBody))
+            .ok_or("the tools have no window")?;
         pump(2.0);
-        Some(page.open_devtools(room.width as u32, room.height as u32, 1.0))
+        Some(page.open_devtools(room.size.width as u32, room.size.height as u32, 1.0))
     } else {
         None
     };
@@ -6293,12 +6391,9 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
         page.scrolled(200, 300, 0, -300, none);
         pump(1.0);
     }
-    let picture = |view: &View, surface: u32| {
-        view.frame().map(|frame| Picture {
-            key: Picture::live_key(surface, frame.generation),
-            width: frame.width,
-            height: frame.height,
-            pixels: frame.rgba,
+    let picture = |view: &View, texture: rustle::ImageKey| {
+        view.frame().and_then(|frame| {
+            ImageData::keyed(texture, frame.width, frame.height, frame.rgba.as_slice())
         })
     };
     let title = page.title();
@@ -6310,7 +6405,7 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
             .map_or(1, |browser| browser.active_id());
         state.browser_tab_painted(
             first,
-            picture(&page, PAGE_SURFACE),
+            picture(&page, rustle::ImageKey::new()),
             &title,
             &page.address(),
             Pointer::Arrow,
@@ -6318,29 +6413,23 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
         );
         if let Some(tools) = tools_view
             .as_ref()
-            .and_then(|view| picture(view, TOOLS_SURFACE))
+            .and_then(|view| picture(view, rustle::ImageKey::new()))
         {
             state.browser_tools_painted(tools);
         }
     }
     println!("title: {title}");
-    scene::paint(
-        width as f32,
-        height as f32,
-        &screen,
-        &input,
-        theme,
-        &mut shaper,
-        &mut list,
-    );
-    let pixels = renderer
-        .snapshot(&list, &mut shaper, scene::ground(theme))
-        .ok_or("the renderer could not read its frame back")?;
+    let frame = Frame {
+        clock_ms: 0.0,
+        family: default_family(),
+        appearance: Appearance::Dark,
+        ..Frame::new(width, height)
+    };
+    let written = write_png(path, &frame, content(screen, None, (width, height)));
     drop(tools_view);
     drop(page);
     drop(engine);
-    image::save_buffer(path, &pixels, width, height, image::ColorType::Rgba8)
-        .map_err(|error| error.to_string())
+    written.map_err(|error| error.to_string())
 }
 
 /// `state` with Ollama and OpenRouter hidden from new sessions, as the settings keep it.
@@ -6454,4 +6543,34 @@ fn many_models() -> WorkspaceState {
         .into_iter()
         .collect();
     WorkspaceState::new(&projects).with_discovery(0, discovery)
+}
+
+#[cfg(test)]
+mod pointer_tests {
+    use super::*;
+
+    /// The pixels of the workspace shot drawn 700 ms in with the pointer at `pointer`.
+    fn workspace_pixels(pointer: Option<(f32, f32)>) -> Vec<u8> {
+        let (frame, drawn) = prepare(700.0, pointer, None, Appearance::Dark, Shot::Workspace, 1.0);
+        offscreen::pixels(&frame, drawn).expect("drawn").2
+    }
+
+    /// How many pixels differ between `one` and `other`, both RGBA.
+    fn changed(one: &[u8], other: &[u8]) -> usize {
+        one.chunks(4)
+            .zip(other.chunks(4))
+            .filter(|(one, other)| one != other)
+            .count()
+    }
+
+    /// The pointer resting on a sidebar row lights it, and resting on a title-bar button
+    /// shows its tooltip, a larger change than the button's own hover fill.
+    #[test]
+    fn the_pointer_shows_hover_and_tooltips() {
+        let bare = workspace_pixels(None);
+        let row = changed(&bare, &workspace_pixels(Some((120.0, 336.0))));
+        assert!(row > 0, "a hovered row looks the same");
+        let button = changed(&bare, &workspace_pixels(Some((1062.0, 19.0))));
+        assert!(button > 28 * 28, "no tooltip under the title-bar button");
+    }
 }

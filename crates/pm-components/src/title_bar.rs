@@ -1,49 +1,29 @@
 //! The bar across the top of the window: back and forward, the command center naming where the window is, the button that opens a newer release while one is out, the settings, and the controls of a window the desktop draws no frame around.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Role, bg, border_b, border_color, flex, flex_1, flex_none, gap, h_px, items_center,
-    justify_center, justify_end, min_w_px, px, w_full, w_px,
-};
-use pm_ui::{Node, node};
+use crate::areas::WindowEvent;
+use crate::areas::{DiffEvent, SidebarEvent, TerminalEvent};
+use crate::button;
+
+use crate::events::Interactive;
+use crate::events::{Event, send};
+use crate::icons::{panel_bottom, panel_right};
+use crate::target::Target;
+use crate::theme;
+use crate::theme::Role;
+use crate::theme::sp;
+use rustle::Modifier;
+use rustle::{Alignment, Arrangement, row_arranged};
+use rustle::{Icon, phosphor};
+use std::rc::Rc;
 
 use crate::Button;
 use crate::button::Variant;
 use crate::listing::{LISTING_WIDTH, QUICK_INSET};
 use crate::quick_input::FIELD_HEIGHT;
-use crate::size::Size;
-use crate::state::{Page, REVIEW, SETTINGS, SIDEBAR_TOGGLE, TERMINAL, WorkspaceState};
+use crate::state::{Page, WorkspaceState};
 
 /// How tall the bar is, in logical pixels.
 pub const TITLE_BAR_HEIGHT: f32 = 40.0;
-
-/// The bar itself, which moves the window when it is dragged and maximizes it when it is pressed twice.
-pub const TITLE_BAR: FocusId = FocusId(7_405_000);
-
-/// Goes back to the place shown before.
-pub const GO_BACK: FocusId = FocusId(7_405_001);
-
-/// Goes forward to the place gone back from.
-pub const GO_FORWARD: FocusId = FocusId(7_405_002);
-
-/// The command center, which lists every command.
-pub const COMMAND_CENTER: FocusId = FocusId(7_405_003);
-
-/// Minimizes the window.
-pub const WINDOW_MINIMIZE: FocusId = FocusId(7_405_004);
-
-/// Maximizes the window, or restores it.
-pub const WINDOW_MAXIMIZE: FocusId = FocusId(7_405_005);
-
-/// Closes the window.
-pub const WINDOW_CLOSE: FocusId = FocusId(7_405_006);
-
-/// Opens the page of the newer release that is out.
-pub const UPDATE: FocusId = FocusId(7_405_007);
-
-/// Opens the extensions page, where a newer language or language server is installed.
-pub const LANGUAGE_UPDATE: FocusId = FocusId(7_405_008);
 
 /// How wide the command center is while the bar has room, in logical pixels: as wide as the field of the quick input that opens over it.
 const COMMAND_CENTER_WIDTH: f32 = LISTING_WIDTH - 2.0 * QUICK_INSET;
@@ -80,11 +60,6 @@ pub struct TitleBar {
 }
 
 impl TitleBar {
-    /// A bar holding only the controls of the window.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
     /// A bar holding only the control that closes the window.
     pub fn closing() -> Self {
         Self {
@@ -106,149 +81,283 @@ impl TitleBar {
         }
     }
 
-    /// The node that draws the bar.
-    pub fn build(self) -> Node {
+    /// Emits the bar.
+    #[track_caller]
+    pub fn build(self) {
         let navigation = self.place.is_some();
-        let leading = node()
-            .styles([flex(), flex_1(), items_center(), gap(0.5), px(2)])
-            .child(node().styles([flex_none(), w_px(DESKTOP_CONTROLS)]))
-            .children(navigation.then(|| {
-                Button::icon(IconName::ArrowLeft, GO_BACK)
-                    .build()
-                    .tooltip("Go Back")
-            }))
-            .children(navigation.then(|| {
-                Button::icon(IconName::ArrowRight, GO_FORWARD)
-                    .build()
-                    .tooltip("Go Forward")
-            }));
-        let trailing = node()
-            .styles([
-                flex(),
-                flex_1(),
-                items_center(),
-                justify_end(),
-                gap(0.5),
-                pm_style::h_full(),
-            ])
-            .children(self.language_update.then(|| {
-                Button::new("Update languages", LANGUAGE_UPDATE)
-                    .variant(Variant::Ghost)
-                    .tone(Role::Accent)
-                    .size(Size::Sm)
-                    .build()
-                    .tooltip("A newer language or language server is available")
-                    .styles([pm_style::mr(1)])
-            }))
-            .children(self.update.then(|| {
-                Button::new("Update", UPDATE)
-                    .variant(Variant::Ghost)
-                    .tone(Role::Accent)
-                    .size(Size::Sm)
-                    .build()
-                    .tooltip("Update Available")
-                    .styles([pm_style::mr(1)])
-            }))
-            .children(navigation.then(|| {
-                layout_toggle(
-                    IconName::PanelLeft,
-                    SIDEBAR_TOGGLE,
-                    "Toggle Primary Side Bar",
-                    self.sidebar_open,
-                )
-            }))
-            .children(navigation.then(|| {
-                layout_toggle(
-                    IconName::PanelBottom,
-                    TERMINAL,
-                    "Toggle Panel",
-                    self.panel_open,
-                )
-            }))
-            .children(navigation.then(|| {
-                layout_toggle(
-                    IconName::PanelRight,
-                    REVIEW,
-                    "Toggle Review Panel",
-                    self.review_open,
-                )
-            }))
-            .children(navigation.then(|| {
-                Button::icon(IconName::Settings, SETTINGS)
-                    .build()
-                    .tooltip("Open Settings")
-            }))
-            .children(FRAMELESS.then(|| window_controls(self.close_only)));
-        node()
-            .styles([
-                flex(),
-                flex_none(),
-                items_center(),
-                w_full(),
-                h_px(TITLE_BAR_HEIGHT),
-                bg(Role::Sidebar),
-                border_b(),
-                border_color(Role::Border),
-            ])
-            .focusable(TITLE_BAR)
-            .child(leading)
-            .children(self.place.map(command_center))
-            .child(trailing)
+        let own = Modifier::new()
+            .fill_max_width()
+            .height(TITLE_BAR_HEIGHT)
+            .background(theme::color(Role::Sidebar))
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .control(
+                Target::Window(WindowEvent::TitleBar),
+                send(Event::Window(WindowEvent::TitleBar)),
+            );
+        rustle::layout(own, BarLayout, move || {
+            rustle::row_arranged(
+                Modifier::new()
+                    .fill_max_height()
+                    .padding_xy(theme::sp(2), 0.0),
+                Arrangement::SpacedBy(theme::sp(0.5)),
+                Alignment::Center,
+                || {
+                    rustle::spacer(Modifier::new().width(DESKTOP_CONTROLS));
+                    if navigation {
+                        let back = crate::events::operations();
+                        Button::icon(phosphor::ARROW_LEFT, Target::Window(WindowEvent::GoBack))
+                            .on_click(move || back.navigate(-1))
+                            .tooltip("Go Back")
+                            .build();
+                        let forward = crate::events::operations();
+                        Button::icon(
+                            phosphor::ARROW_RIGHT,
+                            Target::Window(WindowEvent::GoForward),
+                        )
+                        .on_click(move || forward.navigate(1))
+                        .tooltip("Go Forward")
+                        .build();
+                    }
+                },
+            );
+            if let Some(place) = self.place {
+                command_center(place);
+            }
+            row_arranged(
+                Modifier::new().fill_max_height(),
+                Arrangement::SpacedByAligned(sp(0.5), Alignment::End),
+                Alignment::Center,
+                || {
+                    if self.language_update {
+                        update_button(
+                            "Update languages",
+                            WindowEvent::LanguageUpdate,
+                            "A newer language or language server is available",
+                        );
+                    }
+                    if self.update {
+                        update_button("Update", WindowEvent::Update, "Update Available");
+                    }
+                    if navigation {
+                        layout_toggle(
+                            phosphor::SIDEBAR_SIMPLE,
+                            sidebar_mark,
+                            Target::Sidebar(SidebarEvent::SidebarToggle),
+                            "Toggle Primary Side Bar",
+                            self.sidebar_open,
+                        );
+                        layout_toggle(
+                            phosphor::BROWSER,
+                            panel_mark,
+                            Target::Terminal(TerminalEvent::Terminal),
+                            "Toggle Panel",
+                            self.panel_open,
+                        );
+                        layout_toggle(
+                            phosphor::SIDEBAR_SIMPLE,
+                            |open| panel_right(open, 5.0, Role::Muted),
+                            Target::Diff(DiffEvent::Review),
+                            "Toggle Review Panel",
+                            self.review_open,
+                        );
+                        Button::icon(phosphor::GEAR, Target::Sidebar(SidebarEvent::Settings))
+                            .tooltip("Open Settings")
+                            .build();
+                    }
+                    if FRAMELESS {
+                        window_controls(self.close_only);
+                    }
+                },
+            );
+        });
     }
 }
 
-/// The button that shows or hides a panel, filling its part of the icon while open.
-fn layout_toggle(icon: IconName, id: FocusId, words: &str, open: bool) -> Node {
-    let mark = match (icon, open) {
-        (IconName::PanelLeft, true) => IconName::PanelLeftFilled,
-        (IconName::PanelRight, true) => IconName::PanelRightFilled,
-        (IconName::PanelBottom, true) => IconName::PanelBottomFilled,
-        _ => icon,
-    };
-    Button::icon(icon, id)
-        .mark(crate::parts::glyph(mark, 5.0, Role::Muted))
-        .build()
-        .tooltip(words)
+/// How the bar lays out its children: the group at the start, the command center when there is
+/// one, and the group at the end.
+///
+/// The command center gets its own width; the two groups share what is left, the one at the
+/// start also keeping its side padding, so the command center sits in the middle. A group whose
+/// content is wider than its share keeps its content's width and the other group gives up the
+/// difference; when both groups need more than is left, the bar runs past its end.
+struct BarLayout;
+
+impl BarLayout {
+    /// The widths of the start group, the command center and the end group in a bar `room`
+    /// logical pixels across, for groups whose content is `start` and `end` wide and a command
+    /// center when `centered`.
+    fn widths(room: f32, start: f32, end: f32, centered: bool) -> (f32, f32, f32) {
+        let padding = sp(4);
+        let center = if centered { COMMAND_CENTER_WIDTH } else { 0.0 };
+        let free = room - center - padding;
+        let mut left = padding + free / 2.0;
+        let mut right = free / 2.0;
+        if right < end {
+            right = end;
+            left = padding + free - end;
+        }
+        if left < start {
+            left = start;
+            right = (padding + free - start).max(end);
+        }
+        (left.max(0.0), center, right.max(0.0))
+    }
 }
 
-/// The box in the middle of the bar that says where the window is pointed and lists every command when it is pressed.
-fn command_center(place: String) -> Node {
-    Button::new(place, COMMAND_CENTER)
+impl rustle::Layout for BarLayout {
+    /// Measures the groups and the command center by [`BarLayout::widths`], each as tall as the
+    /// bar or less, and centres each down the bar.
+    fn measure(
+        &self,
+        children: &mut rustle::Children,
+        constraints: rustle::Constraints,
+    ) -> rustle::LayoutResult {
+        let count = children.len();
+        let height = constraints.max_height;
+        let last = count.saturating_sub(1);
+        let start = children.max_intrinsic_width(0, height);
+        let end = children.max_intrinsic_width(last, height);
+        let (left, center, right) = Self::widths(constraints.max_width, start, end, count == 3);
+        let widths: Vec<f32> = match count {
+            3 => vec![left, center, right],
+            2 => vec![left, right],
+            _ => vec![constraints.max_width; count],
+        };
+        let mut positions = Vec::with_capacity(count);
+        let mut along = 0.0;
+        for (index, width) in widths.iter().enumerate() {
+            let size = children.measure(
+                index,
+                rustle::Constraints {
+                    min_width: *width,
+                    max_width: *width,
+                    min_height: 0.0,
+                    max_height: height,
+                },
+            );
+            positions.push(rustle::Offset::new(along, (height - size.height) / 2.0));
+            along += width;
+        }
+        rustle::LayoutResult {
+            size: rustle::Size::new(constraints.max_width, height),
+            positions,
+        }
+    }
+}
+
+/// Emits the button that shows or hides a panel, standing for `icon`, its
+/// look drawn by `mark`, which is told whether the panel is `open`.
+#[track_caller]
+fn layout_toggle(icon: Icon, mark: fn(bool), id: Target, words: &str, open: bool) {
+    Button::icon(icon, id)
+        .mark(move || mark(open))
+        .tooltip(words)
+        .build();
+}
+
+/// Emits the primary side bar's toggle: Phosphor's sidebar, filled while `open`.
+fn sidebar_mark(open: bool) {
+    let sidebar = if open {
+        phosphor::fill::SIDEBAR_SIMPLE
+    } else {
+        phosphor::SIDEBAR_SIMPLE
+    };
+    crate::parts::glyph(sidebar, 5.0, Role::Muted);
+}
+
+/// Emits the bottom panel's toggle: a window with a band along its bottom,
+/// the bottom half filled while `open`.
+fn panel_mark(open: bool) {
+    if open {
+        crate::parts::glyph(phosphor::fill::SQUARE_HALF_BOTTOM, 5.0, Role::Muted);
+    } else {
+        panel_bottom(5.0, Role::Muted);
+    }
+}
+
+/// Emits the button that offers a newer release, saying `label`, answering to `id` and explaining `tip` on hover.
+#[track_caller]
+fn update_button(label: &str, id: WindowEvent, tip: &str) {
+    button::small_button(label, Target::Window(id), Variant::Ghost)
+        .tone(Role::Accent)
+        .modifier(Modifier::new().padding_each(0.0, 0.0, theme::sp(1), 0.0))
+        .tooltip(tip)
+        .build();
+}
+
+/// Emits the box in the middle of the bar that says where the window is pointed and lists every command when it is pressed.
+fn command_center(place: String) {
+    let operations = crate::events::operations();
+    Button::new(place, Target::Window(WindowEvent::CommandCenter))
+        .on_click(move || operations.open_command_palette())
         .variant(Variant::Field)
-        .with_icon(IconName::Search)
+        .with_icon(phosphor::MAGNIFYING_GLASS)
         .tone(Role::Subtle)
         .width(COMMAND_CENTER_WIDTH)
-        .build()
-        .styles([
-            justify_center(),
-            min_w_px(COMMAND_CENTER_MIN_WIDTH),
-            h_px(COMMAND_CENTER_HEIGHT),
-            bg(Role::Background),
-        ])
+        .resting(Role::Background)
+        .arranged(
+            Arrangement::SpacedByAligned(sp(2), Alignment::Center),
+            Alignment::Center,
+        )
+        .modifier(
+            Modifier::new()
+                .width_in(COMMAND_CENTER_MIN_WIDTH, COMMAND_CENTER_WIDTH)
+                .height(COMMAND_CENTER_HEIGHT)
+                .chain(crate::bounds::placed(
+                    Target::Window(WindowEvent::CommandCenter),
+                    Modifier::new(),
+                )),
+        )
         .tooltip("Show All Commands")
+        .build();
 }
 
-/// The buttons that minimize, maximize and close a window the desktop draws no frame around, or only the one that closes it when `close_only` is set.
-fn window_controls(close_only: bool) -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(0.5),
-            px(1.5),
-            pm_style::h_full(),
-        ])
-        .children((!close_only).then(|| control(IconName::Minus, WINDOW_MINIMIZE, "Minimize")))
-        .children((!close_only).then(|| control(IconName::Maximize, WINDOW_MAXIMIZE, "Maximize")))
-        .child(control(IconName::Close, WINDOW_CLOSE, "Close"))
+/// Emits the buttons that minimize, maximize and close a window the desktop draws no frame around, or only the one that closes it when `close_only` is set.
+fn window_controls(close_only: bool) {
+    rustle::row_arranged(
+        Modifier::new()
+            .padding_xy(theme::sp(1.5), 0.0)
+            .fill_max_height(),
+        Arrangement::SpacedBy(theme::sp(0.5)),
+        Alignment::Center,
+        || {
+            let operations = crate::events::operations();
+            if !close_only {
+                let minimize = Rc::clone(&operations);
+                control(
+                    phosphor::MINUS,
+                    Target::Window(WindowEvent::WindowMinimize),
+                    "Minimize",
+                    move || minimize.minimize_window(),
+                );
+                let maximize = Rc::clone(&operations);
+                control(
+                    phosphor::ARROWS_OUT_SIMPLE,
+                    Target::Window(WindowEvent::WindowMaximize),
+                    "Maximize",
+                    move || maximize.toggle_maximized(),
+                );
+            }
+            control(
+                phosphor::X,
+                Target::Window(WindowEvent::WindowClose),
+                "Close",
+                move || operations.close_window(),
+            );
+        },
+    );
 }
 
-/// One control of the window, showing `icon`, answering to `id` and named `words`.
-fn control(icon: IconName, id: FocusId, words: &str) -> Node {
+/// Emits one control of the window, showing `icon`, answering to `id`, named `words` and
+/// running `on_click` when clicked.
+#[track_caller]
+fn control(icon: Icon, id: Target, words: &str, on_click: impl Fn() + 'static) {
     Button::icon(icon, id)
-        .build()
-        .styles([w_px(32.0)])
+        .on_click(on_click)
+        .modifier(Modifier::new().width(32.0))
         .tooltip(words)
+        .build();
 }
 
 /// What the command center says the window is pointed at: the project shown, and the session in it or the submodule new work starts in when there is one.
@@ -274,9 +383,4 @@ fn whereabouts(state: &WorkspaceState) -> String {
         Page::Extensions => Some("Extensions".to_owned()),
     };
     named.unwrap_or_else(|| "Search commands".to_owned())
-}
-
-/// Whether `id` is one of the controls of the window.
-pub fn is_window_control(id: FocusId) -> bool {
-    [WINDOW_MINIMIZE, WINDOW_MAXIMIZE, WINDOW_CLOSE].contains(&id)
 }

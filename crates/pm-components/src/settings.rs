@@ -1,96 +1,26 @@
 //! The settings window: the sections of settings down its left side and the one chosen on its right, filling a window of its own.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Role, bg, border_color, border_r, flex, flex_1, flex_col, flex_none, gap, h, h_full,
-    items_center, min_h, min_w_px, overflow_hidden, p, pb, pl, pr, pt, px, w_full, w_px,
-};
-use pm_text::Shaper;
-use pm_ui::{Node, node};
+use crate::areas::SettingsEvent;
+use crate::events;
+use crate::icons;
+use crate::theme::Indicated;
+
+use crate::target::Target;
+use crate::theme;
+use rustle::Modifier;
+use rustle::{Alignment, Arrangement, row_arranged};
+use rustle::{Icon, phosphor};
+
+use crate::theme::{Radius, Role};
 
 use crate::input::Input;
 use crate::parts::{clipped, glyph, line};
-use crate::settings_ids::{SECTIONS, SETTINGS_END, SETTINGS_START, SINGLES};
+use crate::settings_editor::PAGES;
+use crate::settings_rows::SECTIONS;
 use crate::settings_servers;
 use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::tile::Tile;
-
-/// Closes the settings window.
-pub const SETTINGS_CLOSE: FocusId = SINGLES.at(2);
-
-/// Opens the form for adding a server to the list showing.
-pub const SETTINGS_ADD: FocusId = SINGLES.at(3);
-
-/// Keeps what the form holds.
-pub const SETTINGS_SAVE: FocusId = SINGLES.at(4);
-
-/// Puts the form away without keeping it.
-pub const SETTINGS_CANCEL: FocusId = SINGLES.at(5);
-
-/// The box the form's name is written in.
-pub const SETTINGS_NAME: FocusId = SINGLES.at(6);
-
-/// The box the form's command or address is written in.
-pub const SETTINGS_TARGET: FocusId = SINGLES.at(7);
-
-/// The box the form's environment is written in.
-pub const SETTINGS_ENV: FocusId = SINGLES.at(8);
-
-/// The box the list showing is searched with.
-pub const SETTINGS_SEARCH: FocusId = SINGLES.at(30);
-
-/// Searches the registry for the words in the search box, which is what Enter in the box does.
-pub const SETTINGS_SEARCH_GO: FocusId = SINGLES.at(31);
-
-/// The scrolling page of the section showing.
-pub const SETTINGS_SCROLL: FocusId = SINGLES.at(40);
-
-/// The scrolling list of sections down the left side.
-pub const SETTINGS_NAV_SCROLL: FocusId = SINGLES.at(41);
-
-/// Folds the list of what is installed away, or shows it again.
-pub const SETTINGS_TOGGLE_INSTALLED: FocusId = SINGLES.at(32);
-
-/// Folds the list of what the registry offers away, or shows it again.
-pub const SETTINGS_TOGGLE_AVAILABLE: FocusId = SINGLES.at(33);
-
-/// Switches the server the open menu is over on or off.
-pub const SETTINGS_MENU_TOGGLE: FocusId = SINGLES.at(50);
-
-/// Opens the form for the server the open menu is over.
-pub const SETTINGS_MENU_EDIT: FocusId = SINGLES.at(51);
-
-/// Copies the configuration of the server the open menu is over.
-pub const SETTINGS_MENU_COPY: FocusId = SINGLES.at(52);
-
-/// Opens the page of the publisher of the server the open menu is over.
-pub const SETTINGS_MENU_WEBSITE: FocusId = SINGLES.at(53);
-
-/// Takes the server the open menu is over away.
-pub const SETTINGS_MENU_REMOVE: FocusId = SINGLES.at(54);
-
-/// Opens the page that explains tool servers.
-pub const SETTINGS_DOCS: FocusId = SINGLES.at(55);
-
-/// The box every setting is searched with.
-pub const SETTINGS_FIND: FocusId = SINGLES.at(60);
-
-/// The box the open list of choices is narrowed with.
-pub const SETTINGS_PICK_FILTER: FocusId = SINGLES.at(61);
-
-/// The box the keymap's actions are searched with.
-pub const SETTINGS_KEYMAP_FIND: FocusId = SINGLES.at(62);
-
-/// Empties the box every setting is searched with.
-pub const SETTINGS_FIND_CLEAR: FocusId = SINGLES.at(63);
-
-/// Opens the page of the newest release.
-pub const SETTINGS_RELEASE: FocusId = SINGLES.at(64);
-
-/// Picks the first row of the open list of choices, which is what Enter in the box narrowing it does.
-pub const SETTINGS_PICK_FIRST: FocusId = SINGLES.at(67);
 
 /// How far the settings stand in from either side of the right of the window, in logical pixels.
 const PAGE_INSET: f32 = 32.0;
@@ -103,6 +33,16 @@ const NARROW_NAVIGATION: f32 = 184.0;
 
 /// How wide the window is at most for the list of sections to be narrow, in logical pixels.
 const NARROW_WINDOW: f32 = 760.0;
+
+/// The pages inside Agents that are not lists of what agents are given, in the order the list and the overview show them.
+pub(crate) const AGENT_PAGES: [Section; 6] = [
+    Section::AgentServers,
+    Section::McpServers,
+    Section::ModelServers,
+    Section::ModelSlots,
+    Section::Orchestration,
+    Section::Usage,
+];
 
 /// A group of settings, named down the left side of the window; some sit inside another.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -208,7 +148,7 @@ impl Section {
     pub(crate) fn title(self) -> &'static str {
         match self {
             Self::General => "General",
-            Self::Appearance => "Appearance",
+            Self::Appearance | Self::EditorAppearance => "Appearance",
             Self::Languages => "Languages",
             Self::Terminal => "Terminal",
             Self::Browser => "Browser",
@@ -217,14 +157,13 @@ impl Section {
             Self::Servers => "Servers",
             Self::Results => "Search Results",
             Self::Editor => "Editor",
-            Self::EditorAppearance => "Appearance",
             Self::EditorEditing => "Editing",
             Self::EditorSaving => "Saving",
             Self::EditorIntelligence => "Code Intelligence",
             Self::EditorSearch => "Search & Scrolling",
             Self::EditorVim => "Vim",
             Self::Keymap => "Keymap",
-            Self::Agents => "Agents",
+            Self::Agents | Self::AgentDefinitions => "Agents",
             Self::AgentServers => "Agents and accounts",
             Self::McpServers => "MCP Servers",
             Self::ModelServers => "Model Servers",
@@ -234,103 +173,76 @@ impl Section {
             Self::Customizations => "Overview",
             Self::Skills => "Skills",
             Self::Instructions => "Instructions",
-            Self::AgentDefinitions => "Agents",
             Self::Hooks => "Hooks",
             Self::Tools => "Tools",
         }
     }
 
     /// The glyph before its name in the list.
-    fn icon(self) -> IconName {
+    fn icon(self) -> Icon {
         match self {
-            Self::General | Self::Results => IconName::Settings,
-            Self::Appearance => IconName::Pencil,
-            Self::Languages => IconName::File,
-            Self::Terminal => IconName::Terminal,
-            Self::Browser => IconName::Globe,
-            Self::Git | Self::Worktrees => IconName::Git,
-            Self::Servers => IconName::Plug,
-            Self::Editor
-            | Self::EditorAppearance
-            | Self::EditorEditing
-            | Self::EditorSaving
-            | Self::EditorIntelligence
-            | Self::EditorSearch
-            | Self::EditorVim => IconName::FileCode,
-            Self::Keymap => IconName::SquareSlash,
-            Self::Agents => IconName::Sparkles,
-            Self::AgentServers => IconName::Folder,
-            Self::McpServers => IconName::Plug,
-            Self::ModelServers => IconName::Zap,
-            Self::ModelSlots => IconName::Sparkles,
-            Self::Orchestration => IconName::Split,
-            Self::Usage => IconName::Progress,
-            Self::Customizations
-            | Self::Skills
-            | Self::Instructions
-            | Self::AgentDefinitions
-            | Self::Hooks
-            | Self::Tools => IconName::Sparkles,
+            Self::General | Self::Results => phosphor::GEAR,
+            Self::Appearance => phosphor::PENCIL_SIMPLE,
+            Self::Languages => phosphor::FILE,
+            Self::Terminal => phosphor::TERMINAL,
+            Self::Browser => phosphor::GLOBE,
+            Self::Git | Self::Worktrees => phosphor::GIT_BRANCH,
+            Self::Servers | Self::McpServers => phosphor::PLUG,
+            Self::Keymap => phosphor::COMMAND,
+            Self::AgentServers => phosphor::FOLDER,
+            Self::ModelServers => phosphor::LIGHTNING,
+            Self::Orchestration => phosphor::SLIDERS_HORIZONTAL,
+            Self::Usage => phosphor::TIMER,
+            _ if self == Self::Editor || PAGES.contains(&self) => phosphor::CODE,
+            _ => phosphor::SPARKLE,
         }
     }
 
     /// The section it sits inside, if it sits inside one.
     pub(crate) fn parent(self) -> Option<Section> {
         match self {
-            Self::AgentServers
-            | Self::McpServers
-            | Self::ModelServers
-            | Self::ModelSlots
-            | Self::Orchestration
-            | Self::Usage
-            | Self::Customizations
-            | Self::Skills
-            | Self::Instructions
-            | Self::AgentDefinitions
-            | Self::Hooks
-            | Self::Tools => Some(Self::Agents),
-            Self::EditorAppearance
-            | Self::EditorEditing
-            | Self::EditorSaving
-            | Self::EditorIntelligence
-            | Self::EditorSearch
-            | Self::EditorVim => Some(Self::Editor),
             Self::Worktrees => Some(Self::Git),
-            Self::General
-            | Self::Appearance
-            | Self::Languages
-            | Self::Terminal
-            | Self::Browser
-            | Self::Git
-            | Self::Servers
-            | Self::Results
-            | Self::Agents
-            | Self::Editor
-            | Self::Keymap => None,
+            _ if PAGES.contains(&self) => Some(Self::Editor),
+            _ if AGENT_PAGES.contains(&self) || crate::settings_library::lists(self) => {
+                Some(Self::Agents)
+            }
+            _ => None,
         }
     }
 
     /// The name of pressing its row in the list.
-    pub fn id(self) -> FocusId {
+    pub fn id(self) -> Target {
         let position = Self::ALL
             .iter()
             .position(|section| *section == self)
             .unwrap_or_default();
-        SECTIONS.at(position as u64)
+        SECTIONS.at(position)
     }
 
     /// The section whose row in the list `id` names, when it names one.
-    fn of(id: FocusId) -> Option<Self> {
+    fn of(id: Target) -> Option<Self> {
         SECTIONS
             .index_of(id)
             .and_then(|index| Self::ALL.get(index).copied())
     }
 }
 
-/// Whether `id` names something of the window.
-pub fn is_settings(id: FocusId) -> bool {
-    let FocusId(number) = id;
-    (SETTINGS_START..SETTINGS_END).contains(&number)
+/// Whether `id` names something of the window: anything of the settings area but the extensions page and the previews it opens.
+pub fn is_settings(id: Target) -> bool {
+    matches!(
+        id,
+        Target::Settings(event) if !matches!(
+            event,
+            SettingsEvent::Extensions
+                | SettingsEvent::ExtensionsSearch
+                | SettingsEvent::InstallExtension
+                | SettingsEvent::PreviewCancel
+                | SettingsEvent::PreviewInstall
+                | SettingsEvent::PreviewGrant(..)
+                | SettingsEvent::ExtensionRow(..)
+                | SettingsEvent::ExtensionGrant { .. }
+        )
+    )
 }
 
 impl WorkspaceState {
@@ -372,52 +284,25 @@ impl WorkspaceState {
     /// Closes settings, whatever form they had open.
     pub(crate) fn close_settings(&mut self) {
         self.settings = None;
-        self.settings_servers.form = None;
-        self.settings_servers.key_form = None;
-        self.settings_servers.name_form = None;
-        self.settings_page.server_form = None;
-        self.settings_page.models.form = None;
-        self.settings_page.slots.picking = None;
-        self.settings_page.library.draft = None;
-        self.settings_page.picker = None;
+        while self.put_away_innermost() {}
         self.recording = None;
     }
 
     /// The state after something of the settings window was pressed: `action` is the name of what.
-    pub(crate) fn settings_pressed(mut self, action: FocusId) -> Self {
+    pub(crate) fn settings_pressed(mut self, action: Target) -> Self {
         match action {
-            SETTINGS_CLOSE if self.settings_page.picker.is_some() => {
-                self.settings_page.picker = None;
+            Target::Settings(SettingsEvent::SettingsClose) => {
+                if !self.put_away_innermost() {
+                    return self.without_settings();
+                }
             }
-            SETTINGS_CLOSE if self.settings_page.slots.picking.is_some() => {
-                self.settings_page.slots.picking = None;
-            }
-            SETTINGS_CLOSE if self.settings_servers.form.is_some() => {
-                self.settings_servers.form = None;
-            }
-            SETTINGS_CLOSE if self.settings_servers.key_form.is_some() => {
-                self.settings_servers.key_form = None;
-            }
-            SETTINGS_CLOSE if self.settings_servers.name_form.is_some() => {
-                self.settings_servers.name_form = None;
-            }
-            SETTINGS_CLOSE if self.settings_page.models.form.is_some() => {
-                self.settings_page.models.form = None;
-            }
-            SETTINGS_CLOSE if self.settings_page.server_form.is_some() => {
-                self.settings_page.server_form = None;
-            }
-            SETTINGS_CLOSE if self.settings_page.library.draft.is_some() => {
-                self.settings_page.library.draft = None;
-            }
-            SETTINGS_CLOSE => return self.without_settings(),
-            SETTINGS_RELEASE => {
+            Target::Settings(SettingsEvent::SettingsRelease) => {
                 self.open_release();
                 return self.without_settings();
             }
-            SETTINGS_FIND_CLEAR => {
-                self.settings_page.find = pm_text::Field::default();
-                self.settings_servers.scroll = 0.0;
+            Target::Settings(SettingsEvent::SettingsFindClear) => {
+                self.settings_page.find = rustle::TextFieldState::default();
+                self.settings_servers.scroll.jump_to(0.0);
             }
             action if self.slots_pressed(action) => {}
             action if self.setting_pressed(action) => {}
@@ -442,6 +327,19 @@ impl WorkspaceState {
         self
     }
 
+    /// Puts away the list, picker or form open over the page, the first of them open in the order Escape closes them; says whether one was open.
+    pub(crate) fn put_away_innermost(&mut self) -> bool {
+        let (page, servers) = (&mut self.settings_page, &mut self.settings_servers);
+        page.picker.take().is_some()
+            || page.slots.picking.take().is_some()
+            || servers.form.take().is_some()
+            || servers.key_form.take().is_some()
+            || servers.name_form.take().is_some()
+            || page.models.form.take().is_some()
+            || page.server_form.take().is_some()
+            || page.library.draft.take().is_some()
+    }
+
     /// Shows `section`, whose row in the list was pressed; pressing Agents while it shows folds the sections inside it away or shows them.
     fn section_pressed(&mut self, section: Section) {
         if section == Section::Agents {
@@ -449,9 +347,7 @@ impl WorkspaceState {
             self.settings_servers.folded = showing && !self.settings_servers.folded;
         }
         self.settings = Some(section);
-        self.settings_page.find = pm_text::Field::default();
-        self.settings_page.picker = None;
-        self.settings_page.slots.picking = None;
+        self.settings_page.find = rustle::TextFieldState::default();
         self.recording = None;
         self.section_changed();
         if section == Section::ModelServers {
@@ -472,174 +368,188 @@ impl WorkspaceState {
         }
     }
 
-    /// The state after the list of sections is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_settings_nav(mut self, delta: f32, room: f32) -> Self {
-        self.settings_page.nav_scroll = (self.settings_page.nav_scroll + delta).clamp(0.0, room);
-        self
-    }
-
     /// Whether settings are being searched, which shows what was found in place of the section picked.
     pub(crate) fn settings_searching(&self) -> bool {
         !self.settings_page.find.text().trim().is_empty()
     }
 }
 
-/// How wide the list of sections is in a window `width` logical pixels across.
-fn navigation_width(width: f32) -> f32 {
-    if width <= NARROW_WINDOW {
+/// Emits what fills the settings window, `width` logical pixels across, when settings are open.
+///
+/// Returns whether settings are open, and so whether anything was emitted.
+#[track_caller]
+pub fn settings(state: &WorkspaceState, width: f32) -> bool {
+    let Some(section) = state.settings else {
+        return false;
+    };
+    let folded = state.settings_servers.folded;
+    let navigation_width = if width <= NARROW_WINDOW {
         NARROW_NAVIGATION
     } else {
         NAVIGATION_WIDTH
-    }
-}
-
-/// The node that fills the settings window, `width` logical pixels across, when settings are open, with `shaper` measuring the text of its boxes of several lines.
-pub fn settings(state: &WorkspaceState, width: f32, shaper: &mut Shaper) -> Option<Node> {
-    let section = state.settings?;
-    let folded = state.settings_servers.folded;
-    let navigation_width = navigation_width(width);
+    };
     let showing = if state.settings_searching() {
         Section::Results
     } else {
         section
     };
-    Some(
-        node()
-            .styles([flex(), w_full(), h_full(), min_h(0), bg(Role::Surface)])
-            .child(navigation(state, section, folded, navigation_width))
-            .child(content(
-                state,
-                showing,
-                width - navigation_width - 2.0 * PAGE_INSET,
-                shaper,
-            )),
-    )
+    rustle::row_arranged(
+        Modifier::new()
+            .fill_max_size()
+            .background(theme::color(Role::Surface)),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            navigation(state, section, folded, navigation_width);
+            content(state, showing, width - navigation_width - 2.0 * PAGE_INSET);
+        },
+    );
+    true
 }
 
-/// The search box over the list of sections, and the list, with the one showing marked, `width` logical pixels across.
-fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32) -> Node {
+/// Emits the search box over the list of sections, and the list, with the one showing marked, `width` logical pixels across.
+#[track_caller]
+fn navigation(state: &WorkspaceState, showing: Section, folded: bool, width: f32) {
     let searching = state.settings_searching();
-    let find = node()
-        .styles([flex(), items_center(), gap(1), flex_none(), pb(2)])
-        .child(
-            node().styles([flex_1(), min_w_px(0)]).child(
-                Input::search(&state.settings_page.find, SETTINGS_FIND)
-                    .size(Size::Sm)
-                    .placeholder("Search settings")
-                    .build(),
-            ),
-        )
-        .children(searching.then(|| {
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    pm_style::justify_center(),
-                    flex_none(),
-                    pm_style::size(6),
-                    pm_style::rounded(pm_style::Radius::Sm),
-                    pm_style::cursor_pointer(),
-                    bg(Role::SurfaceHover).hover(),
-                ])
-                .focusable(SETTINGS_FIND_CLEAR)
-                .child(glyph(IconName::Close, 3.5, Role::Muted))
-        }));
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_none(),
-            gap(1),
-            p(3),
-            w_px(width),
-            min_h(0),
-            border_r(),
-            border_color(Role::Border),
-        ])
-        .child(
-            node()
-                .styles([flex(), items_center(), h(9), px(2)])
-                .child(line("Settings", 13, 1.4, Role::Subtle)),
-        )
-        .child(find)
-        .child(
-            node()
-                .styles([flex(), flex_col(), flex_1(), min_h(0), overflow_hidden()])
-                .scroll_from_start(SETTINGS_NAV_SCROLL, state.settings_page.nav_scroll)
-                .child(
-                    node()
-                        .styles([flex(), flex_col(), flex_none(), gap(1)])
-                        .children(
-                            Section::ALL
-                                .into_iter()
-                                .filter(|section| match section.parent() {
-                                    Some(Section::Agents) => !folded,
-                                    Some(parent) => {
-                                        showing == parent || showing.parent() == Some(parent)
-                                    }
-                                    None => true,
-                                })
-                                .map(|section| {
-                                    entry(
-                                        section,
-                                        !searching && section == showing,
-                                        folded,
-                                        state.library_count(section),
-                                    )
-                                }),
-                        ),
-                ),
-        )
+    rustle::column_arranged(
+        Modifier::new()
+            .fill_max_height()
+            .width(width)
+            .border_right_hairline(theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 1.0, 0.0)
+            .padding(theme::sp(3)),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Start,
+        || {
+            rustle::row_arranged(
+                Modifier::new()
+                    .height(theme::sp(9))
+                    .padding_xy(theme::sp(2), 0.0),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    line("Settings", 13, 1.4, Role::Subtle);
+                },
+            );
+            find(state, searching);
+            rustle::column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .weight(1.0)
+                    .vertical_scroll(&state.settings_page.nav_scroll)
+                    .fill_max_width(),
+                Arrangement::SpacedBy(theme::sp(1)),
+                Alignment::Start,
+                || {
+                    for section in
+                        Section::ALL
+                            .into_iter()
+                            .filter(|section| match section.parent() {
+                                Some(Section::Agents) => !folded,
+                                Some(parent) => {
+                                    showing == parent || showing.parent() == Some(parent)
+                                }
+                                None => true,
+                            })
+                    {
+                        entry(
+                            section,
+                            !searching && section == showing,
+                            folded,
+                            state.library_count(section),
+                        );
+                    }
+                },
+            );
+        },
+    );
 }
 
-/// One row of the list of sections: a section of its own has its glyph, Agents the chevron that says whether the sections inside it are shown, and those inside another only their name, set in under it, with `count` after it when it has one.
-fn entry(section: Section, showing: bool, folded: bool, count: Option<usize>) -> Node {
+/// Emits the box searching settings, with the button clearing it while `searching`.
+#[track_caller]
+fn find(state: &WorkspaceState, searching: bool) {
+    rustle::row_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .padding_each(0.0, 0.0, 0.0, theme::sp(2)),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
+        || {
+            Input::search(
+                &state.settings_page.find,
+                Target::Settings(SettingsEvent::SettingsFind),
+            )
+            .size(Size::Sm)
+            .placeholder("Search settings")
+            .modifier(Modifier::new().weight(1.0))
+            .build();
+            if searching {
+                let clear = Target::Settings(SettingsEvent::SettingsFindClear);
+                let own = Modifier::new().size(theme::sp(6), theme::sp(6)).indicated(
+                    theme::InteractionTones::new()
+                        .hover(Role::SurfaceHover)
+                        .radius(Radius::Sm),
+                    theme::Focused::Control(crate::focus::is_focused(clear)),
+                );
+                row_arranged(
+                    events::pressable(own, Some(clear)),
+                    Arrangement::Center,
+                    Alignment::Center,
+                    || glyph(phosphor::X, 3.5, Role::Muted),
+                );
+            }
+        },
+    );
+}
+
+/// Emits one row of the list of sections: a section of its own has its glyph, Agents the chevron that says whether the sections inside it are shown, and those inside another only their name, set in under it, with `count` after it when it has one.
+#[track_caller]
+fn entry(section: Section, showing: bool, folded: bool, count: Option<usize>) {
     let tone = if showing { Role::Text } else { Role::Muted };
-    let row = Tile::new(section.id())
+    let nested = section != Section::Agents && section.parent().is_some();
+    let left = if nested { 8.0 } else { 2.0 };
+    Tile::new(section.id())
         .selected(showing)
-        .build()
-        .styles([px(2)]);
-    let row = match section {
-        Section::Agents => row.child(glyph(
-            if folded {
-                IconName::ChevronRight
-            } else {
-                IconName::ChevronDown
-            },
-            4.0,
-            tone,
-        )),
-        _ if section.parent().is_some() => row.styles([pl(8)]),
-        _ => row.child(glyph(section.icon(), 4.0, tone)),
-    };
-    row.child(clipped(section.title(), 13, tone).styles([pm_style::flex_1()]))
-        .children(count.map(|count| crate::Badge::new(count.to_string()).build()))
+        .modifier(Modifier::new().fill_max_width())
+        .inner(Modifier::new().padding_each(theme::sp(left), 0.0, theme::sp(2), 0.0))
+        .build_with(|| {
+            match section {
+                Section::Agents => glyph(icons::chevron(!folded), 4.0, tone),
+                _ if nested => {}
+                _ => glyph(section.icon(), 4.0, tone),
+            }
+            clipped(section.title(), 13, tone);
+            if let Some(count) = count {
+                crate::Badge::new(count.to_string()).build();
+            }
+        });
 }
 
-/// The settings of `section` under its title, with `room` logical pixels across for them and `shaper` measuring the text of their boxes of several lines.
-fn content(state: &WorkspaceState, section: Section, room: f32, shaper: &mut Shaper) -> Node {
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_1(),
-            min_w_px(0),
-            bg(Role::Background),
-        ])
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    pl(8),
-                    pr(8),
-                    pt(6),
-                    pb(4),
-                    flex_none(),
-                ])
-                .child(settings_servers::page_title(section)),
-        )
-        .child(settings_servers::body(state, section, room, shaper))
+/// Emits the settings of `section` under its title, with `room` logical pixels across for them.
+#[track_caller]
+fn content(state: &WorkspaceState, section: Section, room: f32) {
+    rustle::column_arranged(
+        Modifier::new()
+            .fill_max_height()
+            .weight(1.0)
+            .background(theme::color(Role::Background)),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            rustle::row_arranged(
+                Modifier::new().padding_each(
+                    theme::sp(8),
+                    theme::sp(6),
+                    theme::sp(8),
+                    theme::sp(4),
+                ),
+                Arrangement::Start,
+                Alignment::Center,
+                || settings_servers::page_title(section),
+            );
+            settings_servers::body(state, section, room);
+        },
+    );
 }
 
 #[cfg(test)]
@@ -647,11 +557,10 @@ fn content(state: &WorkspaceState, section: Section, room: f32, shaper: &mut Sha
 mod tests {
     use pm_config::KnownServer;
     use pm_protocol::library::Kind;
-    use pm_text::Edit;
 
     use super::*;
     use crate::settings_catalog::{LISTS, OPEN_LIST, Setting};
-    use crate::settings_ids::{KEY_SETS, LIST_ADDS, LIST_FIELDS, PICKS};
+    use crate::settings_rows::{KEY_SETS, LIST_ADDS, LIST_FIELDS, PICKS};
     use crate::settings_values::Control;
     use crate::state::Outgoing;
 
@@ -676,7 +585,7 @@ mod tests {
         let state = open_on(Section::Appearance)
             .with_fonts(families, Vec::new())
             .settings_pressed(Setting::InterfaceFont.id(OPEN_LIST).unwrap());
-        let mut state = state.edited(SETTINGS_PICK_FILTER, Edit::Paste(needle.to_owned()));
+        let mut state = state.typed(Target::Settings(SettingsEvent::SettingsPickFilter), needle);
         state.take_outbox();
         state
     }
@@ -708,8 +617,8 @@ mod tests {
     #[test]
     fn enter_in_the_filter_picks_the_first_match() {
         let state = fonts_narrowed_to("family 0042");
-        let submit = WorkspaceState::submit_of(SETTINGS_PICK_FILTER);
-        assert_eq!(submit, SETTINGS_PICK_FIRST);
+        let submit = WorkspaceState::submit_of(Target::Settings(SettingsEvent::SettingsPickFilter));
+        assert_eq!(submit, Target::Settings(SettingsEvent::SettingsPickFirst));
         let state = state.settings_pressed(submit);
         assert_eq!(state.window.appearance.interface_font, "Family 0042");
         assert_eq!(state.settings_page.picker, None);
@@ -721,17 +630,17 @@ mod tests {
         let binding = "g h => Hover";
         assert!(crate::vim::binding_reads(binding));
         let place = Setting::VimBindings.list_place().unwrap();
-        let field = LIST_FIELDS.at(place as u64);
+        let field = LIST_FIELDS.at(place);
         let include = open_on(Section::Editor).machine.git.worktree_include;
-        let state = open_on(Section::Editor).edited(field, Edit::Paste(binding.to_owned()));
+        let state = open_on(Section::Editor).typed(field, binding);
         let add = WorkspaceState::submit_of(field);
-        assert_eq!(add, LIST_ADDS.at(place as u64));
+        assert_eq!(add, LIST_ADDS.at(place));
         let state = state.settings_pressed(add);
         assert!(state.editor.vim_bindings.iter().any(|held| held == binding));
         assert_eq!(state.machine.git.worktree_include, include);
         assert!(
             state
-                .field(field)
+                .text_field(field)
                 .is_some_and(|field| field.text().is_empty())
         );
     }
@@ -739,13 +648,14 @@ mod tests {
     /// Escape on the form for a new customization puts the form away and keeps the window open.
     #[test]
     fn escape_on_the_draft_form_closes_only_the_form() {
-        let state = open_on(Section::Skills).settings_pressed(crate::settings_drafts::DRAFT_NEW);
+        let state =
+            open_on(Section::Skills).settings_pressed(Target::Settings(SettingsEvent::DraftNew));
         assert!(state.settings_page.library.draft.is_some());
-        let state = state.settings_pressed(SETTINGS_CLOSE);
+        let state = state.settings_pressed(Target::Settings(SettingsEvent::SettingsClose));
         assert!(state.settings_page.library.draft.is_none());
         assert_eq!(state.settings, Some(Section::Skills));
         let state = state
-            .settings_pressed(crate::settings_drafts::DRAFT_NEW)
+            .settings_pressed(Target::Settings(SettingsEvent::DraftNew))
             .without_settings();
         assert!(state.settings_page.library.draft.is_none());
     }
@@ -754,7 +664,7 @@ mod tests {
     #[test]
     fn changing_section_puts_forms_away() {
         let state = open_on(Section::Servers)
-            .settings_pressed(crate::settings_machines::MACHINE_ADD)
+            .settings_pressed(Target::Settings(SettingsEvent::MachineAdd))
             .settings_pressed(Section::AgentServers.id())
             .settings_pressed(KEY_SETS.at(0));
         assert!(state.settings_page.server_form.is_none());

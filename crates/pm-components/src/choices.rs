@@ -1,18 +1,15 @@
 //! What the reader picks around the prompt box: the agent's settings, a command behind a slash, and where new work is done.
 
+use crate::areas::{ChatEvent, ComposerEvent, DialogEvent, DiffEvent, GitEvent, SearchEvent};
+use crate::target::Target;
 use pm_harness::{Discovery, Setting, Slash};
-use pm_input::FocusId;
 use pm_protocol::ExtensionCommand;
 
-use crate::captures::{CAPTURE_BASE, CAPTURE_REMOVE_BASE, MOST_CAPTURES};
-use crate::elements::{ELEMENT_BASE, ELEMENT_REMOVE_BASE, MOST_ELEMENTS};
+use crate::captures::MOST_CAPTURES;
+use crate::elements::MOST_ELEMENTS;
 use crate::state::{
-    ACCOUNT, ACCOUNT_BASE, AGENT_TOGGLE, APPROVALS_CHIP, ATTACHED_BASE, Activity, BRANCH_BASE,
-    DETAILS_BASE, EFFORT_BASE, GOAL_BASE, GOAL_CHIP, GOAL_COMMANDS, LOCATION, Location, MENTION,
-    MENU_BODY, MENU_FILTER, MENU_FILTER_PICK, MENU_PICK_BASE, MENU_PICK_ROOM, ORCHESTRATE,
-    Outgoing, PICK_BASE, PLACE_BASE, PLAN_CHIP, Page, Picker, SETTING_BASE, SHELLS_CHIP,
-    SLASH_BASE, SLASH_BUTTON, STEP_BASE, SUBAGENT_STOP_BASE, SUBAGENT_STOP_ROOM, SUBAGENTS_CHIP,
-    WorkspaceState, prompt_field,
+    Activity, GOAL_COMMANDS, Location, MENU_PICK_ROOM, Outgoing, Page, Picker, WorkspaceState,
+    prompt_field,
 };
 
 /// How tall one value of a menu is, in logical pixels.
@@ -57,34 +54,41 @@ const MENU_FILTER_AFTER: usize = 12;
 
 impl WorkspaceState {
     /// Whether pressing `action` leaves the open menu open or works it.
-    pub fn keeps_picker(action: FocusId) -> bool {
-        let FocusId(id) = action;
-        action == LOCATION
+    pub fn keeps_picker(action: Target) -> bool {
+        action == Target::Composer(ComposerEvent::Location)
             || crate::continue_chat::is_continue_part(action)
-            || action == MENU_BODY
-            || action == MENU_FILTER
-            || action == MENU_FILTER_PICK
-            || (MENU_PICK_BASE..MENU_PICK_BASE + MENU_PICK_ROOM as u64).contains(&id)
-            || action == ACCOUNT
-            || (ACCOUNT_BASE..ACCOUNT_BASE + 50).contains(&id)
-            || action == GOAL_CHIP
-            || (SETTING_BASE..SETTING_BASE + 10).contains(&id)
-            || (ELEMENT_BASE..ELEMENT_BASE + MOST_ELEMENTS as u64).contains(&id)
-            || (CAPTURE_BASE..CAPTURE_BASE + MOST_CAPTURES as u64).contains(&id)
-            || (PICK_BASE..PICK_BASE + 100).contains(&id)
-            || (EFFORT_BASE..EFFORT_BASE + 50).contains(&id)
-            || (PLACE_BASE..PLACE_BASE + 10).contains(&id)
-            || (BRANCH_BASE..BRANCH_BASE + 100).contains(&id)
+            || action == Target::Composer(ComposerEvent::MenuBody)
+            || action == Target::Composer(ComposerEvent::MenuFilter)
+            || action == Target::Composer(ComposerEvent::MenuFilterPick)
+            || action == Target::Composer(ComposerEvent::Account)
+            || action == Target::Composer(ComposerEvent::GoalChip)
+            || matches!(
+                action,
+                Target::Composer(ComposerEvent::MenuPick(_))
+                    | Target::Composer(ComposerEvent::AccountRow(_))
+                    | Target::Composer(ComposerEvent::SettingChip(_))
+                    | Target::Composer(ComposerEvent::Element(_))
+                    | Target::Composer(ComposerEvent::Capture(_))
+                    | Target::Composer(ComposerEvent::SettingPick(_))
+                    | Target::Composer(ComposerEvent::Effort(_))
+                    | Target::Composer(ComposerEvent::Place(_))
+                    | Target::Composer(ComposerEvent::DevContainer)
+                    | Target::Composer(ComposerEvent::Branch(_))
+            )
     }
 
     /// Whether pressing `action` leaves the open panel above the conversation's chips open.
-    pub fn keeps_activity(action: FocusId) -> bool {
-        action == PLAN_CHIP
-            || action == APPROVALS_CHIP
-            || action == SUBAGENTS_CHIP
-            || action == SHELLS_CHIP
-            || (STEP_BASE..DETAILS_BASE).contains(&action.0)
-            || (SUBAGENT_STOP_BASE..SUBAGENT_STOP_BASE + SUBAGENT_STOP_ROOM).contains(&action.0)
+    pub fn keeps_activity(action: Target) -> bool {
+        action == Target::Chat(ChatEvent::PlanChip)
+            || action == Target::Chat(ChatEvent::ApprovalsChip)
+            || action == Target::Chat(ChatEvent::SubagentsChip)
+            || action == Target::Chat(ChatEvent::ShellsChip)
+            || matches!(
+                action,
+                Target::Chat(ChatEvent::Step { .. })
+                    | Target::Chat(ChatEvent::Copy(_))
+                    | Target::Chat(ChatEvent::SubagentStop { .. })
+            )
     }
 
     /// What the agent about to be spoken to lets the reader change: the open session's, or the chosen agent's.
@@ -139,7 +143,7 @@ impl WorkspaceState {
 
     /// The commands, skills and extension commands offered behind a slash that fit what has been typed.
     pub fn slash_matches(&self) -> Vec<Slash> {
-        let typed = self.prompt.text();
+        let typed = &self.prompt.text();
         let Some(rest) = typed.strip_prefix('/') else {
             return Vec::new();
         };
@@ -374,7 +378,7 @@ impl WorkspaceState {
 
     /// The word being typed at the end of the prompt, when it starts with an `@`, without the `@`.
     pub fn mention_query(&self) -> Option<String> {
-        let typed = self.prompt.text();
+        let typed = &self.prompt.text();
         let word = typed.rsplit(char::is_whitespace).next()?;
         word.strip_prefix('@').map(str::to_lowercase)
     }
@@ -404,17 +408,17 @@ impl WorkspaceState {
     fn keep_slash_in_view(&mut self) {
         let top = self.slash as f32 * LIST_ROW_HEIGHT;
         let window = LIST_ROW_HEIGHT * LIST_ROWS as f32;
-        if top < self.menu_scroll {
-            self.menu_scroll = top;
-        } else if top + LIST_ROW_HEIGHT > self.menu_scroll + window {
-            self.menu_scroll = top + LIST_ROW_HEIGHT - window;
+        if top < self.menu_scroll.offset() {
+            self.menu_scroll.jump_to(top);
+        } else if top + LIST_ROW_HEIGHT > self.menu_scroll.offset() + window {
+            self.menu_scroll.jump_to(top + LIST_ROW_HEIGHT - window);
         }
     }
 
     /// Puts the highlight and the scroll offset of the list of files, commands or skills back at the first row.
     pub(crate) fn reset_slash(&mut self) {
         self.slash = 0;
-        self.menu_scroll = 0.0;
+        self.menu_scroll.jump_to(0.0);
     }
 
     /// The state with the highlight in the list of commands moved by `delta` rows, wrapping round.
@@ -872,31 +876,34 @@ impl WorkspaceState {
             .flatten()
     }
 
-    /// What pressing the numbered button `id` among those around the prompt box does, if it is one of them.
-    pub fn press_choice(&mut self, id: u64) -> bool {
-        let within = |base: u64, count: usize| {
-            id.checked_sub(base)
-                .map(|offset| offset as usize)
-                .filter(|offset| *offset < count)
-        };
-        if let Some(index) = within(ATTACHED_BASE, 50) {
+    /// What pressing the button `id` among those around the prompt box does, and whether it is one of them.
+    pub fn press_choice(&mut self, id: Target) -> bool {
+        if let Target::Composer(ComposerEvent::Attached(index)) = id {
             self.detach(index);
-        } else if let Some(index) = within(ELEMENT_BASE, MOST_ELEMENTS) {
+        } else if let Target::Composer(ComposerEvent::Element(index)) = id
+            && index < MOST_ELEMENTS
+        {
             let wanted = (index < self.elements.len()).then_some(Picker::Element(index));
             self.picker = if self.picker == wanted { None } else { wanted };
-            self.menu_scroll = 0.0;
-        } else if let Some(index) = within(ELEMENT_REMOVE_BASE, MOST_ELEMENTS) {
+            self.menu_scroll.jump_to(0.0);
+        } else if let Target::Composer(ComposerEvent::ElementRemove(index)) = id
+            && index < MOST_ELEMENTS
+        {
             self.remove_element(index);
-        } else if let Some(index) = within(CAPTURE_BASE, MOST_CAPTURES) {
+        } else if let Target::Composer(ComposerEvent::Capture(index)) = id
+            && index < MOST_CAPTURES
+        {
             let wanted = (index < self.captures.len()).then_some(Picker::Capture(index));
             self.picker = if self.picker == wanted { None } else { wanted };
-            self.menu_scroll = 0.0;
-        } else if let Some(index) = within(CAPTURE_REMOVE_BASE, MOST_CAPTURES) {
+            self.menu_scroll.jump_to(0.0);
+        } else if let Target::Composer(ComposerEvent::CaptureRemove(index)) = id
+            && index < MOST_CAPTURES
+        {
             self.remove_capture(index);
-        } else if id == SLASH_BUTTON.0 {
+        } else if id == Target::Composer(ComposerEvent::SlashButton) {
             self.prompt = prompt_field("/");
             self.reset_slash();
-        } else if id == MENTION.0 {
+        } else if id == Target::Composer(ComposerEvent::Mention) {
             let mut typed = self.prompt.text().to_owned();
             if !typed.is_empty() && !typed.ends_with(char::is_whitespace) {
                 typed.push(' ');
@@ -904,53 +911,61 @@ impl WorkspaceState {
             typed.push('@');
             self.prompt = prompt_field(&typed);
             self.reset_slash();
-        } else if id == LOCATION.0 {
+        } else if id == Target::Composer(ComposerEvent::Location) {
             self.picker = (self.picker != Some(Picker::Location)).then_some(Picker::Location);
             if self.picker.is_some() {
                 self.reread_branches();
             }
-        } else if id == ACCOUNT.0 {
+        } else if id == Target::Composer(ComposerEvent::Account) {
             self.picker = (self.picker != Some(Picker::Account)).then_some(Picker::Account);
-        } else if let Some(index) = within(ACCOUNT_BASE, 50) {
+        } else if let Target::Composer(ComposerEvent::AccountRow(index)) = id {
             self.pick_account(index);
-        } else if id == GOAL_CHIP.0 {
+        } else if id == Target::Composer(ComposerEvent::GoalChip) {
             self.picker = (self.picker != Some(Picker::Goal)).then_some(Picker::Goal);
-        } else if id == ORCHESTRATE.0 {
+        } else if id == Target::Composer(ComposerEvent::Orchestrate) {
             self.picker = None;
             self.toggle_orchestrator();
-        } else if let Some(index) = within(GOAL_BASE, GOAL_COMMANDS.len()) {
+        } else if let Target::Composer(ComposerEvent::GoalRow(index)) = id
+            && index < GOAL_COMMANDS.len()
+        {
             self.command_goal(index);
-        } else if id == PLAN_CHIP.0 {
+        } else if id == Target::Chat(ChatEvent::PlanChip) {
             self.activity = (self.activity != Some(Activity::Plan)).then_some(Activity::Plan);
-        } else if id == APPROVALS_CHIP.0 {
+        } else if id == Target::Chat(ChatEvent::ApprovalsChip) {
             self.activity =
                 (self.activity != Some(Activity::Approvals)).then_some(Activity::Approvals);
-        } else if id == SUBAGENTS_CHIP.0 {
+        } else if id == Target::Chat(ChatEvent::SubagentsChip) {
             self.activity =
                 (self.activity != Some(Activity::Subagents)).then_some(Activity::Subagents);
-        } else if id == SHELLS_CHIP.0 {
+        } else if id == Target::Chat(ChatEvent::ShellsChip) {
             self.activity = (self.activity != Some(Activity::Shells)).then_some(Activity::Shells);
-        } else if let Some(index) = within(SETTING_BASE, SHOWN.len()) {
+        } else if let Target::Composer(ComposerEvent::SettingChip(index)) = id
+            && index < SHOWN.len()
+        {
             let shown = Self::chips(self.settings_now());
             let wanted = shown.get(index).copied().map(Picker::Setting);
             self.picker = if self.picker == wanted { None } else { wanted };
-            self.menu_filter = pm_text::Field::default();
-            self.menu_scroll = self.scroll_to_current();
-        } else if let Some(index) = within(MENU_PICK_BASE, MENU_PICK_ROOM) {
+            self.menu_filter = rustle::TextFieldState::default();
+            self.menu_scroll.jump_to(self.scroll_to_current());
+        } else if let Target::Composer(ComposerEvent::MenuPick(index)) = id
+            && index < MENU_PICK_ROOM
+        {
             self.pick(index);
-        } else if id == MENU_FILTER_PICK.0 {
+        } else if id == Target::Composer(ComposerEvent::MenuFilterPick) {
             if let Some(first) = self.menu_matches().first().copied() {
                 self.pick(first);
             }
-        } else if let Some(index) = within(PICK_BASE, 100) {
+        } else if let Target::Composer(ComposerEvent::SettingPick(index)) = id {
             self.pick(index);
-        } else if id == AGENT_TOGGLE.0 {
+        } else if id == Target::Composer(ComposerEvent::AgentToggle) {
             self.toggle_agent();
-        } else if let Some(index) = within(EFFORT_BASE, 50) {
+        } else if let Target::Composer(ComposerEvent::Effort(index)) = id {
             self.pick_effort(index);
-        } else if id == PLACE_BASE + 2 {
+        } else if id == Target::Composer(ComposerEvent::DevContainer) {
             self.container = !self.container;
-        } else if let Some(index) = within(PLACE_BASE, 2) {
+        } else if let Target::Composer(ComposerEvent::Place(index)) = id
+            && index < 2
+        {
             self.location = if index == 0 {
                 Location::Worktree
             } else {
@@ -959,13 +974,16 @@ impl WorkspaceState {
             if self.location == Location::Local && !self.offers_container() {
                 self.picker = None;
             }
-        } else if let Some(index) = within(BRANCH_BASE, self.branches.len())
-            .filter(|_| self.picker == Some(Picker::Location))
+        } else if let Target::Composer(ComposerEvent::Branch(index)) = id
+            && index < self.branches.len()
+            && self.picker == Some(Picker::Location)
         {
             self.base = Some(self.branches[index].clone());
             self.location = Location::Worktree;
             self.picker = None;
-        } else if let Some(index) = within(SLASH_BASE, PRESSABLE_LIST_ROWS) {
+        } else if let Target::Composer(ComposerEvent::Slash(index)) = id
+            && index < PRESSABLE_LIST_ROWS
+        {
             self.take_slash(index);
         } else {
             return false;
@@ -1040,10 +1058,13 @@ impl WorkspaceState {
             self.in_use.push((agent.to_owned(), id));
         }
         self.identities[self.agent] = None;
-        self.outbox.push(Outgoing::Accounts {
-            logins: self.logins.clone(),
-            in_use: self.in_use.clone(),
-        });
+        self.send_accounts();
+    }
+
+    /// Has the server keep the logins added and the one in use for each agent as they are now.
+    pub(crate) fn send_accounts(&mut self) {
+        let (logins, in_use) = (self.logins.clone(), self.in_use.clone());
+        self.outbox.push(Outgoing::Accounts { logins, in_use });
     }
 
     /// Has the open session run as the login `login`, or as the agent's own when there is none; nothing when no session is open.
@@ -1058,30 +1079,33 @@ impl WorkspaceState {
         }
     }
 
-    /// Adds a login for the agent at `agent`, makes it the one in use, and has the server sign it in.
-    pub(crate) fn add_account(&mut self, agent: usize) {
-        let Some(owner) = self.agent_id_at(agent) else {
-            return;
-        };
+    /// Adds a login of the agent `owner`, named for now as
+    /// [`Self::placeholder_name`] says and identified by the time it is added,
+    /// and returns its id.
+    pub(crate) fn new_login(&mut self, owner: String) -> String {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |since| since.as_millis());
         let id = format!("{stamp:x}");
         let name = self.placeholder_name(&owner);
+        self.logins.push((owner, id.clone(), name));
+        id
+    }
+
+    /// Adds a login for the agent at `agent`, makes it the one in use, and has the server sign it in.
+    pub(crate) fn add_account(&mut self, agent: usize) {
+        let Some(owner) = self.agent_id_at(agent) else {
+            return;
+        };
+        let id = self.new_login(owner.clone());
         self.in_use.retain(|(by, _)| *by != owner);
-        self.logins.push((owner.clone(), id.clone(), name));
         self.in_use.push((owner, id.clone()));
-        self.outbox.push(Outgoing::Accounts {
-            logins: self.logins.clone(),
-            in_use: self.in_use.clone(),
-        });
+        self.send_accounts();
         self.outbox.push(Outgoing::SignIn {
             agent,
             login: Some(id),
         });
-        if let Some(identity) = self.identities.get_mut(agent) {
-            *identity = None;
-        }
+        self.forget_identity(agent);
     }
 
     /// The name a new login of the agent `owner` has until its sign-in tells who it is: the lowest number free of the logins' own, counting the agent's default account as the first.
@@ -1111,15 +1135,10 @@ impl WorkspaceState {
                 session.login = None;
             }
         }
-        if let Some(agent) = self.agent_position(&owner)
-            && let Some(identity) = self.identities.get_mut(agent)
-        {
-            *identity = None;
+        if let Some(agent) = self.agent_position(&owner) {
+            self.forget_identity(agent);
         }
-        self.outbox.push(Outgoing::Accounts {
-            logins: self.logins.clone(),
-            in_use: self.in_use.clone(),
-        });
+        self.send_accounts();
     }
 
     /// Adds the sessions the server of `host` holds that belong to the projects here, and its chats, which belong to none, asks it for the submodules of those projects, and returns each one's position and the server's number for it.
@@ -1193,7 +1212,7 @@ impl WorkspaceState {
     }
 
     /// The state knowing what the picture at `path` looks like.
-    pub fn with_preview(mut self, path: &str, picture: pm_ui::Picture) -> Self {
+    pub fn with_preview(mut self, path: &str, picture: rustle::ImageData) -> Self {
         self.previews.insert(path.to_owned(), picture);
         self
     }
@@ -1259,10 +1278,7 @@ impl WorkspaceState {
             .find(|(owner, id, name)| *owner == held && id == used && name.starts_with("Account "))
         {
             login.2 = who;
-            self.outbox.push(Outgoing::Accounts {
-                logins: self.logins.clone(),
-                in_use: self.in_use.clone(),
-            });
+            self.send_accounts();
         }
     }
 
@@ -1343,10 +1359,9 @@ impl WorkspaceState {
     }
 
     /// The box to give keyboard focus after `id` was pressed, when that opened a menu narrowed with a box.
-    pub fn menu_filter_focus(&self, id: FocusId) -> Option<FocusId> {
-        let FocusId(number) = id;
-        ((SETTING_BASE..SETTING_BASE + 10).contains(&number) && self.menu_filters())
-            .then_some(MENU_FILTER)
+    pub fn menu_filter_focus(&self, id: Target) -> Option<Target> {
+        (matches!(id, Target::Composer(ComposerEvent::SettingChip(_))) && self.menu_filters())
+            .then_some(Target::Composer(ComposerEvent::MenuFilter))
     }
 
     /// Chooses the value at `index` of the menu that is open.
@@ -1384,40 +1399,45 @@ impl WorkspaceState {
     }
 
     /// The box to give keyboard focus after `id` was pressed, when that is the prompt or the field for an answer of the reader's own.
-    pub fn refocus(id: FocusId) -> Option<FocusId> {
-        let FocusId(number) = id;
-        let slash_row = (SLASH_BASE..SLASH_BASE + PRESSABLE_LIST_ROWS as u64).contains(&number);
-        if id == crate::draft::TYPE_OWN {
-            return Some(crate::draft::OTHER);
+    pub fn refocus(id: Target) -> Option<Target> {
+        let slash_row =
+            matches!(id, Target::Composer(ComposerEvent::Slash(row)) if row < PRESSABLE_LIST_ROWS);
+        if id == Target::Chat(ChatEvent::TypeOwn) {
+            return Some(Target::Chat(ChatEvent::Other));
         }
-        if (crate::queued::EDIT_QUEUED_BASE..crate::queued::EDIT_QUEUED_BASE + 1000)
-            .contains(&number)
-        {
-            return Some(crate::state::PROMPT);
+        if matches!(id, Target::Chat(ChatEvent::EditQueued(_))) {
+            return Some(Target::Composer(ComposerEvent::Prompt));
         }
-        if id == crate::queued::QUEUED_CANCEL {
-            return Some(crate::state::PROMPT);
+        if id == Target::Chat(ChatEvent::QueuedCancel) {
+            return Some(Target::Composer(ComposerEvent::Prompt));
         }
         if crate::adder::is_adder(id) {
-            return Some(crate::adder::ADDER_FIELD);
+            return Some(Target::Dialog(DialogEvent::AdderField));
         }
         if crate::folder_picker::is_picker(id) {
-            return Some(crate::folder_picker::PICKER_FIELD);
+            return Some(Target::Dialog(DialogEvent::PickerField));
         }
         if crate::project_search::is_search_part(id)
-            && id != crate::project_search::PROJECT_SEARCH_FIELD
-            && number < crate::project_search::SEARCH_GROUP_BASE
+            && id != Target::Search(SearchEvent::ProjectSearchField)
+            && !matches!(
+                id,
+                Target::Search(SearchEvent::SearchGroup(_))
+                    | Target::Search(SearchEvent::SearchHit(_))
+            )
         {
-            return Some(crate::project_search::PROJECT_SEARCH_FIELD);
+            return Some(Target::Search(SearchEvent::ProjectSearchField));
         }
-        if id == crate::git_controls::BRANCH_BUTTON {
-            return Some(crate::git_controls::BRANCH_FILTER);
+        if id == Target::Git(GitEvent::BranchButton) {
+            return Some(Target::Git(GitEvent::BranchFilter));
         }
-        if (crate::state::COMMENT_FILE_BASE..crate::state::COMMENT_REMOVE_BASE).contains(&number) {
-            return Some(crate::state::COMMENT_FIELD);
+        if matches!(id, Target::Diff(DiffEvent::CommentFile(_))) {
+            return Some(Target::Diff(DiffEvent::CommentField));
         }
-        (slash_row || id == SLASH_BUTTON || id == MENTION || id == crate::state::REVISE)
-            .then_some(crate::state::PROMPT)
+        (slash_row
+            || id == Target::Composer(ComposerEvent::SlashButton)
+            || id == Target::Composer(ComposerEvent::Mention)
+            || id == Target::Chat(ChatEvent::Revise))
+        .then_some(Target::Composer(ComposerEvent::Prompt))
     }
 
     /// Chooses the effort at `index` of those the agent offers.
@@ -1490,8 +1510,9 @@ mod file_listing_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::areas::ComposerEvent;
+    use crate::events::Event;
     use crate::sample::Session;
-    use crate::state::SLASH_BUTTON;
 
     /// A long menu of models is narrowed with a box: typed words leave the models holding them, Enter takes the first left, and models past the hundredth can be taken.
     #[test]
@@ -1525,12 +1546,15 @@ mod tests {
             .iter()
             .position(|held| state.settings_now()[*held].category == "model")
             .unwrap();
-        let opened = FocusId(SETTING_BASE + chip as u64);
-        let mut state = state.after(opened);
+        let opened = Target::Composer(ComposerEvent::SettingChip(chip));
+        let mut state = state.handle(Event::pressing(opened));
         assert!(state.menu_filters());
-        assert_eq!(state.menu_filter_focus(opened), Some(MENU_FILTER));
+        assert_eq!(
+            state.menu_filter_focus(opened),
+            Some(Target::Composer(ComposerEvent::MenuFilter))
+        );
         assert_eq!(state.menu_matches().len(), 150);
-        state = state.edited(MENU_FILTER, pm_text::Edit::Paste("QWEN 14".to_owned()));
+        state = state.typed(Target::Composer(ComposerEvent::MenuFilter), "QWEN 14");
         let left: Vec<String> = state
             .menu_matches()
             .iter()
@@ -1546,9 +1570,11 @@ mod tests {
                 "qwen/model-149"
             ]
         );
-        state = state.after(MENU_FILTER_PICK);
+        state = state.handle(Event::Composer(ComposerEvent::MenuFilterPick));
         assert_eq!(state.settings_now()[0].current, "qwen/model-141");
-        state = state.after(opened).after(FocusId(MENU_PICK_BASE + 120));
+        state = state
+            .handle(Event::pressing(opened))
+            .handle(Event::Composer(ComposerEvent::MenuPick(120)));
         assert_eq!(state.settings_now()[0].current, "openai/model-120");
     }
 
@@ -1591,20 +1617,20 @@ mod tests {
         assert_eq!(state.orchestrating(), None);
         let mut state = {
             state.take_outbox();
-            state.after(ORCHESTRATE)
+            state.handle(Event::Composer(ComposerEvent::Orchestrate))
         };
         assert!(orchestrator_sets(&mut state).is_empty());
         let mut state = state.heard(0, pm_harness::Event::Settings(vec![orchestrator("off")]));
         assert_eq!(state.orchestrating(), Some(false));
         state.take_outbox();
-        let mut state = state.after(ORCHESTRATE);
+        let mut state = state.handle(Event::Composer(ComposerEvent::Orchestrate));
         assert_eq!(orchestrator_sets(&mut state), [(0, "on".to_owned())]);
         assert_eq!(state.orchestrating(), Some(true));
         let state = state.heard(0, pm_harness::Event::Settings(vec![orchestrator("off")]));
         assert_eq!(state.orchestrating(), Some(false));
         let mut state = state
             .heard(0, pm_harness::Event::Settings(vec![orchestrator("on")]))
-            .after(ORCHESTRATE);
+            .handle(Event::Composer(ComposerEvent::Orchestrate));
         assert_eq!(orchestrator_sets(&mut state), [(0, "off".to_owned())]);
         assert_eq!(state.orchestrating(), Some(false));
     }
@@ -1629,8 +1655,8 @@ mod tests {
     /// The settings the first message of new work was started with, once it was sent.
     fn started_with(state: WorkspaceState) -> Vec<(String, String)> {
         let mut state = state
-            .edited(crate::state::PROMPT, pm_text::Edit::Paste("Go".to_owned()))
-            .after(crate::state::SEND);
+            .typed(Target::Composer(ComposerEvent::Prompt), "Go")
+            .handle(Event::Composer(ComposerEvent::Send));
         state
             .take_outbox()
             .into_iter()
@@ -1647,7 +1673,7 @@ mod tests {
         let state = starting();
         assert_eq!(state.orchestrating(), Some(false));
         assert!(started_with(state).is_empty());
-        let chosen = starting().after(ORCHESTRATE);
+        let chosen = starting().handle(Event::Composer(ComposerEvent::Orchestrate));
         assert_eq!(chosen.orchestrating(), Some(true));
         assert_eq!(
             started_with(chosen),
@@ -1657,7 +1683,7 @@ mod tests {
         preferring.machine.agents.orchestrator = true;
         assert_eq!(preferring.orchestrating(), Some(true));
         assert!(started_with(preferring.clone()).is_empty());
-        let declined = preferring.after(ORCHESTRATE);
+        let declined = preferring.handle(Event::Composer(ComposerEvent::Orchestrate));
         assert_eq!(declined.orchestrating(), Some(false));
         assert_eq!(
             started_with(declined),
@@ -1669,7 +1695,7 @@ mod tests {
     #[test]
     fn the_orchestrate_command_toggles_the_mode() {
         let typed = |state: WorkspaceState, words: &str| {
-            state.edited(crate::state::PROMPT, pm_text::Edit::Paste(words.to_owned()))
+            state.typed(Target::Composer(ComposerEvent::Prompt), words)
         };
         let state = typed(starting(), "/orch");
         let offered: Vec<String> = state
@@ -1681,7 +1707,7 @@ mod tests {
         let state = state.slash_taken();
         assert_eq!(state.orchestrating(), Some(true));
         assert_eq!(state.prompt.text(), "");
-        let mut state = typed(state, "/orchestrate").after(crate::state::SEND);
+        let mut state = typed(state, "/orchestrate").handle(Event::Composer(ComposerEvent::Send));
         assert_eq!(state.orchestrating(), Some(false));
         assert_eq!(state.prompt.text(), "");
         assert!(
@@ -1746,7 +1772,7 @@ mod tests {
     fn many_entries(count: usize) -> WorkspaceState {
         let mut state = conversation();
         state.sessions[0].commands = entries(count);
-        state.press_choice(SLASH_BUTTON.0);
+        state.press_choice(Target::Composer(ComposerEvent::SlashButton));
         state
     }
 
@@ -1764,9 +1790,9 @@ mod tests {
                 description: "Review changes".into(),
             },
         ];
-        state.press_choice(SLASH_BUTTON.0);
+        state.press_choice(Target::Composer(ComposerEvent::SlashButton));
         assert_eq!(state.slash_matches().len(), 2);
-        state = state.edited(crate::state::PROMPT, pm_text::Edit::Insert('r'));
+        state = state.typed(Target::Composer(ComposerEvent::Prompt), "r");
         let matches = state.slash_matches();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].name, "review");
@@ -1788,16 +1814,16 @@ mod tests {
         for _ in 0..19 {
             state = state.slash_moved(1);
             let top = state.slash as f32 * LIST_ROW_HEIGHT;
-            assert!(state.menu_scroll <= top);
-            assert!(top + LIST_ROW_HEIGHT <= state.menu_scroll + window);
+            assert!(state.menu_scroll.offset() <= top);
+            assert!(top + LIST_ROW_HEIGHT <= state.menu_scroll.offset() + window);
         }
         assert_eq!(state.slash, 19);
-        assert_eq!(state.menu_scroll, 20.0 * LIST_ROW_HEIGHT - window);
+        assert_eq!(state.menu_scroll.offset(), 20.0 * LIST_ROW_HEIGHT - window);
         state = state.slash_moved(-1);
         assert_eq!(state.slash, 18);
         state = state.slash_moved(2);
         assert_eq!(state.slash, 0);
-        assert_eq!(state.menu_scroll, 0.0);
+        assert_eq!(state.menu_scroll.offset(), 0.0);
     }
 
     /// Opening the list again after choosing from a scrolled one starts at the first row.
@@ -1808,9 +1834,9 @@ mod tests {
             state = state.slash_moved(1);
         }
         state = state.slash_taken();
-        state.press_choice(SLASH_BUTTON.0);
+        state.press_choice(Target::Composer(ComposerEvent::SlashButton));
         assert_eq!(state.slash, 0);
-        assert_eq!(state.menu_scroll, 0.0);
+        assert_eq!(state.menu_scroll.offset(), 0.0);
     }
 
     /// Narrowing the list by typing puts the highlight and the scroll offset back at the first match.
@@ -1820,10 +1846,10 @@ mod tests {
         for _ in 0..15 {
             state = state.slash_moved(1);
         }
-        assert!(state.menu_scroll > 0.0);
-        state = state.edited(crate::state::PROMPT, pm_text::Edit::Insert('1'));
+        assert!(state.menu_scroll.offset() > 0.0);
+        state = state.typed(Target::Composer(ComposerEvent::Prompt), "1");
         assert_eq!(state.slash, 0);
-        assert_eq!(state.menu_scroll, 0.0);
+        assert_eq!(state.menu_scroll.offset(), 0.0);
         assert!(state.slash_matches().len() < 20);
     }
 

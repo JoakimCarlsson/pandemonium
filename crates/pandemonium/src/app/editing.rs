@@ -1,14 +1,15 @@
 //! What the window does for the file shown between its frames: asking after the changes the language server offers once the caret rests, carrying selected text to another place by the pointer, and moving the caret along the screen in right-to-left text.
 
+use pm_components::areas::EditorEvent;
+use pm_components::target::Target;
 use std::time::Instant;
 
-use pm_components::open_files::EDITOR_FIELD;
+use pm_components::text_lines::Step;
 use pm_editor::LightbulbShown;
-use pm_input::{Key, KeyEvent};
-use pm_pages::Screen;
-use pm_text::{Edit, Motion, Step};
+use pm_editor::{Edit, Motion};
+use rustle::{Key, KeyEvent};
 
-use super::{App, DRAG_DISTANCE};
+use super::App;
 
 /// The file, version, caret, other end of the selection and number of problems that the marker beside the caret's line was asked about.
 pub(super) type BulbKey = (String, i32, usize, usize, usize);
@@ -25,27 +26,27 @@ pub(super) struct TextDrag {
     byte: usize,
     /// Whether the pointer has gone far enough from where it went down for this to be a drag and not a press.
     moving: bool,
+    /// How far the pointer has to move, in logical pixels, for this to be a drag: the touch slop of the view configuration in effect where the text was pressed.
+    touch_slop: f32,
 }
 
 impl App {
     /// Asks the language server whether it offers changes at the caret of the file shown once the caret has rested there long enough, and says when to look again while it has yet to.
     pub(super) fn editor_bulb_due(&mut self) -> Option<Instant> {
-        let here = if self.focus.current() == Some(EDITOR_FIELD) {
-            self.model.read(|screen| match screen {
-                Screen::Workspace(state) => {
-                    if state.editor.lightbulb == LightbulbShown::Off {
-                        return None;
-                    }
-                    let path = state.shown_viewer()?.path.clone();
-                    let document = state.shown_document()?;
-                    Some((
-                        path,
-                        document.version,
-                        document.field.caret(),
-                        document.field.anchor(),
-                        document.diagnostics.len(),
-                    ))
+        let here = if self.focus.focused() == Some(Target::Editor(EditorEvent::EditorField)) {
+            self.model.read(|state| {
+                if state.editor.lightbulb == LightbulbShown::Off {
+                    return None;
                 }
+                let path = state.shown_viewer()?.path.clone();
+                let document = state.shown_document()?;
+                Some((
+                    path,
+                    document.version,
+                    document.field.caret(),
+                    document.field.anchor(),
+                    document.diagnostics.len(),
+                ))
             })
         } else {
             None
@@ -72,8 +73,7 @@ impl App {
         }
         self.bulb_wait = None;
         self.bulb_asked = Some(here);
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).lightbulb_requested());
+        self.model.change(|state| state.lightbulb_requested());
         None
     }
 
@@ -85,45 +85,43 @@ impl App {
         else {
             return;
         };
-        if self.shaper.ligatures() != on {
-            self.shaper.set_ligatures(on);
-            self.scene.clear();
-            if let Some(window) = self.window.as_ref() {
-                window.request_redraw();
-            }
+        if pm_components::theme::code_ligatures() != on {
+            pm_components::theme::set_code_ligatures(on);
+            self.recompose = true;
         }
     }
 
-    /// Takes the press in the file shown at the byte `byte`, at the point `at` of the window, as the start of carrying the selected text when it is on the selection and dragging text is on; says whether it did, in which case the press is not a selection of its own.
-    pub(super) fn drag_text_begins(&mut self, byte: usize, at: (f32, f32)) -> bool {
+    /// Takes the press in the file shown at the byte `byte`, at the point `at` of the window, as the start of carrying the selected text when it is on the selection and dragging text is on, a drag once the pointer moved `touch_slop` logical pixels; says whether it did, in which case the press is not a selection of its own.
+    pub(super) fn drag_text_begins(
+        &mut self,
+        byte: usize,
+        at: (f32, f32),
+        touch_slop: f32,
+    ) -> bool {
         let mut picked = false;
-        self.model.update(|screen| {
-            let Screen::Workspace(state) = screen;
+        self.model.update(|state| {
             picked = state.editor_drag_started(byte);
         });
         self.text_drag = picked.then_some(TextDrag {
             origin: at,
             byte,
             moving: false,
+            touch_slop,
         });
         picked
     }
 
-    /// Carries the selected text being dragged to the point `x`, `y`: once the pointer has gone far enough it marks where the text would be dropped.
-    pub(super) fn drag_text_moved(&mut self, x: f32, y: f32) {
+    /// Carries the selected text being dragged to the point `(x, y)` of the window, over the shown offset `offset` of the file shown: once the pointer has gone far enough it marks where the text would be dropped.
+    pub(super) fn drag_text_moved(&mut self, (x, y): (f32, f32), offset: usize) {
         let Some(mut drag) = self.text_drag else {
             return;
         };
-        if !drag.moving && (x - drag.origin.0).hypot(y - drag.origin.1) < DRAG_DISTANCE {
+        if !drag.moving && (x - drag.origin.0).hypot(y - drag.origin.1) < drag.touch_slop {
             return;
         }
         drag.moving = true;
         self.text_drag = Some(drag);
-        let Some(offset) = self.output.offset_in(EDITOR_FIELD, x, y) else {
-            return;
-        };
-        self.model.update(|screen| {
-            let Screen::Workspace(state) = screen;
+        self.model.update(|state| {
             let byte = state
                 .shown_document()
                 .map(|document| document.field.to_text(offset));
@@ -139,18 +137,19 @@ impl App {
             return false;
         };
         if drag.moving {
-            let copy = self.modifiers.control || self.modifiers.logo;
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            let copy = self.modifiers.ctrl || self.modifiers.meta;
+            self.model.update(|state| {
                 state.editor_dropped(copy);
             });
             self.show_editor_caret();
         } else {
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 state.editor_drag_cancelled();
             });
-            self.edit_field(EDITOR_FIELD, Edit::Select(drag.byte, drag.byte));
+            self.edit_field(
+                Target::Editor(EditorEvent::EditorField),
+                Edit::Select(drag.byte, drag.byte),
+            );
         }
         true
     }
@@ -158,8 +157,7 @@ impl App {
     /// Lets go of the selected text being dragged, leaving it where it was.
     pub(super) fn drag_text_cancelled(&mut self) {
         if self.text_drag.take().is_some() {
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 state.editor_drag_cancelled();
             });
         }
@@ -173,7 +171,7 @@ impl App {
             _ => return false,
         };
         let modifiers = event.modifiers;
-        if modifiers.control || modifiers.alt || modifiers.logo {
+        if modifiers.ctrl || modifiers.alt || modifiers.meta {
             return false;
         }
         let extend = modifiers.shift;
@@ -184,31 +182,49 @@ impl App {
             return false;
         }
         let Some((caret, selected, several)) = self.model.read(|screen| {
-            screen.field(EDITOR_FIELD).map(|field| {
-                (
-                    field.to_shown(field.caret()),
-                    field.selection().is_some(),
-                    field.has_others(),
-                )
-            })
+            screen
+                .field(Target::Editor(EditorEvent::EditorField))
+                .map(|field| {
+                    (
+                        field.to_shown(field.caret()),
+                        field.selection().is_some(),
+                        field.has_others(),
+                    )
+                })
         }) else {
             return false;
         };
         if several || (selected && !extend) {
             return false;
         }
-        match self.output.visual_step(EDITOR_FIELD, caret, right) {
+        match self
+            .code_lines()
+            .visual_step(Target::Editor(EditorEvent::EditorField), caret, right)
+        {
             None => false,
             Some(Step::To(target)) => {
-                self.edit_field(EDITOR_FIELD, Edit::Place(target, extend));
+                self.edit_field(
+                    Target::Editor(EditorEvent::EditorField),
+                    Edit::Place(target, extend),
+                );
                 true
             }
             Some(Step::Edge) => {
-                if let Some(edge) = self.output.line_edge(EDITOR_FIELD, caret, right) {
-                    self.edit_field(EDITOR_FIELD, Edit::Place(edge, extend));
+                if let Some(edge) = self.code_lines().line_edge(
+                    Target::Editor(EditorEvent::EditorField),
+                    caret,
+                    right,
+                ) {
+                    self.edit_field(
+                        Target::Editor(EditorEvent::EditorField),
+                        Edit::Place(edge, extend),
+                    );
                 }
                 let motion = if right { Motion::Right } else { Motion::Left };
-                self.edit_field(EDITOR_FIELD, Edit::Move(motion, extend));
+                self.edit_field(
+                    Target::Editor(EditorEvent::EditorField),
+                    Edit::Move(motion, extend),
+                );
                 true
             }
         }

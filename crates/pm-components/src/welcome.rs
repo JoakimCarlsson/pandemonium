@@ -1,37 +1,36 @@
 //! The empty page of a new session or a new chat: pick an agent, then describe the work.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Role, absolute, flex, flex_1, flex_col, flex_wrap, font_semibold, gap, items_center,
-    justify_center, leading_ratio, max_w_px, min_h, px, py, relative, right, text_color, text_px,
-    top, tracking_tight, w_full,
-};
-use pm_text::Shaper;
-use pm_ui::{Node, node, text};
+use crate::areas::{DiffEvent, SidebarEvent};
+use crate::target::Target;
+use crate::theme;
+use rustle::TextOverflow;
+use rustle::{Alignment, Arrangement, FlowOptions, column_arranged, flow_row_with};
+use rustle::{BoxAlignment, Modifier, phosphor};
 
 use crate::Button;
 use crate::button::Variant;
 use crate::composer::composer;
+use crate::icons::panel_right;
 use crate::size::Size;
-use crate::state::{AGENT_BASE, Page, REVIEW, WorkspaceState};
+use crate::state::{Page, WorkspaceState};
+use crate::theme::{Role, sp};
 
-/// A chip naming one agent, filled while it is the one chosen, with how much of its account's allowance is used as its tooltip once the provider has said.
-fn chip(state: &WorkspaceState, index: usize) -> Node {
+/// Emits a chip naming one agent, filled while it is the one chosen, with how much of its account's allowance is used as its tooltip once the provider has said.
+#[track_caller]
+fn chip(state: &WorkspaceState, index: usize) {
     let agent = state.agent_look(index);
-    let chip = Button::new(agent.name, FocusId(AGENT_BASE + index as u64))
+    let chip = Button::new(agent.name, Target::Sidebar(SidebarEvent::Agent(index)))
         .variant(Variant::Outline)
         .round()
         .with_icon(agent.icon)
         .size(Size::Md)
-        .selected(index == state.agent)
-        .build();
+        .selected(index == state.agent);
     match state
         .allowance_of(index, state.login_for_new_work(index))
         .and_then(crate::usage::tooltip)
     {
-        Some(words) => chip.tooltip(words),
-        None => chip,
+        Some(words) => chip.tooltip(words).build(),
+        None => chip.build(),
     }
 }
 
@@ -54,63 +53,60 @@ fn heading(state: &WorkspaceState) -> String {
     }
 }
 
-/// The page for starting work in a project, naming the project it starts in, or for starting a chat, which belongs to none.
-pub fn welcome(state: &WorkspaceState, above: f32, text_width: f32, shaper: &mut Shaper) -> Node {
+/// Emits the page for starting work in a project, naming the project it starts in, or for starting a chat, which belongs to none.
+#[track_caller]
+pub fn welcome(state: &WorkspaceState, above: f32) {
     let reviewable = state.review_session().is_some();
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            items_center(),
-            justify_center(),
-            flex_1(),
-            min_h(0),
-            px(6),
-            py(10),
-            relative(),
-        ])
-        .children((!state.review && reviewable).then(|| {
-            Button::icon(IconName::PanelRight, REVIEW).build().styles([
-                absolute(),
-                top(2),
-                right(2),
-            ])
-        }))
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    flex_col(),
-                    items_center(),
-                    gap(7),
-                    w_full(),
-                    max_w_px(680.0),
-                ])
-                .child(text(heading(state)).styles([
-                    text_px(28),
-                    leading_ratio(1.25),
-                    font_semibold(),
-                    tracking_tight(),
-                    text_color(Role::Text),
-                ]))
-                .child(
-                    node()
-                        .styles([flex(), flex_wrap(), justify_center(), gap(2), w_full()])
-                        .children(
-                            state
-                                .startable_agents()
-                                .into_iter()
-                                .map(|index| chip(state, index)),
-                        ),
+    rustle::stack_with(Modifier::new().weight(1.0), || {
+        column_arranged(
+            Modifier::new()
+                .fill_max_size()
+                .padding_xy(theme::sp(6), theme::sp(10)),
+            Arrangement::Center,
+            Alignment::Center,
+            || {
+                column_arranged(
+                    Modifier::new().width_in(0.0, 680.0).fill_max_width(),
+                    Arrangement::SpacedBy(sp(7)),
+                    Alignment::Center,
+                    || {
+                        rustle::basic_text(
+                            Modifier::new(),
+                            heading(state),
+                            theme::text_style(28, 1.25)
+                                .font_weight(rustle::FontWeight::SEMI_BOLD)
+                                .color(theme::color(Role::Text)),
+                            TextOverflow::Ellipsis,
+                        );
+                        flow_row_with(
+                            Modifier::new().fill_max_width(),
+                            FlowOptions::new(sp(2), sp(2)).arrangement(Arrangement::Center),
+                            || {
+                                for index in state.startable_agents() {
+                                    chip(state, index);
+                                }
+                            },
+                        );
+                        composer(
+                            state,
+                            "Describe a task, ask a question, or type / for commands",
+                            None,
+                            3,
+                            above,
+                        );
+                    },
+                );
+            },
+        );
+        if !state.review && reviewable {
+            Button::icon(phosphor::SIDEBAR_SIMPLE, Target::Diff(DiffEvent::Review))
+                .mark(|| panel_right(false, 4.0, Role::Muted))
+                .modifier(
+                    Modifier::new()
+                        .align(BoxAlignment::TopEnd)
+                        .offset(-sp(2.0), sp(2.0)),
                 )
-                .child(composer(
-                    state,
-                    "Describe a task, ask a question, or type / for commands",
-                    None,
-                    3,
-                    above,
-                    text_width,
-                    shaper,
-                )),
-        )
+                .build();
+        }
+    });
 }

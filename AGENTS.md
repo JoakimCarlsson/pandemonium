@@ -14,8 +14,13 @@
 - Keep dependencies pointing down the layers. Pages use components; components
   never depend on pages. Keep domain work on the server and the `pandemonium`
   binary limited to wiring the layers together.
-- Keep wgpu calls in `pm-renderer`. Build interface elements with `pm-ui` and
-  the existing styling and component APIs. Use winit and wgpu for portability.
+- Build interface elements as rustle composables and rustle widgets themed
+  through rustle's theme (`pm-components/src/theme` provides it), with plain
+  rustle modifiers, text styles and interaction support and the existing
+  component APIs; the binary runs them in rustle's own event loop
+  (`rustle::run_with`, with `rustle::window` for the windows beside the main
+  one) and reads the windows only through rustle's API, never winit itself.
+  Use wgpu, through rustle, for portability.
 - Give each operation one implementation. Reuse the same path for session
   creation, project resolution and worktree teardown wherever it is called.
 - When a control is repeated or needed by a second page, extract it into
@@ -83,6 +88,42 @@ checkout. To release pandemonium with unreleased oh-my-crab work:
 `scripts/release.sh` stops when the crates name different tags, when the tag
 is not published on GitHub, or when any `omc-*` entry in `Cargo.lock` does not
 come from that tag, which catches a local override and a stale lock.
+
+## Building against a local rustle
+
+`pm-components`, `pm-pages` and the `pandemonium` binary depend on rustle by
+git URL. Rustle is not published yet, so the same git-ignored
+`.cargo/config.toml` points every rustle crate at the checkout beside this
+workspace:
+
+```toml
+[patch."https://github.com/JoakimCarlsson/rustle"]
+rustle = { path = "../../rustle/crates/rustle" }
+rustle-animation = { path = "../../rustle/crates/rustle-animation" }
+rustle-charts = { path = "../../rustle/crates/rustle-charts" }
+rustle-foundation = { path = "../../rustle/crates/rustle-foundation" }
+rustle-geometry = { path = "../../rustle/crates/rustle-geometry" }
+rustle-graphics = { path = "../../rustle/crates/rustle-graphics" }
+rustle-icons = { path = "../../rustle/crates/rustle-icons" }
+rustle-icons-macros = { path = "../../rustle/crates/rustle-icons-macros" }
+rustle-macros = { path = "../../rustle/crates/rustle-macros" }
+rustle-navigation = { path = "../../rustle/crates/rustle-navigation" }
+rustle-runtime = { path = "../../rustle/crates/rustle-runtime" }
+rustle-shaders = { path = "../../rustle/crates/rustle-shaders" }
+rustle-text = { path = "../../rustle/crates/rustle-text" }
+rustle-ui = { path = "../../rustle/crates/rustle-ui" }
+rustle-unit = { path = "../../rustle/crates/rustle-unit" }
+rustle-wgpu = { path = "../../rustle/crates/rustle-wgpu" }
+rustle-widgets = { path = "../../rustle/crates/rustle-widgets" }
+```
+
+The rules for `Cargo.lock` are the ones above: never commit its local-path
+lines, and build a release against a pushed rustle commit with the override
+off. When the interface needs something rustle lacks, add it to rustle by its
+own rules, never as a framework of our own here. Icons are rustle's
+Phosphor constants (`rustle::phosphor::X`) used directly, never through a
+name enum of our own; only artwork that arrives while the app runs is
+rasterised here.
 
 ## Verification
 

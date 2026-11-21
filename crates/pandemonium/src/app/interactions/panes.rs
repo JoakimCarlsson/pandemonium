@@ -1,0 +1,224 @@
+//! The file shown and the browser pane: the code taking the keyboard and
+//! the view's size told to the screen, and the browser's address field and menu.
+
+use pm_components::areas::{BrowserEvent, EditorEvent};
+use pm_components::target::Target;
+use pm_pages::Screen;
+use rustle::Key;
+
+use crate::app::headless::Rig;
+use crate::snapshot::Shot;
+
+/// The file shown takes the keyboard when pressed, and keys typed change it.
+#[test]
+fn the_code_takes_typing() {
+    let mut rig = Rig::shot(Shot::Code);
+    let text = |rig: &Rig| {
+        rig.read(|screen| {
+            screen
+                .field(Target::Editor(EditorEvent::EditorField))
+                .map(|field| field.text().to_owned())
+        })
+    };
+    let before = text(&rig).expect("a file is shown");
+    rig.click_on(Target::Editor(EditorEvent::EditorField));
+    assert_eq!(
+        rig.focused(),
+        Some(Target::Editor(EditorEvent::EditorField))
+    );
+    rig.type_text("zz");
+    let after = text(&rig).expect("a file is shown");
+    assert_eq!(after.len(), before.len() + 2);
+    assert!(after.contains("zz"));
+}
+
+/// The screen is told how tall the view of the file shown was drawn, which
+/// paging and wrapping go by.
+#[test]
+fn the_code_view_size_reaches_the_screen() {
+    let rig = Rig::shot(Shot::Code);
+    let drawn = rig.area(Screen::code_area).map(|view| view.size.height);
+    assert!(drawn.is_some());
+    assert_eq!(rig.read(Screen::code_height), drawn);
+}
+
+/// The browser's address takes the keyboard and typing; the secondary
+/// button over the page opens the browser's menu. The browser is the open
+/// session's, as it is once the reader opened it there.
+#[test]
+fn the_browser_address_and_menu() {
+    let mut screen = Shot::BrowserTabs(false).screen();
+    let Screen::Workspace(state) = &mut screen;
+    state.browser_adopted_by(0);
+    let mut rig = Rig::new(screen, crate::app::headless::SIZE);
+    let address = |rig: &Rig| {
+        rig.read(|screen| {
+            screen
+                .text_field(Target::Browser(BrowserEvent::BrowserAddress))
+                .map(rustle::TextFieldState::text)
+        })
+        .unwrap_or_default()
+    };
+    let before = address(&rig);
+    rig.click_on(Target::Browser(BrowserEvent::BrowserAddress));
+    assert_eq!(
+        rig.focused(),
+        Some(Target::Browser(BrowserEvent::BrowserAddress))
+    );
+    rig.type_text("x");
+    assert_eq!(address(&rig).len(), before.len() + 1);
+    rig.key(Key::Escape);
+    let at = rig.center(Target::Browser(BrowserEvent::BrowserBody));
+    rig.right_click(at);
+    assert!(rig.state(|state| state.browser_menu.is_some()));
+}
+
+/// The pointer resting on a word of the file shown starts the wait before
+/// the language server is asked about it, and leaving the code ends it. The
+/// asking itself waits for a language server that has the file, which the
+/// app headless has none of.
+#[test]
+fn resting_on_code_waits_to_ask_about_it() {
+    let mut rig = Rig::shot(Shot::Code);
+    let text = rig
+        .read(|screen| {
+            screen
+                .field(Target::Editor(EditorEvent::EditorField))
+                .map(|field| field.text().to_owned())
+        })
+        .expect("a file is shown");
+    let word = text.find("HashMap").expect("the word is in the file") + 2;
+    let caret = rig
+        .read(pm_pages::Screen::code_lines)
+        .caret_rect(Target::Editor(EditorEvent::EditorField), word)
+        .expect("the word is drawn");
+    let at = (caret.origin.x, caret.origin.y + caret.size.height / 2.0);
+    rig.move_to(at);
+    assert!(rig.app.borrow_mut().hover_rest.is_some());
+    rig.move_to((at.0 + 1.0, at.1));
+    assert!(rig.app.borrow_mut().hover_rest.is_some());
+    rig.leave();
+    rig.move_to((5.0, 400.0));
+    assert!(rig.app.borrow_mut().hover_rest.is_none());
+}
+
+/// Where byte `offset` of the file shown is drawn, halfway down its line.
+fn code_point(rig: &Rig, offset: usize) -> (f32, f32) {
+    let caret = rig
+        .read(pm_pages::Screen::code_lines)
+        .caret_rect(Target::Editor(EditorEvent::EditorField), offset)
+        .expect("the place is drawn");
+    (
+        caret.origin.x + 1.0,
+        caret.origin.y + caret.size.height / 2.0,
+    )
+}
+
+/// Dragging selected code and letting go elsewhere moves it there.
+#[test]
+fn selected_code_drags_to_another_place() {
+    let mut rig = Rig::shot(Shot::Code);
+    let text = |rig: &Rig| {
+        rig.read(|screen| {
+            screen
+                .field(Target::Editor(EditorEvent::EditorField))
+                .map(|field| field.text().to_owned())
+        })
+        .unwrap_or_default()
+    };
+    let before = text(&rig);
+    let word = before.find("LIMIT").expect("the word is in the file");
+    rig.click_on(Target::Editor(EditorEvent::EditorField));
+    std::thread::sleep(double_tap_timeout());
+    let at = code_point(&rig, word + 2);
+    rig.click(at);
+    rig.click(at);
+    let selected = rig.read(|screen| {
+        screen
+            .field(Target::Editor(EditorEvent::EditorField))
+            .map(|field| field.selected().to_owned())
+    });
+    assert_eq!(selected.as_deref(), Some("LIMIT"));
+    let target = before
+        .find("impl Session")
+        .expect("the line is in the file");
+    std::thread::sleep(double_tap_timeout());
+    let to = code_point(&rig, target);
+    rig.drag(at, to, 6);
+    let after = text(&rig);
+    assert_eq!(after.len(), before.len());
+    assert!(after.contains("LIMITimpl Session"), "{after}");
+}
+
+/// Dragging with Alt and Shift held selects a rectangle of code, a stretch on each line.
+#[test]
+fn alt_shift_drag_selects_columns() {
+    let mut rig = Rig::shot(Shot::Code);
+    let text = rig
+        .read(|screen| {
+            screen
+                .field(Target::Editor(EditorEvent::EditorField))
+                .map(|field| field.text().to_owned())
+        })
+        .unwrap_or_default();
+    let first = text.find("pub id").expect("the line is in the file");
+    let third = text
+        .find("names: HashMap")
+        .expect("the line is in the file");
+    rig.click_on(Target::Editor(EditorEvent::EditorField));
+    let from = code_point(&rig, first);
+    let to = code_point(&rig, third + 3);
+    rig.hold(rustle::Modifiers {
+        alt: true,
+        shift: true,
+        ..Default::default()
+    });
+    rig.drag(from, to, 4);
+    rig.hold(rustle::Modifiers::default());
+    let cursors = rig.read(|screen| {
+        screen
+            .field(Target::Editor(EditorEvent::EditorField))
+            .map(|field| field.selected_all().lines().count())
+    });
+    assert_eq!(cursors, Some(3));
+}
+
+/// How long rustle waits after a press for another to count with it, so a press after this long starts a new row.
+fn double_tap_timeout() -> std::time::Duration {
+    std::time::Duration::from_millis(rustle::ViewConfiguration::default().double_tap_timeout_millis)
+}
+
+/// Holding Control over a word of the file shown underlines it, as what a press takes to
+/// its definition, with the pointing hand over the code, and letting go of Control takes
+/// the underline away.
+#[test]
+fn control_reaches_a_word_of_the_code() {
+    let mut rig = Rig::shot(Shot::Code);
+    let text = rig
+        .read(|screen| {
+            screen
+                .field(Target::Editor(EditorEvent::EditorField))
+                .map(|field| field.text().to_owned())
+        })
+        .expect("a file is shown");
+    let word = text.find("HashMap").expect("the word is in the file") + 2;
+    let reached = |rig: &Rig| {
+        rig.state(|state| {
+            state
+                .shown_document()
+                .and_then(|document| document.reach.clone())
+        })
+    };
+    rig.move_to(code_point(&rig, word));
+    assert_eq!(rig.cursor(), rustle::CursorIcon::Text);
+    rig.hold(rustle::Modifiers {
+        ctrl: true,
+        ..rustle::Modifiers::NONE
+    });
+    let underlined = reached(&rig).expect("the word is underlined");
+    assert!(underlined.contains(&word), "{underlined:?}");
+    assert_eq!(rig.cursor(), rustle::CursorIcon::Pointer);
+    rig.hold(rustle::Modifiers::NONE);
+    assert_eq!(reached(&rig), None);
+    assert_eq!(rig.cursor(), rustle::CursorIcon::Text);
+}

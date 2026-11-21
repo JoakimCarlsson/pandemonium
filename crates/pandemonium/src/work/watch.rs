@@ -1,16 +1,14 @@
 //! Keeping project submodules and the shown git panel up to date through their servers’ folder watches.
 
-use pm_pages::Screen;
+use crate::model::Model;
 use pm_protocol::Request;
-use pm_state::State;
 
 use super::{Host, Pending, Work};
 
 impl Work {
     /// The machine and folder of the session the git panel is about, with its position, if one is shown; nothing for a chat whose scratch folder its server has yet to make.
-    fn shown_folder(model: &State<Screen>) -> Option<(usize, Host, String)> {
-        model.read(|screen| {
-            let Screen::Workspace(state) = screen;
+    fn shown_folder(model: &Model) -> Option<(usize, Host, String)> {
+        model.read(|state| {
             let position = state.review_index()?;
             let session = state.sessions.get(position)?;
             let host = state.machine_of(session)?;
@@ -22,9 +20,8 @@ impl Work {
     }
 
     /// The projects on `host`, with their positions and folders as the server knows them.
-    fn project_folders(model: &State<Screen>, host: &Host) -> Vec<(usize, String)> {
-        model.read(|screen| {
-            let Screen::Workspace(state) = screen;
+    fn project_folders(model: &Model, host: &Host) -> Vec<(usize, String)> {
+        model.read(|state| {
             state
                 .projects
                 .iter()
@@ -36,7 +33,7 @@ impl Work {
     }
 
     /// Watches every project root and the shown session, refreshing newly watched projects and those reached again after reconnecting.
-    pub(super) fn watch_shown(&mut self, model: &State<Screen>) {
+    pub(super) fn watch_shown(&mut self, model: &Model) {
         let shown = Self::shown_folder(model).map(|(_, host, directory)| (host, directory));
         let hosts: Vec<Host> = self.links.keys().cloned().collect();
         for host in hosts {
@@ -83,7 +80,7 @@ impl Work {
     }
 
     /// Refreshes matching project submodules and reads the git panel, the file tree and the open files again when `directory`, which the server on `host` watches, is the folder of the session shown.
-    pub(super) fn folder_changed(&mut self, model: &State<Screen>, host: &Host, directory: &str) {
+    pub(super) fn folder_changed(&mut self, model: &Model, host: &Host, directory: &str) {
         for (project, root) in Self::project_folders(model, host) {
             if root == directory {
                 self.ask(
@@ -105,11 +102,7 @@ impl Work {
             && shown == directory
         {
             self.refresh(model, position);
-            model.update(|screen| {
-                *screen = std::mem::take(screen)
-                    .with_tree_stale()
-                    .open_files_wanted(position);
-            });
+            model.change(|state| state.with_tree_stale().open_files_wanted(position));
         }
     }
 }
@@ -119,14 +112,14 @@ mod tests {
     use super::*;
     use crate::work::Link;
     use pm_components::Project;
-    use pm_pages::WorkspaceState;
+    use pm_pages::{Screen, WorkspaceState};
 
     /// All project roots are watched on their own machines even without a session, and reconnecting refreshes them again.
     #[test]
     fn watches_projects_and_refreshes_after_reconnect() {
         let local = None;
         let remote = Some("builder".to_owned());
-        let model = State::new(Screen::Workspace(WorkspaceState::new(&[
+        let model = Model::new(Screen::Workspace(WorkspaceState::new(&[
             Project::from_source("/work/one").unwrap(),
             Project::from_source("ssh://builder/work/two").unwrap(),
         ])));

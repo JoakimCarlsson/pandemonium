@@ -124,20 +124,14 @@ impl WorkspaceState {
                 key,
                 values: Vec::new(),
             });
-            let place = Position {
-                line: line as u32,
-                character: column as u32,
-            };
+            let place = Position::new(line as u32, column as u32);
             self.outbox.push(Outgoing::InlineValues {
                 session,
                 path,
                 version,
                 span,
                 frame,
-                stopped: Span {
-                    start: place,
-                    end: place,
-                },
+                stopped: Span::new(place, place),
             });
         }
         let (inline, run) = (self.debug.inline.take(), self.debug.run.take());

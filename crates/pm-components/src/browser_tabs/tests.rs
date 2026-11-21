@@ -1,10 +1,9 @@
 //! Tests of the tabs of the browser: opening, showing, closing, the lock and what is kept across a restart.
 
-use pm_input::FocusId;
+use crate::areas::BrowserEvent;
+use crate::target::Target;
 
-use super::{
-    BROWSER_LOCK, BROWSER_NEW_TAB, BROWSER_TAB_CLOSE, BROWSER_TAB_SELECT, SavedTab, changes_page,
-};
+use super::{SavedTab, changes_page};
 use crate::browser::Command;
 use crate::state::{Tab, WorkspaceState};
 
@@ -18,25 +17,25 @@ fn opened() -> WorkspaceState {
 /// Pressing the button for a new tab adds a blank tab and shows it.
 #[test]
 fn a_new_tab_is_shown() {
-    let state = opened().browser_pressed(BROWSER_NEW_TAB);
+    let state = opened().browser_pressed(Target::Browser(BrowserEvent::BrowserNewTab));
     let browser = state.browser.as_ref().unwrap();
     assert_eq!(browser.tabs.len(), 2);
     assert_eq!(browser.active, 1);
-    assert_eq!(browser.tabs[1].address.text(), "about:blank");
+    assert_eq!(&browser.tabs[1].address.text(), "about:blank");
 }
 
 /// Selecting a tab shows it and closing the one shown shows its neighbour; the last tab closes the browser.
 #[test]
 fn tabs_are_selected_and_closed() {
-    let mut state = opened().browser_pressed(BROWSER_NEW_TAB);
+    let mut state = opened().browser_pressed(Target::Browser(BrowserEvent::BrowserNewTab));
     let second = state.browser.as_ref().unwrap().tabs[1].id;
-    state = state.browser_pressed(FocusId(BROWSER_TAB_SELECT));
+    state = state.browser_pressed(Target::Browser(BrowserEvent::BrowserTab(0)));
     assert_eq!(state.browser.as_ref().unwrap().active, 0);
-    state = state.browser_pressed(FocusId(BROWSER_TAB_CLOSE));
+    state = state.browser_pressed(Target::Browser(BrowserEvent::BrowserTabClose(0)));
     let browser = state.browser.as_ref().unwrap();
     assert_eq!((browser.tabs.len(), browser.active), (1, 0));
     assert_eq!(browser.tabs[0].id, second);
-    state = state.browser_pressed(FocusId(BROWSER_TAB_CLOSE));
+    state = state.browser_pressed(Target::Browser(BrowserEvent::BrowserTabClose(0)));
     assert!(state.browser.is_none());
     assert_ne!(state.tab, Tab::Browser);
 }
@@ -59,12 +58,12 @@ fn numbers_stay_with_tabs() {
 /// The padlock locks the tab shown and unlocks it, and a tab an agent opened cannot be locked.
 #[test]
 fn the_lock_keeps_agents_out_of_user_tabs_only() {
-    let mut state = opened().browser_pressed(BROWSER_LOCK);
+    let mut state = opened().browser_pressed(Target::Browser(BrowserEvent::BrowserLock));
     assert!(state.browser.as_ref().unwrap().locked);
-    state = state.browser_pressed(BROWSER_LOCK);
+    state = state.browser_pressed(Target::Browser(BrowserEvent::BrowserLock));
     assert!(!state.browser.as_ref().unwrap().locked);
     state.browser_tab_opened("http://localhost:3000", None, true, true);
-    state = state.browser_pressed(BROWSER_LOCK);
+    state = state.browser_pressed(Target::Browser(BrowserEvent::BrowserLock));
     assert!(!state.browser.as_ref().unwrap().locked);
 }
 
@@ -110,7 +109,7 @@ fn only_reading_tools_pass_a_lock() {
 /// The tabs, the one shown, the locks and the marks of agents' tabs come back after a restart.
 #[test]
 fn tabs_survive_a_restart() {
-    let mut state = opened().browser_pressed(BROWSER_LOCK);
+    let mut state = opened().browser_pressed(Target::Browser(BrowserEvent::BrowserLock));
     state.browser_tab_opened(
         "http://localhost:3000",
         Some("ssh://dev".to_owned()),

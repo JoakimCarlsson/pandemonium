@@ -1,15 +1,14 @@
 //! The browser pane in the window: the engine that paints pages, the pointer and keyboard sent into them, and the pictures drawn from what they paint.
 
+use pm_components::areas::{BrowserEvent, ComposerEvent};
+use pm_components::target::Target;
 use std::time::{Duration, Instant};
 
 use pm_browser::{
     Button as Mouse, CaptureKind, Cursor as Shape, DownloadState, EditAction, Engine, Error,
     Key as Typed, Modifiers as Held, Notice, PickedElement, View, ZoomAction,
 };
-use pm_components::browser::{
-    BROWSER_BODY, BROWSER_FIND_BAR, BROWSER_FIND_FIELD, BROWSER_TOOLS_BODY, Command, HOME,
-    PAGE_SURFACE, Pointer, TOOLS_SURFACE, ZoomStep,
-};
+use pm_components::browser::{Command, HOME, Pointer, ZoomStep};
 use pm_components::browser_keys::{Shortcut, shortcut_of};
 use pm_components::browser_links::{Route, route};
 use pm_components::browser_menu::{BROWSER_MENU_HEIGHT, BrowserCommand};
@@ -18,20 +17,20 @@ use pm_components::browser_tabs::{TabInfo, changes_page, locked_message};
 use pm_components::elements::Element;
 use pm_components::exhibit::{Helper, PREVIEW_NEEDS_BROWSER, PREVIEW_NEEDS_UPDATE, PreviewRequest};
 use pm_components::figures::Drawing;
-use pm_components::state::PROMPT;
+
+use pm_components::pointing::{BrowserPointer, BrowserPointing};
+use rustle::{Key, KeyEvent};
+
+use crate::keys;
 use pm_editor::{Action, Pressed};
-use pm_input::{Button, FocusId, Key, KeyEvent};
 use pm_pages::Screen;
-use pm_renderer::{Picture, Rect};
-use pm_ui::Cursor;
+use rustle::ImageData;
+use rustle::Rect;
 
 use super::App;
 
 /// How often the engine is given time to work while a page is open.
 pub(super) const PUMP: Duration = Duration::from_millis(4);
-
-/// How soon after a press another press counts as part of a double click.
-const DOUBLE_CLICK: Duration = Duration::from_millis(450);
 
 /// The engine and the pages it holds.
 #[derive(Default)]
@@ -46,12 +45,13 @@ pub(super) struct Web {
     tools_sized: Option<(u32, u32, f32)>,
     /// The newest frame of the tools that was handed to the window.
     tools_shown: u64,
-    /// Which window the primary button went down in, so the release goes to it too.
-    pressed_in: Option<FocusId>,
-    /// The last press, for counting clicks.
-    last_press: Option<(Instant, (i32, i32), u8)>,
+    /// The texture every frame of the page shown is drawn into, and the tools' one.
+    textures: [rustle::ImageKey; 2],
+    /// Whether the primary and the secondary button went down on a page and are still held,
+    /// as the pages' windows told.
+    buttons: (bool, bool),
     /// The tab being shown and which window had the keyboard when the pages were last told.
-    focused: Option<(Option<u32>, Option<FocusId>)>,
+    focused: Option<(Option<u32>, Option<Target>)>,
     /// Whether the engine could not start.
     failed: bool,
     /// The download of the browser, while it runs, and whether it already failed.
@@ -123,8 +123,8 @@ fn still_outdated() -> String {
 fn preview_drawing(path: &std::path::Path, width: u32) -> Result<Drawing, String> {
     let bytes =
         std::fs::read(path).map_err(|error| format!("The preview could not be read: {error}"))?;
-    let picture = crate::work::picture::decode("preview", &bytes, false)?;
-    let density = (picture.width as f32 / width.max(1) as f32).max(1.0);
+    let picture = crate::work::picture::decode(&bytes, false)?;
+    let density = (picture.width() as f32 / width.max(1) as f32).max(1.0);
     Ok(Drawing { picture, density })
 }
 
@@ -330,38 +330,38 @@ fn is_local(host: &str) -> bool {
     matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "0.0.0.0")
 }
 
-/// The engine's modifiers for the keyboard keys held and the buttons down.
-fn held(keys: pm_input::Modifiers, pointer: pm_input::PointerState) -> Held {
+/// The engine's modifiers for the keyboard keys held and the buttons down, the primary and
+/// the secondary.
+fn held(keys: rustle::Modifiers, (left, right): (bool, bool)) -> Held {
     let mut bits = 0;
     if keys.shift {
         bits |= Held::SHIFT;
     }
-    if keys.control {
+    if keys.ctrl {
         bits |= Held::CONTROL;
     }
     if keys.alt {
         bits |= Held::ALT;
     }
-    if keys.logo {
+    if keys.meta {
         bits |= Held::COMMAND;
     }
-    if pointer.left {
+    if left {
         bits |= Held::LEFT_BUTTON;
     }
-    if pointer.middle {
-        bits |= Held::MIDDLE_BUTTON;
-    }
-    if pointer.right {
+    if right {
         bits |= Held::RIGHT_BUTTON;
     }
     Held(bits)
 }
 
 /// The Windows virtual-key code of `key`, which is how the engine names keys, and the text it types.
-fn typed(event: KeyEvent, modifiers: Held) -> Typed {
+fn typed(event: &KeyEvent, modifiers: Held) -> Typed {
     let plain = modifiers.0 & (Held::CONTROL | Held::ALT | Held::COMMAND) == 0;
-    let (code, text): (i32, Option<String>) = match event.key {
-        Key::Character(character) => {
+    let (code, text): (i32, Option<String>) = match &event.key {
+        Key::Character(_) if keys::is_space(event) => (0x20, plain.then(|| " ".to_owned())),
+        Key::Character(_) => {
+            let character = event.code_point().unwrap_or_default();
             let upper = character.to_ascii_uppercase();
             let code = match upper {
                 'A'..='Z' | '0'..='9' => upper as i32,
@@ -389,31 +389,18 @@ fn typed(event: KeyEvent, modifiers: Held) -> Typed {
         Key::End => (0x23, None),
         Key::PageUp => (0x21, None),
         Key::PageDown => (0x22, None),
-        Key::Space => (0x20, plain.then(|| " ".to_owned())),
         Key::ArrowLeft => (0x25, None),
         Key::ArrowUp => (0x26, None),
         Key::ArrowRight => (0x27, None),
         Key::ArrowDown => (0x28, None),
-        Key::Function(number) => (0x6F + i32::from(number), None),
+        Key::F(number) => (0x6F + i32::from(*number), None),
+        _ => (0, None),
     };
     Typed {
         pressed: event.pressed,
         code,
         text,
         modifiers,
-    }
-}
-
-/// How the pointer looks in the window when the page asks for `shape`.
-fn cursor_of(pointer: Pointer) -> Cursor {
-    match pointer {
-        Pointer::Arrow => Cursor::Default,
-        Pointer::Hand => Cursor::Pointer,
-        Pointer::Text => Cursor::Text,
-        Pointer::Cross => Cursor::Crosshair,
-        Pointer::Wait => Cursor::Wait,
-        Pointer::ResizeHorizontal => Cursor::ColResize,
-        Pointer::ResizeVertical => Cursor::RowResize,
     }
 }
 
@@ -432,47 +419,19 @@ fn pointer_of(shape: Shape) -> Pointer {
 
 impl App {
     /// Where the window of the page or of the tools was drawn, if it was.
-    fn browser_region(&self, id: FocusId) -> Option<Rect> {
-        self.output
-            .regions
-            .iter()
-            .find(|region| region.id == id)
-            .map(|region| region.rect)
+    fn browser_region(&self, id: Target) -> Option<Rect> {
+        self.place(id)
     }
 
     /// Whether the question about clearing cookies and site data is open, which covers the whole window.
     fn browser_clearing(&self) -> bool {
-        self.model.read(|screen| {
-            let Screen::Workspace(state) = screen;
-            state.browser_clearing()
-        })
-    }
-
-    /// The window of a page the point `at` is over, and where in it, in logical pixels; nothing where the bar for finding or the question about clearing is drawn over the page.
-    fn browser_under(&self, at: (f32, f32)) -> Option<(FocusId, (i32, i32))> {
-        let inside = |rect: Rect| {
-            at.0 >= rect.x
-                && at.1 >= rect.y
-                && at.0 < rect.x + rect.width
-                && at.1 < rect.y + rect.height
-        };
-        if self.browser_region(BROWSER_FIND_BAR).is_some_and(inside) || self.browser_clearing() {
-            return None;
-        }
-        [BROWSER_BODY, BROWSER_TOOLS_BODY]
-            .into_iter()
-            .find_map(|id| {
-                let rect = self.browser_region(id)?;
-                inside(rect).then_some((id, ((at.0 - rect.x) as i32, (at.1 - rect.y) as i32)))
-            })
+        self.model.read(|state| state.browser_clearing())
     }
 
     /// The number of the tab being shown, while the browser is open.
     fn browser_active(&self) -> Option<u32> {
-        self.model.read(|screen| {
-            let Screen::Workspace(state) = screen;
-            state.browser.as_ref().map(|browser| browser.active_id())
-        })
+        self.model
+            .read(|state| state.browser.as_ref().map(|browser| browser.active_id()))
     }
 
     /// The page of the tab being shown.
@@ -482,29 +441,33 @@ impl App {
     }
 
     /// The view that shows in the window `id`.
-    fn browser_view_of(&self, id: FocusId) -> Option<&View> {
+    fn browser_view_of(&self, id: Target) -> Option<&View> {
         match id {
-            BROWSER_BODY => self.browser_page(),
-            BROWSER_TOOLS_BODY => self.web.tools.as_ref().map(|(_, view)| view),
+            Target::Browser(BrowserEvent::BrowserBody) => self.browser_page(),
+            Target::Browser(BrowserEvent::BrowserToolsBody) => {
+                self.web.tools.as_ref().map(|(_, view)| view)
+            }
             _ => None,
         }
     }
 
     /// Whether a page or its tools have the keyboard.
-    fn browser_focused(&self) -> Option<FocusId> {
-        self.focus
-            .current()
-            .filter(|id| *id == BROWSER_BODY || *id == BROWSER_TOOLS_BODY)
+    fn browser_focused(&self) -> Option<Target> {
+        self.focus.focused().filter(|id| {
+            *id == Target::Browser(BrowserEvent::BrowserBody)
+                || *id == Target::Browser(BrowserEvent::BrowserToolsBody)
+        })
     }
 
     /// Carries out `command` of the menu over the page.
     pub(super) fn browser_menu_command(&mut self, command: BrowserCommand) {
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).browser_command(command));
+        self.model.change(|state| state.browser_command(command));
         if command == BrowserCommand::Find {
-            self.focus.claim(BROWSER_FIND_FIELD);
+            self.focus
+                .request_focus(Target::Browser(BrowserEvent::BrowserFindField));
         } else {
-            self.focus.focus(BROWSER_BODY);
+            self.focus
+                .request_focus(Target::Browser(BrowserEvent::BrowserBody));
         }
     }
 
@@ -523,124 +486,90 @@ impl App {
             .collect()
     }
 
-    /// Where a menu over the page opens: just under the pointer and inside the window.
-    pub(super) fn browser_menu_place(&self) -> Option<(f32, f32)> {
-        let (x, y) = self.pointer.position?;
+    /// Where a menu over the page opens for a press at `at`, in the window's frame: just
+    /// under it and inside the window.
+    pub(super) fn browser_menu_place(&self, (x, y): (f32, f32)) -> (f32, f32) {
         let (width, height) = self.window_size();
-        Some((
+        (
             (x - 8.0).min(width - 260.0).max(0.0),
             (y + 4.0).min(height - BROWSER_MENU_HEIGHT - 8.0).max(0.0),
-        ))
+        )
     }
 
-    /// Opens the menu over the page just under the pointer and inside the window.
-    pub(super) fn open_browser_menu(&mut self) {
-        let Some(at) = self.browser_menu_place() else {
-            return;
-        };
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).with_browser_menu(at));
+    /// Opens the menu over the page just under `at`, in the window's frame, and inside the
+    /// window.
+    pub(super) fn open_browser_menu(&mut self, at: (f32, f32)) {
+        let at = self.browser_menu_place(at);
+        self.model.change(|state| state.with_browser_menu(at));
     }
 
     /// Opens the browser, or shows it when it is open.
     pub(super) fn open_browser(&mut self) {
-        self.model.update(|screen| {
-            let Screen::Workspace(state) = screen;
+        self.model.update(|state| {
             state.open_browser(HOME);
         });
         self.focus_browser_address = true;
     }
 
-    /// Sends the pointer's move into the page under it, or out of the page it left.
-    pub(super) fn browser_moved(&mut self, at: (f32, f32)) {
-        let modifiers = held(self.modifiers, self.pointer);
-        match self.browser_under(at) {
-            Some((id, (x, y))) => {
-                if let Some(view) = self.browser_view_of(id) {
+    /// Hands what the pointer did over a page or its tools, as `pointer` tells, on to that
+    /// page: moves and the leaving of the pointer, the buttons, the wheel, and the mouse's
+    /// back and forward buttons, which step through the page's history, or else the app's.
+    pub(super) fn browser_pointer(&mut self, pointer: BrowserPointer) {
+        let (x, y) = (pointer.at.0 as i32, pointer.at.1 as i32);
+        let modifiers = held(self.modifiers, self.web.buttons);
+        match pointer.pointing {
+            BrowserPointing::Moved => {
+                if let Some(view) = self.browser_view_of(pointer.surface) {
                     view.pointer_moved(x, y, modifiers, false);
                 }
             }
-            None => {
-                for id in [BROWSER_BODY, BROWSER_TOOLS_BODY] {
-                    if let Some(view) = self.browser_view_of(id) {
-                        view.pointer_moved(0, 0, modifiers, true);
-                    }
+            BrowserPointing::Left => {
+                if let Some(view) = self.browser_view_of(pointer.surface) {
+                    view.pointer_moved(0, 0, modifiers, true);
+                }
+            }
+            BrowserPointing::Button {
+                secondary,
+                down,
+                clicks,
+            } => {
+                if down && self.model.read(Screen::list_menu_open) {
+                    return;
+                }
+                let button = if secondary { Mouse::Right } else { Mouse::Left };
+                if let Some(view) = self.browser_view_of(pointer.surface) {
+                    let clicks = i32::try_from(clicks).unwrap_or(i32::MAX);
+                    view.pointer_button(x, y, button, down, clicks, modifiers);
+                }
+                match secondary {
+                    true => self.web.buttons.1 = down,
+                    false => self.web.buttons.0 = down,
+                }
+            }
+            BrowserPointing::Wheel(dx, dy) => {
+                if let Some(view) = self.browser_view_of(pointer.surface) {
+                    view.scrolled(x, y, dx as i32, dy as i32, modifiers);
+                }
+            }
+            BrowserPointing::History(back) => {
+                self.note_press(None);
+                if !self.browser_history(back, true) {
+                    self.step_through_history(back);
                 }
             }
         }
     }
 
-    /// Sends a press or release of `button` into the page under the pointer, or into the one the press began in.
-    pub(super) fn browser_button(&mut self, button: Button, pressed: bool) {
-        let Some(at) = self.pointer.position else {
-            return;
-        };
-        if pressed && self.model.read(Screen::list_menu_open) {
-            return;
-        }
-        let target = if pressed {
-            self.browser_under(at)
-        } else {
-            self.web.pressed_in.and_then(|id| {
-                let rect = self.browser_region(id)?;
-                Some((id, ((at.0 - rect.x) as i32, (at.1 - rect.y) as i32)))
-            })
-        };
-        let Some((id, (x, y))) = target else {
-            return;
-        };
-        let clicks = if pressed {
-            let near = |last: (i32, i32)| (last.0 - x).abs() < 5 && (last.1 - y).abs() < 5;
-            let count = match self.web.last_press {
-                Some((when, last, count)) if when.elapsed() < DOUBLE_CLICK && near(last) => {
-                    count + 1
-                }
-                _ => 1,
-            };
-            self.web.last_press = Some((Instant::now(), (x, y), count));
-            self.web.pressed_in = Some(id);
-            count
-        } else {
-            self.web.pressed_in = None;
-            self.web.last_press.map_or(1, |(_, _, count)| count)
-        };
-        let button = match button {
-            Button::Left => Mouse::Left,
-            Button::Middle => Mouse::Middle,
-            Button::Right => Mouse::Right,
-        };
-        let modifiers = held(self.modifiers, self.pointer);
-        if let Some(view) = self.browser_view_of(id) {
-            view.pointer_button(x, y, button, pressed, i32::from(clicks), modifiers);
-        }
-    }
-
-    /// Scrolls the page under the pointer by `pixels` of wheel, and says whether there was one.
-    pub(super) fn browser_wheel(&mut self, dx: f32, dy: f32) -> bool {
-        let Some(at) = self.pointer.position else {
-            return false;
-        };
-        let Some((id, (x, y))) = self.browser_under(at) else {
-            return false;
-        };
-        let modifiers = held(self.modifiers, self.pointer);
-        if let Some(view) = self.browser_view_of(id) {
-            view.scrolled(x, y, dx as i32, dy as i32, modifiers);
-        }
-        true
-    }
-
-    /// Takes the mouse's back or forward button into the page, when the pointer is over the page or the page holds the keyboard and is on screen, and says whether it did.
-    pub(super) fn browser_history(&mut self, back: bool) -> bool {
-        if self.browser_region(BROWSER_BODY).is_none() {
+    /// Takes the mouse's back or forward button into the page, when the button went down
+    /// `over` the page or the page holds the keyboard and is on screen, and says whether it did.
+    pub(super) fn browser_history(&mut self, back: bool, over: bool) -> bool {
+        if self
+            .browser_region(Target::Browser(BrowserEvent::BrowserBody))
+            .is_none()
+        {
             return false;
         }
-        let over = self
-            .pointer
-            .position
-            .and_then(|at| self.browser_under(at))
-            .is_some_and(|(id, _)| id == BROWSER_BODY);
-        if !over && self.browser_focused() != Some(BROWSER_BODY) {
+        if !over && self.browser_focused() != Some(Target::Browser(BrowserEvent::BrowserBody)) {
             return false;
         }
         let Some(page) = self.browser_page() else {
@@ -666,66 +595,64 @@ impl App {
     }
 
     /// Takes a key meant for what the pane draws over the page, and says whether it did: while the question about clearing is open Escape declines it and every other key is ignored; in the bar for finding Escape closes it, Shift+Enter goes to the previous match and the keys for finding work.
-    fn browser_overlay_key(&mut self, event: KeyEvent) -> bool {
+    fn browser_overlay_key(&mut self, event: &KeyEvent) -> bool {
         if self.browser_clearing() {
             if matches!(event.key, Key::Escape) {
-                self.model.update(|screen| {
-                    let Screen::Workspace(state) = screen;
+                self.model.update(|state| {
                     state.browser_clear_declined();
                 });
             }
             return true;
         }
-        if self.focus.current() != Some(BROWSER_FIND_FIELD) {
+        if self.focus.focused() != Some(Target::Browser(BrowserEvent::BrowserFindField)) {
             return false;
         }
         let shortcut = match event.key {
             Key::Escape => {
-                self.model.update(|screen| {
-                    let Screen::Workspace(state) = screen;
+                self.model.update(|state| {
                     state.browser_find_closed();
                 });
-                self.focus.focus(BROWSER_BODY);
+                self.focus
+                    .request_focus(Target::Browser(BrowserEvent::BrowserBody));
                 return true;
             }
             Key::Enter if event.modifiers.shift => Shortcut::FindPrevious,
-            _ => match shortcut_of(&event) {
+            _ => match shortcut_of(event) {
                 Some(shortcut @ (Shortcut::Find | Shortcut::FindNext | Shortcut::FindPrevious)) => {
                     shortcut
                 }
                 _ => return false,
             },
         };
-        self.model.update(|screen| {
-            let Screen::Workspace(state) = screen;
+        self.model.update(|state| {
             state.browser_shortcut(shortcut);
         });
         true
     }
 
     /// Sends a key into the page that holds the keyboard, unless the browser takes it for itself, as for finding, zooming and loading again, or the keymap binds it to something the window does, and says whether it did.
-    pub(super) fn browser_key(&mut self, event: KeyEvent) -> bool {
+    pub(super) fn browser_key(&mut self, event: &KeyEvent) -> bool {
         if self.browser_overlay_key(event) {
             return true;
         }
         let Some(id) = self.browser_focused() else {
             return false;
         };
-        if id == BROWSER_BODY
-            && let Some(shortcut) = shortcut_of(&event)
+        if id == Target::Browser(BrowserEvent::BrowserBody)
+            && let Some(shortcut) = shortcut_of(event)
         {
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 state.browser_shortcut(shortcut);
             });
             if shortcut == Shortcut::Find {
-                self.focus.claim(BROWSER_FIND_FIELD);
+                self.focus
+                    .request_focus(Target::Browser(BrowserEvent::BrowserFindField));
             }
             return true;
         }
         let modifiers = event.modifiers;
-        if (modifiers.control || modifiers.alt || modifiers.logo)
-            && let Some(chord) = Self::chord_of(&event)
+        if (modifiers.ctrl || modifiers.alt || modifiers.meta)
+            && let Some(chord) = Self::chord_of(event)
             && !matches!(
                 self.keymap()
                     .press_among(&self.pending, &chord, Action::everywhere),
@@ -734,7 +661,7 @@ impl App {
         {
             return false;
         }
-        let key = typed(event, held(modifiers, self.pointer));
+        let key = typed(event, held(modifiers, self.web.buttons));
         if let Some(view) = self.browser_view_of(id) {
             view.key(&key);
         }
@@ -742,33 +669,20 @@ impl App {
     }
 
     /// Tells the page that holds the keyboard a key came up, as pages that listen for `keyup` or track held keys expect, unless the browser took the press for itself.
-    pub(super) fn browser_key_released(&mut self, event: KeyEvent) {
+    pub(super) fn browser_key_released(&mut self, event: &KeyEvent) {
         if self.browser_clearing() {
             return;
         }
         let Some(id) = self.browser_focused() else {
             return;
         };
-        if id == BROWSER_BODY && shortcut_of(&event).is_some() {
+        if id == Target::Browser(BrowserEvent::BrowserBody) && shortcut_of(event).is_some() {
             return;
         }
-        let key = typed(event, held(event.modifiers, self.pointer));
+        let key = typed(event, held(event.modifiers, self.web.buttons));
         if let Some(view) = self.browser_view_of(id) {
             view.key(&key);
         }
-    }
-
-    /// How the pointer looks while it is over a page, as the page asks.
-    pub(super) fn browser_cursor(&self) -> Option<Cursor> {
-        let at = self.pointer.position?;
-        self.browser_under(at)?;
-        self.model.read(|screen| {
-            let Screen::Workspace(state) = screen;
-            state
-                .browser
-                .as_ref()
-                .map(|browser| cursor_of(browser.pointer))
-        })
     }
 
     /// The address to open for `address` of a page on `host`: a local one is carried to that machine's port, and what no transport can carry is said.
@@ -836,8 +750,7 @@ impl App {
 
     /// The machine the page of the tab numbered `id` is on, when it is not this one.
     fn browser_tab_host(&self, id: u32) -> Option<String> {
-        self.model.read(|screen| {
-            let Screen::Workspace(state) = screen;
+        self.model.read(|state| {
             state
                 .browser
                 .as_ref()
@@ -872,8 +785,7 @@ impl App {
             .filter(|(_, notices)| !notices.is_empty())
             .collect();
         if !notices.is_empty() {
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 for (id, notices) in notices {
                     state.browser_scoped_to_tab(id, |state| {
                         if let Some(tab) = state
@@ -889,8 +801,7 @@ impl App {
                 }
             });
         }
-        let waiting = self.model.read(|screen| {
-            let Screen::Workspace(state) = screen;
+        let waiting = self.model.read(|state| {
             state.browser.as_ref().is_some_and(|browser| {
                 browser
                     .tabs
@@ -902,8 +813,7 @@ impl App {
             return;
         }
         let mut answers = Vec::new();
-        self.model.update(|screen| {
-            let Screen::Workspace(state) = screen;
+        self.model.update(|state| {
             answers = state.take_browser_answers();
         });
         for (tab, answer) in answers {
@@ -957,8 +867,7 @@ impl App {
                 .filter(|_| self.web.install_failed)
                 .or_else(|| self.web.reason.clone())
                 .unwrap_or_else(|| "The embedded browser could not be started.".to_owned());
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 state.browser_notice(&reason);
             });
         }
@@ -966,11 +875,11 @@ impl App {
     }
 
     /// The size a window of a page was last drawn at, in logical pixels, or a size to start from.
-    fn browser_size(&self, id: FocusId, scale: f32) -> (u32, u32, f32) {
+    fn browser_size(&self, id: Target, scale: f32) -> (u32, u32, f32) {
         self.browser_region(id).map_or((960, 640, scale), |rect| {
             (
-                rect.width.max(1.0) as u32,
-                rect.height.max(1.0) as u32,
+                rect.size.width.max(1.0) as u32,
+                rect.size.height.max(1.0) as u32,
                 scale,
             )
         })
@@ -978,8 +887,7 @@ impl App {
 
     /// Carries out what the window asked of the engine, each command in the tab it is for.
     fn browser_commands(&mut self, scale: f32) {
-        let pending = self.model.read(|screen| {
-            let Screen::Workspace(state) = screen;
+        let pending = self.model.read(|state| {
             state
                 .browser
                 .as_ref()
@@ -989,8 +897,7 @@ impl App {
             return;
         }
         let mut commands = Vec::new();
-        self.model.update(|screen| {
-            let Screen::Workspace(state) = screen;
+        self.model.update(|state| {
             commands = state.take_browser_commands();
         });
         for (tab, command) in commands {
@@ -998,7 +905,8 @@ impl App {
                 Command::Load(address) => self.browser_load(tab, &address, scale),
                 Command::LoadSealed => self.browser_load_sealed(tab, scale),
                 Command::OpenTools => {
-                    let (width, height, scale) = self.browser_size(BROWSER_TOOLS_BODY, scale);
+                    let (width, height, scale) =
+                        self.browser_size(Target::Browser(BrowserEvent::BrowserToolsBody), scale);
                     if let Some(page) = self.web.pages.get(&tab).map(|shown| &shown.view) {
                         self.web.tools =
                             Some((tab, page.open_devtools(width.max(1), height, scale)));
@@ -1025,8 +933,7 @@ impl App {
 
     /// Loads `address` in the tab `tab`, opening its page first when it has none.
     fn browser_load(&mut self, tab: u32, address: &str, scale: f32) {
-        let host = self.model.read(|screen| {
-            let Screen::Workspace(state) = screen;
+        let host = self.model.read(|state| {
             state
                 .browser
                 .as_ref()
@@ -1036,15 +943,13 @@ impl App {
         let address = match self.browser_resolve(address, host.as_deref()) {
             Ok(address) => address,
             Err(message) => {
-                self.model.update(|screen| {
-                    let Screen::Workspace(state) = screen;
+                self.model.update(|state| {
                     state.browser_tab_notice(tab, &message);
                 });
                 return;
             }
         };
-        self.model.update(|screen| {
-            let Screen::Workspace(state) = screen;
+        self.model.update(|state| {
             state.browser_notice_cleared(tab);
         });
         match self.web.pages.get(&tab) {
@@ -1054,14 +959,13 @@ impl App {
             }
             Some(_) => {
                 self.web.pages.remove(&tab);
-                self.model.update(|screen| {
-                    let Screen::Workspace(state) = screen;
+                self.model.update(|state| {
                     state.browser_tab_unsealed(tab);
                 });
             }
             None => {}
         }
-        let size = self.browser_size(BROWSER_BODY, scale);
+        let size = self.browser_size(Target::Browser(BrowserEvent::BrowserBody), scale);
         let Some(engine) = self.browser_engine() else {
             return;
         };
@@ -1078,8 +982,7 @@ impl App {
                     },
                 );
             }
-            Err(error) => self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            Err(error) => self.model.update(|state| {
                 state.browser_tab_notice(tab, &error.to_string());
             }),
         }
@@ -1087,8 +990,7 @@ impl App {
 
     /// Shows the sealed document the tab `tab` holds in a page of its own, in place of any page the tab had: the helper denies that page the network and the tools of agents.
     fn browser_load_sealed(&mut self, tab: u32, scale: f32) {
-        let sealed = self.model.read(|screen| {
-            let Screen::Workspace(state) = screen;
+        let sealed = self.model.read(|state| {
             state
                 .browser
                 .as_ref()
@@ -1098,18 +1000,16 @@ impl App {
         let Some(sealed) = sealed else {
             return;
         };
-        self.model.update(|screen| {
-            let Screen::Workspace(state) = screen;
+        self.model.update(|state| {
             state.browser_notice_cleared(tab);
         });
         self.web.pages.remove(&tab);
-        let size = self.browser_size(BROWSER_BODY, scale);
+        let size = self.browser_size(Target::Browser(BrowserEvent::BrowserBody), scale);
         let Some(engine) = self.browser_engine() else {
             return;
         };
         if !engine.sealed_pages() {
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 state.browser_tab_notice(tab, &format!("{PREVIEW_NEEDS_UPDATE}: the installed browser cannot open pages sealed from the network."));
             });
             return;
@@ -1127,8 +1027,7 @@ impl App {
                     },
                 );
             }
-            Err(error) => self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            Err(error) => self.model.update(|state| {
                 state.browser_tab_notice(tab, &error.to_string());
             }),
         }
@@ -1193,14 +1092,10 @@ impl App {
 
     /// Has the pictures of sealed documents the window asked for made, takes in the ones the helper finished, and says whether any is still being rendered, which wants the loop to turn again soon.
     fn browser_previews(&mut self) -> bool {
-        let pending = self.model.read(|screen| {
-            let Screen::Workspace(state) = screen;
-            state.preview_requests_pending()
-        });
+        let pending = self.model.read(|state| state.preview_requests_pending());
         if pending {
             let mut asked = Vec::new();
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 asked = state.take_preview_requests();
             });
             for request in asked {
@@ -1257,8 +1152,7 @@ impl App {
             .collect();
         for tab in late {
             self.web.pages.remove(&tab);
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 state.browser_tab_notice(
                     tab,
                     "The browser did not show this page within 15 seconds. Reload the tab to try again.",
@@ -1270,8 +1164,7 @@ impl App {
     /// Whether the tab `tab` holds a sealed document but has no page, as after its page was given up on, so that reloading it opens the document again.
     fn browser_sealed_without_page(&self, tab: u32) -> bool {
         !self.web.pages.contains_key(&tab)
-            && self.model.read(|screen| {
-                let Screen::Workspace(state) = screen;
+            && self.model.read(|state| {
                 state
                     .browser
                     .as_ref()
@@ -1319,10 +1212,7 @@ impl App {
 
     /// Closes the pages of tabs that were closed, and all of them when the browser was.
     fn browser_sync_tabs(&mut self) {
-        let open: Vec<u32> = self.model.read(|screen| {
-            let Screen::Workspace(state) = screen;
-            state.browser_tab_numbers()
-        });
+        let open: Vec<u32> = self.model.read(|state| state.browser_tab_numbers());
         self.web.pages.retain(|id, _| open.contains(id));
         if self
             .web
@@ -1347,12 +1237,12 @@ impl App {
     fn browser_fit(&mut self, scale: f32) {
         let size_of = |rect: Rect| {
             (
-                rect.width.max(1.0) as u32,
-                rect.height.max(1.0) as u32,
+                rect.size.width.max(1.0) as u32,
+                rect.size.height.max(1.0) as u32,
                 scale,
             )
         };
-        if let Some(rect) = self.browser_region(BROWSER_BODY)
+        if let Some(rect) = self.browser_region(Target::Browser(BrowserEvent::BrowserBody))
             && let Some(active) = self.browser_active()
             && let Some(shown) = self.web.pages.get_mut(&active)
         {
@@ -1362,7 +1252,7 @@ impl App {
                 shown.view.resize(size.0, size.1, size.2);
             }
         }
-        if let Some(rect) = self.browser_region(BROWSER_TOOLS_BODY)
+        if let Some(rect) = self.browser_region(Target::Browser(BrowserEvent::BrowserToolsBody))
             && let Some((_, view)) = self.web.tools.as_ref()
         {
             let size = size_of(rect);
@@ -1387,16 +1277,15 @@ impl App {
             if let Some(result) = picked {
                 let element = result.as_ref().map(element_of);
                 let picked = element.is_some();
-                self.model.update(|screen| {
-                    *screen = std::mem::take(screen).browser_picked(*id, element.clone());
-                });
+                self.model
+                    .change(|state| state.browser_picked(*id, element.clone()));
                 if picked {
-                    self.focus.focus(PROMPT);
+                    self.focus
+                        .request_focus(Target::Composer(ComposerEvent::Prompt));
                 }
             }
             if found.is_some() || zoom.is_some() {
-                self.model.update(|screen| {
-                    let Screen::Workspace(state) = screen;
+                self.model.update(|state| {
                     state.browser_scoped_to_tab(*id, |state| {
                         if let Some((active, total)) = found {
                             state.browser_found(*id, active, total);
@@ -1410,8 +1299,7 @@ impl App {
             for (url, agent) in opened {
                 let host = self.browser_tab_host(*id);
                 let address = self.browser_unresolve(&url, host.as_deref());
-                self.model.update(|screen| {
-                    let Screen::Workspace(state) = screen;
+                self.model.update(|state| {
                     state.browser_scoped_to_tab(*id, |state| {
                         state.browser_tab_opened(&address, host, agent, !agent);
                     });
@@ -1424,25 +1312,22 @@ impl App {
         if self.web.focused != Some((active, focused)) {
             self.web.focused = Some((active, focused));
             for (id, shown) in &self.web.pages {
-                shown
-                    .view
-                    .focus(Some(*id) == active && focused == Some(BROWSER_BODY));
+                shown.view.focus(
+                    Some(*id) == active
+                        && focused == Some(Target::Browser(BrowserEvent::BrowserBody)),
+                );
             }
             if let Some((_, view)) = self.web.tools.as_ref() {
-                view.focus(focused == Some(BROWSER_TOOLS_BODY));
+                view.focus(focused == Some(Target::Browser(BrowserEvent::BrowserToolsBody)));
             }
         }
-        let picture = |view: &View, surface: u32, shown: &mut u64| {
+        let picture = |view: &View, texture: rustle::ImageKey, shown: &mut u64| {
             let frame = view.frame().filter(|frame| frame.generation != *shown)?;
             *shown = frame.generation;
-            Some(Picture {
-                key: Picture::live_key(surface, frame.generation),
-                width: frame.width,
-                height: frame.height,
-                pixels: frame.rgba,
-            })
+            ImageData::keyed(texture, frame.width, frame.height, frame.rgba.as_slice())
         };
-        let typing = self.focus.current() == Some(pm_components::browser::BROWSER_ADDRESS);
+        let [page_texture, tools_texture] = self.web.textures;
+        let typing = self.focus.focused() == Some(Target::Browser(BrowserEvent::BrowserAddress));
         let mut reports = Vec::new();
         for id in self.web.pages.keys().copied().collect::<Vec<_>>() {
             let host = self.browser_tab_host(id);
@@ -1456,7 +1341,7 @@ impl App {
                 continue;
             };
             let page = if Some(id) == active {
-                picture(&shown.view, PAGE_SURFACE, &mut shown.shown)
+                picture(&shown.view, page_texture, &mut shown.shown)
             } else {
                 None
             };
@@ -1472,9 +1357,8 @@ impl App {
             .web
             .tools
             .as_ref()
-            .and_then(|(_, view)| picture(view, TOOLS_SURFACE, &mut self.web.tools_shown));
-        let changed = self.model.read(|screen| {
-            let Screen::Workspace(state) = screen;
+            .and_then(|(_, view)| picture(view, tools_texture, &mut self.web.tools_shown));
+        let changed = self.model.read(|state| {
             reports.iter().any(|(id, page, title, address, pointer)| {
                 page.is_some()
                     || state.browser_tab_anywhere(*id).is_some_and(|tab| {
@@ -1482,15 +1366,14 @@ impl App {
                             || tab.pointer != *pointer
                             || (!(typing && Some(*id) == active)
                                 && !address.is_empty()
-                                && tab.address.text() != address)
+                                && tab.address.text() != *address)
                     })
             })
         });
         if !changed && tools.is_none() {
             return;
         }
-        self.model.update(|screen| {
-            let Screen::Workspace(state) = screen;
+        self.model.update(|state| {
             for (id, page, title, address, pointer) in reports {
                 state.browser_scoped_to_tab(id, |state| {
                     state.browser_tab_painted(id, page, &title, &address, pointer, typing);
@@ -1521,15 +1404,11 @@ impl App {
 
     /// Forgets that the last download of the browser failed when the reader pressed the button of a preview's placeholder that asks for it again, so that [`Self::browser_install`] starts it as it does when the setting is turned on.
     fn browser_install_retry(&mut self) {
-        let asked = self.model.read(|screen| {
-            let Screen::Workspace(state) = screen;
-            state.browser_install_asked()
-        });
+        let asked = self.model.read(|state| state.browser_install_asked());
         if !asked {
             return;
         }
-        self.model.update(|screen| {
-            let Screen::Workspace(state) = screen;
+        self.model.update(|state| {
             state.take_browser_install_asked();
         });
         if self.web.installing.is_none() {
@@ -1578,8 +1457,7 @@ impl App {
             self.web.reason = None;
             if enabled {
                 self.web.failed = false;
-                self.model.update(|screen| {
-                    let Screen::Workspace(state) = screen;
+                self.model.update(|state| {
                     state.retry_previews();
                 });
             }
@@ -1602,15 +1480,12 @@ impl App {
                             format!("The embedded browser could not be installed: {message}")
                         }
                     });
-                    self.model.update(|screen| {
-                        let Screen::Workspace(state) = screen;
-                        match &outcome {
-                            Ok(()) => {
-                                state.browser_retry();
-                                state.retry_previews();
-                            }
-                            Err(message) => state.browser_notice(message),
+                    self.model.update(|state| match &outcome {
+                        Ok(()) => {
+                            state.browser_retry();
+                            state.retry_previews();
                         }
+                        Err(message) => state.browser_notice(message),
                     });
                 }
             }
@@ -1648,8 +1523,7 @@ impl App {
                 let _ = sender.send(outcome);
             });
             self.web.installing = Some(receiver);
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 state.browser_notice("Downloading the embedded browser, about 120 MB...");
             });
             downloading = true;
@@ -1657,16 +1531,14 @@ impl App {
         let status = self.browser_status(downloading);
         if status != self.web.shown_note {
             self.web.shown_note.clone_from(&status);
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 state.set_browser_status(status);
             });
         }
         let helper = self.browser_helper(downloading);
         if helper != self.web.shown_helper {
             self.web.shown_helper.clone_from(&helper);
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 state.set_browser_helper(helper);
             });
         }
@@ -1697,8 +1569,7 @@ impl App {
                 continue;
             };
             let mut entered = None;
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 entered = state.browser_scope_enter(position);
             });
             let Some(entered) = entered else {
@@ -1712,8 +1583,7 @@ impl App {
             };
             let started = self.browser_tool(&host, local, &made.tool, &made.arguments, scale);
             self.browser_commands(scale);
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 state.browser_scope_leave(entered);
             });
             if !started {
@@ -1811,10 +1681,9 @@ impl App {
             };
             arguments_json["url"] = serde_json::Value::String(resolved);
         }
-        let tabs = self.model.read(|screen| {
-            let Screen::Workspace(state) = screen;
-            state.browser.as_ref().map(|browser| browser.tab_infos())
-        });
+        let tabs = self
+            .model
+            .read(|state| state.browser.as_ref().map(|browser| browser.tab_infos()));
         let target = match (named, tabs.as_deref()) {
             (Some(id), Some(tabs)) if tabs.iter().any(|tab| tab.id == id) => Some(id),
             (Some(id), _) => {
@@ -1833,8 +1702,7 @@ impl App {
             Some(id) => id,
             None if tool == "browser_navigate" => {
                 let mut opened = None;
-                self.model.update(|screen| {
-                    let Screen::Workspace(state) = screen;
+                self.model.update(|state| {
                     opened = state.browser_tab_opened("about:blank", host.clone(), true, true);
                 });
                 self.browser_commands(scale);
@@ -1870,8 +1738,7 @@ impl App {
             return true;
         }
         if named.is_some() {
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 if let Some(browser) = state.browser.as_mut() {
                     browser.agent_tab = Some(target);
                 }
@@ -1903,8 +1770,7 @@ impl App {
         let tab = arguments["tab"]
             .as_u64()
             .and_then(|id| u32::try_from(id).ok());
-        let tabs = self.model.read(|screen| {
-            let Screen::Workspace(state) = screen;
+        let tabs = self.model.read(|state| {
             state
                 .browser
                 .as_ref()
@@ -1935,8 +1801,7 @@ impl App {
                     (false, message)
                 } else {
                     let mut opened = None;
-                    self.model.update(|screen| {
-                        let Screen::Workspace(state) = screen;
+                    self.model.update(|state| {
                         opened = state.browser_tab_opened(url, host.clone(), true, false);
                     });
                     self.browser_commands(scale);
@@ -1967,16 +1832,14 @@ impl App {
                         if tabs.iter().any(|t| t.id == id && t.locked) {
                             (false, locked_message("browser_tabs close", id))
                         } else {
-                            self.model.update(|screen| {
-                                let Screen::Workspace(state) = screen;
+                            self.model.update(|state| {
                                 state.browser_tab_closed(id);
                             });
                             (true, format!("Closed tab {id}."))
                         }
                     }
                     Some(id) => {
-                        self.model.update(|screen| {
-                            let Screen::Workspace(state) = screen;
+                        self.model.update(|state| {
                             if let Some(browser) = state.browser.as_mut() {
                                 browser.agent_tab = Some(id);
                             }
@@ -2014,8 +1877,7 @@ impl App {
         let local_links = general.open_local_links;
         for link in links {
             match route(&link, local_links, ready) {
-                Route::Pane(address) => self.model.update(|screen| {
-                    let Screen::Workspace(state) = screen;
+                Route::Pane(address) => self.model.update(|state| {
                     state.open_link_page(&address);
                 }),
                 Route::System(address) => {
@@ -2038,21 +1900,16 @@ impl App {
         {
             return;
         }
-        let scale = self
-            .window
-            .as_ref()
-            .map_or(1.0, |window| window.scale_factor() as f32);
+        let scale = self.scale;
         for (host, url, owner) in pages {
             let mut entered = None;
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+            self.model.update(|state| {
                 entered = owner.and_then(|position| state.browser_scope_enter(position));
                 state.open_served_page(&url, host);
             });
             self.browser_commands(scale);
             if let Some(entered) = entered {
-                self.model.update(|screen| {
-                    let Screen::Workspace(state) = screen;
+                self.model.update(|state| {
                     state.browser_scope_leave(entered);
                 });
             }
@@ -2061,16 +1918,9 @@ impl App {
 
     /// Does the browser's work for one turn of the event loop, and says whether a page is open, which wants the loop to turn again soon.
     pub(super) fn browser_tick(&mut self) -> bool {
-        let scale = self
-            .window
-            .as_ref()
-            .map_or(1.0, |window| window.scale_factor() as f32);
-        if self.model.read(|screen| {
-            let Screen::Workspace(state) = screen;
-            state.browser_rescope_needed()
-        }) {
-            self.model.update(|screen| {
-                let Screen::Workspace(state) = screen;
+        let scale = self.scale;
+        if self.model.read(|state| state.browser_rescope_needed()) {
+            self.model.update(|state| {
                 state.rescope_browser();
             });
         }

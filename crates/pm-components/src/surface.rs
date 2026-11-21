@@ -1,13 +1,11 @@
-//! The surface: the raised, bordered column that menus, popovers and modals are drawn on.
+//! The surface: the raised, bordered column that menus, popovers and modals are drawn on,
+//! a rustle surface in the theme's surface colour, border and corner, with the app's shadow.
 
-use pm_style::{
-    Radius, Role, ShadowLayer, bg, border, border_color, flex, flex_col, overflow_hidden, rounded,
-    shadow_layers, shadow_md,
-};
-use pm_ui::{Node, node};
-
-/// The shadow under a floating surface: a tall, soft one that lifts it off what is behind.
-const FLOATING_SHADOW: [ShadowLayer; 1] = [ShadowLayer::new(0.0, 12.0, 40.0, 0.0, 0.35, false)];
+use crate::theme;
+use crate::theme::ShadowLayers;
+use crate::theme::{Radius, Role};
+use rustle::Modifier;
+use rustle::{Alignment, Arrangement, column_arranged};
 
 /// How a surface looks.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -24,12 +22,17 @@ pub enum Variant {
 /// A surface being described: how it looks.
 ///
 /// Build it with [`Surface::new`], change it with [`Surface::variant`], and
-/// turn it into a node with [`Surface::build`]; the caller adds what it holds,
-/// the room around it and its place.
-#[derive(Clone, Copy, Debug, Default)]
+/// emit it with [`Surface::build_with`]; the caller
+/// gives what it holds, the room around it ([`Surface::inner`]) and its place
+/// ([`Surface::modifier`]).
+#[derive(Clone, Debug, Default)]
 pub struct Surface {
     /// How it looks.
     variant: Variant,
+    /// The padding the caller gave in place of the surface's own, which has none.
+    inner: Modifier,
+    /// What the caller puts around its box.
+    modifier: Modifier,
 }
 
 impl Surface {
@@ -44,28 +47,39 @@ impl Surface {
         self
     }
 
-    /// The node that draws the surface: a column on the surface colour, bordered and shadowed.
-    pub fn build(self) -> Node {
-        let base = node().styles([
-            flex(),
-            flex_col(),
-            bg(Role::Surface),
-            border(),
-            border_color(Role::Border),
-        ]);
-        match self.variant {
-            Variant::Compact => base.styles([rounded(Radius::Md), shadow_md()]),
-            Variant::Floating => {
-                base.styles([rounded(Radius::Xl), shadow_layers(&FLOATING_SHADOW)])
-            }
-            Variant::Dialog => base.styles([rounded(Radius::Xl), shadow_md(), overflow_hidden()]),
-        }
+    /// The surface with `modifier`, padding, in place of its own padding, inside its fill and border.
+    pub fn inner(mut self, modifier: Modifier) -> Self {
+        self.inner = modifier;
+        self
     }
-}
 
-impl From<Surface> for Node {
-    /// The node that draws the surface.
-    fn from(surface: Surface) -> Self {
-        surface.build()
+    /// The surface with `modifier` put around its box, outside its own: sizes, weight, placement.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
+    }
+
+    /// Emits the surface holding `content`: a column on the surface colour, bordered and shadowed.
+    #[track_caller]
+    pub fn build_with(self, content: impl FnOnce()) {
+        let (layers, radius): (&[rustle::Shadow], Radius) = match self.variant {
+            Variant::Compact => (&theme::MEDIUM_SHADOW, Radius::Md),
+            Variant::Floating => (&theme::FLOATING_SHADOW, Radius::Xl),
+            Variant::Dialog => (&theme::MEDIUM_SHADOW, Radius::Xl),
+        };
+        let shadow = Modifier::new().shadow_layers(layers, radius.px());
+        let mut inner = Modifier::new().padding(1.0);
+        if self.variant == Variant::Dialog {
+            inner = inner.clip();
+        }
+        let inner = inner.chain(self.inner);
+        rustle::surface_custom(
+            self.modifier.chain(shadow),
+            rustle::Shape::rounded(radius.px()),
+            theme::color(Role::Surface),
+            theme::color(Role::Text),
+            Some(rustle::BorderStroke::new(1.0, theme::color(Role::Border))),
+            || column_arranged(inner, Arrangement::Start, Alignment::Start, content),
+        );
     }
 }

@@ -14,10 +14,75 @@ Spacers preserve scroll height and offscreen keyboard identities. Tree rows
 have a fixed height at the current density. Inline naming temporarily uses the
 complete list because validation messages have variable heights.
 
-Moving inside the same unpressed tree row skips a redraw when neither the
-model nor the scrollbar hover changes and no animation is running. Moving to
-another row, dragging, crossing the scrollbar grip and other interactions
-still request frames.
+Hover, press and focus styling is resolved when the interface is painted, so
+moving the pointer repaints without composing the screen again; only a model
+change composes it. Spinners read their angle when they are painted, so a
+turning spinner paints the window again each frame without composing or
+measuring it.
+
+## Interactions on a heavy workspace
+
+```sh
+CARGO_TARGET_DIR=build cargo test -p pandemonium benchmark_interactions -- --ignored --nocapture --test-threads=1
+```
+
+The benchmarks in `crates/pandemonium/src/app/interactions/benchmarks.rs`
+drive the app headless through the interaction rig, which feeds rustle's
+`Embedded` interfaces as rustle's event loop feeds a window and wakes the app as
+its external handler does, on a heavy workspace (`snapshot::heavy_workspace`): the file shown, the
+conversation and the diff side by side in panes, 40 replies of 30 markdown
+paragraphs each, and the review panel open on a tree of 400 files. They drag
+the sidebar's handle, the review panel's handle and a seam between panes a
+pixel a frame for 100 frames, move the pointer over the panes, scroll, type
+into the prompt and stream 100 chunks of an agent's reply, and print for each
+frame the main window's composing time and layout plus painting time (from
+rustle's `Embedded::update_timing`) and the whole turn of the loop, as
+p50/p95/max in milliseconds. Add `--release` for the release profile; the
+numbers below are from the `dev` profile `make run` uses, which is optimized.
+
+Three causes made every frame of these slow, measured with the benchmarks
+and a sampling profile:
+
+- Text was shaped again on every frame. Ellipsized labels, canvases and
+  editable and selectable text asked rustle's text engine for a layout while
+  composing and again while painting, and nothing kept it: shaping was half
+  of a frame. rustle now keeps text layouts per thread by their runs, style,
+  width and fonts, and text measured for editing goes through the same layouts.
+- A spinner turning anywhere on the screen composed, measured and painted the
+  whole window on every frame while an agent worked, and so on every pointer
+  move. The spinner reads its angle while it is drawn; rustle now records
+  state read while drawing (or measuring) and draws (or lays out) again for
+  it without composing.
+- Every change, including a pane's width, composed the whole screen. The
+  workspace's regions (title bar, sidebar, each pane, the dock, the plan and
+  review panels) are now `pm_components::revision::region` blocks keyed by
+  the screen's revision and their room, and a handle's drag changes only
+  sizes (`Model::resize`), so the regions whose room did not change keep what
+  they emitted.
+
+Measured on the same machine (`dev` profile, milliseconds, p50 / p95 of the
+whole turn; before is the earlier interface with text sizes cached as a
+window's renderer caches them):
+
+| Interaction | Before | After |
+| --- | --- | --- |
+| Drag the sidebar's handle | 34.2 / 36.2 | 2.9 / 3.2 |
+| Drag the review panel's handle | 38.1 / 56.2 | 5.2 / 6.8 |
+| Drag a seam between panes | 55.0 / 57.7 | 5.8 / 9.3 |
+| Move the pointer | 22.8 / 24.4 | 0.6 / 0.9 |
+| Scroll | 34.1 / 35.7 | 3.2 / 3.3 |
+| Type into the prompt | 56.8 / 60.6 | 4.1 / 4.2 |
+| Stream an agent's reply | 91.1 / 124.0 | 11.6 / 15.0 |
+
+Medians moved by up to a third between runs while other work loaded the
+machine; compare before and after in the same session. The release profile
+measured 27.2 ms before and 2.4 ms after for the
+sidebar's handle, 41.8 ms and 5.8 ms for a seam, and 72.2 ms and 11.4 ms for
+streaming. What costs most now is composing the panes whose width changed
+(the conversation and the code view compose their visible rows again) and,
+while streaming, composing every region again, since any change of the screen
+moves its revision; then measuring and painting the whole tree, which rustle
+caches only per restartable scope.
 
 ## Measure a running window
 
@@ -25,9 +90,9 @@ still request frames.
 PANDEMONIUM_FRAME_TIMINGS=1 CARGO_TARGET_DIR=build cargo run -p pandemonium
 ```
 
-Every 240 successfully submitted main-window frames, stderr reports p50, p95
-and p99 in milliseconds for CPU scene work, surface acquisition plus encoding
-and submission, pointer movement to successful submission, and key/IME handling
+Every 240 composed main-window frames, stderr reports p50, p95 and p99 in
+milliseconds for composing and laying out the screen, the remaining time to
+the end of the frame, pointer movement to successful submission, and key/IME handling
 to successful submission. Pointer timings
 start at event handling and include coalesced events from the oldest pending
 movement. They exclude OS event delivery, compositor queues, scanout and actual
@@ -56,8 +121,8 @@ server's bell as soon as they queue an event, and the pump runs on the ring; its
 and on a waker, on the server's side and on the client's. Queueing a message
 for the client, or a request for the server, rings that waker, so it is written
 at once instead of at the next 25 ms read timeout. The client's connection
-thread calls a wake function after each report, which the window turns into an
-event loop user event, so incoming events are applied at once instead of at the
+thread calls a wake function after each report, rustle's `external_waker`, which
+wakes the event loop to run the app's external handler, so incoming events are applied at once instead of at the
 next 50 ms tick while an agent works.
 
 Measured over a loopback WebSocket with an agent streaming one chunk every
@@ -158,7 +223,7 @@ PANDEMONIUM_STARTUP_TIMINGS=1 CARGO_TARGET_DIR=build cargo run --release -p pand
 ```
 
 Stderr reports the milliseconds since the process began at each phase: the
-event loop, the saved settings, fonts and the model, the window, the renderer,
+saved settings, fonts and the model, the window, the renderer,
 the first presented frame and the first listing of this machine's sessions.
 
 The window opens on what this machine has saved (projects, choices, accounts,
@@ -183,7 +248,7 @@ projects, milliseconds from process start (three runs each):
 With two unreachable `ssh://` projects added, the warm first frame was 252-337
 before and 231-246 after.
 
-The GPU opens on its own thread, started before the event loop. The window
+The GPU opens on its own thread, started before rustle's event loop. The window
 builds its first scene while it opens, so the device is ready by the time the
 scene is. The instance asks only for the primary graphics interfaces (Vulkan,
 Metal, DX12), so no OpenGL, Mesa or LLVM driver is loaded. Together these took
@@ -193,7 +258,10 @@ GPU vendor's shader compiler.
 
 ## Idle and streaming
 
-An idle window draws nothing. A blinking caret asks for a frame at its next
+An idle window draws nothing and the app sleeps: what waits on time is an
+effect keyed on its deadline that waits with rustle's `delay`, a timer the loop
+sleeps until without drawing, and polling (the browser's pump, an agent being
+heard) runs only while that work is under way. A blinking caret asks for a frame at its next
 change, not for continuous frames, and the input method is told where the caret
 is only when it moves. Telling it every frame made the desktop answer with an
 empty composition each time, which dirtied the model and drew another frame, at

@@ -8,24 +8,9 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
-pm-primitives = { path = "crates/pm-primitives" }
-pm-color = { path = "crates/pm-color" }
-pm-renderer = { path = "crates/pm-renderer" }
-pm-shaders = { path = "crates/pm-shaders" }
-pm-layout = { path = "crates/pm-layout" }
-pm-typography = { path = "crates/pm-typography" }
-pm-decoration = { path = "crates/pm-decoration" }
-pm-animation = { path = "crates/pm-animation" }
-pm-style = { path = "crates/pm-style" }
 pm-components = { path = "crates/pm-components" }
 pm-pages = { path = "crates/pm-pages" }
-pm-ui = { path = "crates/pm-ui" }
-pm-icon = { path = "crates/pm-icon" }
-pm-state = { path = "crates/pm-state" }
-pm-input = { path = "crates/pm-input" }
-pm-text = { path = "crates/pm-text" }
 pm-vim = { path = "crates/pm-vim" }
-pm-theme = { path = "crates/pm-theme" }
 pm-protocol = { path = "crates/pm-protocol" }
 pm-git = { path = "crates/pm-git" }
 pm-harness = { path = "crates/pm-harness" }

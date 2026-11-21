@@ -1,9 +1,10 @@
 //! The badge: a small label in a pill, filled, washed in its colour or quietly neutral.
 
-use pm_style::{
-    Color, Radius, Role, bg, flex, flex_none, h, items_center, px, rounded, rounded_full,
-};
-use pm_ui::{Node, node};
+use crate::theme;
+use rustle::{Alignment, Arrangement};
+use rustle::{Color, Modifier};
+
+use crate::theme::{Radius, Role};
 
 use crate::parts::line;
 
@@ -22,7 +23,7 @@ pub enum Variant {
 /// A badge being described: what it says, in which colour and how it looks.
 ///
 /// Build it with [`Badge::new`], change it with the methods that follow, and
-/// turn it into a node with [`Badge::build`].
+/// emit it with [`Badge::build`].
 #[derive(Clone, Debug)]
 pub struct Badge {
     /// The words on the badge.
@@ -64,26 +65,35 @@ impl Badge {
         self
     }
 
-    /// The node that draws the badge.
-    pub fn build(self) -> Node {
+    /// Emits the badge: its words in a pill.
+    #[track_caller]
+    pub fn build(self) {
         let (fill, words) = match self.variant {
             Variant::Solid => (self.tone, Color::from(Role::Background)),
-            Variant::Soft => (self.tone.alpha(0.18), self.tone),
+            Variant::Soft => (self.tone.copy(self.tone.alpha() * 0.18), self.tone),
             Variant::Subtle => (Color::from(Role::SurfaceSelected), self.tone),
         };
-        let pill = node().styles([flex(), items_center(), flex_none(), h(4.5), px(2), bg(fill)]);
-        let pill = if self.round {
-            pill.styles([rounded_full()])
-        } else {
-            pill.styles([rounded(Radius::Sm)])
-        };
-        pill.child(line(self.label, 11, 1.2, words))
+        let radius = if self.round { Radius::Full } else { Radius::Sm };
+        let inner = Modifier::new().padding_xy(theme::sp(2), 0.0);
+        let label = self.label;
+        rustle::surface_custom(
+            Modifier::new().height(theme::sp(4.5)),
+            rustle::Shape::rounded(radius.px()),
+            theme::color(fill),
+            theme::color(words),
+            None,
+            move || {
+                rustle::row_arranged(inner, Arrangement::Start, Alignment::Center, move || {
+                    line(label, 11, 1.2, words);
+                });
+            },
+        );
     }
 }
 
-impl From<Badge> for Node {
-    /// The node that draws the badge.
+impl From<Badge> for rustle::Node {
+    /// The drawn badge, held as a value.
     fn from(badge: Badge) -> Self {
-        badge.build()
+        rustle::compose(move || badge.build())
     }
 }

@@ -1,22 +1,23 @@
 //! File and folder icons, and which installed language a file is written in: a file is shown with the icon of that language, and as a plain file otherwise; nothing language-specific ships with the app.
 
+use rustle::phosphor;
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 
-use pm_icon::{IconName, Svg};
 use pm_protocol::{ExtensionIconTheme, ExtensionInfo};
-use pm_style::{Color, Role, size, text_color};
-use pm_ui::{Node, node};
+use rustle::{Color, Modifier, SvgPainter};
 
-use crate::parts::glyph;
+use crate::icons::icon;
+use crate::icons::{artwork_with, icon_with};
+use crate::theme::{Role, sp};
 
 /// What an installed language says of the files whose names end as it reads.
 #[derive(Clone)]
 struct Known {
     /// The language, by its folder's name.
     language: String,
-    /// The icon and colour its files are shown with, when it has one.
-    icon: Option<(Svg, Color)>,
+    /// The icon its files are shown with, when it has one, and its own colour, or none for muted.
+    icon: Option<(SvgPainter, Option<Color>)>,
 }
 
 /// What the installed languages of one machine say of their files: by the ending of a file name, and by the whole names and name patterns that are read before an ending is.
@@ -34,8 +35,8 @@ type Learned = HashMap<Option<String>, Machine>;
 /// What was learned from the languages installed on the machines reached.
 static LEARNED: LazyLock<Mutex<Learned>> = LazyLock::new(Default::default);
 
-/// The icons the icon themes of each machine give the endings of file names: by machine, then by ending.
-type Themed = HashMap<Option<String>, HashMap<String, (Svg, Color)>>;
+/// The icons the icon themes of each machine give the endings of file names: by machine, then by ending, each with its own colour, or none for muted.
+type Themed = HashMap<Option<String>, HashMap<String, (SvgPainter, Option<Color>)>>;
 
 /// What was learned from the icon themes installed on the machines reached.
 static THEMED: LazyLock<Mutex<Themed>> = LazyLock::new(Default::default);
@@ -57,14 +58,10 @@ fn colour_of(hex: &str) -> Option<Color> {
 pub fn learn_languages(host: &Option<String>, extensions: &[ExtensionInfo]) {
     let mut machine = Machine::default();
     for extension in extensions.iter().filter(|extension| extension.installed) {
-        let icon = extension.icon.as_ref().map(|source| {
-            let svg = Svg::arrived(&format!("extension-{}", extension.id), source);
-            let tone = extension
-                .color
-                .as_deref()
-                .and_then(colour_of)
-                .unwrap_or_else(|| Color::from(Role::Muted));
-            (svg, tone)
+        let icon = extension.icon.as_ref().and_then(|source| {
+            let svg = SvgPainter::from_str(source).ok()?;
+            let tone = extension.color.as_deref().and_then(colour_of);
+            Some((svg, tone))
         });
         let known = Known {
             language: extension.id.clone(),
@@ -93,18 +90,10 @@ pub fn learn_icon_themes(host: &Option<String>, themes: &[ExtensionIconTheme]) {
     let mut endings = HashMap::new();
     for theme in themes {
         for icon in &theme.icons {
-            let tone = icon
-                .color
-                .as_deref()
-                .and_then(colour_of)
-                .unwrap_or_else(|| Color::from(Role::Muted));
-            let svg = Svg::arrived(
-                &format!(
-                    "icon-theme-{}-{}-{}",
-                    theme.extension, theme.name, icon.suffix
-                ),
-                &icon.svg,
-            );
+            let tone = icon.color.as_deref().and_then(colour_of);
+            let Ok(svg) = SvgPainter::from_str(&icon.svg) else {
+                continue;
+            };
             endings.insert(icon.suffix.to_lowercase(), (svg, tone));
         }
     }
@@ -142,31 +131,37 @@ pub fn file_language(path: &str) -> Option<String> {
     learned_of(path, |known| Some(known.language.clone()))
 }
 
-/// The icon and colour of the file `path` names: its installed language's, or a plain muted file.
-pub fn file_kind(path: &str) -> (Svg, Color) {
+/// The icon and colour of the file `path` names: its installed language's or its icon theme's artwork, or no artwork, meaning the plain file icon, in muted.
+pub fn file_kind(path: &str) -> (Option<SvgPainter>, Color) {
     let suffix = suffix_of(path);
     let themed = THEMED.lock().ok().and_then(|themed| {
         themed
             .values()
-            .find_map(|endings| endings.get(&suffix).copied())
+            .find_map(|endings| endings.get(&suffix).cloned())
     });
     themed
-        .or_else(|| learned_of(path, |known| known.icon))
-        .unwrap_or_else(|| (IconName::File.svg(), Color::from(Role::Muted)))
+        .or_else(|| learned_of(path, |known| known.icon.clone()))
+        .map_or((None, Color::from(Role::Muted)), |(art, tone)| {
+            (Some(art), tone.unwrap_or_else(|| Color::from(Role::Muted)))
+        })
 }
 
-/// The icon of the file `path` names, `steps` on a side, tinted by its kind.
-pub fn file_icon(path: &str, steps: f32) -> Node {
-    let (svg, tone) = file_kind(path);
-    node().styles([size(steps), text_color(tone)]).artwork(svg)
+/// Emits the icon of the file `path` names, `steps` on a side, tinted by its kind.
+#[track_caller]
+pub fn file_icon(path: &str, steps: f32) {
+    match file_kind(path) {
+        (Some(art), tone) => artwork_with(Modifier::new(), &art, sp(steps), tone),
+        (None, tone) => icon_with(Modifier::new(), phosphor::FILE, sp(steps), tone),
+    }
 }
 
-/// A folder, open or closed, `steps` on a side, in the folder colour.
-pub fn folder_icon(open: bool, steps: f32) -> Node {
-    let icon = if open {
-        IconName::FolderOpen
+/// Emits a folder, open or closed, `steps` on a side, in the folder colour.
+#[track_caller]
+pub fn folder_icon(open: bool, steps: f32) {
+    let name = if open {
+        phosphor::FOLDER_OPEN
     } else {
-        IconName::Folder
+        phosphor::FOLDER
     };
-    glyph(icon, steps, Color::rgb(0xd9, 0xa9, 0x5b))
+    icon(name, steps, Color::rgb(0xd9, 0xa9, 0x5b));
 }

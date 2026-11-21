@@ -1,8 +1,8 @@
 //! The work behind tasks: asking the server of a session's machine what its folder can be built, tested and run with, running a task or a runnable place of a file there in a shell shown in the dock, and choosing the toolchains a project is run with.
 
-use pm_pages::{Outgoing, Screen};
+use crate::model::Model;
+use pm_pages::Outgoing;
 use pm_protocol::{Request, Response};
-use pm_state::State;
 
 use super::{Host, Pending, Work};
 
@@ -18,7 +18,7 @@ struct Place {
 
 impl Work {
     /// Where the session at `session` works, and the project it belongs to; a chat belongs to none, and its scratch folder stands for one.
-    fn task_place(model: &State<Screen>, session: usize) -> Option<Place> {
+    fn task_place(model: &Model, session: usize) -> Option<Place> {
         let placement = Self::session_of(model, session)?;
         let directory = if placement.directory.is_empty() {
             placement.repository.clone()
@@ -38,7 +38,7 @@ impl Work {
     }
 
     /// Carries out what the window asked about tasks.
-    pub(super) fn deliver_tasks(&mut self, model: &State<Screen>, outgoing: Outgoing) {
+    pub(super) fn deliver_tasks(&mut self, model: &Model, outgoing: Outgoing) {
         match outgoing {
             Outgoing::Tasks { session } => {
                 if let Some(place) = Self::task_place(model, session) {
@@ -161,12 +161,7 @@ impl Work {
     }
 
     /// Does what an answer about tasks calls for.
-    pub(super) fn answered_tasks(
-        &mut self,
-        model: &State<Screen>,
-        pending: Pending,
-        response: Response,
-    ) {
+    pub(super) fn answered_tasks(&mut self, model: &Model, pending: Pending, response: Response) {
         match (pending, response) {
             (Pending::Tasks(session), Response::Tasks { tasks, problem }) => {
                 model.update(|screen| {
@@ -190,7 +185,7 @@ impl Work {
             }
             (Pending::Toolchains(_), other) => {
                 let problem = Self::trouble_of(other);
-                model.update(|screen| *screen = std::mem::take(screen).listing_failed(problem));
+                model.change(|state| state.listing_failed(problem));
             }
             _ => {}
         }

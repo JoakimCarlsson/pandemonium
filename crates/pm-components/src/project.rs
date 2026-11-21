@@ -1,6 +1,6 @@
 //! A project: a folder or repository the work happens in.
 
-use pm_style::Color;
+use rustle::{Color, ColorSpaces};
 
 /// The perceptual lightness every avatar shares, so white letters read on all of them.
 const LIGHTNESS: f32 = 0.55;
@@ -81,6 +81,12 @@ impl Project {
         let hash = self.path.bytes().fold(FNV_OFFSET, |hash, byte| {
             (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME)
         });
-        Color::oklch(LIGHTNESS, CHROMA, (hash % 360) as f32)
+        Color::in_space(
+            LIGHTNESS,
+            CHROMA,
+            (hash % 360) as f32,
+            1.0,
+            ColorSpaces::OKLCH,
+        )
     }
 }

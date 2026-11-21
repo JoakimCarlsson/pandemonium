@@ -1,33 +1,36 @@
 //! The source control panel: the branch, the commit message and its button, the changed files in groups, and the graph of commits.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Color, Radius, Role, animate_spin, bg, border, border_b, border_color, border_l,
-    cursor_pointer, flex, flex_1, flex_col, flex_none, font_medium, gap, h, h_full, items_center,
-    justify_center, min_h, min_w_px, overflow_hidden, pb, pl, pr, px, py, relative, rounded,
-    w_full, w_px,
-};
-use pm_text::Shaper;
-use pm_ui::{Node, node};
+use crate::areas::GitEvent;
+use crate::areas::{DiffEvent, SearchEvent, TreeEvent};
+use crate::button;
+use crate::events;
+use crate::icons;
+use crate::parts;
+use crate::theme::{FocusOutline, Indicated};
+use rustle::TextOverflow;
+
+use crate::events::{Event, send};
+use crate::git_menus::MenuKind;
+use crate::target::Target;
+use crate::theme;
+use rustle::{Alignment, Arrangement, row_arranged};
+use rustle::{CursorIcon, Modifier};
+use rustle::{Icon, phosphor};
+use std::rc::Rc;
+
+use crate::events::Interactive;
+use crate::icons::spinner;
+use crate::theme::{Radius, Role};
 
 use crate::branch_menu::branch_menu;
 use crate::button::Variant;
-use crate::git_controls::{
-    BRANCH_BUTTON, CHANGES_MORE, CHANGES_REFRESH, CHANGES_TOGGLE, COMMIT_CHEVRON, Primary,
-    REPOSITORY_BASE, REPOSITORY_BRANCH_BASE, TROUBLE_DISMISS,
-};
+use crate::git_controls::Primary;
 use crate::graph::graph;
 use crate::parts::{clipped, glyph, line, spacer, wrap};
 use crate::sample::Session;
 use crate::size::Size;
-use crate::state::{
-    COMMIT, COMMIT_MESSAGE, OPEN_DIFF, REVIEW_CHANGES, REVIEW_FILES, ReviewTab, TREE_SCROLL,
-    WorkspaceState,
-};
-use crate::tree_actions::{
-    TREE_COLLAPSE, TREE_NEW_FILE, TREE_NEW_FOLDER, TREE_REFRESH, TREE_SPACE,
-};
+use crate::state::{ReviewTab, WorkspaceState};
+
 use crate::{Button, Input, Tile, input};
 use crate::{change_list, file_tree};
 
@@ -37,359 +40,380 @@ pub const WIDTH: f32 = 380.0;
 /// How narrow and how wide the review panel can be dragged, in logical pixels.
 pub const WIDTHS: (f32, f32) = (260.0, 760.0);
 
-/// A row of the panel `height` steps tall, with a rule beneath it.
-fn band(height: u32) -> Node {
-    node().styles([
-        flex(),
-        items_center(),
-        gap(2),
-        h(height),
-        px(3),
-        flex_none(),
-        border_b(),
-        border_color(Role::Border),
-    ])
+/// Emits the box that holds the rows of the panel's list, which `content` emits, and scrolls them.
+fn scrolling_list(state: &WorkspaceState, content: impl FnOnce()) {
+    rustle::column_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .weight(1.0)
+            .vertical_scroll(&state.tree_scroll)
+            .fill_max_width()
+            .padding_xy(0.0, theme::sp(1)),
+        Arrangement::Start,
+        Alignment::Start,
+        content,
+    );
 }
 
-/// The box that holds the rows of the panel's list and scrolls them.
-fn scrolling_list(state: &WorkspaceState) -> Node {
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            pm_style::flex_1(),
-            min_h(0),
-            overflow_hidden(),
-            pm_style::py(1),
-        ])
-        .scroll_from_start(TREE_SCROLL, state.tree_scroll)
+/// Emits a line telling the list has nothing to show.
+#[track_caller]
+pub(crate) fn nothing(message: &str) {
+    rustle::row_arranged(
+        Modifier::new().padding_xy(theme::sp(4), theme::sp(3)),
+        Arrangement::Start,
+        Alignment::Start,
+        || line(message, 13, 1.4, Role::Subtle),
+    );
 }
 
-/// A line telling the list has nothing to show.
-fn nothing(message: &str) -> Node {
-    node()
-        .styles([px(4), pm_style::py(3)])
-        .child(line(message, 13, 1.4, Role::Subtle))
-}
-
-/// One of the tabs at the top of the panel, a glyph that says its name when the pointer rests on it, filled while it is the one shown.
-fn panel_tab(label: &str, icon: IconName, id: FocusId, shown: bool) -> Node {
-    let mark = match (icon, shown) {
-        (IconName::Git, true) => IconName::GitFilled,
-        (IconName::Folder, true) => IconName::FolderFilled,
-        (IconName::Search, true) => IconName::SearchFilled,
-        _ => icon,
-    };
+/// Emits one of the tabs at the top of the panel, `icon`, a glyph that says
+/// its name when the pointer rests on it, drawn as `filled` while it is the one shown.
+#[track_caller]
+fn panel_tab(label: &str, icon: Icon, filled: Icon, id: Target, shown: bool) {
+    let mark = if shown { filled } else { icon.clone() };
     let tone = if shown { Role::Text } else { Role::Muted };
     Button::icon(icon, id)
         .size(Size::Md)
-        .mark(glyph(mark, 5.0, tone))
-        .build()
+        .mark(move || glyph(mark.clone(), 5.0, tone))
         .tooltip(label)
+        .build();
 }
 
-/// The line above the tree: what it lists, and the buttons that make a file or folder, read it again and fold it.
-fn files_header(state: &WorkspaceState) -> Node {
-    band(10)
-        .child(line("Files", 13, 1.4, Role::Subtle).styles([pm_style::flex_1()]))
-        .child(
-            Button::icon(IconName::FilePlus, TREE_NEW_FILE)
-                .size(Size::Sm)
-                .build()
-                .tooltip("New File…"),
-        )
-        .child(
-            Button::icon(IconName::FolderPlus, TREE_NEW_FOLDER)
-                .size(Size::Sm)
-                .build()
-                .tooltip("New Folder…"),
-        )
-        .child(
-            Button::icon(IconName::Refresh, TREE_REFRESH)
-                .size(Size::Sm)
-                .spinning(state.git.working)
-                .build()
-                .tooltip("Refresh"),
-        )
-        .child(
-            Button::icon(IconName::Collapse, TREE_COLLAPSE)
-                .size(Size::Sm)
-                .build()
-                .tooltip("Collapse Folders"),
-        )
+/// Emits a small button showing only `icon`, answering to `id`, turning while `spinning`, saying what it does with `tooltip`.
+#[track_caller]
+pub(crate) fn small_icon_button(icon: Icon, id: Target, spinning: bool, tooltip: &str) {
+    Button::icon(icon, id)
+        .spinning(spinning)
+        .tooltip(tooltip)
+        .build();
 }
 
-/// Every file of the project, as a tree, under the buttons that act on it.
-fn files(state: &WorkspaceState, height: f32) -> Node {
-    let mut list = scrolling_list(state).children(file_tree::rows(
-        state,
-        (height - 136.0 * pm_style::step_scale()).max(0.0),
-    ));
-    if state.files.is_empty() && state.tree_folders.is_empty() {
-        list = list.child(nothing(if state.files_loading() {
-            "Loading files…"
-        } else {
-            "No files yet."
-        }));
-    }
-    let landing_at_root = state
-        .git
-        .tree_drag
-        .as_ref()
-        .is_some_and(|drag| drag.into.as_deref() == Some(""));
-    let mut space = node().styles([flex_1(), min_h(32.0)]);
-    if landing_at_root {
-        space = space.styles([
-            pm_style::rounded(pm_style::Radius::Sm),
-            pm_style::bg(pm_style::Color::from(Role::Accent).alpha(0.24)),
-        ]);
-    }
-    list = list.child(space.focusable(TREE_SPACE));
-    node()
-        .styles([flex(), flex_col(), pm_style::flex_1(), min_h(0)])
-        .child(files_header(state))
-        .child(list)
+/// Emits the line above the tree: what it lists, and the buttons that make a file or folder, read it again and fold it.
+fn files_header(state: &WorkspaceState) {
+    parts::bar(10, 3, 2, || {
+        rustle::basic_text(
+            Modifier::new().weight(1.0),
+            "Files",
+            theme::line(13, Role::Subtle),
+            TextOverflow::Ellipsis,
+        );
+        for (icon, id, spinning, tooltip) in [
+            (
+                phosphor::FILE_PLUS,
+                TreeEvent::TreeNewFile,
+                false,
+                "New File…",
+            ),
+            (
+                phosphor::FOLDER_PLUS,
+                TreeEvent::TreeNewFolder,
+                false,
+                "New Folder…",
+            ),
+            (
+                phosphor::ARROWS_CLOCKWISE,
+                TreeEvent::TreeRefresh,
+                state.git.working,
+                "Refresh",
+            ),
+            (
+                phosphor::ARROWS_IN_LINE_VERTICAL,
+                TreeEvent::TreeCollapse,
+                false,
+                "Collapse Folders",
+            ),
+        ] {
+            small_icon_button(icon, Target::Tree(id), spinning, tooltip);
+        }
+    });
 }
 
-/// The words and the icon on the button under the commit message, for what it does now.
-fn primary_face(primary: &Primary) -> Node {
-    let enabled = !matches!(
-        primary,
-        Primary::Commit {
-            stopped: Some(_),
-            ..
-        } | Primary::Busy(_)
-    );
-    let tone = if enabled { Role::Text } else { Role::Subtle };
-    let (icon, label) = match primary {
-        Primary::Commit { title, stopped } => (IconName::Check, stopped.unwrap_or(title)),
-        Primary::Sync { .. } => (IconName::Refresh, "Sync Changes"),
-        Primary::Publish => (IconName::GitPush, "Publish Branch"),
-        Primary::Busy(doing) => (IconName::Loading, *doing),
-    };
-    let mut face = node().styles([flex(), items_center(), gap(2)]).child(
-        if matches!(primary, Primary::Busy(_)) {
-            glyph(icon, 3.5, tone).styles([animate_spin()])
-        } else {
-            glyph(icon, 3.5, tone)
+/// Emits every file of the project, as a tree, under the buttons that act on it.
+#[track_caller]
+fn files(state: &WorkspaceState) {
+    rustle::column_arranged(
+        Modifier::new().fill_max_width().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            files_header(state);
+            file_tree::list(state);
         },
     );
-    face = face.child(line(label, 13, 1.4, tone).styles([font_medium()]));
-    if let Primary::Sync { ahead, behind } = primary {
-        for (count, arrow) in [(*behind, IconName::ArrowDown), (*ahead, IconName::ArrowUp)] {
-            if count > 0 {
-                face = face
-                    .child(line(count.to_string(), 13, 1.4, tone))
-                    .child(glyph(arrow, 3.0, tone));
-            }
-        }
-    }
-    face
 }
 
-/// The control that commits, or syncs or publishes once there is nothing to commit, with the arrow that offers what else it can do.
-///
-/// What stops it is written where the words would be, so a reader who cannot commit is told why.
-fn commit_button(primary: &Primary) -> Node {
-    let enabled = !matches!(
+/// Whether the button under the commit message does something now: it is neither stopped nor waiting.
+fn enabled(primary: &Primary) -> bool {
+    !matches!(
         primary,
         Primary::Commit {
             stopped: Some(_),
             ..
         } | Primary::Busy(_)
-    );
-    let mut main = node()
-        .styles([flex(), items_center(), justify_center(), flex_1(), h_full()])
-        .child(primary_face(primary));
-    let mut arrow = node()
-        .styles([
-            flex(),
-            items_center(),
-            px(2),
-            h_full(),
-            border_l(),
-            border_color(Role::Border),
-        ])
-        .child(glyph(
-            IconName::ChevronDown,
-            3.0,
-            if enabled { Role::Text } else { Role::Subtle },
-        ));
-    let mut control = node().styles([
-        flex(),
-        items_center(),
-        h(9),
-        w_full(),
-        rounded(Radius::Md),
-        bg(Role::SurfaceSelected),
-    ]);
-    if enabled {
-        main = main
-            .styles([cursor_pointer(), bg(Role::SurfaceHover).hover()])
-            .focusable(COMMIT);
-        arrow = arrow
-            .styles([cursor_pointer(), bg(Role::SurfaceHover).hover()])
-            .focusable(COMMIT_CHEVRON);
-    }
-    control = control.child(main).child(arrow);
-    node().styles([px(3), pb(2), flex_none()]).child(control)
-}
-
-/// The box the commit message is written in: several lines, wrapped to the panel.
-fn message_box(state: &WorkspaceState, shaper: &mut Shaper) -> Node {
-    node().styles([px(3), py(2), flex_none()]).child(
-        node()
-            .styles([
-                relative(),
-                flex(),
-                flex_col(),
-                w_full(),
-                rounded(Radius::Lg),
-                border(),
-                border_color(Role::Border),
-                border_color(Role::Accent).focus(),
-                bg(Role::Background),
-            ])
-            .focused_with(COMMIT_MESSAGE)
-            .child(
-                Input::new(&state.message, COMMIT_MESSAGE)
-                    .variant(input::Variant::Multiline)
-                    .placeholder(&match &state.git.repository {
-                        Some(submodule) => format!("Message (Ctrl+Enter to commit in {submodule})"),
-                        None => "Message (Ctrl+Enter to commit)".to_owned(),
-                    })
-                    .rows(4)
-                    .wrap(input::inner_width(state.review_width - 24.0), shaper)
-                    .build(),
-            ),
     )
 }
 
-/// The heading of the changes section: a chevron that folds it, its name, and what can be done from it.
-fn section_heading(state: &WorkspaceState, primary: &Primary) -> Node {
+/// Emits the words and the icon on the button under the commit message, for what it does now.
+fn primary_face(primary: &Primary) {
+    let enabled = enabled(primary);
+    let tone = if enabled { Role::Text } else { Role::Subtle };
+    let (icon, words) = match primary {
+        Primary::Commit { title, stopped } => (phosphor::CHECK, stopped.unwrap_or(title)),
+        Primary::Sync { .. } => (phosphor::ARROWS_CLOCKWISE, "Sync Changes"),
+        Primary::Publish => (phosphor::ARROW_LINE_UP, "Publish Branch"),
+        Primary::Busy(doing) => (phosphor::CIRCLE_DASHED, *doing),
+    };
+    rustle::row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            if matches!(primary, Primary::Busy(_)) {
+                spinner(3.5, tone);
+            } else {
+                glyph(icon, 3.5, tone);
+            }
+            rustle::basic_text(
+                Modifier::new(),
+                words,
+                theme::strong(13, tone),
+                TextOverflow::Ellipsis,
+            );
+            if let Primary::Sync { ahead, behind } = primary {
+                for (count, arrow) in [
+                    (*behind, phosphor::ARROW_DOWN),
+                    (*ahead, phosphor::ARROW_UP),
+                ] {
+                    if count > 0 {
+                        line(count.to_string(), 13, 1.4, tone);
+                        glyph(arrow, 3.0, tone);
+                    }
+                }
+            }
+        },
+    );
+}
+
+/// Emits the control that commits, or syncs or publishes once there is nothing to commit, with the arrow that offers what else it can do.
+///
+/// What stops it is written where the words would be, so a reader who cannot commit is told why.
+fn commit_button(primary: &Primary) {
+    let enabled = enabled(primary);
+    let pressable = |own: Modifier, id: Target, on_click: Rc<dyn Fn()>| {
+        if enabled {
+            own.indicated(
+                theme::InteractionTones::new().hover(Role::SurfaceHover),
+                theme::Focused::Control(crate::focus::is_focused(id)),
+            )
+            .cursor(CursorIcon::Pointer)
+            .control(id, move || on_click())
+        } else {
+            own
+        }
+    };
+    let main = pressable(
+        Modifier::new().weight(1.0).fill_max_height(),
+        Target::Git(GitEvent::Commit),
+        Rc::new(send(Event::Git(GitEvent::Commit))),
+    );
+    let operations = crate::events::operations();
+    let arrow = pressable(
+        Modifier::new().fill_max_height(),
+        Target::Git(GitEvent::CommitChevron),
+        Rc::new(move || {
+            operations.open_git_menu(
+                MenuKind::Commit,
+                Some(Target::Git(GitEvent::CommitChevron)),
+                None,
+            )
+        }),
+    )
+    .padding_xy(theme::sp(2), 0.0);
+    rustle::row_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .padding_each(theme::sp(3), 0.0, theme::sp(3), theme::sp(2))
+            .height(theme::sp(9))
+            .background_rounded(theme::color(Role::SurfaceSelected), Radius::Md.px()),
+        Arrangement::Start,
+        Alignment::Center,
+        || {
+            row_arranged(main, Arrangement::Center, Alignment::Center, || {
+                primary_face(primary)
+            });
+            rustle::vertical_divider(Modifier::new(), 1.0, theme::color(Role::Border));
+            rustle::row_arranged(arrow, Arrangement::Start, Alignment::Center, || {
+                glyph(
+                    phosphor::CARET_DOWN,
+                    3.0,
+                    if enabled { Role::Text } else { Role::Subtle },
+                )
+            });
+        },
+    );
+}
+
+/// Emits the box the commit message is written in: several lines, wrapped to the panel.
+fn message_box(state: &WorkspaceState) {
+    rustle::column_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .padding_xy(theme::sp(3), theme::sp(2))
+            .background_rounded(theme::color(Role::Background), Radius::Lg.px())
+            .focus_outline(
+                crate::focus::is_focused(Target::Git(GitEvent::CommitMessage)),
+                theme::color(Role::Border),
+                theme::color(Role::Accent),
+                Radius::Lg,
+            )
+            .padding(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            Input::new(&state.message, Target::Git(GitEvent::CommitMessage))
+                .modifier(Modifier::new().fill_max_width())
+                .variant(input::Variant::Multiline)
+                .placeholder(&match &state.git.repository {
+                    Some(submodule) => format!("Message (Ctrl+Enter to commit in {submodule})"),
+                    None => "Message (Ctrl+Enter to commit)".to_owned(),
+                })
+                .rows(4)
+                .build();
+        },
+    );
+}
+
+/// Emits the heading of the changes section: a chevron that folds it, its name, and what can be done from it.
+fn section_heading(state: &WorkspaceState, primary: &Primary) {
     let open = state.git.changes_open;
     let committable = matches!(primary, Primary::Commit { stopped: None, .. });
-    node()
-        .styles([flex(), items_center(), gap(1), h(8), px(2), flex_none()])
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    gap(1),
-                    flex_1(),
-                    h_full(),
-                    cursor_pointer(),
-                ])
-                .child(glyph(
-                    if open {
-                        IconName::ChevronDown
-                    } else {
-                        IconName::ChevronRight
-                    },
-                    3.5,
-                    Role::Subtle,
-                ))
-                .child(line("Changes", 13, 1.4, Role::Text))
-                .focusable(CHANGES_TOGGLE),
-        )
-        .child(
-            Button::icon(IconName::GitCommit, COMMIT)
-                .size(Size::Sm)
+    rustle::row_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .height(theme::sp(8))
+            .padding_xy(theme::sp(2), 0.0),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
+        || {
+            rustle::row_arranged(
+                events::pressed(
+                    Modifier::new().weight(1.0).fill_max_height(),
+                    Target::Git(GitEvent::ChangesToggle),
+                ),
+                Arrangement::SpacedBy(theme::sp(1)),
+                Alignment::Center,
+                || {
+                    glyph(icons::chevron(open), 3.5, Role::Subtle);
+                    line("Changes", 13, 1.4, Role::Text);
+                },
+            );
+            Button::icon(phosphor::GIT_COMMIT, Target::Git(GitEvent::Commit))
                 .disabled(!committable)
-                .build()
-                .tooltip("Commit"),
-        )
-        .child(
-            Button::icon(IconName::Refresh, CHANGES_REFRESH)
-                .size(Size::Sm)
-                .spinning(state.git.working)
-                .build()
-                .tooltip("Refresh"),
-        )
-        .child(
-            Button::icon(IconName::More, CHANGES_MORE)
-                .size(Size::Sm)
-                .build()
-                .tooltip("More Actions…"),
-        )
+                .tooltip("Commit")
+                .build();
+            small_icon_button(
+                phosphor::ARROWS_CLOCKWISE,
+                Target::Git(GitEvent::ChangesRefresh),
+                state.git.working,
+                "Refresh",
+            );
+            let operations = crate::events::operations();
+            Button::icon(phosphor::DOTS_THREE, Target::Git(GitEvent::ChangesMore))
+                .on_click(move || {
+                    operations.open_git_menu(
+                        MenuKind::Source,
+                        Some(Target::Git(GitEvent::ChangesMore)),
+                        None,
+                    )
+                })
+                .tooltip("More Actions…")
+                .build();
+        },
+    );
 }
 
-/// The banner saying what git refused to do, with a button that dismisses it, in a panel `width` logical pixels wide.
-fn trouble(said: &str, width: f32) -> Node {
-    node().styles([px(3), pb(2), flex_none()]).child(
-        node()
-            .styles([
-                flex(),
-                gap(2),
-                px(3),
-                py(2),
-                rounded(Radius::Md),
-                bg(Color::from(Role::Danger).alpha(0.12)),
-            ])
-            .child(
-                node()
-                    .styles([flex(), flex_col(), flex_1(), min_w_px(0)])
-                    .children(
-                        wrap(said, 12, width - 24.0 - 56.0)
-                            .iter()
-                            .map(|words| line(words, 12, 1.5, Role::Danger)),
-                    ),
-            )
-            .child(
-                Button::icon(IconName::Close, TROUBLE_DISMISS)
-                    .size(Size::Sm)
-                    .build(),
-            ),
-    )
+/// Emits the banner saying what git refused to do, with a button that dismisses it, in a panel `width` logical pixels wide.
+#[track_caller]
+fn trouble(said: &str, width: f32) {
+    rustle::row_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .padding_each(theme::sp(3), 0.0, theme::sp(3), theme::sp(2))
+            .background_rounded(theme::color(Role::Danger.alpha(0.12)), Radius::Md.px())
+            .padding_xy(theme::sp(3), theme::sp(2)),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
+        || {
+            rustle::column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    for words in wrap(said, 12, width - 24.0 - 56.0) {
+                        line(words, 12, 1.5, Role::Danger);
+                    }
+                },
+            );
+            Button::icon(phosphor::X, Target::Git(GitEvent::TroubleDismiss)).build();
+        },
+    );
 }
 
-/// The changes of `session`: the commit message and its button, then the files in groups, and the graph under them.
-fn changes(state: &WorkspaceState, session: &Session, shaper: &mut Shaper) -> Node {
+/// Emits the changes of `session`: the commit message and its button, then the files in groups, and the graph under them.
+#[track_caller]
+fn changes(state: &WorkspaceState, session: &Session) {
     if session.unknown {
-        return nothing("Reading the folder…");
+        nothing("Reading the folder…");
+        return;
     }
     if !session.on_branch
         && session.branch.is_empty()
         && session.changes.is_empty()
         && state.git.history.is_empty()
     {
-        return nothing("This folder is not a git repository.");
+        nothing("This folder is not a git repository.");
+        return;
     }
     let primary = state.primary();
-    let mut list = scrolling_list(state).children(change_list::rows(state, session));
-    if session.changes.is_empty() {
-        list = list.child(nothing("No uncommitted changes."));
-    }
-    let mut section = node()
-        .styles([flex(), flex_col(), pm_style::flex_1(), min_h(0)])
-        .child(section_heading(state, &primary))
-        .children(
-            state
-                .git
-                .trouble
-                .as_deref()
-                .map(|said| trouble(said, state.review_width)),
-        );
-    if state.git.changes_open {
-        section = section
-            .child(message_box(state, shaper))
-            .child(commit_button(&primary))
-            .child(list);
-    } else {
-        section = section.child(spacer());
-    }
-    node()
-        .styles([flex(), flex_col(), pm_style::flex_1(), min_h(0)])
-        .child(section)
-        .child(graph(state))
+    rustle::column_arranged(
+        Modifier::new().fill_max_width().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            rustle::column_arranged(
+                Modifier::new().fill_max_width().weight(1.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    section_heading(state, &primary);
+                    if let Some(said) = state.git.trouble.as_deref() {
+                        trouble(said, state.review_width);
+                    }
+                    if state.git.changes_open {
+                        message_box(state);
+                        commit_button(&primary);
+                        scrolling_list(state, || {
+                            change_list::rows(state, session);
+                            if session.changes.is_empty() {
+                                nothing("No uncommitted changes.");
+                            }
+                        });
+                    } else {
+                        spacer();
+                    }
+                },
+            );
+            graph(state);
+        },
+    );
 }
 
-/// The rows of the list of repositories of `session`'s folder, when it has submodules: its own and each submodule, nested ones set in under the one they are in, each with what it has checked out on a button that opens its branches; the one the panel works on is picked.
-fn repositories(state: &WorkspaceState, session: &Session) -> Option<Node> {
+/// Emits the rows of the list of repositories of `session`'s folder, when it has submodules: its own and each submodule, nested ones set in under the one they are in, each with what it has checked out on a button that opens its branches; the one the panel works on is picked.
+#[track_caller]
+fn repositories(state: &WorkspaceState, session: &Session) {
     let repositories = state.repositories();
     if repositories.len() < 2 {
-        return None;
+        return;
     }
     let name = |repository: &Option<String>| match repository {
         Some(path) => path.clone(),
@@ -410,167 +434,177 @@ fn repositories(state: &WorkspaceState, session: &Session) -> Option<Node> {
                 .count()
         })
     };
-    let rows =
-        repositories.iter().enumerate().map(|(row, repository)| {
-            let changed = session
-                .changes
-                .iter()
-                .filter(|change| change.is_listed_in(repository.as_deref()))
-                .count();
-            let head = state.head_of(repository.as_deref()).unwrap_or_default();
-            Tile::new(FocusId(REPOSITORY_BASE + row as u64))
-                .selected(state.git.repository == *repository)
-                .height(7.0)
-                .gap(2.0)
-                .radius(Radius::Sm)
-                .build()
-                .styles([pl(2.0 + depth(repository) as f32 * 3.5), pr(1), flex_none()])
-                .child(glyph(
-                    if repository.is_some() {
-                        IconName::GitFork
-                    } else {
-                        IconName::Git
-                    },
-                    3.5,
-                    Role::Muted,
-                ))
-                .child(clipped(name(repository), 13, Role::Text))
-                .children((changed > 0).then(|| {
-                    line(changed.to_string(), 11, 1.4, Role::Subtle).styles([flex_none()])
-                }))
-                .child(
-                    Button::new(&head, FocusId(REPOSITORY_BRANCH_BASE + row as u64))
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
+    rustle::column_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_each(theme::sp(1), 0.0, theme::sp(1), theme::sp(2)),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            rustle::row_arranged(
+                Modifier::new()
+                    .height(theme::sp(7))
+                    .padding_xy(theme::sp(2), 0.0),
+                Arrangement::Start,
+                Alignment::Center,
+                || line("Repositories", 12, 1.4, Role::Subtle),
+            );
+            for (place, repository) in repositories.iter().enumerate() {
+                let changed = session
+                    .changes
+                    .iter()
+                    .filter(|change| change.is_listed_in(repository.as_deref()))
+                    .count();
+                let head = state.head_of(repository.as_deref()).unwrap_or_default();
+                Tile::new(Target::Git(GitEvent::Repository(place)))
+                    .selected(state.git.repository == *repository)
+                    .height(7.0)
+                    .gap(2.0)
+                    .radius(Radius::Sm)
+                    .modifier(Modifier::new().fill_max_width())
+                    .inner(Modifier::new().padding_each(
+                        theme::sp(2.0 + depth(repository) as f32 * 3.5),
+                        0.0,
+                        theme::sp(1),
+                        0.0,
+                    ))
+                    .build_with(|| {
+                        glyph(
+                            if repository.is_some() {
+                                phosphor::GIT_FORK
+                            } else {
+                                phosphor::GIT_BRANCH
+                            },
+                            3.5,
+                            Role::Muted,
+                        );
+                        clipped(name(repository), 13, Role::Text);
+                        if changed > 0 {
+                            line(changed.to_string(), 11, 1.4, Role::Subtle);
+                        }
+                        button::small_button(
+                            &head,
+                            Target::Git(GitEvent::RepositoryBranch(place)),
+                            Variant::Ghost,
+                        )
                         .monospace()
-                        .build()
-                        .styles([flex_none()])
-                        .tooltip("Checkout Branch…"),
-                )
-        });
-    Some(
-        node()
-            .styles([
-                flex(),
-                flex_col(),
-                px(1),
-                pb(2),
-                flex_none(),
-                border_b(),
-                border_color(Role::Border),
-            ])
-            .child(
-                node()
-                    .styles([flex(), items_center(), h(7), px(2)])
-                    .child(line("Repositories", 12, 1.4, Role::Subtle)),
-            )
-            .children(rows),
-    )
+                        .tooltip("Checkout Branch…")
+                        .build();
+                    });
+            }
+        },
+    );
 }
 
-/// The button that shows the branch the repository the panel works on is on and opens the list of branches, or, outside a repository, only says so.
-fn branch_button(state: &WorkspaceState, session: &Session, working: bool) -> Node {
+/// Emits the button that shows the branch the repository the panel works on is on and opens the list of branches, or, outside a repository, only says so.
+fn branch_button(state: &WorkspaceState, session: &Session, working: bool) {
     if session.branch.is_empty() {
         let said = if session.unknown {
             "Reading the folder…"
         } else {
             "Not a Git repository"
         };
-        return clipped(said, 12, Role::Subtle);
+        clipped(said, 12, Role::Subtle);
+        return;
     }
     let head = state
         .head_of(state.git.repository.as_deref())
         .unwrap_or_else(|| session.branch.clone());
-    Button::new(&head, BRANCH_BUTTON)
-        .variant(Variant::Ghost)
-        .size(Size::Sm)
+    button::small_button(&head, Target::Git(GitEvent::BranchButton), Variant::Ghost)
         .tone(Role::Text)
-        .with_icon(IconName::GitFork)
+        .with_icon(phosphor::GIT_FORK)
         .monospace()
         .fill()
         .trailing_icon(if working {
-            IconName::Loading
+            phosphor::CIRCLE_DASHED
         } else {
-            IconName::ChevronDown
+            phosphor::CARET_DOWN
         })
         .spinning(working)
-        .build()
+        .build();
 }
 
-/// The review panel for `session`. A chat has no branch, worktree or diff, so its panel leaves out source control: it lists the files of its scratch folder, or searches them.
-pub fn review(state: &WorkspaceState, session: &Session, height: f32, shaper: &mut Shaper) -> Node {
+/// Emits the review panel for `session`. A chat has no branch, worktree or diff, so its panel leaves out source control: it lists the files of its scratch folder, or searches them.
+#[track_caller]
+pub fn review(state: &WorkspaceState, session: &Session) {
     let versioned = !session.is_chat();
     let shown = match state.review_tab {
         ReviewTab::Changes if !versioned => ReviewTab::Files,
         tab => tab,
     };
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_none(),
-            w_px(state.review_width),
-            h_full(),
-            bg(Role::Background),
-            border_l(),
-            border_color(Role::Border),
-            relative(),
-        ])
-        .child(
-            band(12)
-                .styles([px(3)])
-                .child(
-                    node()
-                        .styles([
-                            flex(),
-                            items_center(),
-                            gap(2),
-                            flex_1(),
-                            min_w_px(0),
-                            overflow_hidden(),
-                        ])
-                        .children(versioned.then(|| {
-                            panel_tab(
-                                "Source Control",
-                                IconName::Git,
-                                REVIEW_CHANGES,
-                                shown == ReviewTab::Changes,
-                            )
-                        }))
-                        .child(panel_tab(
-                            "Files",
-                            IconName::Folder,
-                            REVIEW_FILES,
-                            shown == ReviewTab::Files,
-                        ))
-                        .child(panel_tab(
-                            "Search",
-                            IconName::Search,
-                            crate::project_search::REVIEW_SEARCH,
-                            shown == ReviewTab::Search,
-                        )),
-                )
-                .children(
-                    (shown == ReviewTab::Changes && !session.changes.is_empty()).then(|| {
-                        Button::icon(IconName::GitCompare, OPEN_DIFF)
-                            .build()
-                            .styles([flex_none()])
-                            .tooltip("Open Diff")
-                    }),
-                ),
-        )
-        .children(
-            versioned.then(|| band(10).child(branch_button(state, session, state.git.working))),
-        )
-        .children(
-            (shown == ReviewTab::Changes)
-                .then(|| repositories(state, session))
-                .flatten(),
-        )
-        .child(match shown {
-            ReviewTab::Changes => changes(state, session, shaper),
-            ReviewTab::Files => files(state, height),
-            ReviewTab::Search => crate::project_search::panel(state),
-        })
-        .children((versioned && state.git.branch_menu).then(|| branch_menu(state)))
+    rustle::row_arranged(
+        Modifier::new()
+            .width(state.review_width)
+            .fill_max_height()
+            .background(theme::color(Role::Background)),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            rustle::vertical_divider(Modifier::new(), 1.0, theme::color(Role::Border));
+            rustle::stack_with(Modifier::new().weight(1.0).fill_max_height(), || {
+                rustle::column_arranged(
+                    Modifier::new().fill_max_size(),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        parts::bar(12, 3, 2, || {
+                            rustle::row_arranged(
+                                Modifier::new().weight(1.0).clip(),
+                                Arrangement::SpacedBy(theme::sp(2)),
+                                Alignment::Center,
+                                || {
+                                    if versioned {
+                                        panel_tab(
+                                            "Source Control",
+                                            phosphor::GIT_BRANCH,
+                                            phosphor::fill::GIT_BRANCH,
+                                            Target::Diff(DiffEvent::ReviewChanges),
+                                            shown == ReviewTab::Changes,
+                                        );
+                                    }
+                                    panel_tab(
+                                        "Files",
+                                        phosphor::FOLDER,
+                                        phosphor::fill::FOLDER,
+                                        Target::Diff(DiffEvent::ReviewFiles),
+                                        shown == ReviewTab::Files,
+                                    );
+                                    panel_tab(
+                                        "Search",
+                                        phosphor::MAGNIFYING_GLASS,
+                                        phosphor::fill::MAGNIFYING_GLASS,
+                                        Target::Search(SearchEvent::ReviewSearch),
+                                        shown == ReviewTab::Search,
+                                    );
+                                },
+                            );
+                            if shown == ReviewTab::Changes && !session.changes.is_empty() {
+                                Button::icon(phosphor::GIT_DIFF, Target::Diff(DiffEvent::OpenDiff))
+                                    .tooltip("Open Diff")
+                                    .build();
+                            }
+                        });
+                        if versioned {
+                            parts::bar(10, 3, 2, || {
+                                branch_button(state, session, state.git.working)
+                            });
+                        }
+                        if shown == ReviewTab::Changes {
+                            repositories(state, session);
+                        }
+                        match shown {
+                            ReviewTab::Changes => changes(state, session),
+                            ReviewTab::Files => files(state),
+                            ReviewTab::Search => crate::project_search::panel(state),
+                        }
+                    },
+                );
+                if versioned && state.git.branch_menu {
+                    branch_menu(state);
+                }
+            });
+        },
+    );
 }

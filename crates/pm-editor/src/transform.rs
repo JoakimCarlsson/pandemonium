@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::ops::Range;
 
-use pm_text::Edit;
+use crate::Edit;
 
 use crate::document::Document;
 

@@ -1,11 +1,13 @@
 //! Tests of what the prompt does with screenshots and console lines of a page.
 
-use pm_input::FocusId;
+use crate::areas::ComposerEvent;
 
-use super::{CAPTURE_REMOVE_BASE, Capture, Kind, Shot, message};
+use crate::events::Event;
+
+use super::{Capture, Kind, Shot, message};
 use crate::elements::split;
 use crate::sample::Status;
-use crate::state::{Outgoing, SEND, WorkspaceState};
+use crate::state::{Outgoing, WorkspaceState};
 
 /// A console capture of `lines`.
 fn console(lines: &[&str]) -> Capture {
@@ -99,7 +101,7 @@ fn sending_attaches_screenshots_and_writes_the_console() {
         .with_capture(screenshot("/data/pasted/page-1.png"))
         .with_capture(screenshot("/data/pasted/page-2.png"))
         .with_capture(console(&["[error] boom"]));
-    state = state.after(SEND);
+    state = state.handle(Event::Composer(ComposerEvent::Send));
     let sent = state.take_outbox();
     let Some(Outgoing::Prompt { text, files, .. }) = sent
         .iter()
@@ -133,7 +135,7 @@ fn a_failed_capture_sends_nothing() {
         title: String::new(),
         note: "no picture could be taken".to_owned(),
     });
-    state = state.after(SEND);
+    state = state.handle(Event::Composer(ComposerEvent::Send));
     assert!(
         !state
             .take_outbox()
@@ -149,7 +151,7 @@ fn a_chip_can_be_removed() {
     let mut state = ready()
         .with_capture(screenshot("/data/pasted/page-1.png"))
         .with_capture(console(&[]));
-    state = state.after(FocusId(CAPTURE_REMOVE_BASE));
+    state = state.handle(Event::Composer(ComposerEvent::CaptureRemove(0)));
     assert_eq!(state.captures.len(), 1);
     assert_eq!(state.captures[0].kind, Kind::Console);
 }

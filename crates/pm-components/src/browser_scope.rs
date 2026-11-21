@@ -2,7 +2,6 @@
 //!
 //! The browser of the session being shown is `WorkspaceState::browser`, which the rest of the window reads and changes. The browsers of the other sessions wait in `WorkspaceState::browsers`, by the scope of the session that owns each, until their session is shown again.
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 use crate::browser::Browser;
@@ -135,10 +134,12 @@ impl WorkspaceState {
         tab: u32,
         act: impl FnOnce(&mut Self) -> R,
     ) -> Option<R> {
-        let shown = self.browser_scope;
-        let page_tab = self.tab;
+        let entered = Entered {
+            shown: self.browser_scope,
+            tab: self.tab,
+        };
         let owner = if self.browser.as_ref().is_some_and(|b| b.tab(tab).is_some()) {
-            shown
+            entered.shown
         } else {
             *self
                 .browsers
@@ -148,10 +149,7 @@ impl WorkspaceState {
         };
         self.browser_swap(owner);
         let out = act(self);
-        self.browser_swap(shown);
-        if owner != shown {
-            self.tab = page_tab;
-        }
+        self.browser_scope_leave(entered);
         Some(out)
     }
 
@@ -221,11 +219,6 @@ pub(crate) fn saved_parts(browser: &Browser) -> SavedBrowserParts {
         })
         .collect();
     (tabs, active, browser.tools, browser.tools_width)
-}
-
-/// The browsers set aside, by the scope of their session, for state that has none.
-pub(crate) fn no_browsers() -> HashMap<u64, Browser> {
-    HashMap::new()
 }
 
 #[cfg(test)]

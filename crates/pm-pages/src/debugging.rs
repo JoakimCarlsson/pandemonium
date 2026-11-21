@@ -69,11 +69,6 @@ impl Screen {
         self.in_workspace_debugging(|state| state.with_debug_lost(debug))
     }
 
-    /// The screen after one of the debug tab's lists was scrolled.
-    pub fn scrolled_debug(self, list: pm_input::FocusId, delta: f32, room: f32) -> Self {
-        self.in_workspace_debugging(|state| state.scrolled_debug(list, delta, room))
-    }
-
     /// The number the server knows the program being debugged by, and the session it is debugged in, while there is one.
     pub fn debug_run(&self) -> Option<(u64, usize)> {
         match self {

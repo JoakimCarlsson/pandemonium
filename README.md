@@ -56,8 +56,9 @@ welcome as [issues](https://github.com/JoakimCarlsson/pandemonium/issues).
   or on another one, over a direct connection on a trusted network such as
   Tailscale or through an ssh tunnel. A project added as `ssh://host/folder`
   lives on `host`. A phone is only another client.
-- **GPU-native.** Rendered with wgpu, windowed with winit, with a UI layer
-  written from scratch. No web view, no Electron, no UI framework.
+- **GPU-native.** Rendered with wgpu, windowed through rustle, and built as
+  [rustle](https://github.com/JoakimCarlsson/rustle) composables. No web view,
+  no Electron.
 - **Agents show, not only tell.** An agent can put a Mermaid diagram or a
   self-contained HTML prototype into the conversation, and give the answers of
   a question mockups that are shown side by side to compare. Diagrams are drawn
@@ -198,6 +199,11 @@ happy with. Agents are fetched with `npx` on first run, so Node helps too. The
 embedded browser's helper is an Electron app, so `make run` and `make install`
 use `npm` to fetch it; see [docs/browser.md](docs/browser.md).
 
+The interface is built on [rustle](https://github.com/JoakimCarlsson/rustle),
+named by git URL in the manifests. Until rustle is published, clone it beside
+this workspace and point Cargo at it with the git-ignored `.cargo/config.toml`
+described under "Building against a local rustle" in [AGENTS.md](AGENTS.md).
+
 ```sh
 git clone https://github.com/JoakimCarlsson/pandemonium.git
 cd pandemonium
@@ -226,8 +232,12 @@ Cargo commands and make targets, set `CARGO_TARGET_DIR=build`.
 The binary draws one frame to a PNG without opening a window:
 
 ```text
-pandemonium --snapshot <path> [elapsed_ms [x y [focus [light|dark [screen]]]]]
+pandemonium --snapshot <path> [elapsed_ms [x y [focus [light|dark [screen [scale]]]]]]
 ```
+
+`focus` names the control that holds focus: the control alone, such as `Prompt`
+or `{"Session":2}`, or the whole target with its area, such as
+`{"Sidebar":{"Session":2}}`, or `0` for none (`320` still names the prompt).
 
 For example, after `CARGO_TARGET_DIR=build cargo build -p pandemonium`:
 

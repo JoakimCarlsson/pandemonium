@@ -1,10 +1,10 @@
 //! The bar row: a name with a figure beside it and a bar under them, as long as the row's share of the longest.
 
-use pm_style::{
-    Color, Radius, Role, bg, flex, flex_1, flex_col, flex_none, gap, h_px, items_center,
-    justify_between, min_w_px, overflow_hidden, rounded, w_px,
-};
-use pm_ui::{Node, node};
+use crate::theme;
+use rustle::{Alignment, Arrangement};
+use rustle::{Color, Modifier};
+
+use crate::theme::Role;
 
 use crate::parts::line;
 
@@ -17,7 +17,7 @@ const LEAST_BAR: f32 = 2.0;
 /// A bar row being described: what it names, the figure beside the name, the line under it, and how long and in which colour its bar is.
 ///
 /// Build it with [`BarRow::new`], change it with the methods that follow, and
-/// turn it into a node with [`BarRow::build`].
+/// emit it with [`BarRow::build`].
 #[derive(Clone, Debug)]
 pub struct BarRow {
     /// What the row names.
@@ -78,42 +78,51 @@ impl BarRow {
         }
     }
 
-    /// The node that draws the row: the name and the figure on one line, the detail under them, and the bar on its track.
-    pub fn build(self) -> Node {
+    /// Emits the row: the name and the figure on one line, the detail under them, and the bar on its track as rustle's linear progress indicator.
+    #[track_caller]
+    pub fn build(self) {
         let filled = self.filled();
-        let track = node()
-            .styles([
-                flex(),
-                flex_none(),
-                w_px(self.width),
-                h_px(BAR_HEIGHT),
-                rounded(Radius::Sm),
-                bg(Role::SurfaceHover),
-                overflow_hidden(),
-            ])
-            .children((filled > 0.0).then(|| {
-                node().styles([
-                    flex_none(),
-                    w_px(filled),
-                    h_px(BAR_HEIGHT),
-                    rounded(Radius::Sm),
-                    bg(self.tone),
-                ])
-            }));
-        node()
-            .styles([flex(), flex_col(), flex_none(), gap(1), w_px(self.width)])
-            .child(
-                node()
-                    .styles([flex(), items_center(), justify_between(), gap(3)])
-                    .child(
-                        node()
-                            .styles([flex_1(), min_w_px(0), overflow_hidden()])
-                            .child(line(self.label, 13, 1.4, Role::Text)),
-                    )
-                    .child(line(self.value, 13, 1.4, Role::Text).styles([flex_none()])),
-            )
-            .children(self.detail.map(|detail| line(detail, 12, 1.4, Role::Muted)))
-            .child(track)
+        let Self {
+            label,
+            value,
+            detail,
+            tone,
+            width,
+            ..
+        } = self;
+        rustle::column_arranged(
+            Modifier::new().width(width),
+            Arrangement::SpacedBy(theme::sp(1)),
+            Alignment::Start,
+            move || {
+                rustle::row_arranged(
+                    Modifier::new().fill_max_width(),
+                    Arrangement::SpacedBy(theme::sp(3)),
+                    Alignment::Center,
+                    || {
+                        rustle::column_arranged(
+                            Modifier::new().weight(1.0).clip(),
+                            Arrangement::Start,
+                            Alignment::Start,
+                            || {
+                                line(label, 13, 1.4, Role::Text);
+                            },
+                        );
+                        line(value, 13, 1.4, Role::Text);
+                    },
+                );
+                if let Some(detail) = detail {
+                    line(detail, 12, 1.4, Role::Muted);
+                }
+                let share = filled / width.max(f32::EPSILON);
+                rustle::linear_progress_indicator_with(
+                    move || share,
+                    Modifier::new().width(width).height(BAR_HEIGHT),
+                    theme::color(tone),
+                    theme::color(Role::SurfaceHover),
+                );
+            },
+        );
     }
 }
 

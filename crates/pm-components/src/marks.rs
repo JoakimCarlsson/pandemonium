@@ -1,22 +1,38 @@
 //! What is marked over the file shown besides its text: where the thing at the caret is used, marked as the caret settles, the signature of the call the caret is in, shown as it is typed, and how its lines differ from the last commit.
 
+use pm_editor::Document;
 use pm_protocol::{Signature, Span};
 
 use crate::state::{Outgoing, WorkspaceState};
 
 impl WorkspaceState {
+    /// The session the review panel is about, the path of the file shown and its text, when that text is what `wanted` takes.
+    pub(crate) fn asking(
+        &self,
+        wanted: impl Fn(&Document) -> bool,
+    ) -> Option<(usize, String, &Document)> {
+        let session = self.review_index()?;
+        let path = self.shown_viewer()?.path.clone();
+        let document = self.shown_document().filter(|document| wanted(document))?;
+        Some((session, path, document))
+    }
+
+    /// The paths of the files of the session at `session` open with text as the folder holds them, only those without unsaved changes when `clean`.
+    fn open_text_paths(&mut self, session: usize, clean: bool) -> Vec<String> {
+        self.every_viewer()
+            .into_iter()
+            .filter(|(owner, viewer)| *owner == session && !viewer.head)
+            .filter(|(_, viewer)| viewer.document().is_some() && !(clean && viewer.is_dirty()))
+            .map(|(_, viewer)| viewer.path.clone())
+            .collect()
+    }
+
     /// Asks the language server where the thing at the caret of the file shown is used in it, unless it was asked for this place of this version already.
     pub fn highlights_requested(mut self) -> Self {
         if !self.editor.occurrence_highlights {
             return self;
         }
-        let Some(session) = self.review_index() else {
-            return self;
-        };
-        let Some(path) = self.shown_viewer().map(|viewer| viewer.path.clone()) else {
-            return self;
-        };
-        let Some(document) = self.shown_document().filter(|document| document.synced) else {
+        let Some((session, path, document)) = self.asking(|document| document.synced) else {
             return self;
         };
         let request = Outgoing::Highlights {
@@ -31,17 +47,11 @@ impl WorkspaceState {
 
     /// Asks the language server which blocks of the file shown can be folded, unless the text it was asked about is the text as it is.
     pub fn folds_requested(mut self) -> Self {
-        let Some(session) = self.review_index() else {
-            return self;
-        };
-        let Some(path) = self.shown_viewer().map(|viewer| viewer.path.clone()) else {
-            return self;
-        };
-        let Some(document) = self
-            .shown_document()
-            .filter(|document| document.synced && document.folds_supported)
-            .filter(|document| document.server_folds_version() != Some(document.version))
-        else {
+        let Some((session, path, document)) = self.asking(|document| {
+            document.synced
+                && document.folds_supported
+                && document.server_folds_version() != Some(document.version)
+        }) else {
             return self;
         };
         let request = Outgoing::FoldingRanges {
@@ -72,17 +82,12 @@ impl WorkspaceState {
         if !self.editor.linked_editing {
             return self;
         }
-        let Some(session) = self.review_index() else {
-            return self;
-        };
-        let Some(path) = self.shown_viewer().map(|viewer| viewer.path.clone()) else {
-            return self;
-        };
-        let Some(document) = self
-            .shown_document()
-            .filter(|document| document.synced && document.links_supported)
-            .filter(|document| !document.field.is_read_only() && !document.is_linked())
-        else {
+        let Some((session, path, document)) = self.asking(|document| {
+            document.synced
+                && document.links_supported
+                && !document.field.is_read_only()
+                && !document.is_linked()
+        }) else {
             return self;
         };
         let request = Outgoing::LinkedRanges {
@@ -139,13 +144,7 @@ impl WorkspaceState {
 
     /// Asks the language server what the call the caret of the file shown is in looks like.
     pub fn signature_requested(mut self) -> Self {
-        let Some(session) = self.review_index() else {
-            return self;
-        };
-        let Some(path) = self.shown_viewer().map(|viewer| viewer.path.clone()) else {
-            return self;
-        };
-        let Some(document) = self.shown_document().filter(|document| document.synced) else {
+        let Some((session, path, document)) = self.asking(|document| document.synced) else {
             return self;
         };
         let request = Outgoing::Signature {
@@ -188,14 +187,7 @@ impl WorkspaceState {
 
     /// Reads again, as the last commit holds them, the files of the session at `session` that are open, since the last commit may have changed.
     pub fn bases_wanted(mut self, session: usize) -> Self {
-        let paths: Vec<String> = self
-            .every_viewer()
-            .into_iter()
-            .filter(|(owner, viewer)| *owner == session && !viewer.head)
-            .filter(|(_, viewer)| matches!(viewer.contents, crate::open_files::Contents::Text(_)))
-            .map(|(_, viewer)| viewer.path.clone())
-            .collect();
-        for path in paths {
+        for path in self.open_text_paths(session, false) {
             self.outbox.push(Outgoing::ReadBase { session, path });
         }
         self
@@ -203,14 +195,7 @@ impl WorkspaceState {
 
     /// Reads again the files of the session at `session` that are open as the folder holds them and show text without unsaved changes, since something other than this window, such as an agent, may have changed them.
     pub fn open_files_wanted(mut self, session: usize) -> Self {
-        let paths: Vec<String> = self
-            .every_viewer()
-            .into_iter()
-            .filter(|(owner, viewer)| *owner == session && !viewer.head && !viewer.is_dirty())
-            .filter(|(_, viewer)| matches!(viewer.contents, crate::open_files::Contents::Text(_)))
-            .map(|(_, viewer)| viewer.path.clone())
-            .collect();
-        for path in paths {
+        for path in self.open_text_paths(session, true) {
             self.outbox.push(Outgoing::ReadFile {
                 session,
                 path,

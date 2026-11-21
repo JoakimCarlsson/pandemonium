@@ -1,11 +1,13 @@
 //! The tab chip: one tab of a strip inside a pane, with its glyph, its words, marks for what it is and a button that closes it.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, bg, flex, flex_none, gap, h_px, items_center, px, rounded, text_color, w_px,
-};
-use pm_ui::{Node, node};
+use crate::events;
+use crate::target::Target;
+use crate::theme;
+use crate::theme::Indicated;
+use crate::theme::{Radius, Role};
+use rustle::Modifier;
+use rustle::{Alignment, Arrangement};
+use rustle::{Icon, phosphor};
 
 use crate::Button;
 use crate::parts::{clipped, glyph};
@@ -21,23 +23,21 @@ pub enum TabVariant {
     Agent,
 }
 
-/// A tab chip being described: build it with [`TabChip::new`], change it with the methods that follow, and turn it into a node with [`TabChip::build`].
+/// A tab chip being described: build it with [`TabChip::new`], change it with the methods that follow, and emit it with [`TabChip::build`].
 #[derive(Clone, Debug)]
 pub struct TabChip {
     /// The words on the tab.
     label: String,
     /// The target that selects the tab.
-    select: FocusId,
+    select: Target,
     /// The target of the button that closes it.
-    close: FocusId,
+    close: Target,
     /// The glyph before the words.
-    icon: IconName,
+    icon: Icon,
     /// Whether it is the tab being shown.
     selected: bool,
     /// Whose tab it is.
     variant: TabVariant,
-    /// How big it is: `Sm` is the strip's usual height, `Xs` a tighter one.
-    size: Size,
     /// Whether a padlock marks it as kept from agents.
     locked: bool,
     /// How wide it is, in logical pixels.
@@ -48,15 +48,14 @@ pub struct TabChip {
 
 impl TabChip {
     /// A tab saying `label`, selected by `select` and closed by `close`.
-    pub fn new(label: impl Into<String>, select: FocusId, close: FocusId) -> Self {
+    pub fn new(label: impl Into<String>, select: Target, close: Target) -> Self {
         Self {
             label: label.into(),
             select,
             close,
-            icon: IconName::Globe,
+            icon: phosphor::GLOBE,
             selected: false,
             variant: TabVariant::Page,
-            size: Size::Sm,
             locked: false,
             width: 160.0,
             hint: None,
@@ -66,12 +65,6 @@ impl TabChip {
     /// Whose tab it is.
     pub fn variant(mut self, variant: TabVariant) -> Self {
         self.variant = variant;
-        self
-    }
-
-    /// How big it is.
-    pub fn size(mut self, size: Size) -> Self {
-        self.size = size;
         self
     }
 
@@ -99,48 +92,47 @@ impl TabChip {
         self
     }
 
-    /// The tab as a node.
-    pub fn build(self) -> Node {
+    /// Emits the tab.
+    #[track_caller]
+    pub fn build(self) {
         let tone = if self.selected {
             Role::Text
         } else {
             Role::Muted
         };
-        let height = if self.size == Size::Xs { 24.0 } else { 28.0 };
-        let mut chip = node().styles([
-            if self.selected {
-                bg(Role::SurfaceSelected)
-            } else {
-                bg(Role::SurfaceHover).hover()
-            },
-            flex(),
-            flex_none(),
-            items_center(),
-            gap(1),
-            px(2),
-            h_px(height),
-            w_px(self.width),
-            rounded(Radius::Md),
-            pm_style::cursor_pointer(),
-            text_color(tone),
-        ]);
-        chip = chip.child(match self.variant {
-            TabVariant::Agent => glyph(IconName::Sparkles, 3.5, Role::Accent),
-            TabVariant::Page => glyph(self.icon, 3.5, tone),
-        });
-        chip = chip.child(clipped(self.label, 12, tone));
-        if self.locked {
-            chip = chip.child(glyph(IconName::Lock, 3.0, Role::Warning));
+        let looks = theme::selectable(self.selected).radius(Radius::Md);
+        let own = events::pressed(
+            Modifier::new().width(self.width).height(28.0).indicated(
+                looks,
+                theme::Focused::Control(crate::focus::is_focused(self.select)),
+            ),
+            self.select,
+        )
+        .padding_xy(theme::sp(2), 0.0);
+        let (variant, icon, label, locked, close) =
+            (self.variant, self.icon, self.label, self.locked, self.close);
+        let hint = self.hint;
+        let row = move || {
+            rustle::row_arranged(
+                own,
+                Arrangement::SpacedBy(theme::sp(1)),
+                Alignment::Center,
+                move || {
+                    match variant {
+                        TabVariant::Agent => glyph(phosphor::SPARKLE, 3.5, Role::Accent),
+                        TabVariant::Page => glyph(icon, 3.5, tone),
+                    }
+                    clipped(label, 12, tone);
+                    if locked {
+                        glyph(phosphor::LOCK_SIMPLE, 3.0, Role::Warning);
+                    }
+                    Button::icon(phosphor::X, close).size(Size::Xs).build();
+                },
+            );
+        };
+        match hint {
+            Some(hint) => crate::tooltip::with_tooltip(hint, row),
+            None => row(),
         }
-        chip = chip.child(
-            Button::icon(IconName::Close, self.close)
-                .variant(crate::button::Variant::Ghost)
-                .size(Size::Xs)
-                .build(),
-        );
-        if let Some(hint) = self.hint {
-            chip = chip.tooltip(hint);
-        }
-        chip.focusable(self.select)
     }
 }

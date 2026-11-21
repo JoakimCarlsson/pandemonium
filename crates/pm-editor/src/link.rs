@@ -2,8 +2,8 @@
 
 use std::ops::Range;
 
+use crate::Edit;
 use pm_buffer::Change;
-use pm_text::Edit;
 
 use crate::document::Document;
 

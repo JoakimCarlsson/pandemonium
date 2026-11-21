@@ -1,54 +1,27 @@
 //! Adding a project: the modal that offers a folder on this computer or a repository to clone, found through the accounts and organizations on GitHub.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, animate_spin, bg, border_b, border_color, cursor_pointer, flex, flex_1, flex_col,
-    flex_none, gap, h, items_center, max_h, min_w_px, overflow_hidden, p, px, py, rounded,
-    truncate,
-};
-use pm_text::Field;
-use pm_ui::{Node, node};
+use crate::areas::DialogEvent;
+use crate::events;
+use crate::target::Target;
+use crate::theme;
+use crate::theme::Indicated;
+use rustle::Modifier;
+use rustle::TextFieldState;
+use rustle::{Alignment, Arrangement};
+use rustle::{Icon, phosphor};
 
 use crate::Input;
 use crate::Modal;
 use crate::folder_picker::Purpose;
+use crate::icons::spinner;
 use crate::input;
 use crate::parts::{glyph, line};
-use crate::state::{MENU_SCROLL, Outgoing, WorkspaceState};
+use crate::theme::{Radius, Role, sp};
 
-/// Closes the panel, which is what pressing outside it does.
-pub const ADDER_SCRIM: FocusId = FocusId(6000);
-
-/// The panel itself, which keeps a press on it from counting as outside.
-pub const ADDER_BODY: FocusId = FocusId(6001);
-
-/// The row offering the desktop's folder chooser.
-pub const ADDER_BROWSE: FocusId = FocusId(6003);
-
-/// The row offering a repository to clone.
-pub const ADDER_CLONE: FocusId = FocusId(6004);
-
-/// The field the reader types a search or an address into.
-pub const ADDER_FIELD: FocusId = FocusId(6006);
-
-/// Takes the row that is highlighted.
-pub const ADDER_SUBMIT: FocusId = FocusId(6007);
-
-/// Highlights the row above.
-pub const ADDER_UP: FocusId = FocusId(6008);
-
-/// Highlights the row below.
-pub const ADDER_DOWN: FocusId = FocusId(6009);
-
-/// Goes back to the first choices, or closes the panel when they are showing.
-pub const ADDER_ESCAPE: FocusId = FocusId(6010);
-
-/// The first of the rows of a list; the rest follow it.
-pub const ADDER_ROW_BASE: u64 = 6100;
+use crate::state::{Outgoing, WorkspaceState};
 
 /// How many rows of a list have names.
-const ADDER_ROWS: u64 = 500;
+const ADDER_ROWS: usize = 500;
 
 /// How wide the panel is, in logical pixels.
 const WIDTH: f32 = 632.0;
@@ -108,7 +81,7 @@ pub struct Adder {
     /// What the panel is showing.
     pub step: Step,
     /// What the reader types.
-    pub field: Field,
+    pub field: TextFieldState,
     /// The accounts and organizations the server listed.
     pub owners: Listing,
     /// The repositories the server listed for the account picked.
@@ -133,14 +106,21 @@ pub(crate) enum Status {
     Message(String),
 }
 
-/// One row as it is drawn.
-struct Row {
-    /// The glyph at its left.
-    icon: IconName,
-    /// The name.
-    name: String,
-    /// What is said under it.
-    detail: String,
+/// One row as it is drawn: the glyph at its left, the name and what is said under it.
+type Row = (Icon, String, String);
+
+impl Listing {
+    /// What a list showing none of its rows says: that `loading` is waited for, why the server could not say, that `empty` when it found nothing, or that nothing matches what was typed.
+    pub(crate) fn standing(&self, loading: &str, empty: &str) -> Status {
+        match self {
+            Listing::Loading => Status::Loading(loading.to_owned()),
+            Listing::Failed(reason) => {
+                Status::Message(reason.lines().next().unwrap_or(reason).to_owned())
+            }
+            Listing::Found(inside) if inside.is_empty() => Status::Message(empty.to_owned()),
+            Listing::Found(_) => Status::Message("Nothing matches".to_owned()),
+        }
+    }
 }
 
 /// Whether `text` is written as the address of a repository rather than as words to search for.
@@ -150,7 +130,7 @@ fn is_address(text: &str) -> bool {
 }
 
 /// Whether every word of `needle` is somewhere in `found`, in any case.
-fn matches(found: &Found, needle: &str) -> bool {
+pub(crate) fn matches(found: &Found, needle: &str) -> bool {
     let hay = format!("{} {}", found.name, found.detail).to_lowercase();
     needle
         .to_lowercase()
@@ -163,7 +143,7 @@ impl Adder {
     fn new(machine: Option<pm_config::KnownServer>) -> Self {
         Self {
             step: Step::Choices,
-            field: Field::default(),
+            field: TextFieldState::default(),
             owners: Listing::Loading,
             repositories: Listing::Loading,
             owner: None,
@@ -174,18 +154,10 @@ impl Adder {
         }
     }
 
-    /// The address of the project in the folder `path` of the machine it is added on.
-    fn address(&self, path: &str) -> String {
-        match &self.machine {
-            Some(machine) => machine.project(path),
-            None => path.to_owned(),
-        }
-    }
-
     /// The panel on `step`, with nothing typed and the first row highlighted.
     fn moved_to(&mut self, step: Step) {
         self.step = step;
-        self.field = Field::default();
+        self.field = TextFieldState::default();
         self.selected = 0;
         self.trouble = None;
     }
@@ -203,7 +175,7 @@ impl Adder {
         if self.step == Step::Choices {
             return Vec::new();
         }
-        let typed = self.field.text();
+        let typed = &self.field.text();
         let mut entries = Vec::new();
         if is_address(typed) {
             entries.push(Found {
@@ -238,19 +210,11 @@ impl Adder {
         if self.step == Step::Choices || self.count() > 0 {
             return None;
         }
-        Some(match self.listing() {
-            Listing::Loading => Status::Loading(
-                match self.step {
-                    Step::Owners => "Loading accounts and organizations",
-                    _ => "Loading repositories",
-                }
-                .to_owned(),
-            ),
-            Listing::Failed(reason) => {
-                Status::Message(reason.lines().next().unwrap_or(reason).to_owned())
-            }
-            Listing::Found(_) => Status::Message("Nothing matches".to_owned()),
-        })
+        let loading = match self.step {
+            Step::Owners => "Loading accounts and organizations",
+            _ => "Loading repositories",
+        };
+        Some(self.listing().standing(loading, "Nothing matches"))
     }
 
     /// What the field says while it is empty.
@@ -262,184 +226,175 @@ impl Adder {
         }
     }
 
-    /// The rows of the first choices, on the machine the project is added on.
-    fn choices(&self) -> [(IconName, &'static str, String); 2] {
-        let browse = match &self.machine {
-            Some(machine) => format!("Choose a folder on {}", machine.name),
-            None => "Choose a folder on this computer".to_owned(),
-        };
-        [
-            (IconName::FolderOpen, "Browse", browse),
-            (
-                IconName::GitFork,
-                "Clone from GitHub",
-                "Search projects available to your GitHub account".to_owned(),
-            ),
-        ]
-    }
-
-    /// The rows as they are drawn.
+    /// The rows as they are drawn: the first choices, on the machine the project is added on, or the entries of a list.
     fn rows(&self) -> Vec<Row> {
-        match self.step {
-            Step::Choices => self
-                .choices()
-                .into_iter()
-                .map(|(icon, name, detail)| Row {
-                    icon,
-                    name: name.to_owned(),
-                    detail,
-                })
-                .collect(),
-            _ => self
-                .entries()
-                .into_iter()
-                .map(|found| Row {
-                    icon: match found.kind {
-                        Kind::Owner(_) => IconName::CircleUser,
-                        Kind::Repository => IconName::GitFork,
-                        Kind::Folder => IconName::Folder,
-                    },
-                    name: found.name,
-                    detail: found.detail,
-                })
-                .collect(),
+        if self.step == Step::Choices {
+            let browse = match &self.machine {
+                Some(machine) => format!("Choose a folder on {}", machine.name),
+                None => "Choose a folder on this computer".to_owned(),
+            };
+            let clone = "Search projects available to your GitHub account".to_owned();
+            return vec![
+                (phosphor::FOLDER_OPEN, "Browse".to_owned(), browse),
+                (phosphor::GIT_FORK, "Clone from GitHub".to_owned(), clone),
+            ];
         }
+        self.entries()
+            .into_iter()
+            .map(|found| {
+                let icon = match found.kind {
+                    Kind::Owner(_) => phosphor::USER_CIRCLE,
+                    Kind::Repository => phosphor::GIT_FORK,
+                    Kind::Folder => phosphor::FOLDER,
+                };
+                (icon, found.name, found.detail)
+            })
+            .collect()
     }
 }
 
 /// The row of the first choices at `index`.
-fn choice_id(index: usize) -> FocusId {
-    [ADDER_BROWSE, ADDER_CLONE][index.min(1)]
+fn choice_id(index: usize) -> Target {
+    [
+        Target::Dialog(DialogEvent::AdderBrowse),
+        Target::Dialog(DialogEvent::AdderClone),
+    ][index.min(1)]
 }
 
-/// The modal for adding a project, when it is open.
-pub fn adder(state: &WorkspaceState) -> Option<Node> {
-    let open = state.adder.as_ref()?;
-    Some(
-        Modal::new(ADDER_SCRIM, ADDER_BODY)
-            .width(WIDTH)
-            .children(panel(open, state.menu_scroll))
-            .build(),
+/// Emits the modal for adding a project, when it is open.
+#[track_caller]
+pub fn adder(state: &WorkspaceState) {
+    let Some(open) = state.adder.as_ref() else {
+        return;
+    };
+    Modal::new(
+        Target::Dialog(DialogEvent::AdderScrim),
+        Target::Dialog(DialogEvent::AdderBody),
     )
+    .width(WIDTH)
+    .build_with(|| panel(open, &state.menu_scroll));
 }
 
-/// What the modal holds: its heading, the field when the step has one and the list.
-fn panel(open: &Adder, scrolled: f32) -> Vec<Node> {
-    let mut parts = vec![
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                gap(2),
-                h(11),
-                px(4),
-                flex_none(),
-                border_b(),
-                border_color(Role::Border),
-            ])
-            .child(line("Add project", 13, 1.4, Role::Text))
-            .children(heading_hint(open).map(|hint| line(hint, 13, 1.4, Role::Subtle))),
-    ];
+/// Emits what the modal holds: its heading, the field when the step has one and the list, scrolled as `scrolled` says.
+#[track_caller]
+fn panel(open: &Adder, scrolled: &rustle::ScrollState) {
+    let banded = || {
+        Modifier::new()
+            .height(theme::sp(11))
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(4), 0.0)
+    };
+    rustle::row_arranged(
+        banded(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            line("Add project", 13, 1.4, Role::Text);
+            if let (Some((login, _)), Step::Repositories) = (&open.owner, open.step) {
+                line(login.clone(), 13, 1.4, Role::Subtle);
+            }
+        },
+    );
     if open.step != Step::Choices {
-        parts.push(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    h(11),
-                    px(4),
-                    flex_none(),
-                    border_b(),
-                    border_color(Role::Border),
-                ])
-                .child(
-                    Input::new(&open.field, ADDER_FIELD)
-                        .variant(input::Variant::Ghost)
-                        .placeholder(open.placeholder())
-                        .build(),
-                ),
-        );
+        rustle::row_arranged(banded(), Arrangement::Start, Alignment::Center, || {
+            Input::new(&open.field, Target::Dialog(DialogEvent::AdderField))
+                .variant(input::Variant::Ghost)
+                .placeholder(open.placeholder())
+                .modifier(Modifier::new().weight(1.0))
+                .build();
+        });
     }
-    let mut list = node()
-        .styles([
-            flex(),
-            flex_col(),
-            p(1.5),
-            max_h(LIST_HEIGHT / 4.0),
-            overflow_hidden(),
-        ])
-        .scroll_from_start(MENU_SCROLL, scrolled);
-    list = list.children(open.rows().iter().enumerate().map(|(index, row)| {
-        let id = if open.step == Step::Choices {
-            choice_id(index)
-        } else {
-            FocusId(ADDER_ROW_BASE + index as u64)
-        };
-        entry(row, id, index == open.selected)
-    }));
-    if let Some(status) = open.status() {
-        list = list.child(status_line(status));
-    }
-    parts.push(list);
-    parts
+    rustle::column_arranged(
+        Modifier::new()
+            .height_in(0.0, sp(LIST_HEIGHT / 4.0))
+            .vertical_scroll(scrolled)
+            .fill_max_width()
+            .padding(theme::sp(1.5)),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for (index, row) in open.rows().iter().enumerate() {
+                let id = if open.step == Step::Choices {
+                    choice_id(index)
+                } else {
+                    Target::Dialog(DialogEvent::AdderRow(index))
+                };
+                entry(row, id, index == open.selected);
+            }
+            if let Some(status) = open.status() {
+                status_line(status);
+            }
+        },
+    );
 }
 
-/// What is said after the heading: whose repositories are listed, once an account is picked.
-fn heading_hint(open: &Adder) -> Option<String> {
-    match (&open.owner, open.step) {
-        (Some((login, _)), Step::Repositories) => Some(login.clone()),
-        _ => None,
-    }
+/// Emits the line under the rows: a spinner and what is being waited for, or what is the matter.
+#[track_caller]
+pub(crate) fn status_line(status: Status) {
+    rustle::row_arranged(
+        Modifier::new().padding_xy(theme::sp(2.5), theme::sp(2)),
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Center,
+        || match status {
+            Status::Loading(message) => {
+                spinner(4.0, Role::Muted);
+                line(message, 13, 1.4, Role::Subtle);
+            }
+            Status::Message(message) => line(message, 13, 1.4, Role::Subtle),
+        },
+    );
 }
 
-/// The line under the rows: a spinner and what is being waited for, or what is the matter.
-pub(crate) fn status_line(status: Status) -> Node {
-    let row = node().styles([flex(), items_center(), gap(3), px(2.5), py(2)]);
-    match status {
-        Status::Loading(message) => row
-            .child(glyph(IconName::Loading, 4.0, Role::Muted).styles([animate_spin()]))
-            .child(line(message, 13, 1.4, Role::Subtle)),
-        Status::Message(message) => row.child(line(message, 13, 1.4, Role::Subtle)),
-    }
-}
-
-/// One row of the list: a glyph, a name and what is said under it, highlighted while it is the one the keys act on.
-fn entry(row: &Row, id: FocusId, selected: bool) -> Node {
-    let mut styles = vec![
-        flex(),
-        items_center(),
-        gap(3),
-        px(2.5),
-        py(1.5),
-        flex_none(),
-        rounded(Radius::Lg),
-        cursor_pointer(),
-        bg(Role::SurfaceHover).hover(),
-    ];
-    if selected {
-        styles.push(bg(Role::SurfaceSelected));
-    }
-    node()
-        .styles(styles)
-        .child(glyph(row.icon, 4.0, Role::Muted))
-        .child(
-            node()
-                .styles([flex(), flex_col(), flex_1(), min_w_px(0)])
-                .child(line(row.name.clone(), 13, 1.4, Role::Text).styles([truncate()]))
-                .children(
-                    (!row.detail.is_empty()).then(|| {
-                        line(row.detail.clone(), 12, 1.4, Role::Subtle).styles([truncate()])
-                    }),
-                ),
-        )
-        .focusable(id)
+/// Emits one row of the list: a glyph, a name and what is said under it, highlighted while it is the one the keys act on.
+#[track_caller]
+fn entry((icon, name, detail): &Row, id: Target, selected: bool) {
+    let looks = theme::InteractionTones::new()
+        .hover(Role::SurfaceHover)
+        .radius(Radius::Lg);
+    let looks = if selected {
+        looks.idle(Role::SurfaceSelected)
+    } else {
+        looks
+    };
+    let looks = Modifier::new()
+        .fill_max_width()
+        .indicated(looks, theme::Focused::Control(crate::focus::is_focused(id)));
+    rustle::row_arranged(
+        events::pressed(looks, id).padding_xy(theme::sp(2.5), theme::sp(1.5)),
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Center,
+        || {
+            glyph(icon.clone(), 4.0, Role::Muted);
+            rustle::column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    line(name.clone(), 13, 1.4, Role::Text);
+                    if !detail.is_empty() {
+                        line(detail.clone(), 12, 1.4, Role::Subtle);
+                    }
+                },
+            );
+        },
+    );
 }
 
 /// Whether `id` names something of the panel.
-pub fn is_adder(id: FocusId) -> bool {
-    let FocusId(number) = id;
-    (ADDER_SCRIM.0..=ADDER_ESCAPE.0).contains(&number)
-        || (ADDER_ROW_BASE..ADDER_ROW_BASE + ADDER_ROWS).contains(&number)
+pub fn is_adder(id: Target) -> bool {
+    matches!(
+        id,
+        Target::Dialog(DialogEvent::AdderScrim)
+            | Target::Dialog(DialogEvent::AdderBody)
+            | Target::Dialog(DialogEvent::AdderBrowse)
+            | Target::Dialog(DialogEvent::AdderClone)
+            | Target::Dialog(DialogEvent::AdderField)
+            | Target::Dialog(DialogEvent::AdderSubmit)
+            | Target::Dialog(DialogEvent::AdderUp)
+            | Target::Dialog(DialogEvent::AdderDown)
+            | Target::Dialog(DialogEvent::AdderEscape)
+    ) || matches!(id, Target::Dialog(DialogEvent::AdderRow(row)) if row < ADDER_ROWS)
 }
 
 impl WorkspaceState {
@@ -449,65 +404,66 @@ impl WorkspaceState {
     }
 
     /// What pressing Enter presses while the panel is open: the highlighted choice, or the highlighted row of a list.
-    pub fn adder_enter(&self) -> Option<FocusId> {
+    pub fn adder_enter(&self) -> Option<Target> {
         let open = self.adder.as_ref()?;
         Some(match open.step {
             Step::Choices => choice_id(open.selected),
-            _ => ADDER_SUBMIT,
+            _ => Target::Dialog(DialogEvent::AdderSubmit),
         })
     }
 
     /// The state with the panel closed.
     pub fn without_adder(mut self) -> Self {
         self.adder = None;
-        self.menu_scroll = 0.0;
+        self.menu_scroll.jump_to(0.0);
         self
     }
 
     /// The state after something of the panel was pressed: `action` is the name of what.
-    pub(crate) fn adder_pressed(mut self, action: FocusId) -> Self {
+    pub(crate) fn adder_pressed(mut self, action: Target) -> Self {
         let Some(mut open) = self.adder.take() else {
             return self;
         };
         let working = open.working.is_some();
         match action {
-            ADDER_SCRIM => return self.without_adder(),
-            ADDER_ESCAPE if open.step == Step::Choices => return self.without_adder(),
-            ADDER_ESCAPE => {
+            Target::Dialog(DialogEvent::AdderScrim) => return self.without_adder(),
+            Target::Dialog(DialogEvent::AdderEscape) if open.step == Step::Choices => {
+                return self.without_adder();
+            }
+            Target::Dialog(DialogEvent::AdderEscape) => {
                 open.moved_to(match open.step {
                     Step::Repositories => Step::Owners,
                     _ => Step::Choices,
                 });
-                self.menu_scroll = 0.0;
+                self.menu_scroll.jump_to(0.0);
             }
-            ADDER_UP | ADDER_DOWN if !working => {
-                let last = open.count().saturating_sub(1);
-                open.selected = match (open.selected, action) {
-                    (usize::MAX, _) => 0,
-                    (selected, ADDER_UP) => selected.saturating_sub(1),
-                    (selected, _) => (selected + 1).min(last),
-                };
-                self.keep_selected_in_view(open.selected);
+            Target::Dialog(DialogEvent::AdderUp | DialogEvent::AdderDown) if !working => {
+                let up = action == Target::Dialog(DialogEvent::AdderUp);
+                open.selected = stepped(open.selected, up, open.count());
+                scroll_into_view(
+                    &self.menu_scroll,
+                    open.selected,
+                    ENTRY_HEIGHT,
+                    LIST_HEIGHT - 12.0,
+                );
             }
-            ADDER_SUBMIT if !working => {
-                let index = if open.selected == usize::MAX {
-                    0
-                } else {
-                    open.selected
-                };
+            Target::Dialog(DialogEvent::AdderSubmit) if !working => {
+                let index = Some(open.selected)
+                    .filter(|held| *held != usize::MAX)
+                    .unwrap_or(0);
                 self.adder = Some(open);
                 self.adder_chosen(index);
                 return self;
             }
-            ADDER_BROWSE if !working => {
-                self.menu_scroll = 0.0;
+            Target::Dialog(DialogEvent::AdderBrowse) if !working => {
+                self.menu_scroll.jump_to(0.0);
                 self.open_folder_picker(Purpose::Open, open.machine);
                 return self;
             }
-            ADDER_CLONE if !working => {
+            Target::Dialog(DialogEvent::AdderClone) if !working => {
                 open.moved_to(Step::Owners);
                 open.owners = Listing::Loading;
-                self.menu_scroll = 0.0;
+                self.menu_scroll.jump_to(0.0);
                 self.outbox.push(Outgoing::Owners);
             }
             _ => {}
@@ -531,7 +487,7 @@ impl WorkspaceState {
                 open.moved_to(Step::Repositories);
                 open.repositories = Listing::Loading;
                 open.owner = Some((login.clone(), organization));
-                self.menu_scroll = 0.0;
+                self.menu_scroll.jump_to(0.0);
                 self.outbox.push(Outgoing::Repositories {
                     login,
                     organization,
@@ -549,29 +505,25 @@ impl WorkspaceState {
     pub(crate) fn with_adder(mut self) -> Self {
         self.menu = None;
         self.picker = None;
-        self.menu_scroll = 0.0;
+        self.menu_scroll.jump_to(0.0);
         self.adder = Some(Adder::new(self.window.servers.default_target().cloned()));
         self
     }
 
-    /// The state after `edit` was made to the field of the panel.
-    pub(crate) fn adder_edited(&mut self, edit: pm_text::Edit) {
+    /// Takes in what the reader wrote in the field of the panel: the list starts over from its first row.
+    pub(crate) fn adder_typed(&mut self) {
         let Some(open) = self.adder.as_mut() else {
             return;
         };
-        let before = open.field.text().to_owned();
-        open.field.apply(edit);
-        if open.field.text() != before {
-            open.selected = 0;
-            open.trouble = None;
-            self.menu_scroll = 0.0;
-        }
+        open.selected = 0;
+        open.trouble = None;
+        self.menu_scroll.jump_to(0.0);
     }
 
     /// The state with the accounts and organizations the server listed, or why it could not.
     pub fn with_owners(mut self, listed: Result<Vec<Found>, String>) -> Self {
         if let Some(open) = self.adder.as_mut() {
-            open.owners = Self::listing_of(listed);
+            open.owners = listed.map_or_else(Listing::Failed, Listing::Found);
         }
         self
     }
@@ -581,17 +533,9 @@ impl WorkspaceState {
         if let Some(open) = self.adder.as_mut()
             && open.owner.as_ref().is_some_and(|(held, _)| held == login)
         {
-            open.repositories = Self::listing_of(listed);
+            open.repositories = listed.map_or_else(Listing::Failed, Listing::Found);
         }
         self
-    }
-
-    /// What a list holds, from what the server answered.
-    fn listing_of(listed: Result<Vec<Found>, String>) -> Listing {
-        match listed {
-            Ok(found) => Listing::Found(found),
-            Err(reason) => Listing::Failed(reason),
-        }
     }
 
     /// The state after the server cloned the repository into `path`, which is added as a project and opened.
@@ -599,7 +543,8 @@ impl WorkspaceState {
         let address = self
             .adder
             .as_ref()
-            .map_or_else(|| path.to_owned(), |open| open.address(path));
+            .and_then(|open| open.machine.as_ref())
+            .map_or_else(|| path.to_owned(), |machine| machine.project(path));
         self.without_adder().with_project_opened(&address)
     }
 
@@ -611,17 +556,25 @@ impl WorkspaceState {
         }
         self
     }
+}
 
-    /// Scrolls the list so that the row at `selected` is in view.
-    fn keep_selected_in_view(&mut self, selected: usize) {
-        let row = ENTRY_HEIGHT;
-        let top = selected as f32 * row;
-        let bottom = top + row;
-        if top < self.menu_scroll {
-            self.menu_scroll = top;
-        } else if bottom > self.menu_scroll + LIST_HEIGHT - 12.0 {
-            self.menu_scroll = bottom - LIST_HEIGHT + 12.0;
-        }
+/// The row of a list of `count` rows highlighted after moving `up`, or down, from `selected`: the first while none was.
+pub(crate) fn stepped(selected: usize, up: bool, count: usize) -> usize {
+    match selected {
+        usize::MAX => 0,
+        held if up => held.saturating_sub(1),
+        held => (held + 1).min(count.saturating_sub(1)),
+    }
+}
+
+/// Scrolls the list `scroll` moves, `view` logical pixels tall, so that its row at `selected`, each row `row` logical pixels tall, is in view.
+pub(crate) fn scroll_into_view(scroll: &rustle::ScrollState, selected: usize, row: f32, view: f32) {
+    let top = selected as f32 * row;
+    let bottom = top + row;
+    if top < scroll.offset() {
+        scroll.jump_to(top);
+    } else if bottom > scroll.offset() + view {
+        scroll.jump_to(bottom - view);
     }
 }
 

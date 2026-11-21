@@ -1,7 +1,7 @@
 //! The completions open at the caret: narrowed to the word typed, and the edits that write the one picked.
 
+use crate::Edit;
 use pm_protocol::Completion;
-use pm_text::Edit;
 
 use crate::document::Document;
 

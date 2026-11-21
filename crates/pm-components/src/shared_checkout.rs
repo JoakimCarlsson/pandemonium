@@ -2,9 +2,12 @@
 //!
 //! Sessions share a checkout when their servers name the same canonical working tree for them on the same machine. Each worktree of a repository is a working tree of its own, so sessions in separate worktrees never share one, and chats, which work in scratch folders of their own, are left out.
 
-use pm_icon::IconName;
-use pm_style::{Role, flex, flex_none, gap, items_center, min_w_px, px, py};
-use pm_ui::{Node, node};
+use crate::theme;
+use rustle::Modifier;
+use rustle::phosphor;
+use rustle::{Alignment, Arrangement};
+
+use crate::theme::Role;
 
 use crate::parts::{clipped, glyph};
 use crate::sample::{Session, Status};
@@ -109,25 +112,23 @@ impl WorkspaceState {
     }
 }
 
-/// The notice for `session` while the agents of other sessions are working in its checkout: one muted line with a fork before it, naming them and suggesting a worktree; nothing while none are.
-pub fn notice(state: &WorkspaceState, session: &Session) -> Option<Node> {
+/// Emits the notice for `session` while the agents of other sessions are working in its checkout: one muted line with a fork before it, naming them and suggesting a worktree; nothing while none are.
+#[track_caller]
+pub fn notice(state: &WorkspaceState, session: &Session) {
     let titles = state.sharing_checkout(session);
     if titles.is_empty() {
-        return None;
+        return;
     }
-    Some(
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                gap(1.5),
-                px(2.5),
-                py(0.5),
-                min_w_px(0),
-            ])
-            .child(glyph(IconName::GitFork, 3.5, Role::Warning).styles([flex_none()]))
-            .child(clipped(shared_words(&titles), 12, Role::Muted)),
-    )
+    let words = shared_words(&titles);
+    rustle::row_arranged(
+        Modifier::new().padding_xy(theme::sp(2.5), theme::sp(0.5)),
+        Arrangement::SpacedBy(theme::sp(1.5)),
+        Alignment::Center,
+        move || {
+            glyph(phosphor::GIT_FORK, 3.5, Role::Warning);
+            clipped(words, 12, Role::Muted);
+        },
+    );
 }
 
 #[cfg(test)]

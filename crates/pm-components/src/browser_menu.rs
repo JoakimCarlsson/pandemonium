@@ -1,20 +1,18 @@
 //! The menu that opens over a page of the browser: going back and forward, loading it again with or without the cache, cutting, copying and pasting, marking everything, finding in the page, zooming, opening it in the system's browser, clearing cookies and site data, showing the developer tools, and adding screenshots of the page or its console to the prompt.
 
-use pm_input::FocusId;
-use pm_ui::Node;
-
 use crate::Menu;
+use crate::areas::MenuEvent;
 use crate::browser::{Command, ZoomStep};
 use crate::state::WorkspaceState;
-
-/// The first of the rows of the menu over a page; each command's row follows it by the command's place.
-const BROWSER_MENU_BASE: u64 = 7_441_000;
+use crate::target::Target;
 
 /// How tall the menu over a page is, in logical pixels, to keep it inside the window.
 pub const BROWSER_MENU_HEIGHT: f32 = 19.0 * 26.0 + 6.0 * 9.0 + 10.0;
 
 /// What a row of the menu over a page does.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(
+    Clone, Copy, Debug, serde::Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize,
+)]
 pub enum BrowserCommand {
     /// Goes back one page in the history.
     Back,
@@ -57,45 +55,20 @@ pub enum BrowserCommand {
 }
 
 impl BrowserCommand {
-    /// Every command, in the order of their rows.
-    const ALL: [Self; 19] = [
-        Self::Back,
-        Self::Forward,
-        Self::Reload,
-        Self::HardReload,
-        Self::Cut,
-        Self::Copy,
-        Self::Paste,
-        Self::SelectAll,
-        Self::Find,
-        Self::ZoomIn,
-        Self::ZoomOut,
-        Self::ZoomReset,
-        Self::OpenExternal,
-        Self::ClearData,
-        Self::Inspect,
-        Self::Screenshot,
-        Self::FullPage,
-        Self::Area,
-        Self::Console,
-    ];
-
     /// The commands that put something from the page into the prompt, which the button of the bar offers on their own.
     const CAPTURES: [Self; 4] = [Self::Screenshot, Self::FullPage, Self::Area, Self::Console];
 
     /// The name of the command's row.
-    pub fn id(self) -> FocusId {
-        let place = Self::ALL
-            .iter()
-            .position(|held| *held == self)
-            .unwrap_or_default();
-        FocusId(BROWSER_MENU_BASE + place as u64)
+    pub fn id(self) -> Target {
+        Target::Menu(MenuEvent::BrowserMenu(self))
     }
 
     /// The command whose row `id` names.
-    pub fn of(id: FocusId) -> Option<Self> {
-        let place = id.0.checked_sub(BROWSER_MENU_BASE)?;
-        Self::ALL.get(usize::try_from(place).ok()?).copied()
+    pub fn of(id: Target) -> Option<Self> {
+        match id {
+            Target::Menu(MenuEvent::BrowserMenu(command)) => Some(command),
+            _ => None,
+        }
     }
 
     /// What its row says.
@@ -149,32 +122,26 @@ pub struct BrowserMenu {
 impl WorkspaceState {
     /// The state with the menu over the page open at `at`, and the other menus closed.
     pub fn with_browser_menu(self, at: (f32, f32)) -> Self {
-        if self.browser.is_none() {
-            return self;
-        }
-        let mut state = self.without_menu();
-        state.browser_menu = Some(BrowserMenu {
-            at,
-            captures_only: false,
-        });
-        state
+        self.with_browser_menu_of(at, false)
     }
 
     /// The state with the menu of what can be put into the prompt from the page open at `at`, and the other menus closed.
     pub fn with_browser_capture_menu(self, at: (f32, f32)) -> Self {
+        self.with_browser_menu_of(at, true)
+    }
+
+    /// The state with the menu over the page open at `at`, offering only what can be put into the prompt when `captures_only`, and the other menus closed.
+    fn with_browser_menu_of(self, at: (f32, f32), captures_only: bool) -> Self {
         if self.browser.is_none() {
             return self;
         }
         let mut state = self.without_menu();
-        state.browser_menu = Some(BrowserMenu {
-            at,
-            captures_only: true,
-        });
+        state.browser_menu = Some(BrowserMenu { at, captures_only });
         state
     }
 
     /// Whether `id` is a row of the menu over a page while it is open.
-    pub fn is_browser_menu_row(&self, id: FocusId) -> bool {
+    pub fn is_browser_menu_row(&self, id: Target) -> bool {
         self.browser_menu.is_some() && BrowserCommand::of(id).is_some()
     }
 
@@ -214,32 +181,41 @@ impl WorkspaceState {
     }
 }
 
-/// The menu over a page opened at `open`.
-pub fn browser_menu(open: BrowserMenu) -> Node {
+/// Emits the menu over a page opened at `open`.
+#[track_caller]
+pub fn browser_menu(open: BrowserMenu) {
     let row = |menu: Menu, command: BrowserCommand| {
         menu.item(command.label(), command.keys(), command.id(), false)
     };
-    let menu = Menu::new(open.at.0, open.at.1).width(68.0).row_height(6.5);
+    let operations = crate::events::operations();
+    let menu = Menu::new(open.at.0, open.at.1)
+        .width(68.0)
+        .row_height(6.5)
+        .on_pick(move |row| {
+            if let Some(command) = BrowserCommand::of(row) {
+                operations.browser_menu_command(command);
+            }
+        });
     if open.captures_only {
-        return BrowserCommand::CAPTURES.into_iter().fold(menu, row).build();
+        BrowserCommand::CAPTURES.into_iter().fold(menu, row).build();
+        return;
     }
-    let menu = row(menu, BrowserCommand::Back);
-    let menu = row(menu, BrowserCommand::Forward);
-    let menu = row(menu, BrowserCommand::Reload);
-    let menu = row(menu, BrowserCommand::HardReload).separator();
-    let menu = row(menu, BrowserCommand::Cut);
-    let menu = row(menu, BrowserCommand::Copy);
-    let menu = row(menu, BrowserCommand::Paste);
-    let menu = row(menu, BrowserCommand::SelectAll).separator();
-    let menu = row(menu, BrowserCommand::Find).separator();
-    let menu = row(menu, BrowserCommand::ZoomIn);
-    let menu = row(menu, BrowserCommand::ZoomOut);
-    let menu = row(menu, BrowserCommand::ZoomReset).separator();
-    let menu = row(menu, BrowserCommand::OpenExternal);
-    let menu = row(menu, BrowserCommand::ClearData).separator();
-    let menu = row(menu, BrowserCommand::Inspect).separator();
-    let menu = row(menu, BrowserCommand::Screenshot);
-    let menu = row(menu, BrowserCommand::FullPage);
-    let menu = row(menu, BrowserCommand::Area);
-    row(menu, BrowserCommand::Console).build()
+    use BrowserCommand::*;
+    let groups: [&[BrowserCommand]; 7] = [
+        &[Back, Forward, Reload, HardReload],
+        &[Cut, Copy, Paste, SelectAll],
+        &[Find],
+        &[ZoomIn, ZoomOut, ZoomReset],
+        &[OpenExternal, ClearData],
+        &[Inspect],
+        &BrowserCommand::CAPTURES,
+    ];
+    groups
+        .into_iter()
+        .enumerate()
+        .fold(menu, |menu, (at, group)| {
+            let menu = if at == 0 { menu } else { menu.separator() };
+            group.iter().copied().fold(menu, row)
+        })
+        .build();
 }

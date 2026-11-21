@@ -1,12 +1,16 @@
 //! Tests of chats: starting one without a project, where it lives, and how it is kept apart from the projects.
 
-use super::NEW_CHAT;
-use crate::state::{Outgoing, Page, SEND, WorkspaceState, prompt_field};
+use crate::areas::SidebarEvent;
+
+use crate::areas::ComposerEvent;
+
+use crate::events::Event;
+use crate::state::{Outgoing, Page, WorkspaceState, prompt_field};
 
 /// Sends `text` from the page being shown and returns the state afterwards.
 fn sent(mut state: WorkspaceState, text: &str) -> WorkspaceState {
     state.prompt = prompt_field(text);
-    state.after(SEND)
+    state.handle(Event::Composer(ComposerEvent::Send))
 }
 
 /// What the server lists for a chat numbered `session`, working in the scratch folder `directory`.
@@ -61,7 +65,10 @@ fn a_chat_goes_to_the_machine_of_the_project_shown() {
         .with_project("/work/app")
         .with_project("ssh://builder/work/lib");
     state.start_in(1, None);
-    let state = sent(state.after(NEW_CHAT), "Why is the build slow?");
+    let state = sent(
+        state.handle(Event::Sidebar(SidebarEvent::NewChat)),
+        "Why is the build slow?",
+    );
     let Page::Session(started) = state.page else {
         panic!("the page did not move to the chat");
     };
@@ -70,7 +77,7 @@ fn a_chat_goes_to_the_machine_of_the_project_shown() {
 
     let mut state = state;
     state.page = Page::History;
-    let state = state.after(NEW_CHAT);
+    let state = state.handle(Event::Sidebar(SidebarEvent::NewChat));
     assert_eq!(state.page, Page::Chat);
     assert_eq!(state.chat_on, None);
 }

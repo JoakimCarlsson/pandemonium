@@ -1,12 +1,14 @@
 //! Where the window was when it was closed, kept on this machine so that the next launch opens on the same page.
 
+use pm_components::areas::SidebarEvent;
+use pm_components::areas::{ComposerEvent, EditorEvent};
+
 use pm_components::browser_tabs::SavedTab;
-use pm_components::open_files::{Contents, EDITOR_FIELD, Left};
+use pm_components::events::Event;
+use pm_components::open_files::{Contents, Left};
 use pm_components::panes::{Layout, Panes};
-use pm_components::state::{
-    PROMPT, Page, ReviewTab, SESSION_BASE, Tab, WorkspaceState, prompt_field,
-};
-use pm_input::FocusId;
+use pm_components::state::{Page, ReviewTab, Tab, WorkspaceState, prompt_field};
+use pm_components::target::Target;
 use serde::{Deserialize, Serialize};
 
 mod writer;
@@ -119,6 +121,9 @@ pub struct View {
     /// How far down the review panel's list was scrolled, in logical pixels.
     #[serde(default)]
     tree_scroll: f32,
+    /// The row of the project's files at the top of their list.
+    #[serde(default)]
+    files_first_row: usize,
     /// How far down the diff was scrolled, in logical pixels.
     #[serde(default)]
     diff_scroll: f32,
@@ -323,7 +328,7 @@ impl View {
     /// What `state` shows now, with `focused` the field that has the keyboard and `server_number` telling each session's machine and number on its server.
     pub fn capture(
         state: &WorkspaceState,
-        focused: Option<FocusId>,
+        focused: Option<Target>,
         server_number: impl Fn(usize) -> Option<(Option<String>, u64)>,
     ) -> Self {
         let path = |project: usize| {
@@ -372,7 +377,8 @@ impl View {
                         path: viewer.path.clone(),
                         head: viewer.head,
                         preview: viewer.preview,
-                        scroll: viewer.scroll,
+                        scroll: viewer.top_row(state.wrap_columns(), state.editor.row_height())
+                            * state.editor.row_height(),
                         caret: document.map_or(0, |document| document.field.caret()),
                         unsaved: document
                             .filter(|document| document.is_dirty())
@@ -384,8 +390,8 @@ impl View {
             Vec::new()
         };
         let typing = match focused {
-            Some(PROMPT) => Some(Typing::Prompt),
-            Some(EDITOR_FIELD) if with_files => Some(Typing::Editor),
+            Some(Target::Composer(ComposerEvent::Prompt)) => Some(Typing::Prompt),
+            Some(Target::Editor(EditorEvent::EditorField)) if with_files => Some(Typing::Editor),
             _ => None,
         };
         Self {
@@ -412,8 +418,9 @@ impl View {
             files_tab: state.review_tab == ReviewTab::Files,
             open_tree: sorted(&state.open_tree),
             closed_folders: sorted(&state.closed_folders),
-            tree_scroll: state.tree_scroll,
-            diff_scroll: state.diff_scroll,
+            tree_scroll: state.tree_scroll.offset(),
+            files_first_row: state.files_list.first_visible_item().unwrap_or(0),
+            diff_scroll: state.diff_list.scroll().offset(),
             changes_open: state.git.changes_open,
             graph_open: state.git.graph_open,
             graph_all: state.git.graph_all,
@@ -468,10 +475,10 @@ impl View {
     }
 
     /// The field the reader was typing in, to give the keyboard back to once the view is finished.
-    pub fn typing(&self) -> Option<FocusId> {
+    pub fn typing(&self) -> Option<Target> {
         match self.typing? {
-            Typing::Prompt => Some(PROMPT),
-            Typing::Editor => Some(EDITOR_FIELD),
+            Typing::Prompt => Some(Target::Composer(ComposerEvent::Prompt)),
+            Typing::Editor => Some(Target::Editor(EditorEvent::EditorField)),
         }
     }
 
@@ -539,7 +546,7 @@ impl View {
         let mut state = match (open, state.page) {
             (Some(position), _) => {
                 state.browser_adopted_by(position);
-                let mut opened = state.after(FocusId(SESSION_BASE + position as u64));
+                let mut opened = state.handle(Event::Sidebar(SidebarEvent::Session(position)));
                 opened.tab = if self.diff { Tab::Diff } else { Tab::Chat };
                 opened.sync_context();
                 self.reopen_files(opened)
@@ -561,8 +568,11 @@ impl View {
         }
         state.review_tab = self.review_tab();
         state.sidebar_scroll = self.scroll;
-        state.tree_scroll = self.tree_scroll;
-        state.diff_scroll = self.diff_scroll;
+        state.tree_scroll.jump_to(self.tree_scroll);
+        state
+            .files_list
+            .scroll_to_item_offset(self.files_first_row, 0.0);
+        state.scroll_diff_to(self.diff_scroll);
         state.refresh_files();
         if let Some(saved) = &self.panes {
             state.panes = Panes {
@@ -592,6 +602,7 @@ impl View {
                 viewer.preview = false;
             }
         }
+        let (columns, row) = (opened.wrap_columns(), opened.editor.row_height());
         for file in &self.files {
             if let Some(viewer) = opened
                 .git
@@ -600,7 +611,7 @@ impl View {
                 .find(|viewer| viewer.path == file.path && viewer.head == file.head)
             {
                 viewer.preview = file.preview;
-                viewer.scroll = file.scroll;
+                viewer.scroll_to_row(file.scroll / row.max(1.0), columns, row);
                 viewer.left = Some(Left {
                     unsaved: file.unsaved.clone(),
                     caret: file.caret,
@@ -657,11 +668,11 @@ mod tests {
     /// Each session's browser is saved with its session, and a view saved with one browser for the window restores into the session that was open.
     #[test]
     fn browsers_are_saved_per_session() {
-        let mut state = WorkspaceState::sample().after(FocusId(SESSION_BASE));
+        let mut state = WorkspaceState::sample().handle(Event::Sidebar(SidebarEvent::Session(0)));
         state.open_browser("http://localhost:3000");
-        state = state.after(FocusId(SESSION_BASE + 1));
+        state = state.handle(Event::Sidebar(SidebarEvent::Session(1)));
         state.open_browser("http://localhost:4000");
-        state = state.after(FocusId(SESSION_BASE));
+        state = state.handle(Event::Sidebar(SidebarEvent::Session(0)));
         let view = View::capture(&state, None, |index| Some((None, index as u64 + 1)));
         assert_eq!(view.session_browsers().len(), 1);
         assert_eq!(view.session_browsers()[0].number, 2);

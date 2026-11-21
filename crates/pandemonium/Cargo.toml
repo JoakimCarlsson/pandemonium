@@ -5,22 +5,13 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-arboard = { version = "3.6.1", default-features = false, features = ["image-data", "wayland-data-control"] }
 image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "webp"] }
 pm-harness.workspace = true
-pm-color.workspace = true
 pm-components.workspace = true
 pm-pages.workspace = true
 pm-git.workspace = true
-pm-input.workspace = true
-pm-renderer.workspace = true
-pm-state.workspace = true
 pm-store.workspace = true
-pm-text.workspace = true
-pm-theme.workspace = true
-pm-ui.workspace = true
 rfd = "0.17.2"
-winit = "0.30.13"
 pm-protocol.workspace = true
 pm-client.workspace = true
 pm-ssh.workspace = true
@@ -31,21 +22,17 @@ pm-treesitter.workspace = true
 pm-lsp.workspace = true
 pm-editor.workspace = true
 pm-config.workspace = true
-pm-style.workspace = true
-resvg = "0.48.1"
 mermaid-svg = "0.7.0"
 latex-rust = "2.1.1"
 pm-transport.workspace = true
 pm-browser = { path = "../pm-browser" }
 pm-update.workspace = true
 pm-vim.workspace = true
-
-[target.'cfg(target_os = "linux")'.dependencies]
-rustix = { version = "1.1.5", features = ["fs"] }
-wayland-backend = { version = "0.3.17", features = ["client_system"] }
-wayland-client = "0.31.15"
-wayland-protocols = { version = "0.32.13", features = ["client"] }
-x11rb = "0.13.2"
+rustle = { git = "https://github.com/JoakimCarlsson/rustle", version = "0.1.0" }
+pm-buffer.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 mac-notification-sys = "0.6.15"
+
+[dev-dependencies]
+pm-store = { workspace = true, features = ["scratch-folders"] }

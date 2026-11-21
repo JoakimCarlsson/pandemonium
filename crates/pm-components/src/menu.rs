@@ -1,14 +1,16 @@
 //! The menu: a floating list of actions opened at a point.
 
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, absolute, bg, cursor_not_allowed, cursor_pointer, flex, flex_1, gap, h,
-    items_center, leading_ratio, left_px, min_w_px, opacity, p, px, rounded, text_color, text_px,
-    top_px, w, z,
-};
-use pm_ui::{Node, node, text};
+use crate::events::{Event, send};
+use crate::target::Target;
+use crate::theme;
+use crate::theme::Indicated;
+use rustle::{Alignment, Arrangement, TextOverflow};
+use rustle::{CursorIcon, Modifier};
+use std::rc::Rc;
 
 use crate::Surface;
+use crate::events::Interactive;
+use crate::theme::{Radius, Role, sp};
 
 /// How far a menu opened from a control hangs from it, in logical pixels.
 const MENU_GAP: f32 = 4.0;
@@ -23,7 +25,7 @@ pub enum Entry {
         /// The keys that do the same, written out, if any.
         shortcut: Option<String>,
         /// The name the row answers to.
-        id: FocusId,
+        id: Target,
         /// Whether the row is switched off.
         disabled: bool,
     },
@@ -34,9 +36,8 @@ pub enum Entry {
 /// A menu being described: where it opens and what it holds.
 ///
 /// Build it with [`Menu::new`], add rows with [`Menu::item`] and
-/// [`Menu::separator`], and turn it into a node with [`Menu::build`]. The
-/// node is positioned over whatever it is placed in, so it belongs last in
-/// the root of a screen.
+/// [`Menu::separator`], and emit it with [`Menu::build`]. It floats over
+/// everything at its point, kept inside the window.
 #[derive(Clone, Debug)]
 pub struct Menu {
     /// Where its top-left corner is, in logical pixels.
@@ -47,6 +48,20 @@ pub struct Menu {
     width: f32,
     /// How tall each row is, in style units.
     row: f32,
+    /// What picking a row does, told the row's id, when the caller said; the workspace's
+    /// reducer takes the press of the row otherwise.
+    on_pick: Option<Pick>,
+}
+
+/// What picking a row of a menu does, told the row's id, as the menu's builder keeps it.
+#[derive(Clone)]
+struct Pick(Rc<dyn Fn(Target)>);
+
+impl std::fmt::Debug for Pick {
+    /// Writes that there is a lambda, which has nothing else to show.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Pick")
+    }
 }
 
 impl Menu {
@@ -57,7 +72,15 @@ impl Menu {
             entries: Vec::new(),
             width: 52.0,
             row: 8.0,
+            on_pick: None,
         }
+    }
+
+    /// The menu running `on_pick` with the id of the row picked, in place of handing the
+    /// press of the row to the workspace's reducer.
+    pub fn on_pick(mut self, on_pick: impl Fn(Target) + 'static) -> Self {
+        self.on_pick = Some(Pick(Rc::new(on_pick)));
+        self
     }
 
     /// The menu with rows `units` style units tall, for a long menu that has to fit the window.
@@ -74,13 +97,7 @@ impl Menu {
 
     /// The menu with a row saying `label`, answering to `id`, written with
     /// `shortcut` beside it, and switched off while `disabled` is true.
-    pub fn item(
-        mut self,
-        label: &str,
-        shortcut: Option<&str>,
-        id: FocusId,
-        disabled: bool,
-    ) -> Self {
+    pub fn item(mut self, label: &str, shortcut: Option<&str>, id: Target, disabled: bool) -> Self {
         self.entries.push(Entry::Item {
             label: label.to_owned(),
             shortcut: shortcut.map(str::to_owned),
@@ -94,6 +111,18 @@ impl Menu {
     pub fn separator(mut self) -> Self {
         self.entries.push(Entry::Separator);
         self
+    }
+
+    /// The menu with each of `rows` added in turn: what the row says, the keys that do the same, the name it answers to, whether it is switched on, and whether a rule follows it.
+    pub fn rows<'a>(
+        self,
+        rows: impl IntoIterator<Item = (&'a str, Option<String>, Target, bool, bool)>,
+    ) -> Self {
+        rows.into_iter()
+            .fold(self, |menu, (label, keys, id, on, rule)| {
+                let menu = menu.item(label, keys.as_deref(), id, !on);
+                if rule { menu.separator() } else { menu }
+            })
     }
 
     /// The menu opened from the control occupying `trigger`, as `(x, y, width, height)` in logical pixels, inside a window `window` wide and tall:
@@ -127,7 +156,7 @@ impl Menu {
 
     /// How wide and how tall the menu is, in logical pixels, at the spacing scale being built for.
     fn extent(&self) -> (f32, f32) {
-        let step = 4.0 * pm_style::step_scale();
+        let step = 4.0 * crate::theme::step_scale();
         let rows: f32 = self
             .entries
             .iter()
@@ -139,79 +168,92 @@ impl Menu {
         (self.width * step, rows + step * 0.5)
     }
 
-    /// The node that draws the menu.
-    pub fn build(self) -> Node {
-        Surface::new()
-            .build()
-            .styles([
-                absolute(),
-                left_px(self.at.0),
-                top_px(self.at.1),
-                z(50),
-                w(self.width),
-                min_w_px(0),
-                p(1),
-            ])
-            .keep_in_view()
-            .children(self.entries.into_iter().map(|entry| row(entry, self.row)))
+    /// Emits the menu over everything, with its corner at its point, kept inside the window; a
+    /// press outside it asks the app to close what a press elsewhere closes.
+    #[track_caller]
+    pub fn build(self) {
+        let (x, y) = self.at;
+        let (width, height) = (self.width, self.row);
+        let entries = self.entries;
+        let on_pick = self.on_pick;
+        crate::popups::at_window(x, y, true, move || {
+            Surface::new()
+                .modifier(Modifier::new().width(theme::sp(width)))
+                .inner(Modifier::new().padding(theme::sp(1)))
+                .build_with(move || {
+                    for entry in entries {
+                        menu_row(entry, height, on_pick.clone());
+                    }
+                });
+        });
     }
 }
 
-/// The node for one entry, `height` style units tall when it is a row.
-fn row(entry: Entry, height: f32) -> Node {
+/// What clicking the row `id` does: `on_pick` told the row, or the workspace's reducer
+/// taking the press without one.
+fn picked(id: Target, on_pick: Option<Pick>) -> impl Fn() + 'static {
+    let reduced = send(Event::pressing(id));
+    move || match &on_pick {
+        Some(Pick(on_pick)) => on_pick(id),
+        None => reduced(),
+    }
+}
+
+/// Emits one entry, `height` style units tall when it is a row: rustle's horizontal divider
+/// across the menu inside its padding with a step of room above and below it, or a row with
+/// the label and its shortcut, whose click runs `on_pick`, or hands the press to the
+/// workspace's reducer without one.
+fn menu_row(entry: Entry, height: f32, on_pick: Option<Pick>) {
     match entry {
-        Entry::Separator => node().styles([
-            h(0.25),
-            bg(Role::Border),
-            pm_style::mx(-1.0),
-            pm_style::my(1),
-        ]),
+        Entry::Separator => {
+            rustle::horizontal_divider(
+                Modifier::new().padding_xy(0.0, sp(1)),
+                sp(0.25),
+                crate::theme::role(Role::Border),
+            );
+        }
         Entry::Item {
-            label,
+            label: words,
             shortcut,
             id,
             disabled,
         } => {
-            let mut styles = vec![
-                flex(),
-                items_center(),
-                gap(4),
-                h(height),
-                px(2),
-                rounded(Radius::Sm),
-            ];
-            if disabled {
-                styles.extend([opacity(40), cursor_not_allowed()]);
+            let modifier = Modifier::new().fill_max_width().height(theme::sp(height));
+            let modifier = if disabled {
+                modifier.alpha(0.4).cursor(CursorIcon::NotAllowed)
             } else {
-                styles.extend([
-                    cursor_pointer(),
-                    bg(Role::SurfaceHover).hover(),
-                    bg(Role::SurfaceActive).active(),
-                ]);
-            }
-            let mut item =
-                node()
-                    .styles(styles)
-                    .child(node().styles([flex_1()]).child(text(label).styles([
-                        text_px(13),
-                        leading_ratio(1.4),
-                        text_color(Role::Text),
-                    ])));
-            if let Some(shortcut) = shortcut {
-                item = item.child(text(shortcut).styles([
-                    text_px(12),
-                    leading_ratio(1.4),
-                    text_color(Role::Subtle),
-                ]));
-            }
-            if disabled { item } else { item.focusable(id) }
+                modifier
+                    .indicated(
+                        theme::InteractionTones::new()
+                            .hover(Role::SurfaceHover)
+                            .active(Role::SurfaceActive)
+                            .radius(Radius::Sm),
+                        theme::Focused::Rustle,
+                    )
+                    .cursor(CursorIcon::Pointer)
+                    .control(id, picked(id, on_pick))
+            };
+            rustle::row_arranged(
+                modifier.padding_xy(theme::sp(2), 0.0),
+                Arrangement::SpacedBy(theme::sp(4)),
+                Alignment::Center,
+                move || {
+                    rustle::basic_text(
+                        Modifier::new().weight(1.0),
+                        words,
+                        theme::text_style(13, 1.4).color(theme::color(Role::Text)),
+                        TextOverflow::Ellipsis,
+                    );
+                    if let Some(shortcut) = shortcut {
+                        rustle::basic_text(
+                            Modifier::new(),
+                            shortcut,
+                            theme::text_style(12, 1.4).color(theme::color(Role::Subtle)),
+                            TextOverflow::Ellipsis,
+                        );
+                    }
+                },
+            );
         }
-    }
-}
-
-impl From<Menu> for Node {
-    /// The node that draws the menu.
-    fn from(menu: Menu) -> Self {
-        menu.build()
     }
 }

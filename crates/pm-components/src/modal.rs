@@ -1,80 +1,69 @@
-//! The modal: a panel centred over a darkened window, which pressing outside closes.
+//! The modal: rustle's dialog, a panel centred over a darkened window, which pressing outside closes.
 
-use pm_input::FocusId;
-use pm_style::{
-    Color, absolute, bg, flex, flex_none, inset, items_center, justify_center, w_px, z,
-};
-use pm_ui::{Node, node};
+use crate::events::{Event, send};
+use crate::target::Target;
+use rustle::{DialogProperties, Modifier};
 
+use crate::events::Interactive;
 use crate::{Surface, surface};
 
-/// How dark the window behind a modal is made, from 0.0 to 1.0.
-const DIM: f32 = 0.55;
+/// How far above the rest of the window the modal is drawn.
+const LAYER: i32 = 70;
 
-/// A modal being described: how wide its panel is and what the panel holds.
+/// How the modal behaves as a dialog: a press outside asks to close it, and Escape is the app's own key.
+const PROPERTIES: DialogProperties = DialogProperties {
+    dismiss_on_back_press: false,
+    dismiss_on_click_outside: true,
+};
+
+/// A modal being described: what its parts answer to and how wide its panel is.
 ///
-/// Build it with [`Modal::new`], fill it with [`Modal::child`] and
-/// [`Modal::children`], and turn it into a node with [`Modal::build`]. The
-/// node covers its parent, so it belongs last in the root of a screen.
-#[derive(Clone, Debug)]
+/// Build it with [`Modal::new`], change it with [`Modal::width`], and emit it
+/// with what its panel holds through [`Modal::build_with`]. It covers the layer
+/// it is emitted in, so it belongs last in the root of a screen.
 pub struct Modal {
-    /// What pressing the dimmed window outside the panel does.
-    outside: FocusId,
-    /// The panel itself, which keeps a press on it from counting as outside.
-    panel: Node,
+    /// What a press on the dimmed window outside the panel hands to the workspace.
+    outside: Target,
+    /// What the panel answers to.
+    inside: Target,
+    /// How wide the panel is, in logical pixels, when fixed.
+    width: Option<f32>,
 }
 
 impl Modal {
     /// A modal whose dimmed window answers to `outside` and whose panel answers to `inside`.
-    pub fn new(outside: FocusId, inside: FocusId) -> Self {
+    pub fn new(outside: Target, inside: Target) -> Self {
         Self {
             outside,
-            panel: Surface::new()
-                .variant(surface::Variant::Dialog)
-                .build()
-                .styles([flex_none()])
-                .focusable(inside),
+            inside,
+            width: None,
         }
     }
 
     /// The modal with a panel `pixels` wide.
     pub fn width(mut self, pixels: f32) -> Self {
-        self.panel = self.panel.styles([w_px(pixels)]);
+        self.width = Some(pixels);
         self
     }
 
-    /// The modal with `child` after what its panel holds.
-    pub fn child(mut self, child: Node) -> Self {
-        self.panel = self.panel.child(child);
-        self
-    }
-
-    /// The modal with every node of `children` after what its panel holds.
-    pub fn children(mut self, children: impl IntoIterator<Item = Node>) -> Self {
-        self.panel = self.panel.children(children);
-        self
-    }
-
-    /// The node that draws the modal.
-    pub fn build(self) -> Node {
-        node()
-            .styles([
-                absolute(),
-                inset(0),
-                z(70),
-                flex(),
-                items_center(),
-                justify_center(),
-                bg(Color::Black.alpha(DIM)),
-            ])
-            .child(self.panel)
-            .focusable(self.outside)
-    }
-}
-
-impl From<Modal> for Node {
-    /// The node that draws the modal.
-    fn from(modal: Modal) -> Self {
-        modal.build()
+    /// Emits the modal as rustle's dialog in a layer over the window, its panel holding what
+    /// `content` emits; a press outside the panel hands `outside` to the workspace.
+    #[track_caller]
+    pub fn build_with(self, content: impl FnOnce()) {
+        let layer = Modifier::new().match_parent_size().z_index_unclipped(LAYER);
+        let mut panel = Modifier::new();
+        if let Some(width) = self.width {
+            panel = panel.width(width);
+        }
+        let panel = panel.control(self.inside, send(Event::pressing(self.inside)));
+        let outside = send(Event::pressing(self.outside));
+        rustle::stack_with(layer, move || {
+            rustle::dialog_with(outside, PROPERTIES, move || {
+                Surface::new()
+                    .variant(surface::Variant::Dialog)
+                    .modifier(panel)
+                    .build_with(content);
+            });
+        });
     }
 }

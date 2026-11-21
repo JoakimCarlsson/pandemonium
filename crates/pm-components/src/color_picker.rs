@@ -1,48 +1,12 @@
 //! Choosing another colour for a stretch of the file that spells one: the colour typed in hex, the ways the language server offers to write it, and the one picked written in place of the stretch.
 
-use pm_input::FocusId;
 use pm_protocol::{ColorPresentation, Span};
-use pm_text::{Edit, Field};
+use rustle::TextFieldState;
 
 use crate::state::{Outgoing, WorkspaceState};
 
-/// The field the colour is typed in, as hex.
-pub const COLOR_HEX: FocusId = FocusId(7_420_000);
-
-/// Hands in the colour typed: the first way to write it is taken.
-pub const COLOR_HEX_SUBMIT: FocusId = FocusId(7_420_001);
-
-/// The box the colour is chosen in, which keeps a press on it from counting as outside.
-pub const COLOR_BOX: FocusId = FocusId(7_420_002);
-
-/// The first of the rows that each write the colour one way.
-pub const COLOR_FORMAT_BASE: u64 = 7_420_100;
-
-/// The end of the rows that each write the colour one way.
-const COLOR_FORMAT_END: u64 = 7_420_200;
-
-/// The first of the squares of colour in the file, one for each colour the language server said.
-pub const COLOR_SWATCH_BASE: u64 = 7_421_000;
-
-/// The end of the squares of colour in the file.
-const COLOR_SWATCH_END: u64 = 7_423_000;
-
 /// How many ways of writing the colour are listed.
 pub const COLOR_FORMATS_SHOWN: usize = 8;
-
-/// The way of writing the colour the row `id` stands for, counted from the first.
-pub fn color_format_of(id: FocusId) -> Option<usize> {
-    (COLOR_FORMAT_BASE..COLOR_FORMAT_END)
-        .contains(&id.0)
-        .then(|| (id.0 - COLOR_FORMAT_BASE) as usize)
-}
-
-/// The colour of the file the square `id` stands for, counted from the first.
-pub fn color_swatch_of(id: FocusId) -> Option<usize> {
-    (COLOR_SWATCH_BASE..COLOR_SWATCH_END)
-        .contains(&id.0)
-        .then(|| (id.0 - COLOR_SWATCH_BASE) as usize)
-}
 
 /// A colour of the file being changed.
 #[derive(Clone, Debug, PartialEq)]
@@ -58,7 +22,7 @@ pub struct ColorPicking {
     /// The colour as it is now, as red, green, blue and opacity from 0 to 255.
     pub color: [u8; 4],
     /// The colour as typed, in hex.
-    pub hex: Field,
+    pub hex: TextFieldState,
     /// The ways the language server offers to write the colour, as it last said.
     pub formats: Vec<ColorPresentation>,
     /// Where the box hangs, in logical pixels of the window.
@@ -67,6 +31,19 @@ pub struct ColorPicking {
     pub loading: bool,
     /// Why the language server could not say, when it could not.
     pub problem: Option<String>,
+}
+
+impl ColorPicking {
+    /// The request asking the language server how the colour held can be written in the file.
+    fn presentations(&self) -> Outgoing {
+        Outgoing::ColorPresentations {
+            session: self.session,
+            path: self.path.clone(),
+            version: self.version,
+            span: self.span,
+            color: self.color,
+        }
+    }
 }
 
 /// The colour as hex: `#rrggbb`, with two more digits for its opacity when it is not fully opaque.
@@ -127,11 +104,11 @@ impl WorkspaceState {
             document.position_of(range.end),
         );
         let version = document.version;
-        let mut hex = Field::new(hex_of(color));
-        hex.apply(Edit::SelectAll);
+        let hex = TextFieldState::new(hex_of(color));
+        hex.select_all();
         self.color_picking = Some(ColorPicking {
             session,
-            path: path.clone(),
+            path,
             version,
             span,
             color,
@@ -141,13 +118,8 @@ impl WorkspaceState {
             loading: true,
             problem: None,
         });
-        self.outbox.push(Outgoing::ColorPresentations {
-            session,
-            path,
-            version,
-            span,
-            color,
-        });
+        self.outbox
+            .extend(self.color_picking.as_ref().map(ColorPicking::presentations));
         self
     }
 
@@ -162,26 +134,19 @@ impl WorkspaceState {
         self
     }
 
-    /// Takes `edit` to the hex typed in the box; when it spells a colour other than the one held, the language server is asked how that can be written.
-    pub(crate) fn color_hex_edited(&mut self, edit: Edit) {
+    /// Takes in the hex the reader typed in the box; when it spells a colour other than the one held, the language server is asked how that can be written.
+    pub(crate) fn color_hex_typed(&mut self) {
         let Some(picking) = self.color_picking.as_mut() else {
             return;
         };
-        picking.hex.apply(edit);
-        let Some(color) = color_of(picking.hex.text()).filter(|color| *color != picking.color)
+        let Some(color) = color_of(&picking.hex.text()).filter(|color| *color != picking.color)
         else {
             return;
         };
         picking.color = color;
         picking.loading = true;
         picking.problem = None;
-        let request = Outgoing::ColorPresentations {
-            session: picking.session,
-            path: picking.path.clone(),
-            version: picking.version,
-            span: picking.span,
-            color,
-        };
+        let request = picking.presentations();
         self.outbox.push(request);
     }
 

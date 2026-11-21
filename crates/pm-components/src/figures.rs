@@ -1,26 +1,26 @@
 //! The pictures a markdown source shows: diagrams written as fenced mermaid code, formulas written in TeX and images it names, each drawn or fetched into pixels and kept under a key.
 
+use crate::events;
+use crate::target::Target;
+use crate::theme;
+use rustle::TextOverflow;
+use rustle::{Alignment, row_arranged};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use pm_input::FocusId;
 use pm_markdown::{Block, Image};
-use pm_style::{
-    Role, cursor_pointer, flex, flex_none, flex_wrap, gap, h_px, items_end, justify_center, w_full,
-    w_px,
-};
-use pm_ui::{Node, Picture, node};
+use rustle::{Arrangement, FlowOptions, Modifier};
 
-use crate::parts::line;
 use crate::preview::linked_path;
 use crate::state::{Outgoing, WorkspaceState};
+use crate::theme::{Role, sp};
 
 /// Pixels a figure was drawn into, and how many of them fall on one logical pixel.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Drawing {
     /// The pixels.
-    pub picture: Picture,
+    pub picture: rustle::ImageData,
     /// How many pixels fall on one logical pixel across: more than one for a picture drawn sharp for a dense screen.
     pub density: f32,
 }
@@ -29,8 +29,8 @@ impl Drawing {
     /// How wide and tall the drawing is at its own size, in logical pixels.
     pub(crate) fn size(&self) -> (f32, f32) {
         (
-            self.picture.width as f32 / self.density,
-            self.picture.height as f32 / self.density,
+            self.picture.width() as f32 / self.density,
+            self.picture.height() as f32 / self.density,
         )
     }
 }
@@ -66,7 +66,7 @@ pub fn is_diagram(language: &str) -> bool {
 }
 
 /// `value` hashed into the key a figure is kept under.
-fn key_of(value: impl Hash) -> u64 {
+pub(crate) fn key_of(value: impl Hash) -> u64 {
     let mut hasher = DefaultHasher::new();
     value.hash(&mut hasher);
     hasher.finish()
@@ -194,26 +194,35 @@ pub(crate) fn figure_marks(source: &str, place: Option<&str>, figures: &Figures)
         .iter()
         .map(|(key, _)| match figures.get(key) {
             None => 0,
-            Some(Ok(drawing)) => drawing.picture.key,
+            Some(Ok(drawing)) => drawing.picture.id(),
             Some(Err(_)) => 1,
         })
         .collect()
 }
 
-/// `drawing` `across` by `down` logical pixels.
-fn drawn(drawing: &Drawing, across: f32, down: f32) -> Node {
-    node()
-        .styles([w_px(across), h_px(down), flex_none()])
-        .picture(drawing.picture.clone())
+/// Emits `drawing` `across` by `down` logical pixels, with `modifier` around it.
+#[track_caller]
+fn drawn(modifier: Modifier, drawing: &Drawing, across: f32, down: f32) {
+    rustle::image(
+        modifier.width(across).height(down),
+        &drawing.picture,
+        rustle::ContentScale::Crop,
+    );
 }
 
-/// `drawing`, a drawn diagram or formula, at its own size or shrunk to `width` logical pixels, in the middle of a row that wide.
-pub(crate) fn diagram_node(drawing: &Drawing, width: f32) -> Node {
+/// Emits `drawing`, a drawn diagram or formula, at its own size or shrunk to `width` logical pixels, in the middle of a row that wide.
+#[track_caller]
+pub(crate) fn diagram_node(drawing: &Drawing, width: f32) {
     let (across, down) = drawing.size();
     let fit = (width / across.max(1.0)).min(1.0);
-    node()
-        .styles([flex(), justify_center(), w_full(), flex_none()])
-        .child(drawn(drawing, across * fit, down * fit))
+    row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::Center,
+        Alignment::Start,
+        || {
+            drawn(Modifier::new(), drawing, across * fit, down * fit);
+        },
+    );
 }
 
 /// How big `image` is drawn from `drawing`: the size the source asks for, the other side following the picture's shape when only one is asked, or else the drawing's own size, shrunk to `width` logical pixels.
@@ -230,34 +239,54 @@ fn image_size(image: &Image, drawing: &Drawing, width: f32) -> (f32, f32) {
     (across * fit, down * fit)
 }
 
-/// `images` side by side, wrapping onto more rows within `width` logical pixels and set in the middle when `centered`, each drawn as `figures` holds it under `key`, and its words in `pixels` tall type in its place until then; an image that is the face of a link answers to the link's name from `links` up.
+/// The modifier of a run or an image that is the face of the link numbered `target` from one, which answers to the link's name counted from `links` when links can be pressed; an empty modifier for no link.
+pub(crate) fn link_press(links: Option<Target>, target: impl Into<usize>) -> Modifier {
+    match (links, target.into()) {
+        (Some(base), target) if target > 0 => {
+            let id = base.offset(target - 1);
+            events::pressed(Modifier::new(), id)
+        }
+        _ => Modifier::new(),
+    }
+}
+
+/// Emits `images` side by side, wrapping onto more rows within `width` logical pixels and set in the middle when `centered`, each drawn as `figures` holds it under `key`, and its words in `pixels` tall type in its place until then; an image that is the face of a link answers to the link's name from `links` up.
 pub(crate) fn images_node(
     images: &[Image],
     centered: bool,
     figures: Option<&Figures>,
     key: impl Fn(&Image) -> u64,
-    (links, pixels, width): (Option<u64>, u32, f32),
-) -> Node {
-    let mut row = node().styles([flex(), flex_wrap(), items_end(), gap(1.5), w_full()]);
-    if centered {
-        row = row.styles([justify_center()]);
-    }
-    row.children(images.iter().filter_map(|image| {
-        let shown = match figures.and_then(|figures| figures.get(&key(image))) {
-            Some(Ok(drawing)) => {
-                let (across, down) = image_size(image, drawing, width);
-                drawn(drawing, across, down)
+    (links, pixels, width): (Option<Target>, u32, f32),
+) {
+    let arrangement = if centered {
+        Arrangement::Center
+    } else {
+        Arrangement::Start
+    };
+    rustle::flow_row_with(
+        Modifier::new().fill_max_width(),
+        FlowOptions::new(sp(1.5), sp(1.5))
+            .arrangement(arrangement)
+            .item_alignment(rustle::Alignment::End),
+        || {
+            for image in images {
+                let modifier = link_press(links, image.target);
+                match figures.and_then(|figures| figures.get(&key(image))) {
+                    Some(Ok(drawing)) => {
+                        let (across, down) = image_size(image, drawing, width);
+                        drawn(modifier, drawing, across, down);
+                    }
+                    _ if image.alt.is_empty() => {}
+                    _ => rustle::basic_text(
+                        modifier,
+                        &image.alt,
+                        theme::line(pixels.saturating_sub(1), Role::Subtle),
+                        TextOverflow::Ellipsis,
+                    ),
+                }
             }
-            _ if image.alt.is_empty() => return None,
-            _ => line(&image.alt, pixels.saturating_sub(1), 1.4, Role::Subtle),
-        };
-        Some(match (links, image.target) {
-            (Some(base), target) if target > 0 => shown
-                .styles([cursor_pointer()])
-                .focusable(FocusId(base + u64::from(target) - 1)),
-            _ => shown,
-        })
-    }))
+        },
+    );
 }
 
 impl WorkspaceState {

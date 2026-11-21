@@ -1,37 +1,17 @@
 //! The page that offers a newer release: its notes, and the button that downloads it and restarts into it.
 
-use pm_input::FocusId;
-use pm_style::{
-    Role, bg, flex, flex_1, flex_col, gap, items_center, min_h, min_w_px, overflow_hidden, px, py,
-    w_full,
-};
-use pm_text::Shaper;
-use pm_ui::{Node, node};
-
+use crate::Markdown;
+use crate::areas::DialogEvent;
+use crate::button;
 use crate::button::Variant;
-use crate::parts::{line, spacer, wrap};
-use crate::size::Size;
+use crate::parts::{line, spacer, title, wrap};
 use crate::state::{Outgoing, WorkspaceState};
+use crate::target::Target;
+use crate::theme;
+use crate::theme::Role;
 use crate::update::{RUNNING, Update};
-use crate::{Button, Markdown};
-
-/// Downloads the release and restarts into it.
-pub const UPDATE_NOW: FocusId = FocusId(7_019);
-
-/// Opens the page of the release.
-pub const UPDATE_PAGE: FocusId = FocusId(7_025);
-
-/// The tab of the release notes in a pane's strip.
-pub const TAB_UPDATE: FocusId = FocusId(7_411_000);
-
-/// Closes the tab of the release notes.
-pub const UPDATE_CLOSE: FocusId = FocusId(7_411_001);
-
-/// Closes the tab of the release notes, or cancels the download first.
-pub const UPDATE_LATER: FocusId = FocusId(7_411_002);
-
-/// The box the notes of the release scroll in.
-pub const UPDATE_SCROLL: FocusId = FocusId(7_026);
+use rustle::Modifier;
+use rustle::{Alignment, Arrangement};
 
 /// The space around the page's column, in logical pixels, which the notes' width is taken from.
 const MARGIN: f32 = 48.0;
@@ -60,7 +40,7 @@ impl WorkspaceState {
     pub(crate) fn open_release(&mut self) {
         if matches!(self.settings_page.release, Some(Update::Newer { .. })) {
             if !self.update_open {
-                self.update_scroll = 0.0;
+                self.update_scroll.jump_to(0.0);
             }
             self.update_open = true;
             self.tab = crate::state::Tab::Update;
@@ -79,12 +59,6 @@ impl WorkspaceState {
                 self.tab = crate::state::Tab::Chat;
             }
         }
-    }
-
-    /// The state after the notes of the update were scrolled by `delta` logical pixels, with `room` pixels to scroll.
-    pub fn scrolled_update(mut self, delta: f32, room: f32) -> Self {
-        self.update_scroll = (self.update_scroll + delta).clamp(0.0, room);
-        self
     }
 
     /// The state knowing how far the download of the update has got.
@@ -114,7 +88,7 @@ impl WorkspaceState {
     }
 
     /// Carries out `action` if it presses the tab of an update, and says whether it did.
-    pub(crate) fn press_update(&mut self, action: FocusId) -> bool {
+    pub(crate) fn press_update(&mut self, action: Target) -> bool {
         let Some(Update::Newer {
             url,
             version,
@@ -125,9 +99,11 @@ impl WorkspaceState {
             return false;
         };
         match action {
-            TAB_UPDATE => self.tab = crate::state::Tab::Update,
-            UPDATE_PAGE => self.outbox.push(Outgoing::Open { address: url }),
-            UPDATE_NOW if blocker.is_none() => {
+            Target::Dialog(DialogEvent::TabUpdate) => self.tab = crate::state::Tab::Update,
+            Target::Dialog(DialogEvent::UpdatePage) => {
+                self.outbox.push(Outgoing::Open { address: url })
+            }
+            Target::Dialog(DialogEvent::UpdateNow) if blocker.is_none() => {
                 self.update_run = UpdateRun::Downloading {
                     received: 0,
                     total: 0,
@@ -137,19 +113,13 @@ impl WorkspaceState {
                     version,
                 });
             }
-            UPDATE_CLOSE | UPDATE_LATER => self.close_release(),
+            Target::Dialog(DialogEvent::UpdateClose | DialogEvent::UpdateLater) => {
+                self.close_release()
+            }
             _ => return false,
         }
         true
     }
-}
-
-/// A button of the window, saying `label`.
-fn button(label: &str, id: FocusId, variant: Variant) -> Node {
-    Button::new(label, id)
-        .variant(variant)
-        .size(Size::Sm)
-        .build()
 }
 
 /// What the window says under the notes about how the update is going, when it says anything.
@@ -166,8 +136,9 @@ fn status(state: &WorkspaceState, blocker: Option<&str>) -> Option<String> {
     }
 }
 
-/// The page, `width` logical pixels across, that offers `update`, the newer release found, with its notes.
-pub fn page(state: &WorkspaceState, update: &Update, width: f32, shaper: &mut Shaper) -> Node {
+/// Emits the page, `width` logical pixels across, that offers `update`, the newer release found, with its notes; nothing when `update` is not a newer release.
+#[track_caller]
+pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
     let Update::Newer {
         name,
         published,
@@ -176,76 +147,87 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32, shaper: &mut Sh
         ..
     } = update
     else {
-        return node();
+        return;
     };
     let text_width = width - 2.0 * MARGIN;
     let date = published
         .as_deref()
         .map(|date| format!(", published {}", date.split('T').next().unwrap_or(date)))
         .unwrap_or_default();
-    let mut column = node()
-        .styles([
-            flex(),
-            flex_col(),
-            gap(3),
-            flex_1(),
-            min_h(0),
-            w_full(),
-            py(8),
-        ])
-        .child(line(name, 22, 1.3, Role::Text).styles([pm_style::font_medium()]))
-        .child(line(
-            format!("This is {RUNNING}{date}."),
-            13,
-            1.4,
-            Role::Muted,
-        ));
-    if let Some(notes) = body {
-        column = column.child(
-            node()
-                .styles([flex_1(), min_h(0), overflow_hidden()])
-                .scroll_from_start(UPDATE_SCROLL, state.update_scroll)
-                .child(Markdown::new(notes, text_width).build(shaper)),
-        );
-    } else {
-        column = column.child(node().styles([flex_1()]));
-    }
     let said = status(state, blocker.as_deref());
     let busy = matches!(
         state.update_run,
         UpdateRun::Downloading { .. } | UpdateRun::Installing
     );
-    let mut buttons = node()
-        .styles([flex(), items_center(), gap(2)])
-        .child(button("View on GitHub", UPDATE_PAGE, Variant::Ghost))
-        .child(spacer());
-    if !matches!(state.update_run, UpdateRun::Installing) {
-        buttons = buttons.child(button(
-            if busy { "Cancel" } else { "Later" },
-            UPDATE_LATER,
-            Variant::Ghost,
-        ));
-    }
-    if !busy && blocker.is_none() {
-        buttons = buttons.child(button("Update and Restart", UPDATE_NOW, Variant::Default));
-    }
-    let column = column
-        .children(said.map(|said| {
-            node().styles([flex(), flex_col()]).children(
-                wrap(&said, 13, text_width)
-                    .iter()
-                    .map(|words| line(words, 13, 1.5, Role::Muted)),
-            )
-        }))
-        .child(buttons);
-    node()
-        .styles([
-            flex(),
-            flex_1(),
-            min_w_px(0),
-            min_h(0),
-            px(6),
-            bg(Role::Background),
-        ])
-        .child(column)
+    let installing = matches!(state.update_run, UpdateRun::Installing);
+    rustle::row_arranged(
+        Modifier::new()
+            .weight(1.0)
+            .background(theme::color(Role::Background))
+            .padding_xy(theme::sp(6), 0.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            rustle::column_arranged(
+                Modifier::new()
+                    .fill_max_height()
+                    .weight(1.0)
+                    .fill_max_width()
+                    .padding_xy(0.0, theme::sp(8)),
+                Arrangement::SpacedBy(theme::sp(3)),
+                Alignment::Start,
+                || {
+                    title(name, 22, 1.3);
+                    line(format!("This is {RUNNING}{date}."), 13, 1.4, Role::Muted);
+                    if let Some(notes) = body {
+                        rustle::column_with(
+                            Modifier::new()
+                                .fill_max_width()
+                                .weight(1.0)
+                                .clip()
+                                .vertical_scroll(&state.update_scroll)
+                                .fill_max_width(),
+                            || Markdown::new(notes, text_width).build(),
+                        );
+                    } else {
+                        spacer();
+                    }
+                    if let Some(said) = said {
+                        rustle::column_arranged(
+                            Modifier::new(),
+                            Arrangement::Start,
+                            Alignment::Start,
+                            || {
+                                for words in wrap(&said, 13, text_width) {
+                                    line(words, 13, 1.5, Role::Muted);
+                                }
+                            },
+                        );
+                    }
+                    rustle::row_arranged(
+                        Modifier::new().fill_max_width(),
+                        Arrangement::SpacedBy(theme::sp(2)),
+                        Alignment::Center,
+                        || {
+                            let page = Target::Dialog(DialogEvent::UpdatePage);
+                            button::action("View on GitHub", page, Variant::Ghost);
+                            spacer();
+                            if !installing {
+                                let later = if busy { "Cancel" } else { "Later" };
+                                button::action(
+                                    later,
+                                    Target::Dialog(DialogEvent::UpdateLater),
+                                    Variant::Ghost,
+                                );
+                            }
+                            if !busy && blocker.is_none() {
+                                let now = Target::Dialog(DialogEvent::UpdateNow);
+                                button::action("Update and Restart", now, Variant::Default);
+                            }
+                        },
+                    );
+                },
+            );
+        },
+    );
 }

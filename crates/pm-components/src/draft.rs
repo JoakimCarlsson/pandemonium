@@ -1,34 +1,11 @@
 //! The answers being given to a form of questions the agent asked, and what pressing its buttons does.
 
+use crate::areas::ChatEvent;
+use crate::target::Target;
 use pm_harness::{Inquiry, Question, Reply};
-use pm_input::FocusId;
-use pm_text::Field;
+use rustle::TextFieldState;
 
 use crate::state::{Outgoing, Page, WorkspaceState};
-
-/// The first of the rows picking an answer; the rest follow it.
-pub const PICK_BASE: u64 = 5200;
-
-/// The field the reader types an answer of their own in.
-pub const OTHER: FocusId = FocusId(5290);
-
-/// Moves on to the next question, or hands the answers to the agent after the last.
-pub const NEXT: FocusId = FocusId(5291);
-
-/// Leaves the question unanswered and moves on.
-pub const SKIP: FocusId = FocusId(5292);
-
-/// Abandons the form.
-pub const CLOSE: FocusId = FocusId(5293);
-
-/// Folds the form down to its title, or opens it again.
-pub const FOLD: FocusId = FocusId(5294);
-
-/// Starts typing an answer of the reader's own.
-pub const TYPE_OWN: FocusId = FocusId(5295);
-
-/// The first of the buttons that open the mockup of an answer larger; the answer at `i` is `MOCKUP_OPEN_BASE + i`.
-pub const MOCKUP_OPEN_BASE: u64 = 5240;
 
 /// The most answers of a question that have a button to open their mockup larger, which is what fits between the buttons' first name and the next name taken.
 const MOCKUPS: usize = 40;
@@ -43,7 +20,7 @@ pub struct Draft {
     /// The alternatives picked for each question, by position.
     pub picks: Vec<Vec<usize>>,
     /// What was typed as an answer of the reader's own for each question.
-    pub others: Vec<Field>,
+    pub others: Vec<TextFieldState>,
     /// Whether the form is folded down to its title.
     pub folded: bool,
 }
@@ -56,7 +33,7 @@ impl Draft {
             inquiry,
             step: 0,
             picks: vec![Vec::new(); count],
-            others: vec![Field::default(); count],
+            others: vec![TextFieldState::default(); count],
             folded: false,
         }
     }
@@ -121,55 +98,50 @@ impl WorkspaceState {
     }
 
     /// The field the reader types their own answer in, while a form is open.
-    pub fn other_field(&self) -> Option<&Field> {
+    pub fn other_field(&self) -> Option<&TextFieldState> {
         self.draft().map(|draft| &draft.others[draft.step])
     }
 
     /// What pressing the key for the number `digit` presses, while a form is open and not folded.
-    pub fn inquiry_hotkey(&self, digit: usize) -> Option<FocusId> {
+    pub fn inquiry_hotkey(&self, digit: usize) -> Option<Target> {
         let draft = self.draft().filter(|draft| !draft.folded)?;
         let count = draft.question().alternatives.len();
         match digit.checked_sub(1)? {
-            index if index < count => Some(FocusId(PICK_BASE + index as u64)),
-            index if index == count => Some(TYPE_OWN),
+            index if index < count => Some(Target::Chat(ChatEvent::InquiryPick(index))),
+            index if index == count => Some(Target::Chat(ChatEvent::TypeOwn)),
             _ => None,
         }
     }
 
     /// What pressing the button `id` does to the open form, when it is one of the form's.
-    pub fn press_inquiry(&mut self, id: FocusId) -> bool {
-        let FocusId(number) = id;
+    pub fn press_inquiry(&mut self, id: Target) -> bool {
         let options = self
             .draft()
             .map_or(0, |draft| draft.question().alternatives.len());
-        if let Some(index) = number
-            .checked_sub(PICK_BASE)
-            .map(|offset| offset as usize)
-            .filter(|index| *index < options)
+        if let Target::Chat(ChatEvent::InquiryPick(index)) = id
+            && index < options
         {
             if let Some(draft) = self.draft_mut() {
                 draft.toggle(index);
             }
             return true;
         }
-        if let Some(index) = number
-            .checked_sub(MOCKUP_OPEN_BASE)
-            .map(|offset| offset as usize)
-            .filter(|index| *index < options.min(MOCKUPS))
+        if let Target::Chat(ChatEvent::MockupOpen(index)) = id
+            && index < options.min(MOCKUPS)
         {
             self.open_mockup(index);
             return true;
         }
         match id {
-            NEXT => self.advance(true),
-            SKIP => self.advance(false),
-            CLOSE => self.abandon(),
-            FOLD => {
+            Target::Chat(ChatEvent::Next) => self.advance(true),
+            Target::Chat(ChatEvent::Skip) => self.advance(false),
+            Target::Chat(ChatEvent::Close) => self.hand_over(false),
+            Target::Chat(ChatEvent::Fold) => {
                 if let Some(draft) = self.draft_mut() {
                     draft.folded = !draft.folded;
                 }
             }
-            TYPE_OWN => {}
+            Target::Chat(ChatEvent::TypeOwn) => {}
             _ => return false,
         }
         true
@@ -197,7 +169,7 @@ impl WorkspaceState {
         if !keep {
             let step = draft.step;
             draft.picks[step].clear();
-            draft.others[step] = Field::default();
+            draft.others[step] = TextFieldState::default();
         }
         if !draft.last() {
             draft.step += 1;
@@ -206,12 +178,7 @@ impl WorkspaceState {
         self.hand_over(true);
     }
 
-    /// Abandons the form, which aborts what the agent was doing with it.
-    fn abandon(&mut self) {
-        self.hand_over(false);
-    }
-
-    /// Takes the form off the open session and queues its answers, or its abandoning when `answers` is false.
+    /// Takes the form off the open session and queues its answers, or, when `answers` is false, its abandoning, which aborts what the agent was doing with it.
     fn hand_over(&mut self, answers: bool) {
         let Page::Session(open) = self.page else {
             return;
@@ -271,23 +238,29 @@ mod tests {
     #[test]
     fn a_tile_picks_one_answer_of_a_single_choice() {
         let mut state = asked(false);
-        assert!(state.press_inquiry(FocusId(PICK_BASE)));
-        assert!(state.press_inquiry(FocusId(PICK_BASE + 1)));
+        assert!(state.press_inquiry(Target::Chat(ChatEvent::InquiryPick(0))));
+        assert!(state.press_inquiry(Target::Chat(ChatEvent::InquiryPick(1))));
         assert_eq!(state.draft().unwrap().picks[0], vec![1]);
-        assert!(state.press_inquiry(FocusId(PICK_BASE + 1)));
+        assert!(state.press_inquiry(Target::Chat(ChatEvent::InquiryPick(1))));
         assert!(state.draft().unwrap().picks[0].is_empty());
-        assert_eq!(state.inquiry_hotkey(2), Some(FocusId(PICK_BASE + 1)));
-        assert_eq!(state.inquiry_hotkey(4), Some(TYPE_OWN));
+        assert_eq!(
+            state.inquiry_hotkey(2),
+            Some(Target::Chat(ChatEvent::InquiryPick(1)))
+        );
+        assert_eq!(
+            state.inquiry_hotkey(4),
+            Some(Target::Chat(ChatEvent::TypeOwn))
+        );
     }
 
     /// A question that takes several answers keeps every tile pressed, and the answers go to the agent by their labels.
     #[test]
     fn tiles_of_a_multiple_choice_are_picked_together() {
         let mut state = asked(true);
-        state.press_inquiry(FocusId(PICK_BASE));
-        state.press_inquiry(FocusId(PICK_BASE + 2));
+        state.press_inquiry(Target::Chat(ChatEvent::InquiryPick(0)));
+        state.press_inquiry(Target::Chat(ChatEvent::InquiryPick(2)));
         assert_eq!(state.draft().unwrap().picks[0], vec![0, 2]);
-        state.press_inquiry(NEXT);
+        state.press_inquiry(Target::Chat(ChatEvent::Next));
         assert!(state.draft().is_none());
         assert!(state.outbox.iter().any(|asked| matches!(
             asked,
@@ -300,14 +273,14 @@ mod tests {
     #[test]
     fn a_mockup_opens_larger_without_picking_its_answer() {
         let mut state = asked(false);
-        assert!(state.press_inquiry(FocusId(MOCKUP_OPEN_BASE + 1)));
+        assert!(state.press_inquiry(Target::Chat(ChatEvent::MockupOpen(1))));
         assert!(state.draft().unwrap().picks[0].is_empty());
         let browser = state.browser.as_ref().unwrap();
         assert_eq!(&*browser.sealed.as_ref().unwrap().html, "<p>b</p>");
         assert_eq!(state.tab, Tab::Browser);
         let tabs = browser.tabs.len();
-        assert!(state.press_inquiry(FocusId(MOCKUP_OPEN_BASE + 2)));
+        assert!(state.press_inquiry(Target::Chat(ChatEvent::MockupOpen(2))));
         assert_eq!(state.browser.as_ref().unwrap().tabs.len(), tabs);
-        assert!(!state.press_inquiry(FocusId(MOCKUP_OPEN_BASE + 3)));
+        assert!(!state.press_inquiry(Target::Chat(ChatEvent::MockupOpen(3))));
     }
 }

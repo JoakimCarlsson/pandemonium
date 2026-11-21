@@ -1,25 +1,23 @@
 //! Markdown: a source laid out as paragraphs, headings, lists, code, quotes, fold-outs, rules and tables.
 
-use std::hash::{DefaultHasher, Hash, Hasher};
+use crate::events::{Event, send};
+use crate::icons;
+use crate::theme;
+use crate::theme::Frame;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
-use pm_icon::IconName;
-use pm_input::FocusId;
 use pm_markdown::{Block, Inline, Span};
-use pm_style::{
-    Radius, Role, Sides, Style, Utility, bg, border, border_color, border_t, border_width,
-    cursor_pointer, flex, flex_1, flex_col, flex_none, font_mono, font_semibold, gap, gap_x, h_px,
-    italic, items_center, leading_ratio, line_through, min_w_px, ml, my, overflow_hidden, padding,
-    pl, px, py, rounded, rounded_full, size, text_color, text_px, underline, w_full, w_px,
-};
-use pm_text::Shaper;
-use pm_ui::{Node, node, retained, text};
+use rustle::{CursorIcon, Modifier};
 
 use crate::CodeBox;
+use crate::events::Interactive;
 use crate::figures::{
     Figures, diagram_key, diagram_node, figure_marks, formula_key, image_key, images_node,
     is_diagram,
 };
 use crate::parts::{glyph, line};
+use crate::target::Target;
+use crate::theme::{Radius, Role};
 
 /// The line height of running text, as a share of its size.
 const LEADING: f32 = 1.57;
@@ -42,7 +40,7 @@ const UNCUT: f32 = 1.0e6;
 /// A markdown source being described: what it says, how wide it is set and in what type.
 ///
 /// Build it with [`Markdown::new`], change it with [`Markdown::size`] and
-/// [`Markdown::tone`], and turn it into a node with [`Markdown::build`].
+/// [`Markdown::tone`], and emit it with [`Markdown::build`].
 #[derive(Clone, Debug)]
 pub struct Markdown<'a> {
     /// The markdown.
@@ -54,11 +52,11 @@ pub struct Markdown<'a> {
     /// The colour of running text.
     tone: Role,
     /// The name of the first fold-out's summary, the rest following it, when they can be pressed.
-    details: Option<u64>,
+    details: Option<Target>,
     /// The fold-outs that are open, by their place in the source; all are when none can be pressed.
     unfolded: Vec<usize>,
     /// The name of the first link, the rest following it in the order [`pm_markdown::links`] gives their addresses, when they can be pressed.
-    links: Option<u64>,
+    links: Option<Target>,
     /// The figures drawn or fetched so far, when diagrams and images are shown as pictures.
     figures: Option<&'a Figures>,
     /// The markdown file the source is, from the root of its repository, which the paths of its images start from; nothing for text in no file.
@@ -93,8 +91,8 @@ impl<'a> Markdown<'a> {
         self
     }
 
-    /// Links that can be pressed, the first answering to `base` and the rest following it in the order [`pm_markdown::links`] gives their addresses.
-    pub fn links(mut self, base: u64) -> Self {
+    /// Links that can be pressed, the first named by `base` and the rest following it in the order [`pm_markdown::links`] gives their addresses, as [`Target::offset`] counts them.
+    pub fn links(mut self, base: Target) -> Self {
         self.links = Some(base);
         self
     }
@@ -106,25 +104,26 @@ impl<'a> Markdown<'a> {
         self
     }
 
-    /// Fold-outs whose summaries are named from `base` up, in the order the
-    /// source has them, closed but for those placed in `unfolded`.
-    pub fn details(mut self, base: u64, unfolded: Vec<usize>) -> Self {
+    /// Fold-outs whose summaries are named from `base` on, in the order the
+    /// source has them as [`Target::offset`] counts them, closed but for those placed in `unfolded`.
+    pub fn details(mut self, base: Target, unfolded: Vec<usize>) -> Self {
         self.details = Some(base);
         self.unfolded = unfolded;
         self
     }
 
-    /// The node that draws the source, its lines broken as `shaper` measures
-    /// them. The source is parsed and laid out once for as long as nothing
-    /// about it changes, and each block once for as long as it stays the
-    /// same, so a reply that grows only lays out its last block again.
-    pub fn build(self, shaper: &mut Shaper) -> Node {
+    /// Emits the source, its lines broken as the type measures them. The
+    /// source is parsed and laid out once for as long as nothing about it
+    /// changes, and each block once for as long as it stays the same, so a
+    /// reply that grows only lays out its last block again.
+    #[track_caller]
+    pub fn build(self) {
         let width = self.width;
         let drawn = self
             .figures
             .map(|figures| figure_marks(self.source, self.place, figures))
             .unwrap_or_default();
-        let whole = hash((
+        let whole = crate::figures::key_of((
             self.source,
             self.pixels,
             self.tone,
@@ -134,69 +133,68 @@ impl<'a> Markdown<'a> {
             &drawn,
             self.place,
         ));
-        retained(whole, width, shaper, |shaper| {
-            let blocks = pm_markdown::parse(self.source);
-            let mut seen = 0;
-            node()
-                .styles([flex(), flex_col(), gap(3)])
-                .children(blocks.iter().map(|block| {
-                    let first = seen;
-                    seen += count_details(std::slice::from_ref(block));
-                    let unfolded: Vec<usize> = self
-                        .unfolded
-                        .iter()
-                        .copied()
-                        .filter(|place| (first..seen).contains(place))
-                        .collect();
-                    let key = hash((
-                        block,
-                        self.pixels,
-                        self.tone,
-                        self.details,
-                        first,
-                        &unfolded,
-                        self.links,
-                        &drawn,
-                    ));
-                    retained(key, width, shaper, |shaper| {
-                        Layout {
-                            pixels: self.pixels,
-                            shaper,
-                            details: self.details,
-                            unfolded,
-                            seen: first,
-                            links: self.links,
-                            figures: self.figures,
-                            place: self.place,
+        rustle::column_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(theme::sp(3)),
+            Alignment::Start,
+            || {
+                rustle::key(whole, || {
+                    rustle::skippable((whole, width.to_bits()), || {
+                        let blocks = pm_markdown::parse(self.source);
+                        let mut seen = 0;
+                        for block in &blocks {
+                            let first = seen;
+                            seen += count_details(std::slice::from_ref(block));
+                            let unfolded: Vec<usize> = self
+                                .unfolded
+                                .iter()
+                                .copied()
+                                .filter(|place| (first..seen).contains(place))
+                                .collect();
+                            let key = crate::figures::key_of((
+                                block,
+                                self.pixels,
+                                self.tone,
+                                self.details,
+                                first,
+                                &unfolded,
+                                self.links,
+                                &drawn,
+                            ));
+                            rustle::key(key, || {
+                                rustle::skippable((key, width.to_bits()), || {
+                                    Layout {
+                                        pixels: self.pixels,
+                                        details: self.details,
+                                        unfolded,
+                                        seen: first,
+                                        links: self.links,
+                                        figures: self.figures,
+                                        place: self.place,
+                                    }
+                                    .block(block, self.tone, width);
+                                });
+                            });
                         }
-                        .block(block, self.tone, width)
-                    })
-                }))
-        })
+                    });
+                });
+            },
+        );
     }
-}
-
-/// `value` hashed, to tell one retained subtree from another.
-fn hash(value: impl Hash) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    value.hash(&mut hasher);
-    hasher.finish()
 }
 
 /// One pass of laying blocks out.
 struct Layout<'s> {
     /// How tall running text is, in logical pixels.
     pixels: u32,
-    /// Measures the text as it will be drawn.
-    shaper: &'s mut Shaper,
     /// The name of the first fold-out's summary, when they can be pressed.
-    details: Option<u64>,
+    details: Option<Target>,
     /// The fold-outs that are open, by their place in the source.
     unfolded: Vec<usize>,
     /// How many fold-outs were laid out or passed over so far.
     seen: usize,
     /// The name of the first link, when links can be pressed.
-    links: Option<u64>,
+    links: Option<Target>,
     /// The figures drawn or fetched so far, when diagrams and images are shown as pictures.
     figures: Option<&'s Figures>,
     /// The markdown file the source is, which the paths of its images start from.
@@ -209,17 +207,29 @@ impl Layout<'_> {
         self.pixels as f32 * LEADING
     }
 
-    /// `blocks` one under the other, `width` wide, running text in `tone`.
-    fn blocks(&mut self, blocks: &[Block], tone: Role, width: f32) -> Node {
-        node()
-            .styles([flex(), flex_col(), gap(3)])
-            .children(blocks.iter().map(|block| self.block(block, tone, width)))
+    /// Emits `blocks` one under the other, `gap` steps apart, in a column with
+    /// `modifier`, `width` wide, running text in `tone`.
+    #[track_caller]
+    fn blocks(&mut self, modifier: Modifier, gap: f32, blocks: &[Block], tone: Role, width: f32) {
+        rustle::column_arranged(
+            modifier,
+            Arrangement::SpacedBy(theme::sp(gap)),
+            Alignment::Start,
+            || {
+                for block in blocks {
+                    self.block(block, tone, width);
+                }
+            },
+        );
     }
 
-    /// One block, `width` wide, running text in `tone`.
-    fn block(&mut self, block: &Block, tone: Role, width: f32) -> Node {
+    /// Emits one block, `width` wide, running text in `tone`.
+    #[track_caller]
+    fn block(&mut self, block: &Block, tone: Role, width: f32) {
         match block {
-            Block::Paragraph(spans) => self.text(spans, self.pixels, false, tone, width),
+            Block::Paragraph(spans) => {
+                self.text(Modifier::new(), spans, self.pixels, false, tone, width)
+            }
             Block::Heading { level, spans } => {
                 let pixels = match level {
                     1 => self.pixels + 6,
@@ -227,7 +237,7 @@ impl Layout<'_> {
                     3 => self.pixels + 1,
                     _ => self.pixels,
                 };
-                self.text(spans, pixels, true, tone, width)
+                self.text(Modifier::new(), spans, pixels, true, tone, width);
             }
             Block::List { start, items } => self.list(*start, items, tone, width),
             Block::Code { language, text } if is_diagram(language) => self.figure(
@@ -237,16 +247,30 @@ impl Layout<'_> {
                 width,
             ),
             Block::Code { text, .. } => self.code(text, width),
-            Block::Quote(blocks) => node()
-                .styles([
-                    flex(),
-                    border_width(Sides::Left, 2.0),
-                    border_color(Role::Border),
-                    pl(QUOTE_INDENT / 4.0 - 0.5),
-                ])
-                .child(self.blocks(blocks, Role::Muted, width - QUOTE_INDENT)),
+            Block::Quote(blocks) => {
+                let inset = theme::sp(QUOTE_INDENT / 4.0 - 0.5);
+                rustle::row_arranged(
+                    Modifier::new().height_intrinsic(rustle::IntrinsicSize::Min),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        rustle::vertical_divider(Modifier::new(), 2.0, theme::color(Role::Border));
+                        self.blocks(
+                            Modifier::new().padding_each(inset, 0.0, 0.0, 0.0),
+                            3.0,
+                            blocks,
+                            Role::Muted,
+                            width - QUOTE_INDENT,
+                        );
+                    },
+                );
+            }
             Block::Details { summary, blocks } => self.fold_out(summary, blocks, tone, width),
-            Block::Rule => node().styles([h_px(1), w_full(), my(1), bg(Role::Border)]),
+            Block::Rule => rustle::horizontal_divider(
+                Modifier::new().padding_xy(0.0, theme::sp(1)),
+                rustle::DividerDefaults::THICKNESS,
+                rustle::DividerDefaults::color(),
+            ),
             Block::Table { head, rows } => self.table(head, rows, tone, width),
             Block::Math(text) => self.figure(
                 text,
@@ -264,8 +288,8 @@ impl Layout<'_> {
         }
     }
 
-    /// A fold-out: a chevron and `summary`, over `blocks` set in past a bar under the chevron when it is open.
-    fn fold_out(&mut self, summary: &[Span], blocks: &[Block], tone: Role, width: f32) -> Node {
+    /// Emits a fold-out: a chevron and `summary`, over `blocks` set in past a bar under the chevron when it is open.
+    fn fold_out(&mut self, summary: &[Span], blocks: &[Block], tone: Role, width: f32) {
         let place = self.seen;
         self.seen += 1;
         let open = self.details.is_none() || self.unfolded.contains(&place);
@@ -279,129 +303,169 @@ impl Layout<'_> {
         } else {
             summary
         };
-        let mut head = node()
-            .styles([flex(), gap_x(1.5), cursor_pointer()])
-            .child(
-                node()
-                    .styles([h_px(height), flex(), items_center(), flex_none()])
-                    .child(glyph(
-                        if open {
-                            IconName::ChevronDown
-                        } else {
-                            IconName::ChevronRight
-                        },
-                        3.5,
-                        Role::Subtle,
-                    )),
-            )
-            .child(
-                self.text(summary, self.pixels, true, tone, width - 20.0)
-                    .styles([flex_1(), min_w_px(0)]),
-            );
+        let mut head = Modifier::new().cursor(CursorIcon::Pointer);
         if let Some(base) = self.details {
-            head = head.focusable(FocusId(base + place as u64));
+            head = head.control(
+                base.offset(place),
+                send(Event::pressing(base.offset(place))),
+            );
         }
-        let fold = node().styles([flex(), flex_col(), gap(2)]).child(head);
-        if !open {
-            self.seen += count_details(blocks);
-            return fold;
-        }
-        fold.child(
-            node()
-                .styles([
-                    flex(),
-                    border_width(Sides::Left, 2.0),
-                    border_color(Role::Border),
-                    ml(1.5),
-                    padding(Sides::Left, INDENT - 8.0),
-                ])
-                .child(self.blocks(blocks, tone, width - INDENT)),
-        )
+        let pixels = self.pixels;
+        rustle::column_arranged(
+            Modifier::new().fill_max_width().width_in(0.0, width),
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Start,
+            || {
+                rustle::row_arranged(
+                    Modifier::new().fill_max_width().chain(head),
+                    Arrangement::SpacedBy(theme::sp(1.5)),
+                    Alignment::Start,
+                    || {
+                        rustle::row_arranged(
+                            Modifier::new().height(height),
+                            Arrangement::Start,
+                            Alignment::Center,
+                            || {
+                                glyph(icons::chevron(open), 3.5, Role::Subtle);
+                            },
+                        );
+                        self.text(
+                            Modifier::new().weight(1.0),
+                            summary,
+                            pixels,
+                            true,
+                            tone,
+                            width - 20.0,
+                        );
+                    },
+                );
+                if !open {
+                    self.seen += count_details(blocks);
+                    return;
+                }
+                let bar = Modifier::new()
+                    .padding_each(theme::sp(1.5), 0.0, 0.0, 0.0)
+                    .height_intrinsic(rustle::IntrinsicSize::Min);
+                rustle::row_arranged(bar, Arrangement::Start, Alignment::Start, || {
+                    rustle::vertical_divider(Modifier::new(), 2.0, theme::color(Role::Border));
+                    self.blocks(
+                        Modifier::new().padding_each(INDENT - 8.0, 0.0, 0.0, 0.0),
+                        3.0,
+                        blocks,
+                        tone,
+                        width - INDENT,
+                    );
+                });
+            },
+        );
     }
 
-    /// A list of `items`, numbered from `start` when it is ordered and dotted when not.
-    fn list(&mut self, start: Option<u64>, items: &[Vec<Block>], tone: Role, width: f32) -> Node {
+    /// Emits a list of `items`, numbered from `start` when it is ordered and dotted when not.
+    #[track_caller]
+    fn list(&mut self, start: Option<u64>, items: &[Vec<Block>], tone: Role, width: f32) {
         let height = self.line_height();
         let pixels = self.pixels;
-        node()
-            .styles([flex(), flex_col(), gap(1.5)])
-            .children(items.iter().enumerate().map(|(index, item)| {
-                let marker = match start {
-                    Some(first) => line(
-                        format!("{}.", first + index as u64),
-                        pixels,
-                        LEADING,
-                        Role::Muted,
-                    ),
-                    None => node().styles([size(1), rounded_full(), bg(Role::Subtle)]),
-                };
-                node()
-                    .styles([flex()])
-                    .child(
-                        node()
-                            .styles([
-                                w_px(INDENT),
-                                h_px(height),
-                                flex(),
-                                items_center(),
-                                flex_none(),
-                            ])
-                            .child(marker),
-                    )
-                    .child(self.blocks(item, tone, width - INDENT).styles([
-                        flex_1(),
-                        min_w_px(0),
-                        gap(1.5),
-                    ]))
-            }))
+        rustle::column_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(theme::sp(1.5)),
+            Alignment::Start,
+            || {
+                for (index, item) in items.iter().enumerate() {
+                    rustle::row_arranged(
+                        Modifier::new(),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            rustle::row_arranged(
+                                Modifier::new().width(INDENT).height(height),
+                                Arrangement::Start,
+                                Alignment::Center,
+                                || match start {
+                                    Some(first) => line(
+                                        format!("{}.", first + index as u64),
+                                        pixels,
+                                        LEADING,
+                                        Role::Muted,
+                                    ),
+                                    None => rustle::spacer(
+                                        Modifier::new()
+                                            .size(theme::sp(1), theme::sp(1))
+                                            .background_rounded(
+                                                theme::color(Role::Subtle),
+                                                Radius::Full.px(),
+                                            ),
+                                    ),
+                                },
+                            );
+                            self.blocks(
+                                Modifier::new().weight(1.0),
+                                1.5,
+                                item,
+                                tone,
+                                width - INDENT,
+                            );
+                        },
+                    );
+                }
+            },
+        );
     }
 
-    /// A block of code in a bordered box, its long lines broken to fit `width`.
-    fn code(&mut self, source: &str, width: f32) -> Node {
-        let styles = [
-            text_px(self.pixels - 1),
-            leading_ratio(1.6),
-            font_mono(),
-            text_color(Role::Text),
-        ];
+    /// Emits a block of code in a bordered box, its long lines broken to fit `width`.
+    #[track_caller]
+    fn code(&mut self, source: &str, width: f32) {
+        let kind = theme::mono_style(self.pixels - 1, 1.6).color(theme::color(Role::Text));
         let room = width - 30.0;
         let mut lines = Vec::new();
         for source_line in source.split('\n') {
             let expanded = source_line.replace('\t', "    ");
-            for piece in pm_ui::wrap(self.shaper, &expanded, styles, room) {
-                lines.push(
-                    node()
-                        .styles([flex(), px(3.5)])
-                        .child(text(&expanded[piece.start..piece.end]).styles(styles)),
-                );
+            for piece in rustle::wrap_at_spaces(&expanded, &kind, room) {
+                lines.push(expanded[piece.start..piece.end].to_owned());
             }
         }
-        CodeBox::new(lines)
-            .max_height(UNCUT)
-            .build()
-            .styles([py(2), my(0)])
+        CodeBox::new(move || {
+            for content in lines {
+                rustle::row_arranged(
+                    Modifier::new().padding_xy(theme::sp(3.5), 0.0),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    move || {
+                        rustle::basic_text(Modifier::new(), content, kind, TextOverflow::Ellipsis);
+                    },
+                );
+            }
+        })
+        .max_height(UNCUT)
+        .modifier(Modifier::new().fill_max_width().width_in(0.0, width))
+        .margin(0.0)
+        .inner(Modifier::new().padding_xy(0.0, theme::sp(2)))
+        .build();
     }
 
-    /// The figure written as `source` and kept under `key`, drawn when its drawing has arrived, and otherwise its source as code, with `failed` under it when it could not be drawn.
-    fn figure(&mut self, source: &str, key: u64, failed: &str, width: f32) -> Node {
+    /// Emits the figure written as `source` and kept under `key`, drawn when its drawing has arrived, and otherwise its source as code, with `failed` under it when it could not be drawn.
+    #[track_caller]
+    fn figure(&mut self, source: &str, key: u64, failed: &str, width: f32) {
         match self.figures.and_then(|figures| figures.get(&key)) {
             Some(Ok(drawing)) => diagram_node(drawing, width),
-            Some(Err(_)) => node()
-                .styles([flex(), flex_col(), gap(1.5)])
-                .child(self.code(source, width))
-                .child(line(failed, self.pixels - 2, 1.4, Role::Subtle)),
+            Some(Err(_)) => {
+                let pixels = self.pixels;
+                rustle::column_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(theme::sp(1.5)),
+                    Alignment::Start,
+                    || {
+                        self.code(source, width);
+                        line(failed, pixels - 2, 1.4, Role::Subtle);
+                    },
+                );
+            }
             None => self.code(source, width),
         }
     }
 
-    /// A table: a shaded heading row over its rows, the columns sharing `width` evenly.
-    fn table(
-        &mut self,
-        head: &[Vec<Span>],
-        rows: &[Vec<Vec<Span>>],
-        tone: Role,
-        width: f32,
-    ) -> Node {
+    /// Emits a table: a shaded heading row over its rows, the columns sharing `width` evenly.
+    #[track_caller]
+    fn table(&mut self, head: &[Vec<Span>], rows: &[Vec<Vec<Span>>], tone: Role, width: f32) {
         let columns = rows
             .iter()
             .map(Vec::len)
@@ -411,43 +475,64 @@ impl Layout<'_> {
             .max(1);
         let cell_width = ((width - 2.0) / columns as f32).floor();
         let pixels = self.pixels - 1;
-        let mut table = node().styles([
-            flex(),
-            flex_col(),
-            rounded(Radius::Lg),
-            border(),
-            border_color(Role::Border),
-            overflow_hidden(),
-        ]);
-        table = table.child(
-            node().styles([flex(), bg(Role::Surface)]).children(
-                head.iter()
-                    .map(|cell| self.cell(cell, pixels, true, tone, cell_width)),
-            ),
-        );
-        for row in rows {
-            table = table.child(
-                node()
-                    .styles([flex(), border_t(), border_color(Role::Border)])
-                    .children(
-                        row.iter()
-                            .map(|cell| self.cell(cell, pixels, false, tone, cell_width)),
-                    ),
+        let own = Modifier::new().outlined(Radius::Lg).clip();
+        rustle::column_arranged(own, Arrangement::Start, Alignment::Start, || {
+            rustle::row_arranged(
+                Modifier::new().background(theme::color(Role::Surface)),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    for cell in head {
+                        self.cell(cell, pixels, true, tone, cell_width);
+                    }
+                },
             );
-        }
-        table
+            for cells in rows {
+                rustle::horizontal_divider(
+                    Modifier::new().width(cells.len() as f32 * cell_width),
+                    1.0,
+                    theme::color(Role::Border),
+                );
+                rustle::row_arranged(
+                    Modifier::new(),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        for cell in cells {
+                            self.cell(cell, pixels, false, tone, cell_width);
+                        }
+                    },
+                );
+            }
+        });
     }
 
-    /// One cell of a table, `width` wide, set heavier when it is a heading.
-    fn cell(&mut self, spans: &[Span], pixels: u32, strong: bool, tone: Role, width: f32) -> Node {
-        node()
-            .styles([w_px(width), flex_none(), px(2.5), py(1.5)])
-            .child(self.text(spans, pixels, strong, tone, width - 20.0))
+    /// Emits one cell of a table, `width` wide, set heavier when it is a heading.
+    #[track_caller]
+    fn cell(&mut self, spans: &[Span], pixels: u32, strong: bool, tone: Role, width: f32) {
+        rustle::column_arranged(
+            Modifier::new()
+                .width(width)
+                .padding_xy(theme::sp(2.5), theme::sp(1.5)),
+            Arrangement::Start,
+            Alignment::Start,
+            || self.text(Modifier::new(), spans, pixels, strong, tone, width - 20.0),
+        );
     }
 
-    /// `spans` broken into lines that fit `width`, set in `pixels` tall type,
-    /// heavier throughout when `strong`, running text in `tone`.
-    fn text(&mut self, spans: &[Span], pixels: u32, strong: bool, tone: Role, width: f32) -> Node {
+    /// Emits `spans` broken into lines that fit `width`, set in `pixels` tall
+    /// type, heavier throughout when `strong`, running text in `tone`, in a
+    /// column with `modifier`.
+    #[track_caller]
+    fn text(
+        &mut self,
+        modifier: Modifier,
+        spans: &[Span],
+        pixels: u32,
+        strong: bool,
+        tone: Role,
+        width: f32,
+    ) {
         let mut lines: Vec<Vec<(String, Inline)>> = vec![Vec::new()];
         let mut used = 0.0;
         for span in spans {
@@ -480,21 +565,22 @@ impl Layout<'_> {
             }
         }
         let height = pixels as f32 * LEADING;
-        node()
-            .styles([flex(), flex_col()])
-            .children(lines.into_iter().map(|runs| {
-                node()
-                    .styles([flex(), items_center(), h_px(height)])
-                    .children(runs.into_iter().map(|(content, inline)| {
-                        let piece = run(content, inline, pixels, strong, tone);
-                        match (self.links, inline.target) {
-                            (Some(base), target) if target > 0 => piece
-                                .styles([cursor_pointer()])
-                                .focusable(FocusId(base + u64::from(target) - 1)),
-                            _ => piece,
+        let links = self.links;
+        rustle::column_arranged(modifier, Arrangement::Start, Alignment::Start, move || {
+            for runs in lines {
+                rustle::row_arranged(
+                    Modifier::new().height(height),
+                    Arrangement::Start,
+                    Alignment::Center,
+                    move || {
+                        for (content, inline) in runs {
+                            let pressed = crate::figures::link_press(links, inline.target);
+                            run(pressed, content, inline, pixels, strong, tone);
                         }
-                    }))
-            }))
+                    },
+                );
+            }
+        });
     }
 
     /// `word` cut into pieces no wider than `width`; one piece when it fits.
@@ -524,9 +610,9 @@ impl Layout<'_> {
 
     /// How wide `content` is when set as `inline` in `pixels` tall type, heavier when `strong`.
     fn measure(&mut self, content: &str, inline: Inline, pixels: u32, strong: bool) -> f32 {
-        let mut style = Style::default();
-        style.extend(setting(inline, pixels, strong));
-        self.shaper.measure(content, &style.base().typography).width
+        rustle::layout_text(content, &setting(inline, pixels, strong), None)
+            .size()
+            .width
     }
 }
 
@@ -554,50 +640,47 @@ fn opening(line: &[(String, Inline)], inline: Inline) -> f32 {
     }
 }
 
-/// The typography of text set as `inline` in `pixels` tall type, heavier when `strong`.
-fn setting(inline: Inline, pixels: u32, strong: bool) -> Vec<Utility> {
-    let mut utilities = Vec::new();
-    if inline.code {
-        utilities.push(text_px(pixels - 1));
-        utilities.push(leading_ratio(
+/// The type of text set as `inline` in `pixels` tall type, heavier when `strong`.
+fn setting(inline: Inline, pixels: u32, strong: bool) -> rustle::TextStyle {
+    let mut kind = if inline.code {
+        theme::mono_style(
+            pixels - 1,
             pixels as f32 * CODE_LEADING / (pixels - 1) as f32,
-        ));
-        utilities.push(font_mono());
+        )
     } else {
-        utilities.push(text_px(pixels));
-        utilities.push(leading_ratio(LEADING));
-    }
+        theme::text_style(pixels, LEADING)
+    };
     if strong || inline.strong {
-        utilities.push(font_semibold());
+        kind = kind.font_weight(rustle::FontWeight::SEMI_BOLD);
     }
     if inline.emphasis {
-        utilities.push(italic());
+        kind = kind.italic();
     }
     if inline.strike {
-        utilities.push(line_through());
+        kind = kind.strikethrough();
     }
     if inline.link {
-        utilities.push(underline());
+        kind = kind.underline();
     }
-    utilities
+    kind
 }
 
-/// One run of `content` set as `inline`, in `tone` unless it is a link or struck.
-fn run(content: String, inline: Inline, pixels: u32, strong: bool, tone: Role) -> Node {
+/// Emits one run of `content` set as `inline`, in `tone` unless it is a link or struck, inside
+/// `modifier` (what makes a link pressable), on a shaded rounded backing when it is code.
+#[track_caller]
+fn run(modifier: Modifier, content: String, inline: Inline, pixels: u32, strong: bool, tone: Role) {
     let colour = match inline {
         Inline { link: true, .. } => Role::Accent,
         Inline { strike: true, .. } => Role::Muted,
         _ => tone,
     };
-    let piece = text(content)
-        .styles(setting(inline, pixels, strong))
-        .styles([text_color(colour), flex_none()]);
-    match inline.code {
-        true => piece.styles([
-            padding(Sides::Horizontal, CODE_PAD),
-            rounded(Radius::Sm),
-            bg(Role::SurfaceHover),
-        ]),
-        false => piece,
-    }
+    let kind = setting(inline, pixels, strong).color(theme::color(colour));
+    let modifier = match inline.code {
+        true => Modifier::new()
+            .background_rounded(theme::color(Role::SurfaceHover), Radius::Sm.px())
+            .chain(modifier)
+            .padding_xy(CODE_PAD, 0.0),
+        false => modifier,
+    };
+    rustle::basic_text(modifier, content, kind, TextOverflow::Ellipsis);
 }

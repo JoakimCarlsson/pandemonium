@@ -1,20 +1,32 @@
 //! Lines of files shown as one document, one under another, each edited in place in the file it comes from: the lines around the hits of a search, the lines a set of changes touched, or a file set against one of the states it was saved in.
 
-use std::ops::Range;
+use crate::areas::EditorEvent;
+use crate::areas::SearchEvent;
+use crate::button;
+use crate::button::Variant;
+use crate::events;
+use crate::icons;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
-use pm_icon::IconName;
-use pm_input::FocusId;
+use crate::events::{Event, send};
+use crate::target::Target;
+use crate::theme;
+use rustle::{Icon, phosphor};
+
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::ops::Range;
+use std::rc::Rc;
+
+use crate::events::Interactive;
+use crate::marked::{Mark, Paint};
+use crate::theme::Role;
 use pm_protocol::Location;
-use pm_style::{
-    Color, Role, bg, border_b, border_color, cursor_pointer, cursor_text, flex, flex_1, flex_col,
-    flex_none, font_medium, gap, h_px, items_center, min_h, min_w_px, overflow_hidden, pr, px,
-    truncate, w, w_px,
-};
-use pm_ui::{Mark, Node, Paint, node};
+use rustle::{CursorIcon, Modifier};
 
 use crate::file_icon::file_icon;
-use crate::open_files::{Contents, EDITOR_FIELD, Viewer};
-use crate::parts::{glyph, line};
+use crate::open_files::{Contents, Viewer};
+use crate::parts::glyph;
 use crate::sample::DiffLine;
 use crate::size::Size;
 use crate::state::{Tab, WorkspaceState};
@@ -23,47 +35,11 @@ use crate::viewer::{
 };
 use crate::{Button, Tally};
 
-/// The tab of the excerpts in a pane's strip.
-pub const TAB_EXCERPTS: FocusId = FocusId(7_410_000);
-
-/// Closes the excerpts.
-pub const EXCERPTS_CLOSE: FocusId = FocusId(7_410_001);
-
-/// The scrolling box of the excerpts.
-pub const EXCERPTS_SCROLL: FocusId = FocusId(7_410_002);
-
-/// Puts the file shown back as it was in the state it is set against.
-pub const EXCERPTS_RESTORE: FocusId = FocusId(7_410_003);
-
-/// Folds every file of the excerpts away, or opens them all when they are all folded.
-pub const EXCERPTS_FOLD_ALL: FocusId = FocusId(7_410_004);
-
-/// The first of the headers that open a file, each following it by the position of the file in the excerpts.
-pub const EXCERPTS_FILE_BASE: u64 = 7_411_000;
-
-/// The first of the boxes holding the lines of a file that is not the one being edited, each following it by the position of the file among the open files; a press on one makes that file the one edited.
-pub const EXCERPT_OWNER_BASE: u64 = 7_412_000;
-
-/// One past the last box holding lines of a file that is not the one being edited.
-const EXCERPT_OWNER_END: u64 = 7_413_000;
-
-/// Takes everything the turn shown changed back out of the files.
-pub const EXCERPTS_UNDO_ALL: FocusId = FocusId(7_410_005);
-
-/// The first of the buttons taking what the turn shown changed back out of one file, each following it by the position of the file in the excerpts.
-pub const EXCERPT_UNDO_BASE: u64 = 7_413_000;
-
-/// One past the last button taking a turn's changes back out of one file.
-const EXCERPT_UNDO_END: u64 = 7_414_000;
-
 /// How many lines are shown on each side of a hit.
 const CONTEXT: usize = 2;
 
 /// How tall the space under each excerpt is, in logical pixels.
 const GAP: f32 = 12.0;
-
-/// How far beyond the view, above and below, excerpts are still built, in logical pixels.
-const OVERSCAN: f32 = 200.0;
 
 /// A run of lines of a file shown together, and the lines in it that are hits.
 #[derive(Clone, Debug, PartialEq)]
@@ -169,8 +145,8 @@ pub struct Excerpts {
     pub source: Source,
     /// The files, in the order they are listed.
     pub files: Vec<ExcerptFile>,
-    /// How far down it is scrolled, in logical pixels.
-    pub scroll: f32,
+    /// The list of the headers and lines, which says how far down it is scrolled.
+    pub scroll: rustle::LazyListState,
 }
 
 impl Excerpts {
@@ -188,12 +164,12 @@ impl Excerpts {
     }
 
     /// The glyph of the tab of the excerpts.
-    pub fn icon(&self) -> IconName {
+    pub fn icon(&self) -> Icon {
         match &self.source {
-            Source::Search { .. } => IconName::Search,
-            Source::Revision { .. } => IconName::GitCompare,
-            Source::Timeline { .. } => IconName::History,
-            Source::Conflict(_) => IconName::GitFork,
+            Source::Search { .. } => phosphor::MAGNIFYING_GLASS,
+            Source::Revision { .. } => phosphor::GIT_DIFF,
+            Source::Timeline { .. } => phosphor::CLOCK_COUNTER_CLOCKWISE,
+            Source::Conflict(_) => phosphor::GIT_FORK,
         }
     }
 
@@ -230,20 +206,21 @@ fn blocks_of(lines: &[usize]) -> Vec<Block> {
     blocks
 }
 
-/// Whether `id` is the box of lines of a file that is not the one being edited.
-pub fn is_excerpt_owner(id: FocusId) -> bool {
-    (EXCERPT_OWNER_BASE..EXCERPT_OWNER_END).contains(&id.0)
-}
-
 /// Whether `id` is something of the excerpts the state handles when it is pressed.
-pub fn is_excerpt_part(id: FocusId) -> bool {
-    id == TAB_EXCERPTS
-        || id == EXCERPTS_CLOSE
-        || id == EXCERPTS_RESTORE
-        || id == EXCERPTS_FOLD_ALL
-        || id == EXCERPTS_UNDO_ALL
-        || (EXCERPTS_FILE_BASE..EXCERPT_UNDO_END).contains(&id.0)
-        || crate::conflict::is_conflict_part(id)
+pub fn is_excerpt_part(id: Target) -> bool {
+    matches!(
+        id,
+        Target::Search(
+            SearchEvent::TabExcerpts
+                | SearchEvent::ExcerptsClose
+                | SearchEvent::ExcerptsRestore
+                | SearchEvent::ExcerptsFoldAll
+                | SearchEvent::ExcerptsUndoAll
+                | SearchEvent::ExcerptsFile(_)
+                | SearchEvent::ExcerptOwner(_)
+                | SearchEvent::ExcerptUndo(_)
+        )
+    ) || crate::conflict::is_conflict_part(id)
 }
 
 impl WorkspaceState {
@@ -305,7 +282,7 @@ impl WorkspaceState {
         self.excerpts = Some(Excerpts {
             source,
             files,
-            scroll: 0.0,
+            scroll: rustle::LazyListState::default(),
         });
         self.tab = Tab::Excerpts;
     }
@@ -332,11 +309,6 @@ impl WorkspaceState {
         self
     }
 
-    /// Whether the excerpts are open.
-    pub fn excerpts_open(&self) -> bool {
-        self.excerpts.is_some()
-    }
-
     /// The state after the file at `index` among the open files was made the one edited, which is what a press on its lines does.
     pub fn excerpt_file_shown(mut self, index: usize) -> Self {
         if index < self.git.viewers.len() {
@@ -346,10 +318,13 @@ impl WorkspaceState {
     }
 
     /// The position among the open files of the file whose box of lines `id` is.
-    pub fn excerpt_owner_of(&self, id: FocusId) -> Option<usize> {
-        is_excerpt_owner(id)
-            .then(|| (id.0 - EXCERPT_OWNER_BASE) as usize)
-            .filter(|index| *index < self.git.viewers.len())
+    pub fn excerpt_owner_of(&self, id: Target) -> Option<usize> {
+        match id {
+            Target::Search(SearchEvent::ExcerptOwner(index)) if index < self.git.viewers.len() => {
+                Some(index)
+            }
+            _ => None,
+        }
     }
 
     /// Folds the file at `place` among the excerpts away, or opens it when it is folded.
@@ -374,39 +349,37 @@ impl WorkspaceState {
     }
 
     /// Carries out what pressing `id` of the excerpts does.
-    pub(crate) fn excerpts_pressed(mut self, id: FocusId) -> Self {
+    pub(crate) fn excerpts_pressed(mut self, id: Target) -> Self {
         if crate::conflict::is_conflict_part(id) {
             return self.conflict_pressed(id);
         }
-        if id == TAB_EXCERPTS {
-            self.tab = Tab::Excerpts;
-            return self;
-        }
-        if id == EXCERPTS_CLOSE {
-            return self.excerpts_closed();
-        }
-        if id == EXCERPTS_RESTORE {
-            return self.timeline_restored();
-        }
-        if id == EXCERPTS_FOLD_ALL {
-            self.excerpts_folded();
-            return self;
-        }
-        if id == EXCERPTS_UNDO_ALL {
-            self.turn_undone(None);
-            return self;
-        }
-        if (EXCERPT_UNDO_BASE..EXCERPT_UNDO_END).contains(&id.0) {
-            self.turn_undone(Some((id.0 - EXCERPT_UNDO_BASE) as usize));
-            return self;
-        }
-        if let Some(index) = self.excerpt_owner_of(id) {
-            return self.excerpt_file_shown(index);
-        }
-        if !(EXCERPTS_FILE_BASE..EXCERPT_OWNER_BASE).contains(&id.0) {
-            return self;
-        }
-        let place = (id.0 - EXCERPTS_FILE_BASE) as usize;
+        let place = match id {
+            Target::Search(SearchEvent::TabExcerpts) => {
+                self.tab = Tab::Excerpts;
+                return self;
+            }
+            Target::Search(SearchEvent::ExcerptsClose) => return self.excerpts_closed(),
+            Target::Search(SearchEvent::ExcerptsRestore) => return self.timeline_restored(),
+            Target::Search(SearchEvent::ExcerptsFoldAll) => {
+                self.excerpts_folded();
+                return self;
+            }
+            Target::Search(SearchEvent::ExcerptsUndoAll) => {
+                self.turn_undone(None);
+                return self;
+            }
+            Target::Search(SearchEvent::ExcerptUndo(turn)) => {
+                self.turn_undone(Some(turn));
+                return self;
+            }
+            Target::Search(SearchEvent::ExcerptsFile(place)) => place,
+            _ => {
+                return match self.excerpt_owner_of(id) {
+                    Some(index) => self.excerpt_file_shown(index),
+                    None => self,
+                };
+            }
+        };
         if self.excerpts.as_ref().is_some_and(Excerpts::folds) {
             self.excerpt_file_folded(place);
             return self;
@@ -493,14 +466,6 @@ impl WorkspaceState {
             }
         }
     }
-
-    /// The state after the excerpts were scrolled by `delta` logical pixels, with `room` to scroll.
-    pub fn scrolled_excerpts(mut self, delta: f32, room: f32) -> Self {
-        if let Some(excerpts) = self.excerpts.as_mut() {
-            excerpts.scroll = (excerpts.scroll + delta).clamp(0.0, room);
-        }
-        self
-    }
 }
 
 /// How many lines of `viewer` the block shows: the lines it holds, up to the end of the file once that is read.
@@ -517,82 +482,89 @@ fn block_rows(viewer: Option<&Viewer>, block: &Block) -> usize {
     shown_lines(viewer, block).len() + block.removed_lines()
 }
 
-/// The header over the excerpts of one file: its icon and name, where it is, whether it has changes not saved and what it holds, with, for a change, how far it went.
+/// Emits the header over the excerpts of one file: its icon and name, where it is, whether it has changes not saved and what it holds, with, for a change, how far it went.
+#[track_caller]
 fn header(
     position: usize,
     file: &ExcerptFile,
     viewer: Option<&Viewer>,
     excerpts: &Excerpts,
     size: Size,
-) -> Node {
+) {
     let name = name_of(&file.path);
     let folder = file.path.strip_suffix(name).unwrap_or_default();
-    let mut row = node().styles([
-        flex(),
-        items_center(),
-        gap(2),
-        h_px(header_height(size)),
-        flex_none(),
-        px(3),
-        bg(Role::Surface),
-        border_b(),
-        border_color(Role::Border),
-    ]);
-    let mut label = node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(2),
-            flex_1(),
-            min_w_px(0),
-            overflow_hidden(),
-            cursor_pointer(),
-        ])
-        .focusable(FocusId(EXCERPTS_FILE_BASE + position as u64));
-    if excerpts.folds() {
-        label = label.child(glyph(
-            if file.closed {
-                IconName::ChevronRight
-            } else {
-                IconName::ChevronDown
-            },
-            3.5,
-            Role::Muted,
-        ));
-    }
-    label = label
-        .child(file_icon(name, 4.0))
-        .child(line(name, 13, 1.4, Role::Text).styles([font_medium(), flex_none()]))
-        .child(
-            node()
-                .styles([flex_1(), min_w_px(0), overflow_hidden()])
-                .child(line(folder, 12, 1.4, Role::Subtle).styles([truncate()])),
-        );
-    row = row.child(label);
-    if viewer.is_some_and(Viewer::is_dirty) {
-        row = row.child(glyph(IconName::Pencil, 3.0, Role::Muted));
-    }
-    match &excerpts.source {
-        Source::Search { .. } => {
-            let hits: usize = file.blocks.iter().map(|block| block.hits.len()).sum();
-            row = row.child(line(hits.to_string(), 11, 1.4, Role::Muted).styles([flex_none()]));
-        }
-        _ => {
-            if let Some(mark) = file.mark {
-                row = row.child(line(mark, 11, 1.4, mark_tone(mark)).styles([flex_none()]));
+    rustle::row_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .height(header_height(size))
+            .background(theme::color(Role::Surface))
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(3), 0.0),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            rustle::row_arranged(
+                events::pressed(
+                    Modifier::new().weight(1.0).clip(),
+                    Target::Search(SearchEvent::ExcerptsFile(position)),
+                ),
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Center,
+                || {
+                    if excerpts.folds() {
+                        glyph(icons::chevron(!file.closed), 3.5, Role::Muted);
+                    }
+                    file_icon(name, 4.0);
+                    rustle::basic_text(
+                        Modifier::new(),
+                        name,
+                        theme::strong(13, Role::Text),
+                        TextOverflow::Ellipsis,
+                    );
+                    rustle::basic_text(
+                        Modifier::new().weight(1.0).clip(),
+                        folder,
+                        theme::line(12, Role::Subtle),
+                        TextOverflow::Ellipsis,
+                    );
+                },
+            );
+            if viewer.is_some_and(Viewer::is_dirty) {
+                glyph(phosphor::PENCIL_SIMPLE, 3.0, Role::Muted);
             }
-            row = row.child(Tally::new(file.tally.0, file.tally.1).size(11).build());
-            if matches!(excerpts.source, Source::Revision { turn: Some(_), .. }) {
-                row = row.child(
-                    Button::icon(IconName::Undo, FocusId(EXCERPT_UNDO_BASE + position as u64))
-                        .size(Size::Sm)
-                        .build()
-                        .tooltip("Take what this turn changed back out of this file"),
-                );
+            match &excerpts.source {
+                Source::Search { .. } => {
+                    let hits: usize = file.blocks.iter().map(|block| block.hits.len()).sum();
+                    rustle::basic_text(
+                        Modifier::new(),
+                        hits.to_string(),
+                        theme::line(11, Role::Muted),
+                        TextOverflow::Ellipsis,
+                    );
+                }
+                _ => {
+                    if let Some(mark) = file.mark {
+                        rustle::basic_text(
+                            Modifier::new(),
+                            mark,
+                            theme::line(11, mark_tone(mark)),
+                            TextOverflow::Ellipsis,
+                        );
+                    }
+                    Tally::new(file.tally.0, file.tally.1).size(11).build();
+                    if matches!(excerpts.source, Source::Revision { turn: Some(_), .. }) {
+                        Button::icon(
+                            phosphor::ARROW_COUNTER_CLOCKWISE,
+                            Target::Search(SearchEvent::ExcerptUndo(position)),
+                        )
+                        .tooltip("Take what this turn changed back out of this file")
+                        .build();
+                    }
+                }
             }
-        }
-    }
-    row
+        },
+    );
 }
 
 /// The colour of the letter a change is marked with.
@@ -604,23 +576,45 @@ fn mark_tone(mark: &str) -> Role {
     }
 }
 
-/// The button of the header of a timeline that puts the file back as it was in the state.
-pub(crate) fn restore_button() -> Node {
-    Button::new("Restore this version", EXCERPTS_RESTORE)
-        .with_icon(IconName::History)
-        .size(Size::Sm)
-        .build()
+/// Emits the button of the header of a timeline that puts the file back as it was in the state.
+pub(crate) fn restore_button() {
+    button::small_button(
+        "Restore this version",
+        Target::Search(SearchEvent::ExcerptsRestore),
+        Variant::Default,
+    )
+    .with_icon(phosphor::CLOCK_COUNTER_CLOCKWISE)
+    .build();
 }
 
-/// What the view of the excerpts needs to draw the lines of one file.
-struct Drawing<'a> {
+/// What the lines of one open file are drawn with, worked out once for every line of it in view.
+struct Context {
+    /// The field whose caret and selection the lines hold.
+    owner: Target,
+    /// The places find found in the file, and the one chosen.
+    found: (Vec<Range<usize>>, Option<usize>),
+    /// The brackets paired at the caret.
+    pair: Vec<Range<usize>>,
+    /// The breakpoints and the paused line of the file.
+    gutter: crate::debug::Gutter,
+}
+
+/// What the view of the excerpts needs to draw the lines of the files, with what it worked out for the lines already drawn.
+pub(crate) struct Drawing<'a> {
     /// The state the lines are drawn from.
     state: &'a WorkspaceState,
     /// How the editor draws.
-    settings: &'a pm_editor::EditorSettings,
+    settings: pm_editor::EditorSettings,
     /// The matcher that marks the hits within their lines, for the excerpts of a search.
     matcher: Option<pm_editor::Query>,
+    /// What the lines of each open file are drawn with, by the file's index.
+    contexts: RefCell<HashMap<usize, Rc<Context>>>,
+    /// The rows of each block, by the place of its file and its own place in it.
+    rows: RefCell<BlockRows<'a>>,
 }
+
+/// The rows of every block built so far, by the place of its file and its own place in it.
+type BlockRows<'a> = HashMap<(usize, usize), Rc<Vec<Row<'a>>>>;
 
 /// One row of a block: a line of the file, or a line a change took out.
 enum Row<'a> {
@@ -630,227 +624,313 @@ enum Row<'a> {
     Removed(&'a str),
 }
 
-/// A line a change took out, drawn under the gutter of the lines of the file so that the text stays in its column, tinted as taken out and not to be edited.
-fn removed_row(content: &str, settings: &pm_editor::EditorSettings) -> Node {
+/// Emits a line a change took out, drawn under the gutter of the lines of the file so that the text stays in its column, tinted as taken out and not to be edited.
+#[track_caller]
+fn removed_row(content: &str, settings: &pm_editor::EditorSettings) {
     let height = settings.row_height();
-    let numbers = if settings.line_numbers { w(13) } else { w(2) };
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            h_px(height),
-            flex_none(),
-            overflow_hidden(),
-            bg(Color::from(Role::Danger).alpha(0.12)),
-        ])
-        .child(node().styles([w_px(BREAKPOINT_CELL + 3.0), flex_none()]))
-        .child(node().styles([flex_none(), pr(3), numbers]))
-        .child(
-            node()
-                .styles([flex_1(), min_w_px(0), overflow_hidden(), px(2)])
-                .child(pm_ui::text(crate::diff_syntax::shown(content)).styles([
-                    pm_style::code_px(settings.font_size),
-                    pm_style::leading_ratio(1.4),
-                    pm_style::font_mono(),
-                    pm_style::text_color(Role::Muted),
-                ])),
-        )
+    let numbers = if settings.line_numbers {
+        Modifier::new().width(theme::sp(13))
+    } else {
+        Modifier::new().width(theme::sp(2))
+    };
+    let kind = theme::code_style(settings.font_size, 1.4).color(theme::color(Role::Muted));
+    let shown = crate::diff_syntax::shown(content);
+    rustle::row_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .height(height)
+            .background(theme::color(Role::Danger.alpha(0.12)))
+            .clip(),
+        Arrangement::Start,
+        Alignment::Center,
+        move || {
+            rustle::spacer(Modifier::new().width(BREAKPOINT_CELL + 3.0));
+            rustle::spacer(numbers.padding_each(0.0, 0.0, theme::sp(3), 0.0));
+            rustle::basic_text(
+                Modifier::new()
+                    .weight(1.0)
+                    .clip()
+                    .padding_xy(theme::sp(2), 0.0),
+                shown,
+                kind,
+                TextOverflow::Ellipsis,
+            );
+        },
+    );
 }
 
-/// A box as tall as `rows` rows of `row` logical pixels, standing in for those left out.
-fn blank(rows: usize, row: f32) -> Node {
-    node().styles([h_px(rows as f32 * row), flex_none()])
-}
-
-impl Drawing<'_> {
-    /// The rows of `block` of the file open at `index`, the ones in `window` built from a block that starts `top` logical pixels down, in a box that a press makes the file edited, with the space under them.
-    fn block(&self, index: usize, block: &Block, top: f32, window: (f32, f32)) -> Node {
-        let state = self.state;
-        let row_height = state.editor.row_height();
-        let Some(Contents::Text(document)) = state.git.viewers.get(index).map(|v| &v.contents)
-        else {
-            return node().styles([h_px(GAP + row_height), flex_none()]);
-        };
-        let live = state.git.shown == Some(index);
-        let owner = if live {
-            EDITOR_FIELD
-        } else {
-            FocusId(EXCERPT_OWNER_BASE + index as u64)
-        };
-        let found = if live {
-            state.find_marks()
-        } else {
-            (Vec::new(), None)
-        };
-        let pair: Vec<Range<usize>> = document
-            .syntax
-            .as_ref()
-            .filter(|_| live)
-            .and_then(|syntax| syntax.bracket_pair(document.field.text(), document.field.caret()))
-            .map(|(open, close)| vec![open, close])
-            .unwrap_or_default();
-        let gutter = state.gutter_of(index);
-        let run = shown_lines(state.git.viewers.get(index), block);
-        let mut rows: Vec<Row> = Vec::with_capacity(run.len() + block.removed_lines());
-        for line in run.clone() {
-            for (_, taken) in block.removed.iter().filter(|(anchor, _)| *anchor == line) {
-                rows.extend(taken.iter().map(|text| Row::Removed(text)));
-            }
-            rows.push(Row::Line(line));
-        }
-        for (_, taken) in block
-            .removed
-            .iter()
-            .filter(|(anchor, _)| *anchor >= run.end)
-        {
+/// The rows of `block` of the file `viewer` holds, in order: each line of the file it shows, under the lines a change took out before it, then those taken out after the last.
+fn rows_of<'a>(viewer: Option<&Viewer>, block: &'a Block) -> Vec<Row<'a>> {
+    let run = shown_lines(viewer, block);
+    let mut rows: Vec<Row> = Vec::with_capacity(run.len() + block.removed_lines());
+    for line in run.clone() {
+        for (_, taken) in block.removed.iter().filter(|(anchor, _)| *anchor == line) {
             rows.extend(taken.iter().map(|text| Row::Removed(text)));
         }
-        let first = (((window.0 - top) / row_height).floor().max(0.0) as usize).min(rows.len());
-        let last = (((window.1 - top) / row_height).ceil().max(0.0) as usize).min(rows.len());
-        let visible = &rows[first..last.max(first)];
-        let (low, high) = visible
-            .iter()
-            .filter_map(|row| match row {
-                Row::Line(line) => Some(*line),
-                Row::Removed(_) => None,
-            })
-            .fold((usize::MAX, 0), |(low, high), line| {
-                (low.min(line), high.max(line + 1))
-            });
-        let painted = if low < high {
-            document.highlights(low..high)
-        } else {
-            Vec::new()
+        rows.push(Row::Line(line));
+    }
+    for (_, taken) in block
+        .removed
+        .iter()
+        .filter(|(anchor, _)| *anchor >= run.end)
+    {
+        rows.extend(taken.iter().map(|text| Row::Removed(text)));
+    }
+    rows
+}
+
+impl<'a> Drawing<'a> {
+    /// What draws the lines of the files of `state` as the editor does, the hits of a search marked by `matcher`.
+    pub(crate) fn new(state: &'a WorkspaceState, matcher: Option<pm_editor::Query>) -> Self {
+        Self {
+            state,
+            settings: pm_editor::EditorSettings {
+                git_gutter: state.shows_gutter(),
+                ..state.editor.clone()
+            },
+            matcher,
+            contexts: RefCell::default(),
+            rows: RefCell::default(),
+        }
+    }
+
+    /// What the lines of the file open at `index` are drawn with.
+    fn context(&self, index: usize) -> Rc<Context> {
+        if let Some(held) = self.contexts.borrow().get(&index) {
+            return held.clone();
+        }
+        let state = self.state;
+        let live = state.git.shown == Some(index);
+        let pair = match state.git.viewers.get(index).map(|viewer| &viewer.contents) {
+            Some(Contents::Text(document)) if live => document
+                .syntax
+                .as_ref()
+                .and_then(|syntax| {
+                    syntax.bracket_pair(document.field.text(), document.field.caret())
+                })
+                .map(|(open, close)| vec![open, close])
+                .unwrap_or_default(),
+            _ => Vec::new(),
         };
-        let drawn = visible.iter().map(|row| match row {
-            Row::Removed(text) => removed_row(text, self.settings),
-            Row::Line(line) => {
-                let spans = painted.get(line - low).cloned().unwrap_or_default();
-                let mut marks = line_marks(document, *line, spans, &pair, &found, self.settings);
-                let range = document.line(*line);
-                let hit = block.hits.binary_search(line).is_ok();
-                if hit
-                    && let Some(matched) = self
-                        .matcher
-                        .as_ref()
-                        .and_then(|matcher| matcher.first_in(&document.field.text()[range.clone()]))
-                {
-                    marks.push(Mark {
-                        range: matched,
-                        color: Role::SurfaceSelected.into(),
-                        paint: Paint::Fill,
-                    });
-                }
-                let segments = vec![Range {
-                    start: 0,
-                    end: range.len(),
-                }];
-                let cell = breakpoint_cell(
-                    index,
-                    *line,
-                    &gutter,
-                    document_row(self.settings, &segments),
-                );
-                let mut shown = file_line(
-                    document,
-                    *line,
-                    marks,
-                    segments,
-                    Beside {
-                        blamed: None,
-                        breakpoint: cell,
-                        bulb: false,
-                        paused: gutter.paused == Some(*line),
-                    },
-                    self.settings,
-                    owner,
-                );
-                if hit && self.matcher.is_none() {
-                    shown = shown.styles([bg(Color::from(Role::Success).alpha(0.12))]);
-                }
-                shown
-            }
+        let made = Rc::new(Context {
+            owner: if live {
+                Target::Editor(EditorEvent::EditorField)
+            } else {
+                Target::Search(SearchEvent::ExcerptOwner(index))
+            },
+            found: if live {
+                state.find_marks()
+            } else {
+                (Vec::new(), None)
+            },
+            pair,
+            gutter: state.gutter_of(index),
         });
-        node()
-            .styles([flex(), flex_col(), flex_none()])
-            .child(
-                node()
-                    .styles([flex(), flex_col(), flex_none(), cursor_text()])
-                    .focusable(owner)
-                    .child(blank(first, row_height))
-                    .children(drawn)
-                    .child(blank(rows.len() - last.max(first), row_height)),
-            )
-            .child(node().styles([h_px(GAP), flex_none()]))
+        self.contexts.borrow_mut().insert(index, made.clone());
+        made
+    }
+
+    /// The rows of `block` of the file open at `index`, which `place` names among the blocks drawn.
+    fn rows(&self, index: usize, place: (usize, usize), block: &'a Block) -> Rc<Vec<Row<'a>>> {
+        if let Some(held) = self.rows.borrow().get(&place) {
+            return held.clone();
+        }
+        let made = Rc::new(rows_of(self.state.git.viewers.get(index), block));
+        self.rows.borrow_mut().insert(place, made.clone());
+        made
+    }
+
+    /// How many rows `block` of the file open at `index` has.
+    pub(crate) fn row_count(&self, index: usize, block: &Block) -> usize {
+        block_rows(self.state.git.viewers.get(index), block)
+    }
+
+    /// Emits the row at `at` of `block` of the file open at `index`, which `place` names among the blocks drawn, in a box that a press makes the file edited; nothing when the file is not read.
+    #[track_caller]
+    pub(crate) fn row(&self, index: usize, place: (usize, usize), block: &'a Block, at: usize) {
+        let state = self.state;
+        let Some(Contents::Text(document)) = state.git.viewers.get(index).map(|v| &v.contents)
+        else {
+            return;
+        };
+        let rows = self.rows(index, place, block);
+        let Some(row) = rows.get(at) else {
+            return;
+        };
+        let context = self.context(index);
+        let owner = context.owner;
+        let lines = &state.code_lines;
+        let on_press = crate::code_pointing::on_press(owner, lines);
+        let hover = if owner == Target::Editor(EditorEvent::EditorField) {
+            crate::code_pointing::hover(owner, lines)
+        } else {
+            Modifier::new()
+        };
+        rustle::column_arranged(
+            Modifier::new()
+                .fill_max_width()
+                .cursor(CursorIcon::Text)
+                .chain(hover)
+                .chain(crate::code_pointing::held(owner, lines))
+                .control_pointing(owner, send(Event::pressing(owner)), move |event| {
+                    on_press(event)
+                }),
+            Arrangement::Start,
+            Alignment::Start,
+            || match row {
+                Row::Removed(text) => removed_row(text, &self.settings),
+                Row::Line(line) => self.line(document, index, block, *line, &context),
+            },
+        );
+    }
+
+    /// Emits the line at `line` of `document`, the file open at `index`, which `block` shows, drawn with `context`.
+    #[track_caller]
+    fn line(
+        &self,
+        document: &pm_editor::Document,
+        index: usize,
+        block: &Block,
+        line: usize,
+        context: &Context,
+    ) {
+        let spans = document
+            .highlights(line..line + 1)
+            .pop()
+            .unwrap_or_default();
+        let mut marks = line_marks(
+            document,
+            line,
+            spans,
+            &context.pair,
+            &context.found,
+            &self.settings,
+        );
+        let range = document.line(line);
+        let hit = block.hits.binary_search(&line).is_ok();
+        if hit
+            && let Some(matched) = self
+                .matcher
+                .as_ref()
+                .and_then(|matcher| matcher.first_in(&document.field.text()[range.clone()]))
+        {
+            marks.push(Mark::new(matched, Role::SurfaceSelected, Paint::Fill));
+        }
+        let segments = vec![Range {
+            start: 0,
+            end: range.len(),
+        }];
+        let height = document_row(&self.settings, &segments);
+        let gutter = &context.gutter;
+        let beside = Beside {
+            blamed: None,
+            breakpoint: || breakpoint_cell(index, line, gutter, height),
+            bulb: false,
+            paused: gutter.paused == Some(line),
+        };
+        let shown = || {
+            file_line(
+                document,
+                line,
+                marks,
+                segments,
+                beside,
+                &self.settings,
+                (context.owner, &self.state.code_lines),
+            );
+        };
+        if hit && self.matcher.is_none() {
+            rustle::column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .background(theme::color(Role::Success.alpha(0.12))),
+                Arrangement::Start,
+                Alignment::Start,
+                shown,
+            );
+        } else {
+            shown();
+        }
     }
 }
 
-/// One thing drawn in the excerpts, with its height.
+/// Emits the space under a block.
+#[track_caller]
+pub(crate) fn block_gap() {
+    rustle::spacer(Modifier::new().height(GAP));
+}
+
+/// One item of the list of the excerpts.
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 enum Entry {
     /// The header of the file at this position in the excerpts.
     Header(usize),
-    /// The block at the second position of the file at the first.
-    Block(usize, usize),
+    /// The rows of the diff of the file at this position, with the space under them.
+    Diff(usize),
+    /// The row at the third position of the block at the second of the file at the first.
+    Row(usize, usize, usize),
+    /// The space under the block at the second position of the file at the first.
+    Gap(usize, usize),
+    /// The space the block at the second position of the file at the first takes while its file is not read.
+    Waiting(usize, usize),
+    /// The lines a change took out of the block at the second position of the file at the first, which is gone.
+    Gone(usize, usize),
 }
 
-/// The lines of a file that is shown from its diff alone, as the rows of a diff, under its header.
-fn diff_rows(file: &ExcerptFile) -> Vec<Node> {
+/// Emits the lines of a file that is shown from its diff alone, as the rows of a diff, under its header.
+fn diff_rows(file: &ExcerptFile) {
     let colours = crate::diff_syntax::DiffColours::of(
         &file.diff,
         crate::file_icon::file_language(&file.path).as_deref(),
     );
-    file.diff
-        .iter()
-        .enumerate()
-        .map(|(at, diff)| crate::diff::diff_line(diff.kind, &diff.text, colours.line(at)))
-        .collect()
+    for (at, diff) in file.diff.iter().enumerate() {
+        crate::diff::diff_line(diff.kind, &diff.text, colours.line(at));
+    }
 }
 
-/// How tall the rows of a diff are, in logical pixels.
-const DIFF_ROW: f32 = 20.0;
-
-/// The excerpts in a view `height` logical pixels tall: a header over each file, and under it the runs of lines, only those near the view being built.
-pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: Size) -> Node {
-    let Some(excerpts) = state.excerpts.as_ref() else {
-        return node();
-    };
-    let row = state.editor.row_height();
-    let header_pixels = header_height(size);
-    let mut entries: Vec<(Entry, f32)> = Vec::new();
+/// The items of the list of `excerpts`: a header over each file, and under it, unless it is folded, the rows of its diff or of each of its blocks.
+fn entries(state: &WorkspaceState, excerpts: &Excerpts, drawing: &Drawing) -> Vec<Entry> {
+    let mut entries = Vec::new();
     for (place, file) in excerpts.files.iter().enumerate() {
-        let viewer = state
-            .viewer_at(&file.path)
-            .and_then(|i| state.git.viewers.get(i));
-        entries.push((Entry::Header(place), header_pixels));
+        entries.push(Entry::Header(place));
         if file.closed {
             continue;
         }
         if !file.diff.is_empty() {
-            entries.push((
-                Entry::Block(place, usize::MAX),
-                file.diff.len() as f32 * DIFF_ROW + GAP,
-            ));
+            entries.push(Entry::Diff(place));
             continue;
         }
-        let viewer = viewer.filter(|_| file.editable);
+        let open = state.viewer_at(&file.path).filter(|_| file.editable);
         for (step, block) in file.blocks.iter().enumerate() {
-            let rows = if file.editable {
-                block_rows(viewer, block)
-            } else {
-                block.removed_lines()
+            match open {
+                _ if !file.editable => entries.push(Entry::Gone(place, step)),
+                Some(index)
+                    if matches!(
+                        state.git.viewers.get(index).map(|viewer| &viewer.contents),
+                        Some(Contents::Text(_))
+                    ) =>
+                {
+                    let count = drawing.row_count(index, block);
+                    entries.extend((0..count).map(|row| Entry::Row(place, step, row)));
+                    entries.push(Entry::Gap(place, step));
+                }
+                _ => entries.push(Entry::Waiting(place, step)),
             }
-            .max(1);
-            entries.push((Entry::Block(place, step), rows as f32 * row + GAP));
         }
     }
-    let settings = pm_editor::EditorSettings {
-        git_gutter: state.shows_gutter(),
-        ..state.editor.clone()
+    entries
+}
+
+/// Emits the excerpts as a lazy list: a header over each file, and under it the runs of lines, headers `size` big.
+#[track_caller]
+pub(crate) fn file_list(state: &WorkspaceState, size: Size) {
+    let Some(excerpts) = state.excerpts.as_ref() else {
+        return;
     };
-    let drawing = Drawing {
+    let row = state.editor.row_height();
+    let drawing = Drawing::new(
         state,
-        settings: &settings,
-        matcher: match &excerpts.source {
+        match &excerpts.source {
             Source::Search { text, case, regex } => Some(pm_editor::Query {
                 text: text.clone(),
                 case: *case,
@@ -859,67 +939,65 @@ pub(crate) fn file_list(state: &WorkspaceState, height: f32, size: Size) -> Node
             }),
             _ => None,
         },
-    };
-    let (low, high) = (
-        excerpts.scroll - OVERSCAN,
-        excerpts.scroll + height + OVERSCAN,
     );
-    let (mut before, mut after, mut top) = (0.0_f32, 0.0_f32, 0.0_f32);
-    let mut built = Vec::new();
-    for (entry, size) in &entries {
-        let (start, end) = (top, top + size);
-        top = end;
-        if end < low {
-            before += size;
-            continue;
+    let entries = entries(state, excerpts, &drawing);
+    let draw = |entry: Entry| match entry {
+        Entry::Header(place) => {
+            let file = &excerpts.files[place];
+            let viewer = state
+                .viewer_at(&file.path)
+                .and_then(|i| state.git.viewers.get(i));
+            header(place, file, viewer, excerpts, size);
         }
-        if start > high {
-            after += size;
-            continue;
+        Entry::Diff(place) => {
+            let file = &excerpts.files[place];
+            rustle::column_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    diff_rows(file);
+                    block_gap();
+                },
+            );
         }
-        built.push(match entry {
-            Entry::Header(place) => {
-                let file = &excerpts.files[*place];
-                let viewer = state
-                    .viewer_at(&file.path)
-                    .and_then(|i| state.git.viewers.get(i));
-                header(*place, file, viewer, excerpts, size_of(header_pixels))
+        Entry::Row(place, step, at) => {
+            let file = &excerpts.files[place];
+            if let Some(index) = state.viewer_at(&file.path) {
+                drawing.row(index, (place, step), &file.blocks[step], at);
             }
-            Entry::Block(place, usize::MAX) => {
-                let file = &excerpts.files[*place];
-                node()
-                    .styles([flex(), flex_col(), flex_none()])
-                    .children(diff_rows(file))
-                    .child(node().styles([h_px(GAP), flex_none()]))
-            }
-            Entry::Block(place, step) => {
-                let file = &excerpts.files[*place];
-                match state.viewer_at(&file.path).filter(|_| file.editable) {
-                    Some(index) => drawing.block(index, &file.blocks[*step], start, (low, high)),
-                    None if !file.editable => gone_block(&file.blocks[*step], &settings),
-                    None => node().styles([h_px(*size), flex_none()]),
-                }
-            }
-        });
-    }
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_1(),
-            min_w_px(0),
-            min_h(0),
-            overflow_hidden(),
-            bg(Role::Background),
-        ])
-        .child(
-            node()
-                .styles([flex(), flex_col(), flex_1(), min_h(0), overflow_hidden()])
-                .scroll_from_start(EXCERPTS_SCROLL, excerpts.scroll)
-                .child(node().styles([h_px(before), flex_none()]))
-                .children(built)
-                .child(node().styles([h_px(after), flex_none()])),
-        )
+        }
+        Entry::Gap(..) => block_gap(),
+        Entry::Waiting(place, step) => {
+            let file = &excerpts.files[place];
+            let index = state.viewer_at(&file.path);
+            let rows = match index {
+                Some(_) => 1,
+                None => block_rows(None, &file.blocks[step]).max(1),
+            };
+            rustle::spacer(Modifier::new().height(rows as f32 * row + GAP));
+        }
+        Entry::Gone(place, step) => {
+            gone_block(&excerpts.files[place].blocks[step], &drawing.settings);
+        }
+    };
+    rustle::column_arranged(
+        Modifier::new()
+            .weight(1.0)
+            .clip()
+            .background(theme::color(Role::Background)),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            rustle::lazy_list_keyed(
+                Modifier::new().fill_max_width().weight(1.0),
+                &excerpts.scroll,
+                entries.len(),
+                |item| entries[item],
+                |item| draw(entries[item]),
+            );
+        },
+    );
 }
 
 /// How tall a header over a file is at `size`, in logical pixels.
@@ -932,54 +1010,22 @@ pub(crate) const fn header_height(size: Size) -> f32 {
     }
 }
 
-/// The header size that is `height` logical pixels tall.
-fn size_of(height: f32) -> Size {
-    if height <= header_height(Size::Xs) {
-        Size::Xs
-    } else if height <= header_height(Size::Sm) {
-        Size::Sm
-    } else if height <= header_height(Size::Md) {
-        Size::Md
-    } else {
-        Size::Lg
-    }
+/// Emits the lines a change took out of a file that is gone, drawn as taken out, with the space under them.
+fn gone_block(block: &Block, settings: &pm_editor::EditorSettings) {
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for text in block.removed.iter().flat_map(|(_, lines)| lines.iter()) {
+                removed_row(text, settings);
+            }
+            block_gap();
+        },
+    );
 }
 
-/// The lines a change took out of a file that is gone, drawn as taken out, with the space under them.
-fn gone_block(block: &Block, settings: &pm_editor::EditorSettings) -> Node {
-    node()
-        .styles([flex(), flex_col(), flex_none()])
-        .children(
-            block
-                .removed
-                .iter()
-                .flat_map(|(_, lines)| lines.iter())
-                .map(|text| removed_row(text, settings)),
-        )
-        .child(node().styles([h_px(GAP), flex_none()]))
-}
-
-/// The rows of `block` of the file open at `index` in the window, the ones in `window` built from a block that starts `top` logical pixels down, as the excerpts draw them but for the hits of a search.
-pub(crate) fn plain_block(
-    state: &WorkspaceState,
-    index: usize,
-    block: &Block,
-    top: f32,
-    window: (f32, f32),
-) -> Node {
-    let settings = pm_editor::EditorSettings {
-        git_gutter: state.shows_gutter(),
-        ..state.editor.clone()
-    };
-    Drawing {
-        state,
-        settings: &settings,
-        matcher: None,
-    }
-    .block(index, block, top, window)
-}
-
-/// The excerpts of a search in a view `height` logical pixels tall.
-pub fn excerpts_view(state: &WorkspaceState, height: f32) -> Node {
-    file_list(state, height, Size::default())
+/// Emits the excerpts of a search.
+pub fn excerpts_view(state: &WorkspaceState) {
+    file_list(state, Size::default());
 }

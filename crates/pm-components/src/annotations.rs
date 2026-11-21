@@ -1,6 +1,5 @@
 //! What the language server says to show in and beside the lines of the file shown: names coloured by what they are, hints written inside a line, and lenses at the end of one.
 
-use pm_input::FocusId;
 use pm_protocol::{CodeLens, FileEdit, InlayHint, Location, Seek, SemanticToken};
 
 use crate::listing::{Items, Listing};
@@ -8,24 +7,6 @@ use crate::state::{Outgoing, WorkspaceState};
 
 /// How tall a view is taken to be, in logical pixels, until the one drawn has been measured.
 const VIEW_HEIGHT: f32 = 1200.0;
-
-/// The first of the marks standing for lenses, each following it by the place of the lens in the list the server gave.
-pub const LENS_BASE: u64 = 8_600_000;
-
-/// One past the last mark standing for lenses.
-pub const LENS_END: u64 = 8_700_000;
-
-/// The mark that presses the lens at `index` of the list the server gave.
-pub fn lens_mark(index: usize) -> FocusId {
-    FocusId(LENS_BASE + index as u64)
-}
-
-/// The lens, by its place in the list the server gave, that the mark `id` presses.
-pub fn lens_of(id: FocusId) -> Option<usize> {
-    (LENS_BASE..LENS_END)
-        .contains(&id.0)
-        .then(|| (id.0 - LENS_BASE) as usize)
-}
 
 impl WorkspaceState {
     /// Asks the language server for what it says to show in and beside the lines of the file shown, whatever it was not asked or did not answer for the text as it is, and lets go of what the reader turned off.
@@ -122,9 +103,9 @@ impl WorkspaceState {
             return None;
         }
         let row = self.editor.row_height().max(1.0);
-        let scroll = self.shown_viewer()?.scroll;
+        let top = self.shown_viewer()?.top_row(self.wrap_columns(), row);
         let height = self.code_height.unwrap_or(VIEW_HEIGHT);
-        let first = (scroll / row).floor().max(0.0) as usize;
+        let first = top.floor().max(0.0) as usize;
         let count = (height / row).ceil() as usize + 1;
         let (lines, _) = document.wrapped_lines(first, count, self.wrap_columns());
         let margin = self.editor.semantic_range_margin;
@@ -233,18 +214,12 @@ impl WorkspaceState {
 
     /// Presses the lens at `index` of the list the language server gave for the file shown, what it points to being listed at `at`.
     pub fn lens_pressed(mut self, index: usize, at: (f32, f32)) -> Self {
-        let Some(session) = self.review_index() else {
-            return self;
-        };
-        let Some(path) = self.shown_viewer().map(|viewer| viewer.path.clone()) else {
-            return self;
-        };
-        let Some(title) = self
-            .shown_document()
-            .and_then(|document| document.lens_titled(index).map(str::to_owned))
+        let Some((session, path, document)) =
+            self.asking(|document| document.lens_titled(index).is_some())
         else {
             return self;
         };
+        let title = document.lens_titled(index).unwrap_or_default().to_owned();
         self.listing = Some(Listing::waiting(
             session,
             Items::Places {

@@ -1,29 +1,32 @@
 //! The terminal dock under the session: tabs of shells above the window of the one showing.
 
+use crate::areas::DebugEvent;
+use crate::areas::TerminalEvent;
+use crate::events;
+use crate::parts;
+use crate::theme::Indicated;
+use rustle::{Alignment, Arrangement, TextOverflow};
+
+use crate::events::{Event, send};
+use crate::target::Target;
+use crate::theme;
+use rustle::phosphor;
+
 use std::hash::{Hash, Hasher};
 
 use pm_config::TerminalCursor;
-use pm_icon::IconName;
-use pm_style::typography::{FontFamily, LineHeight, TypographyStyle};
-use pm_style::{
-    Color, Radius, Role, Sides, bg, border_b, border_color, border_l, border_t, border_width,
-    code_px, cursor_pointer, cursor_text, flex, flex_1, flex_col, flex_none, font_bold, font_mono,
-    gap, h, h_px, italic, items_center, leading_ratio, line_through, min_h, min_w_px,
-    overflow_hidden, pr, px, rounded, text_color, underline, w_full, w_px,
-};
 use pm_terminal::{Cell, Color as Paint, Emulator, Flags, Link};
-use pm_text::Shaper;
-use pm_ui::{Node, node, retained, text};
+use rustle::{Color, CursorIcon, Modifier};
 
 use crate::Button;
-use crate::dock::{BottomTab, TerminalTab};
+use crate::dock::{BottomTab, Shared, TerminalTab};
+use crate::events::Interactive;
 use crate::parts::{glyph, line, spacer};
+use crate::pointing::{Stroke, TerminalPointer};
 use crate::sample::Session;
-use crate::state::{
-    BOTTOM_PROBLEMS, BOTTOM_TERMINAL, MAXIMIZE_TERMINAL, NEW_TERMINAL, TERMINAL, TERMINAL_BODY,
-    TERMINAL_CLOSE_BASE, TERMINAL_TAB_BASE, WorkspaceState,
-};
-use pm_input::FocusId;
+use crate::state::WorkspaceState;
+use crate::theme::{Radius, Role};
+use std::rc::Rc;
 
 /// How tall the dock is until it is dragged taller or shorter, in logical pixels.
 pub const HEIGHT: f32 = 280.0;
@@ -73,15 +76,18 @@ impl Look {
 }
 
 /// How wide and how tall one cell of the shell's window is, in logical pixels, with type `font` tall.
-pub fn cell_size(shaper: &mut Shaper, font: f32) -> (f32, f32) {
-    let style = TypographyStyle {
-        family: FontFamily::Mono,
-        size: font,
-        line_height: LineHeight::Ratio(LEADING),
-        ..TypographyStyle::BASE
-    };
-    let extent = shaper.measure(&"M".repeat(SAMPLE), &style);
-    (extent.width / SAMPLE as f32, extent.height)
+pub fn cell_size(font: f32) -> (f32, f32) {
+    let kind = cell_type(font);
+    let size = rustle::layout_text(&"M".repeat(SAMPLE), &kind, None).size();
+    (
+        size.width / SAMPLE as f32,
+        size.height.max(kind.line_height),
+    )
+}
+
+/// The type the cells of a shell are set in: monospaced, `font` logical pixels tall, lines [`LEADING`] times that.
+fn cell_type(font: f32) -> rustle::TextStyle {
+    theme::code_style(font, LEADING)
 }
 
 /// How many columns and lines fit in the window of a shell that is `width` by `height` logical pixels with its padding.
@@ -109,198 +115,193 @@ pub fn height(state: &WorkspaceState, page: f32) -> f32 {
 /// How wide the list of shells at the right of the dock is, in logical pixels.
 const SHELL_LIST_WIDTH: f32 = 160.0;
 
-/// The dock of `session`, on a page `width` wide and `page` tall.
-pub fn terminal(
-    state: &WorkspaceState,
-    session: &Session,
-    width: f32,
-    page: f32,
-    shaper: &mut Shaper,
-) -> Node {
+/// Emits the dock of `session`, on a page `width` wide and `page` tall.
+#[track_caller]
+pub fn terminal(state: &WorkspaceState, session: &Session, width: f32, page: f32) {
     let shown = state.bottom_tab();
     let (errors, warnings) = crate::problems_panel::tally(state);
-    let mut strip = node().styles([
-        flex(),
-        items_center(),
-        gap(1),
-        h(10),
-        px(2),
-        flex_none(),
-        border_b(),
-        border_color(Role::Border),
-    ]);
-    strip = strip.child(pane_tab(
-        "Problems",
-        Some(errors + warnings).filter(|count| *count > 0),
-        shown == BottomTab::Problems,
-        BOTTOM_PROBLEMS,
-    ));
-    if state.debug_docked() {
-        strip = strip.child(pane_tab(
-            "Debug Console",
-            None,
-            shown == BottomTab::Debug,
-            crate::debug::DEBUG_TAB,
-        ));
-    }
-    strip = strip
-        .child(pane_tab(
-            "Terminal",
-            None,
-            shown == BottomTab::Terminal,
-            BOTTOM_TERMINAL,
-        ))
-        .child(spacer());
-    if shown == BottomTab::Terminal {
-        strip = strip.child(Button::icon(IconName::Plus, NEW_TERMINAL).build());
-    }
-    strip = strip
-        .child(
-            Button::icon(
-                if state.terminal_maximized {
-                    IconName::Minimize
-                } else {
-                    IconName::Maximize
+    rustle::column_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .height(height(state, page))
+            .background(theme::color(Role::Background)),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            rustle::horizontal_divider(Modifier::new(), 1.0, theme::color(Role::Border));
+            rustle::column_arranged(
+                Modifier::new().fill_max_width().weight(1.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    parts::bar(10, 2, 1, || {
+                        pane_tab(
+                            "Problems",
+                            Some(errors + warnings).filter(|count| *count > 0),
+                            shown == BottomTab::Problems,
+                            Target::Terminal(TerminalEvent::BottomProblems),
+                        );
+                        if state.debug_docked() {
+                            pane_tab(
+                                "Debug Console",
+                                None,
+                                shown == BottomTab::Debug,
+                                Target::Debug(DebugEvent::DebugTab),
+                            );
+                        }
+                        pane_tab(
+                            "Terminal",
+                            None,
+                            shown == BottomTab::Terminal,
+                            Target::Terminal(TerminalEvent::BottomTerminal),
+                        );
+                        spacer();
+                        if shown == BottomTab::Terminal {
+                            Button::icon(
+                                phosphor::PLUS,
+                                Target::Terminal(TerminalEvent::NewTerminal),
+                            )
+                            .build();
+                        }
+                        Button::icon(
+                            if state.terminal_maximized {
+                                phosphor::ARROWS_IN_SIMPLE
+                            } else {
+                                phosphor::ARROWS_OUT_SIMPLE
+                            },
+                            Target::Terminal(TerminalEvent::MaximizeTerminal),
+                        )
+                        .build();
+                        Button::icon(phosphor::X, Target::Terminal(TerminalEvent::Terminal))
+                            .build();
+                    });
+                    match shown {
+                        BottomTab::Problems => crate::problems_panel::problems_tab(state),
+                        BottomTab::Debug => crate::debug_panel::debug_tab(state),
+                        BottomTab::Terminal => {
+                            if let Some(tab) = session.terminals.get(session.terminal_active) {
+                                let listed = session.terminals.len() > 1;
+                                let room = if listed {
+                                    width - SHELL_LIST_WIDTH
+                                } else {
+                                    width
+                                };
+                                rustle::row_arranged(
+                                    Modifier::new().fill_max_width().weight(1.0),
+                                    Arrangement::Start,
+                                    Alignment::Start,
+                                    || {
+                                        window(tab, room - 2.0 * PADDING_X, Look::of(state));
+                                        if listed {
+                                            shell_list(session);
+                                        }
+                                    },
+                                );
+                            }
+                        }
+                    }
                 },
-                MAXIMIZE_TERMINAL,
-            )
-            .build(),
-        )
-        .child(Button::icon(IconName::Close, TERMINAL).build());
-    let mut dock = node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_none(),
-            w_full(),
-            h_px(height(state, page)),
-            bg(Role::Background),
-            border_t(),
-            border_color(Role::Border),
-        ])
-        .child(strip);
-    match shown {
-        BottomTab::Problems => dock = dock.child(crate::problems_panel::problems_tab(state)),
-        BottomTab::Debug => dock = dock.child(crate::debug_panel::debug_tab(state)),
-        BottomTab::Terminal => {
-            if let Some(tab) = session.terminals.get(session.terminal_active) {
-                let listed = session.terminals.len() > 1;
-                let room = if listed {
-                    width - SHELL_LIST_WIDTH
-                } else {
-                    width
-                };
-                let mut body = node().styles([flex(), flex_1(), min_h(0)]).child(window(
-                    tab,
-                    room - 2.0 * PADDING_X,
-                    Look::of(state),
-                    shaper,
-                ));
-                if listed {
-                    body = body.child(shell_list(session));
-                }
-                dock = dock.child(body);
+            );
+        },
+    );
+}
+
+/// The look of a tab or shell row: filled while it is the one `shown`, lit under the pointer otherwise.
+fn tab_tones(shown: bool) -> theme::InteractionTones {
+    if shown {
+        theme::InteractionTones::new().idle(Role::SurfaceSelected)
+    } else {
+        theme::InteractionTones::new().hover(Role::SurfaceHover)
+    }
+}
+
+/// Emits a tab of the dock named `label`, filled while it is the one showing, with how many things it holds when it holds any.
+#[track_caller]
+fn pane_tab(label: &str, count: Option<usize>, shown: bool, id: Target) {
+    let tone = if shown { Role::Text } else { Role::Muted };
+    let own = Modifier::new().height(theme::sp(8)).indicated(
+        tab_tones(shown).radius(Radius::Lg),
+        theme::Focused::Control(crate::focus::is_focused(id)),
+    );
+    rustle::row_arranged(
+        events::pressed(own, id).padding_xy(theme::sp(3), 0.0),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            line(label, 13, 1.4, tone);
+            if let Some(count) = count {
+                rustle::row_arranged(
+                    Modifier::new()
+                        .background_rounded(theme::color(Role::Accent), Radius::Lg.px())
+                        .padding_xy(theme::sp(1.5), 0.0),
+                    Arrangement::Start,
+                    Alignment::Center,
+                    || line(count.to_string(), 11, 1.3, Role::OnAccent),
+                );
             }
-        }
-    }
-    dock
+        },
+    );
 }
 
-/// A tab of the dock named `label`, filled while it is the one showing, with how many things it holds when it holds any.
-fn pane_tab(label: &str, count: Option<usize>, shown: bool, id: FocusId) -> Node {
+/// Emits the shells of `session` as a list at the right of the dock, the one showing marked, each with the button that ends it.
+fn shell_list(session: &Session) {
+    rustle::row_arranged(
+        Modifier::new().fill_max_height().width(SHELL_LIST_WIDTH),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            rustle::vertical_divider(Modifier::new(), 1.0, theme::color(Role::Border));
+            rustle::column_arranged(
+                Modifier::new().weight(1.0).fill_max_height().clip(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    for (index, tab) in session.terminals.iter().enumerate() {
+                        rustle::key(index, || {
+                            shell_row(index, tab, index == session.terminal_active)
+                        });
+                    }
+                },
+            );
+        },
+    );
+}
+
+/// Emits the row of the shell at `index`: its name, pressed to show it, and the button that ends it.
+fn shell_row(index: usize, tab: &TerminalTab, shown: bool) {
     let tone = if shown { Role::Text } else { Role::Muted };
-    let mut styles = vec![
-        flex(),
-        items_center(),
-        gap(2),
-        h(8),
-        px(3),
-        rounded(Radius::Lg),
-        cursor_pointer(),
-    ];
-    if shown {
-        styles.push(bg(Role::SurfaceSelected));
-    } else {
-        styles.push(bg(Role::SurfaceHover).hover());
-    }
-    let mut tab = node().styles(styles).child(line(label, 13, 1.4, tone));
-    if let Some(count) = count {
-        tab = tab.child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    px(1.5),
-                    rounded(Radius::Lg),
-                    bg(Role::Accent),
-                ])
-                .child(line(count.to_string(), 11, 1.3, Role::OnAccent)),
-        );
-    }
-    tab.focusable(id)
+    let select = Target::Terminal(TerminalEvent::TerminalTab(index));
+    rustle::row_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .height(theme::sp(7))
+            .indicated(tab_tones(shown), theme::Focused::Rustle)
+            .padding_each(0.0, 0.0, theme::sp(1), 0.0),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            let name = Modifier::new().weight(1.0).height(theme::sp(7)).clip();
+            rustle::row_arranged(
+                events::pressed(name, select).padding_each(theme::sp(3), 0.0, 0.0, 0.0),
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Center,
+                || {
+                    glyph(phosphor::TERMINAL, 3.5, tone);
+                    line(tab.name(), 13, 1.4, tone);
+                },
+            );
+            Button::icon(
+                phosphor::X,
+                Target::Terminal(TerminalEvent::TerminalClose(index)),
+            )
+            .build();
+        },
+    );
 }
 
-/// The shells of `session` as a list at the right of the dock, the one showing marked, each with the button that ends it.
-fn shell_list(session: &Session) -> Node {
-    let mut list = node().styles([
-        flex(),
-        flex_col(),
-        flex_none(),
-        w_px(SHELL_LIST_WIDTH),
-        min_h(0),
-        overflow_hidden(),
-        border_l(),
-        border_color(Role::Border),
-    ]);
-    for (index, tab) in session.terminals.iter().enumerate() {
-        list = list.child(shell_row(index, tab, index == session.terminal_active));
-    }
-    list
-}
-
-/// The row of the shell at `index`: its name, pressed to show it, and the button that ends it.
-fn shell_row(index: usize, tab: &TerminalTab, shown: bool) -> Node {
-    let tone = if shown { Role::Text } else { Role::Muted };
-    let mut styles = vec![
-        flex(),
-        items_center(),
-        gap(2),
-        h(7),
-        pr(1),
-        flex_none(),
-        text_color(tone),
-    ];
-    if shown {
-        styles.push(bg(Role::SurfaceSelected));
-    } else {
-        styles.push(bg(Role::SurfaceHover).hover());
-    }
-    let name = node()
-        .styles([
-            flex(),
-            flex_1(),
-            items_center(),
-            gap(2),
-            h(7),
-            pm_style::pl(3),
-            min_w_px(0),
-            overflow_hidden(),
-            cursor_pointer(),
-        ])
-        .child(glyph(IconName::Terminal, 3.5, tone))
-        .child(line(tab.name(), 13, 1.4, tone))
-        .focusable(pm_input::FocusId(TERMINAL_TAB_BASE + index as u64));
-    node().styles(styles).child(name).child(
-        Button::icon(
-            IconName::Close,
-            pm_input::FocusId(TERMINAL_CLOSE_BASE + index as u64),
-        )
-        .build(),
-    )
-}
-
-/// The window of the shell `tab`, `width` logical pixels wide inside its padding and drawn as `look` says, which takes the keyboard when pressed.
-fn window(tab: &TerminalTab, width: f32, look: Look, shaper: &mut Shaper) -> Node {
+/// Emits the window of the shell `tab`, `width` logical pixels wide inside its padding and drawn as `look` says, which takes the keyboard when pressed.
+#[track_caller]
+fn window(tab: &TerminalTab, width: f32, look: Look) {
     let emulator = tab.emulator.clone();
     let back = tab.back;
     let composing = tab.composing.clone();
@@ -316,23 +317,42 @@ fn window(tab: &TerminalTab, width: f32, look: Look, shaper: &mut Shaper) -> Nod
         look.cursor as u8,
     )
         .hash(&mut hasher);
-    let grid = retained(hasher.finish(), width, shaper, move |_| {
-        lines(&emulator.read(), back, &composing, link.as_ref(), look)
-    });
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_1(),
-            min_h(0),
-            overflow_hidden(),
-            pm_style::padding(Sides::Horizontal, PADDING_X),
-            pm_style::padding(Sides::Vertical, PADDING_Y),
-            bg(Role::Background),
-            cursor_text(),
-        ])
-        .child(grid)
-        .focusable(TERMINAL_BODY)
+    let key = hasher.finish();
+    let body = Target::Terminal(TerminalEvent::TerminalBody);
+    rustle::column_arranged(
+        Modifier::new()
+            .fill_max_height()
+            .weight(1.0)
+            .background(theme::color(Role::Background))
+            .clip()
+            .cursor(if link.is_some() {
+                CursorIcon::Pointer
+            } else {
+                CursorIcon::Text
+            })
+            .chain(shell_pointer(&emulator, look.font))
+            .pressable_pointing(
+                body,
+                send(Event::pressing(body)),
+                {
+                    let operations = crate::events::operations();
+                    move |at| operations.open_terminal_menu(at)
+                },
+                shell_press(&emulator, look.font),
+            )
+            .chain(crate::bounds::placed(body, Modifier::new()))
+            .chain(crate::focus::keyboard_focus(body))
+            .padding_xy(PADDING_X, PADDING_Y),
+        Arrangement::Start,
+        Alignment::Start,
+        move || {
+            rustle::key(key, || {
+                rustle::skippable((key, width.to_bits()), || {
+                    lines(&emulator.read(), back, &composing, link.as_ref(), look);
+                });
+            });
+        },
+    );
 }
 
 /// What the cells of a run share, which is what makes them one run.
@@ -352,33 +372,36 @@ struct Run {
     linked: bool,
 }
 
-/// The lines of the window of `emulator` scrolled `back` lines up, with `composing` shown at the cursor and `link` underlined, drawn as `look` says.
-fn lines(
-    emulator: &Emulator,
-    back: usize,
-    composing: &str,
-    link: Option<&Link>,
-    look: Look,
-) -> Node {
+/// Emits the lines of the window of `emulator` scrolled `back` lines up, with `composing` shown at the cursor and `link` underlined, drawn as `look` says.
+#[track_caller]
+fn lines(emulator: &Emulator, back: usize, composing: &str, link: Option<&Link>, look: Look) {
     let first = emulator.first_line(back);
     let cursor = emulator.cursor(back);
     let selection = emulator.selection().map(|marked| marked.ordered());
-    node()
-        .styles([flex(), flex_col(), flex_none()])
-        .children((0..emulator.rows()).map(|row| {
-            let at_cursor = cursor
-                .filter(|(line, _)| *line == row)
-                .map(|(_, column)| column);
-            let marked = selection.and_then(|range| marked_columns(range, first + row));
-            let linked = link.and_then(|link| linked_columns(link, first + row));
-            line_of(
-                emulator.line(row, back),
-                at_cursor,
-                Marks { marked, linked },
-                composing,
-                look,
-            )
-        }))
+    rustle::column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for row in 0..emulator.rows() {
+                let at_cursor = cursor
+                    .filter(|(line, _)| *line == row)
+                    .map(|(_, column)| column);
+                let marked = selection.and_then(|range| marked_columns(range, first + row));
+                let linked =
+                    link.and_then(|link| marked_columns((link.start, link.end), first + row));
+                rustle::key(row, || {
+                    line_of(
+                        emulator.line(row, back),
+                        at_cursor,
+                        Marks { marked, linked },
+                        composing,
+                        look,
+                    )
+                });
+            }
+        },
+    );
 }
 
 /// The columns of line `line` that the selection from `start` to `end` covers, when it covers any.
@@ -394,11 +417,6 @@ fn marked_columns(
     Some((from, to))
 }
 
-/// The columns of line `line` that `link` covers, when it covers any.
-fn linked_columns(link: &Link, line: usize) -> Option<(usize, usize)> {
-    marked_columns((link.start, link.end), line)
-}
-
 /// The columns of one line that are drawn apart from the rest, each from one column to another inclusive.
 #[derive(Clone, Copy, Debug, Default)]
 struct Marks {
@@ -408,14 +426,15 @@ struct Marks {
     linked: Option<(usize, usize)>,
 }
 
-/// One line of the window: its cells grouped into runs of the same look, with `composing` drawn just before the cursor, drawn as `look` says.
+/// Emits one line of the window: its cells grouped into runs of the same look, with `composing` drawn just before the cursor, drawn as `look` says.
+#[track_caller]
 fn line_of(
     cells: &[Cell],
     cursor: Option<usize>,
     Marks { marked, linked }: Marks,
     composing: &str,
     look: Look,
-) -> Node {
+) {
     let used = cells
         .iter()
         .rposition(|cell| !cell.is_blank())
@@ -426,51 +445,56 @@ fn line_of(
         })
         .max(cursor.map_or(0, |column| column + 1))
         .min(cells.len());
-    let mut row = node().styles([flex(), flex_none(), h_px(look.font * LEADING)]);
-    let mut run: Option<(Run, String)> = None;
-    for (column, cell) in cells[..end].iter().enumerate() {
-        let shared = Run {
-            fg: cell.fg,
-            bg: cell.bg,
-            flags: cell.flags,
-            selected: marked.is_some_and(|(from, to)| column >= from && column <= to),
-            cursor: cursor == Some(column),
-            linked: linked.is_some_and(|(from, to)| column >= from && column <= to),
-        };
-        let character = if cell.flags.has(Flags::HIDDEN) {
-            ' '
-        } else {
-            cell.ch
-        };
-        match &mut run {
-            Some((held, content)) if *held == shared && !shared.cursor => content.push(character),
-            _ => {
-                if let Some((held, content)) = run.take() {
-                    row = row.child(run_node(held, content, look));
+    rustle::row_arranged(
+        Modifier::new().height(look.font * LEADING),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            let mut run: Option<(Run, String)> = None;
+            for (column, cell) in cells[..end].iter().enumerate() {
+                let shared = Run {
+                    fg: cell.fg,
+                    bg: cell.bg,
+                    flags: cell.flags,
+                    selected: marked.is_some_and(|(from, to)| column >= from && column <= to),
+                    cursor: cursor == Some(column),
+                    linked: linked.is_some_and(|(from, to)| column >= from && column <= to),
+                };
+                let character = if cell.flags.has(Flags::HIDDEN) {
+                    ' '
+                } else {
+                    cell.ch
+                };
+                match &mut run {
+                    Some((held, content)) if *held == shared && !shared.cursor => {
+                        content.push(character)
+                    }
+                    _ => {
+                        if let Some((held, content)) = run.take() {
+                            run_node(held, content, look);
+                        }
+                        if shared.cursor && !composing.is_empty() {
+                            composing_node(composing, look.font);
+                        }
+                        run = Some((shared, character.to_string()));
+                    }
                 }
-                if shared.cursor && !composing.is_empty() {
-                    row = row.child(composing_node(composing, look.font));
-                }
-                run = Some((shared, character.to_string()));
             }
-        }
-    }
-    if let Some((held, content)) = run {
-        row = row.child(run_node(held, content, look));
-    }
-    row
+            if let Some((held, content)) = run {
+                run_node(held, content, look);
+            }
+        },
+    );
 }
 
-/// The node drawing `composing`, text an input method has not committed yet, underlined in the default colours, `font` logical pixels tall.
-fn composing_node(composing: &str, font: f32) -> Node {
-    text(composing).styles([
-        flex_none(),
-        code_px(font),
-        leading_ratio(LEADING),
-        font_mono(),
-        text_color(Role::Text),
-        underline(),
-    ])
+/// Emits `composing`, text an input method has not committed yet, underlined in the default colours, `font` logical pixels tall.
+fn composing_node(composing: &str, font: f32) {
+    rustle::basic_text(
+        Modifier::new(),
+        composing,
+        cell_type(font).color(theme::color(Role::Text)).underline(),
+        TextOverflow::Ellipsis,
+    );
 }
 
 /// How a paint is shown: a colour, or the default one of `role`.
@@ -485,8 +509,9 @@ fn shown(paint: Paint, role: Role) -> Color {
     }
 }
 
-/// The node drawing `content` as the cells of `run` share, with type and cursor as `drawn` says.
-fn run_node(look: Run, content: String, drawn: Look) -> Node {
+/// Emits `content` as the cells of `look` share, with type and cursor as `drawn` says; the cell under the cursor tells the window, through `ime_caret`, where an input method's candidates go while the shell has the keyboard.
+#[track_caller]
+fn run_node(look: Run, content: String, drawn: Look) {
     let inverse = look.flags.has(Flags::INVERSE);
     let (mut ink, mut ground) = if inverse {
         (
@@ -500,54 +525,147 @@ fn run_node(look: Run, content: String, drawn: Look) -> Node {
         )
     };
     if look.flags.has(Flags::DIM) {
-        ink = ink.alpha(0.6);
+        ink = ink.copy(ink.alpha() * 0.6);
     }
     if look.selected {
         ground = Some(Role::SurfaceActive.into());
     }
-    let mut styles = vec![
-        flex_none(),
-        code_px(drawn.font),
-        leading_ratio(LEADING),
-        font_mono(),
-        text_color(ink),
-    ];
-    if let Some(ground) = ground {
-        styles.push(bg(ground));
-    }
+    let mut kind = cell_type(drawn.font);
     if look.flags.has(Flags::BOLD) {
-        styles.push(font_bold());
+        kind = kind.bold();
     }
     if look.flags.has(Flags::ITALIC) {
-        styles.push(italic());
+        kind = kind.italic();
     }
     if look.flags.has(Flags::UNDERLINE) || look.linked {
-        styles.push(underline());
+        kind = kind.underline();
     }
     if look.flags.has(Flags::STRIKE) {
-        styles.push(line_through());
+        kind = kind.strikethrough();
+    }
+    let mut modifier = Modifier::new().fill_max_height();
+    if let Some(ground) = ground {
+        modifier = modifier.background(theme::color(ground));
     }
     if look.cursor {
-        match drawn.cursor {
-            TerminalCursor::Block => styles.extend([
-                bg(Role::Subtle),
-                text_color(Role::Background),
-                bg(Role::Text).focus(),
-            ]),
-            TerminalCursor::Bar => styles.extend([
-                border_width(Sides::Left, 2.0),
-                border_color(Role::Subtle),
-                border_color(Role::Text).focus(),
-            ]),
-            TerminalCursor::Underline => styles.extend([
-                border_width(Sides::Bottom, 2.0),
-                border_color(Role::Subtle),
-                border_color(Role::Text).focus(),
-            ]),
-        }
-        return text(content).styles(styles).focused_with(TERMINAL_BODY);
+        let caret = rustle::Rect::new(
+            rustle::Offset::new(0.0, 0.0),
+            rustle::Size::new(1.0, kind.line_height),
+        );
+        cursor_cell(modifier.ime_caret(caret), content, kind, ink, drawn.cursor);
+    } else {
+        rustle::basic_text(
+            modifier,
+            content,
+            kind.color(theme::color(ink)),
+            TextOverflow::Ellipsis,
+        );
     }
-    text(content).styles(styles)
+}
+
+/// Emits `content` in `kind` with `modifier` as the cell under the cursor, the cursor drawn as `shape` says: subtle, and in the text colour while the window holds the keyboard; its character in `ink`, or in the background colour on a block cursor.
+#[track_caller]
+fn cursor_cell(
+    modifier: Modifier,
+    content: String,
+    kind: rustle::TextStyle,
+    ink: Color,
+    shape: TerminalCursor,
+) {
+    let cursor = if crate::focus::is_focused(Target::Terminal(TerminalEvent::TerminalBody)) {
+        theme::color(Role::Text)
+    } else {
+        theme::color(Role::Subtle)
+    };
+    match shape {
+        TerminalCursor::Block => rustle::basic_text(
+            modifier.background(cursor),
+            content,
+            kind.color(theme::color(Role::Background)),
+            TextOverflow::Ellipsis,
+        ),
+        TerminalCursor::Bar => {
+            rustle::row_arranged(modifier, Arrangement::Start, Alignment::Start, || {
+                rustle::vertical_divider(Modifier::new(), 2.0, cursor);
+                rustle::basic_text(
+                    Modifier::new().fill_max_height(),
+                    content,
+                    kind.color(theme::color(ink)),
+                    TextOverflow::Ellipsis,
+                );
+            })
+        }
+        TerminalCursor::Underline => rustle::basic_text(
+            modifier
+                .border_bottom(2.0, cursor)
+                .padding_each(0.0, 0.0, 0.0, 2.0),
+            content,
+            kind.color(theme::color(ink)),
+            TextOverflow::Ellipsis,
+        ),
+    }
+}
+
+/// The cell of the window of the shell `emulator`, set in type `font` tall, that the point `at` from the top left of the window is over.
+fn cell_of(emulator: &Shared, font: f32, at: rustle::Offset) -> (usize, usize) {
+    let shown = emulator.read();
+    cell_at(
+        (at.x, at.y),
+        cell_size(font),
+        (shown.columns(), shown.rows()),
+    )
+}
+
+/// What the window of the shell `emulator`, set in type `font` tall, does with its own
+/// presses: the primary button going down tells the app the cell under it, how many presses
+/// in a row it makes and the modifier keys held, which open a link or start marking text.
+fn shell_press(emulator: &Shared, font: f32) -> impl Fn(&rustle::PointerEvent) + 'static {
+    let operations = events::operations();
+    let emulator = emulator.clone();
+    move |event| {
+        if event.button != rustle::PointerButton::Primary
+            || event.phase != rustle::PointerPhase::Press
+        {
+            return;
+        }
+        operations.terminal_pointer(TerminalPointer {
+            cell: cell_of(&emulator, font, event.position),
+            stroke: Stroke::Down {
+                clicks: event.click_count,
+                modifiers: event.modifiers,
+            },
+        });
+    }
+}
+
+/// The modifier of the window of the shell `emulator`, set in type `font` tall, that tells
+/// the app the cell the pointer is over, the primary button pressed on it moving and let go
+/// wherever the pointer is, and the wheel turned over it, which scrolls the shell back and
+/// goes no further.
+fn shell_pointer(emulator: &Shared, font: f32) -> Modifier {
+    let operations = events::operations();
+    let (hovered, held) = (Rc::clone(&operations), Rc::clone(&operations));
+    let (over, pressed) = (emulator.clone(), emulator.clone());
+    Modifier::new()
+        .on_pointer_move(move |local| {
+            hovered.terminal_hovered(local.map(|local| cell_of(&over, font, local)));
+        })
+        .pointer_input(move |event| {
+            let stroke = match event.phase {
+                rustle::PointerInputPhase::Move => Stroke::Move,
+                rustle::PointerInputPhase::Up | rustle::PointerInputPhase::Cancel => Stroke::Up,
+                rustle::PointerInputPhase::Scroll => {
+                    held.terminal_wheel(-event.scroll_delta.y);
+                    return true;
+                }
+                rustle::PointerInputPhase::Down => return false,
+            };
+            held.terminal_pointer(TerminalPointer {
+                cell: cell_of(&pressed, font, event.position),
+                stroke,
+            });
+            false
+        })
 }
 
 /// The line of the window and the column that the point `x`, `y` logical pixels from the top left of the window of a shell is over, kept inside a window of `columns` by `rows`.

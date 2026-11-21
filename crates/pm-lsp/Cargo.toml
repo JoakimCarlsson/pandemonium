@@ -18,3 +18,6 @@ sha2 = "0.11.1"
 toml = "1.1.8"
 ureq = { version = "3.4.2", default-features = false, features = ["rustls"] }
 zip = { version = "9.0.3", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+pm-store = { workspace = true, features = ["scratch-folders"] }

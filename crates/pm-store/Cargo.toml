@@ -4,5 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# Keeps the data and cache folders in a folder of each process under the workspace's `build/` directory instead of the desktop's, for tests.
+scratch-folders = []
+
 [dependencies]
 dirs = "7.0.0"

@@ -1,167 +1,128 @@
-//! The screen the window shows, and how it is drawn.
+//! What each window shows: the root composables the live windows and the
+//! snapshots draw, from the screen the app holds.
 
-use pm_color::{Role, Roles, Srgba};
-use pm_pages::{Screen, picker_screen, screen, settings_screen};
-use pm_renderer::DrawList;
-use pm_text::Shaper;
-use pm_theme::{Fonts, Theme};
-use pm_ui::{Input, Node, Output};
+use pm_components::theme::{self, Tokens};
+use pm_pages::{Screen, picker_screen, screen, settings_window};
+use rustle::Modifier;
+use rustle::{Alignment, Arrangement, column_arranged};
 
-/// A shaper set in the fonts the app ships.
-pub fn shaper() -> Shaper {
-    let mut shaper = Shaper::new();
-    shaper.set_stacks(Fonts::DEFAULT.sans, Fonts::DEFAULT.mono);
-    shaper
+/// Which window a root composable fills: the main window is [`MAIN_WINDOW`], the windows
+/// beside it are numbered.
+pub type WindowKey = u64;
+
+/// The key of the main window.
+pub const MAIN_WINDOW: WindowKey = 0;
+
+/// The window key of the settings window.
+pub const SETTINGS_WINDOW: WindowKey = 1;
+
+/// The window key of the folder picker's window.
+pub const PICKER_WINDOW: WindowKey = 2;
+
+/// Sets interface text in the family `sans` and code in `mono`, each by name,
+/// falling back to the fonts the app ships; an empty name is the one the app ships.
+pub fn set_fonts(sans: &str, mono: &str) {
+    theme::set_font_choice(sans, mono);
+    theme::fonts_changed();
 }
 
-/// Sets `shaper` in the interface font `sans` and the code font `mono`, each by family name, falling back to the fonts the app ships; an empty name is the one the app ships.
-pub fn set_fonts(shaper: &mut Shaper, sans: &str, mono: &str) {
-    let stack = |chosen: &str, shipped: &[&'static str]| -> Vec<String> {
-        std::iter::once(chosen)
-            .filter(|name| !name.is_empty())
-            .chain(shipped.iter().copied())
-            .map(str::to_owned)
-            .collect()
-    };
-    let sans = stack(sans, Fonts::DEFAULT.sans);
-    let mono = stack(mono, Fonts::DEFAULT.mono);
-    let sans: Vec<&str> = sans.iter().map(String::as_str).collect();
-    let mono: Vec<&str> = mono.iter().map(String::as_str).collect();
-    shaper.set_stacks(&sans, &mono);
-}
-
-/// Builds what follows on this thread as closely and with interface text as big as the window's settings in `state` say.
-fn scale_for(state: &Screen) {
+/// Lays out what follows on this thread as closely, and with interface text
+/// as big, as the window's settings in `state` say.
+pub fn scale_for(state: &Screen) {
     let appearance = match state {
         Screen::Workspace(held) => held.window.appearance.clone(),
     };
-    pm_style::set_scales(appearance.density.scale(), appearance.text_scale());
+    theme::set_scales(appearance.density.scale(), appearance.text_scale());
 }
 
-/// The colour the window is cleared to before anything is drawn: nothing, where the window floats and what is behind it must show past its rounded corners and through its band for the shadow.
-pub fn ground(theme: &Theme) -> Srgba {
-    if pm_components::framed() {
-        Srgba::new(0.0, 0.0, 0.0, 0.0)
-    } else {
-        theme.role(Role::Background)
-    }
+/// Emits `content`, a window's frame `width` by `height` logical pixels
+/// across, inset in a window larger by the band that holds the frame's
+/// shadow while there is one.
+#[track_caller]
+pub fn banded(content: impl FnOnce(f32, f32), width: f32, height: f32) {
+    let band = pm_components::shadow_margin();
+    column_arranged(
+        Modifier::new().fill_max_size().padding(band),
+        Arrangement::Start,
+        Alignment::Start,
+        || content(width - 2.0 * band, height - 2.0 * band),
+    );
 }
 
-/// Builds the screen for `state` and `input` and paints it into `list`,
-/// replacing what the list held. Reports what was drawn and where.
-pub fn paint(
-    width: f32,
-    height: f32,
-    state: &Screen,
-    input: &Input,
-    theme: &Theme,
-    shaper: &mut Shaper,
-    list: &mut DrawList,
-) -> Output {
-    list.clear();
+/// Emits the main window's frame for `state` in a window `width` by `height`
+/// logical pixels, inset by the band that holds the frame's shadow.
+#[track_caller]
+pub fn main_frame(state: &Screen, width: f32, height: f32) {
+    banded(|width, height| screen(state, width, height), width, height);
+}
+
+/// Emits what the window beside the main one kept under `window` shows for
+/// `state`, in a window `width` by `height` logical pixels, inset by the band
+/// that holds its frame's shadow.
+#[track_caller]
+pub fn aside_frame(state: &Screen, window: WindowKey, width: f32, height: f32) {
+    banded(
+        |width, height| {
+            if window == SETTINGS_WINDOW {
+                settings_window(state, width, height);
+            } else {
+                picker_screen(state, width, height);
+            }
+        },
+        width,
+        height,
+    );
+}
+
+/// Emits the main window's root for `state` in a window `width` by `height`
+/// logical pixels drawn with `tokens`: the screen in its frame over the
+/// background that takes the presses nothing above took, the tooltips over it,
+/// and the area that takes dropped files.
+pub fn main_root(state: &Screen, width: f32, height: f32, tokens: Tokens) {
     scale_for(state);
-    let root = screen(state, width, height, shaper);
-    pm_ui::draw(&root, width, height, input, theme, shaper, list)
+    theme::provide(tokens, || {
+        rustle::stack_with(Modifier::new().fill_max_size(), || {
+            column_arranged(
+                Modifier::new()
+                    .fill_max_size()
+                    .chain(pm_components::events::background())
+                    .chain(app_keys())
+                    .chain(pm_components::events::carry_target())
+                    .chain(pm_components::events::file_drop()),
+                Arrangement::Start,
+                Alignment::Start,
+                || main_frame(state, width, height),
+            );
+            pm_components::resize_edges();
+        });
+    });
 }
 
-/// Paints `root`, when there is one, into `list`, replacing what the list held, and reports what was drawn and where.
-fn paint_window(
-    root: Option<Node>,
-    width: f32,
-    height: f32,
-    input: &Input,
-    theme: &Theme,
-    shaper: &mut Shaper,
-    list: &mut DrawList,
-) -> Output {
-    match root {
-        Some(root) => pm_ui::draw(&root, width, height, input, theme, shaper, list),
-        None => Output::default(),
-    }
-}
-
-/// Builds what the settings window shows for `state` and `input` and paints
-/// it into `list`, replacing what the list held. Reports what was drawn and
-/// where; nothing is drawn while settings are closed.
-pub fn paint_settings(
-    width: f32,
-    height: f32,
-    state: &Screen,
-    input: &Input,
-    theme: &Theme,
-    shaper: &mut Shaper,
-    list: &mut DrawList,
-) -> Output {
-    list.clear();
+/// Emits the root of the window beside the main one kept under `window`,
+/// `width` by `height` logical pixels, drawn with `tokens`: the settings
+/// window or the folder picker's, over the background that takes the presses
+/// nothing above took.
+pub fn aside_root(state: &Screen, window: WindowKey, width: f32, height: f32, tokens: Tokens) {
     scale_for(state);
-    let root = settings_screen(state, width, shaper);
-    paint_window(root, width, height, input, theme, shaper, list)
+    theme::provide(tokens, || {
+        rustle::stack_with(Modifier::new().fill_max_size(), || {
+            let root = Modifier::new()
+                .fill_max_size()
+                .chain(pm_components::events::background())
+                .chain(app_keys());
+            rustle::stack_with(root, || {
+                aside_frame(state, window, width, height);
+            });
+            pm_components::resize_edges();
+        });
+    });
 }
 
-/// Builds what the folder picker's window shows for `state` and `input` and
-/// paints it into `list`, replacing what the list held. Reports what was
-/// drawn and where; nothing is drawn while the picker is closed.
-pub fn paint_picker(
-    width: f32,
-    height: f32,
-    state: &Screen,
-    input: &Input,
-    theme: &Theme,
-    shaper: &mut Shaper,
-    list: &mut DrawList,
-) -> Output {
-    list.clear();
-    scale_for(state);
-    let root = picker_screen(state);
-    paint_window(root, width, height, input, theme, shaper, list)
-}
-
-/// The main screen retained until its model, viewport, clock second or fonts change.
-#[derive(Default)]
-pub struct Cached {
-    /// The model version, logical viewport and clock second of the retained screen.
-    key: Option<(u64, u32, u32, u64, bool)>,
-    /// The tree and layout of the last screen built.
-    scene: Option<pm_ui::Scene>,
-}
-
-impl Cached {
-    /// Drops geometry after a font change even when the model did not change.
-    pub fn clear(&mut self) {
-        self.key = None;
-        self.scene = None;
-    }
-
-    /// Rebuilds on content, viewport, clock-second or frame changes; otherwise only repaints interaction styles.
-    #[allow(clippy::too_many_arguments)]
-    pub fn paint(
-        &mut self,
-        version: u64,
-        width: f32,
-        height: f32,
-        state: &Screen,
-        input: &Input,
-        theme: &Theme,
-        shaper: &mut Shaper,
-        list: &mut DrawList,
-    ) -> Output {
-        scale_for(state);
-        let key = (
-            version,
-            width.to_bits(),
-            height.to_bits(),
-            (input.elapsed_ms / 1000.0) as u64,
-            pm_components::framed(),
-        );
-        if self.key != Some(key) {
-            let root = screen(state, width, height, shaper);
-            self.scene = Some(pm_ui::Scene::new(root, width, height, shaper));
-            self.key = Some(key);
-        }
-        list.clear();
-        self.scene
-            .as_ref()
-            .expect("screen built above")
-            .paint(input, theme, shaper, list)
-    }
+/// The modifier that hands every key of the window to the app's state holder before
+/// whatever holds focus sees it, the root key handler that keeps the app-wide shortcuts:
+/// a key the app takes goes no further, and one it leaves goes on to the focused control,
+/// then to rustle (Tab walks focus).
+fn app_keys() -> Modifier {
+    let operations = pm_components::events::operations();
+    Modifier::new().on_preview_key_event(move |event| operations.key(event))
 }

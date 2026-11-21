@@ -2,28 +2,23 @@
 //!
 //! Each row shows the first few lines of its prompt, with the elements and captures it carries as chips, and only the first few rows are shown, so that a long prompt or many of them never push the prompt box out of the window; the whole of a prompt is read by editing it.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Color, Radius, Role, bg, border, border_color, flex, flex_1, flex_col, flex_none, gap, h,
-    items_center, items_start, leading_ratio, mb, min_w_px, pl, pr, pt, py, rounded, text_color,
-    text_px, w_full,
-};
-use pm_text::{Field, Shaper};
-use pm_ui::{Node, node, text};
+use crate::areas::ChatEvent;
+use crate::button;
+use crate::target::Target;
+use crate::theme;
+use crate::theme::Frame;
+use rustle::Modifier;
+use rustle::TextFieldState;
+use rustle::{Alignment, Arrangement, TextOverflow};
+use rustle::{Color, Icon, phosphor};
+
+use crate::theme::{Radius, Role};
 
 use crate::Button;
 use crate::button::Variant;
 use crate::parts::{glyph, line};
 use crate::sample::{Queued, Session};
-use crate::size::Size;
-use crate::state::{HURRY_BASE, Outgoing, Page, REMOVE_QUEUED_BASE, WorkspaceState, prompt_field};
-
-/// Gives up the edit of a waiting prompt and puts back what was in the prompt box before it.
-pub const QUEUED_CANCEL: FocusId = FocusId(7_402_302);
-
-/// The first of the buttons opening a waiting prompt for editing; the rest follow it.
-pub const EDIT_QUEUED_BASE: u64 = 4_901_000_000_000;
+use crate::state::{Outgoing, Page, WorkspaceState, prompt_field};
 
 /// How wide the three buttons beside the text of a waiting prompt are together, in logical pixels, which the text leaves free.
 const BESIDE_TEXT: f32 = 240.0;
@@ -57,7 +52,7 @@ pub struct EditingQueued {
     /// The prompt, by the id the server gave it.
     pub id: u64,
     /// What the prompt box held before the edit began, which goes back when it ends.
-    pub draft: Field,
+    pub draft: TextFieldState,
 }
 
 impl WorkspaceState {
@@ -169,186 +164,208 @@ fn with_selection(typed: &str, original: &str) -> String {
     }
 }
 
-/// The first `SHOWN_LINES` lines of `content` wrapped to `width` logical pixels, in `tone`, the last of them ended with an ellipsis when more of it is left out.
-fn clamped(content: &str, tone: Role, width: f32, shaper: &mut Shaper) -> Node {
+/// Emits the first `SHOWN_LINES` lines of `content` wrapped to `width` logical pixels, in `tone`, the last of them ended with an ellipsis when more of it is left out.
+#[track_caller]
+fn clamped(content: &str, tone: Role, width: f32) {
     let tone: Color = tone.into();
-    let lines = pm_ui::wrap(
-        shaper,
-        content,
-        [text_px(TEXT_PIXELS), leading_ratio(TEXT_LEADING)],
-        width.max(32.0),
-    );
+    let kind = theme::text_style(TEXT_PIXELS, TEXT_LEADING);
+    let lines = rustle::wrap_at_spaces(content, &kind, width.max(32.0));
     let cut = lines.len() > SHOWN_LINES;
     let shown = lines.len().min(SHOWN_LINES);
-    node().styles([flex(), flex_col(), min_w_px(0)]).children(
-        lines.into_iter().take(shown).enumerate().map(|(at, part)| {
-            let words = content[part.start..part.end].trim_end();
-            match (cut && at + 1 == shown, words.is_empty()) {
-                (true, _) => line(format!("{words}\u{2026}"), TEXT_PIXELS, TEXT_LEADING, tone),
-                (false, true) => node().styles([h(3)]),
-                (false, false) => text(words).styles([
-                    text_px(TEXT_PIXELS),
-                    leading_ratio(TEXT_LEADING),
-                    text_color(tone),
-                    min_w_px(0),
-                ]),
+    rustle::column_arranged(
+        Modifier::new(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            for (at, part) in lines.into_iter().take(shown).enumerate() {
+                let words = content[part.start..part.end].trim_end();
+                match (cut && at + 1 == shown, words.is_empty()) {
+                    (true, _) => line(format!("{words}\u{2026}"), TEXT_PIXELS, TEXT_LEADING, tone),
+                    (false, true) => rustle::spacer(Modifier::new().height(theme::sp(3))),
+                    (false, false) => rustle::basic_text(
+                        Modifier::new(),
+                        words,
+                        kind.color(theme::color(tone)),
+                        TextOverflow::Ellipsis,
+                    ),
+                }
             }
-        }),
-    )
+        },
+    );
 }
 
-/// What a row shows of a waiting prompt's `content` in a column `width` logical pixels wide: the elements and captures it carries as chips, as a sent message shows them, then the first lines of what the reader typed, in `tone`.
-fn body(content: &str, tone: Role, width: f32, shaper: &mut Shaper) -> Node {
+/// Emits what a row shows of a waiting prompt's `content` in a column `width` logical pixels wide: the elements and captures it carries as chips, as a sent message shows them, then the first lines of what the reader typed, in `tone`.
+#[track_caller]
+fn body(content: &str, tone: Role, width: f32) {
     let (typed, labels) = crate::elements::split(content);
-    node()
-        .styles([flex_1(), min_w_px(0), pt(1), flex(), flex_col(), gap(1.5)])
-        .children((!labels.is_empty()).then(|| crate::elements::sent_chips(&labels)))
-        .children((!typed.is_empty()).then(|| clamped(typed, tone, width, shaper)))
+    rustle::column_arranged(
+        Modifier::new()
+            .weight(1.0)
+            .padding_each(0.0, theme::sp(1), 0.0, 0.0),
+        Arrangement::SpacedBy(theme::sp(1.5)),
+        Alignment::Start,
+        || {
+            if !labels.is_empty() {
+                crate::elements::sent_chips(&labels);
+            }
+            if !typed.is_empty() {
+                clamped(typed, tone, width);
+            }
+        },
+    );
 }
 
-/// A button showing only `icon`, saying what it does with `tooltip`, answering to `id`.
-fn icon_button(icon: IconName, tooltip: &str, id: FocusId) -> Node {
-    Button::icon(icon, id)
-        .variant(Variant::Ghost)
-        .size(Size::Sm)
-        .build()
-        .tooltip(tooltip)
+/// Emits a button showing only `icon`, saying what it does with `tooltip`, answering to `id`.
+#[track_caller]
+pub(crate) fn icon_button(icon: Icon, tooltip: &str, id: Target) {
+    Button::icon(icon, id).tooltip(tooltip).build();
 }
 
-/// The box a row of a waiting prompt is drawn in, its contents aligned to the top.
-fn frame() -> Node {
-    node().styles([
-        flex(),
-        items_start(),
-        gap(2),
-        w_full(),
-        pl(3),
-        pr(1),
-        py(1),
-        rounded(Radius::Lg),
-        border(),
-        border_color(Role::Border),
-        bg(Role::Surface),
-    ])
+/// Emits a small ghost button saying `label` with `icon`, answering to `id`: the actions of a waiting prompt's row.
+#[track_caller]
+fn ghost(label: &str, id: Target, icon: Icon) {
+    button::small_button(label, id, Variant::Ghost)
+        .with_icon(icon)
+        .build();
 }
 
-/// One waiting prompt, at `index`, in a row `width` logical pixels wide: the first lines of its text and chips for what it carries, how many files go with it and buttons to edit it, send it now or remove it.
-fn waiting(index: usize, queued: &Queued, width: f32, shaper: &mut Shaper) -> Node {
+/// Emits the box a row of a waiting prompt is drawn in, its contents aligned to the top, holding what `content` emits.
+#[track_caller]
+fn frame(content: impl FnOnce()) {
+    rustle::row_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .panel(Radius::Lg)
+            .padding_each(theme::sp(3), theme::sp(1), theme::sp(1), theme::sp(1)),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
+        content,
+    );
+}
+
+/// Emits `name` in `tone`, lowered by a step to sit on the first line of a row's text.
+#[track_caller]
+fn leading_glyph(name: Icon, tone: Role) {
+    rustle::row_arranged(
+        Modifier::new().padding_each(0.0, theme::sp(1), 0.0, 0.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || glyph(name, 3.5, tone),
+    );
+}
+
+/// Emits one waiting prompt, at `index`, in a row `width` logical pixels wide: the first lines of its text and chips for what it carries, how many files go with it and buttons to edit it, send it now or remove it.
+#[track_caller]
+fn waiting(index: usize, queued: &Queued, width: f32) {
     let counted = if queued.files.is_empty() {
         0.0
     } else {
         FILE_COUNT
     };
     let room = (width - CHROME - BESIDE_TEXT - counted).max(120.0);
-    let mut buttons = node()
-        .styles([flex(), items_center(), gap(1), flex_none()])
-        .child(icon_button(
-            IconName::Pencil,
-            "Edit",
-            FocusId(EDIT_QUEUED_BASE + index as u64),
-        ));
-    buttons = buttons
-        .child(
-            Button::new("Send now", FocusId(HURRY_BASE + index as u64))
-                .variant(Variant::Ghost)
-                .size(Size::Sm)
-                .with_icon(IconName::Zap)
-                .build(),
-        )
-        .child(
-            Button::new("Remove", FocusId(REMOVE_QUEUED_BASE + index as u64))
-                .variant(Variant::Ghost)
-                .size(Size::Sm)
-                .with_icon(IconName::Trash)
-                .build(),
+    frame(|| {
+        leading_glyph(phosphor::TIMER, Role::Muted);
+        body(&queued.text, Role::Text, room);
+        if !queued.files.is_empty() {
+            let count = queued.files.len();
+            let files = if count == 1 { "file" } else { "files" };
+            rustle::row_arranged(
+                Modifier::new().padding_each(0.0, theme::sp(1.5), 0.0, 0.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || line(format!("{count} {files}"), 12, 1.4, Role::Muted),
+            );
+        }
+        rustle::row_arranged(
+            Modifier::new(),
+            Arrangement::SpacedBy(theme::sp(1)),
+            Alignment::Center,
+            || {
+                icon_button(
+                    phosphor::PENCIL_SIMPLE,
+                    "Edit",
+                    Target::Chat(ChatEvent::EditQueued(index)),
+                );
+                ghost(
+                    "Send now",
+                    Target::Chat(ChatEvent::Hurry(index)),
+                    phosphor::LIGHTNING,
+                );
+                ghost(
+                    "Remove",
+                    Target::Chat(ChatEvent::RemoveQueued(index)),
+                    phosphor::TRASH,
+                );
+            },
         );
-    let mut row = frame()
-        .child(
-            node()
-                .styles([pt(1)])
-                .child(glyph(IconName::Progress, 3.5, Role::Muted)),
-        )
-        .child(body(&queued.text, Role::Text, room, shaper));
-    if !queued.files.is_empty() {
-        let count = queued.files.len();
-        let files = if count == 1 { "file" } else { "files" };
-        row = row.child(node().styles([flex_none(), pt(1.5)]).child(line(
-            format!("{count} {files}"),
-            12,
-            1.4,
-            Role::Muted,
-        )));
-    }
-    row.child(buttons)
+    });
 }
 
-/// The waiting prompt being edited, in a row `width` logical pixels wide: the first lines of the text it has until the edit is saved, which the prompt box holds whole, chips for what it carries, and a button to give the edit up.
-fn editing(queued: &Queued, width: f32, shaper: &mut Shaper) -> Node {
+/// Emits the waiting prompt being edited, in a row `width` logical pixels wide: the first lines of the text it has until the edit is saved, which the prompt box holds whole, chips for what it carries, and a button to give the edit up.
+#[track_caller]
+fn editing(queued: &Queued, width: f32) {
     let room = (width - CHROME - BESIDE_EDIT).max(120.0);
-    frame()
-        .child(
-            node()
-                .styles([pt(1)])
-                .child(glyph(IconName::Pencil, 3.5, Role::Accent)),
-        )
-        .child(body(&queued.text, Role::Muted, room, shaper))
-        .child(
-            Button::new("Cancel", QUEUED_CANCEL)
-                .variant(Variant::Ghost)
-                .size(Size::Sm)
-                .with_icon(IconName::Close)
-                .build(),
-        )
+    frame(|| {
+        leading_glyph(phosphor::PENCIL_SIMPLE, Role::Accent);
+        body(&queued.text, Role::Muted, room);
+        ghost("Cancel", Target::Chat(ChatEvent::QueuedCancel), phosphor::X);
+    });
 }
 
-/// The prompts waiting for `session`'s agent, oldest first, in a column `width` logical pixels wide, or nothing when none waits. Only the first `SHOWN_ROWS` are shown, and the one being edited wherever it is; a line counts the others.
-pub fn queued(
-    state: &WorkspaceState,
-    session: &Session,
-    width: f32,
-    shaper: &mut Shaper,
-) -> Option<Node> {
+/// Emits the prompts waiting for `session`'s agent, oldest first, in a column `width` logical pixels wide, or nothing when none waits. Only the first `SHOWN_ROWS` are shown, and the one being edited wherever it is; a line counts the others.
+#[track_caller]
+pub fn queued(state: &WorkspaceState, session: &Session, width: f32) {
     if session.queued.is_empty() {
-        return None;
+        return;
     }
     let editing_id = state
         .editing_queued
         .as_ref()
         .filter(|open| open.scope == session.scope)
         .map(|open| open.id);
-    let mut rows = node().styles([flex(), flex_col(), gap(1), mb(2)]);
-    let mut hidden = 0;
-    for (index, waiting_prompt) in session.queued.iter().enumerate() {
-        let edited = editing_id == Some(waiting_prompt.id);
-        if index >= SHOWN_ROWS && !edited {
-            hidden += 1;
-            continue;
-        }
-        rows = rows.child(if edited {
-            editing(waiting_prompt, width, shaper)
-        } else {
-            waiting(index, waiting_prompt, width, shaper)
-        });
-    }
-    if hidden > 0 {
-        let prompts = if hidden == 1 { "prompt" } else { "prompts" };
-        rows = rows.child(node().styles([pl(3)]).child(line(
-            format!("+{hidden} more {prompts} waiting"),
-            12,
-            1.4,
-            Role::Muted,
-        )));
-    }
-    Some(rows)
+    rustle::column_arranged(
+        Modifier::new().padding_each(0.0, 0.0, 0.0, theme::sp(2)),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Start,
+        || {
+            let mut hidden = 0;
+            for (index, waiting_prompt) in session.queued.iter().enumerate() {
+                let edited = editing_id == Some(waiting_prompt.id);
+                if index >= SHOWN_ROWS && !edited {
+                    hidden += 1;
+                    continue;
+                }
+                rustle::key(waiting_prompt.id, || {
+                    if edited {
+                        editing(waiting_prompt, width);
+                    } else {
+                        waiting(index, waiting_prompt, width);
+                    }
+                });
+            }
+            if hidden > 0 {
+                let prompts = if hidden == 1 { "prompt" } else { "prompts" };
+                let said = format!("+{hidden} more {prompts} waiting");
+                rustle::row_arranged(
+                    Modifier::new().padding_each(theme::sp(3), 0.0, 0.0, 0.0),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || line(said, 12, 1.4, Role::Muted),
+                );
+            }
+        },
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use pm_harness::Event;
-    use pm_text::Edit;
 
     use super::*;
-    use crate::state::{PROMPT, WorkspaceState};
+    use crate::areas::ChatEvent;
+    use crate::areas::ComposerEvent;
+    use crate::areas::SidebarEvent;
+    use crate::state::WorkspaceState;
 
     /// What `WorkspaceState` is given for the tests: the same state with nothing waiting in its outbox.
     trait Drained {
@@ -368,7 +385,9 @@ mod tests {
     fn waiting_state() -> WorkspaceState {
         let state = WorkspaceState::sample();
         let session = state.sessions.len() - 1;
-        let state = state.after(FocusId(crate::state::SESSION_BASE + session as u64));
+        let state = state.handle(crate::events::Event::Sidebar(SidebarEvent::Session(
+            session,
+        )));
         [(1, "first"), (2, "second")]
             .into_iter()
             .fold(state, |state, (id, text)| {
@@ -381,22 +400,23 @@ mod tests {
                     },
                 )
             })
-            .edited(PROMPT, Edit::Paste("my draft".to_owned()))
+            .typed(Target::Composer(ComposerEvent::Prompt), "my draft")
             .drained()
     }
 
     /// Editing holds the queue and loads the waiting text into the prompt box, sending asks the server to replace the text and lets the queue go on, and the draft comes back.
     #[test]
     fn sending_while_editing_saves_the_edit_and_restores_the_draft() {
-        let mut state = waiting_state().after(FocusId(EDIT_QUEUED_BASE));
+        let mut state =
+            waiting_state().handle(crate::events::Event::Chat(ChatEvent::EditQueued(0)));
         assert_eq!(state.prompt.text(), "first");
         assert!(matches!(
             state.take_outbox().as_slice(),
             [Outgoing::HoldQueue { held: true, .. }]
         ));
         state = state
-            .edited(PROMPT, Edit::Paste(", edited".to_owned()))
-            .after(crate::state::SEND);
+            .typed(Target::Composer(ComposerEvent::Prompt), ", edited")
+            .handle(crate::events::Event::Composer(ComposerEvent::Send));
         assert_eq!(state.prompt.text(), "my draft");
         assert!(state.editing_queued.is_none());
         assert!(matches!(
@@ -409,9 +429,9 @@ mod tests {
     #[test]
     fn cancelling_an_edit_restores_the_draft_and_releases_the_queue() {
         let mut state = waiting_state()
-            .after(FocusId(EDIT_QUEUED_BASE))
-            .edited(PROMPT, Edit::Paste("x".to_owned()))
-            .after(QUEUED_CANCEL);
+            .handle(crate::events::Event::Chat(ChatEvent::EditQueued(0)))
+            .typed(Target::Composer(ComposerEvent::Prompt), "x")
+            .handle(crate::events::Event::Chat(ChatEvent::QueuedCancel));
         assert_eq!(state.prompt.text(), "my draft");
         assert!(matches!(
             state.take_outbox().last(),
@@ -423,7 +443,9 @@ mod tests {
     fn selection_state() -> (WorkspaceState, String) {
         let state = WorkspaceState::sample();
         let session = state.sessions.len() - 1;
-        let state = state.after(FocusId(crate::state::SESSION_BASE + session as u64));
+        let state = state.handle(crate::events::Event::Sidebar(SidebarEvent::Session(
+            session,
+        )));
         let section = crate::elements::message(&[crate::elements::Element {
             tag: "button".to_owned(),
             text: "Save".to_owned(),
@@ -447,12 +469,12 @@ mod tests {
     #[test]
     fn editing_keeps_the_selected_elements() {
         let (state, section) = selection_state();
-        let mut state = state.after(FocusId(EDIT_QUEUED_BASE));
+        let mut state = state.handle(crate::events::Event::Chat(ChatEvent::EditQueued(0)));
         assert_eq!(state.prompt.text(), "fix this");
         state.take_outbox();
         state = state
-            .edited(PROMPT, Edit::Paste(", please".to_owned()))
-            .after(crate::state::SEND);
+            .typed(Target::Composer(ComposerEvent::Prompt), ", please")
+            .handle(crate::events::Event::Composer(ComposerEvent::Send));
         let expected = format!("fix this, please\n\n{section}");
         assert!(matches!(
             state.take_outbox().as_slice(),
@@ -464,20 +486,22 @@ mod tests {
     #[test]
     fn an_unchanged_edit_with_elements_changes_nothing() {
         let (state, _) = selection_state();
-        let mut state = state.after(FocusId(EDIT_QUEUED_BASE)).drained();
-        state = state.after(crate::state::SEND);
+        let mut state = state
+            .handle(crate::events::Event::Chat(ChatEvent::EditQueued(0)))
+            .drained();
+        state = state.handle(crate::events::Event::Composer(ComposerEvent::Send));
         assert!(matches!(
             state.take_outbox().as_slice(),
             [Outgoing::HoldQueue { held: false, .. }]
         ));
     }
 
-    /// Send now is heard however many branches the prompt box has loaded, which number their rows from a base of their own.
+    /// Send now is heard however many branches the prompt box has loaded, whose rows are targets of their own.
     #[test]
     fn sending_now_with_many_branches_loaded_hurries_the_prompt() {
         let mut state = waiting_state();
         state.branches = (0..500).map(|n| format!("branch-{n}")).collect();
-        let mut state = state.after(FocusId(HURRY_BASE + 1));
+        let mut state = state.handle(crate::events::Event::Chat(ChatEvent::Hurry(1)));
         assert!(matches!(
             state.take_outbox().as_slice(),
             [Outgoing::Hurry { queued: 2, .. }]
@@ -488,9 +512,9 @@ mod tests {
     #[test]
     fn sending_now_while_editing_ends_the_edit() {
         let mut state = waiting_state()
-            .after(FocusId(EDIT_QUEUED_BASE))
+            .handle(crate::events::Event::Chat(ChatEvent::EditQueued(0)))
             .drained()
-            .after(FocusId(HURRY_BASE + 1));
+            .handle(crate::events::Event::Chat(ChatEvent::Hurry(1)));
         assert!(state.editing_queued.is_none());
         assert_eq!(state.prompt.text(), "my draft");
         assert!(matches!(

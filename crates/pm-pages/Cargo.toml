@@ -10,11 +10,10 @@ pm-components.workspace = true
 pm-config.workspace = true
 pm-editor.workspace = true
 pm-git.workspace = true
-pm-icon.workspace = true
-pm-input.workspace = true
 pm-protocol.workspace = true
-pm-style.workspace = true
 pm-terminal.workspace = true
-pm-text.workspace = true
-pm-ui.workspace = true
 pm-vim.workspace = true
+rustle = { git = "https://github.com/JoakimCarlsson/rustle", version = "0.1.0" }
+
+[dev-dependencies]
+pm-store = { workspace = true, features = ["scratch-folders"] }

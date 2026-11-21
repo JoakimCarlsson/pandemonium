@@ -1,19 +1,9 @@
 //! The keys that work on whole lines and on the selection of the file shown: commenting, indenting, moving, duplicating and deleting lines, growing and shrinking the selection along the syntax tree, going to the next problem and to a line by its number.
 
 use pm_editor::{Case, Document, LineOrder};
-use pm_input::FocusId;
-use pm_text::{Edit, Field, Motion};
+use pm_editor::{Edit, Motion};
 
 use crate::state::WorkspaceState;
-
-/// The field the number of the line to go to is typed in.
-pub const GO_TO_LINE: FocusId = FocusId(7_401_910);
-
-/// Hands in the number of the line to go to.
-pub const GO_TO_LINE_SUBMIT: FocusId = FocusId(7_401_911);
-
-/// The box the number of the line to go to is typed in, which keeps a press on it from counting as outside.
-pub const GO_TO_LINE_BOX: FocusId = FocusId(7_401_912);
 
 /// What is done to the lines or the selection of the file shown.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -110,7 +100,7 @@ pub enum LineEdit {
 #[derive(Clone, Debug, PartialEq)]
 pub struct GoingTo {
     /// The number being typed.
-    pub field: Field,
+    pub field: rustle::TextFieldState,
     /// Where it hangs, in logical pixels of the window.
     pub at: (f32, f32),
 }
@@ -118,11 +108,7 @@ pub struct GoingTo {
 impl WorkspaceState {
     /// The file shown, to change it, when it is text.
     pub(crate) fn shown_text(&mut self) -> Option<&mut Document> {
-        let index = self.git.shown?;
-        match &mut self.git.viewers.get_mut(index)?.contents {
-            crate::open_files::Contents::Text(document) => Some(document),
-            _ => None,
-        }
+        self.chosen_viewer_mut()?.document_mut()
     }
 
     /// Does `what` to the lines or the selection of the file shown.
@@ -160,39 +146,15 @@ impl WorkspaceState {
             .shown_document()
             .is_some_and(|document| document.field.has_others());
         let edits: Vec<Edit> = match what {
-            LineEdit::SelectAllOccurrences => self
-                .shown_document()
-                .map(Document::select_all_occurrences_edits)
-                .unwrap_or_default(),
             LineEdit::Backspace if several => vec![Edit::Backspace],
             LineEdit::Home(extend) if several => {
-                vec![Edit::Move(pm_text::Motion::LineStart, extend)]
+                vec![Edit::Move(Motion::LineStart, extend)]
             }
-            LineEdit::Case(case) => self
-                .shown_document()
-                .map(|document| document.case_edits(case))
-                .unwrap_or_default(),
-            LineEdit::OrderLines(order) => self
-                .shown_document()
-                .map(|document| document.order_lines_edits(order))
-                .unwrap_or_default(),
-            LineEdit::SplitIntoLines => self
-                .shown_document()
-                .map(Document::split_into_lines_edits)
-                .unwrap_or_default(),
-            LineEdit::Column(down, right) => self
-                .shown_text()
-                .map(|document| document.column_select_edits(down, right))
-                .unwrap_or_default(),
-            LineEdit::ColumnDrag(from, to) => self
-                .shown_document()
-                .map(|document| document.column_drag_edits(from, to))
-                .unwrap_or_default(),
             LineEdit::DeleteToLineEnd => vec![Edit::Move(Motion::LineEnd, true), Edit::Delete],
             LineEdit::DeleteToLineStart => {
                 vec![Edit::Move(Motion::LineStart, true), Edit::Backspace]
             }
-            _ => self.line_edit(what).into_iter().collect(),
+            _ => self.line_edits(what),
         };
         let read_only = self
             .shown_document()
@@ -219,16 +181,36 @@ impl WorkspaceState {
                 | LineEdit::ColumnDrag(..)
         );
         if moves_only || !read_only {
-            for edit in edits {
-                self.file_edited(edit);
-            }
+            self.file_edits(edits);
         }
         self
     }
 
-    /// The edit `what` makes to the file shown, when it makes one.
-    fn line_edit(&mut self, what: LineEdit) -> Option<Edit> {
-        self.shown_text().and_then(|document| match what {
+    /// The edits `what` makes to the file shown. The edits that change the
+    /// selection or several lines at once are only made while the file's own
+    /// tab is in front.
+    fn line_edits(&mut self, what: LineEdit) -> Vec<Edit> {
+        let needs_tab = matches!(
+            what,
+            LineEdit::SelectAllOccurrences
+                | LineEdit::Case(_)
+                | LineEdit::OrderLines(_)
+                | LineEdit::SplitIntoLines
+                | LineEdit::ColumnDrag(..)
+        );
+        if needs_tab && self.shown_document().is_none() {
+            return Vec::new();
+        }
+        let Some(document) = self.shown_text() else {
+            return Vec::new();
+        };
+        let single = match what {
+            LineEdit::SelectAllOccurrences => return document.select_all_occurrences_edits(),
+            LineEdit::Case(case) => return document.case_edits(case),
+            LineEdit::OrderLines(order) => return document.order_lines_edits(order),
+            LineEdit::SplitIntoLines => return document.split_into_lines_edits(),
+            LineEdit::Column(down, right) => return document.column_select_edits(down, right),
+            LineEdit::ColumnDrag(from, to) => return document.column_drag_edits(from, to),
             LineEdit::ToggleComment => document.toggle_comment_edit(),
             LineEdit::Indent => document.indent_lines_edit(false),
             LineEdit::Outdent => document.indent_lines_edit(true),
@@ -258,21 +240,16 @@ impl WorkspaceState {
             LineEdit::Transpose => document.transpose_edit(),
             LineEdit::TrimTrailing => document.tidy_edit(true, false),
             LineEdit::ToggleBlockComment => document.toggle_block_comment_lines_edit(),
-            LineEdit::Case(_)
-            | LineEdit::OrderLines(_)
-            | LineEdit::DeleteToLineEnd
+            LineEdit::DeleteToLineEnd
             | LineEdit::DeleteToLineStart
-            | LineEdit::SplitIntoLines
-            | LineEdit::Column(..)
-            | LineEdit::ColumnDrag(..)
-            | LineEdit::SelectAllOccurrences
             | LineEdit::Fold
             | LineEdit::Unfold
             | LineEdit::FoldAll
             | LineEdit::CursorUndo
             | LineEdit::CursorRedo
             | LineEdit::UnfoldAll => None,
-        })
+        };
+        single.into_iter().collect()
     }
 
     /// What copying in the file shown puts on the clipboard when the selection holds nothing: the lines the carets are on, the indentation the text was copied at, and whether it is whole lines; or the indentation of the selection when it holds something.
@@ -310,7 +287,7 @@ impl WorkspaceState {
     pub fn go_to_line_requested(mut self, at: (f32, f32)) -> Self {
         if self.shown_document().is_some() {
             self.going_to = Some(GoingTo {
-                field: Field::new(""),
+                field: rustle::TextFieldState::default(),
                 at,
             });
         }
@@ -339,12 +316,7 @@ impl WorkspaceState {
         };
         self.going_to = None;
         self.remember_spot();
-        let edit = self
-            .shown_document()
-            .map(|document| document.go_to_line_edit(number));
-        if let Some(edit) = edit {
-            self.file_edited(edit);
-        }
+        self.edit_shown(|document| Some(document.go_to_line_edit(number)));
         self
     }
 }

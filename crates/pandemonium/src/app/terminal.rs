@@ -1,55 +1,38 @@
 //! The terminal dock in the window: sizing it to the shell, typing into it, marking text and scrolling back.
 
-use pm_components::terminal::{cell_at, cell_size, fitting};
+use pm_buffer::Reach;
+use pm_components::areas::{ComposerEvent, TerminalEvent};
+use pm_components::pointing::{Stroke, TerminalPointer};
+use pm_components::target::Target;
+use pm_components::terminal::{cell_size, fitting};
 use pm_components::terminal_keys;
 use pm_components::terminal_menu::{TERMINAL_MENU_HEIGHT, TerminalCommand};
 use pm_editor::{Action, Pressed};
-use pm_input::{Key, KeyEvent};
-use pm_pages::{PROMPT, TERMINAL_BODY};
-use pm_renderer::Rect;
-use pm_text::Reach;
 
-use super::gesture::TerminalWindow;
-use super::{App, DOUBLE_CLICK};
+use rustle::Rect;
+use rustle::{Key, KeyEvent};
+
+use super::App;
+use super::selecting::{Hold, Selected};
 use crate::keys::{self, Clip};
 
 impl App {
     /// How tall the type of the shells is, in logical pixels, as the settings say.
     fn terminal_font(&self) -> f32 {
         self.model
-            .read(|screen| match screen {
-                pm_pages::Screen::Workspace(state) => {
-                    Some(pm_components::terminal::Look::of(state).font)
-                }
-            })
+            .read(|state| Some(pm_components::terminal::Look::of(state).font))
             .unwrap_or(13.0)
     }
 
     /// How wide and how tall one cell of a shell's window is, in logical pixels.
     fn terminal_cell_size(&mut self) -> (f32, f32) {
         let font = self.terminal_font();
-        cell_size(&mut self.shaper, font)
+        cell_size(font)
     }
 
     /// Where the window of the shell showing was drawn, if it was.
     fn terminal_region(&self) -> Option<Rect> {
-        self.output
-            .regions
-            .iter()
-            .find(|region| region.id == TERMINAL_BODY)
-            .map(|region| region.rect)
-    }
-
-    /// The cell of the shell's window that the point `at` is over, and the room it has.
-    fn terminal_cell(&mut self, at: (f32, f32)) -> Option<(usize, usize)> {
-        let body = self.terminal_region()?;
-        let (columns, rows, _) = self.model.read(|screen| screen.terminal_window())?;
-        let cell = self.terminal_cell_size();
-        Some(cell_at(
-            (at.0 - body.x, at.1 - body.y),
-            cell,
-            (columns, rows),
-        ))
+        self.place(Target::Terminal(TerminalEvent::TerminalBody))
     }
 
     /// Gives the shell the size of the room the dock has for it, when that differs from the size it has.
@@ -58,7 +41,7 @@ impl App {
             return;
         };
         let cell = self.terminal_cell_size();
-        let (columns, rows) = fitting(body.width, body.height, cell);
+        let (columns, rows) = fitting(body.size.width, body.size.height, cell);
         let differs = self
             .model
             .read(|screen| screen.terminal_window())
@@ -80,7 +63,7 @@ impl App {
 
     /// Types the text an input method committed into the shell, when it holds the keyboard.
     pub(super) fn commit_to_terminal(&mut self, text: &str) -> bool {
-        if self.focus.current() != Some(TERMINAL_BODY) {
+        if self.focus.focused() != Some(Target::Terminal(TerminalEvent::TerminalBody)) {
             return false;
         }
         self.type_into_terminal(text.as_bytes().to_vec());
@@ -88,8 +71,8 @@ impl App {
     }
 
     /// Acts on a key when the shell holds the keyboard, and says whether it did.
-    pub(super) fn terminal_key(&mut self, event: KeyEvent) -> bool {
-        if self.focus.current() != Some(TERMINAL_BODY) {
+    pub(super) fn terminal_key(&mut self, event: &KeyEvent) -> bool {
+        if self.focus.focused() != Some(Target::Terminal(TerminalEvent::TerminalBody)) {
             return false;
         }
         let Some((application, bracketed)) = self.model.read(|screen| screen.terminal_modes())
@@ -99,7 +82,7 @@ impl App {
         if self.terminal_keymap_key(event) {
             return true;
         }
-        if let Some(action) = keys::terminal_clip(&event) {
+        if let Some(action) = keys::terminal_clip(event) {
             self.terminal_clip(action, bracketed);
         } else if event.modifiers.shift && matches!(event.key, Key::PageUp | Key::PageDown) {
             let page = self
@@ -113,19 +96,19 @@ impl App {
                 -page
             };
             self.model.update(|screen| screen.scroll_terminal(lines));
-        } else if let Some(data) = terminal_keys::bytes(&event, application) {
+        } else if let Some(data) = terminal_keys::bytes(event, application) {
             self.type_into_terminal(data);
         }
         true
     }
 
     /// Takes a press of keys the keymap binds to one of the shell's actions, or that starts such a binding, and says whether it took it.
-    fn terminal_keymap_key(&mut self, event: KeyEvent) -> bool {
+    fn terminal_keymap_key(&mut self, event: &KeyEvent) -> bool {
         let modifiers = event.modifiers;
-        if !(modifiers.control || modifiers.logo || modifiers.alt) && self.pending.is_empty() {
+        if !(modifiers.ctrl || modifiers.meta || modifiers.alt) && self.pending.is_empty() {
             return false;
         }
-        let Some(chord) = Self::chord_of(&event) else {
+        let Some(chord) = Self::chord_of(event) else {
             return false;
         };
         match self
@@ -156,28 +139,26 @@ impl App {
                 .is_some_and(|(_, bracketed)| bracketed);
             self.terminal_clip(Clip::Paste, bracketed);
         }
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).terminal_command(command));
+        self.model.change(|state| state.terminal_command(command));
         if command == TerminalCommand::AddToChat {
-            self.focus.focus(PROMPT);
+            self.focus
+                .request_focus(Target::Composer(ComposerEvent::Prompt));
         } else {
-            self.focus.focus(TERMINAL_BODY);
+            self.focus
+                .request_focus(Target::Terminal(TerminalEvent::TerminalBody));
         }
         self.deliver();
     }
 
-    /// Opens the menu over the shell's window just under the pointer and inside the window.
-    pub(super) fn open_terminal_menu(&mut self) {
-        let Some((x, y)) = self.pointer.position else {
-            return;
-        };
+    /// Opens the menu over the shell's window just under `at`, in the window's frame, and
+    /// inside the window.
+    pub(super) fn open_terminal_menu(&mut self, (x, y): (f32, f32)) {
         let (width, height) = self.window_size();
         let at = (
             (x - 8.0).min(width - 264.0).max(0.0),
             (y + 4.0).min(height - TERMINAL_MENU_HEIGHT - 8.0).max(0.0),
         );
-        self.model
-            .update(|screen| *screen = std::mem::take(screen).with_terminal_menu(at));
+        self.model.change(|state| state.with_terminal_menu(at));
     }
 
     /// Copies what is marked in the shell showing, when the settings say to copy as soon as text is selected.
@@ -189,7 +170,7 @@ impl App {
             && !text.is_empty()
             && let Some(clipboard) = self.clipboard()
         {
-            let _ = clipboard.set_text(text);
+            clipboard.set_text(&text);
         }
     }
 
@@ -197,9 +178,7 @@ impl App {
     fn terminal_clip(&mut self, action: Clip, bracketed: bool) {
         match action {
             Clip::Paste => {
-                let pasted = self
-                    .clipboard()
-                    .and_then(|clipboard| clipboard.get_text().ok());
+                let pasted = self.clipboard().and_then(|clipboard| clipboard.text());
                 if let Some(text) = pasted {
                     self.type_into_terminal(terminal_keys::paste(&text, bracketed));
                 }
@@ -208,61 +187,87 @@ impl App {
                 if let Some(text) = self.model.read(|screen| screen.terminal_selection())
                     && let Some(clipboard) = self.clipboard()
                 {
-                    let _ = clipboard.set_text(text);
+                    clipboard.set_text(&text);
                 }
             }
         }
     }
 
-    /// The cell of the shell's window under the pointer, when the pointer is over the window.
-    fn terminal_cell_under_pointer(&mut self) -> Option<(usize, usize)> {
-        let at = self.pointer.position?;
-        (self.output.hit(at) == Some(TERMINAL_BODY)).then_some(())?;
-        self.terminal_region()
-            .is_some_and(|body| body.contains(at.0, at.1))
-            .then(|| self.terminal_cell(at))
-            .flatten()
+    /// Notes the cell of the shell's window the pointer is over, or that it left the window,
+    /// as the window tells, and follows the link Ctrl underlines there.
+    pub(super) fn terminal_hovered(&mut self, cell: Option<(usize, usize)>) {
+        self.terminal_hover = cell;
+        self.reach_terminal_link();
     }
 
     /// Underlines the web address under the pointer in the shell's window while Ctrl is held, and takes the underline away otherwise.
     pub(super) fn reach_terminal_link(&mut self) {
-        let at = self
-            .modifiers
-            .control
-            .then(|| self.terminal_cell_under_pointer())
-            .flatten();
+        let at = self.terminal_hover.filter(|_| self.modifiers.ctrl);
         let reaching = self.model.read(|screen| screen.reaching_terminal_link());
         if at.is_some() || reaching {
             self.model.update(|screen| screen.reach_terminal_link(at));
         }
     }
 
-    /// Whether a web address of the shell is underlined as what a press opens.
-    pub(super) fn reaching_terminal_link(&self) -> bool {
-        self.model.read(|screen| screen.reaching_terminal_link())
+    /// Carries out what the primary button did on the shell's window, as `pointer` tells: a
+    /// press with Ctrl held opens the web address there, and any other begins marking text,
+    /// a point, a word or a line as the presses in a row say; a move with the button held
+    /// stretches what is marked; the release copies it when the settings say to.
+    pub(super) fn terminal_pointer(&mut self, pointer: TerminalPointer) {
+        match pointer.stroke {
+            Stroke::Down { clicks, modifiers } => {
+                self.terminal_hold = None;
+                let mut opened = false;
+                if modifiers.ctrl {
+                    self.model
+                        .update(|screen| opened = screen.open_terminal_link(pointer.cell));
+                }
+                if opened {
+                    self.deliver();
+                    return;
+                }
+                let Some(cell) = self.absolute_terminal_cell(pointer.cell) else {
+                    return;
+                };
+                let (hold, selected) =
+                    Hold::press(cell, clicks, |reach, at| self.terminal_reach(reach, at));
+                self.mark_terminal(selected);
+                self.terminal_hold = Some(hold);
+            }
+            Stroke::Move => {
+                let Some(hold) = self.terminal_hold else {
+                    return;
+                };
+                if let Some(cell) = self.absolute_terminal_cell(pointer.cell) {
+                    let selected = hold.drag(cell, |reach, at| self.terminal_reach(reach, at));
+                    self.mark_terminal(selected);
+                }
+            }
+            Stroke::Up => {
+                if self.terminal_hold.take().is_some() {
+                    self.copy_terminal_selection();
+                }
+            }
+        }
     }
 
-    /// Opens the web address under the pointer when Ctrl is held as the primary button goes down in the shell's window, or else begins marking text there.
-    pub(super) fn terminal_press(&mut self) {
-        self.terminal_gesture.release();
-        let Some(cell) = self.terminal_cell_under_pointer() else {
-            return;
-        };
-        let mut opened = false;
-        if self.modifiers.control {
-            self.model
-                .update(|screen| opened = screen.open_terminal_link(cell));
+    /// The word or line `reach` takes around the cell `at`, by line counted from the oldest kept and column.
+    fn terminal_reach(&self, reach: Reach, at: (usize, usize)) -> ((usize, usize), (usize, usize)) {
+        self.model
+            .read(|screen| screen.terminal_reach(reach, at))
+            .unwrap_or((at, at))
+    }
+
+    /// Marks what `selected` says of the shell's text, both ends included, or unmarks it.
+    fn mark_terminal(&mut self, selected: Selected<(usize, usize)>) {
+        match selected {
+            Selected::Point(_) => self
+                .model
+                .update(|screen| screen.clear_terminal_selection()),
+            Selected::Span(anchor, head) => self
+                .model
+                .update(|screen| screen.select_terminal_span(anchor, head)),
         }
-        if opened {
-            self.deliver();
-            return;
-        }
-        let Some(cell) = self.absolute_terminal_cell(cell) else {
-            return;
-        };
-        let reach = Reach::of_clicks(self.clicks.press(TERMINAL_BODY, DOUBLE_CLICK));
-        self.terminal_gesture
-            .press(&mut TerminalWindow { model: &self.model }, cell, reach);
     }
 
     /// The cell `cell` of the shell's window as a line counted from the oldest kept and a column.
@@ -271,37 +276,13 @@ impl App {
         Some((first + cell.0, cell.1))
     }
 
-    /// Extends the marked text to the point `at` while the button is held.
-    pub(super) fn terminal_drag(&mut self, at: (f32, f32)) {
-        if !self.terminal_gesture.is_held() {
-            return;
-        }
-        if let Some(cell) = self
-            .terminal_cell(at)
-            .and_then(|cell| self.absolute_terminal_cell(cell))
-        {
-            self.terminal_gesture
-                .drag(&mut TerminalWindow { model: &self.model }, cell);
-        }
-    }
-
-    /// Scrolls the shell back or forward when the wheel turned over its window, and says whether it did.
-    pub(super) fn terminal_wheel(&mut self, pixels: f32) -> bool {
-        let Some(at) = self.pointer.position else {
-            return false;
-        };
-        if !self
-            .terminal_region()
-            .is_some_and(|body| body.contains(at.0, at.1))
-        {
-            return false;
-        }
+    /// Scrolls the shell back or forward by `pixels` of wheel turned over its window, downwards when positive.
+    pub(super) fn terminal_wheel(&mut self, pixels: f32) {
         let height = self.terminal_cell_size().1;
         self.terminal_scroll_rest -= pixels / height;
         let lines = self.terminal_scroll_rest.trunc();
         self.terminal_scroll_rest -= lines;
         self.model
             .update(|screen| screen.scroll_terminal(lines as isize));
-        true
     }
 }

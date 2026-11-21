@@ -1,28 +1,29 @@
 //! What a keypress does to a file while modal editing is on: the key goes to vim's engine before the keymap sees it, because in normal mode a plain letter is a command rather than a character, and whatever the engine does not take goes on as it would without modal editing, which is how insert mode types.
 
+use pm_components::areas::EditorEvent;
+use pm_components::target::Target;
 use pm_editor::Action;
-use pm_input::KeyEvent;
 use pm_vim::Command;
+use rustle::KeyEvent;
 
-use pm_components::git_controls::VIEWER_SCROLL;
-use pm_components::open_files::{EDITOR_FIELD, STRIP};
+use pm_components::open_files::STRIP;
 use pm_pages::Screen;
 
 use super::App;
 
-/// The system clipboard, as modal editing reaches it.
-struct Desktop<'a>(&'a mut Option<arboard::Clipboard>);
+/// The clipboard rustle installed, as modal editing reaches it.
+struct Desktop(Option<std::rc::Rc<dyn rustle::Clipboard>>);
 
-impl pm_vim::Clipboard for Desktop<'_> {
+impl pm_vim::Clipboard for Desktop {
     /// What is on the clipboard, if it holds text.
     fn read(&mut self) -> Option<String> {
-        self.0.as_mut()?.get_text().ok()
+        self.0.as_ref()?.text()
     }
 
     /// Puts `text` on the clipboard.
     fn write(&mut self, text: String) {
-        if let Some(clipboard) = self.0.as_mut() {
-            let _ = clipboard.set_text(text);
+        if let Some(clipboard) = self.0.as_ref() {
+            clipboard.set_text(&text);
         }
     }
 }
@@ -72,24 +73,23 @@ fn action_for(command: Command) -> Option<Action> {
 
 impl App {
     /// Sends a keypress to modal editing, when it is on and the file shown has the keyboard, and says whether it was taken.
-    pub(super) fn vim_key(&mut self, event: KeyEvent) -> bool {
-        if self.focus.current() != Some(EDITOR_FIELD) || !self.model.read(Screen::vim_on) {
+    pub(super) fn vim_key(&mut self, event: &KeyEvent) -> bool {
+        if self.focus.focused() != Some(Target::Editor(EditorEvent::EditorField))
+            || !self.model.read(|screen| screen.vim_on())
+        {
             return false;
         }
-        let Some(key) = pm_components::vim::keystroke(&event) else {
+        let Some(key) = pm_components::vim::keystroke(event) else {
             return false;
         };
         let height = self
-            .output
-            .regions
-            .iter()
-            .find(|region| region.id == VIEWER_SCROLL)
-            .map_or_else(|| self.window_height(), |region| region.rect.height + STRIP);
-        self.clipboard();
-        let clipboard = &mut self.clipboard;
+            .model
+            .read(Screen::code_area)
+            .map_or_else(|| self.window_height(), |view| view.size.height + STRIP);
+        let clipboard = self.clipboard();
         let mut commands = None;
         self.model.update(|screen| {
-            commands = screen.vim_key(key, height, &mut Desktop(clipboard));
+            commands = screen.vim_key(key, height, &mut Desktop(clipboard.clone()));
         });
         let Some(commands) = commands else {
             return false;

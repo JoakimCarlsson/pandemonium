@@ -1,7 +1,10 @@
 //! Tests of what the page for starting work hands to the session started from it.
 
+use crate::areas::ComposerEvent;
+
 use crate::browser_scope::NO_SCOPE;
-use crate::state::{Page, SEND, WorkspaceState, prompt_field};
+use crate::events::Event;
+use crate::state::{Page, WorkspaceState, prompt_field};
 
 /// A workspace on the page for starting work in the first project, with its `home` session made, and the position of that session.
 fn on_new_page() -> (WorkspaceState, usize) {
@@ -16,7 +19,7 @@ fn on_new_page() -> (WorkspaceState, usize) {
 /// Sends `text` from the page being shown and returns the state afterwards.
 fn sent(mut state: WorkspaceState, text: &str) -> WorkspaceState {
     state.prompt = prompt_field(text);
-    let mut state = state.after(SEND);
+    let mut state = state.handle(Event::Composer(ComposerEvent::Send));
     state.rescope_browser();
     state
 }

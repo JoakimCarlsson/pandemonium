@@ -1,6 +1,6 @@
 //! Brackets and quotes typed in pairs: the closing one written with the opening one, typed over when it is next, wrapped around a selection, and deleted with the opening one; and backspace in indentation taking a whole level.
 
-use pm_text::Edit;
+use crate::Edit;
 
 use crate::document::Document;
 

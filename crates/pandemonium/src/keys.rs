@@ -1,81 +1,52 @@
-//! Turning the window's keyboard events into the app's own.
+//! What the window's keys mean to the app: which keys the app reacts to, and the text edits and clipboard actions a key event asks for. The app
+//! matches on rustle's [`KeyEvent`]s directly; these turn them into the plain values of the
+//! crates below it, such as [`pm_editor::Edit`].
 
-use pm_input::{Key, KeyEvent, Modifiers};
-use pm_text::{Edit, Motion};
-use winit::event::{ElementState, KeyEvent as WindowKeyEvent};
-use winit::keyboard::{Key as WindowKey, ModifiersState, NamedKey};
-use winit::platform::modifier_supplement::KeyEventExtModifierSupplement;
+use pm_editor::{Edit, Motion};
+use rustle::{Key, KeyEvent};
 
-/// The app's modifiers for the window's.
-pub fn modifiers(state: ModifiersState) -> Modifiers {
-    Modifiers {
-        shift: state.shift_key(),
-        control: state.control_key(),
-        alt: state.alt_key(),
-        logo: state.super_key(),
+/// Whether the app reacts to the key of `event`: a character it typed, a named key it has
+/// a use for or a function key up to F12; not a modifier pressed on its own, nor text an
+/// input method committed.
+pub fn is_app_key(event: &KeyEvent) -> bool {
+    match &event.key {
+        Key::Character(_) => event.code_point().is_some(),
+        Key::F(number) => (1..=12).contains(number),
+        Key::Enter
+        | Key::Escape
+        | Key::Tab
+        | Key::Backspace
+        | Key::Delete
+        | Key::Home
+        | Key::End
+        | Key::PageUp
+        | Key::PageDown
+        | Key::ArrowUp
+        | Key::ArrowDown
+        | Key::ArrowLeft
+        | Key::ArrowRight => true,
+        _ => false,
     }
 }
 
-/// The app's key event for a key the window reported, or nothing for a key
-/// the app has no name for.
-pub fn key_event(event: &WindowKeyEvent, modifiers: Modifiers) -> Option<KeyEvent> {
-    let key = match &event.logical_key {
-        WindowKey::Named(NamedKey::Enter) => Key::Enter,
-        WindowKey::Named(NamedKey::Escape) => Key::Escape,
-        WindowKey::Named(NamedKey::Tab) => Key::Tab,
-        WindowKey::Named(NamedKey::Backspace) => Key::Backspace,
-        WindowKey::Named(NamedKey::Delete) => Key::Delete,
-        WindowKey::Named(NamedKey::Home) => Key::Home,
-        WindowKey::Named(NamedKey::End) => Key::End,
-        WindowKey::Named(NamedKey::PageUp) => Key::PageUp,
-        WindowKey::Named(NamedKey::PageDown) => Key::PageDown,
-        WindowKey::Named(NamedKey::Space) => Key::Space,
-        WindowKey::Named(NamedKey::ArrowUp) => Key::ArrowUp,
-        WindowKey::Named(NamedKey::ArrowDown) => Key::ArrowDown,
-        WindowKey::Named(NamedKey::ArrowLeft) => Key::ArrowLeft,
-        WindowKey::Named(NamedKey::ArrowRight) => Key::ArrowRight,
-        WindowKey::Named(NamedKey::F1) => Key::Function(1),
-        WindowKey::Named(NamedKey::F2) => Key::Function(2),
-        WindowKey::Named(NamedKey::F3) => Key::Function(3),
-        WindowKey::Named(NamedKey::F4) => Key::Function(4),
-        WindowKey::Named(NamedKey::F5) => Key::Function(5),
-        WindowKey::Named(NamedKey::F6) => Key::Function(6),
-        WindowKey::Named(NamedKey::F7) => Key::Function(7),
-        WindowKey::Named(NamedKey::F8) => Key::Function(8),
-        WindowKey::Named(NamedKey::F9) => Key::Function(9),
-        WindowKey::Named(NamedKey::F10) => Key::Function(10),
-        WindowKey::Named(NamedKey::F11) => Key::Function(11),
-        WindowKey::Named(NamedKey::F12) => Key::Function(12),
-        WindowKey::Character(text) => Key::Character(text.chars().next()?),
-        _ => return None,
-    };
-    Some(KeyEvent {
-        key,
-        modifiers: unspent(event, modifiers),
-        pressed: event.state == ElementState::Pressed,
-    })
+/// Whether `event` is the space bar.
+pub fn is_space(event: &KeyEvent) -> bool {
+    matches!(&event.key, Key::Character(text) if text == " ")
 }
 
-/// `modifiers` without the ones the keyboard layout spent composing the
-/// character `event` typed, such as Option turning `a` into `å` on a Mac or
-/// AltGr turning `2` into `@` elsewhere, so the character is typed rather
-/// than taken for a shortcut.
-fn unspent(event: &WindowKeyEvent, modifiers: Modifiers) -> Modifiers {
-    let composed = modifiers.alt
-        && matches!(
-            (&event.logical_key, event.key_without_modifiers()),
-            (WindowKey::Character(typed), WindowKey::Character(bare))
-                if !typed.eq_ignore_ascii_case(&bare)
-        );
-    if composed {
-        Modifiers {
-            alt: false,
-            control: false,
-            ..modifiers
-        }
-    } else {
-        modifiers
+/// The character `event` typed, Shift and the layout applied, when it is a character key
+/// other than the space bar.
+pub fn character(event: &KeyEvent) -> Option<char> {
+    match &event.key {
+        Key::Character(_) if !is_space(event) => event.code_point(),
+        _ => None,
     }
+}
+
+/// The character `event` typed, lower-cased, when it is a character key other than the
+/// space bar, as shortcuts that ignore Shift and Caps Lock match it.
+pub fn letter(event: &KeyEvent) -> Option<char> {
+    character(event).map(|character| character.to_ascii_lowercase())
 }
 
 /// The edit a key event asks of a text field, or nothing for a key that does
@@ -91,19 +62,26 @@ pub fn edit(event: &KeyEvent) -> Option<Edit> {
     if !event.pressed || (modifiers.alt && !option) {
         return None;
     }
-    let command = modifiers.control || modifiers.logo;
+    let command = modifiers.ctrl || modifiers.meta;
     let word = command || option;
     let shift = modifiers.shift;
+    if is_space(event) {
+        return (!command).then_some(Edit::Insert(' '));
+    }
+    if let Some(character) = character(event) {
+        return if command {
+            match character.to_ascii_lowercase() {
+                'a' => Some(Edit::SelectAll),
+                'z' if shift => Some(Edit::Redo),
+                'z' => Some(Edit::Undo),
+                'y' => Some(Edit::Redo),
+                _ => None,
+            }
+        } else {
+            Some(Edit::Insert(character))
+        };
+    }
     match event.key {
-        Key::Character(character) if command => match character.to_ascii_lowercase() {
-            'a' => Some(Edit::SelectAll),
-            'z' if shift => Some(Edit::Redo),
-            'z' => Some(Edit::Undo),
-            'y' => Some(Edit::Redo),
-            _ => None,
-        },
-        Key::Character(character) => Some(Edit::Insert(character)),
-        Key::Space if !command => Some(Edit::Insert(' ')),
         Key::Backspace => Some(by_word(word, Edit::Backspace, Edit::BackspaceWord)),
         Key::Delete => Some(by_word(word, Edit::Delete, Edit::DeleteWord)),
         Key::ArrowLeft => Some(Edit::Move(
@@ -139,16 +117,13 @@ pub enum Clip {
 /// The clipboard action a key event asks for, if it is one of the shortcuts for it.
 pub fn clip(event: &KeyEvent) -> Option<Clip> {
     let modifiers = event.modifiers;
-    if !event.pressed || modifiers.alt || !(modifiers.control || modifiers.logo) {
+    if !event.pressed || modifiers.alt || !(modifiers.ctrl || modifiers.meta) {
         return None;
     }
-    match event.key {
-        Key::Character(character) => match character.to_ascii_lowercase() {
-            'c' => Some(Clip::Copy),
-            'x' => Some(Clip::Cut),
-            'v' => Some(Clip::Paste),
-            _ => None,
-        },
+    match letter(event)? {
+        'c' => Some(Clip::Copy),
+        'x' => Some(Clip::Cut),
+        'v' => Some(Clip::Paste),
         _ => None,
     }
 }
@@ -156,15 +131,12 @@ pub fn clip(event: &KeyEvent) -> Option<Clip> {
 /// The clipboard action Command with C or V asks for in a terminal, the keys a Mac copies and pastes with; Control belongs to the shell, and its keys for the clipboard are the keymap's.
 pub fn terminal_clip(event: &KeyEvent) -> Option<Clip> {
     let modifiers = event.modifiers;
-    if !event.pressed || modifiers.alt || modifiers.shift || !modifiers.logo {
+    if !event.pressed || modifiers.alt || modifiers.shift || !modifiers.meta {
         return None;
     }
-    match event.key {
-        Key::Character(character) => match character.to_ascii_lowercase() {
-            'c' => Some(Clip::Copy),
-            'v' => Some(Clip::Paste),
-            _ => None,
-        },
+    match letter(event)? {
+        'c' => Some(Clip::Copy),
+        'v' => Some(Clip::Paste),
         _ => None,
     }
 }

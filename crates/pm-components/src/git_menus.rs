@@ -1,20 +1,21 @@
 //! The menus of the source control panel: on changed files, under the commit button, over the panel's own actions, on the graph's references and on a commit.
 
-use pm_input::FocusId;
-use pm_ui::Node;
+use crate::areas::SidebarEvent;
+use crate::areas::TreeEvent;
+
+use crate::areas::GitEvent;
+
+use crate::events::Event;
+use crate::target::Target;
 
 use crate::Menu;
 use crate::branch_tasks::BranchTask;
-use crate::git_controls::{BRANCH_BUTTON, CHANGES_MORE, COMMIT_CHEVRON, GRAPH_REFS};
 use crate::git_prompts::{Prompt, StashAction};
-use crate::state::{ADD_PROJECT, Outgoing, WorkspaceState};
+use crate::state::{Outgoing, WorkspaceState};
 use crate::tree_actions::TreeTarget;
 
 /// How wide the menus of source control are, in style units, so that the longest row, such as the one that discards changes to many files, keeps its padding.
 const MENU_WIDTH: f32 = 68.0;
-
-/// The first of the rows of the menu that is open; the rest follow it.
-pub const MENU_ROW_BASE: u64 = 9000;
 
 /// How tall the menu on changed files is, in logical pixels, to keep it inside the window.
 pub const CHANGE_MENU_HEIGHT: f32 = 11.0 * 32.0 + 4.0 * 9.0 + 10.0;
@@ -177,30 +178,14 @@ fn row_if(label: impl Into<String>, command: Command, enabled: bool) -> Entry {
 }
 
 impl WorkspaceState {
-    /// The menu button `id` is, if it is one: a press on it opens that menu.
-    pub fn menu_button_of(id: FocusId) -> Option<MenuKind> {
-        match id {
-            COMMIT_CHEVRON => Some(MenuKind::Commit),
-            CHANGES_MORE => Some(MenuKind::Source),
-            GRAPH_REFS => Some(MenuKind::Refs),
-            _ => None,
-        }
-    }
-
     /// Whether `id` names a row of the menu that is open.
-    pub fn is_menu_row(&self, id: FocusId) -> bool {
-        (self.git.menu.is_some() && id.0.checked_sub(MENU_ROW_BASE).is_some_and(|row| row < 40))
+    pub fn is_menu_row(&self, id: Target) -> bool {
+        (self.git.menu.is_some()
+            && matches!(id, Target::Git(GitEvent::GitMenuRow(row)) if row < 40))
             || self.settings_menu_row(id)
             || self.is_tab_menu_row(id)
             || self.is_terminal_menu_row(id)
             || self.is_browser_menu_row(id)
-    }
-
-    /// Which commit of the graph the row `id` is, if it is one.
-    pub fn history_row_of(&self, id: FocusId) -> Option<usize> {
-        id.0.checked_sub(crate::graph::HISTORY_ROW_BASE)
-            .map(|row| row as usize)
-            .filter(|row| *row < self.git.history.len())
     }
 
     /// The state with the menu `kind` open at `at`, and the others closed.
@@ -208,11 +193,7 @@ impl WorkspaceState {
         if self.review_session().is_none() {
             return self;
         }
-        self.menu = None;
-        self.project_menu = None;
-        self.session_menu = None;
-        self.message_menu = None;
-        self.git.branch_menu = false;
+        self.close_other_menus();
         if kind == MenuKind::Source {
             self.ask_stashes();
         }
@@ -235,17 +216,24 @@ impl WorkspaceState {
         self
     }
 
-    /// The commit and operation rows the menu under the commit button and the menu over the panel's actions share.
-    fn commit_entries(&self) -> Vec<Entry> {
-        let operation = self.git.operation.as_ref();
-        let title = match operation {
+    /// What the commit button says: how the operation under way goes on when
+    /// there is one, else a plain commit, or a commit of the tracked files
+    /// when `tracked` because nothing is staged.
+    pub(crate) fn commit_title(&self, tracked: bool) -> &'static str {
+        match self.git.operation.as_ref() {
             Some(pm_git::Operation::Merge { .. }) => "Commit Merge",
             Some(pm_git::Operation::Rebase { .. }) => "Continue Rebase",
             Some(pm_git::Operation::CherryPick { .. }) => "Continue Cherry-Pick",
+            None if tracked => "Commit Tracked",
             None => "Commit",
-        };
+        }
+    }
+
+    /// The commit and operation rows the menu under the commit button and the menu over the panel's actions share.
+    fn commit_entries(&self) -> Vec<Entry> {
+        let operation = self.git.operation.as_ref();
         let mut entries = vec![
-            row(title, Command::Commit),
+            row(self.commit_title(false), Command::Commit),
             row_if(
                 "Commit and Push",
                 Command::CommitAndPush,
@@ -332,17 +320,16 @@ impl WorkspaceState {
                 let count = acting.len();
                 let created = !acting.is_empty() && acting.iter().all(|change| change.is_created());
                 let staged = self.marked_all_staged();
-                let stage = match (count, staged) {
-                    (1, true) => "Unstage File".to_owned(),
-                    (1, false) => "Stage File".to_owned(),
-                    (count, true) => format!("Unstage {count} Files"),
-                    (count, false) => format!("Stage {count} Files"),
+                let files = if count == 1 {
+                    "File".to_owned()
+                } else {
+                    format!("{count} Files")
                 };
+                let stage = format!("{} {files}", if staged { "Unstage" } else { "Stage" });
                 let discard = match (count, created) {
-                    (1, true) => "Delete File".to_owned(),
                     (1, false) => "Discard Changes".to_owned(),
-                    (count, true) => format!("Delete {count} Files"),
-                    (count, false) => format!("Discard Changes to {count} Files"),
+                    (_, true) => format!("Delete {files}"),
+                    (_, false) => format!("Discard Changes to {files}"),
                 };
                 vec![
                     row_if("Open Changes", Command::OpenChanges, count == 1),
@@ -462,49 +449,55 @@ impl WorkspaceState {
         let local = self.review_is_local();
         let targets = self.tree_targets();
         let one = targets.len() == 1;
-        if target.is_root() {
-            return vec![
-                row("New File…", Command::TreeNewFile),
-                row("New Folder…", Command::TreeNewFolder),
-                Entry::Rule,
-                row_if("Paste", Command::TreePaste, pasting),
-                Entry::Rule,
-                row("Copy Path", Command::TreeCopyPath),
-                row("Copy Relative Path", Command::TreeCopyRelativePath),
-                row_if("Reveal in File Manager", Command::TreeReveal, local),
-                Entry::Rule,
-                row("Collapse All", Command::TreeCollapse),
-                row("Refresh", Command::TreeRefresh),
-            ];
-        }
-        vec![
+        let root = target.is_root();
+        let mut entries = vec![
             row("New File…", Command::TreeNewFile),
             row("New Folder…", Command::TreeNewFolder),
             Entry::Rule,
-            row_if(
-                "Open",
-                Command::TreeOpen,
-                targets.iter().any(|target| !target.folder),
-            ),
-            Entry::Rule,
-            row("Cut", Command::TreeCut),
-            row("Copy", Command::TreeCopy),
-            row_if("Paste", Command::TreePaste, pasting),
-            row("Duplicate", Command::TreeDuplicate),
+        ];
+        if !root {
+            let opens = targets.iter().any(|target| !target.folder);
+            entries.extend([
+                row_if("Open", Command::TreeOpen, opens),
+                Entry::Rule,
+                row("Cut", Command::TreeCut),
+                row("Copy", Command::TreeCopy),
+            ]);
+        }
+        entries.push(row_if("Paste", Command::TreePaste, pasting));
+        if !root {
+            entries.push(row("Duplicate", Command::TreeDuplicate));
+        }
+        entries.extend([
             Entry::Rule,
             row("Copy Path", Command::TreeCopyPath),
             row("Copy Relative Path", Command::TreeCopyRelativePath),
-            row_if("Reveal in File Manager", Command::TreeReveal, local && one),
+            row_if(
+                "Reveal in File Manager",
+                Command::TreeReveal,
+                local && (root || one),
+            ),
             Entry::Rule,
-            row_if("Rename…", Command::TreeRename, one),
-            row("Delete", Command::TreeDelete),
-        ]
+        ]);
+        entries.extend(if root {
+            [
+                row("Collapse All", Command::TreeCollapse),
+                row("Refresh", Command::TreeRefresh),
+            ]
+        } else {
+            [
+                row_if("Rename…", Command::TreeRename, one),
+                row("Delete", Command::TreeDelete),
+            ]
+        });
+        entries
     }
 
-    /// The node that draws the menu that is open.
-    pub fn git_menu_node(&self) -> Option<Node> {
-        let open = self.git.menu?;
-        Some(self.git_menu(open.kind, open.at).build())
+    /// Emits the menu that is open, and nothing when none is.
+    pub fn git_menu_node(&self) {
+        if let Some(open) = self.git.menu {
+            self.git_menu(open.kind, open.at).build();
+        }
     }
 
     /// The point at which the menu `kind`, opened from the control occupying `trigger` as `(x, y, width, height)`, lies below it or above it inside a window `window` wide and tall.
@@ -528,7 +521,7 @@ impl WorkspaceState {
                     menu = menu.item(
                         &label,
                         None,
-                        FocusId(MENU_ROW_BASE + position),
+                        Target::Git(GitEvent::GitMenuRow(position as usize)),
                         command.is_none(),
                     );
                     position += 1;
@@ -598,18 +591,26 @@ impl WorkspaceState {
         self
     }
 
+    /// Carries out `event` as the window's handler does.
+    fn handled(&mut self, event: Event) {
+        *self = std::mem::replace(self, WorkspaceState::new(&[])).handle(event);
+    }
+
     /// Carries out `command` from the menu `kind`.
     fn run(&mut self, command: Command, kind: MenuKind) {
         let acting = self.acting_on();
+        let picked = match kind {
+            MenuKind::History(row) => self.git.history.get(row).map(|commit| commit.id.clone()),
+            _ => None,
+        };
         match command {
-            Command::OpenChanges => {
+            Command::OpenChanges | Command::Resolve => {
                 if let [index] = acting.as_slice() {
-                    self.open_change(*index);
-                }
-            }
-            Command::Resolve => {
-                if let [index] = acting.as_slice() {
-                    self.request_resolver(*index);
+                    if command == Command::OpenChanges {
+                        self.open_change(*index);
+                    } else {
+                        self.request_resolver(*index);
+                    }
                 }
             }
             Command::ReviewChanges => {
@@ -630,14 +631,12 @@ impl WorkspaceState {
                 }
             }
             Command::ShowCommit => {
-                if let (MenuKind::History(row), Some(session)) = (kind, self.review_index())
-                    && let Some(commit) = self.git.history.get(row)
-                {
+                if let (Some(commit), Some(session)) = (picked, self.review_index()) {
                     self.outbox.push(Outgoing::RevisionChanges {
                         session,
-                        label: format!("Commit {}", commit.id),
+                        label: format!("Commit {commit}"),
                         from: None,
-                        to: commit.id.clone(),
+                        to: commit,
                     });
                 }
             }
@@ -678,8 +677,7 @@ impl WorkspaceState {
                 }
             }
             Command::Ignore => {
-                self.git.busy = Some("Updating .gitignore…");
-                self.git.trouble = None;
+                self.await_git("Updating .gitignore…");
                 let paths = self.paths_of(&acting);
                 if let Some(session) = self.review_index() {
                     self.outbox.push(Outgoing::Ignore { session, paths });
@@ -709,12 +707,8 @@ impl WorkspaceState {
             Command::Push => self.remote("push", "Pushing…"),
             Command::ForcePush => self.remote("force_push", "Force pushing…"),
             Command::Fetch => self.remote("fetch", "Fetching…"),
-            Command::Clone => {
-                *self = std::mem::replace(self, WorkspaceState::new(&[])).after(ADD_PROJECT);
-            }
-            Command::Checkout => {
-                *self = std::mem::replace(self, WorkspaceState::new(&[])).after(BRANCH_BUTTON);
-            }
+            Command::Clone => self.handled(Event::Sidebar(SidebarEvent::AddProject)),
+            Command::Checkout => self.handled(Event::Git(GitEvent::BranchButton)),
             Command::Refresh => {
                 if let Some(session) = self.review_index() {
                     self.outbox.push(Outgoing::Refresh { session });
@@ -727,16 +721,12 @@ impl WorkspaceState {
             }
             Command::Auto | Command::All => {
                 self.git.graph_all = command == Command::All;
-                self.git.graph_scroll = 0.0;
+                self.git.graph_scroll.jump_to(0.0);
                 self.ask_log();
             }
             Command::CherryPick => {
-                if let (MenuKind::History(row), Some(session)) = (kind, self.review_index())
-                    && let Some(commit) = self.git.history.get(row)
-                {
-                    let commit = commit.id.clone();
-                    self.git.busy = Some("Cherry-picking…");
-                    self.git.trouble = None;
+                if let (Some(commit), Some(session)) = (picked, self.review_index()) {
+                    self.await_git("Cherry-picking…");
                     self.outbox.push(Outgoing::CherryPick { session, commit });
                 }
             }
@@ -753,16 +743,13 @@ impl WorkspaceState {
             Command::TreeRename => self.tree_rename(),
             Command::TreeDelete => self.tree_delete(),
             Command::TreeCollapse => {
-                self.press_tree(crate::tree_actions::TREE_COLLAPSE);
+                self.press_tree(Target::Tree(TreeEvent::TreeCollapse));
             }
             Command::TreeRefresh => {
-                self.press_tree(crate::tree_actions::TREE_REFRESH);
+                self.press_tree(Target::Tree(TreeEvent::TreeRefresh));
             }
             Command::CopyHash => {
-                if let MenuKind::History(row) = kind
-                    && let Some(commit) = self.git.history.get(row)
-                {
-                    let text = commit.id.clone();
+                if let Some(text) = picked {
                     self.outbox.push(Outgoing::Copy { text });
                 }
             }

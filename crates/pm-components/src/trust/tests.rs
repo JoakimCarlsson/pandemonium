@@ -1,5 +1,7 @@
 //! Tests of how a session takes in a request to trust its project, and how the card answers it.
 
+use crate::areas::ChatEvent;
+use crate::target::Target;
 use std::path::PathBuf;
 
 use pm_harness::Event;
@@ -62,16 +64,16 @@ fn a_request_waits_for_its_own_answer() {
 #[test]
 fn each_button_answers_with_its_verdict() {
     for (button, verdict) in [
-        (TRUST_ALWAYS, Verdict::Always),
-        (TRUST_SESSION, Verdict::Allow),
-        (TRUST_DECLINE, Verdict::Reject),
+        (Target::Chat(ChatEvent::TrustAlways), Verdict::Always),
+        (Target::Chat(ChatEvent::TrustSession), Verdict::Allow),
+        (Target::Chat(ChatEvent::TrustDecline), Verdict::Reject),
     ] {
         let mut state = WorkspaceState::sample();
         state.sessions[0] = session();
         state = state.heard(0, Event::Trust(request(7)));
         state.page = Page::Session(0);
         state.outbox.clear();
-        state = state.after(button);
+        state = state.handle(crate::events::Event::pressing(button));
         assert!(state.sessions[0].trust.is_none());
         assert!(state.outbox.contains(&Outgoing::Trust {
             session: 0,

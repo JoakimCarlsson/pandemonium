@@ -1,57 +1,36 @@
 //! What floats over the file shown while code is written in it: the list of completions at the caret and the card saying what is known about a place.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
+use crate::areas::EditorEvent;
+use crate::events::{Event, send};
+use crate::parts;
+use crate::target::Target;
+use crate::theme;
+use crate::theme::Frame;
+use crate::theme::Indicated;
+use crate::theme::ShadowLayers;
 use pm_protocol::CompletionKind;
-use pm_style::{
-    Color, Radius, Role, ShadowLayer, absolute, bg, border, border_color, bottom_px,
-    cursor_pointer, flex, flex_1, flex_col, flex_none, font_mono, gap, h, h_px, items_center,
-    justify_center, leading_ratio, left_px, max_h, max_w_px, min_h, min_w_px, overflow_hidden, p,
-    px, py, rounded, shadow_layers, size, text_color, text_px, top_px, w_full, w_px, z,
-};
-use pm_text::Shaper;
-use pm_ui::{Mark, Node, Paint, node, text};
+use rustle::TextOverflow;
+use rustle::phosphor;
+use rustle::{Alignment, Arrangement, Color, column_arranged, row_arranged};
+use rustle::{CursorIcon, Modifier};
 
-use crate::color_picker::{
-    COLOR_BOX, COLOR_FORMAT_BASE, COLOR_FORMATS_SHOWN, COLOR_HEX, ColorPicking,
-};
+use crate::events::Interactive;
+use crate::marked::{CaretLook, Mark, Paint, marked_line};
+use crate::popups::at_window;
+use crate::theme::{Radius, Role, sp};
+
+use crate::color_picker::{COLOR_FORMATS_SHOWN, ColorPicking};
 use crate::editor::COMPLETIONS_SHOWN;
 use crate::input::Input;
-use crate::line_edits::{GO_TO_LINE, GO_TO_LINE_BOX, GoingTo};
-use crate::listing::{
-    Items, LISTING_BODY, LISTING_FILTER, LISTING_ROW_BASE, LISTING_SHOWN, LISTING_WIDTH, Listing,
-};
+use crate::line_edits::GoingTo;
+use crate::listing::{Items, LISTING_SHOWN, LISTING_WIDTH, Listing};
 use crate::markdown::Markdown;
-use crate::navigate::{RENAME_BOX, RENAME_SYMBOL, Renaming};
+use crate::navigate::Renaming;
 use crate::parts::{glyph, line};
 use crate::size::Size;
 use crate::state::WorkspaceState;
 use crate::viewer::severity_role;
 use pm_editor::{Completions, HoverCard};
-
-/// The list of completions itself, which keeps a press on it from counting as outside.
-pub const COMPLETION_BODY: FocusId = FocusId(7_200_000);
-
-/// The card about a place, which keeps the pointer resting on it from counting as leaving the place.
-pub const HOVER_CARD: FocusId = FocusId(7_199_999);
-
-/// The text of the card about a place, which the pointer selects as one.
-pub const HOVER_TEXT: FocusId = FocusId(7_199_998);
-
-/// The first of the links of the card about a place; each stretch of prose has a hundred after its own base, the stretches following one another.
-pub const HOVER_LINK_BASE: u64 = 7_190_000;
-
-/// One past the last of the links of the card about a place.
-pub const HOVER_LINK_END: u64 = 7_199_000;
-
-/// How many links one stretch of prose of the card has room for.
-const LINKS_PER_PROSE: u64 = 100;
-
-/// The first of the rows of the list of completions; the rest follow it.
-pub const COMPLETION_ROW_BASE: u64 = 7_200_001;
-
-/// One past the last row of the list of completions.
-pub const COMPLETION_ROW_END: u64 = 7_300_000;
 
 /// How wide the list of completions is, in logical pixels.
 const LIST_WIDTH: f32 = 420.0;
@@ -74,11 +53,9 @@ const CARD_GAP: f32 = 4.0;
 /// How wide the card's text is: the card less its padding, in logical pixels.
 const CARD_TEXT: f32 = CARD_WIDTH - 26.0;
 
-/// The scrolling body of the card about a place.
-pub const HOVER_SCROLL: FocusId = FocusId(7_199_997);
-
 /// The shadow under what floats over the file: soft, to lift it off the code.
-const SHADOW: [ShadowLayer; 1] = [ShadowLayer::new(0.0, 8.0, 28.0, 0.0, 0.3, false)];
+/// Each layer is `(x, y, blur, spread, alpha)`.
+const SHADOW: [rustle::Shadow; 1] = [crate::theme::box_shadow(0.0, 8.0, 28.0, 0.0, 0.3)];
 
 /// The letter and colour that mark a completion of `kind`.
 fn kind_mark(kind: CompletionKind) -> (&'static str, Role) {
@@ -94,101 +71,177 @@ fn kind_mark(kind: CompletionKind) -> (&'static str, Role) {
     }
 }
 
-/// A raised box at `at` in the window, the frame of what floats over the file.
-fn floating(at: (f32, f32)) -> Node {
-    node().styles([
-        absolute(),
-        left_px(at.0),
-        top_px(at.1),
-        z(60),
-        flex(),
-        flex_col(),
-        p(1),
-        rounded(Radius::Md),
-        border(),
-        border_color(Role::Border),
-        bg(Role::Surface),
-        shadow_layers(&SHADOW),
-        overflow_hidden(),
-    ])
+/// Emits a raised box at `at` in the window, the frame of what floats over the file, holding `content`.
+///
+/// `size` is what bounds the box (its width, its greatest height), `target` the name it answers
+/// to, with which a press outside it asks the app to close what a press elsewhere closes,
+/// `padding` the room inside its edge and `arrangement` how its column spreads what it holds.
+#[track_caller]
+fn floating(
+    at: (f32, f32),
+    size: Modifier,
+    target: Option<Target>,
+    padding: Modifier,
+    arrangement: Arrangement,
+    content: impl FnOnce(),
+) {
+    at_window(at.0, at.1, target.is_some(), move || {
+        framed(size, target, padding, arrangement, content);
+    });
 }
 
-/// The list of `completion`, the rows around the one picked.
-fn completion_list(completion: &Completions) -> Option<Node> {
+/// Emits the raised column of what floats over the file, with `size`, answering to `target`,
+/// `padding` inside its edge and spread by `arrangement`, holding `content`.
+#[track_caller]
+fn framed(
+    size: Modifier,
+    target: Option<Target>,
+    padding: Modifier,
+    arrangement: Arrangement,
+    content: impl FnOnce(),
+) {
+    let own = size
+        .shadow_layers(&SHADOW, Radius::Md.px())
+        .panel(Radius::Md)
+        .clip();
+    let own = match target {
+        Some(id) => own.control(id, send(Event::pressing(id))),
+        None => own,
+    };
+    column_arranged(own.chain(padding), arrangement, Alignment::Start, content);
+}
+
+/// `size` made the card about a word of the file shown: a control that tells the app the
+/// pointer came over it or left it, and that the primary button went down on it, to select
+/// its text, and came up again.
+#[track_caller]
+fn card_pointer(size: Modifier) -> Modifier {
+    let id = Target::Editor(EditorEvent::HoverCard);
+    let operations = crate::events::operations();
+    let held = std::rc::Rc::clone(&operations);
+    size.on_hover(move |over| operations.hover_card_hovered(over))
+        .control_pointing(id, send(Event::pressing(id)), move |event| {
+            if event.button == rustle::PointerButton::Primary {
+                match event.phase {
+                    rustle::PointerPhase::Press => held.hover_card_held(true),
+                    rustle::PointerPhase::Release => held.hover_card_held(false),
+                    _ => {}
+                }
+            }
+        })
+}
+
+/// Emits `content` in a box that takes the room left in its row and cuts it off at its edge.
+#[track_caller]
+fn clipped_box(content: impl FnOnce()) {
+    rustle::column_arranged(
+        Modifier::new().weight(1.0).clip(),
+        Arrangement::Start,
+        Alignment::Start,
+        content,
+    );
+}
+
+/// The row of a list over the file `height` theme steps tall that answers to `id`, filled
+/// while it is `picked`, lit under the pointer and ringed while held: chain its press and
+/// padding onto it.
+fn pickable(id: Target, picked: bool, height: f64) -> Modifier {
+    let looks = theme::InteractionTones::new()
+        .hover(Role::SurfaceHover)
+        .radius(Radius::Sm);
+    let looks = if picked {
+        looks.idle(Role::SurfaceSelected)
+    } else {
+        looks
+    };
+    Modifier::new()
+        .fill_max_width()
+        .height(theme::sp(height))
+        .indicated(looks, theme::Focused::Control(crate::focus::is_focused(id)))
+        .cursor(CursorIcon::Pointer)
+}
+
+/// Emits the row of the list of completions at `place`, for `item`, filled while it is `picked`.
+fn completion_row(place: usize, item: &pm_protocol::Completion, picked: bool) {
+    let id = Target::Editor(EditorEvent::CompletionRow(place));
+    let (letter, tone) = kind_mark(item.kind);
+    rustle::row_arranged(
+        pickable(id, picked, 6.0)
+            .control(id, send(Event::pressing(id)))
+            .padding_xy(theme::sp(1.5), 0.0),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            row_arranged(
+                Modifier::new().size(theme::sp(4), theme::sp(4)),
+                Arrangement::Center,
+                Alignment::Center,
+                || {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        letter,
+                        theme::code_style(11, 1.2).color(theme::color(tone)),
+                        TextOverflow::Ellipsis,
+                    )
+                },
+            );
+            clipped_box(|| {
+                rustle::basic_text(
+                    Modifier::new(),
+                    item.label.clone(),
+                    theme::code_style(12, 1.4).color(theme::color(Role::Text)),
+                    TextOverflow::Ellipsis,
+                )
+            });
+            if let Some(detail) = &item.detail {
+                let short: String = detail.chars().take(48).collect();
+                rustle::column_arranged(
+                    Modifier::new().width_in(0.0, LIST_WIDTH * 0.45).clip(),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        rustle::basic_text(
+                            Modifier::new(),
+                            short,
+                            theme::code(11, Role::Subtle),
+                            TextOverflow::Ellipsis,
+                        )
+                    },
+                );
+            }
+        },
+    );
+}
+
+/// Emits the list of `completion`, the rows around the one picked, or nothing when it has none.
+fn completion_list(completion: &Completions) {
     if completion.shown.is_empty() {
-        return None;
+        return;
     }
     let first = completion
         .picked
         .saturating_sub(COMPLETIONS_SHOWN - 1)
         .min(completion.shown.len().saturating_sub(COMPLETIONS_SHOWN));
-    let rows = completion
-        .shown
-        .iter()
-        .enumerate()
-        .skip(first)
-        .take(COMPLETIONS_SHOWN)
-        .filter_map(|(place, index)| {
-            let item = completion.items.get(*index)?;
-            let picked = place == completion.picked;
-            let (letter, tone) = kind_mark(item.kind);
-            let mut row = node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    gap(2),
-                    h(6),
-                    px(1.5),
-                    rounded(Radius::Sm),
-                    cursor_pointer(),
-                    bg(Role::SurfaceHover).hover(),
-                ])
-                .focusable(FocusId(COMPLETION_ROW_BASE + place as u64))
-                .child(
-                    node()
-                        .styles([
-                            flex(),
-                            items_center(),
-                            justify_center(),
-                            size(4),
-                            flex_none(),
-                        ])
-                        .child(text(letter).styles([
-                            text_px(11),
-                            leading_ratio(1.2),
-                            font_mono(),
-                            text_color(tone),
-                        ])),
-                )
-                .child(
-                    node()
-                        .styles([flex_1(), min_w_px(0), overflow_hidden()])
-                        .child(text(item.label.clone()).styles([
-                            text_px(12),
-                            leading_ratio(1.4),
-                            font_mono(),
-                            text_color(Role::Text),
-                        ])),
-                );
-            if let Some(detail) = &item.detail {
-                let short: String = detail.chars().take(48).collect();
-                row = row.child(
-                    node()
-                        .styles([flex_none(), max_w_px(LIST_WIDTH * 0.45), overflow_hidden()])
-                        .child(line(short, 11, 1.4, Role::Subtle).styles([font_mono()])),
-                );
+    floating(
+        completion.at,
+        Modifier::new().width(LIST_WIDTH),
+        Some(Target::Editor(EditorEvent::CompletionBody)),
+        Modifier::new().padding(theme::sp(1)),
+        Arrangement::Start,
+        || {
+            for (place, index) in completion
+                .shown
+                .iter()
+                .enumerate()
+                .skip(first)
+                .take(COMPLETIONS_SHOWN)
+            {
+                if let Some(item) = completion.items.get(*index) {
+                    completion_row(place, item, place == completion.picked);
+                }
             }
-            if picked {
-                row = row.styles([bg(Role::SurfaceSelected)]);
-            }
-            Some(row)
-        });
-    Some(
-        floating(completion.at)
-            .styles([w_px(LIST_WIDTH)])
-            .focusable(COMPLETION_BODY)
-            .children(rows),
-    )
+        },
+    );
 }
 
 /// How wide the documentation beside the list of completions is, in logical pixels.
@@ -197,50 +250,71 @@ const DOCS_WIDTH: f32 = 380.0;
 /// How many lines of the documentation of a completion are read at most.
 const DOCS_LINES: usize = 40;
 
-/// The documentation of the completion picked in `completion`, beside the list, when the language server sent any: its detail as code, then what it says.
-fn completion_docs(
-    completion: &Completions,
-    shown: bool,
-    language: Option<&str>,
-    shaper: &mut Shaper,
-) -> Option<Node> {
+/// Emits the documentation of the completion picked in `completion`, beside the list, when it is `shown` and the language server sent any: its detail as code, then what it says.
+fn completion_docs(completion: &Completions, shown: bool, language: Option<&str>) {
     if !shown {
-        return None;
+        return;
     }
-    let item = completion
+    let Some(item) = completion
         .shown
         .get(completion.picked)
-        .and_then(|index| completion.items.get(*index))?;
-    let said = item.documentation.as_deref()?;
+        .and_then(|index| completion.items.get(*index))
+    else {
+        return;
+    };
+    let Some(said) = item.documentation.as_deref() else {
+        return;
+    };
     let width = DOCS_WIDTH - 26.0;
-    let mut parts: Vec<Node> = Vec::new();
-    if let Some(detail) = &item.detail {
-        parts.extend(code_lines(detail, "", language, width, shaper));
-        parts.push(rule());
-    }
-    for piece in pieces(said, DOCS_LINES) {
-        parts.push(match piece {
-            Piece::Code(fence, body) => node()
-                .styles([flex(), flex_col(), min_w_px(0), overflow_hidden()])
-                .children(code_lines(&body, &fence, language, width, shaper)),
-            Piece::Prose(text) => Markdown::new(&text, width)
-                .size(12)
-                .tone(Role::Muted)
-                .build(shaper),
+    floating(
+        (completion.at.0 + LIST_WIDTH + 4.0, completion.at.1),
+        Modifier::new()
+            .width(DOCS_WIDTH)
+            .height_in(0.0, sp(list_height(completion).max(160.0) / 4.0)),
+        None,
+        Modifier::new().padding_xy(theme::sp(3), theme::sp(2)),
+        Arrangement::SpacedBy(sp(1.5)),
+        || {
+            if let Some(detail) = &item.detail {
+                code_lines(detail, "", language, width);
+                rule();
+            }
+            said_parts(said, DOCS_LINES, language, width, false);
+        },
+    );
+}
+
+/// Emits what a language server said, `said`, at most `most` lines of it and `width` logical
+/// pixels wide: its blocks of code coloured as their fence or else `language` names, its prose
+/// in markdown whose links answer as the card's links do when `linked`, and its rules.
+#[track_caller]
+fn said_parts(said: &str, most: usize, language: Option<&str>, width: f32, linked: bool) {
+    let mut prose = 0;
+    for piece in pieces(said, most) {
+        match piece {
+            Piece::Code(fence, body) => {
+                rustle::column_arranged(
+                    Modifier::new().clip(),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        code_lines(&body, &fence, language, width);
+                    },
+                );
+            }
+            Piece::Prose(text) => {
+                let markdown = Markdown::new(&text, width).size(12).tone(Role::Muted);
+                let markdown = if linked {
+                    markdown.links(Target::Editor(EditorEvent::HoverLink { prose, link: 0 }))
+                } else {
+                    markdown
+                };
+                prose += 1;
+                markdown.build();
+            }
             Piece::Rule => rule(),
-        });
+        }
     }
-    Some(
-        floating((completion.at.0 + LIST_WIDTH + 4.0, completion.at.1))
-            .styles([
-                w_px(DOCS_WIDTH),
-                max_h(list_height(completion).max(160.0) / 4.0),
-                gap(1.5),
-                px(3),
-                py(2),
-            ])
-            .children(parts),
-    )
 }
 
 /// One stretch of what a language server says about a place.
@@ -308,29 +382,27 @@ fn pieces(said: &str, most: usize) -> Vec<Piece> {
 }
 
 /// The address of the link of the card that says `said` that `id` names, when it names one.
-pub fn hover_link(said: &str, id: FocusId) -> Option<String> {
-    let offset =
-        id.0.checked_sub(HOVER_LINK_BASE)
-            .filter(|_| id.0 < HOVER_LINK_END)?;
-    let (stretch, link) = (offset / LINKS_PER_PROSE, offset % LINKS_PER_PROSE);
+pub fn hover_link(said: &str, id: Target) -> Option<String> {
+    let Target::Editor(EditorEvent::HoverLink {
+        prose: stretch,
+        link,
+    }) = id
+    else {
+        return None;
+    };
     let prose = pieces(said, CARD_LINES)
         .into_iter()
         .filter_map(|piece| match piece {
             Piece::Prose(text) => Some(text),
             _ => None,
         })
-        .nth(stretch as usize)?;
-    pm_markdown::links(&prose).into_iter().nth(link as usize)
+        .nth(stretch)?;
+    pm_markdown::links(&prose).into_iter().nth(link)
 }
 
-/// The lines of `body`, code written in the language `language` or else `fallback`, each coloured by that language's grammar when it is loaded and wrapped at `width` logical pixels as `shaper` measures it.
-fn code_lines(
-    body: &str,
-    language: &str,
-    fallback: Option<&str>,
-    width: f32,
-    shaper: &mut Shaper,
-) -> Vec<Node> {
+/// Emits the lines of `body`, code written in the language `language` or else `fallback`, each coloured by that language's grammar when it is loaded and wrapped at `width` logical pixels.
+#[track_caller]
+fn code_lines(body: &str, language: &str, fallback: Option<&str>, width: f32) {
     let body = body.replace('\t', "    ");
     let grammar = pm_treesitter::registry::loaded(language)
         .or_else(|| fallback.and_then(pm_treesitter::registry::loaded));
@@ -338,36 +410,89 @@ fn code_lines(
         .and_then(|grammar| pm_treesitter::Syntax::parse(grammar, &body))
         .map(|syntax| syntax.highlights(&body, 0..body.len()))
         .unwrap_or_default();
-    let setting = [text_px(12), leading_ratio(1.5), font_mono()];
-    pm_ui::wrap(shaper, &body, setting, width)
-        .into_iter()
-        .map(|piece| {
-            let range = piece.start..piece.end;
-            text(&body[range.clone()])
-                .styles(setting)
-                .styles([text_color(Role::Text)])
-                .marks(crate::viewer::highlight_marks(&highlights, range))
-        })
-        .collect()
+    let kind = theme::code_style(12, 1.5).color(theme::color(Role::Text));
+    for piece in rustle::wrap_at_spaces(&body, &kind, width) {
+        let range = piece.start..piece.end;
+        marked_line(
+            Modifier::new(),
+            &body[range.clone()],
+            kind,
+            crate::viewer::highlight_marks(&highlights, range),
+            CaretLook::default(),
+        );
+    }
 }
 
-/// A hairline across the card.
-fn rule() -> Node {
-    node().styles([h_px(1), w_full(), flex_none(), bg(Role::Border)])
+/// Emits a hairline across the card.
+#[track_caller]
+fn rule() {
+    rustle::horizontal_divider(
+        Modifier::new(),
+        rustle::DividerDefaults::THICKNESS,
+        rustle::DividerDefaults::color(),
+    );
 }
 
-/// The card `card`, of what the language server finds wrong at the place and what it says about it, its code coloured as the file's language `language` when no fence names another, in a window `height` logical pixels tall, laid out with `shaper`: below the place's line, or above it when there is more room there, and scrolling when it is taller than that room.
+/// Emits the card `card`, its text selected as `selection` holds and scrolled as `scrolled` says, of what the language server finds wrong at the place and what it says about it, its code coloured as the file's language `language` when no fence names another, with lines `row` logical pixels tall, in a window `height` logical pixels tall: below the place's line, or above it when there is more room there, and scrolling when it is taller than that room.
 fn hover_card(
-    row: f32,
+    row_height: f32,
     card: &HoverCard,
+    selection: &rustle::SelectionState,
+    scrolled: &rustle::ScrollState,
     language: Option<&str>,
     height: f32,
-    shaper: &mut Shaper,
-) -> Option<Node> {
+) {
     if card.text.is_none() && card.diagnostics.is_empty() {
-        return None;
+        return;
     }
-    let mut parts: Vec<Node> = Vec::new();
+    let line_bottom = card.at.1 + row_height;
+    let below = (height - line_bottom - CARD_GAP * 2.0).max(0.0);
+    let above = (card.at.1 - CARD_GAP * 2.0).max(0.0);
+    let downward = below >= CARD_HEIGHT.min(above) || below >= above;
+    let room = sp(if downward { below } else { above }.min(CARD_HEIGHT) / 4.0);
+    let body = move || {
+        framed(
+            card_pointer(Modifier::new().width(CARD_WIDTH)),
+            None,
+            Modifier::new(),
+            Arrangement::Start,
+            || {
+                rustle::selection_container_with(
+                    Modifier::new()
+                        .fill_max_width()
+                        .height_in(0.0, room)
+                        .vertical_scroll(scrolled)
+                        .fill_max_width()
+                        .padding_xy(theme::sp(3), theme::sp(2.5)),
+                    selection,
+                    || {
+                        rustle::column_arranged(
+                            Modifier::new().fill_max_width(),
+                            Arrangement::SpacedBy(theme::sp(2)),
+                            Alignment::Start,
+                            || card_parts(card, language),
+                        )
+                    },
+                );
+            },
+        );
+    };
+    if downward {
+        at_window(card.at.0, line_bottom + CARD_GAP, false, body);
+    } else {
+        at_window(card.at.0, card.at.1 - CARD_GAP - room, false, || {
+            column_arranged(
+                Modifier::new().width(CARD_WIDTH).height(room),
+                Arrangement::End,
+                Alignment::Start,
+                body,
+            );
+        });
+    }
+}
+
+/// Emits what the card `card` says: what is wrong at the place, then what the language server says about it, its code coloured as `language` when no fence names another.
+fn card_parts(card: &HoverCard, language: Option<&str>) {
     for diagnostic in &card.diagnostics {
         let source = diagnostic
             .source
@@ -376,135 +501,82 @@ fn hover_card(
             .unwrap_or_default();
         let mut lines = diagnostic.message.lines();
         let first = lines.next().unwrap_or_default();
-        parts.push(
-            node()
-                .styles([flex(), flex_col()])
-                .child(line(
-                    format!("{source}{first}"),
-                    12,
-                    1.5,
-                    severity_role(diagnostic.severity),
-                ))
-                .children(
-                    lines
-                        .take(4)
-                        .map(|rest| line(rest.to_owned(), 12, 1.5, Role::Muted)),
-                ),
+        rustle::column_arranged(
+            Modifier::new(),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                let tones = std::iter::once(severity_role(diagnostic.severity))
+                    .chain(std::iter::repeat(Role::Muted));
+                for (words, tone) in std::iter::once(format!("{source}{first}"))
+                    .chain(lines.take(4).map(str::to_owned))
+                    .zip(tones)
+                {
+                    rustle::text_styled(
+                        Modifier::new(),
+                        words,
+                        theme::text_style(12, 1.5)
+                            .color(theme::color(tone))
+                            .max_lines(1),
+                    );
+                }
+            },
         );
     }
     if let Some(said) = &card.text {
-        if !parts.is_empty() {
-            parts.push(rule());
+        if !card.diagnostics.is_empty() {
+            rule();
         }
-        let mut prose = 0;
-        for piece in pieces(said, CARD_LINES) {
-            parts.push(match piece {
-                Piece::Code(fence, body) => node()
-                    .styles([flex(), flex_col(), min_w_px(0), overflow_hidden()])
-                    .children(code_lines(&body, &fence, language, CARD_TEXT, shaper)),
-                Piece::Prose(text) => {
-                    prose += 1;
-                    Markdown::new(&text, CARD_TEXT)
-                        .size(12)
-                        .tone(Role::Muted)
-                        .links(HOVER_LINK_BASE + (prose - 1) * LINKS_PER_PROSE)
-                        .build(shaper)
-                }
-                Piece::Rule => rule(),
-            });
-        }
+        said_parts(said, CARD_LINES, language, CARD_TEXT, true);
     }
-    let line_bottom = card.at.1 + row;
-    let below = (height - line_bottom - CARD_GAP * 2.0).max(0.0);
-    let above = (card.at.1 - CARD_GAP * 2.0).max(0.0);
-    let downward = below >= CARD_HEIGHT.min(above) || below >= above;
-    let room = if downward { below } else { above }.min(CARD_HEIGHT);
-    let placed = if downward {
-        top_px(line_bottom + CARD_GAP)
-    } else {
-        bottom_px(height - card.at.1 + CARD_GAP)
-    };
-    Some(
-        node()
-            .styles([
-                absolute(),
-                left_px(card.at.0),
-                placed,
-                z(60),
-                flex(),
-                flex_col(),
-                w_px(CARD_WIDTH),
-                max_h(room / 4.0),
-                rounded(Radius::Md),
-                border(),
-                border_color(Role::Border),
-                bg(Role::Surface),
-                shadow_layers(&SHADOW),
-                overflow_hidden(),
-            ])
-            .focusable(HOVER_CARD)
-            .child(
-                node()
-                    .styles([flex(), flex_col(), flex_1(), min_h(0), overflow_hidden()])
-                    .scroll_from_start(HOVER_SCROLL, card.scroll)
-                    .child(
-                        node()
-                            .styles([flex(), flex_col(), flex_none(), px(3), py(2.5), gap(2)])
-                            .selectable(HOVER_TEXT)
-                            .children(parts),
-                    ),
-            ),
-    )
 }
 
-/// What floats over the file shown, in a window `height` logical pixels tall: its list of completions and its card about a place, when they are open.
-pub fn assist(state: &WorkspaceState, height: f32, shaper: &mut Shaper) -> Vec<Node> {
+/// Emits what floats over the file shown, in a window `height` logical pixels tall: its list of completions and its card about a place, when they are open.
+#[track_caller]
+pub fn assist(state: &WorkspaceState, height: f32) {
     let Some(document) = state.shown_document() else {
-        return state
-            .listing_shown()
-            .map(listing_or_quick)
-            .into_iter()
-            .collect();
+        if let Some(listing) = state.listing_shown() {
+            listing_or_quick(listing);
+        }
+        return;
     };
-    let mut floating = Vec::new();
-    if let Some(card) = &document.hover {
-        floating.extend(hover_card(
+    if let (Some(card), Some(viewer)) = (&document.hover, state.shown_viewer()) {
+        hover_card(
             state.editor.row_height(),
             card,
+            &state.hover_selection,
+            &viewer.hover_scroll,
             document.language.as_deref(),
             height,
-            shaper,
-        ));
+        );
     }
     if let Some(completion) = document.completion.as_ref().filter(|held| !held.loading) {
-        floating.extend(completion_list(completion));
-        floating.extend(completion_docs(
+        completion_list(completion);
+        completion_docs(
             completion,
             state.editor.completion_documentation,
             document.language.as_deref(),
-            shaper,
-        ));
+        );
     }
     if let Some(listing) = state.listing_shown() {
-        floating.push(listing_or_quick(listing));
+        listing_or_quick(listing);
     }
     if let Some(renaming) = &state.renaming {
-        floating.push(rename_box(renaming));
+        rename_box(renaming);
     }
     if let Some(picking) = &state.color_picking {
-        floating.push(color_box(picking));
+        color_box(picking);
     }
     if let Some(going) = &state.going_to {
-        floating.push(go_to_line_box(going, document.lines()));
+        go_to_line_box(going, document.lines());
     }
     if let Some(signature) = document
         .signature
         .as_ref()
         .filter(|_| document.completion.is_none())
     {
-        floating.push(signature_card(signature, state.signature_at));
+        signature_card(signature, state.signature_at);
     }
-    floating
 }
 
 /// How tall the card with the signature of the call the caret is in is, in logical pixels.
@@ -516,24 +588,16 @@ pub fn signature_height(signature: &pm_protocol::Signature) -> f32 {
     }
 }
 
-/// The signature of the call the caret is in, the parameter the caret is at marked, with the first line of what its documentation says.
-fn signature_card(signature: &pm_protocol::Signature, at: (f32, f32)) -> Node {
+/// Emits the signature of the call the caret is in, the parameter the caret is at marked, with the first line of what its documentation says, at `at` in the window.
+fn signature_card(signature: &pm_protocol::Signature, at: (f32, f32)) {
     let mut marks = Vec::new();
     if let Some((start, end)) = signature.active {
-        marks.push(Mark {
-            range: start..end,
-            color: Role::Accent.into(),
-            paint: Paint::Ink,
-        });
-        marks.push(Mark {
-            range: start..end,
-            color: Role::Accent.into(),
-            paint: Paint::Underline,
-        });
+        marks.push(Mark::new(start..end, Role::Accent, Paint::Ink));
+        marks.push(Mark::new(start..end, Role::Accent, Paint::Underline));
     }
-    let mut label = signature.label.clone();
+    let mut words = signature.label.clone();
     if signature.others > 0 {
-        label.push_str(&format!("   (+{} more)", signature.others));
+        words.push_str(&format!("   (+{} more)", signature.others));
     }
     let first_line = signature
         .documentation
@@ -544,67 +608,85 @@ fn signature_card(signature: &pm_protocol::Signature, at: (f32, f32)) -> Node {
                 .find(|line| !line.is_empty() && !line.starts_with("```"))
         })
         .map(|line| line.replace('`', ""));
-    floating(at)
-        .styles([max_w_px(CARD_WIDTH + 120.0), gap(0.5), px(2), py(1)])
-        .child(
-            node().styles([overflow_hidden()]).child(
-                text(label)
-                    .styles([
-                        text_px(12),
-                        leading_ratio(1.5),
-                        font_mono(),
-                        text_color(Role::Text),
-                    ])
-                    .marks(marks),
-            ),
-        )
-        .children(first_line.map(|said| {
-            node()
-                .styles([overflow_hidden()])
-                .child(line(said, 11, 1.4, Role::Muted))
-        }))
+    floating(
+        at,
+        Modifier::new().width_in(0.0, CARD_WIDTH + 120.0),
+        None,
+        Modifier::new().padding_xy(theme::sp(2), theme::sp(1)),
+        Arrangement::SpacedBy(sp(0.5)),
+        || {
+            rustle::column_arranged(
+                Modifier::new().clip(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    marked_line(
+                        Modifier::new(),
+                        &words,
+                        theme::code_style(12, 1.5).color(theme::color(Role::Text)),
+                        marks,
+                        CaretLook::default(),
+                    );
+                },
+            );
+            if let Some(said) = first_line {
+                rustle::column_arranged(
+                    Modifier::new().clip(),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        line(said, 11, 1.4, Role::Muted);
+                    },
+                );
+            }
+        },
+    );
 }
 
-/// The box the number of the line to go to is typed in, saying how many lines there are.
-fn go_to_line_box(going: &GoingTo, lines: usize) -> Node {
-    floating(going.at)
-        .styles([w_px(260.0), gap(1), p(1.5)])
-        .focusable(GO_TO_LINE_BOX)
-        .child(
-            Input::new(&going.field, GO_TO_LINE)
-                .size(Size::Sm)
-                .placeholder("Line number")
-                .build(),
-        )
-        .child(line(
+/// Emits the box the number of the line to go to is typed in, saying how many lines there are.
+fn go_to_line_box(going: &GoingTo, lines: usize) {
+    small_box(going.at, 260.0, EditorEvent::GoToLineBox, || {
+        Input::new(&going.field, Target::Editor(EditorEvent::GoToLine))
+            .modifier(Modifier::new().fill_max_width())
+            .size(Size::Sm)
+            .placeholder("Line number")
+            .build();
+        line(
             format!("Go to a line from 1 to {lines}"),
             11,
             1.4,
             Role::Subtle,
-        ))
+        );
+    });
 }
 
-/// A line of the list over the file, `content` in `pixels` and `tone`, cut short at the edge of the room it is given; in the font for code when `code`.
-fn cell(content: impl Into<String>, pixels: u32, tone: Role, code: bool) -> Node {
-    let mut line =
-        text(content.into()).styles([text_px(pixels), leading_ratio(1.4), text_color(tone)]);
-    if code {
-        line = line.styles([font_mono()]);
-    }
-    node()
-        .styles([flex_1(), min_w_px(0), overflow_hidden()])
-        .child(line)
+/// Emits a line of the list over the file, `content` in `pixels` and `tone`, cut short at the edge of the room it is given; in the font for code when `code`.
+#[track_caller]
+fn cell(content: impl Into<String>, pixels: u32, tone: Role, code: bool) {
+    let kind = theme::text_style(pixels, 1.4).color(theme::color(tone));
+    let kind = if code { theme::in_mono(kind) } else { kind };
+    let content = content.into();
+    clipped_box(move || rustle::basic_text(Modifier::new(), content, kind, TextOverflow::Ellipsis));
 }
 
-/// A line of the list over the file that keeps its own width, `content` in `pixels` and `tone`.
-fn tag(content: impl Into<String>, pixels: u32, tone: Role) -> Node {
-    node()
-        .styles([
-            flex_none(),
-            max_w_px(LISTING_WIDTH * 0.5),
-            overflow_hidden(),
-        ])
-        .child(line(content.into(), pixels, 1.4, tone))
+/// Emits a line of the list over the file that keeps its own width, `content` in `pixels` and `tone`.
+#[track_caller]
+fn tag(content: impl Into<String>, pixels: u32, tone: Role) {
+    let content = content.into();
+    rustle::column_arranged(
+        Modifier::new().width_in(0.0, LISTING_WIDTH * 0.5).clip(),
+        Arrangement::Start,
+        Alignment::Start,
+        move || line(content, pixels, 1.4, tone),
+    );
+}
+
+/// Emits the two lines of most rows of the list over the file: `title` in the text tone, in
+/// the font for code when `code`, then `detail` beside it, smaller and subtler.
+#[track_caller]
+fn pair(title: impl Into<String>, code: bool, detail: impl Into<String>) {
+    cell(title, 12, Role::Text, code);
+    tag(detail, 11, Role::Subtle);
 }
 
 /// The file name and line of `location`, as a list names it.
@@ -622,52 +704,41 @@ fn size_label(bytes: u64) -> String {
     }
 }
 
-/// The cells of the `index`-th row of `items`.
-pub(crate) fn listing_cells(items: &Items, index: usize) -> Vec<Node> {
+/// Emits the cells of the `index`-th row of `items`.
+#[track_caller]
+pub(crate) fn listing_cells(items: &Items, index: usize) {
     match items {
         Items::Symbols { locations, .. } => {
             let Some(location) = locations.get(index) else {
-                return Vec::new();
+                return;
             };
-            vec![
-                cell(
-                    location.name.clone().unwrap_or_default(),
-                    12,
-                    Role::Text,
-                    true,
-                ),
-                tag(place_name(location), 11, Role::Subtle),
-            ]
+            pair(
+                location.name.clone().unwrap_or_default(),
+                true,
+                place_name(location),
+            );
         }
         Items::Files { paths, .. } => {
             let Some(path) = paths.get(index) else {
-                return Vec::new();
+                return;
             };
             let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
-            vec![
-                crate::file_icon::file_icon(path, 4.0),
-                tag(name.to_owned(), 12, Role::Text),
-                cell(folder.to_owned(), 11, Role::Subtle, false),
-            ]
+            crate::file_icon::file_icon(path, 4.0);
+            tag(name.to_owned(), 12, Role::Text);
+            cell(folder.to_owned(), 11, Role::Subtle, false);
         }
-        Items::Line { .. } => Vec::new(),
+        Items::Line { .. } => {}
         Items::Choices { choices, .. } => {
             let Some(choice) = choices.get(index) else {
-                return Vec::new();
+                return;
             };
-            vec![
-                cell(choice.label.clone(), 12, Role::Text, false),
-                tag(choice.detail.clone(), 11, Role::Subtle),
-            ]
+            pair(choice.label.clone(), false, choice.detail.clone());
         }
         Items::Sessions { sessions, .. } => {
             let Some((_, title, beside)) = sessions.get(index) else {
-                return Vec::new();
+                return;
             };
-            vec![
-                cell(title.clone(), 12, Role::Text, false),
-                tag(beside.clone(), 11, Role::Subtle),
-            ]
+            pair(title.clone(), false, beside.clone());
         }
         Items::Commands {
             commands,
@@ -676,123 +747,120 @@ pub(crate) fn listing_cells(items: &Items, index: usize) -> Vec<Node> {
             ..
         } => match commands.get(index) {
             Some((action, keys)) => {
-                let mut cells = vec![cell(action.title(), 12, Role::Text, false)];
-                cells.extend(keys.clone().map(|keys| tag(keys, 11, Role::Subtle)));
-                cells
+                cell(action.title(), 12, Role::Text, false);
+                if let Some(keys) = keys.clone() {
+                    tag(keys, 11, Role::Subtle);
+                }
             }
             None => match tasks.get(index - commands.len()) {
-                Some(task) => vec![
-                    cell(crate::listing::task_title(task), 12, Role::Text, false),
-                    tag(task.command.clone(), 11, Role::Subtle),
-                ],
-                None => extras
-                    .get(index - commands.len() - tasks.len())
-                    .map_or_else(Vec::new, |(_, command)| {
-                        vec![
-                            cell(command.title.clone(), 12, Role::Text, false),
-                            tag(format!("extension {}", command.extension), 11, Role::Subtle),
-                        ]
-                    }),
+                Some(task) => pair(
+                    crate::listing::task_title(task),
+                    false,
+                    task.command.clone(),
+                ),
+                None => {
+                    if let Some((_, command)) = extras.get(index - commands.len() - tasks.len()) {
+                        pair(
+                            command.title.clone(),
+                            false,
+                            format!("extension {}", command.extension),
+                        );
+                    }
+                }
             },
         },
         Items::Outline { items, .. } => {
             let Some(item) = items.get(index) else {
-                return Vec::new();
+                return;
             };
-            vec![
-                node().styles([w_px(item.depth.min(8) as f32 * 14.0), flex_none()]),
-                node()
-                    .styles([w_px(52.0), flex_none(), overflow_hidden()])
-                    .child(line(item.context.clone(), 11, 1.4, Role::SyntaxKeyword)),
-                cell(item.name.clone(), 12, Role::Text, true),
-            ]
+            rustle::spacer(Modifier::new().width(item.depth.min(8) as f32 * 14.0));
+            rustle::column_arranged(
+                Modifier::new().width(52.0).clip(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    line(item.context.clone(), 11, 1.4, Role::SyntaxKeyword);
+                },
+            );
+            cell(item.name.clone(), 12, Role::Text, true);
         }
         Items::Places { locations, .. } | Items::Search { locations, .. } => {
             let Some(location) = locations.get(index) else {
-                return Vec::new();
+                return;
             };
             match &location.name {
-                Some(name) => vec![
-                    cell(name.clone(), 12, Role::Text, true),
-                    tag(place_name(location), 11, Role::Subtle),
-                ],
-                None => vec![
-                    tag(place_name(location), 12, Role::Text),
+                Some(name) => pair(name.clone(), true, place_name(location)),
+                None => {
+                    tag(place_name(location), 12, Role::Text);
                     cell(
                         location.line.as_deref().unwrap_or_default().trim(),
                         12,
                         Role::Muted,
                         true,
-                    ),
-                ],
+                    );
+                }
             }
         }
         Items::Actions { offered, .. } => {
             let Some(action) = offered.get(index) else {
-                return Vec::new();
+                return;
             };
             let tone = if action.disabled.is_some() {
                 Role::Subtle
             } else {
                 Role::Text
             };
-            let mut cells = vec![cell(action.title.clone(), 12, tone, false)];
+            cell(action.title.clone(), 12, tone, false);
             if let Some(reason) = action.disabled.as_ref().or(action.kind.as_ref()) {
-                cells.push(tag(reason.clone(), 11, Role::Subtle));
+                tag(reason.clone(), 11, Role::Subtle);
             }
-            cells
         }
         Items::History {
             commits, versions, ..
         } => match crate::listing::moments(commits, versions).get(index) {
             Some(crate::listing::Moment::Commit(place)) => {
                 let Some(commit) = commits.get(*place) else {
-                    return Vec::new();
+                    return;
                 };
-                vec![
-                    glyph(IconName::GitCommit, 3.5, Role::Muted),
-                    cell(commit.summary.clone(), 12, Role::Text, false),
-                    tag(
-                        format!("{} · {} · {}", commit.id, commit.author, commit.when),
-                        11,
-                        Role::Subtle,
-                    ),
-                ]
+                glyph(phosphor::GIT_COMMIT, 3.5, Role::Muted);
+                pair(
+                    commit.summary.clone(),
+                    false,
+                    format!("{} · {} · {}", commit.id, commit.author, commit.when),
+                );
             }
             Some(crate::listing::Moment::Saved(place)) => {
                 let Some(version) = versions.get(*place) else {
-                    return Vec::new();
+                    return;
                 };
-                vec![
-                    glyph(IconName::History, 3.5, Role::Muted),
-                    cell("Saved", 12, Role::Text, false),
-                    tag(
-                        format!(
-                            "{} · {}",
-                            crate::age::label(version.id, crate::age::now()),
-                            size_label(version.size)
-                        ),
-                        11,
-                        Role::Subtle,
+                glyph(phosphor::CLOCK_COUNTER_CLOCKWISE, 3.5, Role::Muted);
+                pair(
+                    "Saved",
+                    false,
+                    format!(
+                        "{} · {}",
+                        crate::age::label(version.id, crate::age::now()),
+                        size_label(version.size)
                     ),
-                ]
+                );
             }
-            None => Vec::new(),
+            None => {}
         },
     }
 }
 
-/// The quick input when `listing` is one, and otherwise the list over the file.
-fn listing_or_quick(listing: &Listing) -> Node {
+/// Emits the quick input when `listing` is one, and otherwise the list over the file.
+#[track_caller]
+fn listing_or_quick(listing: &Listing) {
     if listing.quick {
-        crate::quick_input::quick_input(listing)
+        crate::quick_input::quick_input(listing);
     } else {
-        listing_panel(listing)
+        listing_panel(listing);
     }
 }
 
-/// The list over the file: its title and how many rows it has, then the rows around the one picked, or what keeps it empty.
-fn listing_panel(listing: &Listing) -> Node {
+/// Emits the list over the file: its title and how many rows it has, then the rows around the one picked, or what keeps it empty.
+fn listing_panel(listing: &Listing) {
     let shown = listing.items.rows();
     let count = shown.len();
     let status = match (&listing.problem, listing.answered, count) {
@@ -813,86 +881,111 @@ fn listing_panel(listing: &Listing) -> Node {
         Items::Symbols { filter, .. } => Some((filter, "Go to a symbol of this project")),
         Items::Search { filter, .. } => Some((filter, "Search the files of this project")),
         _ => None,
-    }
-    .map(|(filter, hint)| {
-        node().styles([px(0.5), py(0.5)]).child(
-            Input::new(filter, LISTING_FILTER)
-                .size(Size::Sm)
-                .placeholder(hint)
-                .build(),
-        )
-    });
-    let header = node()
-        .styles([flex(), items_center(), gap(2), h(7), px(1.5)])
-        .child(cell(listing.items.title(), 12, Role::Text, false))
-        .children((count > 0).then(|| tag(count.to_string(), 11, Role::Subtle)));
+    };
     let first = listing
         .picked
         .saturating_sub(LISTING_SHOWN - 1)
         .min(count.saturating_sub(LISTING_SHOWN));
-    let rows = (first..count.min(first + LISTING_SHOWN)).map(|place| {
-        let index = shown[place];
-        let mut row = node()
-            .styles([
-                flex(),
-                items_center(),
-                gap(3),
-                h(6.5),
-                px(1.5),
-                rounded(Radius::Sm),
-                cursor_pointer(),
-                bg(Role::SurfaceHover).hover(),
-            ])
-            .focusable(FocusId(LISTING_ROW_BASE + place as u64))
-            .children(listing_cells(&listing.items, index));
-        if place == listing.picked {
-            row = row.styles([bg(Role::SurfaceSelected)]);
-        }
-        row
-    });
-    floating(listing.at)
-        .styles([w_px(LISTING_WIDTH)])
-        .focusable(LISTING_BODY)
-        .children(filter)
-        .child(header)
-        .children(status.map(|said| {
-            node()
-                .styles([px(1.5), py(1)])
-                .child(line(said, 12, 1.4, Role::Muted))
-        }))
-        .children(rows)
+    floating(
+        listing.at,
+        Modifier::new().width(LISTING_WIDTH),
+        Some(Target::Editor(EditorEvent::ListingBody)),
+        Modifier::new().padding(theme::sp(1)),
+        Arrangement::Start,
+        || {
+            if let Some((filter, hint)) = filter {
+                rustle::column_arranged(
+                    Modifier::new().fill_max_width().padding(theme::sp(0.5)),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        Input::new(filter, Target::Editor(EditorEvent::ListingFilter))
+                            .modifier(Modifier::new().fill_max_width())
+                            .size(Size::Sm)
+                            .placeholder(hint)
+                            .build();
+                    },
+                );
+            }
+            rustle::row_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .height(theme::sp(7))
+                    .padding_xy(theme::sp(1.5), 0.0),
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Center,
+                || {
+                    cell(listing.items.title(), 12, Role::Text, false);
+                    if count > 0 {
+                        tag(count.to_string(), 11, Role::Subtle);
+                    }
+                },
+            );
+            if let Some(said) = status {
+                parts::note(1.5, 1, said, 12, Role::Muted);
+            }
+            let end = count.min(first + LISTING_SHOWN);
+            for (place, index) in shown.iter().copied().enumerate().take(end).skip(first) {
+                let id = Target::Editor(EditorEvent::ListingRow(place));
+                rustle::row_arranged(
+                    pickable(id, place == listing.picked, 6.5)
+                        .control(id, {
+                            let operations = crate::events::operations();
+                            move || operations.take_listing(Some(place))
+                        })
+                        .padding_xy(theme::sp(1.5), 0.0),
+                    Arrangement::SpacedBy(theme::sp(3)),
+                    Alignment::Center,
+                    || listing_cells(&listing.items, index),
+                );
+            }
+        },
+    );
 }
 
-/// The box the new name of the thing at the caret is typed in, with why the last rename failed under it.
-fn rename_box(renaming: &Renaming) -> Node {
+/// Emits the box the new name of the thing at the caret is typed in, with why the last rename failed under it.
+fn rename_box(renaming: &Renaming) {
     let hint = if renaming.busy {
         "Renaming…"
     } else {
         "Enter to rename, Escape to cancel"
     };
-    floating(renaming.at)
-        .styles([w_px(320.0), gap(1), p(1.5)])
-        .focusable(RENAME_BOX)
-        .child(
-            Input::new(&renaming.field, RENAME_SYMBOL)
-                .size(Size::Sm)
-                .invalid(renaming.problem.is_some())
-                .build(),
-        )
-        .child(line(
+    small_box(renaming.at, 320.0, EditorEvent::RenameBox, || {
+        Input::new(&renaming.field, Target::Editor(EditorEvent::RenameSymbol))
+            .modifier(Modifier::new().fill_max_width())
+            .size(Size::Sm)
+            .invalid(renaming.problem.is_some())
+            .build();
+        let tone = if renaming.problem.is_some() {
+            Role::Danger
+        } else {
+            Role::Subtle
+        };
+        line(
             renaming.problem.clone().unwrap_or_else(|| hint.to_owned()),
             11,
             1.4,
-            if renaming.problem.is_some() {
-                Role::Danger
-            } else {
-                Role::Subtle
-            },
-        ))
+            tone,
+        );
+    });
 }
 
-/// The box a colour of the file is changed in: the colour as a square beside its hex, and the ways the language server offers to write it, each a row to press.
-fn color_box(picking: &ColorPicking) -> Node {
+/// Emits a small raised box at `at`, `width` logical pixels wide, answering to `target` and
+/// holding `content` one theme step apart: the frame of the boxes typed in over the file.
+#[track_caller]
+fn small_box(at: (f32, f32), width: f32, target: EditorEvent, content: impl FnOnce()) {
+    floating(
+        at,
+        Modifier::new().width(width),
+        Some(Target::Editor(target)),
+        Modifier::new().padding(theme::sp(1.5)),
+        Arrangement::SpacedBy(sp(1)),
+        content,
+    );
+}
+
+/// Emits the box a colour of the file is changed in: the colour as a square beside its hex, and the ways the language server offers to write it, each a row to press.
+fn color_box(picking: &ColorPicking) {
     let [red, green, blue, alpha] = picking.color;
     let status = if picking.loading {
         Some("Asking the language server…".to_owned())
@@ -903,55 +996,50 @@ fn color_box(picking: &ColorPicking) -> Node {
     } else {
         None
     };
-    let rows = picking
-        .formats
-        .iter()
-        .take(COLOR_FORMATS_SHOWN)
-        .enumerate()
-        .map(|(place, format)| {
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    h(6.5),
-                    px(1.5),
-                    rounded(Radius::Sm),
-                    cursor_pointer(),
-                    bg(Role::SurfaceHover).hover(),
-                ])
-                .focusable(FocusId(COLOR_FORMAT_BASE + place as u64))
-                .child(line(&format.label, 13, 1.4, Role::Text).styles([font_mono()]))
-        });
-    floating(picking.at)
-        .styles([w_px(260.0), gap(1), p(1.5)])
-        .focusable(COLOR_BOX)
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(2)])
-                .child(node().styles([
-                    size(7),
-                    flex_none(),
-                    rounded(Radius::Sm),
-                    border(),
-                    border_color(Role::Border),
-                    bg(Color::rgb(red, green, blue).alpha(f32::from(alpha) / 255.0)),
-                ]))
-                .child(
-                    node().styles([flex_1()]).child(
-                        Input::new(&picking.hex, COLOR_HEX)
-                            .size(Size::Sm)
-                            .invalid(crate::color_picker::color_of(picking.hex.text()).is_none())
-                            .build(),
-                    ),
-                ),
-        )
-        .children(status.map(|said| {
-            node()
-                .styles([px(1.5), py(1)])
-                .child(line(said, 11, 1.4, Role::Subtle))
-        }))
-        .children(rows)
-        .child(line(
+    small_box(picking.at, 260.0, EditorEvent::ColorBox, || {
+        rustle::row_arranged(
+            Modifier::new().fill_max_width(),
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Center,
+            || {
+                rustle::spacer(
+                    Modifier::new()
+                        .size(theme::sp(7), theme::sp(7))
+                        .background_rounded(
+                            theme::color(Color::rgba(red, green, blue, alpha)),
+                            Radius::Sm.px(),
+                        )
+                        .outlined(Radius::Sm),
+                );
+                Input::new(&picking.hex, Target::Editor(EditorEvent::ColorHex))
+                    .size(Size::Sm)
+                    .invalid(crate::color_picker::color_of(&picking.hex.text()).is_none())
+                    .modifier(Modifier::new().weight(1.0))
+                    .build();
+            },
+        );
+        if let Some(said) = status {
+            parts::note(1.5, 1, said, 11, Role::Subtle);
+        }
+        for (place, format) in picking.formats.iter().take(COLOR_FORMATS_SHOWN).enumerate() {
+            let id = Target::Editor(EditorEvent::ColorFormat(place));
+            rustle::row_arranged(
+                pickable(id, false, 6.5)
+                    .control(id, send(Event::pressing(id)))
+                    .padding_xy(theme::sp(1.5), 0.0),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        &format.label,
+                        theme::code(13, Role::Text),
+                        TextOverflow::Ellipsis,
+                    )
+                },
+            );
+        }
+        line(
             picking.formats.first().map_or_else(
                 || "Type a colour as hex".to_owned(),
                 |format| format!("Enter writes {}", format.label),
@@ -959,7 +1047,8 @@ fn color_box(picking: &ColorPicking) -> Node {
             11,
             1.4,
             Role::Subtle,
-        ))
+        );
+    });
 }
 
 /// How tall the list of completions of `completion` is, in logical pixels.

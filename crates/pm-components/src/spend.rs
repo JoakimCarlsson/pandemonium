@@ -1,8 +1,9 @@
 //! What a conversation has cost, as the strip above it shows it: the total in dollars, and for each model what it cost and how many tokens it took when the pointer rests on the total.
 
+use crate::theme::Role;
 use pm_harness::{ModelSpend, Spent};
-use pm_style::{Role, cursor_default, flex, flex_none, items_center};
-use pm_ui::{Node, node};
+use rustle::{Alignment, Arrangement};
+use rustle::{CursorIcon, Modifier};
 
 use crate::parts::line;
 use crate::sample::Session;
@@ -76,18 +77,20 @@ pub fn tooltip(spent: &Spent) -> String {
     lines.join("\n")
 }
 
-/// What `session` has cost so far, for the strip above its conversation, with the figures as its tooltip; nothing until a model was asked.
-pub fn cost_of(session: &Session) -> Option<Node> {
-    let spent = session
-        .spent
-        .as_ref()
-        .filter(|spent| spent.requests() > 0)?;
-    Some(
-        node()
-            .styles([flex(), flex_none(), items_center(), cursor_default()])
-            .child(line(label(spent), 12, 1.4, Role::Subtle))
-            .tooltip(tooltip(spent)),
-    )
+/// Emits what `session` has cost so far, for the strip above its conversation, with the figures as its tooltip; nothing until a model was asked.
+pub fn cost_of(session: &Session) {
+    let Some(spent) = session.spent.as_ref().filter(|spent| spent.requests() > 0) else {
+        return;
+    };
+    let words = label(spent);
+    crate::tooltip::with_tooltip(tooltip(spent), || {
+        rustle::row_arranged(
+            Modifier::new().cursor(CursorIcon::Default),
+            Arrangement::Start,
+            Alignment::Center,
+            move || line(words, 12, 1.4, Role::Subtle),
+        );
+    });
 }
 
 /// Tests for the words a conversation's cost is shown in.
