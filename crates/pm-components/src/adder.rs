@@ -96,6 +96,8 @@ pub struct Adder {
     pub trouble: Option<String>,
     /// The server on another machine the project is added on, or this machine's when nothing.
     pub machine: Option<pm_config::KnownServer>,
+    /// Where the list of rows is scrolled.
+    pub list: rustle::LazyListState,
 }
 
 /// What the list says when it has no rows to say it.
@@ -151,6 +153,7 @@ impl Adder {
             working: None,
             trouble: None,
             machine,
+            list: rustle::LazyListState::default(),
         }
     }
 
@@ -160,6 +163,7 @@ impl Adder {
         self.field = TextFieldState::default();
         self.selected = 0;
         self.trouble = None;
+        self.list.scroll().jump_to(0.0);
     }
 
     /// What the server listed for the step showing.
@@ -272,12 +276,12 @@ pub fn adder(state: &WorkspaceState) {
         Target::Dialog(DialogEvent::AdderBody),
     )
     .width(WIDTH)
-    .build_with(|| panel(open, &state.menu_scroll));
+    .build_with(|| panel(open));
 }
 
-/// Emits what the modal holds: its heading, the field when the step has one and the list, scrolled as `scrolled` says.
+/// Emits what the modal holds: its heading, the field when the step has one and the list, scrolled as the panel's list state says.
 #[track_caller]
-fn panel(open: &Adder, scrolled: &rustle::ScrollState) {
+fn panel(open: &Adder) {
     let banded = || {
         Modifier::new()
             .height(theme::sp(11))
@@ -305,26 +309,40 @@ fn panel(open: &Adder, scrolled: &rustle::ScrollState) {
                 .build();
         });
     }
-    rustle::column_arranged(
+    let rows = open.rows();
+    let status = open.status();
+    let count = rows.len() + usize::from(status.is_some());
+    rustle::lazy_list_with(
         Modifier::new()
             .height_in(0.0, sp(LIST_HEIGHT / 4.0))
-            .vertical_scroll(scrolled)
-            .fill_max_width()
-            .padding(theme::sp(1.5)),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            for (index, row) in open.rows().iter().enumerate() {
-                let id = if open.step == Step::Choices {
-                    choice_id(index)
-                } else {
-                    Target::Dialog(DialogEvent::AdderRow(index))
-                };
-                entry(row, id, index == open.selected);
-            }
-            if let Some(status) = open.status() {
-                status_line(status);
-            }
+            .fill_max_width(),
+        &open.list,
+        rustle::LazyContent::new().padding(theme::sp(1.5)),
+        count,
+        |index| index,
+        |index| {
+            rustle::column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .padding_xy(theme::sp(1.5), 0.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || match rows.get(index) {
+                    Some(row) => {
+                        let id = if open.step == Step::Choices {
+                            choice_id(index)
+                        } else {
+                            Target::Dialog(DialogEvent::AdderRow(index))
+                        };
+                        entry(row, id, index == open.selected);
+                    }
+                    None => {
+                        if let Some(status) = open.status() {
+                            status_line(status);
+                        }
+                    }
+                },
+            );
         },
     );
 }
@@ -435,17 +453,11 @@ impl WorkspaceState {
                     Step::Repositories => Step::Owners,
                     _ => Step::Choices,
                 });
-                self.menu_scroll.jump_to(0.0);
             }
             Target::Dialog(DialogEvent::AdderUp | DialogEvent::AdderDown) if !working => {
                 let up = action == Target::Dialog(DialogEvent::AdderUp);
                 open.selected = stepped(open.selected, up, open.count());
-                scroll_into_view(
-                    &self.menu_scroll,
-                    open.selected,
-                    ENTRY_HEIGHT,
-                    LIST_HEIGHT - 12.0,
-                );
+                crate::rows_in_view::keep_in_view(&open.list, open.selected);
             }
             Target::Dialog(DialogEvent::AdderSubmit) if !working => {
                 let index = Some(open.selected)
@@ -463,7 +475,6 @@ impl WorkspaceState {
             Target::Dialog(DialogEvent::AdderClone) if !working => {
                 open.moved_to(Step::Owners);
                 open.owners = Listing::Loading;
-                self.menu_scroll.jump_to(0.0);
                 self.outbox.push(Outgoing::Owners);
             }
             _ => {}
@@ -487,7 +498,6 @@ impl WorkspaceState {
                 open.moved_to(Step::Repositories);
                 open.repositories = Listing::Loading;
                 open.owner = Some((login.clone(), organization));
-                self.menu_scroll.jump_to(0.0);
                 self.outbox.push(Outgoing::Repositories {
                     login,
                     organization,
@@ -517,7 +527,7 @@ impl WorkspaceState {
         };
         open.selected = 0;
         open.trouble = None;
-        self.menu_scroll.jump_to(0.0);
+        open.list.scroll().jump_to(0.0);
     }
 
     /// The state with the accounts and organizations the server listed, or why it could not.
@@ -566,17 +576,3 @@ pub(crate) fn stepped(selected: usize, up: bool, count: usize) -> usize {
         held => (held + 1).min(count.saturating_sub(1)),
     }
 }
-
-/// Scrolls the list `scroll` moves, `view` logical pixels tall, so that its row at `selected`, each row `row` logical pixels tall, is in view.
-pub(crate) fn scroll_into_view(scroll: &rustle::ScrollState, selected: usize, row: f32, view: f32) {
-    let top = selected as f32 * row;
-    let bottom = top + row;
-    if top < scroll.offset() {
-        scroll.jump_to(top);
-    } else if bottom > scroll.offset() + view {
-        scroll.jump_to(bottom - view);
-    }
-}
-
-/// How tall a row of the list is, in logical pixels.
-const ENTRY_HEIGHT: f32 = 48.0;

@@ -1,10 +1,14 @@
 //! Scrolling: the wheel over a box and over a box inside another, holding
 //! and dragging a scrollbar, and the conversation keeping to its end.
 
-use pm_components::areas::ComposerEvent;
+use pm_components::adder::{Found, Kind};
+use pm_components::areas::{ComposerEvent, DialogEvent, EditorEvent, SidebarEvent};
+use pm_components::state::WorkspaceState;
 use pm_components::target::Target;
 use pm_pages::Screen;
+use rustle::Key;
 
+use crate::app::asides::Aside;
 use crate::app::headless::Rig;
 use crate::snapshot::Shot;
 
@@ -123,4 +127,170 @@ fn the_conversation_keeps_its_place_from_the_end() {
     rig.wheel(-100.0);
     rig.resize((1280.0, 680.0));
     assert_eq!(back(&rig).0, 100.0);
+}
+
+/// How far the sidebar's list is scrolled, and how far it can go.
+fn sidebar(rig: &Rig) -> (f32, f32) {
+    rig.state(|state| {
+        let scroll = &state.sidebar_scroll;
+        (scroll.offset(), scroll.max_offset())
+    })
+}
+
+/// Whether item `index` of `list` lies wholly inside its viewport as of its latest layout,
+/// give or take the gap of a few pixels a list leaves after each of its items.
+fn wholly_shown(list: &rustle::LazyListState, index: usize) -> bool {
+    let info = list.layout_info();
+    info.visible_items_info.iter().any(|item| {
+        item.index == index
+            && item.offset >= info.viewport_start_offset
+            && item.offset + item.size <= info.viewport_end_offset + 3.0
+    })
+}
+
+/// The wheel over the sidebar's list scrolls it, as far as the list reaches and no further.
+#[test]
+fn the_wheel_scrolls_the_sidebar() {
+    let mut rig = Rig::shot(Shot::Workspace);
+    rig.resize((1280.0, 330.0));
+    let (offset, room) = sidebar(&rig);
+    assert_eq!(offset, 0.0);
+    assert!(room > 40.0, "{room}");
+    let at = rig.center(Target::Sidebar(SidebarEvent::Project(0)));
+    rig.move_to(at);
+    rig.wheel(30.0);
+    assert_eq!(sidebar(&rig).0, 30.0);
+    rig.wheel(10_000.0);
+    let (offset, room) = sidebar(&rig);
+    assert_eq!(offset, room);
+    rig.wheel(-10_000.0);
+    assert_eq!(sidebar(&rig).0, 0.0);
+}
+
+/// The wheel over the subagents' list scrolls it first, and what it has no room for
+/// scrolls the conversation around it.
+#[test]
+fn the_subagents_hand_the_wheel_on() {
+    let mut rig = Rig::shot(Shot::AgentsScrolled);
+    let start = rig.state(|state| {
+        let scroll = &state.subagents_scroll;
+        scroll.offset().min(scroll.max_offset())
+    });
+    assert!(start > 40.0, "{start}");
+    let at = rig.center(Target::Composer(ComposerEvent::Prompt));
+    rig.move_to((at.0, at.1 - 160.0));
+    rig.wheel(10.0);
+    assert_eq!(rig.state(|state| state.subagents_scroll.offset()), start);
+    rig.wheel(-30.0);
+    assert_eq!(
+        rig.state(|state| state.subagents_scroll.offset()),
+        start - 30.0
+    );
+    assert_eq!(back(&rig).0, 0.0);
+    rig.wheel(-10_000.0);
+    assert_eq!(rig.state(|state| state.subagents_scroll.offset()), 0.0);
+    assert!(back(&rig).0 > 0.0);
+}
+
+/// `count` accounts to pick from in the panel for adding a project.
+fn many_owners(count: usize) -> Vec<Found> {
+    (0..count)
+        .map(|index| Found {
+            name: format!("account-{index}"),
+            detail: String::new(),
+            value: format!("account-{index}"),
+            kind: Kind::Owner(false),
+        })
+        .collect()
+}
+
+/// Moving the highlight down the long list of the panel for adding a project keeps the
+/// highlighted row in view, and moving it back up does too.
+#[test]
+fn the_adder_keeps_its_highlight_in_view() {
+    let state = WorkspaceState::sample()
+        .handle(pm_components::events::Event::Sidebar(
+            SidebarEvent::AddProject,
+        ))
+        .handle(pm_components::events::Event::Dialog(
+            DialogEvent::AdderClone,
+        ))
+        .with_owners(Ok(many_owners(30)));
+    let mut rig = Rig::new(Screen::Workspace(state), crate::app::headless::SIZE);
+    let shown = |rig: &Rig| {
+        rig.state(|state| {
+            let open = state.adder.as_ref().expect("the panel is open");
+            wholly_shown(&open.list, open.selected)
+        })
+    };
+    for _ in 0..20 {
+        rig.key(Key::ArrowDown);
+        assert!(shown(&rig));
+    }
+    assert!(rig.state(|state| state.adder.as_ref().unwrap().list.scroll().offset()) > 0.0);
+    for _ in 0..20 {
+        rig.key(Key::ArrowUp);
+        assert!(shown(&rig));
+    }
+}
+
+/// Moving the highlight down the long list of the folder picker keeps the highlighted
+/// folder in view.
+#[test]
+fn the_folder_picker_keeps_its_highlight_in_view() {
+    let mut rig = Rig::shot(Shot::Workspace);
+    rig.click_on(Target::Sidebar(SidebarEvent::AddProject));
+    rig.click_on(Target::Dialog(DialogEvent::AdderBrowse));
+    rig.app.borrow().model.update(|screen| {
+        let Screen::Workspace(state) = std::mem::take(screen);
+        let requested = state.folder_picker.as_ref().unwrap().requested.clone();
+        let folders = (0..40).map(|index| format!("folder-{index:02}")).collect();
+        *screen =
+            Screen::Workspace(state.with_folders(&requested, Ok(("/home/me".to_owned(), folders))));
+    });
+    rig.settle();
+    let shown = |rig: &Rig| {
+        rig.state(|state| {
+            let open = state.folder_picker.as_ref().expect("the picker is open");
+            wholly_shown(&open.list, open.selected)
+        })
+    };
+    for step in 0..30 {
+        rig.key_in(Some(Aside::Picker), Key::ArrowDown);
+        assert!(shown(&rig), "step {step}");
+    }
+    assert!(rig.state(|state| state.folder_picker.as_ref().unwrap().list.scroll().offset()) > 0.0);
+}
+
+/// Moving the pick down the long list of the quick input keeps the picked row inside it.
+#[test]
+fn the_quick_input_keeps_its_pick_in_view() {
+    let mut rig = Rig::shot(Shot::Commands);
+    rig.key(Key::Backspace);
+    rig.key(Key::Backspace);
+    let count = rig.state(|state| {
+        state
+            .listing
+            .as_ref()
+            .map_or(0, |listing| listing.items.rows().len())
+    });
+    assert!(
+        count > pm_components::quick_input::QUICK_SHOWN + 4,
+        "{count}"
+    );
+    let body = rig
+        .region(Target::Editor(EditorEvent::ListingBody))
+        .expect("the quick input is drawn");
+    for picked in 1..count.min(40) {
+        rig.key(Key::ArrowDown);
+        let row = rig
+            .region(Target::Editor(EditorEvent::ListingRow(picked)))
+            .expect("the picked row is drawn");
+        assert!(row.size.height > 20.0, "row {picked} is cut: {row:?}");
+        assert!(
+            row.origin.y >= body.origin.y
+                && row.origin.y + row.size.height <= body.origin.y + body.size.height + 0.5,
+            "{picked}: {row:?} in {body:?}"
+        );
+    }
 }

@@ -17,7 +17,7 @@ use pm_config::KnownServer;
 use rustle::Modifier;
 use rustle::TextFieldState;
 
-use crate::adder::{Found, Kind, Listing, Status, matches, scroll_into_view, status_line, stepped};
+use crate::adder::{Found, Kind, Listing, Status, matches, status_line, stepped};
 use crate::button::Variant;
 use crate::icons::icon;
 use crate::parts::{line, spacer};
@@ -32,9 +32,6 @@ const PLACES_WIDTH: f32 = 176.0;
 
 /// How wide the box filtering the folders is, in logical pixels.
 const FILTER_WIDTH: f32 = 220.0;
-
-/// How tall a folder of the list is, in logical pixels.
-const ROW_HEIGHT: f32 = 32.0;
 
 /// How many times a picker has been opened, which numbers the openings.
 static OPENINGS: AtomicU64 = AtomicU64::new(0);
@@ -90,8 +87,8 @@ pub struct FolderPicker {
     pub requested: String,
     /// The folder that is highlighted, by position; nothing while the list was just entered.
     pub selected: usize,
-    /// How far the list is scrolled, in logical pixels.
-    pub scroll: rustle::ScrollState,
+    /// Where the list of folders is scrolled.
+    pub list: rustle::LazyListState,
     /// The folders looked inside before the one showing, the latest last.
     behind: Vec<String>,
     /// The folders that going back left, the latest last.
@@ -140,7 +137,7 @@ impl FolderPicker {
             directory: None,
             requested: String::new(),
             selected: usize::MAX,
-            scroll: rustle::ScrollState::default(),
+            list: rustle::LazyListState::default(),
             behind: Vec::new(),
             ahead: Vec::new(),
         };
@@ -185,7 +182,7 @@ impl FolderPicker {
         self.requested = path.to_owned();
         self.field = TextFieldState::default();
         self.selected = usize::MAX;
-        self.scroll.jump_to(0.0);
+        self.list.scroll().jump_to(0.0);
         Outgoing::Folders {
             path: path.to_owned(),
             host: self.host(),
@@ -274,7 +271,7 @@ impl FolderPicker {
             Target::Dialog(DialogEvent::PickerUp | DialogEvent::PickerDown) => {
                 let up = id == Target::Dialog(DialogEvent::PickerUp);
                 self.selected = stepped(self.selected, up, self.entries().len());
-                scroll_into_view(&self.scroll, self.selected, ROW_HEIGHT, ROW_HEIGHT * 8.0);
+                crate::rows_in_view::keep_in_view(&self.list, self.selected);
                 Outcome::Staying(None)
             }
             Target::Dialog(DialogEvent::PickerBack) => Outcome::Staying(self.travel(true)),
@@ -304,7 +301,7 @@ impl FolderPicker {
     /// The picker after the reader changed what is typed: the first folder is selected and the list goes back to its top.
     pub fn typed(&mut self) {
         self.selected = 0;
-        self.scroll.jump_to(0.0);
+        self.list.scroll().jump_to(0.0);
     }
 
     /// The picker with the folders the server listed for `requested`, or why it could not, when that is still the folder wanted.
@@ -432,22 +429,35 @@ impl FolderPicker {
     /// Emits the folders inside the one being looked into, one to a line, scrolled to where the picker says.
     #[track_caller]
     fn list(&self) {
-        rustle::column_arranged(
+        let entries = self.entries();
+        let count = entries.len() + usize::from(self.status().is_some());
+        rustle::lazy_list_with(
             Modifier::new()
                 .fill_max_height()
                 .weight(1.0)
-                .vertical_scroll(&self.scroll)
-                .fill_max_width()
-                .padding(theme::sp(2)),
-            Arrangement::SpacedBy(theme::sp(0.5)),
-            Alignment::Start,
-            || {
-                for (index, found) in self.entries().into_iter().enumerate() {
-                    folder_row(&found.name, index == self.selected, index);
-                }
-                if let Some(status) = self.status() {
-                    status_line(status);
-                }
+                .fill_max_width(),
+            &self.list,
+            rustle::LazyContent::new()
+                .padding(theme::sp(2))
+                .spacing(theme::sp(0.5)),
+            count,
+            |index| index,
+            |index| {
+                rustle::column_arranged(
+                    Modifier::new()
+                        .fill_max_width()
+                        .padding_xy(theme::sp(2), 0.0),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || match entries.get(index) {
+                        Some(found) => folder_row(&found.name, index == self.selected, index),
+                        None => {
+                            if let Some(status) = self.status() {
+                                status_line(status);
+                            }
+                        }
+                    },
+                );
             },
         );
     }

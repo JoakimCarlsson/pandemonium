@@ -124,6 +124,7 @@ pub mod quick_sessions;
 mod reach;
 pub mod review;
 pub mod revision;
+mod rows_in_view;
 pub mod sample;
 pub mod sash;
 pub mod scroll_marks;

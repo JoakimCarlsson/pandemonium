@@ -51,10 +51,16 @@ pub fn quick_input(listing: &Listing) {
         (None, true, 0) => Some(empty_words(&listing.items)),
         _ => None,
     };
-    let first = listing
-        .picked
-        .saturating_sub(QUICK_SHOWN - 1)
-        .min(count.saturating_sub(QUICK_SHOWN));
+    let list = rustle::remember_lazy_list_state();
+    list.scroll().set_scrollbar(rustle::ScrollbarStyle {
+        visibility: rustle::ScrollbarVisibility::Hidden,
+        ..theme::scrollbar()
+    });
+    let picked = listing.picked;
+    let shown_list = list.clone();
+    rustle::launched_effect((picked, count), move |_| async move {
+        crate::rows_in_view::keep_in_view(&shown_list, picked);
+    });
     rustle::column_arranged(
         Modifier::new()
             .offset(listing.at.0, listing.at.1)
@@ -110,10 +116,16 @@ pub fn quick_input(listing: &Listing) {
                             || line(said, 13, 1.4, Role::Muted),
                         );
                     }
-                    let end = count.min(first + QUICK_SHOWN);
-                    for (place, item) in shown.iter().enumerate().take(end).skip(first) {
-                        quick_row(listing, place, *item, place == listing.picked);
-                    }
+                    rustle::lazy_list_with(
+                        Modifier::new()
+                            .fill_max_width()
+                            .height_in(0.0, QUICK_SHOWN as f32 * ROW),
+                        &list,
+                        rustle::LazyContent::new(),
+                        count,
+                        |place| place,
+                        |place| quick_row(listing, place, shown[place], place == picked),
+                    );
                 },
             );
         },

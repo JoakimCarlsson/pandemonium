@@ -164,11 +164,6 @@ impl Operations for Controller {
         self.with_move(|app| app.browser_pointer(pointer));
     }
 
-    /// Scrolls the sidebar's list.
-    fn sidebar_scrolled(&self, down: f32) {
-        self.with(|app| app.sidebar_scrolled(down));
-    }
-
     /// Notes that the press being handled is inside the conversation.
     fn conversation_pressed(&self) {
         self.with(App::conversation_pressed);

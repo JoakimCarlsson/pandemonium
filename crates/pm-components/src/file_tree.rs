@@ -473,34 +473,6 @@ fn items<'a>(state: &'a WorkspaceState, entries: &'a [Entry]) -> Vec<Item<'a>> {
     items
 }
 
-/// Scrolls `list` the least that brings item `index` wholly into view, as of its latest
-/// layout: to the item's top when it is above the view, to its bottom when below, and not at
-/// all when it is in view already.
-fn keep_in_view(list: &rustle::LazyListState, index: usize) {
-    let info = list.layout_info();
-    let seen = info
-        .visible_items_info
-        .iter()
-        .find(|item| item.index == index);
-    match seen {
-        Some(item)
-            if item.offset >= info.viewport_start_offset
-                && item.offset + item.size <= info.viewport_end_offset => {}
-        Some(item) if item.offset < info.viewport_start_offset => {
-            list.scroll_to_item(index, rustle::ItemAlign::Start)
-        }
-        Some(_) => list.scroll_to_item(index, rustle::ItemAlign::End),
-        None if info
-            .visible_items_info
-            .first()
-            .is_some_and(|first| index < first.index) =>
-        {
-            list.scroll_to_item(index, rustle::ItemAlign::Start)
-        }
-        None => list.scroll_to_item(index, rustle::ItemAlign::End),
-    }
-}
-
 impl WorkspaceState {
     /// Scrolls the list of the project's files the least that shows the row of `target`, or
     /// the field a name is typed into when `target` is being renamed or `target` is the folder
@@ -522,7 +494,7 @@ impl WorkspaceState {
             _ => false,
         });
         if let Some(at) = found {
-            keep_in_view(&self.files_list, at);
+            crate::rows_in_view::keep_in_view(&self.files_list, at);
         }
     }
 }
@@ -550,7 +522,7 @@ fn walks_rows(rows: Rc<Vec<(Target, usize)>>, list: rustle::LazyListState) -> Mo
         let Some((id, index)) = next.map(|next| rows[next]) else {
             return false;
         };
-        keep_in_view(&list, index);
+        crate::rows_in_view::keep_in_view(&list, index);
         requesters.request_focus(id);
         true
     })

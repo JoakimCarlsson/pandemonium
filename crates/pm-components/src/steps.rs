@@ -440,12 +440,15 @@ pub fn subagents(
             });
             match scroll {
                 Some((own, parent)) => rows(
-                    handing_on(
-                        Modifier::new().fill_max_width().height_in(0.0, sp(60)),
-                        own,
-                        parent,
-                    )
-                    .vertical_scroll(own),
+                    Modifier::new()
+                        .fill_max_width()
+                        .height_in(0.0, sp(60))
+                        .scrollable_nested(
+                            &own.scrollable(),
+                            rustle::Axis::Vertical,
+                            &handing_on(parent),
+                        )
+                        .vertical_scroll(own),
                 ),
                 None => rows(Modifier::new()),
             }
@@ -453,26 +456,15 @@ pub fn subagents(
     );
 }
 
-/// `modifier` handing the wheel to `parent` while `own`, which the area scrolls, is at
-/// the end the wheel turns towards, so the area around goes on scrolling.
-fn handing_on(
-    modifier: Modifier,
-    own: &rustle::ScrollState,
-    parent: &rustle::ScrollState,
-) -> Modifier {
-    let (own, parent) = (own.clone(), parent.clone());
-    modifier.pointer_input(move |event| {
-        if event.phase != rustle::PointerInputPhase::Scroll {
-            return false;
-        }
-        let pixels = -event.scroll_delta.y;
-        let room = own.max_offset();
-        let offset = own.offset().clamp(0.0, room);
-        let at_end = (pixels > 0.0 && offset >= room) || (pixels < 0.0 && offset <= 0.0);
-        if at_end {
-            parent.scroll_drawn_by(pixels);
-        }
-        at_end
+/// The connection through which the subagents' list hands the scroll it has no room for to
+/// `parent`, the area around it, which scrolls by it as drawn, so a parent counting its
+/// offset from its end goes the same way the wheel turned.
+fn handing_on(parent: &rustle::ScrollState) -> rustle::NestedScrollConnection {
+    let parent = parent.clone();
+    rustle::NestedScrollConnection::new().on_post_scroll(move |_, available| {
+        let before = parent.offset();
+        parent.scroll_drawn_by(available);
+        (parent.offset() - before).abs() * available.signum()
     })
 }
 

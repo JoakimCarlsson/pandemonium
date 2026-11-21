@@ -8,7 +8,7 @@ use crate::theme::Frame;
 use crate::theme::ShadowLayers;
 use rustle::Modifier;
 use rustle::TextOverflow;
-use rustle::{Alignment, Arrangement, BoxAlignment, IntrinsicSize, row_arranged};
+use rustle::{Alignment, Arrangement, IntrinsicSize, row_arranged};
 use rustle::{Icon, phosphor};
 use std::rc::Rc;
 
@@ -33,43 +33,8 @@ pub const WIDTHS: (f32, f32) = (200.0, 520.0);
 /// How tall a row of the sidebar is, in logical pixels.
 const ROW: f32 = 36.0;
 
-/// The room under a project's last row, in logical pixels.
-const SECTION_GAP: f32 = 12.0;
-
-/// How tall everything in the sidebar but its list of chats and projects is, in a
-/// window of any height: the four entries.
-const CHROME: f32 = 12.0 + 8.0 + 4.0 * ROW + 3.0 * 2.0;
-
-/// How tall the part of the sidebar showing the list is, in a window `height` logical pixels tall, under the title bar.
-pub fn list_viewport(height: f32) -> f32 {
-    height - crate::title_bar::TITLE_BAR_HEIGHT - CHROME
-}
-
 /// How far, in steps, the line that nests submodules under what holds them is set in from the rows above it: under the middle of the avatar.
 const SUBMODULE_RAIL: f32 = 4.5;
-
-/// How tall the project at `index` is with its sessions and its submodules, in logical pixels.
-pub fn project_height(state: &WorkspaceState, index: usize) -> f32 {
-    let rows = state
-        .sessions
-        .iter()
-        .filter(|session| session.project == Some(index) && !session.closed)
-        .count()
-        + 2
-        + state.projects[index].submodules.len();
-    rows as f32 * ROW + SECTION_GAP
-}
-
-/// How tall the group of chats is with its heading, in logical pixels: nothing while no chat is open.
-pub fn chats_height(state: &WorkspaceState) -> f32 {
-    match state.open_chats().len() {
-        0 => 0.0,
-        chats => (chats + 1) as f32 * ROW + SECTION_GAP,
-    }
-}
-
-/// How tall the heading above the projects is, in logical pixels.
-pub const HEADING_HEIGHT: f32 = ROW;
 
 /// Emits the heading of a group of the list, saying `words`.
 #[track_caller]
@@ -395,20 +360,16 @@ fn chats(state: &WorkspaceState) {
 /// Emits the whole sidebar for `state`.
 #[track_caller]
 pub fn sidebar(state: &WorkspaceState) {
-    let operations = crate::events::operations();
+    state.sidebar_scroll.set_scrollbar(rustle::ScrollbarStyle {
+        visibility: rustle::ScrollbarVisibility::Hidden,
+        ..theme::scrollbar()
+    });
     rustle::column_arranged(
         Modifier::new()
             .width(state.sidebar_width)
             .fill_max_height()
             .background(theme::color(Role::Sidebar))
             .border_right_hairline(theme::color(Role::Border))
-            .pointer_input(move |event| {
-                let wheel = event.phase == rustle::PointerInputPhase::Scroll;
-                if wheel {
-                    operations.sidebar_scrolled(-event.scroll_delta.y);
-                }
-                wheel
-            })
             .padding_each(0.0, 0.0, 1.0, 0.0),
         Arrangement::Start,
         Alignment::Start,
@@ -449,24 +410,22 @@ pub fn sidebar(state: &WorkspaceState) {
                     );
                 },
             );
-            rustle::stack_with(Modifier::new().weight(1.0).fill_max_width().clip(), || {
-                rustle::column_arranged(
-                    Modifier::new()
-                        .offset(0.0, -state.sidebar_scroll)
-                        .wrap_content_height(BoxAlignment::TopStart, true)
-                        .fill_max_width()
-                        .padding_xy(theme::sp(2), 0.0),
-                    Arrangement::Start,
-                    Alignment::Start,
-                    || {
-                        chats(state);
-                        heading("Workspaces");
-                        for index in state.display_order() {
-                            rustle::key(index, || project(state, index));
-                        }
-                    },
-                );
-            });
+            rustle::column_arranged(
+                Modifier::new()
+                    .weight(1.0)
+                    .fill_max_width()
+                    .vertical_scroll(&state.sidebar_scroll)
+                    .padding_xy(theme::sp(2), 0.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    chats(state);
+                    heading("Workspaces");
+                    for index in state.display_order() {
+                        rustle::key(index, || project(state, index));
+                    }
+                },
+            );
         },
     );
 }

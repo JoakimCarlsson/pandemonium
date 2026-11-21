@@ -794,15 +794,6 @@ impl App {
         self.attach_paths(paths);
     }
 
-    /// Scrolls the sidebar's list by `pixels` logical pixels, downwards when positive, as
-    /// the wheel turned over the sidebar.
-    pub(super) fn sidebar_scrolled(&mut self, pixels: f32) {
-        let height = self.window_size().1;
-        self.model.update(|state| {
-            *state = std::mem::take(state).in_workspace(|state| state.scrolled(pixels, height))
-        });
-    }
-
     /// Notes what holds the keyboard and, when it is a text field, what it
     /// holds, before the interface handles an event, so [`App::follow_typing`]
     /// can tell whether the field changed while it did.

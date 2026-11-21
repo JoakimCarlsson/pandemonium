@@ -1635,7 +1635,7 @@ pub struct WorkspaceState {
     /// How far the history session groups have scrolled, in logical pixels.
     pub history_scroll: rustle::ScrollState,
     /// How far the sidebar's list is scrolled, in logical pixels.
-    pub sidebar_scroll: f32,
+    pub sidebar_scroll: rustle::ScrollState,
     /// The submodule of the project the new session page starts work in, or nothing for the project itself.
     pub new_in: Option<String>,
     /// How wide the sidebar is, in logical pixels.
@@ -1915,23 +1915,6 @@ impl WorkspaceState {
             self.sync_context();
         }
         self
-    }
-
-    /// The state after the sidebar's list is scrolled by `delta` logical
-    /// pixels, in a window `height` logical pixels tall, kept within the list.
-    pub fn scrolled(mut self, delta: f32, height: f32) -> Self {
-        let room = (self.list_height() - crate::sidebar::list_viewport(height)).max(0.0);
-        self.sidebar_scroll = (self.sidebar_scroll + delta).clamp(0.0, room);
-        self
-    }
-
-    /// How tall the sidebar's list of chats and projects is, in logical pixels.
-    fn list_height(&self) -> f32 {
-        crate::sidebar::chats_height(self)
-            + crate::sidebar::HEADING_HEIGHT
-            + (0..self.projects.len())
-                .map(|index| crate::sidebar::project_height(self, index))
-                .sum::<f32>()
     }
 
     /// Whether a page for starting work is showing: the one of a project, or the one that starts a chat.

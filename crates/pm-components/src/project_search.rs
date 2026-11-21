@@ -59,6 +59,17 @@ pub struct ProjectSearch {
     groups: Vec<Group>,
     /// The files whose hits are folded away.
     folded: HashSet<String>,
+    /// Where the list of hits is scrolled.
+    list: rustle::LazyListState,
+}
+
+/// One row of the list of hits.
+#[derive(Clone, Copy)]
+enum Row<'a> {
+    /// The row naming the file at this place, folded away when the flag says so.
+    File(usize, &'a Group, bool),
+    /// The hit with this number, counted over every file, at this place.
+    Hit(usize, &'a Location),
 }
 
 impl Default for ProjectSearch {
@@ -73,6 +84,7 @@ impl Default for ProjectSearch {
             problem: None,
             groups: Vec::new(),
             folded: HashSet::new(),
+            list: rustle::LazyListState::default(),
         }
     }
 }
@@ -81,6 +93,23 @@ impl ProjectSearch {
     /// The hits, by file.
     pub(crate) fn groups(&self) -> &[Group] {
         &self.groups
+    }
+
+    /// The rows of the list of hits, in order: each file, followed by its hits unless they are folded away.
+    fn rows(&self) -> Vec<Row<'_>> {
+        let mut rows = Vec::new();
+        let mut index = 0;
+        for (place, group) in self.groups.iter().enumerate() {
+            let folded = self.folded.contains(&group.path);
+            rows.push(Row::File(place, group, folded));
+            for location in &group.hits {
+                if !folded {
+                    rows.push(Row::Hit(index, location));
+                }
+                index += 1;
+            }
+        }
+        rows
     }
 
     /// How many hits there are in all.
@@ -210,7 +239,7 @@ impl WorkspaceState {
                 search.groups.clear();
             }
         }
-        self.tree_scroll.jump_to(0.0);
+        search.list.scroll().jump_to(0.0);
         self
     }
 
@@ -484,28 +513,19 @@ pub fn panel(state: &WorkspaceState) {
                     );
                 },
             );
-            rustle::column_arranged(
-                Modifier::new()
-                    .fill_max_width()
-                    .weight(1.0)
-                    .clip()
-                    .vertical_scroll(&state.tree_scroll)
-                    .fill_max_width()
-                    .padding_xy(0.0, theme::sp(1)),
-                Arrangement::Start,
-                Alignment::Start,
-                || {
-                    let mut index = 0;
-                    for (place, group) in search.groups.iter().enumerate() {
-                        let folded = search.folded.contains(&group.path);
-                        group_row(place, group, folded);
-                        for location in &group.hits {
-                            if !folded {
-                                hit_row(index, location, &matcher);
-                            }
-                            index += 1;
-                        }
-                    }
+            let rows = search.rows();
+            rustle::lazy_list_with(
+                Modifier::new().fill_max_width().weight(1.0).clip(),
+                &search.list,
+                rustle::LazyContent::new().padding(theme::sp(1)),
+                rows.len(),
+                |at| match rows[at] {
+                    Row::File(place, _, _) => (place, None),
+                    Row::Hit(index, _) => (usize::MAX, Some(index)),
+                },
+                |at| match rows[at] {
+                    Row::File(place, group, folded) => group_row(place, group, folded),
+                    Row::Hit(index, location) => hit_row(index, location, &matcher),
                 },
             );
         },

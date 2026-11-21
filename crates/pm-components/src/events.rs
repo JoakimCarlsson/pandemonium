@@ -155,8 +155,6 @@ pub trait Operations {
     fn terminal_wheel(&self, _down: f32) {}
     /// The pointer did what `pointer` tells over a web page or its tools.
     fn browser_pointer(&self, _pointer: BrowserPointer) {}
-    /// The wheel turned over the sidebar's list, `down` logical pixels downwards.
-    fn sidebar_scrolled(&self, _down: f32) {}
     /// The primary button went down inside the conversation, as the conversation hears
     /// before the press reaches what it landed on.
     fn conversation_pressed(&self) {}

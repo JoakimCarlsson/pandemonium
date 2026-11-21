@@ -436,7 +436,7 @@ impl View {
             review_width: state.review_width,
             plan_width: state.plan_width,
             terminal: state.terminal,
-            scroll: state.sidebar_scroll,
+            scroll: state.sidebar_scroll.offset(),
             agent: state.agent,
             prompt: state.prompt.text().to_owned(),
             typing,
@@ -567,7 +567,7 @@ impl View {
             state.git.graph_height = self.graph_height;
         }
         state.review_tab = self.review_tab();
-        state.sidebar_scroll = self.scroll;
+        state.sidebar_scroll.jump_to(self.scroll);
         state.tree_scroll.jump_to(self.tree_scroll);
         state
             .files_list
@@ -693,5 +693,19 @@ mod tests {
             "http://localhost:3000"
         );
         assert_eq!(reopened.page, Page::Session(0));
+    }
+
+    /// The sidebar's list is saved as the offset of its scroll state, under the same `scroll`
+    /// field, and a reopened session starts scrolled to that offset.
+    #[test]
+    fn the_sidebar_keeps_its_place() {
+        let state = WorkspaceState::sample();
+        state.sidebar_scroll.jump_to(84.0);
+        let view = View::capture(&state, None, |index| Some((None, index as u64 + 1)));
+        let text = serde_json::to_value(&view).unwrap();
+        assert_eq!(text["scroll"], serde_json::json!(84.0));
+        let restored: View = serde_json::from_value(text).unwrap();
+        let reopened = restored.reopen(restored.apply(WorkspaceState::sample()), Some(0));
+        assert_eq!(reopened.sidebar_scroll.offset(), 84.0);
     }
 }
