@@ -341,6 +341,7 @@ fn window(tab: &TerminalTab, width: f32, look: Look) {
                 shell_press(&emulator, look.font),
             )
             .chain(crate::bounds::placed(body, Modifier::new()))
+            .chain(crate::bounds::sized(body, Modifier::new()))
             .chain(crate::focus::keyboard_focus(body))
             .padding_xy(PADDING_X, PADDING_Y),
         Arrangement::Start,

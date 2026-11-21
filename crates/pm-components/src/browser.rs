@@ -22,7 +22,7 @@ use crate::browser_address::address_of;
 use crate::browser_find::find_bar;
 use crate::browser_pointing::{PagePointer, cursor_of};
 use crate::browser_safety::{Answer, certificate_page};
-use crate::browser_tabs::{BrowserTab, SavedTab, TAB_STRIP, tab_strip};
+use crate::browser_tabs::{BrowserTab, SavedTab, tab_strip};
 use crate::button::Variant;
 use crate::parts::line;
 use crate::sash::Sash;
@@ -700,26 +700,27 @@ fn toolbar(browser: &Browser) {
     );
 }
 
-/// Emits the window `id` of `browser`, `wide` by `tall` logical pixels: the certificate the page is stopped at, the newest `shown` picture, or what the tab says instead of a page. The pointer over it is handed on to the page unless the question about clearing covers it or the pointer is over what is drawn over the page, as `covered` says.
+/// Emits the window `id` of `browser`, sized by `size`: the certificate the page is stopped at, laid out for the room it is given as Compose's `BoxWithConstraints` lays it out, the newest `shown` picture, or what the tab says instead of a page. The pointer over it is handed on to the page unless the question about clearing covers it or the pointer is over what is drawn over the page, as `covered` says.
 #[track_caller]
 fn surface(
     browser: &Browser,
     id: Target,
     shown: &Option<rustle::ImageData>,
-    (wide, tall): (f32, f32),
+    size: Modifier,
     covered: &Rc<Cell<bool>>,
 ) {
     if id == Target::Browser(BrowserEvent::BrowserBody)
         && let Some(certificate) = browser.safety.certificate.as_ref()
     {
-        certificate_page(certificate, wide, tall);
+        let certificate = certificate.clone();
+        rustle::with_constraints(size, move |room| {
+            certificate_page(&certificate, room.max_width, room.max_height);
+        });
         return;
     }
     let page = PagePointer::new(id, !browser.clearing, Rc::clone(covered));
     let on_pointer = page.on_pointer();
-    let body = Modifier::new()
-        .width(wide)
-        .height(tall)
+    let body = size
         .clip()
         .cursor(cursor_of(browser.pointer))
         .chain(page.modifier())
@@ -739,6 +740,7 @@ fn surface(
             move |event| on_pointer(event),
         )
         .chain(crate::bounds::placed(id, Modifier::new()))
+        .chain(crate::bounds::sized(id, Modifier::new()))
         .chain(crate::focus::keyboard_focus(id));
     match shown {
         Some(shown)
@@ -757,12 +759,12 @@ fn surface(
     }
 }
 
-/// Emits the line between the page and the developer tools, `tall` logical pixels high, with the handle that drags it.
-fn divider(tall: f32) {
+/// Emits the line between the page and the developer tools, as tall as the row it is in, with the handle that drags it.
+fn divider() {
     rustle::stack_with(
         Modifier::new()
             .width(1.0)
-            .height(tall)
+            .fill_max_height()
             .background(theme::color(Role::Border)),
         || {
             Sash::column(Target::Browser(BrowserEvent::BrowserSash))
@@ -772,27 +774,52 @@ fn divider(tall: f32) {
     );
 }
 
-/// Emits the browser shown in a pane `width` by `height` logical pixels; nothing when it is closed.
-pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) {
+/// The size of the developer tools beside the page: `width` logical pixels wide, as they were dragged, kept whole and within what leaves them and the page [`TOOLS_LEAST`] each of the room the row has left for them after the line between them, and as tall as the row.
+fn tools_size(width: f32) -> Modifier {
+    Modifier::new()
+        .fill_max_height()
+        .layout(move |content, room| {
+            let wide = width
+                .clamp(TOOLS_LEAST, (room.max_width - TOOLS_LEAST).max(TOOLS_LEAST))
+                .floor();
+            let size = content.measure(rustle::Constraints {
+                min_width: wide,
+                max_width: wide,
+                ..room
+            });
+            rustle::Placement::new(size, rustle::Offset::default())
+        })
+}
+
+/// Emits the box of the page of `browser`, taking the room its row leaves after the developer tools: the page, the bar for finding in it over its top right corner and the question laid over its top, which report whether the pointer is over them in `covered`.
+#[track_caller]
+fn page_box(browser: &Browser, covered: &Rc<Cell<bool>>) {
+    rustle::stack_with(Modifier::new().weight(1.0).fill_max_height(), || {
+        surface(
+            browser,
+            Target::Browser(BrowserEvent::BrowserBody),
+            &browser.page,
+            Modifier::new().fill_max_size(),
+            covered,
+        );
+        if let Some(search) = browser.search.as_ref() {
+            let over = Rc::clone(covered);
+            find_bar(search, move |hovered| over.set(hovered));
+        }
+        browser.safety.question_overlay();
+    });
+}
+
+/// Emits the browser shown in a pane `width` logical pixels wide, filling the pane's height below its strip of tabs: the strip, the toolbar and the bars over the page and the developer tools beside it, which take the height left; nothing when it is closed.
+pub fn browser_view(state: &WorkspaceState, width: f32) {
     let Some(browser) = state.browser.as_ref() else {
         return;
-    };
-    let room = (height - TAB_STRIP - TOOLBAR - browser.safety.bars()).max(0.0);
-    let tools = browser.tools.then(|| {
-        browser
-            .tools_width
-            .clamp(TOOLS_LEAST, (width - TOOLS_LEAST - 1.0).max(TOOLS_LEAST))
-            .floor()
-    });
-    let (page_width, beside) = match tools {
-        Some(tools) => ((width - tools - 1.0).max(0.0), tools + 1.0),
-        None => (width, 0.0),
     };
     let covered = rustle::remember(|| Rc::new(Cell::new(false))).get();
     rustle::column_arranged(
         Modifier::new()
             .fill_max_width()
-            .height(height)
+            .weight(1.0)
             .background(theme::color(Role::Background)),
         Arrangement::Start,
         Alignment::Start,
@@ -800,37 +827,24 @@ pub fn browser_view(state: &WorkspaceState, width: f32, height: f32) {
             tab_strip(browser, width);
             toolbar(browser);
             browser.safety.bar_nodes();
-            rustle::stack_with(Modifier::new().fill_max_width().height(room), || {
-                rustle::row_arranged(
-                    Modifier::new().fill_max_width().height(room),
-                    Arrangement::Start,
-                    Alignment::Start,
-                    || {
+            rustle::row_arranged(
+                Modifier::new().fill_max_width().weight(1.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    page_box(browser, &covered);
+                    if browser.tools {
+                        divider();
                         surface(
                             browser,
-                            Target::Browser(BrowserEvent::BrowserBody),
-                            &browser.page,
-                            (page_width, room),
+                            Target::Browser(BrowserEvent::BrowserToolsBody),
+                            &browser.tools_page,
+                            tools_size(browser.tools_width),
                             &covered,
                         );
-                        if let Some(tools) = tools {
-                            divider(room);
-                            surface(
-                                browser,
-                                Target::Browser(BrowserEvent::BrowserToolsBody),
-                                &browser.tools_page,
-                                (tools, room),
-                                &covered,
-                            );
-                        }
-                    },
-                );
-                if let Some(search) = browser.search.as_ref() {
-                    let over = Rc::clone(&covered);
-                    find_bar(search, page_width, beside, move |hovered| over.set(hovered));
-                }
-                browser.safety.question_overlay(page_width);
-            });
+                    }
+                },
+            );
         },
     );
 }

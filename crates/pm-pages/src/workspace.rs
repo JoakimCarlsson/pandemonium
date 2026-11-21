@@ -14,7 +14,7 @@ use pm_components::git_prompts;
 use pm_components::message_menu::message_menu;
 use pm_components::title_bar::TITLE_BAR_HEIGHT;
 use pm_components::{Menu, TitleBar, Window};
-use pm_components::{adder, history, plan, review, settings, sidebar, terminal};
+use pm_components::{adder, history, plan, review, settings, sidebar};
 
 pub use pm_components::state::{Outgoing, WorkspaceState};
 
@@ -51,16 +51,14 @@ fn keyboard_asks(state: &WorkspaceState) {
     }
 }
 
-/// Emits the whole workspace screen for `state` in a window `width` logical pixels wide and `height` tall: the title bar over the sidebar and the page, with the handles between them, the menus and the dialogs laid over the window.
+/// Emits the whole workspace screen for `state` in a window `width` logical pixels wide and `height` tall: the title bar over a row of the sidebar, the page taking the room the panels leave, the plan and the review panel, each panel as wide as it was dragged to with its handle lying in the row on its edge, and the menus and the dialogs laid over the window.
 #[track_caller]
 pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
     let page = height - TITLE_BAR_HEIGHT;
-    let planning = state.plan_shown().is_some();
     let reviewing = state.review_session().is_some() && state.review;
     let sidebar_width = state.sidebar_room();
     let review_width = if reviewing { state.review_width } else { 0.0 };
-    let main_width = state.pane_area((width, height)).width;
-    let plan_width = width - sidebar_width - review_width - main_width;
+    let plan_width = state.plan_room(width);
     let paned = state.paned();
     let inner = state.inner_sizes();
     let frame = state.code_lines.frame(Modifier::new().fill_max_size());
@@ -84,6 +82,9 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
                                 region((state.sidebar_width, height, inner), || {
                                     sidebar::sidebar(state);
                                 });
+                                Sash::column(Target::Window(WindowEvent::SidebarSash))
+                                    .between()
+                                    .build();
                             }
                             let rooms = (
                                 width,
@@ -102,11 +103,17 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
                                 _ => region(rooms, || panes::starting_page(state, page)),
                             }
                             if let Some(source) = state.plan_shown() {
+                                Sash::column(Target::Window(WindowEvent::PlanSash))
+                                    .between()
+                                    .build();
                                 region((plan_width, height, inner), || {
                                     plan::panel(state, source, plan_width);
                                 });
                             }
                             if let Some(session) = state.review_session().filter(|_| reviewing) {
+                                Sash::column(Target::Window(WindowEvent::ReviewSash))
+                                    .between()
+                                    .build();
                                 region((review_width, height, inner), || {
                                     review::review(state, session)
                                 });
@@ -115,31 +122,8 @@ pub fn workspace(state: &WorkspaceState, width: f32, height: f32) {
                     );
                 },
             );
-            if state.sidebar_open {
-                Sash::column(Target::Window(WindowEvent::SidebarSash))
-                    .at((sidebar_width, TITLE_BAR_HEIGHT), page)
-                    .build();
-            }
-            if planning {
-                Sash::column(Target::Window(WindowEvent::PlanSash))
-                    .at((sidebar_width + main_width, TITLE_BAR_HEIGHT), page)
-                    .build();
-            }
-            if reviewing {
-                Sash::column(Target::Window(WindowEvent::ReviewSash))
-                    .at((width - review_width, TITLE_BAR_HEIGHT), page)
-                    .build();
-            }
-            if state.docking() {
-                Sash::row(Target::Window(WindowEvent::TerminalSash))
-                    .at(
-                        (sidebar_width, height - terminal::height(state, page)),
-                        main_width,
-                    )
-                    .build();
-            }
             if paned {
-                panes::main_over(state, (width, height));
+                panes::main_over(state);
             }
             over(state, height, reviewing);
         })

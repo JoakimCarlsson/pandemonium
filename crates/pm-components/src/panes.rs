@@ -144,18 +144,6 @@ impl Area {
         }
     }
 
-    /// The part of the area a tab let go of on `side` would take.
-    pub fn of_side(self, side: Side) -> Self {
-        let (wide, tall) = (self.width / 2.0, self.height / 2.0);
-        match side {
-            Side::Center => self,
-            Side::Left => self.cut(Axis::Row, wide).0,
-            Side::Right => self.cut(Axis::Row, wide).1,
-            Side::Top => self.cut(Axis::Column, tall).0,
-            Side::Bottom => self.cut(Axis::Column, tall).1,
-        }
-    }
-
     /// The edge of the area, as a pane with its strip of tabs along the top, that `at` is over: the nearest edge within a share of the area from it, or else the middle.
     pub fn side_at(self, at: (f32, f32)) -> Side {
         let (across, down) = (
@@ -187,19 +175,6 @@ pub struct Placed<'a> {
     pub group: &'a Group,
     /// Where it is.
     pub area: Area,
-}
-
-/// A handle between the two sides of a split, laid out.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Seam {
-    /// The handle.
-    pub id: Target,
-    /// Which way the sides lie.
-    pub axis: Axis,
-    /// Where its line starts.
-    pub at: (f32, f32),
-    /// How long it is.
-    pub length: f32,
 }
 
 /// A tab being dragged to another pane or the edge of one.
@@ -318,38 +293,6 @@ impl Layout {
                 first.place(one, placed);
                 second.place(two, placed);
             }
-        }
-    }
-
-    /// The handles between the sides of every split, laid out in `area`.
-    pub fn seams(&self, area: Area) -> Vec<Seam> {
-        let mut seams = Vec::new();
-        self.seam(area, &mut seams);
-        seams
-    }
-
-    /// Lays out the handles of the splits in `area` after those already in `seams`.
-    fn seam(&self, area: Area, seams: &mut Vec<Seam>) {
-        if let Self::Split {
-            axis,
-            ratio,
-            first,
-            second,
-        } = self
-        {
-            let (one, two) = area.halves(*axis, *ratio);
-            let id = Target::Window(WindowEvent::SplitSash(seams.len()));
-            seams.push(Seam {
-                id,
-                axis: *axis,
-                at: (two.x, two.y),
-                length: match axis {
-                    Axis::Row => two.height,
-                    Axis::Column => two.width,
-                },
-            });
-            first.seam(one, seams);
-            second.seam(two, seams);
         }
     }
 
@@ -631,19 +574,28 @@ impl WorkspaceState {
         self.terminal && self.paned() && self.docked().is_some()
     }
 
-    /// Where the panes are in a window `window` logical pixels wide and tall: right of the sidebar, left of the plan and review panels and above the terminal dock.
-    pub fn pane_area(&self, window: (f32, f32)) -> Area {
-        let review = if self.review_session().is_some() && self.review {
+    /// How wide the review panel is, in logical pixels: nothing while it is closed.
+    fn review_room(&self) -> f32 {
+        if self.review_session().is_some() && self.review {
             self.review_width
         } else {
             0.0
-        };
-        let beside = window.0 - self.sidebar_room() - review;
-        let plan = if self.plan_shown().is_some() {
-            crate::plan::width_in(self, beside)
+        }
+    }
+
+    /// How wide the plan panel is in a window `width` logical pixels wide: what it was dragged to, or its share of the room the sidebar and the review panel leave; nothing while it is closed.
+    pub fn plan_room(&self, width: f32) -> f32 {
+        if self.plan_shown().is_some() {
+            crate::plan::width_in(self, width - self.sidebar_room() - self.review_room())
         } else {
             0.0
-        };
+        }
+    }
+
+    /// Where the panes are in a window `window` logical pixels wide and tall: right of the sidebar, left of the plan and review panels and above the terminal dock.
+    pub fn pane_area(&self, window: (f32, f32)) -> Area {
+        let beside = window.0 - self.sidebar_room() - self.review_room();
+        let plan = self.plan_room(window.0);
         let page = window.1 - crate::title_bar::TITLE_BAR_HEIGHT;
         let dock = if self.docking() {
             terminal::height(self, page)

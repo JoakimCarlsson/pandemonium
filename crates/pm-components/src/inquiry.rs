@@ -11,7 +11,7 @@ use crate::theme::Indicated;
 use crate::theme::sp;
 use pm_harness::Alternative;
 use rustle::TextOverflow;
-use rustle::{Alignment, Arrangement, FlowOptions, flow_row_with, row_arranged};
+use rustle::{Alignment, Arrangement, row_arranged};
 use rustle::{BoxAlignment, Modifier};
 use rustle::{Icon, phosphor};
 
@@ -19,7 +19,7 @@ use crate::Button;
 use crate::button::Variant;
 use crate::draft::Draft;
 use crate::exhibit::{MOCKUP_VIEWPORT, Offer, Preview, wanted_document};
-use crate::figures::Figures;
+use crate::figures::{Drawing, Figures};
 use crate::input::{self, Input};
 use crate::parts::line;
 use crate::theme::{Radius, Role};
@@ -122,9 +122,6 @@ const TWO_TILES: f32 = 480.0;
 /// The gap between two tiles, in logical pixels: two steps of the spacing scale.
 const TILE_GAP: f32 = 8.0;
 
-/// What the padding and border of a tile take from its width, in logical pixels.
-const TILE_INSET: f32 = 18.0;
-
 /// How the label of an answer marks it as the one the agent recommends.
 const RECOMMENDED: &str = "(recommended)";
 
@@ -138,14 +135,6 @@ pub(crate) fn compares(alternatives: &[Alternative]) -> bool {
 /// How many tiles sit on a row when `count` answers share `width` logical pixels: two at the width of a conversation, one when the card is narrow or there is a single answer.
 pub(crate) fn tiles_per_row(width: f32, count: usize) -> usize {
     if count < 2 || width < TWO_TILES { 1 } else { 2 }
-}
-
-/// How wide each tile is, in logical pixels, when `per_row` of them share `width` with a gap between.
-pub(crate) fn tile_width(width: f32, per_row: usize) -> f32 {
-    let per_row = per_row.max(1) as f32;
-    ((width - TILE_GAP * (per_row - 1.0)) / per_row)
-        .floor()
-        .max(1.0)
 }
 
 /// The label of an answer without the mark that says the agent recommends it, and whether it had the mark.
@@ -212,22 +201,19 @@ fn mark(icon: Icon, words: &str, tone: Role, form: Marks, tip: &str) {
     });
 }
 
-/// Emits the tile offering `alternative` among answers that are compared: the picture of its mockup when it has one, as `figures` holds it, over its label and description, `width` logical pixels wide. The key `number` picks it, as a press on it does; it is drawn as taken when `picked` and marked when the agent recommends it, and a tile with a mockup has a button that opens the mockup larger. The marks shrink to icons and then go, and the button goes with them, as the tile gets too narrow to hold them, and the tile cuts off whatever would still reach past its edge. A mockup whose picture waits for the embedded browser offers `offer` in its place, shrinking as the marks do.
+/// Emits the tile offering `alternative` among answers that are compared, sharing its line of tiles with the others by weight: the picture `figure` of its mockup when it has one, over its label and description. The key `number` picks it, as a press on it does; it is drawn as taken when `picked` and marked when the agent recommends it, and a tile with a mockup has a button that opens the mockup larger. What is inside the tile is chosen from the width it is given, as Compose's `BoxWithConstraints` chooses: the marks shrink to icons and then go, and the button goes with them, as the tile gets too narrow to hold them, and the tile cuts off whatever would still reach past its edge. A mockup whose picture waits for the embedded browser offers `offer` in its place, shrinking as the marks do.
 #[track_caller]
 fn tile(
     alternative: &Alternative,
-    (figures, offer): (&Figures, &Offer),
+    (figure, offer): (Option<Result<Drawing, String>>, &Offer),
     (index, picked): (usize, bool),
-    width: f32,
 ) {
-    let inner = width - TILE_INSET;
-    let (label, suggested) = recommended(&alternative.label);
-    let outdated = matches!(offer, Offer::Update(_));
-    let form = marks_in(inner);
     let id = Target::Chat(ChatEvent::InquiryPick(index));
-    rustle::column_arranged(
+    let alternative = alternative.clone();
+    let offer = offer.clone();
+    rustle::with_constraints(
         offered(
-            Modifier::new().width(width),
+            Modifier::new().weight(1.0),
             id,
             if picked {
                 Role::SurfaceActive
@@ -238,6 +224,30 @@ fn tile(
         )
         .clip()
         .padding_xy(theme::sp(2), theme::sp(2)),
+        move |constraints| {
+            tile_content(
+                &alternative,
+                (figure.as_ref(), &offer),
+                (index, picked),
+                constraints.max_width,
+            );
+        },
+    );
+}
+
+/// Emits what a tile offering `alternative` holds in `inner` logical pixels across: its heading with the key, the marks and the button that opens the mockup, the mockup's picture `figure` or the offer `offer` in its place, and its label and description; as [`tile`] describes.
+#[track_caller]
+fn tile_content(
+    alternative: &Alternative,
+    (figure, offer): (Option<&Result<Drawing, String>>, &Offer),
+    (index, picked): (usize, bool),
+    inner: f32,
+) {
+    let (label, suggested) = recommended(&alternative.label);
+    let outdated = matches!(offer, Offer::Update(_));
+    let form = marks_in(inner);
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
         Arrangement::SpacedBy(theme::sp(2)),
         Alignment::Start,
         || {
@@ -272,9 +282,8 @@ fn tile(
                     }
                 },
             );
-            if let Some(html) = alternative.mockup.as_deref() {
-                let (key, _) = wanted_document(html, MOCKUP_VIEWPORT);
-                Preview::new(figures.get(&key), MOCKUP_VIEWPORT, inner)
+            if alternative.mockup.is_some() {
+                Preview::new(figure, MOCKUP_VIEWPORT, inner)
                     .offer(offer, Target::Chat(ChatEvent::MockupOffer(index)))
                     .build();
             }
@@ -283,25 +292,51 @@ fn tile(
     );
 }
 
-/// Emits the answers of a question side by side for comparing, as tiles that wrap onto rows within `width` logical pixels, those of `picked` drawn as taken, with the pictures and the offer of `pictures` as [`tile`] takes them.
-fn tiles(alternatives: &[Alternative], pictures: (&Figures, &Offer), picked: &[usize], width: f32) {
-    let each = tile_width(width, tiles_per_row(width, alternatives.len()));
-    flow_row_with(
-        Modifier::new().fill_max_width(),
-        FlowOptions::new(sp(TILE_GAP / 4.0), sp(TILE_GAP / 4.0)),
-        || {
-            for (index, alternative) in alternatives.iter().enumerate() {
-                rustle::key(index, || {
-                    tile(
-                        alternative,
-                        pictures,
-                        (index, picked.contains(&index)),
-                        each,
-                    );
-                });
-            }
-        },
-    );
+/// Emits the answers of a question side by side for comparing, as tiles in lines across the card, as many to a line as [`tiles_per_row`] says for the width the card gives them, as Compose's `BoxWithConstraints` chooses, each line shared by weight and a short last line kept to the same share with weighted spacers; those of `picked` are drawn as taken, with the pictures `figures` holds of their mockups and the offer `offer` as [`tile`] takes them.
+fn tiles(alternatives: &[Alternative], (figures, offer): (&Figures, &Offer), picked: &[usize]) {
+    let alternatives = alternatives.to_vec();
+    let pictures: Vec<Option<Result<Drawing, String>>> = alternatives
+        .iter()
+        .map(|alternative| {
+            let html = alternative.mockup.as_deref()?;
+            let (key, _) = wanted_document(html, MOCKUP_VIEWPORT);
+            figures.get(&key).cloned()
+        })
+        .collect();
+    let offer = offer.clone();
+    let picked = picked.to_vec();
+    rustle::with_constraints(Modifier::new().fill_max_width(), move |constraints| {
+        let per_row = tiles_per_row(constraints.max_width, alternatives.len());
+        rustle::column_arranged(
+            Modifier::new().fill_max_width(),
+            Arrangement::SpacedBy(sp(TILE_GAP / 4.0)),
+            Alignment::Start,
+            || {
+                for (line, start) in (0..alternatives.len()).step_by(per_row).enumerate() {
+                    let end = (start + per_row).min(alternatives.len());
+                    rustle::key(line, || {
+                        row_arranged(
+                            Modifier::new().fill_max_width(),
+                            Arrangement::SpacedBy(sp(TILE_GAP / 4.0)),
+                            Alignment::Start,
+                            || {
+                                for index in start..end {
+                                    tile(
+                                        &alternatives[index],
+                                        (pictures[index].clone(), &offer),
+                                        (index, picked.contains(&index)),
+                                    );
+                                }
+                                for _ in end..start + per_row {
+                                    rustle::spacer(Modifier::new().weight(1.0));
+                                }
+                            },
+                        );
+                    });
+                }
+            },
+        );
+    });
 }
 
 /// Emits the row for an answer of the reader's own, with the box to type it in, which the key `number` picks.
@@ -420,12 +455,7 @@ pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
                 Alignment::Start,
                 || {
                     if compares(&question.alternatives) {
-                        tiles(
-                            &question.alternatives,
-                            (figures, offer),
-                            picked,
-                            width - CARD_INSET,
-                        );
+                        tiles(&question.alternatives, (figures, offer), picked);
                     } else {
                         for (index, alternative) in question.alternatives.iter().enumerate() {
                             choice(alternative, index, picked.contains(&index), width - 92.0);
@@ -453,9 +483,6 @@ pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
         },
     );
 }
-
-/// What the padding and border of the question card take from its width, in logical pixels.
-const CARD_INSET: f32 = 26.0;
 
 /// What the padding and border of the card that records answers take from its width, in logical pixels.
 const ANSWERED_INSET: f32 = 34.0;
@@ -498,6 +525,45 @@ pub fn answered(answers: &[(String, Option<String>)], width: f32) {
 mod tests {
     use super::*;
 
+    /// What the padding and border of a tile take from its width, in logical pixels.
+    const TILE_INSET: f32 = 18.0;
+
+    /// How thick a tile's border is, in logical pixels: the press area a tile is tagged with lies inside it.
+    const TILE_BORDER: f32 = 1.0;
+
+    /// The question with three answers that each have a mockup.
+    fn three_mockups() -> Draft {
+        Draft::new(pm_harness::Inquiry {
+            ticket: 1,
+            questions: vec![pm_harness::Question {
+                header: "Layout".to_owned(),
+                text: "Which layout?".to_owned(),
+                multiple: false,
+                alternatives: vec![
+                    alternative("Sidebar (Recommended)", true),
+                    alternative("Tabs", true),
+                    alternative("Neither", true),
+                ],
+            }],
+        })
+    }
+
+    /// Where the three tiles of [`three_mockups`] are laid out when the card is `width` logical pixels wide, in the order of their answers.
+    fn tiles_laid(width: f32) -> Vec<rustle::Rect> {
+        let draft = three_mockups();
+        let figures = Figures::new();
+        let laid = crate::tagged::lay_out(width, 2000.0, None, move || {
+            inquiry(&draft, &figures, &Offer::Nothing, width)
+        });
+        (0..3)
+            .map(|index| {
+                laid.node(Target::Chat(ChatEvent::InquiryPick(index)))
+                    .expect("every tile is laid out")
+                    .bounds
+            })
+            .collect()
+    }
+
     /// An answer saying `label`, with a mockup when `pictured`.
     fn alternative(label: &str, pictured: bool) -> Alternative {
         Alternative {
@@ -518,27 +584,50 @@ mod tests {
         assert!(!compares(&[]));
     }
 
-    /// Tiles sit two to a row at the width of a conversation and one to a row when the card is narrow or holds one answer.
+    /// Tiles sit two to a row, sharing it evenly with a gap between, at the width of a conversation, the third under the first at the same width, and one to a row when the card is narrow or holds one answer.
     #[test]
     fn tiles_wrap_two_to_a_row_and_one_when_narrow() {
         assert_eq!(tiles_per_row(686.0, 3), 2);
         assert_eq!(tiles_per_row(TWO_TILES, 2), 2);
         assert_eq!(tiles_per_row(TWO_TILES - 1.0, 3), 1);
         assert_eq!(tiles_per_row(686.0, 1), 1);
-        assert_eq!(tile_width(686.0, 2), 339.0);
-        assert_eq!(tile_width(400.0, 1), 400.0);
-        assert!(tile_width(686.0, 2) * 2.0 + TILE_GAP <= 686.0);
+        let wide = tiles_laid(712.0);
+        let line = wide[1].origin.x + wide[1].size.width - wide[0].origin.x;
+        assert!(line > TWO_TILES);
+        assert_eq!(wide[0].size.width, wide[1].size.width);
+        assert_eq!(wide[0].origin.y, wide[1].origin.y);
+        assert_eq!(
+            wide[1].origin.x - wide[0].origin.x - wide[0].size.width,
+            TILE_GAP + 2.0 * TILE_BORDER
+        );
+        assert!(wide[2].origin.y > wide[0].origin.y);
+        assert_eq!(wide[2].origin.x, wide[0].origin.x);
+        assert_eq!(wide[2].size.width, wide[0].size.width);
+        let narrow = tiles_laid(426.0);
+        assert!(narrow[0].size.width < TWO_TILES);
+        assert!(
+            narrow
+                .iter()
+                .all(|tile| tile.size.width == narrow[0].size.width)
+        );
+        assert!(
+            narrow
+                .iter()
+                .all(|tile| tile.origin.x == narrow[0].origin.x)
+        );
+        assert!(narrow[1].origin.y > narrow[0].origin.y);
+        assert!(narrow[2].origin.y > narrow[1].origin.y);
     }
 
     /// The marks of a tile are spelled out only in a heading with room for them, shrink to icons in a narrower one and go in one too narrow for those, so they never reach outside the tile.
     #[test]
     fn marks_shrink_with_the_tile() {
-        assert_eq!(marks_in(tile_width(686.0, 2) - TILE_INSET), Marks::Words);
+        assert_eq!(marks_in(339.0 - TILE_INSET), Marks::Words);
         assert_eq!(marks_in(MARKS_IN_WORDS), Marks::Words);
         assert_eq!(marks_in(MARKS_IN_WORDS - 1.0), Marks::Icons);
         assert_eq!(marks_in(MARKS_AS_ICONS), Marks::Icons);
         assert_eq!(marks_in(MARKS_AS_ICONS - 1.0), Marks::Hidden);
-        assert_eq!(marks_in(tile_width(100.0, 1) - TILE_INSET), Marks::Hidden);
+        assert_eq!(marks_in(100.0 - TILE_INSET), Marks::Hidden);
     }
 
     /// The mark of a recommended answer is read off the end of its label, whatever its case, and taken out of what the tile says.

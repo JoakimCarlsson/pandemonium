@@ -19,7 +19,7 @@ use pm_components::focus;
 use pm_components::theme::Tokens;
 use pm_pages::Screen;
 use rustle::{
-    LOCAL_WINDOW_INFO, Modifiers, Offset, ShadowLayer, WindowHandle, WindowOptions, WindowShadow,
+    LOCAL_WINDOW_INFO, Modifiers, ShadowLayer, WindowHandle, WindowOptions, WindowShadow,
 };
 
 use super::asides::{self, Aside};
@@ -780,11 +780,7 @@ impl App {
             .model
             .read(|screen| screen.field(id).map(|field| field.to_shown(field.caret())))?;
         let rect = self.code_lines().caret_rect(id, caret)?;
-        let band = pm_components::shadow_margin();
-        Some(rustle::Rect::new(
-            Offset::new(rect.origin.x + band, rect.origin.y + band),
-            rect.size,
-        ))
+        Some(self.unframed(rect))
     }
 
     /// Carries out `act`, the app's part of an event of the main window, or of `aside`'s,

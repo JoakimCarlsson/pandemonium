@@ -261,3 +261,25 @@ fn tooltips_stay_in_their_window() {
             .is_none()
     );
 }
+
+/// The main window's frame tells the screen where it is laid out, inside the band that
+/// holds its shadow, and the app takes the window's coordinates into the frame's from
+/// there: the frame's corner is the frame's origin, and its size the size the app works in.
+#[test]
+fn the_frame_tells_where_it_is_laid_out() {
+    let rig = Rig::shot(Shot::Workspace);
+    let band = pm_components::shadow_margin();
+    let frame = rig
+        .read(|screen| screen.places().get(Target::Window(WindowEvent::Frame)))
+        .expect("the frame is laid out");
+    assert_eq!((frame.origin.x, frame.origin.y), (band, band));
+    assert_eq!(
+        (frame.size.width, frame.size.height),
+        crate::app::headless::SIZE
+    );
+    let app = rig.app.borrow();
+    assert_eq!(app.window_size(), crate::app::headless::SIZE);
+    let corner = app.framed(frame);
+    assert_eq!((corner.origin.x, corner.origin.y), (0.0, 0.0));
+    assert_eq!(app.unframed(corner), frame);
+}

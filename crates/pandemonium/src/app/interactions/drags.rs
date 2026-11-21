@@ -297,3 +297,137 @@ fn the_gutter_marks_lines_for_a_comment() {
         "{range:?}"
     );
 }
+
+/// Dragging the handle on the top edge of the terminal dock up makes the dock taller.
+#[test]
+fn the_terminal_handle_resizes_the_dock() {
+    let mut rig = Rig::shot(Shot::Terminal);
+    let before = rig.state(|state| state.terminal_height);
+    let from = rig.center(Target::Window(WindowEvent::TerminalSash));
+    rig.drag(from, (from.0, from.1 - 40.0), 4);
+    assert_eq!(rig.state(|state| state.terminal_height), before + 40.0);
+}
+
+/// The handles of the sidebar and the review panel lie in the row of panels centred on the
+/// edge they resize, as tall as the row under the title bar, and the dock's handle lies
+/// centred on the dock's top edge, as wide as the main area.
+#[test]
+fn the_handles_lie_on_the_edges_they_resize() {
+    let rig = Rig::shot(Shot::Workspace);
+    let (width, height) = crate::app::headless::SIZE;
+    let bar = pm_components::title_bar::TITLE_BAR_HEIGHT;
+    let sidebar = rig
+        .region(Target::Window(WindowEvent::SidebarSash))
+        .expect("the sidebar's handle is laid out");
+    let edge = rig.state(|state| state.sidebar_width);
+    assert_eq!(sidebar.origin.x + sidebar.size.width / 2.0, edge);
+    assert_eq!((sidebar.origin.y, sidebar.size.height), (bar, height - bar));
+    let review = rig
+        .region(Target::Window(WindowEvent::ReviewSash))
+        .expect("the review panel's handle is laid out");
+    let edge = width - rig.state(|state| state.review_width);
+    assert_eq!(review.origin.x + review.size.width / 2.0, edge);
+    assert_eq!((review.origin.y, review.size.height), (bar, height - bar));
+    let rig = Rig::shot(Shot::Terminal);
+    let dock = rig
+        .region(Target::Window(WindowEvent::TerminalSash))
+        .expect("the dock's handle is laid out");
+    let main = rig
+        .region(Target::Window(WindowEvent::Pane(0)))
+        .expect("the pane is laid out");
+    assert_eq!(
+        dock.origin.y + dock.size.height / 2.0,
+        main.origin.y + main.size.height
+    );
+    assert_eq!(dock.origin.x, main.origin.x);
+}
+
+/// While the plan shows, its handle lies centred on the plan panel's left edge, as tall as
+/// the row of panels, and dragging it left makes the panel wider.
+#[test]
+fn the_plan_handle_lies_on_its_edge_and_resizes_it() {
+    let Screen::Workspace(state) = Shot::Asking.screen();
+    let state = state.handle(pm_components::events::Event::Chat(
+        pm_components::areas::ChatEvent::OpenPlan,
+    ));
+    assert!(state.plan_shown().is_some(), "the plan shows");
+    let mut rig = Rig::new(Screen::Workspace(state), crate::app::headless::SIZE);
+    let (width, height) = crate::app::headless::SIZE;
+    let bar = pm_components::title_bar::TITLE_BAR_HEIGHT;
+    let handle = rig
+        .region(Target::Window(WindowEvent::PlanSash))
+        .expect("the plan's handle is laid out");
+    let plan = rig.state(|state| state.plan_room(width));
+    let review = rig.state(|state| {
+        if state.review_session().is_some() && state.review {
+            state.review_width
+        } else {
+            0.0
+        }
+    });
+    assert_eq!(
+        handle.origin.x + handle.size.width / 2.0,
+        width - review - plan
+    );
+    assert_eq!((handle.origin.y, handle.size.height), (bar, height - bar));
+    let from = rig.center(Target::Window(WindowEvent::PlanSash));
+    rig.drag(from, (from.0 - 40.0, from.1), 4);
+    assert_eq!(rig.state(|state| state.plan_room(width)), plan + 40.0);
+}
+
+/// A split lays its first side out at its share of the split, rounded to a whole pixel,
+/// then the line between the sides one pixel thick and its second side over the rest; the
+/// handle of each split lies centred on the line's leading edge, as long as the split is
+/// across, and dragging it moves the line as far. The shot's panes are a pane beside two
+/// panes one above the other: the first split side by side, the second one above the other.
+#[test]
+fn a_split_lays_its_panes_out_by_its_share() {
+    use pm_components::panes::{Axis, Layout};
+    let mut rig = Rig::shot(Shot::Panes);
+    let ratios = rig.state(|state| match state.panes().layout {
+        Layout::Split {
+            axis: Axis::Row,
+            ratio,
+            first,
+            ..
+        } => match *first {
+            Layout::Split {
+                axis: Axis::Column,
+                ratio: inner,
+                ..
+            } => (ratio, inner),
+            _ => panic!("the first side is split one above the other"),
+        },
+        _ => panic!("the panes are split side by side"),
+    });
+    let pane = |rig: &Rig, index| {
+        rig.region(Target::Window(WindowEvent::Pane(index)))
+            .expect("the pane is laid out")
+    };
+    let handle = |rig: &Rig, index| {
+        rig.region(Target::Window(WindowEvent::SplitSash(index)))
+            .expect("the split's handle is laid out")
+    };
+    let (top, bottom, beside) = (pane(&rig, 0), pane(&rig, 1), pane(&rig, 2));
+    let across = beside.origin.x + beside.size.width - top.origin.x;
+    assert_eq!(top.size.width, (across * ratios.0).round());
+    assert_eq!(beside.origin.x, top.origin.x + top.size.width + 1.0);
+    let outer = handle(&rig, 0);
+    assert_eq!(
+        outer.origin.x + outer.size.width / 2.0,
+        top.origin.x + top.size.width
+    );
+    assert_eq!(outer.size.height, beside.size.height);
+    let down = bottom.origin.y + bottom.size.height - top.origin.y;
+    assert_eq!(top.size.height, (down * ratios.1).round());
+    assert_eq!(bottom.origin.y, top.origin.y + top.size.height + 1.0);
+    let inner = handle(&rig, 1);
+    assert_eq!(
+        inner.origin.y + inner.size.height / 2.0,
+        top.origin.y + top.size.height
+    );
+    assert_eq!(inner.size.width, top.size.width);
+    let from = rig.center(Target::Window(WindowEvent::SplitSash(0)));
+    rig.drag(from, (from.0 + 30.0, from.1), 3);
+    assert_eq!(pane(&rig, 0).size.width, top.size.width + 30.0);
+}

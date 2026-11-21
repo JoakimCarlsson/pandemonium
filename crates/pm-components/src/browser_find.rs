@@ -138,18 +138,31 @@ impl WorkspaceState {
     }
 }
 
-/// Emits the bar for finding in the page, over the top right corner of the page, which is `page` logical pixels wide and has `beside` logical pixels of the pane to its right; the line the text is typed in narrows to keep the bar inside a narrow page.
+/// Emits the bar for finding in the page, over the top right corner of the page's box, laid out for the width that box gives it as Compose's `BoxWithConstraints` lays it out; the line the text is typed in narrows to keep the bar inside a narrow page.
 ///
 /// It is placed in the layer that holds the page. `on_hover` is told when the pointer comes
 /// over the bar and when it leaves it, as the page under it is not under the pointer then.
 #[track_caller]
-pub fn find_bar(search: &PageSearch, page: f32, beside: f32, on_hover: impl Fn(bool) + 'static) {
+pub fn find_bar(search: &PageSearch, on_hover: impl Fn(bool) + 'static) {
+    let search = search.clone();
+    let on_hover = std::rc::Rc::new(on_hover);
+    rustle::with_constraints(Modifier::new().match_parent_size(), move |room| {
+        let on_hover = std::rc::Rc::clone(&on_hover);
+        rustle::stack_with(Modifier::new().fill_max_size(), || {
+            bar_in(&search, room.max_width, move |hovered| on_hover(hovered));
+        });
+    });
+}
+
+/// Emits the bar for finding in the page at the top right corner of a page `page` logical pixels wide, as [`find_bar`] describes, telling `on_hover` when the pointer comes over it and leaves it.
+#[track_caller]
+fn bar_in(search: &PageSearch, page: f32, on_hover: impl Fn(bool) + 'static) {
     let (said, tone) = search.tally();
     let field = (page - 2.0 * EDGE - BAR_EXTRA).clamp(FIELD_LEAST, FIELD_WIDTH);
     rustle::row_arranged(
         Modifier::new()
             .align(BoxAlignment::TopEnd)
-            .offset(-sp((EDGE + beside) / 4.0), sp(2))
+            .offset(-sp(EDGE / 4.0), sp(2))
             .z_index(40)
             .shadow_layers(&SHADOW, Radius::Md.px())
             .panel(Radius::Md)

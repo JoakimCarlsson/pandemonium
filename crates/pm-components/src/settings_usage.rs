@@ -547,11 +547,6 @@ fn padded(last: bool, content: impl FnOnce()) {
     );
 }
 
-/// How wide a row inside a boxed list is when the page is `room` logical pixels across.
-fn row_width(room: f32) -> f32 {
-    (room - 28.0).max(40.0)
-}
-
 /// What `totals` holds beside its headline figure, on one line: its tokens and its requests.
 fn counts(totals: &UsageTotals) -> String {
     format!(
@@ -561,9 +556,9 @@ fn counts(totals: &UsageTotals) -> String {
     )
 }
 
-/// Emits a row of a boxed list for each of `entries`, in `room` logical pixels: what it is called, what it came to and the line saying more, with a bar in its colour as long as its share of the most any of them came to in `measure`.
+/// Emits a row of a boxed list for each of `entries` across the list: what it is called, what it came to and the line saying more, with a bar in its colour as long as its share of the most any of them came to in `measure`.
 #[track_caller]
-fn bar_rows(entries: Vec<(String, &UsageTotals, String, Color)>, measure: Measure, room: f32) {
+fn bar_rows(entries: Vec<(String, &UsageTotals, String, Color)>, measure: Measure) {
     let most = entries
         .iter()
         .map(|(_, totals, _, _)| amount(totals, measure))
@@ -572,7 +567,7 @@ fn bar_rows(entries: Vec<(String, &UsageTotals, String, Color)>, measure: Measur
     let last = entries.len().saturating_sub(1);
     for (place, (name, totals, detail, tone)) in entries.into_iter().enumerate() {
         padded(place == last, || {
-            BarRow::new(name, spend_label(totals), row_width(room))
+            BarRow::new(name, spend_label(totals))
                 .detail(detail)
                 .share(share_of(amount(totals, measure), most))
                 .tone(tone)
@@ -581,9 +576,9 @@ fn bar_rows(entries: Vec<(String, &UsageTotals, String, Color)>, measure: Measur
     }
 }
 
-/// Emits the models of `report`, one to a row in `room` logical pixels, the costliest first, each with a bar as long as its share of the costliest and in its colour of the chart.
+/// Emits the models of `report`, one to a row, the costliest first, each with a bar as long as its share of the costliest and in its colour of the chart.
 #[track_caller]
-fn model_rows(report: &UsageReport, room: f32) {
+fn model_rows(report: &UsageReport) {
     let measure = measure(report);
     let entries = report.models.iter().enumerate().map(|(place, model)| {
         let unpriced = measure == Measure::Cost && model.totals.cost.is_none();
@@ -599,7 +594,7 @@ fn model_rows(report: &UsageReport, room: f32) {
             series_tone(place),
         )
     });
-    bar_rows(entries.collect(), measure, room);
+    bar_rows(entries.collect(), measure);
 }
 
 /// How much of `most` `amount` is, from nought to one; nothing when `most` is.
@@ -611,8 +606,8 @@ pub(crate) fn share_of(amount: u64, most: u64) -> f32 {
     }
 }
 
-/// Emits the sessions of `report` that used most, one to a row in `room` logical pixels, each with its title, its project, what it used and a bar as long as its share of the first, which used most.
-fn session_rows(report: &UsageReport, room: f32) {
+/// Emits the sessions of `report` that used most, one to a row, each with its title, its project, what it used and a bar as long as its share of the first, which used most.
+fn session_rows(report: &UsageReport) {
     let entries = report.sessions.iter().take(TOP_SESSIONS).map(|session| {
         let detail = format!(
             "{} · {}",
@@ -626,7 +621,7 @@ fn session_rows(report: &UsageReport, room: f32) {
             Role::Accent.into(),
         )
     });
-    bar_rows(entries.collect(), measure(report), room);
+    bar_rows(entries.collect(), measure(report));
 }
 
 /// Emits the body of the usage page, `room` logical pixels across, after what `page` emits: what it is for, the choice of days, then the headline figures, the chart, the models and the top sessions; or that the servers are being asked, that nothing was used, or why a server could not say.
@@ -678,9 +673,9 @@ pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     headlines(&report, room);
     chart(&report, room);
     heading_only("Models", report.models.len());
-    boxed(|| model_rows(&report, room));
+    boxed(|| model_rows(&report));
     heading_only("Top sessions", report.sessions.len().min(TOP_SESSIONS));
-    boxed(|| session_rows(&report, room));
+    boxed(|| session_rows(&report));
 }
 
 /// What was spent over the days the page covers, in words, for the page's card on the Agents overview; nothing until a server reported.

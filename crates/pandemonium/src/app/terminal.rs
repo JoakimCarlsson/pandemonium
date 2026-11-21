@@ -9,7 +9,7 @@ use pm_components::terminal_keys;
 use pm_components::terminal_menu::TerminalCommand;
 use pm_editor::{Action, Pressed};
 
-use rustle::Rect;
+use rustle::Size;
 use rustle::{Key, KeyEvent};
 
 use super::App;
@@ -30,18 +30,22 @@ impl App {
         cell_size(font)
     }
 
-    /// Where the window of the shell showing was drawn, if it was.
-    fn terminal_region(&self) -> Option<Rect> {
-        self.place(Target::Terminal(TerminalEvent::TerminalBody))
+    /// The size the window of the shell showing was laid out at, as it told it with `onSizeChanged`, if it is shown.
+    fn terminal_size(&self) -> Option<Size> {
+        self.model.read(|screen| {
+            screen
+                .places()
+                .size(Target::Terminal(TerminalEvent::TerminalBody))
+        })
     }
 
     /// Gives the shell the size of the room the dock has for it, when that differs from the size it has.
     pub(super) fn fit_terminal(&mut self) {
-        let Some(body) = self.terminal_region() else {
+        let Some(body) = self.terminal_size() else {
             return;
         };
         let cell = self.terminal_cell_size();
-        let (columns, rows) = fitting(body.size.width, body.size.height, cell);
+        let (columns, rows) = fitting(body.width, body.height, cell);
         let differs = self
             .model
             .read(|screen| screen.terminal_window())

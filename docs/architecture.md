@@ -92,6 +92,27 @@ One crate per layer, each depending only on the layers below it.
   the composables' own callbacks into holders the model owns (`Bounds`,
   `Places` for the few areas the app asks about by name, `TextLines`,
   `Selectables`), and what the pointer is over from the controls' hover.
+  `Places` keeps where an area is drawn (`bounds::placed`, its
+  `on_globally_positioned`) and the size it is laid out at (`bounds::sized`,
+  its `on_size_changed`): the shell and the browser's page and developer tools
+  are sized from the latter, and the app takes window coordinates into the
+  frame's from where the main window's frame told it is laid out
+  (`WindowEvent::Frame`), not from the shadow band's width.
+  The workspace is a row of the sidebar, the page and the plan and review
+  panels, each panel at the width it was dragged to and the page taking the
+  rest by weight; the handles between them are `Sash::between` boxes in that
+  row (and in the column of the panes and the dock), no thicker than the edge
+  they lie on, out of which the handle reaches to both sides. Panes are laid
+  out by a custom layout (`Split` in `pm-pages/src/panes.rs`) that gives the
+  first side its share of the split, the line between the sides and the
+  handle on it, and the second side the rest; the highlight of where a carried
+  tab would land is drawn inside the pane it is over. The browser stacks its
+  strip, toolbar and bars over a row of the page, taking the rest by weight,
+  and the developer tools, kept at their dragged width by a layout modifier;
+  the find bar and the certificate page are laid out for the room they are
+  given with `with_constraints`. Only the widths the views need to compose
+  their content (each pane's, the plan panel's) are still worked out from the
+  state, since content composed while measuring cannot borrow the screen.
   Scrolling areas are rustle's `vertical_scroll` over a
   `rustle::ScrollState` the model owns (hoisted state), styled with the
   theme's `scrollbar()`, provided as rustle's `LOCAL_SCROLLBAR_STYLE`; rustle handles the wheel and the bar, and the binary

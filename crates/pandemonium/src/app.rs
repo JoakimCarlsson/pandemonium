@@ -799,16 +799,54 @@ impl App {
         (corner.origin.x, corner.origin.y)
     }
 
-    /// `rect`, in the window, in the coordinates of the window's frame: past the band that
-    /// holds the main window's shadow.
-    pub(super) fn framed(&self, rect: rustle::Rect) -> rustle::Rect {
-        let band = if self.on_aside.is_none() {
-            pm_components::shadow_margin()
+    /// Where the frame of the window events are handled for is laid out in that window:
+    /// for the main window, where its frame told the screen it is, as `onGloballyPositioned`
+    /// tells it, and before the frame was first laid out, the window inset by the band that
+    /// holds its shadow; a window beside the main one is its own frame.
+    fn frame_area(&self) -> rustle::Rect {
+        let size = self
+            .window
+            .as_ref()
+            .map_or((0.0, 0.0), |window| window.logical_size());
+        let size = if size == (0.0, 0.0) {
+            (WIDTH, HEIGHT)
         } else {
-            0.0
+            size
         };
+        let whole = rustle::Rect::new(
+            rustle::Offset::new(0.0, 0.0),
+            rustle::Size::new(size.0, size.1),
+        );
+        if self.on_aside.is_some() {
+            return whole;
+        }
+        self.model
+            .read(|screen| screen.places().get(Target::Window(WindowEvent::Frame)))
+            .unwrap_or_else(|| {
+                let band = pm_components::shadow_margin();
+                rustle::Rect::new(
+                    rustle::Offset::new(band, band),
+                    rustle::Size::new(size.0 - 2.0 * band, size.1 - 2.0 * band),
+                )
+            })
+    }
+
+    /// `rect`, in the window, in the coordinates of the window's frame: from the corner
+    /// [`frame_area`](Self::frame_area) says the frame is laid out at.
+    pub(super) fn framed(&self, rect: rustle::Rect) -> rustle::Rect {
+        let corner = self.frame_area().origin;
         rustle::Rect::new(
-            rustle::Offset::new(rect.origin.x - band, rect.origin.y - band),
+            rustle::Offset::new(rect.origin.x - corner.x, rect.origin.y - corner.y),
+            rect.size,
+        )
+    }
+
+    /// `rect`, in the coordinates of the window's frame, in the window: from the corner
+    /// [`frame_area`](Self::frame_area) says the frame is laid out at.
+    pub(super) fn unframed(&self, rect: rustle::Rect) -> rustle::Rect {
+        let corner = self.frame_area().origin;
+        rustle::Rect::new(
+            rustle::Offset::new(rect.origin.x + corner.x, rect.origin.y + corner.y),
             rect.size,
         )
     }
@@ -820,21 +858,11 @@ impl App {
         Some(self.framed(rect))
     }
 
-    /// How wide and tall the window is, in logical pixels.
+    /// How wide and tall the frame of the window events are handled for is, in logical
+    /// pixels, as [`frame_area`](Self::frame_area) says.
     pub(super) fn window_size(&self) -> (f32, f32) {
-        let size = self
-            .window
-            .as_ref()
-            .map_or((0.0, 0.0), |window| window.logical_size());
-        if size == (0.0, 0.0) {
-            return (WIDTH, HEIGHT);
-        }
-        let band = if self.on_aside.is_none() {
-            2.0 * pm_components::shadow_margin()
-        } else {
-            0.0
-        };
-        (size.0 - band, size.1 - band)
+        let size = self.frame_area().size;
+        (size.width, size.height)
     }
 
     /// Whether `id` is a handle the composables drag themselves: a panel's handle or the

@@ -3,6 +3,8 @@
 use crate::theme;
 use rustle::{Alignment, Arrangement};
 use rustle::{Color, Modifier};
+use std::cell::Cell;
+use std::rc::Rc;
 
 use crate::theme::Role;
 
@@ -30,20 +32,17 @@ pub struct BarRow {
     share: f32,
     /// The colour of the bar.
     tone: Color,
-    /// How wide the row is, in logical pixels.
-    width: f32,
 }
 
 impl BarRow {
-    /// A row naming `label` with `value` beside it, `width` logical pixels across, its bar empty and in the accent colour.
-    pub fn new(label: impl Into<String>, value: impl Into<String>, width: f32) -> Self {
+    /// A row naming `label` with `value` beside it, as wide as its parent lets it be, its bar empty and in the accent colour.
+    pub fn new(label: impl Into<String>, value: impl Into<String>) -> Self {
         Self {
             label: label.into(),
             value: value.into(),
             detail: None,
             share: 0.0,
             tone: Role::Accent.into(),
-            width,
         }
     }
 
@@ -69,29 +68,24 @@ impl BarRow {
         self
     }
 
-    /// How wide the bar is drawn, in logical pixels: its share of the row, and at least a sliver when it stands for anything.
-    pub fn filled(&self) -> f32 {
-        if self.share <= 0.0 {
-            0.0
-        } else {
-            (self.share * self.width).clamp(LEAST_BAR.min(self.width), self.width)
-        }
+    /// How wide the bar is drawn on a track `width` logical pixels long: its share of the track, and at least a sliver when it stands for anything.
+    pub fn filled(&self, width: f32) -> f32 {
+        filled(self.share, width)
     }
 
-    /// Emits the row: the name and the figure on one line, the detail under them, and the bar on its track as rustle's linear progress indicator.
+    /// Emits the row across its parent: the name and the figure on one line, the detail under them, and the bar on its track as rustle's linear progress indicator, whose fill is worked out from the track's laid-out width when it is drawn.
     #[track_caller]
     pub fn build(self) {
-        let filled = self.filled();
         let Self {
             label,
             value,
             detail,
+            share,
             tone,
-            width,
-            ..
         } = self;
+        let track = rustle::remember(|| Rc::new(Cell::new(0.0_f32))).get();
         rustle::column_arranged(
-            Modifier::new().width(width),
+            Modifier::new().fill_max_width(),
             Arrangement::SpacedBy(theme::sp(1)),
             Alignment::Start,
             move || {
@@ -114,15 +108,30 @@ impl BarRow {
                 if let Some(detail) = detail {
                     line(detail, 12, 1.4, Role::Muted);
                 }
-                let share = filled / width.max(f32::EPSILON);
+                let laid = Rc::clone(&track);
                 rustle::linear_progress_indicator_with(
-                    move || share,
-                    Modifier::new().width(width).height(BAR_HEIGHT),
+                    move || {
+                        let width = track.get();
+                        filled(share, width) / width.max(f32::EPSILON)
+                    },
+                    Modifier::new()
+                        .fill_max_width()
+                        .height(BAR_HEIGHT)
+                        .on_size_changed(move |size| laid.set(size.width)),
                     theme::color(tone),
                     theme::color(Role::SurfaceHover),
                 );
             },
         );
+    }
+}
+
+/// How wide a bar filling `share` of a track `width` logical pixels long is drawn: its share of the track, and at least a sliver when it stands for anything.
+fn filled(share: f32, width: f32) -> f32 {
+    if share <= 0.0 {
+        0.0
+    } else {
+        (share * width).clamp(LEAST_BAR.min(width), width)
     }
 }
 
@@ -134,12 +143,12 @@ mod tests {
     /// The bar is as long as its share of the row, empty for nothing, a sliver for very little, and never longer than the row.
     #[test]
     fn the_bar_is_its_share_of_the_row() {
-        let row = BarRow::new("a", "$1.00", 200.0);
-        assert_eq!(row.filled(), 0.0);
-        assert_eq!(row.clone().share(0.5).filled(), 100.0);
-        assert_eq!(row.clone().share(0.001).filled(), LEAST_BAR);
-        assert_eq!(row.clone().share(7.0).filled(), 200.0);
-        assert_eq!(row.clone().share(f32::NAN).filled(), 0.0);
-        assert_eq!(row.share(-1.0).filled(), 0.0);
+        let row = BarRow::new("a", "$1.00");
+        assert_eq!(row.filled(200.0), 0.0);
+        assert_eq!(row.clone().share(0.5).filled(200.0), 100.0);
+        assert_eq!(row.clone().share(0.001).filled(200.0), LEAST_BAR);
+        assert_eq!(row.clone().share(7.0).filled(200.0), 200.0);
+        assert_eq!(row.clone().share(f32::NAN).filled(200.0), 0.0);
+        assert_eq!(row.share(-1.0).filled(200.0), 0.0);
     }
 }

@@ -981,6 +981,8 @@ pub enum WindowEvent {
     SplitSash(usize),
     /// A button of an empty pane: the page (0), the diff (1), a file (2), closing it (3) or the browser (4), by the pane's place.
     PanePut { pane: usize, put: usize },
+    /// The main window's frame inside the band that holds its shadow, whose corner the coordinates the app keeps start from.
+    Frame,
 }
 
 impl Event {

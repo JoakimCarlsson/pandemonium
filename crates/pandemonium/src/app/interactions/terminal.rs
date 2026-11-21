@@ -130,3 +130,34 @@ fn control_reaches_a_link_in_the_shell() {
     assert_eq!(reached(&rig), Some(false));
     assert_eq!(rig.cursor(), rustle::CursorIcon::Text);
 }
+
+/// The shell's window tells the screen the size it is laid out at, and the shell is given
+/// as many cells as fit that size, again when the window changes size.
+#[test]
+fn the_shell_fits_the_size_its_window_is_laid_out_at() {
+    let mut rig = opened();
+    let body = Target::Terminal(TerminalEvent::TerminalBody);
+    let grid = |rig: &Rig| {
+        let size = rig
+            .read(|screen| screen.places().size(body))
+            .expect("the shell's window told its size");
+        let region = rig.region(body).expect("the shell's window is laid out");
+        assert_eq!(size, region.size);
+        let font = rig.state(|state| pm_components::terminal::Look::of(state).font);
+        let cell = pm_components::terminal::cell_size(font);
+        let (columns, rows) = pm_components::terminal::fitting(size.width, size.height, cell);
+        (columns as usize, rows as usize)
+    };
+    let held = |rig: &Rig| {
+        rig.read(|screen| screen.terminal_window())
+            .map(|(columns, rows, _)| (columns, rows))
+    };
+    rig.settle();
+    let first = grid(&rig);
+    assert_eq!(held(&rig), Some(first));
+    rig.resize((1000.0, 700.0));
+    rig.settle();
+    let second = grid(&rig);
+    assert_ne!(second, first);
+    assert_eq!(held(&rig), Some(second));
+}

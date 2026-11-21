@@ -859,12 +859,12 @@ impl App {
         self.web.engine.as_ref()
     }
 
-    /// The size a window of a page was last drawn at, in logical pixels, or a size to start from.
+    /// The size a window of a page is laid out at, in logical pixels, at `scale`, or a size to start from while it is not shown.
     fn browser_size(&self, id: Target, scale: f32) -> (u32, u32, f32) {
-        self.browser_region(id).map_or((960, 640, scale), |rect| {
+        self.browser_laid(id).map_or((960, 640, scale), |size| {
             (
-                rect.size.width.max(1.0) as u32,
-                rect.size.height.max(1.0) as u32,
+                size.width.max(1.0) as u32,
+                size.height.max(1.0) as u32,
                 scale,
             )
         })
@@ -1218,29 +1218,31 @@ impl App {
         self.web.engine = None;
     }
 
+    /// The size the surface `id` of the browser is laid out at, as it told it with `onSizeChanged`, while it is shown.
+    fn browser_laid(&self, id: Target) -> Option<rustle::Size> {
+        self.model.read(|screen| screen.places().size(id))
+    }
+
     /// Gives the page being shown and the tools the size of the room the pane has for them.
     fn browser_fit(&mut self, scale: f32) {
-        let size_of = |rect: Rect| {
-            (
-                rect.size.width.max(1.0) as u32,
-                rect.size.height.max(1.0) as u32,
-                scale,
-            )
-        };
-        if let Some(rect) = self.browser_region(Target::Browser(BrowserEvent::BrowserBody))
+        let page = Target::Browser(BrowserEvent::BrowserBody);
+        let tools = Target::Browser(BrowserEvent::BrowserToolsBody);
+        let page_size = self.browser_size(page, scale);
+        let tools_size = self.browser_size(tools, scale);
+        if self.browser_laid(page).is_some()
             && let Some(active) = self.browser_active()
             && let Some(shown) = self.web.pages.get_mut(&active)
         {
-            let size = size_of(rect);
+            let size = page_size;
             if shown.sized != Some(size) {
                 shown.sized = Some(size);
                 shown.view.resize(size.0, size.1, size.2);
             }
         }
-        if let Some(rect) = self.browser_region(Target::Browser(BrowserEvent::BrowserToolsBody))
+        if self.browser_laid(tools).is_some()
             && let Some((_, view)) = self.web.tools.as_ref()
         {
-            let size = size_of(rect);
+            let size = tools_size;
             if self.web.tools_sized != Some(size) {
                 self.web.tools_sized = Some(size);
                 view.resize(size.0, size.1, size.2);

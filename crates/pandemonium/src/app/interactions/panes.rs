@@ -222,3 +222,53 @@ fn control_reaches_a_word_of_the_code() {
     assert_eq!(reached(&rig), None);
     assert_eq!(rig.cursor(), rustle::CursorIcon::Text);
 }
+
+/// The browser's page and its developer tools tell the screen the size each is laid out
+/// at, which the pages behind them are given. The browser is the open session's, as it is
+/// once the reader opened it there.
+#[test]
+fn the_browser_surfaces_tell_the_size_they_are_laid_out_at() {
+    let Screen::Workspace(state) = Shot::BrowserTabs(false).screen();
+    let mut state = state.browser_tools_shown();
+    state.browser_adopted_by(0);
+    let rig = Rig::new(Screen::Workspace(state), crate::app::headless::SIZE);
+    for id in [BrowserEvent::BrowserBody, BrowserEvent::BrowserToolsBody] {
+        let id = Target::Browser(id);
+        let region = rig.region(id).expect("the surface is laid out");
+        assert_eq!(
+            rig.read(|screen| screen.places().size(id)),
+            Some(region.size)
+        );
+    }
+}
+
+/// The developer tools keep the width they were dragged to beside the page, which takes the
+/// rest of the pane after the line between them, and a width that would leave the page too
+/// narrow is cut to leave it its least width.
+#[test]
+fn the_browser_tools_keep_their_width_and_the_page_takes_the_rest() {
+    let laid = |tools_width: f32| {
+        let Screen::Workspace(state) = Shot::BrowserTabs(false).screen();
+        let mut state = state.browser_tools_shown();
+        state.browser_adopted_by(0);
+        if let Some(browser) = state.browser.as_mut() {
+            browser.tools_width = tools_width;
+        }
+        let rig = Rig::new(Screen::Workspace(state), crate::app::headless::SIZE);
+        let page = rig
+            .region(Target::Browser(BrowserEvent::BrowserBody))
+            .expect("the page is laid out");
+        let tools = rig
+            .region(Target::Browser(BrowserEvent::BrowserToolsBody))
+            .expect("the tools are laid out");
+        (page, tools)
+    };
+    let (page, tools) = laid(300.0);
+    assert_eq!(tools.size.width, 300.0);
+    assert_eq!(page.origin.x + page.size.width + 1.0, tools.origin.x);
+    assert_eq!(page.size.height, tools.size.height);
+    let row = page.size.width + 1.0 + tools.size.width;
+    let (page, tools) = laid(5000.0);
+    assert_eq!(page.size.width, pm_components::browser::TOOLS_LEAST);
+    assert_eq!(page.size.width + 1.0 + tools.size.width, row);
+}

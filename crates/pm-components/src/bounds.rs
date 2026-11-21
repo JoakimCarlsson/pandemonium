@@ -6,7 +6,7 @@ use std::cell::Cell;
 use std::fmt;
 use std::rc::Rc;
 
-use rustle::{Modifier, Rect};
+use rustle::{Modifier, Rect, Size};
 
 /// Where an area is drawn in its window, in logical pixels: told by the area
 /// each time the display is built. Two handles are equal when they are the
@@ -21,6 +21,8 @@ struct Held {
     shown: Cell<Option<Rect>>,
     /// Where the area was last drawn, kept after it left the composition.
     last: Cell<Option<Rect>>,
+    /// The size the area was laid out at while it is in the composition, as `onSizeChanged` tells it.
+    size: Cell<Option<Size>>,
 }
 
 impl Bounds {
@@ -34,6 +36,22 @@ impl Bounds {
     /// drawn on its own.
     pub fn last(&self) -> Option<Rect> {
         self.0.last.get()
+    }
+
+    /// The size the area was laid out at, or nothing while it is not in the composition.
+    pub fn size(&self) -> Option<Size> {
+        self.0.size.get()
+    }
+
+    /// `modifier` telling these bounds the size its area is laid out at each time layout
+    /// runs, as Compose's `onSizeChanged` tells a state holder; once the call leaves the
+    /// composition, [`size`](Self::size) answers nothing again.
+    #[track_caller]
+    pub fn track_size(&self, modifier: Modifier) -> Modifier {
+        let gone = self.0.clone();
+        rustle::disposable_effect((), move || move || gone.size.set(None));
+        let seen = self.0.clone();
+        modifier.on_size_changed(move |size| seen.size.set(Some(size)))
     }
 
     /// `modifier` telling these bounds where its area is drawn, each time the
@@ -105,6 +123,11 @@ impl Places {
         self.0.borrow().get(&id).and_then(Bounds::get)
     }
 
+    /// The size the area named `id` is laid out at, while it is in the composition.
+    pub fn size(&self, id: Target) -> Option<Size> {
+        self.0.borrow().get(&id).and_then(Bounds::size)
+    }
+
     /// The areas shown now and where they are drawn, in no particular order.
     pub fn shown(&self) -> Vec<(Target, Rect)> {
         self.0
@@ -143,6 +166,16 @@ impl fmt::Debug for Places {
 pub fn placed(id: Target, modifier: Modifier) -> Modifier {
     match LOCAL_PLACES.current() {
         Some(places) => places.of(id).track_visible(modifier),
+        None => modifier,
+    }
+}
+
+/// `modifier` telling the [`Places`] the views are composed with the size the area named `id`
+/// is laid out at, as `onSizeChanged` tells a state holder; nothing without one.
+#[track_caller]
+pub fn sized(id: Target, modifier: Modifier) -> Modifier {
+    match LOCAL_PLACES.current() {
+        Some(places) => places.of(id).track_size(modifier),
         None => modifier,
     }
 }

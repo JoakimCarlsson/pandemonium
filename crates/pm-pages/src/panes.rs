@@ -28,7 +28,7 @@ use pm_components::button::Variant;
 use pm_components::excerpts::{self, Source};
 use pm_components::file_icon::file_icon;
 use pm_components::open_files::Viewer;
-use pm_components::panes::{Area, Axis, Group, Item, Layout, Placed};
+use pm_components::panes::{Area, Axis, Group, Item, Layout, Placed, Side};
 use pm_components::parts::{glyph, line, spacer};
 use pm_components::revision::region;
 use pm_components::sash::Sash;
@@ -407,7 +407,7 @@ fn item_view(state: &WorkspaceState, item: &Item, area: Area, tall: f32) {
         }
         (Item::Excerpts, _, _) => excerpts_item(state, width),
         (Item::Browser, _, _) => {
-            browser::browser_view(state, width, area.height - pm_components::panes::TABS);
+            browser::browser_view(state, width);
         }
         (Item::Update, _, _) => {
             if let Some(update) = state.settings_page.release.as_ref() {
@@ -494,11 +494,11 @@ fn pane_place(index: usize) -> Modifier {
     })
 }
 
-/// Emits the pane `placed`: its strip of tabs over the tab it shows, the button for the terminal in its strip when `toggle`, its views given `extra` logical pixels of height beyond its own.
+/// Emits the pane `placed`: its strip of tabs over the tab it shows, the button for the terminal in its strip when `toggle`, its views given `extra` logical pixels of height beyond their own, and, while a tab is carried over it, the highlight over the part of it the tab would take.
 #[track_caller]
 fn pane(state: &WorkspaceState, placed: &Placed, toggle: bool, extra: f32) {
     let group = placed.group;
-    column_arranged(
+    rustle::stack_with(
         Modifier::new()
             .fill_max_height()
             .weight(1.0)
@@ -512,25 +512,133 @@ fn pane(state: &WorkspaceState, placed: &Placed, toggle: bool, extra: f32) {
                 Modifier::new(),
             ))
             .chain(pane_place(placed.index)),
-        Arrangement::Start,
-        Alignment::Start,
         || {
-            strip(state, group, toggle);
-            match group.items.get(group.active) {
-                Some(item) => item_view(state, item, placed.area, placed.area.height + extra),
-                None => empty_pane(state, placed.index),
+            column_arranged(
+                Modifier::new().fill_max_size(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    strip(state, group, toggle);
+                    match group.items.get(group.active) {
+                        Some(item) => {
+                            item_view(state, item, placed.area, placed.area.height + extra)
+                        }
+                        None => empty_pane(state, placed.index),
+                    }
+                },
+            );
+            if let Some((_, side)) = state
+                .pane_drag
+                .as_ref()
+                .and_then(|drag| drag.over)
+                .filter(|(index, _)| *index == placed.index)
+            {
+                drop_zone(side);
             }
         },
     );
 }
 
-/// Emits the panes of `layout`, laid out in `area` of the panes' whole area `whole`, the one counted next being `placed[*next]`, their views given `extra` logical pixels of height beyond their own.
+/// The modifier of the half of a pane's box along `axis`, as Compose's `fillMaxWidth(0.5f)` or `fillMaxHeight(0.5f)` takes it, filling the box the other way.
+fn half(axis: Axis) -> Modifier {
+    Modifier::new().layout(move |content, room| {
+        let (width, height) = match axis {
+            Axis::Row => (room.max_width / 2.0, room.max_height),
+            Axis::Column => (room.max_width, room.max_height / 2.0),
+        };
+        let size = content.measure(rustle::Constraints {
+            min_width: width,
+            max_width: width,
+            min_height: height,
+            max_height: height,
+        });
+        rustle::Placement::new(size, rustle::Offset::default())
+    })
+}
+
+/// Emits the highlight over the part of a pane's box a tab let go of on `side` would take: the whole box for its middle, the half by an edge for an edge, inset a little and rounded.
+#[track_caller]
+fn drop_zone(side: Side) {
+    let zone = match side {
+        Side::Center => Modifier::new().fill_max_size(),
+        Side::Left => half(Axis::Row).align(BoxAlignment::CenterStart),
+        Side::Right => half(Axis::Row).align(BoxAlignment::CenterEnd),
+        Side::Top => half(Axis::Column).align(BoxAlignment::TopCenter),
+        Side::Bottom => half(Axis::Column).align(BoxAlignment::BottomCenter),
+    };
+    rustle::spacer(
+        zone.z_index(50)
+            .padding(4.0)
+            .alpha(0.18)
+            .background_rounded(theme::color(Role::Accent), Radius::Lg.px()),
+    );
+}
+
+/// How a split lays out what [`laid`] emits in it, as a Compose custom `Layout` measures:
+/// the first side `ratio` of the split's length along `axis`, rounded to a whole pixel,
+/// then the line between the sides one pixel thick, the handle on that line taking no
+/// room, and the second side the rest; each as long across as the split.
+struct Split {
+    /// Which way the sides lie.
+    axis: Axis,
+    /// The share of the split's length the first side takes.
+    ratio: f32,
+}
+
+impl Split {
+    /// The size `along` long on the split's axis and `across` the other way.
+    fn size(&self, along: f32, across: f32) -> rustle::Size {
+        match self.axis {
+            Axis::Row => rustle::Size::new(along, across),
+            Axis::Column => rustle::Size::new(across, along),
+        }
+    }
+
+    /// The place `along` down the split's axis from its start.
+    fn offset(&self, along: f32) -> rustle::Offset {
+        match self.axis {
+            Axis::Row => rustle::Offset::new(along, 0.0),
+            Axis::Column => rustle::Offset::new(0.0, along),
+        }
+    }
+}
+
+impl rustle::Layout for Split {
+    /// Measures the first side, the line, the handle and the second side, in that order,
+    /// each exactly at its length, and places them one after another along the axis.
+    fn measure(
+        &self,
+        children: &mut rustle::Children,
+        constraints: rustle::Constraints,
+    ) -> rustle::LayoutResult {
+        let (extent, across) = match self.axis {
+            Axis::Row => (constraints.max_width, constraints.max_height),
+            Axis::Column => (constraints.max_height, constraints.max_width),
+        };
+        let first = (extent * self.ratio).round();
+        let lengths = [first, 1.0, 0.0, (extent - first - 1.0).max(0.0)];
+        let starts = [0.0, first, first, first + 1.0];
+        let mut positions = Vec::with_capacity(children.len());
+        for index in 0..children.len() {
+            let length = lengths.get(index).copied().unwrap_or(0.0);
+            let size = self.size(length, across);
+            children.measure(index, rustle::Constraints::tight(size));
+            positions.push(self.offset(starts.get(index).copied().unwrap_or(0.0)));
+        }
+        rustle::LayoutResult {
+            size: self.size(extent, across),
+            positions,
+        }
+    }
+}
+
+/// Emits the panes of `layout`, the one counted next being `placed[*next]` and the handle of the split counted next being the `*seam`-th, their views given `extra` logical pixels of height beyond their own; the pane at the top right corner of the panes, which `corner` says this part reaches, holds the button for the terminal. A split lays its sides out by [`Split`], with the handle that resizes it lying on the line between them.
 fn laid(
     state: &WorkspaceState,
     layout: &Layout,
     placed: &[Placed],
-    next: &mut usize,
-    (area, whole, extra): (Area, Area, f32),
+    (next, seam): (&mut usize, &mut usize),
+    (corner, extra): (bool, f32),
 ) {
     match layout {
         Layout::Group(_) => {
@@ -538,13 +646,11 @@ fn laid(
                 return;
             };
             *next += 1;
-            let toggle = here.area.y <= whole.y + 0.5
-                && here.area.x + here.area.width >= whole.x + whole.width - 0.5;
             rustle::key(here.index, || {
                 region(
-                    (here.index, here.area, toggle, extra, state.inner_sizes()),
+                    (here.index, here.area, corner, extra, state.inner_sizes()),
                     || {
-                        pane(state, here, toggle, extra);
+                        pane(state, here, corner, extra);
                     },
                 );
             });
@@ -555,64 +661,53 @@ fn laid(
             first,
             second,
         } => {
-            let (one_area, two_area) = area.halves(*axis, *ratio);
-            let sized = match axis {
-                Axis::Row => Modifier::new().fill_max_height().width(one_area.width),
-                Axis::Column => Modifier::new().fill_max_width().height(one_area.height),
+            let id = Target::Window(WindowEvent::SplitSash(*seam));
+            *seam += 1;
+            let (first_corner, second_corner) = match axis {
+                Axis::Row => (false, corner),
+                Axis::Column => (corner, false),
             };
-            let halves = || {
-                row_arranged(sized, Arrangement::Start, Alignment::Start, || {
-                    laid(state, first, placed, next, (one_area, whole, extra));
-                });
-                let across = match axis {
-                    Axis::Row => Modifier::new().fill_max_height(),
-                    Axis::Column => Modifier::new().fill_max_width(),
-                };
-                match axis {
-                    Axis::Row => {
-                        rustle::vertical_divider(Modifier::new(), 1.0, theme::color(Role::Border))
+            let side = || Modifier::new().fill_max_size();
+            rustle::layout(
+                Modifier::new().fill_max_height().weight(1.0).clip(),
+                Split {
+                    axis: *axis,
+                    ratio: *ratio,
+                },
+                || {
+                    row_arranged(side(), Arrangement::Start, Alignment::Start, || {
+                        laid(state, first, placed, (next, seam), (first_corner, extra));
+                    });
+                    match axis {
+                        Axis::Row => rustle::vertical_divider(
+                            Modifier::new(),
+                            1.0,
+                            theme::color(Role::Border),
+                        ),
+                        Axis::Column => rustle::horizontal_divider(
+                            Modifier::new(),
+                            1.0,
+                            theme::color(Role::Border),
+                        ),
                     }
-                    Axis::Column => {
-                        rustle::horizontal_divider(Modifier::new(), 1.0, theme::color(Role::Border))
-                    }
-                }
-                row_arranged(
-                    across.weight(1.0),
-                    Arrangement::Start,
-                    Alignment::Start,
-                    || laid(state, second, placed, next, (two_area, whole, extra)),
-                );
-            };
-            let outer = Modifier::new().fill_max_height().weight(1.0).clip();
-            match axis {
-                Axis::Row => row_arranged(outer, Arrangement::Start, Alignment::Start, halves),
-                Axis::Column => {
-                    column_arranged(outer, Arrangement::Start, Alignment::Start, halves)
-                }
-            }
+                    rustle::key(id, || match axis {
+                        Axis::Row => Sash::column(id).between().build(),
+                        Axis::Column => Sash::row(id).between().build(),
+                    });
+                    row_arranged(side(), Arrangement::Start, Alignment::Start, || {
+                        laid(state, second, placed, (next, seam), (second_corner, extra));
+                    });
+                },
+            );
         }
     }
 }
 
-/// Emits the highlight over the part of a pane a dragged tab would take, and the tab itself under the pointer, as boxes placed in the window's layer.
-fn drag_marks(state: &WorkspaceState, placed: &[Placed]) {
+/// Emits the tab being dragged under the pointer, as a box placed in the window's layer.
+fn drag_marks(state: &WorkspaceState) {
     let Some(drag) = state.pane_drag.as_ref() else {
         return;
     };
-    if let Some((index, side)) = drag.over
-        && let Some(here) = placed.get(index)
-    {
-        let zone = here.area.of_side(side);
-        rustle::spacer(
-            Modifier::new()
-                .offset(zone.x + 4.0, zone.y + 4.0)
-                .z_index_unclipped(50)
-                .width((zone.width - 8.0).max(0.0))
-                .height((zone.height - 8.0).max(0.0))
-                .alpha(0.18)
-                .background_rounded(theme::color(Role::Accent), Radius::Lg.px()),
-        );
-    }
     if has_tab(state, &drag.item) {
         rustle::stack_with(
             Modifier::new()
@@ -626,7 +721,7 @@ fn drag_marks(state: &WorkspaceState, placed: &[Placed]) {
     }
 }
 
-/// Emits the main area of a page in a window `window` logical pixels wide and tall: its panes over the terminal dock while the dock shows.
+/// Emits the main area of a page in a window `window` logical pixels wide and tall: its panes over the terminal dock while the dock shows, with the handle that resizes the dock lying on its top edge.
 pub(crate) fn main_area(state: &WorkspaceState, window: (f32, f32)) {
     let area = state.pane_area(window);
     let panes = state.panes();
@@ -643,17 +738,20 @@ pub(crate) fn main_area(state: &WorkspaceState, window: (f32, f32)) {
                 Arrangement::Start,
                 Alignment::Start,
                 || {
-                    let mut next = 0;
+                    let (mut next, mut seam) = (0, 0);
                     laid(
                         state,
                         &panes.layout,
                         &placed,
-                        &mut next,
-                        (area, area, extra),
+                        (&mut next, &mut seam),
+                        (true, extra),
                     );
                 },
             );
             if let Some(session) = state.docked().filter(|_| state.docking()) {
+                Sash::row(Target::Window(WindowEvent::TerminalSash))
+                    .between()
+                    .build();
                 region((area, page, state.inner_sizes()), || {
                     terminal::terminal(state, session, area.width, page);
                 });
@@ -662,16 +760,7 @@ pub(crate) fn main_area(state: &WorkspaceState, window: (f32, f32)) {
     );
 }
 
-/// Emits, to lay over the whole window from its layer, the handles between the panes of the main area of a window `window` logical pixels wide and tall, and the marks of a tab being dragged.
-pub(crate) fn main_over(state: &WorkspaceState, window: (f32, f32)) {
-    let area = state.pane_area(window);
-    let panes = state.panes();
-    let placed = panes.layout.placed(area);
-    for seam in panes.layout.seams(area) {
-        rustle::key(seam.id, || match seam.axis {
-            Axis::Row => Sash::column(seam.id).at(seam.at, seam.length).build(),
-            Axis::Column => Sash::row(seam.id).at(seam.at, seam.length).build(),
-        });
-    }
-    drag_marks(state, &placed);
+/// Emits, to lay over the whole window from its layer, the tab being dragged between panes.
+pub(crate) fn main_over(state: &WorkspaceState) {
+    drag_marks(state);
 }

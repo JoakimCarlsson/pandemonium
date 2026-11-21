@@ -198,11 +198,6 @@ impl Safety {
         true
     }
 
-    /// How tall the bars above the page are together, in logical pixels.
-    pub fn bars(&self) -> f32 {
-        usize::from(self.download.is_some()) as f32 * BAR
-    }
-
     /// Emits the bars to show above the page: the note about the last download. The question is not among them; it is laid over the page by [`Safety::question_overlay`], so that it appearing does not move the page.
     #[track_caller]
     pub fn bar_nodes(&self) {
@@ -217,9 +212,9 @@ impl Safety {
         Some(ALLOW_DELAY.saturating_sub(now.saturating_duration_since(since)))
     }
 
-    /// Emits the bar with the first question, when there is one, laid over the top of the page, which is `width` logical pixels wide, at the top start of the page's box, in the layer of the bar for finding in the page; Allow is drawn faint and cannot be pressed until [`ALLOW_DELAY`] has passed, which an effect waits for on the frame clock.
+    /// Emits the bar with the first question, when there is one, laid over the top of the page across the width of the page's box, at its top start, in the layer of the bar for finding in the page; Allow is drawn faint and cannot be pressed until [`ALLOW_DELAY`] has passed, which an effect waits for on the frame clock.
     #[track_caller]
-    pub fn question_overlay(&self, width: f32) {
+    pub fn question_overlay(&self) {
         let ready = rustle::remember(|| None::<u64>);
         let Some(asked) = self.questions.first() else {
             return;
@@ -234,7 +229,7 @@ impl Safety {
         question_bar(
             Modifier::new()
                 .align(rustle::BoxAlignment::TopStart)
-                .width(width)
+                .fill_max_width()
                 .z_index(40)
                 .control(
                     Target::Browser(BrowserEvent::BrowserQuestionBar),

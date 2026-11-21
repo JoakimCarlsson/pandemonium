@@ -50,17 +50,17 @@ pub enum Layout {
     Row,
 }
 
-/// A handle on the edge between two panels, either floating over the edge at a place in the window or lying over the top edge of what follows it in the flow.
+/// A handle on the edge between two panels: lying in the flow between them, over the top edge of what follows it in the flow, or inside the element whose edge it is.
 #[derive(Clone, Debug)]
 pub struct Sash {
     /// The element the handle is.
     id: Target,
     /// Which way it lies.
     layout: Layout,
-    /// Where its middle line starts in the window, and how long it is, when it floats over an edge.
-    placed: Option<((f32, f32), f32)>,
     /// Whether it is built bare, to be put inside the element whose edge it is.
     bare: bool,
+    /// Whether it lies in the flow between two siblings of a row or a column, taking no room.
+    between: bool,
     /// What the caller puts around the handle's strip.
     modifier: Modifier,
 }
@@ -81,21 +81,24 @@ impl Sash {
         Self {
             id,
             layout,
-            placed: None,
             bare: false,
+            between: false,
             modifier: Modifier::new(),
         }
-    }
-
-    /// The handle floating over the edge whose line starts at `at` in the window and runs `length` logical pixels.
-    pub fn at(mut self, at: (f32, f32), length: f32) -> Self {
-        self.placed = Some((at, length));
-        self
     }
 
     /// The handle without the zero-height element that holds it in a flow, for putting inside the element whose edge it lies over.
     pub fn bare(mut self) -> Self {
         self.bare = true;
+        self
+    }
+
+    /// The handle as a child of a row, for an upright one, or of a column, for a flat one,
+    /// between the two panels it resizes: a box with no thickness, as long as its parent is
+    /// across, out of which the handle reaches half its thickness to either side, centred
+    /// on the edge by `wrap_content` as Compose centres a child larger than its box.
+    pub fn between(mut self) -> Self {
+        self.between = true;
         self
     }
 
@@ -119,15 +122,17 @@ impl Sash {
             ),
         };
         let (half, along) = (THICKNESS / 2.0, Modifier::new());
-        let own = match (self.layout, self.placed) {
-            (Layout::Column, Some(((x, y), length))) => {
-                along.offset(x - half, y).size(THICKNESS, length)
-            }
-            (Layout::Row, Some(((x, y), length))) => {
-                along.offset(x, y - half).size(length, THICKNESS)
-            }
-            (Layout::Column, None) => along.offset(-half, 0.0).width(THICKNESS).fill_max_height(),
-            (Layout::Row, None) => along.offset(0.0, -half).height(THICKNESS).fill_max_width(),
+        let own = match self.layout {
+            Layout::Column if self.between => along
+                .wrap_content_width(rustle::BoxAlignment::Center, true)
+                .width(THICKNESS)
+                .fill_max_height(),
+            Layout::Row if self.between => along
+                .wrap_content_height(rustle::BoxAlignment::Center, true)
+                .height(THICKNESS)
+                .fill_max_width(),
+            Layout::Column => along.offset(-half, 0.0).width(THICKNESS).fill_max_height(),
+            Layout::Row => along.offset(0.0, -half).height(THICKNESS).fill_max_width(),
         };
         let over = rustle::remember_mutable_interaction_source();
         let hovered = over.collect_is_hovered_as_state();
@@ -153,12 +158,21 @@ impl Sash {
                 },
             );
         };
-        match self.placed {
-            Some(_) => handle(),
-            None if self.bare => rustle::stack_with(Modifier::new().match_parent_size(), handle),
-            None => rustle::stack_with(Modifier::new().fill_max_width().height(0.0), move || {
-                rustle::stack_with(Modifier::new().match_parent_size(), handle);
-            }),
+        let (layout, between) = (self.layout, self.between);
+        match (between, self.bare) {
+            (true, _) => {
+                let edge = match layout {
+                    Layout::Column => Modifier::new().width(0.0).fill_max_height(),
+                    Layout::Row => Modifier::new().height(0.0).fill_max_width(),
+                };
+                rustle::stack_with(edge, handle);
+            }
+            (false, true) => rustle::stack_with(Modifier::new().match_parent_size(), handle),
+            (false, false) => {
+                rustle::stack_with(Modifier::new().fill_max_width().height(0.0), move || {
+                    rustle::stack_with(Modifier::new().match_parent_size(), handle);
+                })
+            }
         }
     }
 }

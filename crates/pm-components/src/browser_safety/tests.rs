@@ -133,9 +133,36 @@ fn a_press_answers_only_the_question_it_was_for() {
 fn overlay_shown(safety: &Safety) -> bool {
     let safety = safety.clone();
     let laid = crate::tagged::lay_out(400.0, 300.0, None, move || {
-        rustle::stack_with(rustle::Modifier::new(), || safety.question_overlay(400.0));
+        rustle::stack_with(rustle::Modifier::new(), || safety.question_overlay());
     });
     laid.drawn(Target::Browser(BrowserEvent::BrowserQuestionBar))
+}
+
+/// How far down the bars `safety` draws above the page push the page, laid out in a column over a page 400 logical pixels wide.
+fn bars_height(safety: &Safety) -> f32 {
+    use crate::events::Interactive;
+    let safety = safety.clone();
+    let page = Target::Browser(BrowserEvent::BrowserBody);
+    let laid = crate::tagged::lay_out(400.0, 300.0, None, move || {
+        rustle::column_arranged(
+            rustle::Modifier::new(),
+            rustle::Arrangement::Start,
+            rustle::Alignment::Start,
+            || {
+                safety.bar_nodes();
+                rustle::spacer(
+                    rustle::Modifier::new()
+                        .size(400.0, 10.0)
+                        .control(page, || {}),
+                );
+            },
+        );
+    });
+    laid.node(page)
+        .expect("the page is laid out")
+        .bounds
+        .origin
+        .y
 }
 
 /// Whether `safety` draws any bar above the page: the note about a download has a button that dismisses it.
@@ -163,7 +190,7 @@ fn the_bar_takes_presses_and_leaves_the_page_where_it_is() {
     ));
     assert!(safety.answers.len() == 1);
     safety.ask_at(asked(4, "https://a.example"), start);
-    assert_eq!(safety.bars(), 0.0);
+    assert_eq!(bars_height(&safety), 0.0);
     assert!(!bars_shown(&safety));
     assert!(overlay_shown(&safety));
 }
@@ -211,13 +238,13 @@ fn proceeding_past_a_certificate_is_deliberate() {
 #[test]
 fn the_download_note_can_be_dismissed() {
     let mut safety = Safety::default();
-    assert_eq!(safety.bars(), 0.0);
+    assert_eq!(bars_height(&safety), 0.0);
     safety.download = Some(Download {
         name: "a.pdf".to_owned(),
         saving: Saving::Finished,
     });
     safety.ask(asked(1, "https://a.example"));
-    assert_eq!(safety.bars(), super::BAR);
+    assert_eq!(bars_height(&safety), super::BAR);
     assert!(safety.press(Target::Browser(BrowserEvent::BrowserDismiss)));
     assert!(safety.download.is_none());
     assert!(!safety.press(Target::Composer(ComposerEvent::Prompt)));

@@ -37,12 +37,12 @@ pub fn scale_for(state: &Screen) {
 
 /// Emits `content`, a window's frame `width` by `height` logical pixels
 /// across, inset in a window larger by the band that holds the frame's
-/// shadow while there is one.
+/// shadow while there is one, with `frame` around the frame inside the band.
 #[track_caller]
-pub fn banded(content: impl FnOnce(f32, f32), width: f32, height: f32) {
+pub fn banded(content: impl FnOnce(f32, f32), frame: Modifier, width: f32, height: f32) {
     let band = pm_components::shadow_margin();
     column_arranged(
-        Modifier::new().fill_max_size().padding(band),
+        Modifier::new().fill_max_size().padding(band).chain(frame),
         Arrangement::Start,
         Alignment::Start,
         || content(width - 2.0 * band, height - 2.0 * band),
@@ -50,10 +50,22 @@ pub fn banded(content: impl FnOnce(f32, f32), width: f32, height: f32) {
 }
 
 /// Emits the main window's frame for `state` in a window `width` by `height`
-/// logical pixels, inset by the band that holds the frame's shadow.
+/// logical pixels, inset by the band that holds the frame's shadow; the frame tells the
+/// screen where it is laid out, as `onGloballyPositioned` does, for the app to take the
+/// window's coordinates into the frame's.
 #[track_caller]
 pub fn main_frame(state: &Screen, width: f32, height: f32) {
-    banded(|width, height| screen(state, width, height), width, height);
+    state.places().provide(|| {
+        banded(
+            |width, height| screen(state, width, height),
+            pm_components::bounds::placed(
+                pm_components::target::Target::Window(pm_components::areas::WindowEvent::Frame),
+                Modifier::new(),
+            ),
+            width,
+            height,
+        );
+    });
 }
 
 /// Emits what the window beside the main one kept under `window` shows for
@@ -69,6 +81,7 @@ pub fn aside_frame(state: &Screen, window: WindowKey, width: f32, height: f32) {
                 picker_screen(state, width, height);
             }
         },
+        Modifier::new(),
         width,
         height,
     );
