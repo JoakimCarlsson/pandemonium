@@ -52,6 +52,7 @@ pub mod checkbox;
 pub mod choices;
 pub mod code_box;
 pub mod code_pointing;
+pub mod code_view;
 pub mod color_picker;
 pub mod compare;
 pub mod composer;

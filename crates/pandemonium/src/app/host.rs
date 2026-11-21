@@ -474,11 +474,36 @@ fn every(interval: Option<Duration>, app: &Weak<RefCell<App>>, act: fn(&mut App)
     });
 }
 
+/// Follows the reader's scrolls of the lists the screen keeps up with, the diff's and the
+/// conversation's, by observing their scroll states: a block that reads how far both are
+/// scrolled, composed again alone when either moves, whose effect keyed on the offsets has
+/// the app catch the screen up with them.
+fn scroll_effects(shared: &Shared) {
+    let lists = shared.model.read(Screen::followed_lists);
+    let app = shared.app();
+    rustle::restartable(lists.clone(), move || {
+        let (diff, chat) = &lists;
+        let offsets = (
+            diff.scroll().offset().to_bits(),
+            chat.scroll().offset().to_bits(),
+        );
+        let scrolled = app.clone();
+        rustle::disposable_effect(offsets, move || {
+            with_app(&scrolled, |app| {
+                app.follow_scrolls();
+                app.flush();
+            });
+            || {}
+        });
+    });
+}
+
 /// Emits what the main window shows for what `shared` holds, under the operations its
 /// views hand what the user does to, with what the app reads of the window; the field the
 /// reader was typing in when the window last closed takes the keyboard back as it appears.
 pub(super) fn main_view(shared: &Shared) {
     idle_effects(shared);
+    scroll_effects(shared);
     watch_window(shared, None);
     let tokens = shared.tokens.borrow().clone();
     let size = shared.sizes.borrow()[0];
@@ -675,9 +700,8 @@ impl App {
     /// What rustle's external handler runs whenever the loop is woken for the app: drains
     /// what woke it. The agents' work and the servers' answers are taken in and what the
     /// reader asked of them delivered; the app catches up with an event the interface
-    /// finished handling (the text typed and the focus moved are followed), with what rustle
-    /// scrolled by itself,
-    /// and with a frame drawn; then it follows what that changed.
+    /// finished handling (the text typed and the focus moved are followed) and with a frame
+    /// drawn; then it follows what that changed.
     pub(super) fn on_wake(&mut self) {
         self.window_opened();
         self.work.discover();
@@ -691,7 +715,6 @@ impl App {
         } else if std::mem::take(&mut self.acted) {
             self.recompose = true;
         }
-        self.follow_scrolls();
         if std::mem::take(&mut self.frame_pending) {
             self.browsing = self.browser_tick();
         }
@@ -788,8 +811,6 @@ impl App {
     pub(super) fn flush(&mut self) {
         if std::mem::take(&mut self.recompose) {
             self.shell.invalidate();
-        } else {
-            self.dirty.set(false);
         }
         self.after_compose();
         self.publish_idle();
@@ -809,7 +830,7 @@ impl App {
         crate::startup::frame_presented();
         self.place_completion();
         self.place_signature();
-        self.note_code_view();
+        self.ask_names_in_view();
         self.note_conversation(true);
     }
 
@@ -839,7 +860,6 @@ impl App {
             None => act(self),
         }
         self.acted = false;
-        self.follow_scrolls();
         self.flush();
     }
 

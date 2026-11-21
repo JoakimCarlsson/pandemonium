@@ -12,14 +12,11 @@ use std::rc::Rc;
 
 use pm_pages::{Screen, WorkspaceState};
 
-/// The screen as a rustle state, with a mark the app clears once it composed
-/// for a change. Every clone is a handle to the same screen.
+/// The screen as a rustle state. Every clone is a handle to the same screen.
 #[derive(Clone)]
 pub struct Model {
     /// The screen, read by the root of every window, which a change composes again.
     state: rustle::State<Screen>,
-    /// Whether the screen changed since the app last composed for it.
-    changed: Rc<Cell<bool>>,
     /// The screen's revision: how many changes there were that are not only of the
     /// sizes of panels, and how often the windows were composed again for something
     /// outside the screen.
@@ -29,11 +26,10 @@ pub struct Model {
 }
 
 impl Model {
-    /// A model holding `screen`, not marked as changed.
+    /// A model holding `screen`.
     pub fn new(screen: Screen) -> Self {
         Self {
             state: rustle::mutable_state(screen),
-            changed: Rc::new(Cell::new(false)),
             revision: Rc::new(Cell::new(0)),
             generation: Rc::new(Cell::new(0)),
         }
@@ -44,11 +40,9 @@ impl Model {
         self.state.with(read)
     }
 
-    /// Changes the screen in place through `change`, marks it changed and moves
-    /// its revision on.
+    /// Changes the screen in place through `change` and moves its revision on.
     pub fn update(&self, change: impl FnOnce(&mut Screen)) {
         self.state.update(change);
-        self.changed.set(true);
         self.generation.set(self.generation.get() + 1);
         self.revise();
     }
@@ -59,12 +53,11 @@ impl Model {
         self.update(|screen| *screen = std::mem::take(screen).in_workspace(change));
     }
 
-    /// Changes only the sizes of panels in the screen through `change`, marking it
-    /// changed but leaving its revision, so only the regions whose room changed are
+    /// Changes only the sizes of panels in the screen through `change`, leaving its
+    /// revision, so only the regions whose room changed are
     /// composed again. `change` must change nothing but such sizes.
     pub fn resize(&self, change: impl FnOnce(&mut Screen)) {
         self.state.update(change);
-        self.changed.set(true);
         self.generation.set(self.generation.get() + 1);
     }
 
@@ -84,37 +77,27 @@ impl Model {
     pub fn generation(&self) -> u64 {
         self.generation.get()
     }
-
-    /// The mark set by every change, for the app to clear once it composed.
-    pub fn changes(&self) -> Rc<Cell<bool>> {
-        Rc::clone(&self.changed)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A change through any handle is seen through every other and marks the model changed.
+    /// A change through any handle is seen through every other.
     #[test]
-    fn a_change_reaches_every_handle_and_marks_the_model() {
+    fn a_change_reaches_every_handle() {
         let model = Model::new(Screen::default());
         let other = model.clone();
-        let changes = model.changes();
-        assert!(!changes.get());
         other.change(|state| state.with_fonts(vec!["Inter".to_owned()], Vec::new()));
-        assert!(changes.get());
         assert!(model.read(|screen| *screen != Screen::default()));
     }
 
-    /// A change moves the revision on and a resize marks the model changed but leaves it.
+    /// A change moves the revision on and a resize leaves it.
     #[test]
     fn only_a_resize_leaves_the_revision() {
         let model = Model::new(Screen::default());
-        let changes = model.changes();
         let before = model.revision();
         model.resize(|_| {});
-        assert!(changes.get());
         assert_eq!(model.revision(), before);
         model.update(|_| {});
         assert_eq!(model.revision(), before + 1);

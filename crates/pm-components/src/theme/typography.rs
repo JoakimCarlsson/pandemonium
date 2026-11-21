@@ -82,6 +82,16 @@ pub fn code_style(pixels: impl Into<f64>, ratio: f32) -> TextStyle {
     line_style(pixels.into() as f32, ratio, mono(), code_ligatures())
 }
 
+/// How wide a character of code set at `pixels` is, in logical pixels: a run of wide
+/// characters laid out in [`code_style`] and divided by its length, which rustle keeps
+/// laid out while the fonts stay the same. Nothing wide before a renderer exists.
+pub fn code_cell(pixels: f32) -> f32 {
+    rustle::layout_text(&"M".repeat(64), &code_style(pixels, 1.5), None)
+        .size()
+        .width
+        / 64.0
+}
+
 /// `style` set in the mono family at its weight when code fonts have that
 /// face (regular and bold), and in the sans family otherwise, as code asked
 /// for at another weight, such as medium, always was.

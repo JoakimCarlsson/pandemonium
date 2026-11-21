@@ -1789,10 +1789,8 @@ pub struct WorkspaceState {
     pub recorded: Vec<String>,
     /// Whether the editor's settings kept between runs were put in, so that what is shown is not mistaken for them before.
     pub editor_loaded: bool,
-    /// How wide the view of the file shown was last drawn and how wide a character of code is in it, in logical pixels, which soft wrap breaks lines by; nothing until it was drawn.
-    pub code_view: Option<(f32, f32)>,
-    /// How tall the view of the file shown was last drawn, in logical pixels, which tells the lines in view; nothing until it was drawn.
-    pub code_height: Option<f32>,
+    /// The size the view of the file shown was last laid out at, told by the view, which soft wrap breaks lines by and which tells the lines in view.
+    pub code_size: crate::code_view::CodeViewSize,
     /// Whether the reader asked to close the window and nothing is left to ask first.
     pub quitting: bool,
     /// How far down the notes in the window of an update are scrolled, in logical pixels.

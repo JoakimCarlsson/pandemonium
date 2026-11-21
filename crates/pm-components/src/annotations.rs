@@ -104,7 +104,7 @@ impl WorkspaceState {
         }
         let row = self.editor.row_height().max(1.0);
         let top = self.shown_viewer()?.top_row(self.wrap_columns(), row);
-        let height = self.code_height.unwrap_or(VIEW_HEIGHT);
+        let height = self.code_size.get().map_or(VIEW_HEIGHT, |size| size.height);
         let first = top.floor().max(0.0) as usize;
         let count = (height / row).ceil() as usize + 1;
         let (lines, _) = document.wrapped_lines(first, count, self.wrap_columns());
@@ -119,12 +119,6 @@ impl WorkspaceState {
         };
         self.shown_document()
             .is_some_and(|document| document.semantic_range_wanted(lines).is_some())
-    }
-
-    /// The state knowing the view of the file shown is `height` logical pixels tall.
-    pub fn with_code_height(mut self, height: f32) -> Self {
-        self.code_height = Some(height);
-        self
     }
 
     /// The state after the language server said what each name within the stretch `range` of the file at `path` of the session at `session` is, as the text was at `version`.

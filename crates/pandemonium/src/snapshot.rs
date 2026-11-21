@@ -2980,7 +2980,6 @@ impl Shot {
                 Screen::Workspace(
                     code()
                         .with_editor_settings(editor)
-                        .with_code_view(560.0, 7.2)
                         .handle(Event::Field(FieldEvent::Edited { field: Target::Editor(EditorEvent::EditorField), edit: Edit::Place(600, false) })),
                 )
             }

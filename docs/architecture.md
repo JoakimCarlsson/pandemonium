@@ -116,9 +116,15 @@ One crate per layer, each depending only on the layers below it.
   Scrolling areas are rustle's `vertical_scroll` over a
   `rustle::ScrollState` the model owns (hoisted state), styled with the
   theme's `scrollbar()`, provided as rustle's `LOCAL_SCROLLBAR_STYLE`; rustle handles the wheel and the bar, and the binary
-  catches the model up with what the reader scrolled after each event
-  (`follow_scrolls`). Where an area was drawn is kept by a `Bounds` the model
-  owns, told by the area's `on_globally_positioned`.
+  observes the scroll states of the diff and the conversation: a `restartable`
+  block of the main root reads their offsets, so it alone composes again when
+  either moves, and its `disposable_effect` keyed on the offsets has the model
+  catch up with them (`scroll_effects`, `follow_scrolls`). Where an area was
+  drawn is kept by a `Bounds` the model owns, told by the area's
+  `on_globally_positioned`. The size the view of the file shown is laid out at
+  is told by its `on_size_changed` to a `CodeViewSize` the model owns, a rustle
+  state, so soft wrap and the lines in view follow it and what reads it composes
+  again when it changes.
   Controls take event lambdas, as composables do (`pm-components/src/events.rs`):
   `Interactive::control(id, on_click)` makes a control a focus target that runs
   `on_click` when clicked, or when Enter or Space reaches it while it holds
@@ -334,8 +340,7 @@ What the app does with the windows goes through rustle's API:
 - **Waking.** The app's work and the servers' connections wake the loop with
   `rustle::external_waker`, and `rustle::set_external_handler` runs
   `App::on_wake`, which only drains what woke it: the work's results and the
-  outbox, an event the interface finished handling, what rustle scrolled by
-  itself, and a frame drawn, which `rustle::set_frame_observer` reports.
+  outbox, an event the interface finished handling, and a frame drawn, which `rustle::set_frame_observer` reports.
 - **Idle work.** Everything else is an effect of the main window's root
   (`idle_effects` in `app/host.rs`), each keyed on the state it follows: what
   follows a change of the screen (settings written, the outbox delivered, the

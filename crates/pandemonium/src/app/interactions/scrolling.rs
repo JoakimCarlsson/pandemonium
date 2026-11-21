@@ -80,6 +80,22 @@ fn the_wheel_scrolls_the_conversation() {
     assert_eq!(back(&rig).0, 0.0);
 }
 
+/// A scroll of the conversation by the wheel reaches the screen through its observed scroll
+/// state, with no event of the app's own: the open session keeps how far back it is scrolled.
+#[test]
+fn the_screen_follows_the_scrolled_conversation() {
+    let mut rig = Rig::shot(Shot::Workspace);
+    let at = middle(&rig);
+    rig.move_to(at);
+    rig.wheel(-100.0);
+    let kept = rig.state(|state| {
+        state
+            .open_index()
+            .map(|index| state.sessions[index].chat_back)
+    });
+    assert_eq!(kept, Some(100.0));
+}
+
 /// The wheel over the long prompt scrolls the prompt, not the conversation around it.
 #[test]
 fn the_wheel_scrolls_the_innermost_box() {

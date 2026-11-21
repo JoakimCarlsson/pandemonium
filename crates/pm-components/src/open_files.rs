@@ -155,7 +155,8 @@ impl Viewer {
 impl WorkspaceState {
     /// How many characters a row of the file shown holds when long lines wrap, as soft wrap and the view's width say, or nothing when they do not.
     pub fn wrap_columns(&self) -> Option<usize> {
-        let fitting = self.code_view.map(|(width, cell)| {
+        let fitting = self.code_size.get().map(|size| {
+            let cell = crate::theme::code_cell(self.editor.font_size as f32);
             let scale = crate::theme::step_scale();
             let numbers = if self.editor.line_numbers { 13.0 } else { 2.0 };
             let runs = match self.git.shown {
@@ -164,7 +165,7 @@ impl WorkspaceState {
             };
             let gutter =
                 3.0 + (numbers + 4.0) * 4.0 * scale + 12.0 + crate::viewer::BREAKPOINT_CELL + runs;
-            (((width - gutter) / cell.max(1.0)).floor() as usize).max(10)
+            (((size.width - gutter) / cell.max(1.0)).floor() as usize).max(10)
         });
         match self.editor.soft_wrap {
             pm_editor::SoftWrap::Off => None,
@@ -175,12 +176,6 @@ impl WorkspaceState {
                 }),
             ),
         }
-    }
-
-    /// The state knowing the view of the file shown is `width` logical pixels wide, with a character of code `cell` wide.
-    pub fn with_code_view(mut self, width: f32, cell: f32) -> Self {
-        self.code_view = Some((width, cell));
-        self
     }
 
     /// The file whose tab is showing, if one is.

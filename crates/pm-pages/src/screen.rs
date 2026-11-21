@@ -195,6 +195,12 @@ impl Screen {
         matches!(self, Self::Workspace(state) if state.untracked())
     }
 
+    /// The lists whose scrolls the screen follows: the diff's and the conversation's.
+    pub fn followed_lists(&self) -> (rustle::LazyListState, rustle::LazyListState) {
+        let Self::Workspace(state) = self;
+        (state.diff_list.clone(), state.chat_list.clone())
+    }
+
     /// Whether the reader scrolled what the screen follows since it last looked.
     pub fn scrolls_moved(&self) -> bool {
         let Self::Workspace(state) = self;

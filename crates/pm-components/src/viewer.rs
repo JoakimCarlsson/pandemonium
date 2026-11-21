@@ -1211,9 +1211,11 @@ pub fn file_view(state: &WorkspaceState, index: usize, width: f32, height: f32) 
                         || {
                             let area = Modifier::new().fill_max_size();
                             let area = match live {
-                                true => state
-                                    .code_bounds
-                                    .track(area.chain(crate::focus::keyboard_focus(owner))),
+                                true => state.code_size.track(
+                                    state
+                                        .code_bounds
+                                        .track(area.chain(crate::focus::keyboard_focus(owner))),
+                                ),
                                 false => area,
                             };
                             match shown_text {

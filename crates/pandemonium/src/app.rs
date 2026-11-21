@@ -15,7 +15,6 @@ use pm_components::events::Event;
 use pm_components::events::FieldEvent;
 use pm_components::focus::FocusRequesters;
 use pm_components::target::Target;
-use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
@@ -123,8 +122,6 @@ pub struct App {
     saved_window: pm_config::WindowSettings,
     /// What the user can change on the screen.
     model: Model,
-    /// Set by the model whenever it changes, so the screen is drawn again.
-    dirty: Rc<Cell<bool>>,
     /// The rustle focus of every control, which says which holds keyboard focus.
     focus: FocusRequesters,
     /// Which modifier keys are held.
@@ -327,7 +324,6 @@ impl App {
         loop_wake: pm_client::Wake,
     ) -> Self {
         let model = Model::new(screen);
-        let dirty = model.changes();
         let focus = FocusRequesters::new();
         Self {
             shell: host::Shell::new(model.clone(), focus.clone()),
@@ -344,7 +340,6 @@ impl App {
             appearance: Appearance::Dark,
             system_appearance: Appearance::Dark,
             model,
-            dirty,
             focus,
             modifiers: Modifiers::default(),
             anchor: None,
@@ -452,43 +447,14 @@ impl App {
         }
     }
 
-    /// Tells the screen how wide the view of the file shown was drawn and how wide a character of code is, when that changed, so long lines wrap at its edge.
-    fn note_code_view(&mut self) {
-        let Some((width, height)) = self
-            .model
-            .read(Screen::code_area)
-            .map(|view| (view.size.width, view.size.height))
-        else {
+    /// Asks the language server for the names of the lines of the file shown that are in view, when the file is long enough for those to be asked for first and they are not held.
+    fn ask_names_in_view(&mut self) {
+        if self.model.read(Screen::code_area).is_none() {
             return;
-        };
-        if self.model.read(Screen::code_height) != Some(height) {
-            self.model.change(|state| state.with_code_height(height));
         }
         if self.model.read(|screen| screen.names_in_view_wanted()) {
             self.model.change(|state| state.annotations_requested());
             self.deliver();
-        }
-        let Some(font) = self.model.read(|screen| {
-            screen
-                .editor_settings()
-                .map(|settings| settings.font_size as f32)
-        }) else {
-            return;
-        };
-        let cell = rustle::layout_text(
-            &"M".repeat(64),
-            &pm_components::theme::code_style(font, 1.5),
-            None,
-        )
-        .size()
-        .width
-            / 64.0;
-        let known = self.model.read(Screen::code_view);
-        let differs = known.is_none_or(|(held_width, held_cell)| {
-            (held_width - width).abs() > 0.5 || (held_cell - cell).abs() > 0.01
-        });
-        if differs {
-            self.model.change(|state| state.with_code_view(width, cell));
         }
     }
 
@@ -747,8 +713,9 @@ impl App {
         }
     }
 
-    /// Catches the screen up with what the reader scrolled in the interface,
-    /// and asks for the diffs that a scroll of the diff brought into view.
+    /// Catches the screen up with what the reader scrolled in the interface, as the root's
+    /// observer of the lists' scroll states asks once one moved, and asks for the diffs that
+    /// a scroll of the diff brought into view.
     pub(super) fn follow_scrolls(&mut self) {
         if !self.model.read(Screen::scrolls_moved) {
             return;

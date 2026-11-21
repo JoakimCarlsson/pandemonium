@@ -68,13 +68,6 @@ impl Screen {
         }
     }
 
-    /// How wide the view of the file shown was last drawn and how wide a character of code is in it, while the workspace is showing and it was drawn.
-    pub fn code_view(&self) -> Option<(f32, f32)> {
-        match self {
-            Self::Workspace(state) => state.code_view,
-        }
-    }
-
     /// Whether the window is to close: the reader asked to and nothing is left to ask first.
     pub fn quitting(&self) -> bool {
         self.workspace_is(|state| state.quitting)
@@ -136,10 +129,10 @@ impl Screen {
         self.in_workspace(|state| state.with_edited_files(session, files))
     }
 
-    /// How tall the view of the file shown was last drawn, while the workspace is showing and it was drawn.
+    /// How tall the view of the file shown was last laid out, as the view told its holder, while the workspace is showing and it was laid out.
     pub fn code_height(&self) -> Option<f32> {
         match self {
-            Self::Workspace(state) => state.code_height,
+            Self::Workspace(state) => state.code_size.get().map(|size| size.height),
         }
     }
 }

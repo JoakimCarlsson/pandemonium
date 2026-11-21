@@ -2,6 +2,7 @@
 //! the view's size told to the screen, and the browser's address field and menu.
 
 use pm_components::areas::{BrowserEvent, EditorEvent};
+use pm_components::state::WorkspaceState;
 use pm_components::target::Target;
 use pm_pages::Screen;
 use rustle::Key;
@@ -40,6 +41,34 @@ fn the_code_view_size_reaches_the_screen() {
     let drawn = rig.area(Screen::code_area).map(|view| view.size.height);
     assert!(drawn.is_some());
     assert_eq!(rig.read(Screen::code_height), drawn);
+}
+
+/// With soft wrap at the edge, the file shown wraps at the width its view told its holder
+/// it was laid out at, and wraps again, narrower, once the window narrows.
+#[test]
+fn soft_wrap_follows_the_laid_out_view() {
+    let mut screen = Shot::Code.screen();
+    let Screen::Workspace(state) = &mut screen;
+    let editor = pm_editor::EditorSettings {
+        soft_wrap: pm_editor::SoftWrap::Edge,
+        ..pm_editor::EditorSettings::default()
+    };
+    *state = std::mem::take(state).with_editor_settings(editor);
+    let size = crate::app::headless::SIZE;
+    let mut rig = Rig::new(screen, size);
+    let wide = rig
+        .state(WorkspaceState::wrap_columns)
+        .expect("long lines wrap at the edge");
+    rig.resize((size.0 - 300.0, size.1));
+    let narrow = rig
+        .state(WorkspaceState::wrap_columns)
+        .expect("long lines still wrap at the edge");
+    assert!(narrow < wide, "{narrow} columns then, before {wide}");
+    let drawn = rig.area(Screen::code_area).map(|view| view.size.width);
+    assert_eq!(
+        rig.state(|state| state.code_size.get().map(|size| size.width)),
+        drawn
+    );
 }
 
 /// The browser's address takes the keyboard and typing; the secondary

@@ -53,8 +53,8 @@ pub use interaction::{FocusOutline, FocusRing, Focused, Indicated, InteractionTo
 pub use role::Role;
 pub use scheme::Theme;
 pub use typography::{
-    code, code_ligatures, code_style, fixed_text_style, font_families, font_key, in_mono, line,
-    mono_style, set_code_ligatures, strong, text_style, typography,
+    code, code_cell, code_ligatures, code_style, fixed_text_style, font_families, font_key,
+    in_mono, line, mono_style, set_code_ligatures, strong, text_style, typography,
 };
 
 /// Logical pixels in one step of the spacing scale at the comfortable density.
