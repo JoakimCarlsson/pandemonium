@@ -6,9 +6,6 @@ use rustle::Color;
 use rustle::Modifier;
 use rustle::{Alignment, Arrangement, TextOverflow};
 
-/// How wide, as a share of its height, a character of body text is taken to be.
-const CHARACTER_WIDTH: f32 = 0.53;
-
 /// Emits a line of `content` at `pixels` tall type with a line height of `ratio` times that,
 /// in `tone`, ended with an ellipsis when the box it sits in is too narrow for it.
 #[track_caller]
@@ -87,22 +84,25 @@ pub fn paragraph(content: &str, pixels: u32, ratio: f32, tone: impl Into<Color>,
     );
 }
 
-/// The lines `content` breaks into when each may hold as many characters of
-/// `pixels` tall type as fit in `width` logical pixels, since text does not wrap.
-pub fn wrap(content: &str, pixels: u32, width: f32) -> Vec<String> {
-    let character = pixels as f32 * crate::theme::text_scale() * CHARACTER_WIDTH;
-    let columns = ((width / character) as usize).max(8);
-    let mut lines: Vec<String> = Vec::new();
-    for word in content.split_whitespace() {
-        match lines.last_mut() {
-            Some(last) if last.chars().count() + 1 + word.chars().count() <= columns => {
-                last.push(' ');
-                last.push_str(word);
-            }
-            _ => lines.push(word.to_owned()),
-        }
-    }
-    lines
+/// Emits `content` set in `pixels` tall type with a line height of `ratio` times that, in
+/// `tone`, with `modifier`, broken at spaces by the text layout into as many lines as the
+/// width the modifier and the parent leave it needs: Compose's `Text` with no line limit.
+#[track_caller]
+pub fn wrapping(
+    modifier: Modifier,
+    content: impl Into<String>,
+    pixels: u32,
+    ratio: f32,
+    tone: impl Into<Color>,
+) {
+    rustle::basic_text(
+        modifier,
+        content,
+        theme::text_style(pixels, ratio)
+            .color(theme::color(tone))
+            .wrap(rustle::TextWrap::Word),
+        TextOverflow::Clip,
+    );
 }
 
 /// Emits one line of `words` `pixels` tall in `tone`, inset `x` theme steps

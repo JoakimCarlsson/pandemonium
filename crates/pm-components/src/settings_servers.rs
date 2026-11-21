@@ -18,7 +18,7 @@ use crate::agent_list::AgentEntry;
 use crate::button::Variant;
 use crate::input::Input;
 use crate::menu::Menu;
-use crate::parts::{glyph, line, wrap};
+use crate::parts::{glyph, line, wrapping};
 use crate::settings::Section;
 use crate::settings_machines::labelled;
 use crate::settings_row::switch;
@@ -588,9 +588,13 @@ pub(crate) fn paragraph(content: &str, room: f32) {
         Arrangement::Start,
         Alignment::Start,
         || {
-            for words in wrap(content, 13, room.min(PARAGRAPH_WIDTH)) {
-                line(words, 13, 1.5, Role::Muted);
-            }
+            wrapping(
+                Modifier::new().width_in(0.0, room.min(PARAGRAPH_WIDTH)),
+                content,
+                13,
+                1.5,
+                Role::Muted,
+            );
         },
     );
 }
@@ -1026,9 +1030,13 @@ pub(crate) fn wrapped_note(message: &str, room: f32) {
         Arrangement::Start,
         Alignment::Start,
         || {
-            for words in wrap(message, 12, room) {
-                line(words, 12, 1.4, Role::Muted);
-            }
+            wrapping(
+                Modifier::new().width_in(0.0, room),
+                message,
+                12,
+                1.4,
+                Role::Muted,
+            );
         },
     );
 }

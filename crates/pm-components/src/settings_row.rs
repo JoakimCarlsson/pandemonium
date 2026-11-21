@@ -16,7 +16,7 @@ use rustle::{Icon, phosphor};
 use crate::Button;
 use crate::button::Variant;
 use crate::input::Input;
-use crate::parts::{clipped, glyph, line, wrap};
+use crate::parts::{clipped, glyph, line, wrapping};
 use crate::settings_rows::PICKS;
 use crate::size::Size;
 use crate::theme::{Radius, Role};
@@ -418,7 +418,6 @@ impl<'a> SettingRow<'a> {
             .map_or(0.0, |(_, width)| width.unwrap_or(TEXT_WIDTH));
         let beside = room - width - reserved - ROW_GAP;
         let stacked = beside < MIN_WORDS;
-        let words = if stacked { room - reserved } else { beside };
         let modifier = Modifier::new()
             .fill_max_width()
             .padding_xy(0.0, theme::sp(3));
@@ -438,7 +437,7 @@ impl<'a> SettingRow<'a> {
                                 Arrangement::SpacedBy(theme::sp(2)),
                                 Alignment::Start,
                                 || {
-                                    about_words(&title, &about, words);
+                                    about_words(&title, &about);
                                     reset_button(reset);
                                 },
                             );
@@ -469,7 +468,7 @@ impl<'a> SettingRow<'a> {
                         Arrangement::SpacedBy(theme::sp(6)),
                         Alignment::Center,
                         || {
-                            about_words(&title, &about, words);
+                            about_words(&title, &about);
                             rustle::row_arranged(
                                 Modifier::new(),
                                 Arrangement::SpacedBy(theme::sp(2)),
@@ -501,20 +500,16 @@ impl<'a> SettingRow<'a> {
     }
 }
 
-/// Emits what a setting is called, `title`, over what it does, `about`, each wrapped to `words` logical pixels, in a column taking the room its row leaves.
+/// Emits what a setting is called, `title`, over what it does, `about`, each wrapped by the text layout to the room its row leaves, in a column taking that room.
 #[track_caller]
-fn about_words(title: &str, about: &str, words: f32) {
+fn about_words(title: &str, about: &str) {
     rustle::column_arranged(
         Modifier::new().weight(1.0),
         Arrangement::SpacedBy(theme::sp(0.5)),
         Alignment::Start,
         || {
-            for part in wrap(title, 13, words) {
-                line(part, 13, 1.4, Role::Text);
-            }
-            for part in wrap(about, 12, words) {
-                line(part, 12, 1.4, Role::Muted);
-            }
+            wrapping(Modifier::new(), title, 13, 1.4, Role::Text);
+            wrapping(Modifier::new(), about, 12, 1.4, Role::Muted);
         },
     );
 }

@@ -23,7 +23,7 @@ use crate::diff::diff_line;
 use crate::diff_syntax::DiffColours;
 use crate::file_icon::{file_icon, file_language};
 use crate::icons::spinner;
-use crate::parts::{clipped, glyph, line, wrap};
+use crate::parts::{clipped, glyph, line, wrapping};
 use crate::sample::{DiffLine, Kind, Step, ToolUse};
 use crate::size::Size;
 
@@ -645,7 +645,6 @@ pub fn steps(
     message: usize,
     opened: impl Fn(usize) -> bool,
     root: &str,
-    width: f32,
 ) {
     rustle::stack_with(Modifier::new(), || {
         rustle::vertical_divider(
@@ -718,11 +717,13 @@ pub fn steps(
                                                 Arrangement::Start,
                                                 Alignment::Start,
                                                 || {
-                                                    for piece in
-                                                        wrap(&thought.text, 13, width - 40.0)
-                                                    {
-                                                        line(piece, 13, 1.6, Role::Subtle);
-                                                    }
+                                                    wrapping(
+                                                        Modifier::new(),
+                                                        &thought.text,
+                                                        13,
+                                                        1.6,
+                                                        Role::Subtle,
+                                                    );
                                                 },
                                             );
                                         }

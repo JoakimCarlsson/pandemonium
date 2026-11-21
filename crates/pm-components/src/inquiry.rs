@@ -24,25 +24,16 @@ use crate::input::{self, Input};
 use crate::parts::line;
 use crate::theme::{Radius, Role};
 
-/// Emits every measured line of agent text within `width`, set in `pixels` tall type in `tone`.
+/// Emits agent text set in `pixels` tall type in `tone`, broken at spaces by the text layout to the width its parent gives it.
 #[track_caller]
-fn wrapped(content: &str, pixels: u32, tone: Role, width: f32) {
-    let kind = theme::text_style(pixels, 1.4);
-    let lines = rustle::wrap_at_spaces(content, &kind, width.max(32.0));
-    rustle::column_arranged(
+fn wrapped(content: &str, pixels: u32, tone: Role) {
+    rustle::basic_text(
         Modifier::new(),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            for part in lines {
-                rustle::basic_text(
-                    Modifier::new(),
-                    &content[part.start..part.end],
-                    kind.color(theme::color(tone)),
-                    TextOverflow::Ellipsis,
-                );
-            }
-        },
+        content,
+        theme::text_style(pixels, 1.4)
+            .color(theme::color(tone))
+            .wrap(rustle::TextWrap::Word),
+        TextOverflow::Clip,
     );
 }
 
@@ -79,9 +70,9 @@ fn offered(modifier: Modifier, id: Target, idle: Role, edge: Role) -> Modifier {
     )
 }
 
-/// Emits the row offering `alternative`, the one at `index`, which the key after it picks, drawn as taken when `picked`, its words wrapped to `width`.
+/// Emits the row offering `alternative`, the one at `index`, which the key after it picks, drawn as taken when `picked`, its words wrapped to the room the key leaves.
 #[track_caller]
-fn choice(alternative: &Alternative, index: usize, picked: bool, width: f32) {
+fn choice(alternative: &Alternative, index: usize, picked: bool) {
     let id = Target::Chat(ChatEvent::InquiryPick(index));
     rustle::row_arranged(
         offered(
@@ -98,20 +89,19 @@ fn choice(alternative: &Alternative, index: usize, picked: bool, width: f32) {
                 Modifier::new().weight(1.0),
                 &alternative.label,
                 &alternative.description,
-                width,
             );
             key(index + 1);
         },
     );
 }
 
-/// Emits the words of an answer wrapped to `width` in a column with `modifier`: its `label`, over its `description`, when it has one.
+/// Emits the words of an answer, wrapped to the column's width, in a column with `modifier`: its `label`, over its `description`, when it has one.
 #[track_caller]
-fn said(modifier: Modifier, label: &str, description: &str, width: f32) {
+fn said(modifier: Modifier, label: &str, description: &str) {
     rustle::column_arranged(modifier, Arrangement::Start, Alignment::Start, || {
-        wrapped(label, 14, Role::Text, width);
+        wrapped(label, 14, Role::Text);
         if !description.is_empty() {
-            wrapped(description, 13, Role::Muted, width);
+            wrapped(description, 13, Role::Muted);
         }
     });
 }
@@ -287,7 +277,7 @@ fn tile_content(
                     .offer(offer, Target::Chat(ChatEvent::MockupOffer(index)))
                     .build();
             }
-            said(Modifier::new(), label, &alternative.description, inner);
+            said(Modifier::new(), label, &alternative.description);
         },
     );
 }
@@ -397,7 +387,7 @@ fn other(draft: &Draft, number: usize) {
 
 /// Emits the card for `draft`: the question, the answers to pick from, and the buttons that skip it or move on, or only its title when folded. When an answer of the question has a mockup, the answers are tiles side by side, each with the picture `figures` holds of its mockup, for the reader to compare, and a mockup whose picture waits for the embedded browser offers `offer` in its place.
 #[track_caller]
-pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
+pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer) {
     let question = draft.question();
     let count = draft.inquiry.questions.len();
     rustle::column_arranged(
@@ -432,12 +422,7 @@ pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
                         Arrangement::Start,
                         Alignment::Start,
                         || {
-                            wrapped(
-                                &question.text,
-                                14,
-                                Role::Text,
-                                width - if count > 1 { 145.0 } else { 105.0 },
-                            );
+                            wrapped(&question.text, 14, Role::Text);
                         },
                     );
                     Button::icon(icons::chevron(!draft.folded), Target::Chat(ChatEvent::Fold))
@@ -458,7 +443,7 @@ pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
                         tiles(&question.alternatives, (figures, offer), picked);
                     } else {
                         for (index, alternative) in question.alternatives.iter().enumerate() {
-                            choice(alternative, index, picked.contains(&index), width - 92.0);
+                            choice(alternative, index, picked.contains(&index));
                         }
                     }
                     other(draft, question.alternatives.len() + 1);
@@ -484,13 +469,9 @@ pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer, width: f32) {
     );
 }
 
-/// What the padding and border of the card that records answers take from its width, in logical pixels.
-const ANSWERED_INSET: f32 = 34.0;
-
-/// Emits the card that records a form of questions the reader answered, at most `width` logical pixels wide: each question with its answer, or `[No preference]` when it was skipped, both wrapped to fit.
+/// Emits the card that records a form of questions the reader answered, at most as wide as its parent: each question with its answer, or `[No preference]` when it was skipped, both wrapped to fit.
 #[track_caller]
-pub fn answered(answers: &[(String, Option<String>)], width: f32) {
-    let room = width - ANSWERED_INSET;
+pub fn answered(answers: &[(String, Option<String>)]) {
     rustle::column_arranged(
         Modifier::new()
             .align(BoxAlignment::TopStart)
@@ -506,12 +487,11 @@ pub fn answered(answers: &[(String, Option<String>)], width: f32) {
                     Arrangement::SpacedBy(theme::sp(0.5)),
                     Alignment::Start,
                     || {
-                        wrapped(question, 15, Role::Muted, room);
+                        wrapped(question, 15, Role::Muted);
                         wrapped(
                             answer.as_deref().unwrap_or("[No preference]"),
                             15,
                             Role::Text,
-                            room,
                         );
                     },
                 );
@@ -553,7 +533,7 @@ mod tests {
         let draft = three_mockups();
         let figures = Figures::new();
         let laid = crate::tagged::lay_out(width, 2000.0, None, move || {
-            inquiry(&draft, &figures, &Offer::Nothing, width)
+            inquiry(&draft, &figures, &Offer::Nothing)
         });
         (0..3)
             .map(|index| {
@@ -661,7 +641,7 @@ mod tests {
         });
         let figures = Figures::new();
         let laid = crate::tagged::lay_out(700.0, 2000.0, None, move || {
-            inquiry(&draft, &figures, &Offer::Nothing, 700.0)
+            inquiry(&draft, &figures, &Offer::Nothing)
         });
         let ids = laid.ids();
         for index in 0..3 {

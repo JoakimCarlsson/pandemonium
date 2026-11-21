@@ -19,7 +19,7 @@ use rustle::Modifier;
 
 use crate::Button;
 use crate::button::Variant;
-use crate::parts::{clipped, line, wrap};
+use crate::parts::{clipped, wrapping};
 
 /// How long after a question first shows, or the question shown changes, pressing Allow does nothing, in case the reader was about to press something the page moved under the pointer.
 pub const ALLOW_DELAY: Duration = Duration::from_millis(500);
@@ -332,16 +332,12 @@ fn reason(error: &str) -> &'static str {
 /// Emits `content` broken into lines no more than `room` logical pixels across, one under another, in `tone` at `pixels` tall type.
 #[track_caller]
 fn paragraph(content: &str, pixels: u32, tone: Role, room: f32) {
-    let lines = wrap(content, pixels, room);
-    rustle::column_arranged(
-        Modifier::new(),
-        Arrangement::Start,
-        Alignment::Start,
-        || {
-            for words in lines {
-                line(words, pixels, 1.45, tone);
-            }
-        },
+    wrapping(
+        Modifier::new().width_in(0.0, room),
+        content,
+        pixels,
+        1.45,
+        tone,
     );
 }
 

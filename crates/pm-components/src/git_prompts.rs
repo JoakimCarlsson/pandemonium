@@ -9,7 +9,7 @@ use rustle::Modifier;
 use rustle::{Alignment, Arrangement, TextOverflow};
 
 use crate::button::Variant;
-use crate::parts::{line, wrap};
+use crate::parts::{line, wrapping};
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::tree_actions::{EntryChange, TreeTarget, name_of};
@@ -306,17 +306,16 @@ pub(crate) fn question_of(
                 Arrangement::SpacedBy(theme::sp(2)),
                 Alignment::Start,
                 || {
-                    for title in wrap(&title, 15, WIDTH - 40.0) {
-                        rustle::basic_text(
-                            Modifier::new(),
-                            title,
-                            theme::strong(15, Role::Text),
-                            TextOverflow::Ellipsis,
-                        );
-                    }
-                    for words in wrap(words, 13, WIDTH - 40.0) {
-                        line(words, 13, 1.5, Role::Muted);
-                    }
+                    rustle::basic_text(
+                        Modifier::new(),
+                        title,
+                        theme::text_style(15, 1.4)
+                            .font_weight(rustle::FontWeight::MEDIUM)
+                            .color(theme::color(Role::Text))
+                            .wrap(rustle::TextWrap::Word),
+                        TextOverflow::Clip,
+                    );
+                    wrapping(Modifier::new(), words, 13, 1.5, Role::Muted);
                 },
             );
             buttons(ids.cancel, Some((confirm, ids.confirm, variant)));

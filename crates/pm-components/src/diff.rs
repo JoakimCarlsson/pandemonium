@@ -23,7 +23,7 @@ use crate::theme::{Radius, Role};
 use crate::button::Variant;
 use crate::diff_syntax::{DiffColours, shown};
 use crate::file_icon::{file_icon, file_language};
-use crate::parts::{line, spacer, wrap};
+use crate::parts::{line, spacer, wrapping};
 use crate::sample::{Change, Comment, DiffLine, Kind, Range, Session};
 use crate::size::Size;
 use crate::state::{CommentTarget, WorkspaceState};
@@ -501,11 +501,10 @@ fn card(padded: bool, arrangement: Arrangement, content: impl FnOnce()) {
 
 /// Emits a note waiting to be sent: which lines it is about, that it is unsent, a button to take it back, and what it says.
 #[track_caller]
-fn comment_card(index: usize, comment: &Comment, width: f32) {
+fn comment_card(index: usize, comment: &Comment) {
     let about = comment
         .range
         .map_or_else(|| "Whole file".to_owned(), |range| range.label());
-    let body = wrap(&comment.text, 13, width);
     under(comment.range, || {
         card(false, Arrangement::Start, || {
             parts::bar(8, 3, 2, || {
@@ -526,9 +525,7 @@ fn comment_card(index: usize, comment: &Comment, width: f32) {
                 Arrangement::Start,
                 Alignment::Start,
                 || {
-                    for text in &body {
-                        line(text, 13, 1.54, Role::Text);
-                    }
+                    wrapping(Modifier::new(), &comment.text, 13, 1.54, Role::Text);
                 },
             );
         });
@@ -844,10 +841,6 @@ struct Shown<'a> {
     colours: std::cell::RefCell<std::collections::HashMap<usize, DiffColours>>,
     /// How many characters of code one side of a row holds on a line.
     columns: usize,
-    /// How wide the view is, in logical pixels.
-    width: f32,
-    /// How wide a column of code is, in logical pixels, which a note on lines is set in.
-    column_width: f32,
 }
 
 impl Shown<'_> {
@@ -899,8 +892,8 @@ impl Shown<'_> {
                     comment_box(self.state, target);
                 }
             }
-            Item::FileNote(_, nth) => comment_card(nth, comment(nth), self.width),
-            Item::Note(_, nth) => comment_card(nth, comment(nth), self.column_width),
+            Item::FileNote(_, nth) => comment_card(nth, comment(nth)),
+            Item::Note(_, nth) => comment_card(nth, comment(nth)),
             Item::Row(_, position) => {
                 let mut cache = self.colours.borrow_mut();
                 let colours = cache.entry(index).or_insert_with(|| {
@@ -1022,8 +1015,6 @@ pub fn diff(state: &WorkspaceState, session: &Session, width: f32) {
         rows,
         colours: std::cell::RefCell::default(),
         columns: columns(width),
-        width,
-        column_width: ((width - 34.0) / 2.0 - 46.0).max(80.0),
     };
     rustle::column_arranged(
         Modifier::new().weight(1.0),

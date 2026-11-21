@@ -338,7 +338,6 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                         index,
                         |position| page.is_some_and(|open| held.contains(&(open, index, position))),
                         &root,
-                        width,
                     );
                 }
             },
@@ -380,7 +379,7 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                     .get(recorded)
                     .filter(|(at, _)| *at <= before)
                 {
-                    answered(answers, width);
+                    answered(answers);
                     recorded += 1;
                 }
                 let base = number * FOLDS_PER_PIECE;
@@ -418,7 +417,7 @@ fn agent_message(state: &WorkspaceState, session: &Session, index: usize, width:
                 run(shown, message.steps.len());
             }
             for (_, answers) in &message.answers[recorded..] {
-                answered(answers, width);
+                answered(answers);
             }
             if !message.bullets.is_empty() {
                 rustle::column_arranged(
@@ -570,14 +569,7 @@ pub fn chat(state: &WorkspaceState, session: &Session, width: f32, above: f32) {
                                         .fill_max_width(),
                                     Arrangement::Start,
                                     Alignment::Start,
-                                    || {
-                                        inquiry(
-                                            draft,
-                                            &state.figures,
-                                            &state.preview_offer(),
-                                            text_width,
-                                        )
-                                    },
+                                    || inquiry(draft, &state.figures, &state.preview_offer()),
                                 );
                             }
                             activity(state, session, text_width);

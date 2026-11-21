@@ -26,12 +26,6 @@ use crate::state::{Outgoing, WorkspaceState};
 /// How wide the page's column is at most, in logical pixels.
 const PAGE_WIDTH: f32 = 860.0;
 
-/// How long a line of what an extension brings may be in a row, in characters.
-const ROW_LINE: usize = 80;
-
-/// How long a line of what an extension brings may be on the card asking about it, in characters.
-const CARD_LINE: usize = 100;
-
 /// How long a reason a row has room for, in characters.
 const PROBLEM_LENGTH: usize = 96;
 
@@ -93,19 +87,19 @@ fn shortened(words: &str, most: usize) -> String {
     format!("{}…", kept.trim_end())
 }
 
-/// `items` joined with ` · ` and broken into lines of at most `most` characters, each item whole.
-fn wrapped(items: &[String], most: usize) -> Vec<String> {
-    let mut lines: Vec<String> = Vec::new();
-    for item in items {
-        match lines.last_mut() {
-            Some(last) if last.chars().count() + 3 + item.chars().count() <= most => {
-                last.push_str(" · ");
-                last.push_str(item);
-            }
-            _ => lines.push(item.clone()),
+/// Emits `items` in a flow row across its parent, each after the first led by ` · `, a line breaking between items where the next no longer fits, in quiet 12 pixel type.
+#[track_caller]
+fn brought(items: &[String]) {
+    rustle::flow_row(Modifier::new().fill_max_width(), 0.0, 0.0, || {
+        for (place, item) in items.iter().enumerate() {
+            let said = if place == 0 {
+                item.clone()
+            } else {
+                format!(" · {item}")
+            };
+            line(said, 12, 1.4, Role::Subtle);
         }
-    }
-    lines
+    });
 }
 
 /// What an extension is doing or has, in words, and the colour they are drawn in; nothing for one that is only available.
@@ -419,7 +413,6 @@ pub(crate) fn row(extension: &ExtensionInfo, action: Target) {
     } else {
         format!("{}  {}", extension.description, endings(extension))
     };
-    let brings = wrapped(&extension.provides, ROW_LINE);
     rustle::row_arranged(
         Modifier::new()
             .fill_max_width()
@@ -458,9 +451,7 @@ pub(crate) fn row(extension: &ExtensionInfo, action: Target) {
                         },
                     );
                     line(about, 12, 1.4, Role::Muted);
-                    for said in brings {
-                        line(said, 12, 1.4, Role::Subtle);
-                    }
+                    brought(&extension.provides);
                     if let Some(owner) = &extension.owner {
                         line(format!("From the {owner} extension"), 12, 1.4, Role::Subtle);
                     }
@@ -549,9 +540,7 @@ fn preview_card(preview: &Preview) {
             if !extension.description.is_empty() {
                 line(extension.description.clone(), 12, 1.4, Role::Muted);
             }
-            for said in wrapped(&extension.provides, CARD_LINE) {
-                line(said, 12, 1.4, Role::Subtle);
-            }
+            brought(&extension.provides);
             line("It asks to be allowed to", 12, 1.4, Role::Subtle);
             for (which, asked) in extension.requests.iter().enumerate() {
                 permission(

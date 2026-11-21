@@ -4,7 +4,7 @@ use crate::Markdown;
 use crate::areas::DialogEvent;
 use crate::button;
 use crate::button::Variant;
-use crate::parts::{line, spacer, title, wrap};
+use crate::parts::{line, spacer, title, wrapping};
 use crate::state::{Outgoing, WorkspaceState};
 use crate::target::Target;
 use crate::theme;
@@ -198,9 +198,7 @@ pub fn page(state: &WorkspaceState, update: &Update, width: f32) {
                             Arrangement::Start,
                             Alignment::Start,
                             || {
-                                for words in wrap(&said, 13, text_width) {
-                                    line(words, 13, 1.5, Role::Muted);
-                                }
+                                wrapping(Modifier::new(), &said, 13, 1.5, Role::Muted);
                             },
                         );
                     }

@@ -10,7 +10,7 @@ use rustle::{Alignment, Arrangement, TextOverflow};
 
 use crate::Modal;
 use crate::button::Variant;
-use crate::parts::{line, spacer, wrap};
+use crate::parts::{spacer, wrapping};
 use crate::state::{Outgoing, WorkspaceState};
 
 /// How wide the dialog is, in logical pixels.
@@ -99,9 +99,7 @@ pub fn code_dialog(state: &WorkspaceState) {
                     theme::strong(15, Role::Text),
                     TextOverflow::Ellipsis,
                 );
-                for words in wrap(&words, 13, WIDTH - 40.0) {
-                    line(words, 13, 1.5, Role::Muted);
-                }
+                wrapping(Modifier::new(), words, 13, 1.5, Role::Muted);
                 crate::parts::title(code, 24, 1.6);
             },
         );

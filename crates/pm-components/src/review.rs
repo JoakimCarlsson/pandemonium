@@ -26,7 +26,7 @@ use crate::branch_menu::branch_menu;
 use crate::button::Variant;
 use crate::git_controls::Primary;
 use crate::graph::graph;
-use crate::parts::{clipped, glyph, line, spacer, wrap};
+use crate::parts::{clipped, glyph, line, spacer, wrapping};
 use crate::popups::Opener;
 use crate::sample::Session;
 use crate::size::Size;
@@ -340,9 +340,9 @@ fn section_heading(state: &WorkspaceState, primary: &Primary) {
     );
 }
 
-/// Emits the banner saying what git refused to do, with a button that dismisses it, in a panel `width` logical pixels wide.
+/// Emits the banner saying what git refused to do, wrapped to the panel's width, with a button that dismisses it.
 #[track_caller]
-fn trouble(said: &str, width: f32) {
+fn trouble(said: &str) {
     rustle::row_arranged(
         Modifier::new()
             .fill_max_width()
@@ -357,9 +357,7 @@ fn trouble(said: &str, width: f32) {
                 Arrangement::Start,
                 Alignment::Start,
                 || {
-                    for words in wrap(said, 12, width - 24.0 - 56.0) {
-                        line(words, 12, 1.5, Role::Danger);
-                    }
+                    wrapping(Modifier::new(), said, 12, 1.5, Role::Danger);
                 },
             );
             Button::icon(phosphor::X, Target::Git(GitEvent::TroubleDismiss)).build();
@@ -395,7 +393,7 @@ fn changes(state: &WorkspaceState, session: &Session) {
                 || {
                     section_heading(state, &primary);
                     if let Some(said) = state.git.trouble.as_deref() {
-                        trouble(said, state.review_width);
+                        trouble(said);
                     }
                     if state.git.changes_open {
                         message_box(state);

@@ -13,7 +13,7 @@ use crate::theme::Role;
 
 use crate::button::Variant;
 use crate::git_prompts::Prompt;
-use crate::parts::{line, wrap};
+use crate::parts::{line, wrapping};
 use crate::popover::row;
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
@@ -21,9 +21,6 @@ use crate::{Checkbox, Input};
 
 /// How many rows a list shows at once.
 const ROWS: usize = 12;
-
-/// How wide a question is, in logical pixels.
-const WIDTH: f32 = 400.0;
 
 /// What is being done to a branch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -364,9 +361,7 @@ fn tick(label: &str, checked: bool) {
 /// Emits `words` wrapped to the width of a question, one muted line after another.
 #[track_caller]
 fn say(words: &str) {
-    for words in wrap(words, 13, WIDTH - 40.0) {
-        line(words, 13, 1.5, Role::Muted);
-    }
+    wrapping(Modifier::new(), words, 13, 1.5, Role::Muted);
 }
 
 /// Emits the rows of `choices`, each a branch or remote ticked while chosen, answering to the row ids in order.
