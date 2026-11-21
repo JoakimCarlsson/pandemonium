@@ -102,6 +102,32 @@ fn the_browser_address_and_menu() {
     assert!(rig.state(|state| state.browser_menu.is_some()));
 }
 
+/// A press on the page while the browser's menu is open closes the menu and goes no
+/// further: the menu's focusable popup takes it, so the page never hears its button go
+/// down.
+#[test]
+fn a_press_on_the_page_under_a_menu_only_closes_the_menu() {
+    let mut screen = Shot::BrowserTabs(false).screen();
+    let Screen::Workspace(state) = &mut screen;
+    state.browser_adopted_by(0);
+    let mut rig = Rig::new(screen, crate::app::headless::SIZE);
+    let at = rig.center(Target::Browser(BrowserEvent::BrowserBody));
+    let beside = (at.0 - 60.0, at.1 - 60.0);
+    rig.button_in(None, rustle::PointerButton::Primary, true, beside);
+    assert!(
+        rig.app.borrow().web.buttons.0,
+        "the page hears a press with no menu open"
+    );
+    rig.button_in(None, rustle::PointerButton::Primary, false, beside);
+    rig.right_click(at);
+    assert!(rig.state(|state| state.browser_menu.is_some()));
+    rig.button_in(None, rustle::PointerButton::Primary, true, beside);
+    rig.settle();
+    assert!(rig.state(|state| state.browser_menu.is_none()));
+    assert!(!rig.app.borrow().web.buttons.0, "the page heard the press");
+    rig.button_in(None, rustle::PointerButton::Primary, false, beside);
+}
+
 /// The pointer resting on a word of the file shown starts the wait before
 /// the language server is asked about it, and leaving the code ends it. The
 /// asking itself waits for a language server that has the file, which the

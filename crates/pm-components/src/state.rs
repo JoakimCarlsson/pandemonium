@@ -1674,8 +1674,8 @@ pub struct WorkspaceState {
     pub search_stash: std::collections::HashMap<usize, crate::project_search::ProjectSearch>,
     /// The tab being dragged to another pane, if one is.
     pub pane_drag: Option<crate::panes::PaneDrag>,
-    /// Where the menu of panes opened, while it is open.
-    pub pane_menu: Option<(f32, f32)>,
+    /// Whether the menu of panes is open, hanging from its button.
+    pub pane_menu: bool,
     /// The list of the conversation's messages, laid out from its end, so the offset of its
     /// scroll is how far the conversation is scrolled back from its end, in logical pixels.
     pub chat_list: rustle::LazyListState,
@@ -2081,7 +2081,7 @@ impl WorkspaceState {
             self.panes.parked = None;
         }
         self.settle_panes();
-        self.pane_menu = None;
+        self.pane_menu = false;
         if self.press_empty_pane(action) {
             return self;
         }
@@ -2304,25 +2304,8 @@ impl WorkspaceState {
     }
 
     /// The state with a menu open over the field `field` at `at`.
-    pub fn with_menu(self, field: Target, at: (f32, f32)) -> Self {
-        self.with_text_menu(field, at, false, false)
-    }
-
-    /// The state with a menu open over the text field `field` at `at`, the field having
-    /// said whether it is `secure` and `multiline`.
-    pub fn with_text_menu(
-        mut self,
-        field: Target,
-        at: (f32, f32),
-        secure: bool,
-        multiline: bool,
-    ) -> Self {
-        self.menu = Some(ContextMenu {
-            field,
-            at,
-            secure,
-            multiline,
-        });
+    pub fn with_menu(mut self, field: Target, at: (f32, f32)) -> Self {
+        self.menu = Some(ContextMenu { field, at });
         self
     }
 
@@ -2337,7 +2320,7 @@ impl WorkspaceState {
         self.git.menu = None;
         self.settings_servers.menu = None;
         self.tab_menu = None;
-        self.pane_menu = None;
+        self.pane_menu = false;
         self
     }
 

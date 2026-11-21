@@ -27,9 +27,10 @@ const WIDTH: f32 = 340.0;
 ///
 /// It is a focusable popup placed against the panel it is declared in, kept inside the window,
 /// and answers to [`GitEvent::BranchBody`](crate::areas::GitEvent::BranchBody); Escape or a
-/// press outside it closes it, except a press on the buttons of `opener`, which toggle it.
+/// press outside it closes it, a press on the button that opened it included, which the popup
+/// takes so the button does not open it again.
 #[track_caller]
-pub fn branch_menu(state: &WorkspaceState, opener: &crate::popups::Opener) {
+pub fn branch_menu(state: &WorkspaceState) {
     let git = &state.git;
     let current = state.head_of(git.repository.as_deref()).unwrap_or_default();
     let current = current.as_str();
@@ -38,8 +39,7 @@ pub fn branch_menu(state: &WorkspaceState, opener: &crate::popups::Opener) {
     let matching = git.matching();
     crate::popups::in_box_at(
         (sp(3), TOP),
-        crate::popups::Dismissal::focusable(WorkspaceState::without_branch_menu)
-            .except_from(opener),
+        crate::popups::Dismissal::focusable(WorkspaceState::without_branch_menu),
         || {
             Popover::new()
                 .width(WIDTH)

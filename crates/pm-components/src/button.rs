@@ -97,6 +97,9 @@ pub struct Button {
     /// What clicking it does, when the caller said; the workspace's reducer takes the
     /// press otherwise.
     on_click: Option<OnClick>,
+    /// The menu emitted in the button's box while it is open, which hangs from the box it is
+    /// declared in.
+    dropdown: Option<crate::Menu>,
 }
 
 impl Button {
@@ -123,6 +126,7 @@ impl Button {
             arranged: None,
             tooltip: None,
             on_click: None,
+            dropdown: None,
         }
     }
 
@@ -130,6 +134,14 @@ impl Button {
     /// of handing the press to the workspace's reducer.
     pub fn on_click(mut self, on_click: impl Fn() + 'static) -> Self {
         self.on_click = Some(OnClick::new(on_click));
+        self
+    }
+
+    /// The button emitting `dropdown`, while it is given, in its own box: a menu built with
+    /// [`Menu::dropdown`](crate::Menu::dropdown) there hangs from the button, as Compose's
+    /// `DropdownMenu` declared in the box of its button does.
+    pub fn dropdown(mut self, dropdown: Option<crate::Menu>) -> Self {
+        self.dropdown = dropdown;
         self
     }
 
@@ -376,6 +388,7 @@ impl Button {
             self.label,
             self.lines,
         );
+        let dropdown = self.dropdown;
         rustle::surface_custom(
             self.modifier.chain(own),
             Shape::rounded(radius.px()),
@@ -426,6 +439,9 @@ impl Button {
                         Self::glyph(name, ink, spinning);
                     }
                 });
+                if let Some(dropdown) = dropdown {
+                    dropdown.build();
+                }
             },
         );
     }

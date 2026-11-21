@@ -23,7 +23,6 @@ use rustle::{Key, KeyEvent};
 
 use crate::keys;
 use pm_editor::{Action, Pressed};
-use pm_pages::Screen;
 use rustle::ImageData;
 use rustle::Rect;
 
@@ -49,7 +48,7 @@ pub(super) struct Web {
     textures: [rustle::ImageKey; 2],
     /// Whether the primary and the secondary button went down on a page and are still held,
     /// as the pages' windows told.
-    buttons: (bool, bool),
+    pub(super) buttons: (bool, bool),
     /// The tab being shown and which window had the keyboard when the pages were last told.
     focused: Option<(Option<u32>, Option<Target>)>,
     /// Whether the engine could not start.
@@ -518,9 +517,6 @@ impl App {
                 down,
                 clicks,
             } => {
-                if down && self.model.read(Screen::list_menu_open) {
-                    return;
-                }
                 let button = if secondary { Mouse::Right } else { Mouse::Left };
                 if let Some(view) = self.browser_view_of(pointer.surface) {
                     let clicks = i32::try_from(clicks).unwrap_or(i32::MAX);

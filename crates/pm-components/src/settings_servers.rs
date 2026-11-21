@@ -137,13 +137,11 @@ impl ServerSettings {
     }
 }
 
-/// The menu of a server of the list showing: which one, and where it opens.
+/// The menu of a server of the list showing, which hangs from the server's button.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ServerMenu {
     /// The place of the server in its list.
     pub index: usize,
-    /// Where its top-left corner is, in logical pixels.
-    pub at: (f32, f32),
 }
 
 /// A server being described: which one of its list it replaces, and the boxes it is written in.
@@ -336,9 +334,10 @@ impl WorkspaceState {
         self.keep_tools();
     }
 
-    /// The state with the menu of the `index`-th server of the list showing open at `at`.
-    pub fn with_settings_menu(mut self, index: usize, at: (f32, f32)) -> Self {
-        self.settings_servers.menu = Some(ServerMenu { index, at });
+    /// The state with the menu of the `index`-th server of the list showing open, hanging
+    /// from its button.
+    pub fn with_settings_menu(mut self, index: usize) -> Self {
+        self.settings_servers.menu = Some(ServerMenu { index });
         self
     }
 
@@ -460,14 +459,8 @@ fn configuration_of(tool: &McpServer) -> String {
         .unwrap_or_default()
 }
 
-/// Emits the menu of a server of the list showing, when one is open.
-pub fn server_menu(state: &WorkspaceState) {
-    if let Some(menu) = server_menu_of(state) {
-        menu.build();
-    }
-}
-
-/// The menu of a server of the list showing, described, when one is open.
+/// The menu of a server of the list showing, described to hang from the server's button,
+/// when one is open.
 fn server_menu_of(state: &WorkspaceState) -> Option<Menu> {
     let open = state.settings_servers.menu?;
     let entries: Vec<Option<(&str, SettingsEvent, bool)>> = match state.settings? {
@@ -509,7 +502,7 @@ fn server_menu_of(state: &WorkspaceState) -> Option<Menu> {
             Some(("Remove", SettingsEvent::SettingsMenuRemove, false)),
         ],
     };
-    let menu = Menu::new(open.at.0, open.at.1).offset(-190.0, 14.0);
+    let menu = Menu::dropdown();
     Some(entries.into_iter().fold(menu, |menu, entry| match entry {
         Some((label, event, off)) => menu.item(label, None, Target::Settings(event), off),
         None => menu.separator(),
@@ -914,7 +907,15 @@ fn list(state: &WorkspaceState, room: f32) {
                 for shown in installed {
                     match form.filter(|form| form.index == Some(shown.place)) {
                         Some(form) => form_node(form),
-                        None => installed_row(shown),
+                        None => {
+                            let menu = server_menu_of(state).filter(|_| {
+                                state
+                                    .settings_servers
+                                    .menu
+                                    .is_some_and(|open| open.index == shown.place)
+                            });
+                            installed_row(shown, menu);
+                        }
                     }
                 }
             });
@@ -1177,7 +1178,7 @@ fn offer(shown: OfferedRow) {
 }
 
 /// Emits one row of the list: a name, marked when it is switched off, over what it is for and what runs it, with its switch and menu.
-fn installed_row(shown: InstalledRow) {
+fn installed_row(shown: InstalledRow, menu: Option<Menu>) {
     flat_row(3, || {
         titled(
             &shown.title,
@@ -1212,6 +1213,7 @@ fn installed_row(shown: InstalledRow) {
                     let index = shown.place;
                     Button::icon(phosphor::DOTS_THREE, more)
                         .on_click(move || operations.open_settings_menu(index))
+                        .dropdown(menu)
                         .build();
                 }
             },

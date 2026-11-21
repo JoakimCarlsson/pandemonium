@@ -13,7 +13,6 @@ use crate::branch_tasks::BranchTask;
 use crate::git_prompts::{Prompt, StashAction};
 use crate::state::{Outgoing, WorkspaceState};
 use crate::tree_actions::TreeTarget;
-use rustle::Rect;
 
 /// How wide the menus of source control are, in style units, so that the longest row, such as the one that discards changes to many files, keeps its padding.
 const MENU_WIDTH: f32 = 68.0;
@@ -49,8 +48,8 @@ pub struct OpenMenu {
 pub enum MenuPlace {
     /// Where the pointer was, in logical pixels in the window.
     At((f32, f32)),
-    /// Hanging from the control that opened it, at a rectangle of the window.
-    Under(Rect),
+    /// Hanging from the control that opened it, which emits it in its own box.
+    Under,
 }
 
 impl MenuKind {
@@ -202,10 +201,10 @@ impl WorkspaceState {
         self.with_git_menu_placed(kind, MenuPlace::At(at))
     }
 
-    /// The state with the menu `kind` open hanging from the control at `control`, a
-    /// rectangle of the window, and the others closed.
-    pub fn with_git_menu_under(self, kind: MenuKind, control: Rect) -> Self {
-        self.with_git_menu_placed(kind, MenuPlace::Under(control))
+    /// The state with the menu `kind` open hanging from the control that opens it, and the
+    /// others closed.
+    pub fn with_git_menu_under(self, kind: MenuKind) -> Self {
+        self.with_git_menu_placed(kind, MenuPlace::Under)
     }
 
     /// The state with the menu `kind` open at `place`, and the others closed.
@@ -513,19 +512,29 @@ impl WorkspaceState {
         entries
     }
 
-    /// Emits the menu that is open, and nothing when none is.
+    /// Emits the menu that is open where the pointer was, and nothing when none is; one that
+    /// hangs from its control is emitted there, by [`git_menu_under`](Self::git_menu_under).
     pub fn git_menu_node(&self) {
-        let Some(open) = self.git.menu else {
+        let Some(OpenMenu {
+            kind,
+            place: MenuPlace::At((x, y)),
+        }) = self.git.menu
+        else {
             return;
         };
-        let menu = match open.place {
-            MenuPlace::At((x, y)) => {
-                let (dx, dy) = open.kind.offset();
-                Menu::new(x, y).offset(dx, dy)
-            }
-            MenuPlace::Under(control) => Menu::dropdown(control),
-        };
-        self.git_menu(open.kind, menu).build();
+        let (dx, dy) = kind.offset();
+        self.git_menu(kind, Menu::new(x, y).offset(dx, dy)).build();
+    }
+
+    /// The menu `kind`, to emit in the box of the control that opens it and hang from it,
+    /// while it is open there, and nothing otherwise.
+    pub fn git_menu_under(&self, kind: MenuKind) -> Option<Menu> {
+        (self.git.menu
+            == Some(OpenMenu {
+                kind,
+                place: MenuPlace::Under,
+            }))
+        .then(|| self.git_menu(kind, Menu::dropdown()))
     }
 
     /// The menu `kind` with its rows, opening where `menu` does.

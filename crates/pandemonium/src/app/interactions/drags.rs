@@ -457,3 +457,32 @@ fn a_split_lays_its_panes_out_by_its_share() {
     rig.drag(from, (from.0 + 30.0, from.1), 3);
     assert_eq!(pane(&rig, 0).size.width, top.size.width + 30.0);
 }
+
+/// While a tab is held over the right edge of a pane, the highlight of where it would go
+/// covers the right half of the pane's box, inset a little: a fraction of the box, as
+/// Compose's `fillMaxWidth(0.5f)` takes it, filling the box the other way.
+#[test]
+fn a_tab_held_by_an_edge_lights_half_the_pane() {
+    let rig = Rig::shot(Shot::PanesDragging);
+    let pane = rig
+        .region(Target::Window(WindowEvent::Pane(0)))
+        .expect("the pane is drawn");
+    let accent = pm_components::theme::color(pm_components::theme::Role::Accent);
+    let lit: Vec<rustle::Rect> = rig
+        .filled_with(accent)
+        .into_iter()
+        .chain(rig.filled_with(accent.copy(0.18 * accent.alpha())))
+        .filter(|rect| rect.size.width > 40.0 && rect.size.height > 40.0)
+        .collect();
+    let margin = pm_components::shadow_margin();
+    let right = pane.origin.x + pane.size.width + margin;
+    let half = lit
+        .iter()
+        .find(|rect| {
+            (rect.size.width - (pane.size.width / 2.0 - 8.0)).abs() < 1.5
+                && (rect.origin.x + rect.size.width - (right - 4.0)).abs() < 1.5
+        })
+        .unwrap_or_else(|| panic!("no half of {pane:?} lit among {lit:?}"));
+    assert!((half.size.height - (pane.size.height - 8.0)).abs() < 1.5);
+    assert!((half.origin.y - (pane.origin.y + margin + 4.0)).abs() < 1.5);
+}

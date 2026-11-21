@@ -218,8 +218,14 @@ fn update_tab(shown: bool) {
     );
 }
 
-/// Emits a square button in the strip of tabs holding only `icon`, answering to `id`, filled while `on`, saying `hint` when the pointer rests on it and running `on_click` when clicked.
-fn strip_button(icon: Icon, id: Target, on: bool, hint: &str, on_click: impl Fn() + 'static) {
+/// Emits a square button in the strip of tabs holding only `icon`, answering to `id`, filled while `on`, with `dropdown`, the menu it opens while it is open, declared in its box to hang from it, saying `hint` when the pointer rests on it and running `on_click` when clicked.
+fn strip_button(
+    icon: Icon,
+    id: Target,
+    (on, dropdown): (bool, Option<Menu>),
+    hint: &str,
+    on_click: impl Fn() + 'static,
+) {
     let looks = theme::InteractionTones::new()
         .hover(Role::SurfaceHover)
         .radius(Radius::Lg);
@@ -239,7 +245,12 @@ fn strip_button(icon: Icon, id: Target, on: bool, hint: &str, on_click: impl Fn(
                 .control(id, on_click),
             Arrangement::Center,
             Alignment::Center,
-            || glyph(icon, 3.5, tone),
+            || {
+                glyph(icon, 3.5, tone);
+                if let Some(menu) = dropdown {
+                    menu.build();
+                }
+            },
         );
     });
 }
@@ -254,7 +265,7 @@ fn strip_buttons(state: &WorkspaceState) {
             strip_button(
                 phosphor::SQUARE_SPLIT_HORIZONTAL,
                 Target::Window(WindowEvent::PaneMenu),
-                state.pane_menu.is_some(),
+                (state.pane_menu, state.pane_menu.then(pane_menu)),
                 "Split pane",
                 {
                     let operations = pm_components::events::operations();
@@ -265,11 +276,9 @@ fn strip_buttons(state: &WorkspaceState) {
     );
 }
 
-/// Emits the menu of panes, opened with its corner at `at`: the pane being worked in split with an empty pane on each side.
-#[track_caller]
-pub(crate) fn pane_menu(at: (f32, f32)) {
-    Menu::new(at.0, at.1)
-        .offset(-190.0, 14.0)
+/// The menu of panes, hanging from the button it is emitted in: the pane being worked in split with an empty pane on each side.
+fn pane_menu() -> Menu {
+    Menu::dropdown()
         .item(
             "Split pane right",
             None,
@@ -294,7 +303,6 @@ pub(crate) fn pane_menu(at: (f32, f32)) {
             Target::Window(WindowEvent::SplitDown),
             false,
         )
-        .build();
 }
 
 /// The glyph and label of the tab of the page itself.
@@ -539,32 +547,27 @@ fn pane(state: &WorkspaceState, placed: &Placed, toggle: bool, extra: f32) {
     );
 }
 
-/// The modifier of the half of a pane's box along `axis`, as Compose's `fillMaxWidth(0.5f)` or `fillMaxHeight(0.5f)` takes it, filling the box the other way.
-fn half(axis: Axis) -> Modifier {
-    Modifier::new().layout(move |content, room| {
-        let (width, height) = match axis {
-            Axis::Row => (room.max_width / 2.0, room.max_height),
-            Axis::Column => (room.max_width, room.max_height / 2.0),
-        };
-        let size = content.measure(rustle::Constraints {
-            min_width: width,
-            max_width: width,
-            min_height: height,
-            max_height: height,
-        });
-        rustle::Placement::new(size, rustle::Offset::default())
-    })
-}
-
 /// Emits the highlight over the part of a pane's box a tab let go of on `side` would take: the whole box for its middle, the half by an edge for an edge, inset a little and rounded.
 #[track_caller]
 fn drop_zone(side: Side) {
     let zone = match side {
         Side::Center => Modifier::new().fill_max_size(),
-        Side::Left => half(Axis::Row).align(BoxAlignment::CenterStart),
-        Side::Right => half(Axis::Row).align(BoxAlignment::CenterEnd),
-        Side::Top => half(Axis::Column).align(BoxAlignment::TopCenter),
-        Side::Bottom => half(Axis::Column).align(BoxAlignment::BottomCenter),
+        Side::Left => Modifier::new()
+            .fill_max_width_with(0.5)
+            .fill_max_height()
+            .align(BoxAlignment::CenterStart),
+        Side::Right => Modifier::new()
+            .fill_max_width_with(0.5)
+            .fill_max_height()
+            .align(BoxAlignment::CenterEnd),
+        Side::Top => Modifier::new()
+            .fill_max_width()
+            .fill_max_height_with(0.5)
+            .align(BoxAlignment::TopCenter),
+        Side::Bottom => Modifier::new()
+            .fill_max_width()
+            .fill_max_height_with(0.5)
+            .align(BoxAlignment::BottomCenter),
     };
     rustle::spacer(
         zone.z_index(50)

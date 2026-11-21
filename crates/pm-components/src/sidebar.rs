@@ -317,6 +317,12 @@ fn project(state: &WorkspaceState, index: usize) {
                 Target::Sidebar(SidebarEvent::ProjectMore(index)),
             )
             .on_click(move || operations.open_project_menu(index, None))
+            .dropdown(
+                state
+                    .project_menu
+                    .filter(|open| open.project == index && open.at.is_none())
+                    .map(|_| crate::arrange::project_menu(crate::Menu::dropdown())),
+            )
             .build();
         });
         for &(position, session) in members

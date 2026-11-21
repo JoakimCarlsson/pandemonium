@@ -71,12 +71,14 @@ One crate per layer, each depending only on the layers below it.
   set with the interface's font database and whose embedded images are drawn. What floats
   over the screen is rustle popups (`pm-components/src/popups.rs`): popovers
   and the quick input placed against the box they are declared in, menus at a
-  window point or hanging from the control that opened them as a dropdown
-  menu does, and the code assists hanging from the line they are about,
+  window point, or declared in the box of the button that opens them
+  (`Menu::dropdown`, `Button::dropdown`) and hanging from it as Compose's
+  `DropdownMenu` does, and the code assists hanging from the line they are about,
   each placed by a `PopupPositionProvider` and kept inside the window's frame
   clear of its shadow band. Each popup closes itself: menus and popovers are
   focusable, so Escape or a press outside calls their own
-  `on_dismiss_request`, and the boxes typed in over the code close on a press
+  `on_dismiss_request` and the press goes no further, not even to the button
+  that opened them, and the boxes typed in over the code close on a press
   outside that goes on to what it landed on (`Dismissal`). Tooltips are rustle's `tooltip_area`
   (`pm-components/src/tooltip.rs`, `Button::tooltip`), shown after a rest on
   the frame clock, at once in snapshots.
@@ -126,9 +128,10 @@ One crate per layer, each depending only on the layers below it.
   state, so soft wrap and the lines in view follow it and what reads it composes
   again when it changes.
   Controls take event lambdas, as composables do (`pm-components/src/events.rs`):
-  `Interactive::control(id, on_click)` makes a control a focus target that runs
-  `on_click` when clicked, or when Enter or Space reaches it while it holds
-  rustle's focus; `control_with` hands the lambda the modifier keys (rows picked
+  `Interactive::control(id, on_click)` makes a control rustle's focusable
+  `clickable_with`, under the control's focus given with `focus_requester`, that
+  runs `on_click` when a click the app lets count lands, or when Enter or Space
+  comes up on it while it holds rustle's focus; `control_with` hands the lambda the modifier keys (rows picked
   with Shift or Control), and `control_menu`/`pressable_menu` add the lambda of a
   secondary press (a row's, tab's, field's, shell's or page's menu; other controls
   open the menu of the conversation's text). `Button`, `Tile`, `Checkbox` and
@@ -200,7 +203,11 @@ One crate per layer, each depending only on the layers below it.
   in view; the model catches up with what was typed after each event
   (`field_typed`). A field holds its control's rustle `Focus` from the
   registry (`focus::focus_of`), and the window root's key handler sees its keys
-  first, so the app's shortcuts, Enter and the clipboard keep working in it. `pm-editor`'s `Field` is the editing model of the code
+  first, so the app's shortcuts, Enter and the clipboard keep working in it.
+  Each field is composed under rustle's `LOCAL_TEXT_CONTEXT_MENU`
+  (`context_menu::offered`), which keeps the `TextManager` the field hands it:
+  the field's menu cuts, copies, pastes and selects all through those
+  operations, as a Compose text context menu does. `pm-editor`'s `Field` is the editing model of the code
   editor only (several carets, column selection, the editor's undo grouping,
   vim's programmatic edits): it is drawn line by line with rustle's
   `marked_text`, each line telling the state's `TextLines` its shaped layout

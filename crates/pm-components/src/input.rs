@@ -298,7 +298,7 @@ impl<'a> Input<'a> {
         if boxed || invalid {
             own = own.padding(1.0);
         }
-        own = editing(own, id, (self.secure, false)).padding_xy(theme::sp(3), 0.0);
+        own = editing(own, id).padding_xy(theme::sp(3), 0.0);
         let mut kind = theme::text_style(font, 1.4).color(theme::color(Role::Text));
         kind = if self.variant == Variant::Default {
             theme::in_mono(kind)
@@ -351,7 +351,7 @@ impl<'a> Input<'a> {
         let mut own = Modifier::new()
             .fill_max_width()
             .height_in(theme::sp(minimum / 4.0), f32::INFINITY);
-        own = editing(own, self.id, (false, true)).padding_each(
+        own = editing(own, self.id).padding_each(
             theme::sp(4),
             theme::sp(3.5),
             theme::sp(4),
@@ -430,7 +430,7 @@ impl FieldText<'_> {
                 ..theme::scrollbar()
             },
         });
-        let context = context_press(id, self.field, &shaped, &scroll, (self.secure, multiline));
+        let context = context_press(id, self.field, &shaped, &scroll);
         let decorator: TextFieldDecorator = Rc::new(move |inner: &dyn Fn()| {
             rustle::stack_with(
                 Modifier::new().fill_max_width().chain(context.clone()),
@@ -474,18 +474,21 @@ impl FieldText<'_> {
         };
         let field = self.field;
         let secure = self.secure;
+        let menu = crate::context_menu::offered(self.id);
         LOCAL_TEXT_SELECTION_COLORS.provide(colors, || {
-            if secure {
-                rustle::basic_secure_text_field(
-                    modifier,
-                    field,
-                    TextObfuscationMode::Hidden,
-                    rustle::DEFAULT_OBFUSCATION_CHARACTER,
-                    options,
-                );
-            } else {
-                rustle::basic_text_field_with(modifier, field, options);
-            }
+            rustle::LOCAL_TEXT_CONTEXT_MENU.provide(menu, || {
+                if secure {
+                    rustle::basic_secure_text_field(
+                        modifier,
+                        field,
+                        TextObfuscationMode::Hidden,
+                        rustle::DEFAULT_OBFUSCATION_CHARACTER,
+                        options,
+                    );
+                } else {
+                    rustle::basic_text_field_with(modifier, field, options);
+                }
+            });
         });
     }
 }
@@ -541,14 +544,12 @@ fn entering(
 /// The modifier that takes a secondary press on the text of the input `id`:
 /// the caret of `field` goes to the character under the pointer, found in the
 /// `shaped` text scrolled by `scroll`, unless the press is inside the
-/// selection, and the app opens the input's menu, told whether the field is
-/// secure and holds several lines, as `(secure, multiline)` says.
+/// selection, and the app opens the input's menu.
 fn context_press(
     id: Target,
     field: &TextFieldState,
     shaped: &Rc<RefCell<Option<Rc<rustle::TextLayout>>>>,
     scroll: &ScrollState,
-    (secure, multiline): (bool, bool),
 ) -> Modifier {
     let operations = events::operations();
     let focus = crate::focus::focus_of(id);
@@ -574,15 +575,14 @@ fn context_press(
             }
         }
         focus.request_focus();
-        operations.open_text_field_menu(id, crate::events::window_at(event), secure, multiline);
+        operations.open_text_field_menu(id, crate::events::window_at(event));
     })
 }
 
 /// `own` taking the presses of the input `id` with the text cursor: a click gives its
 /// field the keyboard, as a press on a Compose text field's decoration does, and a
-/// secondary press gives it the keyboard and opens its menu, told whether the field is
-/// secure and holds several lines, as `(secure, multiline)` says.
-fn editing(own: Modifier, id: Target, (secure, multiline): (bool, bool)) -> Modifier {
+/// secondary press gives it the keyboard and opens its menu.
+fn editing(own: Modifier, id: Target) -> Modifier {
     let operations = crate::events::operations();
     let focus = crate::focus::focus_of(id);
     let held = focus.clone();
@@ -595,7 +595,7 @@ fn editing(own: Modifier, id: Target, (secure, multiline): (bool, bool)) -> Modi
         },
         move |at| {
             focus.request_focus();
-            operations.open_text_field_menu(id, at, secure, multiline);
+            operations.open_text_field_menu(id, at);
         },
     )
 }

@@ -767,10 +767,10 @@ impl WorkspaceState {
         true
     }
 
-    /// The state with the menu of panes open with its corner at `at`.
-    pub fn with_pane_menu(mut self, at: (f32, f32)) -> Self {
+    /// The state with the menu of panes open, hanging from its button.
+    pub fn with_pane_menu(mut self) -> Self {
         self = self.without_menu();
-        self.pane_menu = Some(at);
+        self.pane_menu = true;
         self
     }
 

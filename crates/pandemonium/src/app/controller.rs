@@ -376,43 +376,30 @@ impl Operations for Controller {
         self.with(App::attach);
     }
 
-    /// Opens the menu of a server of the settings where its button was clicked.
+    /// Opens the menu of a server of the settings, hanging from its button.
     fn open_settings_menu(&self, index: usize) {
-        self.with(|app| {
-            if let Some(at) = app.clicked_at() {
-                app.open_settings_menu(index, at);
-            }
-        });
+        self.with(|app| app.open_settings_menu(index));
     }
 
-    /// Opens the menu of a project at the pointer, or where its button was clicked.
+    /// Opens the menu of a project at the pointer, or hanging from its button.
     fn open_project_menu(&self, project: usize, at: Option<(f32, f32)>) {
         self.with(|app| {
-            let at = match at {
-                Some(at) => Some(app.framed_point(at)),
-                None => app.clicked_at(),
-            };
-            if let Some(at) = at {
-                app.open_project_menu(project, at);
-            }
+            let at = at.map(|at| app.framed_point(at));
+            app.open_project_menu(project, at);
         });
     }
 
     /// Opens a menu of the changes.
-    fn open_git_menu(&self, kind: MenuKind, trigger: Option<Target>, at: Option<(f32, f32)>) {
+    fn open_git_menu(&self, kind: MenuKind, at: Option<(f32, f32)>) {
         self.with(|app| {
             let at = at.map(|at| app.framed_point(at));
-            app.open_git_menu(kind, trigger, at);
+            app.open_git_menu(kind, at);
         });
     }
 
-    /// Opens the menu of the pane that has the keyboard where its button was clicked.
+    /// Opens the menu of the pane that has the keyboard, hanging from its button.
     fn open_pane_menu(&self) {
-        self.with(|app| {
-            if let Some(at) = app.clicked_at() {
-                app.open_pane_menu(at);
-            }
-        });
+        self.with(App::open_pane_menu);
     }
 
     /// Opens the menu of a session.
@@ -464,10 +451,10 @@ impl Operations for Controller {
     }
 
     /// Opens the menu of a text field, which said whether it is secure and multiline.
-    fn open_text_field_menu(&self, field: Target, at: (f32, f32), secure: bool, multiline: bool) {
+    fn open_text_field_menu(&self, field: Target, at: (f32, f32)) {
         self.with(|app| {
             let at = app.framed_point(at);
-            app.open_text_menu(field, at, secure, multiline);
+            app.open_text_menu(field, at);
         });
     }
 

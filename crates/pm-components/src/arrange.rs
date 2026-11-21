@@ -19,8 +19,8 @@ pub struct SessionMenu {
 pub struct ProjectMenu {
     /// The project, by position.
     pub project: usize,
-    /// Where it opened, in logical pixels.
-    pub at: (f32, f32),
+    /// Where it opened, in logical pixels, or nothing when it hangs from the project's button.
+    pub at: Option<(f32, f32)>,
 }
 
 /// A project being dragged to another place in the list.
@@ -190,8 +190,9 @@ impl WorkspaceState {
         self
     }
 
-    /// The state with the menu of the project at `project` open at `at`.
-    pub fn with_project_menu(mut self, project: usize, at: (f32, f32)) -> Self {
+    /// The state with the menu of the project at `project` open at `at`, or hanging from the
+    /// project's button without a point.
+    pub fn with_project_menu(mut self, project: usize, at: Option<(f32, f32)>) -> Self {
         if project < self.projects.len() {
             self.menu = None;
             self.session_menu = None;
@@ -338,4 +339,22 @@ impl WorkspaceState {
         self.project_drag = None;
         self.sync_context();
     }
+}
+
+/// `menu` holding the rows of the menu of a project: start a session in it, or take it out of
+/// the window.
+pub fn project_menu(menu: crate::Menu) -> crate::Menu {
+    menu.item(
+        "New session",
+        None,
+        Target::Menu(MenuEvent::ProjectMenuNew),
+        false,
+    )
+    .separator()
+    .item(
+        "Remove workspace",
+        None,
+        Target::Menu(MenuEvent::ProjectMenuRemove),
+        false,
+    )
 }

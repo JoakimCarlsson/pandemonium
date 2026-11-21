@@ -77,10 +77,11 @@ impl App {
         self.drop_tree(modifiers);
     }
 
-    /// Opens the menu of panes where its button was clicked, at `at` in the window's frame.
-    pub(super) fn open_pane_menu(&mut self, at: (f32, f32)) {
+    /// Opens the menu of panes, hanging from its button.
+    pub(super) fn open_pane_menu(&mut self) {
         self.model.update(|state| {
-            *state = std::mem::take(state).in_workspace(|state| state.with_pane_menu(at))
+            *state = std::mem::take(state)
+                .in_workspace(pm_components::state::WorkspaceState::with_pane_menu)
         });
     }
 

@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use rustle::{Embedded, Key, KeyEvent, Modifier, Modifiers, Offset, PointerButton};
 
-use super::{Change, Interactive, Operations, activates, provide};
+use super::{Change, Interactive, Operations, provide};
 use crate::pointing::Press;
 
 /// Operations that let every click count and keep what the views asked of them.
@@ -102,23 +102,54 @@ fn press(ui: &mut Embedded, button: PointerButton) {
     ui.update();
 }
 
-/// Enter and the space bar going down activate a control; their release and other keys do not.
+/// Sends `key` going down, then coming up, with the modifier keys `modifiers` held.
+fn stroke(ui: &mut Embedded, key: Key, modifiers: Modifiers) {
+    ui.set_modifiers(modifiers);
+    ui.key_event(down(key.clone(), modifiers));
+    ui.key_event(KeyEvent {
+        pressed: false,
+        ..KeyEvent::press(key, modifiers)
+    });
+    ui.set_modifiers(Modifiers::NONE);
+    ui.update();
+}
+
+/// Enter and the space bar activate the focused control as they come up; going down alone,
+/// coming up alone and other keys do not.
 #[test]
 fn enter_and_space_activate() {
-    assert!(activates(&down(Key::Enter, Modifiers::NONE)));
-    assert!(activates(&down(
-        Key::Character(" ".into()),
-        Modifiers::NONE
-    )));
-    assert!(!activates(&KeyEvent {
+    let operations = Rc::new(Recording::default());
+    let asked = Rc::new(Asked::default());
+    let mut ui = laid_out(
+        &operations,
+        &asked,
+        false,
+        Some(Target::Window(WindowEvent::Control)),
+    );
+    ui.key_event(down(Key::Enter, Modifiers::NONE));
+    ui.update();
+    assert!(asked.clicks.borrow().is_empty(), "the key went down only");
+    ui.key_event(KeyEvent {
         pressed: false,
         ..KeyEvent::press(Key::Enter, Modifiers::NONE)
-    }));
-    assert!(!activates(&down(
-        Key::Character("a".into()),
-        Modifiers::NONE
-    )));
-    assert!(!activates(&down(Key::Escape, Modifiers::NONE)));
+    });
+    ui.update();
+    assert_eq!(asked.clicks.borrow().len(), 1);
+    ui.key_event(KeyEvent {
+        pressed: false,
+        ..KeyEvent::press(Key::Enter, Modifiers::NONE)
+    });
+    stroke(&mut ui, Key::Character("a".into()), Modifiers::NONE);
+    stroke(&mut ui, Key::Escape, Modifiers::NONE);
+    assert_eq!(asked.clicks.borrow().len(), 1);
+    let mut ui = laid_out(
+        &operations,
+        &asked,
+        false,
+        Some(Target::Window(WindowEvent::Control)),
+    );
+    stroke(&mut ui, Key::Character(" ".into()), Modifiers::NONE);
+    assert_eq!(asked.clicks.borrow().len(), 2);
 }
 
 /// A click runs the control's lambda with the keys held, after the press is reported.
@@ -141,8 +172,7 @@ fn keys_run_the_lambda_of_the_focused_control() {
     let operations = Rc::new(Recording::default());
     let asked = Rc::new(Asked::default());
     let mut ui = laid_out(&operations, &asked, false, None);
-    ui.key_event(down(Key::Enter, Modifiers::NONE));
-    ui.update();
+    stroke(&mut ui, Key::Enter, Modifiers::NONE);
     assert!(asked.clicks.borrow().is_empty());
     let mut ui = laid_out(
         &operations,
@@ -154,9 +184,8 @@ fn keys_run_the_lambda_of_the_focused_control() {
         shift: true,
         ..Modifiers::NONE
     };
-    ui.key_event(down(Key::Enter, shift));
-    ui.key_event(down(Key::Character(" ".into()), Modifiers::NONE));
-    ui.update();
+    stroke(&mut ui, Key::Enter, shift);
+    stroke(&mut ui, Key::Character(" ".into()), Modifiers::NONE);
     assert_eq!(*asked.clicks.borrow(), vec![shift, Modifiers::NONE]);
 }
 

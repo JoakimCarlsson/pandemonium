@@ -110,8 +110,9 @@ impl BrowserCommand {
 /// The menu open over a page of the browser, and where.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BrowserMenu {
-    /// Where it opened, in logical pixels.
-    pub at: (f32, f32),
+    /// Where it opened, in logical pixels, or nothing when it hangs from the button of the
+    /// bar that opened it.
+    pub at: Option<(f32, f32)>,
     /// Whether it offers only what can be put into the prompt, as the button of the bar opens it.
     pub captures_only: bool,
 }
@@ -119,16 +120,16 @@ pub struct BrowserMenu {
 impl WorkspaceState {
     /// The state with the menu over the page open at `at`, and the other menus closed.
     pub fn with_browser_menu(self, at: (f32, f32)) -> Self {
-        self.with_browser_menu_of(at, false)
+        self.with_browser_menu_of(Some(at), false)
     }
 
-    /// The state with the menu of what can be put into the prompt from the page open at `at`, and the other menus closed.
-    pub fn with_browser_capture_menu(self, at: (f32, f32)) -> Self {
-        self.with_browser_menu_of(at, true)
+    /// The state with the menu of what can be put into the prompt from the page open, hanging from the button of the bar that opens it, and the other menus closed.
+    pub fn with_browser_capture_menu(self) -> Self {
+        self.with_browser_menu_of(None, true)
     }
 
-    /// The state with the menu over the page open at `at`, offering only what can be put into the prompt when `captures_only`, and the other menus closed.
-    fn with_browser_menu_of(self, at: (f32, f32), captures_only: bool) -> Self {
+    /// The state with the menu over the page open at `at`, or hanging from its button without a point, offering only what can be put into the prompt when `captures_only`, and the other menus closed.
+    fn with_browser_menu_of(self, at: Option<(f32, f32)>, captures_only: bool) -> Self {
         if self.browser.is_none() {
             return self;
         }
@@ -173,25 +174,37 @@ impl WorkspaceState {
     }
 }
 
-/// Emits the menu over a page opened at `open`.
+/// Emits the menu over a page opened at a point, as `open` says, and nothing for one that
+/// hangs from its button, which emits it there ([`capture_dropdown`]).
 #[track_caller]
 pub fn browser_menu(open: BrowserMenu) {
+    if let Some((x, y)) = open.at {
+        browser_menu_rows(open, Menu::new(x, y).offset(-8.0, 4.0)).build();
+    }
+}
+
+/// The menu of what can be put into the prompt from the page, to emit in the box of the
+/// button of the bar that opens it and hang from it, while it is open there.
+pub fn capture_dropdown(state: &WorkspaceState) -> Option<Menu> {
+    state
+        .browser_menu
+        .filter(|open| open.at.is_none())
+        .map(|open| browser_menu_rows(open, Menu::dropdown()))
+}
+
+/// `menu` holding the rows of the menu over a page that `open` says it offers.
+fn browser_menu_rows(open: BrowserMenu, menu: Menu) -> Menu {
     let row = |menu: Menu, command: BrowserCommand| {
         menu.item(command.label(), command.keys(), command.id(), false)
     };
     let operations = crate::events::operations();
-    let menu = Menu::new(open.at.0, open.at.1)
-        .offset(-8.0, 4.0)
-        .width(68.0)
-        .row_height(6.5)
-        .on_pick(move |row| {
-            if let Some(command) = BrowserCommand::of(row) {
-                operations.browser_menu_command(command);
-            }
-        });
+    let menu = menu.width(68.0).row_height(6.5).on_pick(move |row| {
+        if let Some(command) = BrowserCommand::of(row) {
+            operations.browser_menu_command(command);
+        }
+    });
     if open.captures_only {
-        BrowserCommand::CAPTURES.into_iter().fold(menu, row).build();
-        return;
+        return BrowserCommand::CAPTURES.into_iter().fold(menu, row);
     }
     use BrowserCommand::*;
     let groups: [&[BrowserCommand]; 7] = [
@@ -210,5 +223,4 @@ pub fn browser_menu(open: BrowserMenu) {
             let menu = if at == 0 { menu } else { menu.separator() };
             group.iter().copied().fold(menu, row)
         })
-        .build();
 }

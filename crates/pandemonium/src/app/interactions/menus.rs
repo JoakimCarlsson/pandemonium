@@ -53,6 +53,31 @@ fn a_field_menu_selects_and_pastes() {
     assert_eq!(prompt(&rig), "pasted");
 }
 
+/// The rows of a field's menu copy and cut its selection through the field's own operations,
+/// and offer neither while nothing is selected.
+#[test]
+fn a_field_menu_copies_and_cuts() {
+    let mut rig = Rig::shot(Shot::Workspace);
+    rig.click_on(Target::Composer(ComposerEvent::Prompt));
+    rig.type_text("draft");
+    let at = rig.caret_in_text("draft", 2).expect("the prompt is drawn");
+    rig.right_click(at);
+    assert!(rig.drawn(Target::Menu(MenuEvent::MenuPaste)));
+    assert!(
+        !rig.drawn(Target::Menu(MenuEvent::MenuCopy)),
+        "nothing is selected"
+    );
+    rig.click_on(Target::Menu(MenuEvent::MenuSelectAll));
+    rig.right_click(at);
+    rig.click_on(Target::Menu(MenuEvent::MenuCopy));
+    assert_eq!(rig.clipboard.text.borrow().as_deref(), Some("draft"));
+    assert_eq!(prompt(&rig), "draft");
+    rig.right_click(at);
+    rig.click_on(Target::Menu(MenuEvent::MenuCut));
+    assert_eq!(prompt(&rig), "");
+    assert_eq!(rig.focused(), Some(Target::Composer(ComposerEvent::Prompt)));
+}
+
 /// The secondary button over a session's row opens its menu, whose rows act on that session.
 #[test]
 fn a_session_menu_opens_on_its_row() {

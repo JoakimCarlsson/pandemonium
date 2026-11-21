@@ -2,7 +2,7 @@
 //! and a menu, a popover or a list closes itself on Escape or a press outside it, while a
 //! press on the control that opens it toggles it.
 
-use pm_components::areas::{ComposerEvent, GitEvent, MenuEvent, SidebarEvent};
+use pm_components::areas::{ComposerEvent, GitEvent, MenuEvent, SidebarEvent, WindowEvent};
 use pm_components::git_menus::MenuPlace;
 use pm_components::target::Target;
 
@@ -21,10 +21,7 @@ fn a_source_menu_hangs_from_its_button_and_escape_closes_it() {
         .expect("the button over the changes is drawn");
     rig.click_on(Target::Git(GitEvent::ChangesMore));
     let place = rig.state(|state| state.git.menu.map(|open| open.place));
-    assert!(
-        matches!(place, Some(MenuPlace::Under(control)) if control == button),
-        "{place:?}"
-    );
+    assert!(place == Some(MenuPlace::Under), "{place:?}");
     let row = rig
         .region(Target::Git(GitEvent::GitMenuRow(0)))
         .expect("the menu is drawn");
@@ -96,4 +93,41 @@ fn a_popover_closes_on_escape_and_on_a_press_outside() {
         below.origin.y + below.size.height + 40.0,
     ));
     assert!(rig.state(|state| state.picker.is_none()));
+}
+
+/// The menus that buttons open hang from their button, whatever the pointer did, as a
+/// dropdown menu declared in the button's box does: the menu of panes and the menu of a
+/// project each start under their button, lined up with one of its edges.
+#[test]
+fn menus_hang_from_the_buttons_that_open_them() {
+    for (shot, button, row) in [
+        (
+            Shot::Code,
+            Target::Window(WindowEvent::PaneMenu),
+            Target::Window(WindowEvent::SplitRight),
+        ),
+        (
+            Shot::Workspace,
+            Target::Sidebar(SidebarEvent::ProjectMore(1)),
+            Target::Menu(MenuEvent::ProjectMenuNew),
+        ),
+    ] {
+        let mut rig = Rig::shot(shot);
+        let control = rig.region(button).expect("the button is drawn");
+        let pressed_at = (
+            control.origin.x + control.size.width - 2.0,
+            control.origin.y + control.size.height - 2.0,
+        );
+        rig.click(pressed_at);
+        let drawn = rig.region(row).expect("the menu is drawn");
+        assert!(
+            drawn.origin.y >= control.origin.y + control.size.height,
+            "{button:?}: {drawn:?} under {control:?}"
+        );
+        let left = (drawn.origin.x - control.origin.x).abs() < 12.0;
+        let right = (drawn.origin.x + drawn.size.width - (control.origin.x + control.size.width))
+            .abs()
+            < 12.0;
+        assert!(left || right, "{button:?}: {drawn:?} beside {control:?}");
+    }
 }

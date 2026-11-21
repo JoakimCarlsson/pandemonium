@@ -194,7 +194,7 @@ fn commit_row(commit: &Commit, columns: usize, position: usize) {
                 },
                 {
                     let operations = crate::events::operations();
-                    move |at| operations.open_git_menu(MenuKind::History(position), None, Some(at))
+                    move |at| operations.open_git_menu(MenuKind::History(position), Some(at))
                 },
             )
             .padding_xy(theme::sp(3), 0.0),
@@ -250,7 +250,9 @@ fn visible(commits: &[Commit], columns: usize, scroll: f32, height: f32) {
 }
 
 /// Emits the button saying which references the graph lists, which switches between the checked out branch and all of them, with `tip` shown while it is hovered.
-fn refs_button(all: bool, tip: &str) {
+fn refs_button(state: &WorkspaceState, tip: &str) {
+    let all = state.git.graph_all;
+    let menu = state.git_menu_under(MenuKind::Refs);
     crate::tooltip::with_tooltip(tip, || {
         rustle::row_arranged(
             Modifier::new()
@@ -266,13 +268,7 @@ fn refs_button(all: bool, tip: &str) {
                 .cursor(CursorIcon::Pointer)
                 .control(Target::Git(GitEvent::GraphRefs), {
                     let operations = crate::events::operations();
-                    move || {
-                        operations.open_git_menu(
-                            MenuKind::Refs,
-                            Some(Target::Git(GitEvent::GraphRefs)),
-                            None,
-                        )
-                    }
+                    move || operations.open_git_menu(MenuKind::Refs, None)
                 })
                 .padding_xy(theme::sp(2), 0.0),
             Arrangement::SpacedBy(theme::sp(1)),
@@ -281,6 +277,9 @@ fn refs_button(all: bool, tip: &str) {
                 glyph(phosphor::GIT_FORK, 3.5, Role::Muted);
                 line(if all { "All" } else { "Auto" }, 12, 1.4, Role::Text);
                 glyph(phosphor::CARET_DOWN, 3.0, Role::Muted);
+                if let Some(menu) = menu {
+                    menu.build();
+                }
             },
         );
     });
@@ -314,7 +313,7 @@ fn strip(state: &WorkspaceState) {
                 fold,
             );
             line("Graph", 13, 1.4, Role::Text);
-            refs_button(git.graph_all, "Choose history references");
+            refs_button(state, "Choose history references");
             for (icon, id, spinning, tip) in [
                 (
                     phosphor::TARGET,

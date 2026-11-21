@@ -1,12 +1,12 @@
-//! The menu: a floating list of actions opened at a point or hanging from the control that
-//! opened it.
+//! The menu: a floating list of actions opened at a point, or declared in the box of the
+//! control that opens it and hanging from it, as Compose's `DropdownMenu` is.
 
 use crate::events::{Event, send};
 use crate::target::Target;
 use crate::theme;
 use crate::theme::Indicated;
 use rustle::{Alignment, Arrangement, TextOverflow};
-use rustle::{CursorIcon, Modifier, Rect};
+use rustle::{CursorIcon, Modifier};
 use std::rc::Rc;
 
 use crate::Surface;
@@ -28,8 +28,9 @@ enum Place {
         /// How far the corner is moved from the point.
         offset: (f32, f32),
     },
-    /// Hanging from the control at a rectangle of the window, as a dropdown menu does.
-    Dropdown(Rect),
+    /// Hanging from the box it is declared in, the control that opens it, as a dropdown
+    /// menu does.
+    Dropdown,
 }
 
 /// One row of a menu, or the rule between groups of rows.
@@ -54,7 +55,7 @@ pub enum Entry {
 ///
 /// Build it with [`Menu::new`] or [`Menu::dropdown`], add rows with [`Menu::item`] and
 /// [`Menu::separator`], and emit it with [`Menu::build`]. It floats over everything at its
-/// point, or under the control that opened it, kept inside the window; Escape or a
+/// point, or under the control it is emitted in, kept inside the window; Escape or a
 /// press outside it closes it.
 #[derive(Clone, Debug)]
 pub struct Menu {
@@ -91,11 +92,12 @@ impl Menu {
         })
     }
 
-    /// An empty menu hanging from the control at `control`, a rectangle of the window: below
-    /// it with their left edges together, their right edges together when it would leave the
-    /// window on the right, and above the control when there is no room below.
-    pub fn dropdown(control: Rect) -> Self {
-        Self::placed(Place::Dropdown(control))
+    /// An empty menu hanging from the box it is emitted in, the control that opens it, as
+    /// Compose's `DropdownMenu` does: below it with their left edges together, their right
+    /// edges together when it would leave the window on the right, and above the control when
+    /// there is no room below.
+    pub fn dropdown() -> Self {
+        Self::placed(Place::Dropdown)
     }
 
     /// The menu with its corner moved `dx`, `dy` logical pixels from the point it opens at.
@@ -186,7 +188,7 @@ impl Menu {
         let dismissal = Dismissal::focusable(WorkspaceState::without_menu);
         match self.place {
             Place::At { point, offset } => at_window(point, offset, dismissal, content),
-            Place::Dropdown(control) => dropdown(control, MENU_GAP, dismissal, content),
+            Place::Dropdown => dropdown(MENU_GAP, dismissal, content),
         }
     }
 }

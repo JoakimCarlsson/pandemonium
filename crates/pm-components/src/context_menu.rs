@@ -1,8 +1,15 @@
 //! The menu that opens over a text field: its rows and the field it acts on.
+//!
+//! A text field hands rustle's [`TextContextMenu`] provided around it what it can do on its
+//! text now, a [`TextManager`], as a Compose text field does; [`offered`] keeps the latest of
+//! each field, and the field's menu offers those operations and runs them.
 
-use crate::areas::MenuEvent;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+
+use crate::areas::{ComposerEvent, MenuEvent};
 use crate::target::Target;
-use rustle::TextFieldState;
+use rustle::{TextContextMenu, TextFieldState, TextManager};
 
 use crate::Menu;
 
@@ -90,10 +97,26 @@ pub struct ContextMenu {
     pub field: Target,
     /// Where it opened, in logical pixels.
     pub at: (f32, f32),
-    /// Whether the field said it keeps what it holds off the clipboard, as a key does.
-    pub secure: bool,
-    /// Whether the field said it holds several lines, so what is pasted keeps its line breaks.
-    pub multiline: bool,
+}
+
+thread_local! {
+    /// What each text field composed on this thread can do on its text, as it last said.
+    static OFFERED: RefCell<BTreeMap<Target, TextManager>> = RefCell::default();
+}
+
+/// The text context menu for the field `id`, to provide around its rustle text field: it
+/// keeps what the field says it can do on its text for the field's menu, and emits the field
+/// as it is.
+pub fn offered(id: Target) -> TextContextMenu {
+    TextContextMenu::new(move |manager, content| {
+        OFFERED.with(|offered| offered.borrow_mut().insert(id, manager));
+        content();
+    })
+}
+
+/// What the field `id` said, the last time it was composed, it can do on its text.
+fn offered_by(id: Target) -> TextManager {
+    OFFERED.with(|offered| offered.borrow().get(&id).cloned().unwrap_or_default())
 }
 
 /// Emits the menu over the file shown, opened at `open`: the language server's ways around the code when `coding`, what the selection allows, and the file's place on this machine when it is on this machine, `local`; `keymap` names the keys of each command.
@@ -164,12 +187,14 @@ fn picked_in_field() -> impl Fn(Target) + 'static {
     move |row| operations.field_menu_picked(row)
 }
 
-/// Emits the menu opened at `open`, with each row enabled by what `field` can
-/// do; nothing is copied or cut from a field that said it is secure.
+/// Emits the menu opened at `open`, with each row enabled by what `field` can do: its
+/// history undoes and redoes, and the field's own operations cut, copy, paste and select
+/// all, those it does not offer, such as copying from a secure field, doing nothing; the
+/// prompt takes files and pictures pasted as attachments first.
 #[track_caller]
 pub fn field_menu(field: &TextFieldState, open: ContextMenu) {
     let undo = field.undo_state();
-    let copies = !open.secure && !field.selection().collapsed();
+    let manager = offered_by(open.field);
     let rows = [
         (
             "Undo",
@@ -185,8 +210,20 @@ pub fn field_menu(field: &TextFieldState, open: ContextMenu) {
             undo.can_redo(),
             true,
         ),
-        ("Cut", "Ctrl+X", MenuEvent::MenuCut, copies, false),
-        ("Copy", "Ctrl+C", MenuEvent::MenuCopy, copies, false),
+        (
+            "Cut",
+            "Ctrl+X",
+            MenuEvent::MenuCut,
+            manager.cut.is_some(),
+            false,
+        ),
+        (
+            "Copy",
+            "Ctrl+C",
+            MenuEvent::MenuCopy,
+            manager.copy.is_some(),
+            false,
+        ),
         ("Paste", "Ctrl+V", MenuEvent::MenuPaste, true, true),
         (
             "Select all",
@@ -196,8 +233,29 @@ pub fn field_menu(field: &TextFieldState, open: ContextMenu) {
             false,
         ),
     ];
+    let operations = crate::events::operations();
+    let picked = picked_in_field();
     Menu::new(open.at.0, open.at.1)
-        .on_pick(picked_in_field())
+        .on_pick(move |row| {
+            let run = |operation: &Option<std::rc::Rc<dyn Fn()>>| {
+                if let Some(operation) = operation {
+                    operation();
+                }
+            };
+            match row {
+                Target::Menu(MenuEvent::MenuUndo) => undo.undo(),
+                Target::Menu(MenuEvent::MenuRedo) => undo.redo(),
+                Target::Menu(MenuEvent::MenuCut) => run(&manager.cut),
+                Target::Menu(MenuEvent::MenuCopy) => run(&manager.copy),
+                Target::Menu(MenuEvent::MenuPaste)
+                    if open.field == Target::Composer(ComposerEvent::Prompt)
+                        && operations.paste_attachments() => {}
+                Target::Menu(MenuEvent::MenuPaste) => run(&manager.paste),
+                Target::Menu(MenuEvent::MenuSelectAll) => run(&manager.select_all),
+                _ => {}
+            }
+            picked(row);
+        })
         .rows(rows.map(|(label, keys, event, on, rule)| {
             (label, Some(keys.to_owned()), Target::Menu(event), on, rule)
         }))

@@ -13,7 +13,6 @@ use crate::theme::sp;
 use rustle::phosphor;
 
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
 
 use rustle::{Color, Modifier};
 
@@ -405,14 +404,6 @@ impl Item<'_> {
             Item::Space => Some(Target::Tree(TreeEvent::TreeSpace)),
         }
     }
-
-    /// The row of the tree the item is, if it is one.
-    fn row(&self) -> Option<Target> {
-        match self {
-            Item::File { .. } | Item::Folder { .. } => self.id(),
-            _ => None,
-        }
-    }
 }
 
 /// Every item of the list of the project's files in `state`, from the top down: the rows of
@@ -499,48 +490,6 @@ impl WorkspaceState {
             crate::rows_in_view::keep_in_view(&self.files_list, at);
         }
     }
-}
-
-/// The key handler of the tree: Tab or Shift+Tab from a row moves to the next or previous row
-/// in tree order, scrolling it wholly into view and asking for focus on it, as a lazy list
-/// brings the item focus moves to into view; past the first or last row Tab is left alone.
-fn walks_rows(rows: Rc<Vec<(Target, usize)>>, list: rustle::LazyListState) -> Modifier {
-    let requesters = crate::focus::requesters();
-    Modifier::new().on_key_event(move |event| {
-        if !event.pressed || event.key != rustle::Key::Tab {
-            return false;
-        }
-        let Some(at) = rows
-            .iter()
-            .position(|(id, _)| requesters.focus_of(*id).is_focused())
-        else {
-            return false;
-        };
-        let next = if event.modifiers.shift {
-            at.checked_sub(1)
-        } else {
-            Some(at + 1).filter(|next| *next < rows.len())
-        };
-        let Some((id, index)) = next.map(|next| rows[next]) else {
-            return false;
-        };
-        crate::rows_in_view::keep_in_view(&list, index);
-        requesters.request_focus(id);
-        true
-    })
-}
-
-/// Keeps the item being composed composed while rustle's focus is on `id`, even scrolled
-/// out of view, as a focused item of a lazy list pins itself.
-fn pin_while_focused(id: Target) {
-    let focused = crate::focus::is_focused(id);
-    let container = rustle::LOCAL_PINNABLE_CONTAINER.current();
-    rustle::disposable_effect(focused, move || {
-        let handle = container
-            .filter(|_| focused)
-            .map(|container| container.pin());
-        move || drop(handle)
-    });
 }
 
 /// Emits the space under the rows: as tall as what the rows leave of the view, and
@@ -650,44 +599,28 @@ fn folder_row(
 pub fn list(state: &WorkspaceState) {
     let entries = tree(&state.files, &state.tree_folders);
     let items = items(state, &entries);
-    let rows: Rc<Vec<(Target, usize)>> = Rc::new(
-        items
-            .iter()
-            .enumerate()
-            .filter_map(|(index, item)| item.row().map(|id| (id, index)))
-            .collect(),
-    );
     let marks = marks(state);
     let chosen = state.tree_picked();
-    let keys = walks_rows(rows, state.files_list.clone());
     rustle::lazy_list_with(
-        Modifier::new().fill_max_width().weight(1.0).chain(keys),
+        Modifier::new().fill_max_width().weight(1.0),
         &state.files_list,
         rustle::LazyContent::new().padding(sp(1)),
         items.len(),
         |index| items[index].id(),
-        |index| {
-            let item = &items[index];
-            if let Some(id) = item.id() {
-                pin_while_focused(id);
+        |index| match &items[index] {
+            Item::Field { folder, depth } => {
+                name_lines(state, *folder, *depth);
             }
-            match item {
-                Item::Field { folder, depth } => {
-                    name_lines(state, *folder, *depth);
-                }
-                Item::File { name, index, depth } => {
-                    file_row(state, &marks, &chosen, name, *index, *depth)
-                }
-                Item::Folder { folder, depth } => {
-                    folder_row(state, &marks, &chosen, folder, *depth)
-                }
-                Item::Nothing => crate::review::nothing(if state.files_loading() {
-                    "Loading files…"
-                } else {
-                    "No files yet."
-                }),
-                Item::Space => space(state, index),
+            Item::File { name, index, depth } => {
+                file_row(state, &marks, &chosen, name, *index, *depth)
             }
+            Item::Folder { folder, depth } => folder_row(state, &marks, &chosen, folder, *depth),
+            Item::Nothing => crate::review::nothing(if state.files_loading() {
+                "Loading files…"
+            } else {
+                "No files yet."
+            }),
+            Item::Space => space(state, index),
         },
     );
 }

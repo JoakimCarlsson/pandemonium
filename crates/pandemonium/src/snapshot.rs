@@ -2157,17 +2157,12 @@ pub enum Trigger {
 }
 
 impl Trigger {
-    /// The menu the control opens and where the control is, in logical pixels.
-    fn control(self) -> (MenuKind, rustle::Rect) {
-        let (kind, (x, y, width, height)) = match self {
-            Self::Changes => (MenuKind::Source, (1245.0, 130.0, 26.0, 28.0)),
-            Self::ChangesCompact => (MenuKind::Source, (1245.0, 112.0, 26.0, 24.0)),
-            Self::Refs => (MenuKind::Refs, (1065.0, 774.0, 66.0, 24.0)),
-        };
-        (
-            kind,
-            rustle::Rect::new(rustle::Offset::new(x, y), rustle::Size::new(width, height)),
-        )
+    /// The menu the control opens.
+    fn kind(self) -> MenuKind {
+        match self {
+            Self::Changes | Self::ChangesCompact => MenuKind::Source,
+            Self::Refs => MenuKind::Refs,
+        }
     }
 
     /// How closely the window is set for the shot.
@@ -3285,13 +3280,13 @@ impl Shot {
             Self::Source => Screen::Workspace(source()),
             Self::SourceMenu(trigger) => {
                 let state = source();
-                let (kind, control) = trigger.control();
+                let kind = trigger.kind();
                 let mut window = state.window.clone();
                 window.appearance.density = trigger.density();
                 Screen::Workspace(
                     state
                         .with_window_settings(window)
-                        .with_git_menu_under(kind, control),
+                        .with_git_menu_under(kind),
                 )
             }
             Self::HistoryMenu => {
@@ -3546,7 +3541,7 @@ impl Shot {
                 Screen::Workspace(state)
             }
             Self::ProjectMenu => {
-                Screen::Workspace(workspace().with_project_menu(1, (244.0, 238.0)))
+                Screen::Workspace(workspace().with_project_menu(1, None))
             }
             Self::Dragging => Screen::Workspace(workspace().dragged_over(0, 2, (150.0, 470.0))),
             Self::Welcome => Screen::Workspace(welcome()),
@@ -3610,7 +3605,7 @@ impl Shot {
                 state.open_viewer("README.md".to_owned(), false);
                 Screen::Workspace(state)
             }
-            Self::PaneMenu => Screen::Workspace(code().with_pane_menu((880.0, 30.0))),
+            Self::PaneMenu => Screen::Workspace(code().with_pane_menu()),
             Self::PanesDragging => Screen::Workspace(code().pane_dragged(
                 code_item(),
                 Some((0, Side::Right)),
@@ -3976,7 +3971,7 @@ impl Shot {
             Self::CaptureMenu => {
                 let mut state = workspace_sample();
                 state.open_browser("http://localhost:5173");
-                Screen::Workspace(state.with_browser_capture_menu((428.0, 56.0)))
+                Screen::Workspace(state.with_browser_capture_menu())
             }
             Self::CapturesSent => {
                 let mut state = workspace_sample();
@@ -4114,7 +4109,7 @@ impl Shot {
                             tool_listing("GitHub", "github", "https://api.githubcopilot.com/mcp/"),
                         ]),
                     )
-                    .with_settings_menu(0, (901.0, 343.0)),
+                    .with_settings_menu(0),
             ),
             Self::SettingsForm => Screen::Workspace(
                 welcome()

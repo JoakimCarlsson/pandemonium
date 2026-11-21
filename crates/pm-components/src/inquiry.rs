@@ -282,7 +282,7 @@ fn tile_content(
     );
 }
 
-/// Emits the answers of a question side by side for comparing, as tiles in lines across the card, as many to a line as [`tiles_per_row`] says for the width the card gives them, as Compose's `BoxWithConstraints` chooses, each line shared by weight and a short last line kept to the same share with weighted spacers; those of `picked` are drawn as taken, with the pictures `figures` holds of their mockups and the offer `offer` as [`tile`] takes them.
+/// Emits the answers of a question side by side for comparing, as tiles in a flow row across the card, as many to a line as [`tiles_per_row`] says for the width the card gives them, as Compose's `BoxWithConstraints` chooses, each line shared by weight as Compose's `FlowRow` with `maxItemsInEachRow` shares it, and a short last line kept to the same share with weighted spacers; those of `picked` are drawn as taken, with the pictures `figures` holds of their mockups and the offer `offer` as [`tile`] takes them.
 fn tiles(alternatives: &[Alternative], (figures, offer): (&Figures, &Offer), picked: &[usize]) {
     let alternatives = alternatives.to_vec();
     let pictures: Vec<Option<Result<Drawing, String>>> = alternatives
@@ -297,32 +297,22 @@ fn tiles(alternatives: &[Alternative], (figures, offer): (&Figures, &Offer), pic
     let picked = picked.to_vec();
     rustle::with_constraints(Modifier::new().fill_max_width(), move |constraints| {
         let per_row = tiles_per_row(constraints.max_width, alternatives.len());
-        rustle::column_arranged(
+        let gap = sp(TILE_GAP / 4.0);
+        rustle::flow_row_with(
             Modifier::new().fill_max_width(),
-            Arrangement::SpacedBy(sp(TILE_GAP / 4.0)),
-            Alignment::Start,
+            rustle::FlowOptions::new(gap, gap).max_items_per_line(per_row),
             || {
-                for (line, start) in (0..alternatives.len()).step_by(per_row).enumerate() {
-                    let end = (start + per_row).min(alternatives.len());
-                    rustle::key(line, || {
-                        row_arranged(
-                            Modifier::new().fill_max_width(),
-                            Arrangement::SpacedBy(sp(TILE_GAP / 4.0)),
-                            Alignment::Start,
-                            || {
-                                for index in start..end {
-                                    tile(
-                                        &alternatives[index],
-                                        (pictures[index].clone(), &offer),
-                                        (index, picked.contains(&index)),
-                                    );
-                                }
-                                for _ in end..start + per_row {
-                                    rustle::spacer(Modifier::new().weight(1.0));
-                                }
-                            },
+                for index in 0..alternatives.len() {
+                    rustle::key(index, || {
+                        tile(
+                            &alternatives[index],
+                            (pictures[index].clone(), &offer),
+                            (index, picked.contains(&index)),
                         );
                     });
+                }
+                for _ in alternatives.len()..alternatives.len().next_multiple_of(per_row) {
+                    rustle::spacer(Modifier::new().weight(1.0));
                 }
             },
         );

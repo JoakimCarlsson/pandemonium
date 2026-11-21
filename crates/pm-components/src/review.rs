@@ -27,7 +27,6 @@ use crate::button::Variant;
 use crate::git_controls::Primary;
 use crate::graph::graph;
 use crate::parts::{clipped, glyph, line, spacer, wrapping};
-use crate::popups::Opener;
 use crate::sample::Session;
 use crate::size::Size;
 use crate::state::{ReviewTab, WorkspaceState};
@@ -202,7 +201,7 @@ fn primary_face(primary: &Primary) {
 /// Emits the control that commits, or syncs or publishes once there is nothing to commit, with the arrow that offers what else it can do.
 ///
 /// What stops it is written where the words would be, so a reader who cannot commit is told why.
-fn commit_button(primary: &Primary) {
+fn commit_button(state: &WorkspaceState, primary: &Primary) {
     let enabled = enabled(primary);
     let pressable = |own: Modifier, id: Target, on_click: Rc<dyn Fn()>| {
         if enabled {
@@ -225,13 +224,7 @@ fn commit_button(primary: &Primary) {
     let arrow = pressable(
         Modifier::new().fill_max_height(),
         Target::Git(GitEvent::CommitChevron),
-        Rc::new(move || {
-            operations.open_git_menu(
-                MenuKind::Commit,
-                Some(Target::Git(GitEvent::CommitChevron)),
-                None,
-            )
-        }),
+        Rc::new(move || operations.open_git_menu(MenuKind::Commit, None)),
     )
     .padding_xy(theme::sp(2), 0.0);
     rustle::row_arranged(
@@ -252,7 +245,10 @@ fn commit_button(primary: &Primary) {
                     phosphor::CARET_DOWN,
                     3.0,
                     if enabled { Role::Text } else { Role::Subtle },
-                )
+                );
+                if let Some(menu) = state.git_menu_under(MenuKind::Commit) {
+                    menu.build();
+                }
             });
         },
     );
@@ -327,13 +323,8 @@ fn section_heading(state: &WorkspaceState, primary: &Primary) {
             );
             let operations = crate::events::operations();
             Button::icon(phosphor::DOTS_THREE, Target::Git(GitEvent::ChangesMore))
-                .on_click(move || {
-                    operations.open_git_menu(
-                        MenuKind::Source,
-                        Some(Target::Git(GitEvent::ChangesMore)),
-                        None,
-                    )
-                })
+                .on_click(move || operations.open_git_menu(MenuKind::Source, None))
+                .dropdown(state.git_menu_under(MenuKind::Source))
                 .tooltip("More Actions…")
                 .build();
         },
@@ -397,7 +388,7 @@ fn changes(state: &WorkspaceState, session: &Session) {
                     }
                     if state.git.changes_open {
                         message_box(state);
-                        commit_button(&primary);
+                        commit_button(state, &primary);
                         scrolling_list(state, || {
                             change_list::rows(state, session);
                             if session.changes.is_empty() {
@@ -414,9 +405,9 @@ fn changes(state: &WorkspaceState, session: &Session) {
     );
 }
 
-/// Emits the rows of the list of repositories of `session`'s folder, when it has submodules: its own and each submodule, nested ones set in under the one they are in, each with what it has checked out on a button of `branches` that opens its branches; the one the panel works on is picked.
+/// Emits the rows of the list of repositories of `session`'s folder, when it has submodules: its own and each submodule, nested ones set in under the one they are in, each with what it has checked out on a button that opens its branches; the one the panel works on is picked.
 #[track_caller]
-fn repositories(state: &WorkspaceState, session: &Session, branches: &Opener) {
+fn repositories(state: &WorkspaceState, session: &Session) {
     let repositories = state.repositories();
     if repositories.len() < 2 {
         return;
@@ -496,7 +487,6 @@ fn repositories(state: &WorkspaceState, session: &Session, branches: &Opener) {
                             Variant::Ghost,
                         )
                         .monospace()
-                        .modifier(branches.on(Modifier::new()))
                         .tooltip("Checkout Branch…")
                         .build();
                     });
@@ -505,8 +495,8 @@ fn repositories(state: &WorkspaceState, session: &Session, branches: &Opener) {
     );
 }
 
-/// Emits the button that shows the branch the repository the panel works on is on and opens the list of branches, one of the controls of `opener`, or, outside a repository, only says so.
-fn branch_button(state: &WorkspaceState, session: &Session, working: bool, opener: &Opener) {
+/// Emits the button that shows the branch the repository the panel works on is on and opens the list of branches, or, outside a repository, only says so.
+fn branch_button(state: &WorkspaceState, session: &Session, working: bool) {
     if session.branch.is_empty() {
         let said = if session.unknown {
             "Reading the folder…"
@@ -521,7 +511,6 @@ fn branch_button(state: &WorkspaceState, session: &Session, working: bool, opene
         .unwrap_or_else(|| session.branch.clone());
     let branches = Target::Git(GitEvent::BranchButton);
     button::small_button(&head, branches, Variant::Ghost)
-        .modifier(opener.on(Modifier::new()))
         .on_click(crate::focus::pressing_into(
             branches,
             Target::Git(GitEvent::BranchFilter),
@@ -542,7 +531,6 @@ fn branch_button(state: &WorkspaceState, session: &Session, working: bool, opene
 /// Emits the review panel for `session`. A chat has no branch, worktree or diff, so its panel leaves out source control: it lists the files of its scratch folder, or searches them.
 #[track_caller]
 pub fn review(state: &WorkspaceState, session: &Session) {
-    let branches = Opener::remember();
     let versioned = !session.is_chat();
     let shown = match state.review_tab {
         ReviewTab::Changes if !versioned => ReviewTab::Files,
@@ -605,11 +593,11 @@ pub fn review(state: &WorkspaceState, session: &Session) {
                         });
                         if versioned {
                             parts::bar(10, 3, 2, || {
-                                branch_button(state, session, state.git.working, &branches)
+                                branch_button(state, session, state.git.working)
                             });
                         }
                         if shown == ReviewTab::Changes {
-                            repositories(state, session, &branches);
+                            repositories(state, session);
                         }
                         match shown {
                             ReviewTab::Changes => changes(state, session),
@@ -619,7 +607,7 @@ pub fn review(state: &WorkspaceState, session: &Session) {
                     },
                 );
                 if versioned && state.git.branch_menu {
-                    branch_menu(state, &branches);
+                    branch_menu(state);
                 }
             });
         },

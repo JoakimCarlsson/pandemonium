@@ -1,15 +1,13 @@
 //! What floats over the screen, on rustle popups: popovers placed against what opened them,
-//! menus opened at a point of the window or hanging from the control that opened them, kept
+//! menus opened at a point of the window or hanging from the control they are declared in, kept
 //! inside the window and clear of the band around it that holds its shadow. Each popup that
 //! closes closes itself through its own `on_dismiss_request`, as its [`Dismissal`] says.
 
-use std::cell::Cell;
 use std::rc::Rc;
 
 use rustle::{
-    DropdownMenuPositionProvider, Modifier, Offset, PointerEventPass, PointerEventType,
-    PopupPositionProvider, PopupProperties, PositionAtPoint, Rect, Size,
-    popup_position_provider_at_position, popup_with,
+    DropdownMenuPositionProvider, Modifier, Offset, PopupPositionProvider, PopupProperties,
+    PositionAtPoint, Rect, Size, popup_position_provider_at_position, popup_with,
 };
 
 use crate::events;
@@ -161,67 +159,6 @@ impl Dismissal {
     }
 }
 
-/// The controls that open a popover and close it again, as the anchor of Compose's
-/// `ExposedDropdownMenuBox` does: a press on one of them is left to the control, which
-/// toggles the popover, rather than dismissing the popover as a press outside it.
-///
-/// A focusable rustle popup takes the presses, clicks and drags outside it but not the
-/// pointer buttons a control follows itself, which is how the app's controls tell their
-/// clicks, so the press that dismissed a popover would reach its opener and open it again.
-/// The opener notes a press on it in the first pass of the pointer's events, which comes
-/// before the popup hears of the press, and forgets it in the last pass, which comes after.
-#[derive(Clone, Default)]
-pub struct Opener(Rc<Cell<bool>>);
-
-impl Opener {
-    /// An opener kept across compositions, for the popover emitted where it is called.
-    #[track_caller]
-    pub fn remember() -> Self {
-        rustle::remember(Self::default).get()
-    }
-
-    /// `modifier` made one of the controls that open the popover.
-    pub fn on(&self, modifier: Modifier) -> Modifier {
-        let (pressed, handled) = (Rc::clone(&self.0), Rc::clone(&self.0));
-        modifier
-            .on_pointer_event(
-                PointerEventType::Press,
-                PointerEventPass::Initial,
-                move |_| pressed.set(true),
-            )
-            .on_pointer_event(
-                PointerEventType::Press,
-                PointerEventPass::Final,
-                move |_| handled.set(false),
-            )
-    }
-
-    /// Whether the press being handled landed on one of the controls.
-    fn pressed(&self) -> bool {
-        self.0.get()
-    }
-}
-
-impl Dismissal {
-    /// The dismissal, left out for a press on one of the controls of `opener`, which toggle
-    /// the popover themselves.
-    pub fn except_from(self, opener: &Opener) -> Self {
-        let wrap = |dismiss: Rc<dyn Fn()>| -> Rc<dyn Fn()> {
-            let opener = opener.clone();
-            Rc::new(move || {
-                if !opener.pressed() {
-                    dismiss();
-                }
-            })
-        };
-        match self {
-            Self::Never => Self::Never,
-            Self::Focusable(dismiss) => Self::Focusable(wrap(dismiss)),
-            Self::Outside(dismiss) => Self::Outside(wrap(dismiss)),
-        }
-    }
-}
-
 /// The lambda that runs `change` on the workspace, through the operations the view is
 /// composed under: what a popup's `on_dismiss_request` does to close it.
 fn closing(change: impl Fn(WorkspaceState) -> WorkspaceState + 'static) -> Rc<dyn Fn()> {
@@ -248,8 +185,8 @@ pub fn float(
 
 /// Emits `trigger` in a box with `modifier` and, while `popover` is given, the popover as a
 /// popup placed against the box as `placement` says, `gap` style steps away, over
-/// everything and kept inside the window, dismissed as `dismissal` says except by a press on
-/// the box, whose controls toggle the popover themselves.
+/// everything and kept inside the window, dismissed as `dismissal` says. A focusable popover
+/// takes the press on the box that dismisses it, so the box's controls do not open it again.
 #[track_caller]
 pub fn anchored(
     modifier: Modifier,
@@ -260,9 +197,7 @@ pub fn anchored(
     popover: Option<impl FnOnce()>,
 ) {
     let gap = crate::theme::sp(gap);
-    let opener = Opener::remember();
-    let dismissal = dismissal.except_from(&opener);
-    rustle::stack_with(opener.on(modifier), move || {
+    rustle::stack_with(modifier, move || {
         trigger();
         if let Some(popover) = popover {
             float(Against { placement, gap }, dismissal, popover);
@@ -290,42 +225,17 @@ pub fn at_point(at: (f32, f32), offset: (f32, f32)) -> PositionAtPoint {
     placed
 }
 
-/// Places a popup as Compose's `DropdownMenuPositionProvider` places a dropdown menu, against
-/// the control that opened it rather than the box the popup is declared in.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct HangingFrom {
-    /// Where the control is, in the window.
-    control: Rect,
-    /// How the menu hangs from the control.
-    dropdown: DropdownMenuPositionProvider,
-}
-
-impl PopupPositionProvider for HangingFrom {
-    /// Where the dropdown provider puts the popup against the control.
-    fn calculate_position(&self, _: Rect, window: Size, popup: Size) -> Offset {
-        self.dropdown
-            .calculate_position(self.control, window, popup)
-    }
-}
-
-/// Emits `content` as a popup hanging `gap` logical pixels under `control`, a rectangle of the
-/// window holding the control that opened it, their left edges together, or their right edges
-/// together and above the control where the window has no room: Compose's `DropdownMenu`,
-/// placed by its `DropdownMenuPositionProvider`, and dismissed as `dismissal` says.
-///
-/// Compose declares the menu in the box of the control that opens it. A rustle popup tells the
-/// rows and strips that ask what it holds for its intrinsic size the size of its content, so
-/// one declared in a control of such a row would widen the control there; the menu is declared
-/// over the window instead and given the control's place.
+/// Emits `content` as a popup hanging `gap` logical pixels under the box it is declared in,
+/// the control that opens it, their left edges together, or their right edges together and
+/// above the control where the window has no room: Compose's `DropdownMenu`, placed by its
+/// `DropdownMenuPositionProvider`, and dismissed as `dismissal` says. Declared in the control's
+/// box, it takes no room there.
 #[track_caller]
-pub fn dropdown(control: Rect, gap: f32, dismissal: Dismissal, content: impl FnOnce()) {
+pub fn dropdown(gap: f32, dismissal: Dismissal, content: impl FnOnce()) {
     float(
-        HangingFrom {
-            control,
-            dropdown: DropdownMenuPositionProvider {
-                content_offset: Offset::new(0.0, gap),
-                vertical_margin: 0.0,
-            },
+        DropdownMenuPositionProvider {
+            content_offset: Offset::new(0.0, gap),
+            vertical_margin: 0.0,
         },
         dismissal,
         content,
@@ -386,23 +296,29 @@ mod tests {
         assert_eq!(hung(Side::Above, 50.0), Offset::new(50.0, 72.0));
     }
 
-    /// A menu hanging from a control near the window's right edge lines up its right edge with
+    /// A menu declared in a control near the window's right edge lines up its right edge with
     /// the control's, and goes over the control near the bottom.
     #[test]
     fn a_dropdown_hangs_from_its_control() {
-        let placed = HangingFrom {
-            control: Rect::new(Offset::new(700.0, 560.0), Size::new(30.0, 20.0)),
-            dropdown: DropdownMenuPositionProvider {
-                content_offset: Offset::new(0.0, 4.0),
-                vertical_margin: 0.0,
+        let mut ui = rustle::Embedded::without_renderer(
+            || {
+                rustle::stack_with(Modifier::new().fill_max_size(), || {
+                    rustle::stack_with(
+                        Modifier::new().offset(700.0, 560.0).size(30.0, 20.0),
+                        || {
+                            dropdown(4.0, Dismissal::Never, || {
+                                rustle::spacer(Modifier::new().size(200.0, 100.0).test_tag("menu"))
+                            });
+                        },
+                    );
+                });
             },
-        };
-        let at = placed.calculate_position(
-            Rect::default(),
-            Size::new(800.0, 600.0),
-            Size::new(200.0, 100.0),
+            || {},
         );
-        assert_eq!(at, Offset::new(530.0, 456.0));
+        ui.resize((800, 600), 1.0);
+        ui.update();
+        let menu = ui.node_with_tag("menu").expect("the menu is laid out");
+        assert_eq!(menu.bounds.origin, Offset::new(530.0, 456.0));
     }
 
     /// The documentation beside a list starts just past the list's right edge, level with it.

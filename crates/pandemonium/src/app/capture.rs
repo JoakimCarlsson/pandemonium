@@ -14,14 +14,10 @@ use super::App;
 const PASTED: &str = "pasted";
 
 impl App {
-    /// Opens the menu of what can be added to the prompt from the page just under where its
-    /// button was clicked.
+    /// Opens the menu of what can be added to the prompt from the page, hanging from its
+    /// button.
     pub(super) fn open_browser_capture_menu(&mut self) {
-        let Some(at) = self.clicked_at() else {
-            return;
-        };
-        self.model
-            .change(|state| state.with_browser_capture_menu(at));
+        self.model.change(|state| state.with_browser_capture_menu());
     }
 
     /// Takes in what the helper reported for the reader's additions to the prompt: each becomes a chip, with the pictures attached from the window's own folder, and the previews are started.

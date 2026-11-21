@@ -30,8 +30,9 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use rustle::{
-    CompositionLocal, DragAndDropEvent, DragAndDropTarget, DragAndDropTransferData, DragData, Key,
-    KeyEvent, Modifier, Modifiers, PointerButton, PointerEvent, PointerPhase, Rect, ResizeEdge,
+    CompositionLocal, DragAndDropEvent, DragAndDropTarget, DragAndDropTransferData, DragData,
+    KeyEvent, Modifier, Modifiers, MutableInteractionSource, PointerButton, PointerEvent,
+    PointerPhase, Rect, ResizeEdge,
 };
 
 use crate::browser_menu::BrowserCommand;
@@ -255,9 +256,9 @@ pub trait Operations {
     fn open_settings_menu(&self, _index: usize) {}
     /// Opens the menu of the project `project` at `at`, or where its button was clicked.
     fn open_project_menu(&self, _project: usize, _at: Option<(f32, f32)>) {}
-    /// Opens the menu `kind` of the changes, hanging from the control `trigger` when one
-    /// opened it, or else at `at`.
-    fn open_git_menu(&self, _kind: MenuKind, _trigger: Option<Target>, _at: Option<(f32, f32)>) {}
+    /// Opens the menu `kind` of the changes at `at`, or, without a point, hanging from the
+    /// control that opened it, which emits it in its own box.
+    fn open_git_menu(&self, _kind: MenuKind, _at: Option<(f32, f32)>) {}
     /// Opens the menu of the pane that has the keyboard, where its button was clicked.
     fn open_pane_menu(&self) {}
     /// Opens the menu of the session `session` at `at`.
@@ -273,16 +274,8 @@ pub trait Operations {
     /// Opens the menu of the field `field` at `at`, the caret going to the byte `offset` of
     /// the code text under the pointer first unless it is inside the selection.
     fn open_field_menu(&self, _field: Target, _at: (f32, f32), _offset: Option<usize>) {}
-    /// Opens the menu of the text field `field` at `at`, the field telling whether it is
-    /// `secure`, keeping what it holds off the clipboard, and `multiline`.
-    fn open_text_field_menu(
-        &self,
-        _field: Target,
-        _at: (f32, f32),
-        _secure: bool,
-        _multiline: bool,
-    ) {
-    }
+    /// Opens the menu of the text field `field` at `at`.
+    fn open_text_field_menu(&self, _field: Target, _at: (f32, f32)) {}
     /// Takes the files or the picture on the clipboard as attachments of the prompt, as a
     /// paste in the prompt offers them first, and says whether there were any.
     fn paste_attachments(&self) -> bool {
@@ -394,17 +387,6 @@ pub fn picking(
         };
         operations.update(change);
     }
-}
-
-/// Whether `event` activates the control holding the keyboard: Enter or the space bar
-/// going down, or repeating while held.
-fn activates(event: &KeyEvent) -> bool {
-    event.pressed
-        && match &event.key {
-            Key::Enter => true,
-            Key::Character(text) => text == " ",
-            _ => false,
-        }
 }
 
 /// The modifier that hands a drag of the handle `id` on a panel's edge to the app through
@@ -754,6 +736,11 @@ pub type OnContext = Rc<dyn Fn((f32, f32))>;
 /// after the app was told of the press.
 pub type OnPointer = Rc<dyn Fn(&PointerEvent)>;
 
+/// Whether the latest click of a focusable control landed, as the app told when the button
+/// came up on it, for its clickable to take right after: empty when no click came first,
+/// which is an activation from the keyboard.
+type Landed = Rc<Cell<Option<bool>>>;
+
 /// What a control reports and runs, as [`reporting`] makes it.
 struct Reported {
     /// The control.
@@ -764,6 +751,9 @@ struct Reported {
     on_context: Option<OnContext>,
     /// What the control does itself with the buttons, when it does anything.
     on_pointer: Option<OnPointer>,
+    /// Where a focusable control keeps whether its click landed, for its clickable to run
+    /// the lambda; `None` for an area whose clicks run the lambda here.
+    landed: Option<Landed>,
 }
 
 /// The press or click `event` makes on the control `id` laid out at `area`.
@@ -790,6 +780,7 @@ fn reporting(reported: Reported) -> Modifier {
         on_click,
         on_context,
         on_pointer,
+        landed,
     } = reported;
     let operations = operations();
     let (carry, menus) = (Rc::clone(&operations), Rc::clone(&operations));
@@ -807,11 +798,17 @@ fn reporting(reported: Reported) -> Modifier {
         .on_pointer_button(PointerButton::Primary, move |event| {
             match event.phase {
                 PointerPhase::Press => {
+                    if let Some(landed) = &landed {
+                        landed.set(None);
+                    }
                     operations.pressed(press_of(id, area.get(), event));
                 }
                 PointerPhase::Click => {
-                    if operations.click_lands(press_of(id, area.get(), event)) {
-                        on_click(event.modifiers);
+                    let lands = operations.click_lands(press_of(id, area.get(), event));
+                    match &landed {
+                        Some(landed) => landed.set(Some(lands)),
+                        None if lands => on_click(event.modifiers),
+                        None => {}
                     }
                 }
                 PointerPhase::Drag | PointerPhase::Release => {}
@@ -904,24 +901,27 @@ pub trait Interactive: Sized {
     fn message_area(self, index: usize) -> Self;
 }
 
-/// Names the control `id` as `reported` reports it, a focus target activated with Enter or
-/// Space while it holds the keyboard.
+/// Names the control `id` as `reported` reports it, made rustle's focusable
+/// [`clickable_with`](Modifier::clickable_with) under the control's focus: Tab reaches it,
+/// and its lambda runs, told the modifier keys held, when a click of it lands or when Enter
+/// or Space activates it while it holds the keyboard.
 #[track_caller]
 fn focus_control(modifier: Modifier, reported: Reported) -> Modifier {
-    let id = reported.id;
-    let keyed = Rc::clone(&reported.on_click);
-    let focus = focus::focus_of(id);
-    let held = focus.clone();
+    let on_click = Rc::clone(&reported.on_click);
+    let landed: Landed = Rc::default();
+    let window = rustle::LOCAL_WINDOW_INFO.current();
+    let focus = focus::focus_of(reported.id);
     modifier
-        .on_key_event(move |event| {
-            let taken = held.is_focused() && activates(event);
-            if taken {
-                keyed(event.modifiers);
+        .chain(reporting(Reported {
+            landed: Some(Rc::clone(&landed)),
+            ..reported
+        }))
+        .focus_requester(&focus)
+        .clickable_with(&MutableInteractionSource::new(), None, move || {
+            if landed.take() != Some(false) {
+                on_click(window.keyboard_modifiers());
             }
-            taken
         })
-        .focus_target(&focus)
-        .chain(reporting(reported))
 }
 
 impl Interactive for Modifier {
@@ -939,6 +939,7 @@ impl Interactive for Modifier {
                 on_click: Rc::new(on_click),
                 on_context: None,
                 on_pointer: None,
+                landed: None,
             },
         )
     }
@@ -957,6 +958,7 @@ impl Interactive for Modifier {
                 on_click: Rc::new(on_click),
                 on_context: Some(Rc::new(on_context)),
                 on_pointer: None,
+                landed: None,
             },
         )
     }
@@ -975,6 +977,7 @@ impl Interactive for Modifier {
                 on_click: Rc::new(move |_| on_click()),
                 on_context: None,
                 on_pointer: Some(Rc::new(on_pointer)),
+                landed: None,
             },
         )
     }
@@ -985,6 +988,7 @@ impl Interactive for Modifier {
             on_click: Rc::new(move |_| on_click()),
             on_context: None,
             on_pointer: None,
+            landed: None,
         }))
     }
 
@@ -999,6 +1003,7 @@ impl Interactive for Modifier {
             on_click: Rc::new(move |_| on_click()),
             on_context: Some(Rc::new(on_context)),
             on_pointer: None,
+            landed: None,
         }))
     }
 
@@ -1014,6 +1019,7 @@ impl Interactive for Modifier {
             on_click: Rc::new(move |_| on_click()),
             on_context: Some(Rc::new(on_context)),
             on_pointer: Some(Rc::new(on_pointer)),
+            landed: None,
         }))
     }
 

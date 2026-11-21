@@ -615,7 +615,7 @@ fn toggled(on: bool) -> Variant {
 }
 
 /// Emits the bar above the page of `browser`: back, forward, reload, the address, the zoom when it is not 100%, picking, capturing, the lock and the developer tools.
-fn toolbar(browser: &Browser) {
+fn toolbar(browser: &Browser, capture_menu: Option<crate::Menu>) {
     let zoomed = (browser.zoom - 1.0).abs() > 0.005;
     rustle::row_arranged(
         Modifier::new()
@@ -669,6 +669,7 @@ fn toolbar(browser: &Browser) {
                 Target::Browser(BrowserEvent::BrowserCapture),
             )
             .on_click(move || operations.open_browser_capture_menu())
+            .dropdown(capture_menu)
             .variant(toggled(browser.picking_area))
             .build();
             Button::icon(
@@ -825,7 +826,7 @@ pub fn browser_view(state: &WorkspaceState, width: f32) {
         Alignment::Start,
         || {
             tab_strip(browser, width);
-            toolbar(browser);
+            toolbar(browser, crate::browser_menu::capture_dropdown(state));
             browser.safety.bar_nodes();
             rustle::row_arranged(
                 Modifier::new().fill_max_width().weight(1.0),

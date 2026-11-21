@@ -168,11 +168,6 @@ impl Screen {
         }
     }
 
-    /// Whether a menu is open over a project, a session or a message, so that a press elsewhere has to close it.
-    pub fn list_menu_open(&self) -> bool {
-        matches!(self, Self::Workspace(state) if state.project_menu.is_some() || state.session_menu.is_some() || state.message_menu.is_some() || state.terminal_menu.is_some() || state.browser_menu.is_some() || state.git.menu.is_some() || state.settings_servers.menu.is_some() || state.tab_menu.is_some() || state.pane_menu.is_some())
-    }
-
     /// The screen with the session at `position` closed, by the server or because no server holds it.
     pub fn closed_elsewhere(self, position: usize) -> Self {
         match self {

@@ -154,9 +154,6 @@ fn over(state: &WorkspaceState, height: f32, reviewing: bool) {
     if let Some(open) = state.project_menu {
         project_menu(open);
     }
-    if let Some(open) = state.pane_menu {
-        panes::pane_menu(open);
-    }
     if let Some(open) = state.session_menu {
         session_menu(state, open);
     }
@@ -191,25 +188,13 @@ fn over(state: &WorkspaceState, height: f32, reviewing: bool) {
     pm_components::assist::assist(state, height);
 }
 
-/// Emits the menu of a project: start a session in it, or take it out of the window.
+/// Emits the menu of a project opened at a point; one that hangs from the project's button is
+/// emitted there.
 #[track_caller]
 fn project_menu(open: ProjectMenu) {
-    Menu::new(open.at.0, open.at.1)
-        .offset(-8.0, 12.0)
-        .item(
-            "New session",
-            None,
-            Target::Menu(MenuEvent::ProjectMenuNew),
-            false,
-        )
-        .separator()
-        .item(
-            "Remove workspace",
-            None,
-            Target::Menu(MenuEvent::ProjectMenuRemove),
-            false,
-        )
-        .build();
+    if let Some((x, y)) = open.at {
+        pm_components::arrange::project_menu(Menu::new(x, y).offset(-8.0, 12.0)).build();
+    }
 }
 
 /// Emits the session menu: its checkout, title, read status and archive action. A chat has no branch to copy, and can also be removed for good, with its scratch folder.
@@ -289,9 +274,6 @@ pub(crate) fn settings_window(state: &WorkspaceState, width: f32) {
     Window::new()
         .body(move || {
             settings::settings(state, width);
-        })
-        .over(move || {
-            pm_components::settings_servers::server_menu(state);
         })
         .over(move || {
             if let Some(menu) = state.menu.filter(|menu| settings::is_settings(menu.field))

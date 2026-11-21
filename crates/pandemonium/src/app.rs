@@ -981,12 +981,9 @@ impl App {
         true
     }
 
-    /// Carries out the menu row `row` on the field the menu is open over, and closes the
-    /// menu, giving the field the keyboard back. A text field's rows act through its own
-    /// state: its history undoes and redoes, its selection is copied, cut, replaced or made
-    /// whole, nothing being copied from a field that said it is secure, and what is pasted
-    /// keeping its line breaks only in a field that said it holds several lines; the prompt
-    /// takes files and pictures pasted as attachments.
+    /// Closes the menu after its row `row` was picked, giving the field it is open over the
+    /// keyboard back, and carries the row out on a code field. A text field's menu carries its
+    /// rows out itself, through the field's own operations.
     pub(super) fn menu_action(&mut self, row: Target) {
         let Some(open) = self.model.read(|screen| screen.menu()) else {
             return;
@@ -996,8 +993,7 @@ impl App {
         });
         let field = open.field;
         self.focus.request_focus(field);
-        if let Some(text) = self.model.read(|screen| screen.text_field(field).cloned()) {
-            self.text_menu_action(row, &text, open);
+        if self.model.read(|screen| screen.text_field(field).is_some()) {
             return;
         }
         match row {
@@ -1015,56 +1011,10 @@ impl App {
         }
     }
 
-    /// Carries out the row `row` of the menu `open` over a text field holding `text`,
-    /// through the field's own state and the clipboard, as [`App::menu_action`] says.
-    fn text_menu_action(
-        &mut self,
-        row: Target,
-        text: &rustle::TextFieldState,
-        open: pm_components::context_menu::ContextMenu,
-    ) {
-        let selected = text.selected_text();
-        match row {
-            Target::Menu(MenuEvent::MenuUndo) => text.undo_state().undo(),
-            Target::Menu(MenuEvent::MenuRedo) => text.undo_state().redo(),
-            Target::Menu(MenuEvent::MenuSelectAll) => text.select_all(),
-            Target::Menu(MenuEvent::MenuCopy | MenuEvent::MenuCut)
-                if open.secure || selected.is_empty() => {}
-            Target::Menu(MenuEvent::MenuCopy | MenuEvent::MenuCut) => {
-                if let Some(clipboard) = self.clipboard() {
-                    clipboard.set_text(&selected);
-                }
-                if row == Target::Menu(MenuEvent::MenuCut) {
-                    text.replace_selection("");
-                }
-            }
-            Target::Menu(MenuEvent::MenuPaste)
-                if open.field == Target::Composer(ComposerEvent::Prompt)
-                    && self.paste_attachments() => {}
-            Target::Menu(MenuEvent::MenuPaste) => {
-                if let Some(pasted) = self.clipboard().and_then(|clipboard| clipboard.text()) {
-                    let pasted: String = pasted
-                        .chars()
-                        .filter(|c| !c.is_control() || (open.multiline && matches!(c, '\n' | '\t')))
-                        .collect();
-                    text.replace_selection(&pasted);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Where the control the last press or click was on had the pointer, in the window's
-    /// frame: where a menu opened by clicking a button opens.
-    pub(super) fn clicked_at(&self) -> Option<(f32, f32)> {
-        self.anchor.map(|press| self.framed_point(press.at))
-    }
-
-    /// Opens the menu of the `index`-th server of the settings page where its button was
-    /// clicked, at `at` in the window's frame.
-    pub(super) fn open_settings_menu(&mut self, index: usize, at: (f32, f32)) {
+    /// Opens the menu of the `index`-th server of the settings page, hanging from its button.
+    pub(super) fn open_settings_menu(&mut self, index: usize) {
         self.model.update(|state| {
-            *state = std::mem::take(state).in_workspace(|state| state.with_settings_menu(index, at))
+            *state = std::mem::take(state).in_workspace(|state| state.with_settings_menu(index))
         });
     }
 
@@ -1078,7 +1028,7 @@ impl App {
 
     /// Opens the menu of the project at `project` where the pointer was, at `at` in the
     /// window's frame.
-    pub(super) fn open_project_menu(&mut self, project: usize, at: (f32, f32)) {
+    pub(super) fn open_project_menu(&mut self, project: usize, at: Option<(f32, f32)>) {
         self.model.update(|state| {
             *state = state
                 .clone()
@@ -1111,26 +1061,15 @@ impl App {
         });
     }
 
-    /// Opens the menu `kind` of the source control panel hanging from the control `trigger`,
-    /// where the press on it laid it out, or where the pointer was, at `at` in the window's
-    /// frame, when it comes from no control.
-    pub(super) fn open_git_menu(
-        &mut self,
-        kind: MenuKind,
-        trigger: Option<Target>,
-        at: Option<(f32, f32)>,
-    ) {
-        let control = self
-            .anchor
-            .filter(|press| Some(press.id) == trigger)
-            .map(|press| self.framed(press.area));
-        let open: Box<dyn FnOnce(WorkspaceState) -> WorkspaceState> = match (control, at) {
-            (Some(control), _) => Box::new(move |state| state.with_git_menu_under(kind, control)),
-            (None, Some(at)) => Box::new(move |state| state.with_git_menu(kind, at)),
-            (None, None) => return,
-        };
-        self.model
-            .update(|state| *state = std::mem::take(state).in_workspace(open));
+    /// Opens the menu `kind` of the source control panel where the pointer was, at `at` in
+    /// the window's frame, or, without a point, hanging from the control that opened it.
+    pub(super) fn open_git_menu(&mut self, kind: MenuKind, at: Option<(f32, f32)>) {
+        self.model.update(|state| {
+            *state = std::mem::take(state).in_workspace(|state| match at {
+                Some(at) => state.with_git_menu(kind, at),
+                None => state.with_git_menu_under(kind),
+            })
+        });
     }
 
     /// Opens the menu of the session at `session` where the pointer was, at `at` in the
@@ -1209,16 +1148,9 @@ impl App {
 
     /// Opens the menu over the text field `id` at `at`, in the window's frame, the field
     /// having said whether it is `secure` and `multiline`.
-    pub(super) fn open_text_menu(
-        &mut self,
-        id: Target,
-        at: (f32, f32),
-        secure: bool,
-        multiline: bool,
-    ) {
+    pub(super) fn open_text_menu(&mut self, id: Target, at: (f32, f32)) {
         self.model.update(|state| {
-            *state = std::mem::take(state)
-                .in_workspace(|state| state.with_text_menu(id, at, secure, multiline))
+            *state = std::mem::take(state).in_workspace(|state| state.with_menu(id, at))
         });
     }
 
