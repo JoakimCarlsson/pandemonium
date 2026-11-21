@@ -8,3 +8,6 @@ license.workspace = true
 pm-protocol.workspace = true
 pm-transport.workspace = true
 serde_json = "1.0.154"
+
+[dev-dependencies]
+pm-store = { workspace = true, features = ["scratch-folders"] }

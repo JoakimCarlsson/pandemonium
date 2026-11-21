@@ -14,3 +14,6 @@ regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 similar = "3.2.0"
+
+[dev-dependencies]
+pm-store = { workspace = true, features = ["scratch-folders"] }

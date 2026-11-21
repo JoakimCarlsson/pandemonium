@@ -3829,6 +3829,7 @@ dependencies = [
  "pm-harness",
  "pm-markdown",
  "pm-protocol",
+ "pm-store",
  "pm-terminal",
  "pm-treesitter",
  "pm-vim",
@@ -3843,6 +3844,7 @@ name = "pm-config"
 version = "0.15.0-rc.4"
 dependencies = [
  "pm-protocol",
+ "pm-store",
  "serde",
  "serde_json",
 ]
@@ -3863,6 +3865,7 @@ dependencies = [
  "pm-buffer",
  "pm-lsp",
  "pm-protocol",
+ "pm-store",
  "pm-treesitter",
  "pm-vim",
  "regex",
@@ -3891,6 +3894,7 @@ dependencies = [
  "pm-agent-library",
  "pm-buffer",
  "pm-lsp",
+ "pm-store",
  "pm-tools",
  "serde",
  "serde_json",
@@ -3943,6 +3947,7 @@ dependencies = [
  "pm-git",
  "pm-harness",
  "pm-protocol",
+ "pm-store",
  "pm-terminal",
  "pm-vim",
  "rustle",
@@ -3991,6 +3996,7 @@ dependencies = [
  "pm-git",
  "pm-harness",
  "pm-lsp",
+ "pm-store",
  "pm-task",
  "serde",
  "serde_json",
@@ -4042,6 +4048,7 @@ name = "pm-ssh"
 version = "0.15.0-rc.4"
 dependencies = [
  "pm-protocol",
+ "pm-store",
  "pm-transport",
  "serde_json",
 ]
@@ -4079,6 +4086,7 @@ name = "pm-transport"
 version = "0.15.0-rc.4"
 dependencies = [
  "pm-protocol",
+ "pm-store",
  "serde_json",
  "sha2 0.11.1",
 ]

@@ -20,3 +20,6 @@ serde_json = "1.0.154"
 similar = "3.2.0"
 rustle = { git = "https://github.com/JoakimCarlsson/rustle", version = "0.1.0", features = ["icons-fill"] }
 pm-buffer.workspace = true
+
+[dev-dependencies]
+pm-store = { workspace = true, features = ["scratch-folders"] }

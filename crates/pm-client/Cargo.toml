@@ -12,3 +12,6 @@ pm-store.workspace = true
 pm-tools.workspace = true
 serde_json = "1.0.154"
 tungstenite = "0.30.0"
+
+[dev-dependencies]
+pm-store = { workspace = true, features = ["scratch-folders"] }
