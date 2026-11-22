@@ -60,6 +60,8 @@ pub enum Incoming {
     },
     /// Another client changed the projects; these are the projects now.
     ProjectsChanged(Vec<String>),
+    /// Another client changed what the browser remembers of sites; this is what is remembered now.
+    BrowserSitesChanged(pm_protocol::BrowserSites),
     /// Something a shell printed, which has not been reported before.
     TerminalOutput {
         /// The shell.
@@ -560,6 +562,9 @@ fn converse(
                     }
                     ServerMessage::ProjectsChanged { paths } => {
                         let _ = reporter.send(Incoming::ProjectsChanged(paths));
+                    }
+                    ServerMessage::BrowserSitesChanged { sites } => {
+                        let _ = reporter.send(Incoming::BrowserSitesChanged(sites));
                     }
                     ServerMessage::Diagnostics {
                         directory,

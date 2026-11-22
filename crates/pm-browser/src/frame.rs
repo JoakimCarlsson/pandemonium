@@ -11,6 +11,6 @@ pub struct Frame {
     pub height: u32,
     /// How many paints the page has made when this one was taken; a larger number is a newer picture.
     pub generation: u64,
-    /// Tightly packed RGBA bytes, row by row from the top.
-    pub rgba: Arc<Vec<u8>>,
+    /// Tightly packed RGBA bytes, row by row from the top, shared so a renderer can take them without a copy.
+    pub rgba: Arc<[u8]>,
 }

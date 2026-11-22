@@ -1,6 +1,6 @@
 //! Tests of what the address bar makes of what was typed.
 
-use super::{SEARCH_URL, address_of};
+use super::{SEARCH_URL, address_of, address_with};
 
 /// Addresses with a scheme are kept as typed.
 #[test]
@@ -19,8 +19,8 @@ fn addresses_with_a_scheme_stay() {
 fn hosts_get_a_scheme() {
     assert_eq!(address_of("example.com"), "https://example.com");
     assert_eq!(address_of("example.com/a?b=c"), "https://example.com/a?b=c");
-    assert_eq!(address_of("10.0.0.5:8080/x"), "https://10.0.0.5:8080/x");
-    assert_eq!(address_of("devbox:8080"), "https://devbox:8080");
+    assert_eq!(address_of("10.0.0.5:8080/x"), "http://10.0.0.5:8080/x");
+    assert_eq!(address_of("devbox:8080"), "http://devbox:8080");
     assert_eq!(address_of("localhost"), "http://localhost");
     assert_eq!(address_of("localhost:3000/a"), "http://localhost:3000/a");
     assert_eq!(address_of("127.0.0.1:9"), "http://127.0.0.1:9");
@@ -56,4 +56,22 @@ fn other_text_is_searched_for() {
 #[test]
 fn nothing_typed_is_blank() {
     assert_eq!(address_of("   "), "about:blank");
+}
+
+/// Names of the local network and single words that read as hosts open over plain HTTP; other single words are searched for at the engine chosen.
+#[test]
+fn network_hosts_and_known_words_open() {
+    assert_eq!(address_of("printer.local"), "http://printer.local");
+    assert_eq!(address_of("nas.lan/admin"), "http://nas.lan/admin");
+    assert_eq!(address_of("192.168.1.4"), "http://192.168.1.4");
+    assert_eq!(address_of("devbox/"), "http://devbox/");
+    assert_eq!(address_of("devbox/app"), "http://devbox/app");
+    let known = vec!["devbox".to_owned()];
+    let engine = "https://www.google.com/search?q=";
+    assert_eq!(address_with("devbox", engine, &known), "http://devbox");
+    assert_eq!(
+        address_with("weather", engine, &known),
+        format!("{engine}weather")
+    );
+    assert_eq!(address_of("1234"), format!("{SEARCH_URL}1234"));
 }

@@ -5,9 +5,11 @@
  * the page's DevTools protocol.
  */
 
-const emulation = require('./emulation');
+const { readerZoom } = require('./emulation');
+const { toWindow } = require('./input');
 const inspect = require('./inspect');
 const origins = require('./origins');
+const routing = require('./routing');
 
 /** @typedef {import('./page').Page} Page */
 /** @typedef {import('./types').Json} Json */
@@ -180,18 +182,53 @@ const DESCRIBE = `(x, y) => {
   }`;
 
 /**
+ * A point an agent gave, in CSS pixels of the page's top frame, in the window's pixels: times the reader's zoom gives
+ * logical pixels of the pane, which the pane's display scale turns into the window's.
+ * @param {Page} page The page.
+ * @param {{ x: number, y: number }} at The point, in CSS pixels.
+ * @returns {{ x: number, y: number }} The point in the window's pixels.
+ */
+function windowPoint(page, at) {
+  const zoom = readerZoom(page.contents);
+  return toWindow(at.x * zoom, at.y * zoom, page.paneScale);
+}
+
+/**
+ * Sends one event of the left button's pointer to the frame under it, also a cross-origin frame, through the page's
+ * router, or as Electron's own input event when the page has none.
+ * @param {Page} page The page.
+ * @param {'mouseMoved' | 'mousePressed' | 'mouseReleased'} type The event.
+ * @param {{ x: number, y: number }} at Where, in the window's pixels.
+ * @returns {Promise<void>} Settles once it is sent.
+ */
+async function pointerAt(page, type, at) {
+  const router = routing.of(page.contents);
+  if (router) {
+    const move = type === 'mouseMoved';
+    await router.send({ type, ...at, modifiers: 0, button: move ? 'none' : 'left', buttons: type === 'mousePressed' ? 1 : 0, clickCount: move ? 0 : 1 });
+    return;
+  }
+  if (type === 'mouseMoved') {
+    page.contents.sendInputEvent({ type: 'mouseMove', ...at, modifiers: [] });
+    return;
+  }
+  page.contents.sendInputEvent({ type: type === 'mousePressed' ? 'mouseDown' : 'mouseUp', ...at, button: 'left', clickCount: 1, modifiers: [] });
+}
+
+/**
  * Clicks at a place in the page, as the reader would, and waits for what the click started: a page that loads, or requests that are under way.
  * @param {Page} page The page.
- * @param {number} x Across, in logical pixels.
- * @param {number} y Down, in logical pixels.
+ * @param {number} x Across, in CSS pixels of the top frame.
+ * @param {number} y Down, in CSS pixels of the top frame.
  * @returns {Promise<ToolOutcome>} The answer, saying what was hit and where the page is after.
  */
 async function clickAt(page, x, y) {
   const at = { x: Math.round(x), y: Math.round(y) };
   const hit = await evaluate(page, await world(page), `(${DESCRIBE})(${at.x}, ${at.y})`).catch(() => 'unknown');
-  page.contents.sendInputEvent({ type: 'mouseMove', ...at, modifiers: [] });
-  page.contents.sendInputEvent({ type: 'mouseDown', ...at, button: 'left', clickCount: 1, modifiers: [] });
-  page.contents.sendInputEvent({ type: 'mouseUp', ...at, button: 'left', clickCount: 1, modifiers: [] });
+  const sent = windowPoint(page, at);
+  await pointerAt(page, 'mouseMoved', sent);
+  await pointerAt(page, 'mousePressed', sent);
+  await pointerAt(page, 'mouseReleased', sent);
   await new Promise((resolve) => setTimeout(resolve, CLICK_REACTS));
   await settled(page, CLICK_STILL, CLICK_SETTLING);
   return done(`Clicked ${hit} at ${at.x}, ${at.y}. The page is at ${page.contents.getURL()}.`);
@@ -423,7 +460,7 @@ async function hover(page, args) {
   if ('ok' in at) return at;
   const spot = { x: Math.round(at.x), y: Math.round(at.y) };
   const hit = await describeAt(page, spot);
-  page.contents.sendInputEvent({ type: 'mouseMove', ...spot, modifiers: [] });
+  await pointerAt(page, 'mouseMoved', windowPoint(page, spot));
   await pause(HOVER_REACTS);
   return done(`Hovering ${hit} at ${spot.x}, ${spot.y}.`);
 }
@@ -443,6 +480,8 @@ async function drag(page, args) {
   const finish = await pointOf(page, ends[1]);
   if ('ok' in finish) return failed(`to: ${finish.text}`);
   const cdp = protocol(page);
+  const router = routing.of(page.contents);
+  if (!router) return failed('the page has no pointer router');
   const fromHit = await describeAt(page, start);
   const toHit = await describeAt(page, finish);
   /** @type {Json | null} */
@@ -451,19 +490,22 @@ async function drag(page, args) {
   const hear = (method, params) => {
     if (method === 'Input.dragIntercepted') data = params.data;
   };
-  cdp.listen(hear);
-  /** @type {(type: string, at: { x: number, y: number }, held: boolean) => Promise<Json>} */
+  const targets = router.targets();
+  /** @type {(enabled: boolean) => Promise<unknown>} */
+  const intercept = (enabled) => Promise.all(targets.map((session) => cdp.call('Input.setInterceptDrags', { enabled }, session).catch(() => {})));
+  /** @type {(type: 'mouseMoved' | 'mousePressed' | 'mouseReleased', at: { x: number, y: number }, held: boolean) => Promise<void>} */
   const mouse = (type, at, held) =>
-    cdp.call('Input.dispatchMouseEvent', {
+    router.send({
       type,
-      x: at.x,
-      y: at.y,
+      ...windowPoint(page, at),
+      modifiers: 0,
       button: held || type === 'mouseReleased' ? 'left' : 'none',
       buttons: held ? 1 : 0,
       clickCount: type === 'mouseMoved' ? 0 : 1,
     });
+  cdp.listen(hear);
   try {
-    await cdp.call('Input.setInterceptDrags', { enabled: true });
+    await intercept(true);
     await mouse('mouseMoved', start, false);
     await mouse('mousePressed', start, true);
     for (let step = 1; step <= DRAG_STEPS; step += 1) {
@@ -472,14 +514,12 @@ async function drag(page, args) {
       await pause(16);
     }
     if (data) {
-      for (const type of ['dragEnter', 'dragOver', 'drop']) {
-        await cdp.call('Input.dispatchDragEvent', { type, x: finish.x, y: finish.y, data });
-      }
+      for (const type of ['dragEnter', 'dragOver', 'drop']) await router.dragEvent(type, windowPoint(page, finish), data);
     }
     await mouse('mouseReleased', finish, false);
   } finally {
     cdp.unlisten(hear);
-    await cdp.call('Input.setInterceptDrags', { enabled: false }).catch(() => {});
+    await intercept(false);
   }
   await settled(page, CLICK_STILL, CLICK_SETTLING);
   return done(`Dragged ${fromHit} to ${toHit}${data ? ' as an HTML drag and drop' : ''}. The page is at ${page.contents.getURL()}.`);
@@ -682,9 +722,9 @@ const VIEWPORT_LIMITS = [100, 4000];
  * @returns {Promise<ToolOutcome>} The answer, with the size the page reports.
  */
 async function resize(page, args) {
-  const cdp = protocol(page);
+  protocol(page);
   if (args.reset === true) {
-    await emulation.applyViewport(cdp, null);
+    await page.emulateViewport(null);
     page.viewport = null;
     return done('The viewport follows the pane again.');
   }
@@ -694,7 +734,7 @@ async function resize(page, args) {
     return failed(`give width and height as whole numbers from ${low} to ${high}, or reset as true`);
   }
   page.viewport = { width, height, deviceScaleFactor: 0, mobile: false };
-  await emulation.applyViewport(cdp, page.viewport);
+  await page.emulateViewport(page.viewport);
   const found = await inWorld(page, `JSON.stringify({ width: window.innerWidth, height: window.innerHeight })`);
   return done(`The viewport is ${width} by ${height}; the page reports ${found.width} by ${found.height}. The pane shows it at its top left.`);
 }

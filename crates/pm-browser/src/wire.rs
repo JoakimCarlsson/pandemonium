@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::chrome::{PageAction, PageReport};
 use crate::input::{Button, Cursor, Key};
 
 /// The feature a helper announces in [`Event::Features`] when it opens and renders sealed documents, [`Request::OpenHtml`] and [`Request::RenderHtml`]; a helper that does not announce it ignores both.
@@ -133,6 +134,10 @@ pub enum EditAction {
     Paste,
     /// Marks everything.
     SelectAll,
+    /// Takes back the last change the reader made in the page.
+    Undo,
+    /// Makes again the change that was last taken back.
+    Redo,
 }
 
 /// How a zoom request changes the page's zoom.
@@ -259,6 +264,15 @@ pub enum Request {
         dy: i32,
         /// The modifiers and buttons held.
         modifiers: u32,
+        /// How far across exactly, in logical pixels, of which `dx` is the whole part; absent from older windows, which send only `dx`.
+        #[serde(default)]
+        exact_dx: Option<f64>,
+        /// How far down exactly, in logical pixels, of which `dy` is the whole part; absent from older windows, which send only `dy`.
+        #[serde(default)]
+        exact_dy: Option<f64>,
+        /// Whether the distance came from a trackpad or another device that scrolls by the pixel, rather than from the notches of a wheel.
+        #[serde(default)]
+        precise: bool,
     },
     /// Presses or releases a key.
     Key {
@@ -403,6 +417,53 @@ pub enum Request {
         height: u32,
         /// Where the picture goes: an absolute path ending in `.png`.
         path: String,
+        /// The display scale to render at, device pixels per CSS pixel, so the picture is this many times the viewport's size; a helper treats a missing or unusable one as 1.
+        #[serde(default)]
+        scale: f32,
+    },
+    /// Puts `text`, read from the reader's clipboard by the window, where the page's selection is, in place of what is marked.
+    PasteText {
+        /// The page.
+        page: u32,
+        /// The text.
+        text: String,
+    },
+    /// Does something the reader asked of the page from the pane around it, such as answering a dialog or cancelling a download.
+    Chrome {
+        /// The page.
+        page: u32,
+        /// What to do.
+        action: PageAction,
+    },
+    /// Stops the page loading, as the stop button of a browser does.
+    Stop {
+        /// The page.
+        page: u32,
+    },
+    /// Makes the window the page asked for with `window.open`, reported as [`Event::PopupOpened`], a page of its own numbered `page`, `width` by `height` logical pixels at display `scale`; it keeps its `window.opener`.
+    AdoptPopup {
+        /// The new page.
+        page: u32,
+        /// The helper's number for the window, from [`Event::PopupOpened`].
+        popup: u64,
+        /// Its width in logical pixels.
+        width: u32,
+        /// Its height in logical pixels.
+        height: u32,
+        /// The display scale it is drawn at.
+        scale: f32,
+    },
+    /// Closes the window a page asked for with `window.open`, reported as [`Event::PopupOpened`], that the window will not show, as when it has no room for another tab.
+    DropPopup {
+        /// The helper's number for the window.
+        popup: u64,
+    },
+    /// Shows `text` an input method is composing in the page holding the keyboard, underlined at the caret, replacing the composition shown before; empty `text` ends the composition without typing anything. Finished text comes as [`Request::CommitText`]. The helper answers with [`Event::Caret`] so the input method's candidates sit by the text.
+    Compose {
+        /// The page.
+        page: u32,
+        /// What is being composed.
+        text: String,
     },
 }
 
@@ -555,6 +616,100 @@ pub enum Event {
     Features {
         /// The names of the features.
         features: Vec<String>,
+    },
+    /// The reader copied or cut what was marked in the page; the window puts it on its clipboard, which the hidden engine cannot reach.
+    Copied {
+        /// The page.
+        page: u32,
+        /// What was marked, as plain text.
+        text: String,
+        /// What was marked, as HTML; empty when it was in a text field or the engine gave none.
+        #[serde(default)]
+        html: String,
+    },
+    /// The page reports something for the pane to show around it, such as a dialog, the menu of a right click or a download moving on.
+    Chrome {
+        /// The page.
+        page: u32,
+        /// What it reports.
+        report: PageReport,
+    },
+    /// The page started or stopped loading, or got further with it.
+    Loading {
+        /// The page.
+        page: u32,
+        /// Whether it is loading.
+        loading: bool,
+        /// How far it got, from 0 to 1; the engine gives no measure, so it is a guess from the steps a load goes through.
+        #[serde(default)]
+        progress: f32,
+    },
+    /// The main frame of the page could not load an address, for a reason other than being stopped or sent elsewhere; the page shows the engine's error page until the next load.
+    LoadFailed {
+        /// The page.
+        page: u32,
+        /// The address that did not load.
+        #[serde(default)]
+        url: String,
+        /// The engine's number for the error, such as -105.
+        #[serde(default)]
+        code: i32,
+        /// The engine's name for it, such as `ERR_NAME_NOT_RESOLVED`.
+        #[serde(default)]
+        name: String,
+    },
+    /// The process that ran the page's content went away, crashed or killed; the page shows nothing new until it is loaded again.
+    Crashed {
+        /// The page.
+        page: u32,
+        /// The engine's word for why, such as `crashed`, `oom` or `killed`.
+        #[serde(default)]
+        reason: String,
+    },
+    /// The page stopped answering, or answers again.
+    Responsive {
+        /// The page.
+        page: u32,
+        /// Whether it answers.
+        responsive: bool,
+    },
+    /// Whether the page's history has pages before and after the one shown, sent after each navigation.
+    History {
+        /// The page.
+        page: u32,
+        /// Whether it can go back.
+        back: bool,
+        /// Whether it can go forward.
+        forward: bool,
+    },
+    /// The page opened a window with `window.open` and features, which keeps `window.opener`, as sign-in and payment flows need; the helper holds it until the window answers with [`Request::AdoptPopup`] or [`Request::DropPopup`].
+    PopupOpened {
+        /// The page that opened it.
+        page: u32,
+        /// The helper's number for the window.
+        popup: u64,
+        /// Where it goes.
+        url: String,
+        /// Whether a tool of an agent was running on the page when it opened, so the new tab is the agent's.
+        agent: bool,
+    },
+    /// The page closed itself, as a window opened by a script does with `window.close()`; the window closes its tab.
+    PageClosed {
+        /// The page.
+        page: u32,
+    },
+    /// Where the caret or the text being composed is in the page, so the window can put the input method's candidates by it.
+    Caret {
+        /// The page.
+        page: u32,
+        /// Logical pixels from the left of the page.
+        x: i32,
+        /// Logical pixels from the top of the page.
+        y: i32,
+        /// Its width in logical pixels.
+        width: i32,
+        /// Its height in logical pixels.
+        height: i32,
     },
 }
 

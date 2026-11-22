@@ -59,6 +59,8 @@ settings! {
     OpenDevServers,
     /// Whether links to local pages open in the embedded browser.
     OpenLocalLinks,
+    /// Where the embedded browser's address bar searches.
+    SearchEngine,
     /// Whether agents may open only local addresses and the origins listed.
     RestrictAgentBrowsing,
     /// The origins agents may open besides local addresses.
@@ -303,6 +305,7 @@ impl Setting {
             Self::EmbeddedBrowser
             | Self::OpenDevServers
             | Self::OpenLocalLinks
+            | Self::SearchEngine
             | Self::RestrictAgentBrowsing
             | Self::AgentOrigins => Section::Browser,
             Self::ThemeMode
@@ -493,6 +496,10 @@ impl Setting {
             Self::OpenLocalLinks => (
                 "Open local links in the browser",
                 "Open links to localhost, 127.0.0.1, [::1] and 0.0.0.0 in the embedded browser instead of the system browser. Other links always open in the system browser. Needs the embedded browser.",
+            ),
+            Self::SearchEngine => (
+                "Search engine",
+                "Where the address bar of the embedded browser searches for what is not an address.",
             ),
             Self::RestrictAgentBrowsing => (
                 "Restrict agent browsing",

@@ -16,7 +16,7 @@
 
 /**
  * What an edit request does to the page.
- * @typedef {'Cut' | 'Copy' | 'Paste' | 'SelectAll'} EditAction
+ * @typedef {'Cut' | 'Copy' | 'Paste' | 'SelectAll' | 'Undo' | 'Redo'} EditAction
  */
 
 /**
@@ -26,7 +26,7 @@
 
 /**
  * How the pointer looks over a page.
- * @typedef {'Arrow' | 'Hand' | 'Text' | 'Cross' | 'Wait' | 'Help' | 'ResizeHorizontal' | 'ResizeVertical'} Cursor
+ * @typedef {'Arrow' | 'Hand' | 'Text' | 'Cross' | 'Wait' | 'Help' | 'ResizeHorizontal' | 'ResizeVertical' | 'Grab' | 'Grabbing' | 'Move' | 'NotAllowed' | 'ResizeNwse' | 'ResizeNesw'} Cursor
  */
 
 /**
@@ -133,8 +133,9 @@
  */
 
 /**
- * @typedef {PageBody & { x: number, y: number, dx: number, dy: number, modifiers: number }} ScrolledBody
- * Scrolls the page; a positive `dy` scrolls up.
+ * @typedef {PageBody & { x: number, y: number, dx: number, dy: number, modifiers: number, exact_dx?: number | null, exact_dy?: number | null, precise?: boolean }} ScrolledBody
+ * Scrolls the page; a positive `dy` scrolls up. `exact_dx` and `exact_dy` give the distance with its fractions where the
+ * window sends them, and `precise` says it came from a device that scrolls by the pixel, not from a wheel's notches.
  */
 
 /**
@@ -145,6 +146,11 @@
 /**
  * @typedef {PageBody & { text: string }} CommitTextBody
  * Types finished text, as an input method does.
+ */
+
+/**
+ * @typedef {PageBody & { text: string }} ComposeBody
+ * Shows text an input method is composing; empty text ends the composition without typing.
  */
 
 /**
@@ -198,7 +204,14 @@
  *   | { HardReload: PageBody }
  *   | { ClearData: PageBody }
  *   | { Capture: CaptureBody }
- *   | { PickArea: PickAreaBody }} PageRequest
+ *   | { PickArea: PickAreaBody }
+ *   | { Stop: PageBody }
+ *   | { Chrome: ChromeBody }} PageRequest
+ */
+
+/**
+ * @typedef {PageBody & { action: Json }} ChromeBody
+ * Something the reader does with the page from the pane around it, a `PageAction` of `crates/pm-browser/src/chrome.rs`, such as `{ AnswerDialog: { id, accept, text } }` or `'Print'`.
  */
 
 /**
@@ -208,7 +221,9 @@
  *   | { Scrolled: ScrolledBody }
  *   | { Key: KeyBody }
  *   | { CommitText: CommitTextBody }
- *   | { Edit: EditBody }} InputRequest
+ *   | { Edit: EditBody }
+ *   | { PasteText: CommitTextBody }
+ *   | { Compose: ComposeBody }} InputRequest
  */
 
 /**
@@ -232,8 +247,13 @@
  */
 
 /**
- * @typedef {{ ticket: number, html: string, width: number, height: number, path: string }} RenderHtmlBody
- * Renders the document `html`, sealed from the network, at a viewport of `width` by `height` CSS pixels into the PNG file `path`; the answer is an `HtmlRendered` report with the same `ticket`.
+ * @typedef {{ ticket: number, html: string, width: number, height: number, path: string, scale?: number }} RenderHtmlBody
+ * Renders the document `html`, sealed from the network, at a viewport of `width` by `height` CSS pixels and display `scale` (1 when missing) into the PNG file `path`; the answer is an `HtmlRendered` report with the same `ticket`.
+ */
+
+/**
+ * @typedef {PageBody & { popup: number, width: number, height: number, scale: number }} AdoptPopupBody
+ * Makes the window `popup` a page opened with `window.open` the new page `page`, of `width` by `height` logical pixels at display `scale`.
  */
 
 /**
@@ -248,6 +268,8 @@
  *   | { PermissionAnswer: PermissionAnswerBody }
  *   | { CertificateChoice: CertificateChoiceBody }
  *   | { OpenHtml: OpenHtmlBody }
+ *   | { AdoptPopup: AdoptPopupBody }
+ *   | { DropPopup: { popup: number } }
  *   | { RenderHtml: RenderHtmlBody }} Request
  */
 
@@ -287,7 +309,17 @@
  *   | { Captured: { page: number, capture: Capture } }
  *   | { OpenRequested: { page: number, url: string, agent: boolean } }
  *   | { HtmlRendered: { ticket: number, path: string, error: string } }
- *   | { Features: { features: string[] } }} Event
+ *   | { Features: { features: string[] } }
+ *   | { Loading: { page: number, loading: boolean, progress: number } }
+ *   | { LoadFailed: { page: number, url: string, code: number, name: string } }
+ *   | { Crashed: { page: number, reason: string } }
+ *   | { Responsive: { page: number, responsive: boolean } }
+ *   | { History: { page: number, back: boolean, forward: boolean } }
+ *   | { PopupOpened: { page: number, popup: number, url: string, agent: boolean } }
+ *   | { PageClosed: { page: number } }
+ *   | { Copied: PageBody & { text: string, html: string } }
+ *   | { Caret: PageBody & { x: number, y: number, width: number, height: number } }
+ *   | { Chrome: PageBody & { report: Json } }} Event
  */
 
 /**

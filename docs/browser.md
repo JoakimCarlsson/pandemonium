@@ -32,8 +32,88 @@ library. Requests and reports are one JSON object to a line; `crates/pm-browser/
 Each page paints into two files in the surfaces folder, written in turn. A
 file starts with a counter that is odd while the helper fills it and even
 otherwise; the window copies the pixels out only when it sees the same even
-number before and after. A `Surface` report names the files and a `Painted`
+number before and after, and never from a file whose counter is still 0,
+which was not filled yet. A `Surface` report names the files and a `Painted`
 report says which is newest.
+
+The four bytes after the counter are `BGRA` when the pixels are stored as the
+engine paints them; the helper writes them so and does no work per pixel, and
+the window swaps red and blue while it copies (`SurfaceReader::read_into` in
+`crates/pm-browser/src/surface.rs`). A file without the tag holds RGBA. The
+helper writes into a file only the rows that changed since that file was last
+written: the paint's dirty rectangle joined with the one of the paint before,
+since the files take turns (`dirtyRows` in `src/surface.js`). The window
+copies into the pixels of the picture before last once the renderer no longer
+holds them, and hands the pixels to the renderer without another copy.
+
+When the size changes, the helper makes new files and announces them before
+any paint into them. It keeps the old files for two seconds before removing
+them, so a window still mapping them is not left with missing files, and
+retries later where the system refuses to remove a mapped file. The window
+swaps in the new files and their size under one lock; until a paint into them
+arrives it keeps showing the last picture at the old size, and if it cannot
+map them it shows that picture rather than reading the wrong files.
+
+The window reads reports as bytes up to each newline and the helper splits
+requests the same way (`src/lines.js`), so a character whose bytes arrive in
+two chunks is never broken.
+
+### Display scale
+
+`Open`, `OpenTools`, `OpenHtml`, `RenderHtml` and `Resize` carry the pane's
+display `scale` (device pixels per logical pixel), kept between 1 and 4
+(`displayScale` in `src/surface.js`). A page on a 2x display paints twice its
+logical size in each direction. The surface files hold device pixels (`pixels`
+in `src/surface.js` takes the bitmap at the image's sharpest scale), and the
+window draws the frame cropped to the pane's logical size, so it shows sharp.
+The requests of the window stay in logical pixels.
+
+The engine fixes an offscreen window's device scale when it makes the window and
+has no way to change it later; under Wayland it also ignores any scale but 1.
+So every window paints at 1 (`ENGINE_SCALE` in `src/surface.js`) and is sized
+in device pixels, the pane's logical size times its scale (`Page#fitWindow`),
+and the page's zoom carries the scale: the contents' zoom is the pane's scale
+times the reader's zoom (`Page#carryScale`), so the page lays out at the
+logical size and reports and renders at a pixel ratio of the scale. The zoom,
+unlike an emulated pixel ratio, reaches cross-origin frames, which run in
+processes of their own: `Emulation.setDeviceMetricsOverride` changes the top
+frame alone, and a frame's target refuses it, so with it such a frame reports a
+pixel ratio of 1 and is painted blurry. The contents' zoom mode is `isolated`,
+so the zoom stays through navigation and no other page of the site takes it;
+the helper puts it back after a navigation when the engine dropped it, as it
+does for a zoom set before the first document comes up (`Page#holdZoom`). The
+reader's zoom, as `Zoom`, `SetZoom` and `Zoomed` carry it, is the contents'
+zoom over the pane's scale (`Page#readerZoom`); the engine's limit of 500%
+applies to the product, so at scale 2 the reader can zoom to 250%.
+
+The developer tools and sealed pages render at the pane's scale through
+`Emulation.setDeviceMetricsOverride` with width and height 0 (the size follows
+the window) and `deviceScaleFactor` and `scale` both the pane's scale
+(`paneMetrics` in `src/emulation.js`), through a debugger the helper attaches
+once the scale is above 1. When a `Resize` brings another scale, as when the
+window moves to another display, the window is sized again and the zoom or the
+override set again (`Page#applyScale`), so frames come out at `width * scale`
+by `height * scale`, as sharp as a page opened at that scale, and the page keeps
+its state. `RenderHtml` sizes and renders its window the same way.
+
+The window is in device pixels, so the helper turns every point it sends into
+them: pointer and wheel positions of the window and the points of `InspectAt`
+and `CopyImageAt` are multiplied by the scale (`toWindow` in `src/input.js`),
+and the point of a right click is divided by it. The points of agents' clicks,
+hovers and drags are CSS pixels of the top frame, as the boxes of elements are,
+so they are multiplied by the reader's zoom as well (`windowPoint` in
+`src/agent.js`). Wheel distances stay as they are, since the engine scrolls
+them in CSS pixels.
+
+An agent's viewport (`browser_resize`, `browser_emulate`) sizes the window to
+the viewport's size times the pane's scale. When it has no pixel ratio of its
+own and is not mobile, the zoom carries the scale as for the pane, and the
+override sets only the screen's size (`screenMetrics` in `src/emulation.js`).
+Otherwise the override follows the window at the viewport's pixel ratio, or
+the pane's, with the pane's scale as its `scale` and the viewport's size as the
+screen's (`viewportMetrics`, `Page#emulateViewport`), and the zoom is the
+reader's alone; cross-origin frames then keep a pixel ratio of 1. An override
+of a fixed size would paint at 1.
 
 Right after the token the helper sends `Features { features }`, the names of
 what it can do beyond what every helper does, and then `Ready`. The window reads
@@ -46,17 +126,95 @@ would ignore the request and leave the window waiting. Today the one feature is
 for `OpenHtml` and `RenderHtml`.
 
 `OpenRequested` reports that a page asked for a new window, so that the window
-opens a tab for it (see [Tabs](#tabs)).
+opens a tab for it, and `PopupOpened`, `AdoptPopup` and `DropPopup` carry the
+real popups that keep `window.opener` (see [Tabs](#tabs)). `Loading`,
+`LoadFailed`, `Crashed`, `Responsive`, `History` and `PageClosed` report where a
+page is in its life, and `Stop` stops a load (see
+[Loading, failed loads and crashes](#loading-failed-loads-and-crashes)).
 
 The helper runs each page as an offscreen Electron window and replays the
 window's pointer, scroll and key requests as input events. The page counts as active only while its hidden window
 is focused, so `Focus` focuses and blurs that window: without it a field shows no
-caret or focus ring and a selection paints grey. Cut, copy, paste and select all, pressed with the platform's shortcut key (Command on macOS, Control
-elsewhere), run as the page's own edit commands, since Chromium binds those keys
-in a browser shell that an offscreen page lacks (`shortcutEdit` in
-`helpers/electron-browser/src/input.js`). The picker and the
+caret or focus ring and a selection paints grey. Cut, copy, paste, select all,
+undo (shortcut key with Z) and redo (with Shift+Z, or Y outside macOS), pressed
+with the platform's shortcut key (Command on macOS, Control elsewhere), run as
+the page's own edit commands, since Chromium binds those keys in a browser shell
+that an offscreen page lacks (`shortcutEdit` in
+`helpers/electron-browser/src/input.js`). The hidden window never reaches the
+system clipboard, so the window owns it: on copy or cut, from a key or the menu,
+the helper reads what is marked in the frame that holds the keyboard (a text
+field's selection, otherwise the document's selection as text and HTML; never a
+password field), reports it as `Copied`, and for a cut then deletes it; the
+window puts the text on its clipboard. On paste, from the shortcut or the menu,
+the window reads its clipboard's text and sends it as `PasteText`, which replaces
+the selection; with no text on the clipboard it falls back to the engine's own
+paste. The picker and the
 agent tools use the page's DevTools protocol through Electron's debugger. The
 developer tools are Electron's own, painted into a second page.
+
+### Keyboard, pointer and input methods
+
+Keys go to the page as Windows virtual-key codes (`browser_keys.rs` in
+`crates/pandemonium/src/app`). A letter, digit or punctuation mark of a US
+layout takes the code of the key that types it, so Control+/ or Control+[
+reach the page with their key; a character of another layout, a dead key and
+the media, volume and browser keys take the code of where they sit on the
+keyboard; the number pad, Insert, the context menu key, the locks, the function
+keys up to F24 and the modifier keys have their own codes. A key types text
+only while Control, Alt and Command are up, Enter included. The helper names
+each code as Electron does, punctuation by its unshifted character (`keyName`
+in `src/input.js`); a key Electron has no name for, such as the context menu
+key, goes through the page's DevTools protocol (`Input.dispatchKeyEvent`). On
+macOS, Command and Option with the arrows, Backspace and Delete, Shift marking
+what a movement passes over, are sent with the editing command macOS binds to
+them (`macEditing`), since an offscreen page gets no bindings from the system.
+
+Pointer moves, presses and releases go through the page's DevTools protocol
+(`Input.dispatchMouseEvent`), routed by `src/routing.js`: in an offscreen
+window the engine sends every pointer event to the top frame, so a cross-origin
+frame, which runs in a process of its own, would never see the pointer move,
+show a hover state or a tooltip. The router follows each cross-origin frame as a
+target of its own (`Target.setAutoAttach`), finds the innermost one under the
+pointer (`DOM.getNodeForLocation` and the box of its element) and sends the
+event to that frame's target at the point inside it, in its CSS pixels; the top
+frame takes points in the window's pixels without the zoom. A pressed button
+keeps the pointer in the frame it went down in, and moving off a cross-origin
+frame sends it a move just outside it, so it hears the pointer leave. The
+agents' click, hover and drag tools use the same router.
+
+What an input method composes in a page goes to it as `Compose`, which the
+helper shows with `Input.imeSetComposition`; finished text comes as
+`CommitText`, and empty `Compose` text ends a composition without typing.
+`CommitText` and `PasteText` are typed with the protocol's `Input.insertText`,
+which goes to the frame that holds the keyboard; Electron's own `insertText`
+crashes the page when that frame is a cross-origin frame, so it serves only a
+page without the protocol.
+After each update the helper reports `Caret`, where the caret or the end of the
+selection is in the frame that holds the keyboard (or that frame's focused
+element), moved by the offset of that frame in the top frame (see
+[Frames inside a page](#frames-inside-a-page)), and the window puts the
+candidate window there. Composing needs the
+page's protocol, so sealed pages take only finished text.
+
+The primary, secondary and middle buttons go to the page with their presses,
+drags and releases, and the page follows the pointer while any of them is held,
+wherever it goes in the window. Releasing a secondary or middle button outside
+the window is not seen. The wheel and trackpads send their exact distance
+(`exact_dx`, `exact_dy` on `Scrolled`, with the whole pixels in `dx`, `dy` for
+older helpers), with `precise` set for a turn that is not a whole number of
+wheel notches, which the window counts as 48 logical pixels; the helper passes
+wheel ticks and `hasPreciseScrollingDeltas` on so pages scroll smoothly.
+
+The page's cursor maps to the closest one the window can draw: the arrow, the
+hand, the text caret, the crosshair (also for `cell`), busy (also for
+`progress`), the four resize handles, grab and grabbing, move (also for
+`all-scroll` and panning), and not-allowed (also for `no-drop`). Cursors the
+window has no shape for, such as `zoom-in`, `copy`, `alias` and `none`, show
+the arrow.
+
+When the app's main window loses the keyboard to another application, every
+page is blurred as if it lost the keyboard, and the page that held it is
+focused again when the window comes back.
 
 ## Opening a dev server
 
@@ -111,6 +269,23 @@ window opens the address in a new tab on the same machine as the page that
 asked. The reader's own request is shown at once; one made while a tool of an
 agent ran is the agent's and opens behind the tab shown. The agent restriction on
 origins still applies in the helper before the request is sent.
+
+A real popup, `window.open` with a features string (Chromium's `new-window`
+disposition), is different: sign-in and payment flows need the new window to
+keep `window.opener` and to close itself when it is done. The helper lets
+Electron make that window, as a hidden offscreen window confined like every
+other page (`popupOptions` in `helpers/electron-browser/src/lifecycle.js`),
+holds it and reports `PopupOpened` (opener, the helper's number for the window,
+address, and the agent flag as for `OpenRequested`). The window opens a tab for
+it whose first command is `AdoptPopup` instead of a load, and the helper makes
+the held window that tab's page (`adoptPopup` in `main.js`), sending its address,
+title and history as it stands, since it may have loaded already. When the strip
+is full the window answers `DropPopup` and the helper closes the window; one the
+window never answers is closed after 30 seconds. A blank popup that a script
+fills in afterwards is allowed only for the reader's own clicks, never while a
+tool of an agent runs. When the popup calls `window.close()` the helper reports
+`PageClosed` and the window closes its tab. Links with `target=_blank` and
+`window.open` without features still become plain tabs through `OpenRequested`.
 
 For a remote project a tab keeps the machine its page is on, so its address is
 resolved over the same SSH forward as before, and a window that restores a
@@ -206,8 +381,10 @@ long as the page does, so they are not waited for.
 ## What agents can do with a page
 
 Besides navigating, reading and clicking, the tools can hover (`browser_hover`),
-drag (`browser_drag`, by element or point; HTML drag and drop through
-`Input.setInterceptDrags`, other drags as plain mouse events), fill several
+drag (`browser_drag`, by element or point, through the same router as clicks
+and hovers, so a drag inside a cross-origin frame reaches it; HTML drag and drop
+through `Input.setInterceptDrags` on the page and every frame target, dropped on
+the frame under the end point, other drags as plain mouse events), fill several
 fields at once (`browser_fill_form`, which runs the same code as `browser_type`,
 `browser_select_option` and a click on a box, with the same refusal messages and
 a stop at the first failure), outline an element for the person watching
@@ -217,12 +394,12 @@ a stop at the first failure), outline an element for the person watching
 `captureBeyondViewport`, and a full-page picture is cut at 16000 pixels) and set
 the viewport size (`browser_resize`).
 
-`browser_resize` uses `Emulation.setDeviceMetricsOverride`, so the size stays
-through navigation. It does not fight the pane: the helper applies the override
-again after each `Resize` request of the pane, which still sizes the window and
-the painted surface, so the page is shown at the emulated size at the top left
-of the pane and the rest of the pane is empty. `reset` gives the size back to
-the pane.
+`browser_resize` sizes the window to the viewport and emulates its screen with
+`Emulation.setDeviceMetricsOverride` (see Display scale), so the size stays
+through navigation. It does not fight the pane: a `Resize` request of the pane
+keeps the window at the viewport's size, so the page is shown at the emulated
+size at the top left of the pane and the rest of the pane is empty. `reset`
+gives the size back to the pane.
 
 ## File pickers
 
@@ -237,6 +414,14 @@ windows or not at all, so it calls `app.focus({ steal: true })` first. The files
 reader's own, on the machine the window runs on. Agents still cannot use either
 command (see `cdp-policy.js`).
 
+Before the dialog opens the helper reads the input's `accept` and
+`webkitdirectory` through `DOM.resolveNode`. An input with `webkitdirectory`
+gets a folder dialog. `accept` becomes one filter of the extensions it names
+(`.pdf`, or common types such as `image/*` and `application/json`, `filtersOf`)
+followed by "All files", since `accept` is only a hint. A picker a page opens
+while a dialog is already open waits its turn in a queue instead of being
+dropped; the same input asking twice is asked once.
+
 ## Drop-downs and date pickers
 
 Chromium draws the popup of a `<select>` and of a date, time, date-and-time or
@@ -248,7 +433,20 @@ closed shadow root, which is painted with the page. Choosing sets the value and
 fires `input` and `change`. A press on the picker button at the right end of a
 date input opens the picker; the rest of the input still edits by typing. Lists
 with `multiple` or a `size`, and `week` and `color` inputs, are not covered.
-Pages inside frames get no popups, since the preload runs only in the top frame.
+The preload runs in every frame of the page (`nodeIntegrationInSubFrames`,
+which with `sandbox: true` gives the frames the preload and no node), so a
+list or picker inside a frame opens too; its popup is drawn in that frame and
+is cut off at the frame's edges.
+
+### Frames inside a page
+
+A frame reports a point, such as the pointer under a tooltip or the caret, in
+its own viewport. `helpers/electron-browser/src/frames.js` (`offsetOf`) finds
+where that viewport sits in the top frame, one parent at a time: the child
+finds its place among its parent's frames (`window.parent[i] === window`), and
+the parent finds the `<iframe>` or `<frame>` whose `contentWindow` is that
+child and gives where its content box starts. Both checks are allowed across
+origins, so the same steps serve same-origin and cross-origin frames.
 
 ## Dialogs
 
@@ -262,7 +460,16 @@ offscreen pages, read from its source (`electron_api_web_contents.cc` and
   would be free-standing and nothing in the pane could answer it. While the
   renderer is stopped, DevTools commands such as `Runtime.evaluate` never answer,
   so an agent's call would hang with it.
-- `prompt` is cancelled at once, without a box: the page gets `null`.
+- `prompt` is cancelled at once, without a box: the page gets `null`. The
+  preload (`popups-preload.js`) therefore puts its own `window.prompt` in the
+  page's world (`contextBridge.executeInMainWorld`), which asks the helper with
+  a synchronous IPC message (`pandemonium:prompt`). The page waits on it as on a
+  real prompt; `Dialogs.askPrompt` keeps it open like the other dialogs and
+  answers it with the text, or `null` when cancelled. A frame inside the page
+  gets the same prompt; the reply goes to the frame that asked, and the sheet
+  shows that frame's address. In a frame Electron puts its own `prompt` back
+  after the preload ran, so the preload puts the helper's in again on the
+  first change to the document, before the page's scripts run.
 - `beforeunload` emits `will-prevent-unload`; if nobody calls `preventDefault`,
   the navigation is cancelled silently (`did-fail-load` with `ERR_ABORTED`).
 - The DevTools protocol reports `alert` and `confirm` with
@@ -281,16 +488,22 @@ tool is running, a `beforeunload` prompt is overridden so the tool can leave the
 page; at other times Electron's cancel stands, and the agent is told.
 
 When no tool of an agent runs on the page, the reader's own click made the
-dialog open, so the helper shows it as a native box with no parent window
-(Electron's original `showMessageBox`, kept by `holdNativeBoxes`) and answers
-the page with the button the reader presses. The box is withdrawn if the dialog
-closes another way.
+dialog open, so the helper reports it as `Chrome { report: Dialog }` with a
+number, its kind, message, starting text and the page's host. The pane draws a
+sheet over the dimmed page ("example.com says", the message, a line for a
+prompt's answer, OK and, for `confirm` and `prompt`, Cancel;
+`crates/pm-components/src/browser_chrome.rs`). Enter answers OK and Escape
+Cancel. The answer goes back as `Chrome { action: AnswerDialog }`, which the
+helper takes only while that dialog is still the open one. When the dialog
+closes another way, such as an agent answering it or the timer, the helper
+reports `DialogClosed` and the sheet goes away. A page that opens more than
+three dialogs in 30 seconds has the rest dismissed unseen.
 
-Known limits: `prompt` cannot be answered, since Electron cancels it before the
-protocol sees it, so `prompt_text` has no effect. The pane draws no dialog
-itself; the reader's box is a separate window. The patch of `dialog.showMessageBox` relies on Electron calling
+Known limits: the patch of `dialog.showMessageBox` relies on Electron calling
 it through the module object, as it does at the time of writing; if it did not
-take, the native box would open and the protocol could still answer it.
+take, the native box would open and the protocol could still answer it. A page
+that keeps a reference to `window.prompt` taken before the preload ran keeps
+Electron's, which returns `null`.
 
 ## Keeping the reader safe
 
@@ -324,9 +537,23 @@ ends, and never written to disk.
   Downloads folder. The helper takes only the last part of the proposed name,
   replaces characters file systems treat specially, drops leading dots, avoids
   names Windows reserves, and creates the file exclusively, adding ` (1)`, ` (2)`
-  before the extension when the name is taken, so nothing is overwritten. The
-  pane says what was saved (`Download`, as started, finished or failed) and
-  nothing is opened.
+  before the extension when the name is taken, so nothing is overwritten.
+  Pages and their developer tools may download; sealed pages may not. Each
+  download gets a number and is reported as `Chrome { report: Download }` with
+  the bytes received and in all, at most four times a second, and once more
+  when it finished, failed or was cancelled. The toolbar then has a downloads
+  button, accented while one runs, which shows the list over the top right of
+  the page: each with its name and progress, a button to cancel a running one
+  (`CancelDownload`; the partial file is removed), and for a finished one buttons
+  to show it in its folder (`ShowDownload`) or open it (`OpenDownload`). Nothing
+  is opened unless the reader asks. A new download opens the list.
+- **Sharing the screen.** `getDisplayMedia` from a page's top frame, while no
+  tool of an agent runs on it, lists the screens and windows
+  (`desktopCapturer`) and reports `Chrome { report: ScreenShare }`. A bar over
+  the top of the page offers a button for each and "Don't share"; the answer is
+  `ChooseScreen` with the source or none. A question not answered within two
+  minutes, or whose page closed, is refused and reported as
+  `ScreenShareCancelled`.
 - **Origins for agents.** Settings, under Browser, has "Restrict agent browsing"
   (off by default) and a list of origins. While on, the tools of agents may take
   the page only to `localhost`, `127.0.0.1`, `[::1]` (any port) and the listed
@@ -354,8 +581,11 @@ possibly from what it read on the web, so it is never trusted. The helper shows
 it in a *sealed page* (`helpers/electron-browser/src/sealed.js`, with the
 decisions that need no engine in `src/sealed-policy.js`), in two ways:
 
-- **`RenderHtml { ticket, html, width, height, path }`** renders the document
-  offscreen at a viewport and writes a PNG to `path`; the answer is
+- **`RenderHtml { ticket, html, width, height, path, scale }`** renders the
+  document offscreen at a viewport and display `scale` (1 when missing; the
+  window sends its own, so the PNG is `scale` times the viewport and its
+  density is read back from its width) and writes a PNG to `path`, whose cache
+  name includes the scale when it is not 1; the answer is
   `HtmlRendered { ticket, path, error }`. The window uses it for the picture in
   a prototype's card (1024 by 640) and in the tile of a mockup (640 by 400).
 - **`OpenHtml { page, html, title, width, height, scale }`** opens the document
@@ -383,7 +613,9 @@ What a sealed page is held to:
   layered.
 - **Scripts run, and reach nothing.** The window is `sandbox: true`,
   `contextIsolation: true`, without node integration in the page, its frames or
-  its workers, and without the webview tag. A rendered document has no preload.
+  its workers, and without the webview tag. An interactive document's preload
+  also runs in its frames (`nodeIntegrationInSubFrames`), sandboxed like the
+  page. A rendered document has no preload.
   An interactive one has only the preload that draws drop-downs and date
   pickers (see [Drop-downs and date pickers](#drop-downs-and-date-pickers)),
   which runs in the isolated world and exposes nothing to the page.
@@ -466,6 +698,53 @@ The mouse's back and forward buttons go through the history of the page while
 the pointer is over it, or it holds the keyboard and is on screen. Anywhere else
 they move through the pages of the window, as before.
 
+After each navigation, in-page navigation and stop of a load the helper reports
+`History` with `navigationHistory.canGoBack()` and `canGoForward()`, and the
+toolbar greys out the back and forward buttons that have nowhere to go. A helper
+older than this report never sends it, and then both stay pressable
+(`PageLife::can_go_back` in `crates/pm-components/src/browser_life.rs`).
+
+## Loading, failed loads and crashes
+
+`helpers/electron-browser/src/lifecycle.js` watches each page that is not sealed
+and reports:
+
+- `Loading { loading, progress }` on `did-start-loading`, the main frame's
+  `did-start-navigation`, `did-navigate`, `dom-ready` and `did-stop-loading`.
+  Electron gives no measure of how far a load got, so `progress` is a guess from
+  these steps (0.1, 0.25, 0.5, 0.8, then done). While a page loads the toolbar's
+  reload button becomes a stop button, which sends `Stop` (`webContents.stop()`),
+  and a thin line over the top of the page grows with the progress.
+- `LoadFailed { url, code, name }` from `did-fail-load` for the main frame only,
+  leaving out `-3` (`ERR_ABORTED`, a load stopped or replaced) and certificate
+  errors, which have their own page (see [Keeping the reader safe](#keeping-the-reader-safe)).
+  The pane then shows its own error view in place of the page: what went wrong in
+  words for names that do not resolve, refused connections, timeouts and being
+  offline (`failure_words`), the engine's name and number, and a Try again button
+  that loads the failed address again. The address bar shows the failed address.
+  The view is drawn by the pane, not loaded into the page, so the page's history
+  and what agents read of it are the engine's own.
+- `Crashed { reason }` from `render-process-gone`, except a clean exit. The pane
+  shows a view that says the page stopped, with a Reload button; loading again
+  starts a new content process.
+- `Responsive { responsive }` from `unresponsive` and `responsive`. A bar over the
+  page says it is not responding and offers Reload.
+
+The next load to start clears a failure, a crash and the bar. `pm_browser::Lifecycle`
+holds what was reported for each page; the window hands it to the tab as
+`PageLife` when it changes.
+
+## When the helper stops
+
+The connection to the helper closes when its process ends, which sets the
+engine's failure. Each turn `browser_revive` in `app/browser.rs` looks for that:
+it drops the engine and every page, answers the tool calls that were running
+with what happened, and has every tab that had a page open again, at its last
+address or on its sealed document, with a note over it that the browser was
+started again; the next load starts a new helper. A helper that stops three
+times within a minute is not started again, and every tab says so until the
+browser is turned off and on in Settings.
+
 ## The address bar
 
 What is typed in the address bar becomes an address in
@@ -473,11 +752,40 @@ What is typed in the address bar becomes an address in
 `about:`, `data:`) is loaded as it is. A host gets a scheme: `http://` for
 `localhost`, loopback addresses, `*.localhost` and `:3000`, which means
 `localhost:3000`, and `https://` for anything with a dot or written as
-`name:port`. Everything else is searched for: text with spaces, and one word
-without a dot that is not a local host, such as `react`. The search is
-DuckDuckGo (`SEARCH_URL`). The engine is fixed in code; there is no setting for
-it yet, since the address is made in `pm-components`, which does not see the
-window's settings. Nothing typed loads `about:blank`.
+`name:port`. Machines of the local network get `http://`: IPv4 addresses,
+`name:port` without a dot (`devbox:8080`), and names ending in `.local`,
+`.lan`, `.internal`, `.home.arpa` or `.test`. A single word is a host, over
+`http://`, when it goes on with a slash (`devbox/`) or is a host without a dot
+the reader visited before. Everything else is searched for: text with spaces,
+and other single words, such as `react`. The engine is the setting "Search
+engine" under Browser (`search_engine` in `GeneralSettings`: DuckDuckGo, Google,
+Bing, Brave or Startpage). Nothing typed loads `about:blank`.
+
+While the reader types in the bar, a list under it suggests up to six addresses
+visited before whose address or title holds the text, those starting with it
+first, then the most visited and most recent; pressing one goes there.
+
+### What the browser remembers of sites
+
+The server on the reader's own machine keeps the zoom of each origin the reader
+zoomed and the last 500 addresses visited with their titles, in
+`browser-sites` in its data folder (`crates/pm-server/src/browser_sites.rs`,
+with the rules for recording and suggesting in
+`crates/pm-protocol/src/sites.rs`). It belongs to the reader rather than a
+project, so the window always uses the local server for it, never a project's
+remote one, through the `browser_sites`, `browser_visited`, `browser_titled`
+and `set_site_zoom` requests described in [protocol.md](protocol.md).
+
+The window asks for everything remembered the first time the browser needs it
+and keeps a copy in `Work`, so the address bar suggests from memory as the
+reader types. It records each visit, title and zoom in its copy and sends it
+to the server, which writes its file at once and tells other clients with
+`browser_sites_changed`; their copies are replaced by what it sends. When a
+page goes to another origin, the window puts back the zoom remembered for it
+(`SetZoom`); a zoom the reader then changes is remembered for that origin, and
+100% forgets it. A `browser-sites.json` an earlier version of the window kept
+beside the helper's profile is taken over by the server the first time it
+reads the store, and removed.
 
 ## Finding, zooming and loading again
 
@@ -492,6 +800,13 @@ sent to the page (`browser_keys.rs`).
 | Ctrl or Cmd+= (or +), -, 0 | zoom in, zoom out, back to 100% |
 | Ctrl or Cmd+R, F5 | load again |
 | Ctrl or Cmd+Shift+R, Shift+F5, Ctrl+F5 | load again without the cache |
+| Ctrl or Cmd+L, F6 | puts the keyboard in the address bar |
+| Alt+Left, Alt+Right, Cmd+[, Cmd+] | back, forward |
+| Ctrl+Tab, Ctrl+PgDn; Ctrl+Shift+Tab, Ctrl+PgUp | next tab; previous tab, going round |
+| Ctrl or Cmd+T; with Shift | new tab; opens again the last of the 20 tabs closed |
+| F12, Ctrl or Cmd+Shift+I | shows or hides the developer tools |
+| Ctrl or Cmd+P | prints the page to a PDF in Downloads and opens it |
+| Escape | leaves full screen; otherwise stops a page that is loading |
 
 The find bar has a line for the text, the count (`2 of 7`, or `No results`) and
 previous, next and close buttons. In the line, Enter goes to the next match,
@@ -516,6 +831,44 @@ browser shares, and then loads the page again.
 The wire carries them as `Find`, `StopFind`, `Zoom`, `HardReload` and
 `ClearData` requests and `Found` and `Zoomed` reports, all added to the end of
 `wire.rs` and mirrored in `types.js`.
+
+## Around the page
+
+What a page reports beyond painting goes as `Chrome` events holding a
+`PageReport` (`crates/pm-browser/src/chrome.rs`), and what the reader does
+about it as `Chrome` requests holding a `PageAction`. Both were added at the end
+of `wire.rs` and are mirrored in `types.js`; the helper side is
+`helpers/electron-browser/src/chrome.js`, and the pane draws it in
+`crates/pm-components/src/browser_chrome.rs`.
+
+- **The menu of a right click.** The helper sends Electron's `context-menu`
+  parameters: the link and source addresses, whether it is a picture, the
+  marked text, whether it is editable and what can be cut, copied and pasted,
+  a misspelt word with its suggestions, and whether the page can go back and
+  forward. The window opens the menu where the reader pressed: the
+  suggestions (`ReplaceMisspelling`), Open Link in New Tab, Copy Link Address,
+  Save Link As, the same for a picture with Copy Image (`CopyImageAt`), cut,
+  copy, paste and select all, back, forward and reload, find, print and open in
+  the system's browser, Inspect (opens the developer tools at that element,
+  `InspectAt`) and the rows that add the page to the prompt. Copying an address
+  puts it on the window's clipboard directly. A page that handles the right
+  click itself gets no menu. A tab with no page opens the usual menu at once.
+- **Full screen.** `enter-html-full-screen` hides the strip, the bar and the
+  developer tools so the page fills the pane, and makes the window fill the
+  screen; Escape (`LeaveFullscreen`) or the page leaving it puts both back.
+- **Sound.** `audio-state-changed` puts a speaker on the tab's chip; pressing it
+  mutes or unmutes the page (`Mute`).
+- **The link under the pointer.** `update-target-url` shows the address in a
+  small box at the bottom left of the page.
+- **Tooltips.** The offscreen page draws no tooltips, so the preload watches
+  `mouseover` for an element with a `title` and, after 600 ms, tells the
+  helper (`pandemonium:tooltip`); a frame's point is moved by the frame's
+  offset in the top frame first. The pane draws the title in a box below the
+  pointer until the pointer leaves, a button or key is pressed or the page
+  scrolls.
+- **Printing.** `Print` makes a PDF with `printToPDF`, saves it in Downloads
+  under a fresh name and opens it with the system's viewer; `Printed` says
+  where, and the note above the page shows it.
 
 ## Picking an element
 

@@ -7,11 +7,13 @@
 //! renderer can show as a picture. This crate knows nothing of windows, GPUs or
 //! Chromium: it takes sizes and input and hands back pictures.
 
+pub mod chrome;
 mod engine;
 mod error;
 mod frame;
 mod input;
 pub mod install;
+pub mod life;
 mod link;
 pub mod render;
 pub mod surface;
@@ -22,7 +24,8 @@ pub use engine::Engine;
 pub use error::Error;
 pub use frame::Frame;
 pub use input::{Button, Cursor, Key, Modifiers};
-pub use link::Notice;
+pub use life::{Lifecycle, LoadFailure, Popup};
+pub use link::{Copied, Notice};
 pub use render::Rendered;
 pub use view::View;
 pub use wire::{

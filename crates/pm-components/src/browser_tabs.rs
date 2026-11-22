@@ -109,7 +109,14 @@ pub struct BrowserTab {
     pub locked: bool,
     /// The document the tab shows sealed from the network in place of an address, when it shows one; agents are told nothing of such a tab and their tools do not work on it.
     pub sealed: Option<SealedPage>,
+    /// Where the page is in its loading, history and health, as the engine last reported it.
+    pub life: crate::browser_life::PageLife,
+    /// What the pane shows around the page from what it reported: a dialog, the menu of a right click, full screen, sound, the link under the pointer and tooltips.
+    pub chrome: crate::browser_chrome::PageChrome,
 }
+
+/// How many closed tabs are kept for opening again.
+const CLOSED_KEPT: usize = 20;
 
 impl BrowserTab {
     /// A tab about to load `address`, opened by an agent when `agent`.
@@ -131,6 +138,8 @@ impl BrowserTab {
             agent,
             locked: false,
             sealed: None,
+            life: crate::browser_life::PageLife::default(),
+            chrome: crate::browser_chrome::PageChrome::default(),
         }
     }
 
@@ -271,6 +280,7 @@ impl Browser {
             return false;
         }
         let removed = self.tabs.remove(index);
+        self.remember_closed(&removed);
         if self.agent_tab == Some(removed.id) {
             self.agent_tab = None;
         }
@@ -286,6 +296,36 @@ impl Browser {
         self.strip_start = self.strip_start.min(self.tabs.len() - 1);
         self.show_in_strip();
         false
+    }
+
+    /// Keeps the address of a tab the reader closed, so it can be opened again; blank, sealed and agents' tabs are not kept, and only the newest few are.
+    fn remember_closed(&mut self, tab: &BrowserTab) {
+        let address = tab.address.text().trim().to_owned();
+        if tab.agent || tab.sealed.is_some() || address.is_empty() || address == "about:blank" {
+            return;
+        }
+        self.closed.push((address, tab.host.clone()));
+        if self.closed.len() > CLOSED_KEPT {
+            self.closed.remove(0);
+        }
+    }
+
+    /// Opens again the tab the reader closed last, shown, and says whether there was one.
+    pub fn reopen_closed(&mut self) -> bool {
+        let Some((address, host)) = self.closed.pop() else {
+            return false;
+        };
+        self.open_tab(&address, host, false, true).is_some()
+    }
+
+    /// Shows the tab `step` places after the one shown, going round past either end.
+    pub fn select_step(&mut self, step: isize) {
+        let count = self.tabs.len() as isize;
+        if count < 2 {
+            return;
+        }
+        let next = (self.active as isize + step).rem_euclid(count) as usize;
+        self.select(next);
     }
 
     /// The range of tabs the strip draws in `width` logical pixels, and how wide each is: all of them when each can be `TAB_LEAST` wide, and otherwise as many as fit, from the one the strip was scrolled to (showing a tab scrolls the strip to it).
@@ -494,6 +534,10 @@ pub fn tab_strip(browser: &Browser, width: f32) {
                     })
                     .selected(index == browser.active)
                     .locked(tab.locked)
+                    .audio((tab.chrome.audible || tab.chrome.muted).then_some((
+                        tab.chrome.muted,
+                        Target::Browser(BrowserEvent::BrowserTabMute(index)),
+                    )))
                     .width(each)
                     .hint(hint)
                     .build();

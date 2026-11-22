@@ -6,7 +6,7 @@
  * otherwise, and what the reader says is remembered for the origin until the helper ends.
  */
 
-const { app, session } = require('electron');
+const { app, desktopCapturer, session, shell, webContents } = require('electron');
 const fs = require('fs');
 const path = require('path');
 
@@ -197,7 +197,82 @@ function guardPermissions() {
     return things.every((thing) => remembered.get(`${origin}|${thing}`) === true);
   });
   pages.setDevicePermissionHandler(() => false);
-  pages.setDisplayMediaRequestHandler((_request, callback) => callback({}));
+  pages.setDisplayMediaRequestHandler((request, callback) => askScreen(request, callback));
+}
+
+/**
+ * A question about sharing a screen or a window, by the number the window knows it by.
+ * @typedef {object} ScreenQuestion
+ * @property {number} page The page that asked.
+ * @property {Map<string, import('electron').DesktopCapturerSource>} sources What it may share, by the engine's name.
+ * @property {(streams: import('electron').Streams) => void} callback The engine's callback waiting for the answer.
+ * @property {NodeJS.Timeout} timer Ends the question with a no when it is not answered.
+ */
+
+/**
+ * The questions about sharing the screen the reader has not answered.
+ * @type {Map<number, ScreenQuestion>}
+ */
+const screens = new Map();
+
+/**
+ * Asks the reader which screen or window a page may share, by a `ScreenShare` report the window answers with `ChooseScreen`; a page an agent acts on, a frame inside a page, and a page of no web origin are refused at once, as is the request when the system lists nothing to share.
+ * @param {import('electron').DisplayMediaRequestHandlerHandlerRequest} request What the engine says of the request.
+ * @param {(streams: import('electron').Streams) => void} callback Gets the answer; an empty object refuses.
+ * @returns {void}
+ */
+function askScreen(request, callback) {
+  const frame = request.frame;
+  const contents = frame ? webContents.fromFrame(frame) : null;
+  const page = context.pageOf(contents || null);
+  const origin = originOf(String(request.securityOrigin || (frame ? frame.url : '') || ''));
+  if (!page || !page.cdp || !origin || page.agentBusy() || (frame && frame.parent)) {
+    callback({});
+    return;
+  }
+  desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } }).then(
+    (found) => {
+      if (found.length === 0) return callback({});
+      const id = nextQuestion;
+      nextQuestion += 1;
+      const timer = setTimeout(() => settleScreen(id, null, false), WAIT);
+      screens.set(id, { page: page.id, sources: new Map(found.map((source) => [source.id, source])), callback, timer });
+      context.send({
+        Chrome: {
+          page: page.id,
+          report: { ScreenShare: { id, origin, sources: found.map((source) => ({ id: source.id, name: source.name })) } },
+        },
+      });
+    },
+    () => callback({}),
+  );
+}
+
+/**
+ * Ends a question about sharing the screen.
+ * @param {number} id The question.
+ * @param {string | null} source The engine's name of what the reader chose, or nothing to refuse.
+ * @param {boolean} answered Whether the reader answered; when not, the window is told the question is gone.
+ * @returns {void}
+ */
+function settleScreen(id, source, answered) {
+  const question = screens.get(id);
+  if (!question) return;
+  screens.delete(id);
+  clearTimeout(question.timer);
+  if (!answered) context.send({ Chrome: { page: question.page, report: { ScreenShareCancelled: { id } } } });
+  const chosen = source ? question.sources.get(source) : undefined;
+  question.callback(chosen ? { video: chosen } : {});
+}
+
+/**
+ * Takes the reader's answer about sharing the screen.
+ * @param {number} id The question.
+ * @param {string | null} source The engine's name of the screen or window chosen, or nothing to refuse.
+ * @returns {void}
+ */
+function chooseScreen(id, source) {
+  settleScreen(id, typeof source === 'string' ? source : null, true);
 }
 
 /**
@@ -295,32 +370,114 @@ function reserve(folder, name) {
 }
 
 /**
- * Saves what pages download into the reader's Downloads folder without a dialog, under a name the helper makes safe and never over an existing file, tells the window, and opens nothing.
+ * A download the helper saves, by the number the window knows it by.
+ * @typedef {object} Saving
+ * @property {number} page The page that started it.
+ * @property {import('electron').DownloadItem} item The engine's download.
+ * @property {string} target Where it is saved.
+ * @property {string} name The name it is saved under.
+ */
+
+/**
+ * The downloads of this run of the helper, by number.
+ * @type {Map<number, Saving>}
+ */
+const downloads = new Map();
+
+/** The number the next download gets. */
+let nextDownload = 1;
+
+/** How often a running download tells the window how far it got, at most, in milliseconds. */
+const PROGRESS_EVERY = 250;
+
+/**
+ * Tells the window how a download stands.
+ * @param {number} id The download.
+ * @param {Saving} saving The download.
+ * @param {'Running' | 'Finished' | 'Failed' | 'Cancelled'} progress How it stands.
+ * @returns {void}
+ */
+function reportDownload(id, saving, progress) {
+  const { item } = saving;
+  context.send({
+    Chrome: {
+      page: saving.page,
+      report: {
+        Download: { id, name: saving.name, received: item.getReceivedBytes(), total: item.getTotalBytes(), progress },
+      },
+    },
+  });
+}
+
+/**
+ * Saves what pages and their developer tools download into the reader's Downloads folder without a dialog, under a name the helper makes safe and never over an existing file, tells the window how far it got as it goes, and opens nothing. Sealed pages download nothing.
  * @returns {void}
  */
 function guardDownloads() {
   session.defaultSession.on('will-download', (_event, item, contents) => {
     const page = context.pageOf(contents);
-    if (!page || !page.cdp) {
+    if (!page || page.sealed) {
       item.cancel();
       return;
     }
+    const id = nextDownload;
+    nextDownload += 1;
     let target = '';
     try {
       target = reserve(app.getPath('downloads'), safeName(item.getFilename()));
     } catch (_) {
       item.cancel();
-      context.send({ Download: { page: page.id, name: safeName(item.getFilename()), state: 'Failed' } });
+      context.send({
+        Chrome: {
+          page: page.id,
+          report: { Download: { id, name: safeName(item.getFilename()), received: 0, total: 0, progress: 'Failed' } },
+        },
+      });
       return;
     }
-    const name = path.basename(target);
     item.setSavePath(target);
-    context.send({ Download: { page: page.id, name, state: 'Started' } });
+    /** @type {Saving} */
+    const saving = { page: page.id, item, target, name: path.basename(target) };
+    downloads.set(id, saving);
+    reportDownload(id, saving, 'Running');
+    let told = Date.now();
+    item.on('updated', () => {
+      const now = Date.now();
+      if (now - told < PROGRESS_EVERY) return;
+      told = now;
+      reportDownload(id, saving, 'Running');
+    });
     item.once('done', (_done, state) => {
       if (state !== 'completed') fs.rmSync(target, { force: true });
-      context.send({ Download: { page: page.id, name, state: state === 'completed' ? 'Finished' : 'Failed' } });
+      reportDownload(id, saving, state === 'completed' ? 'Finished' : state === 'cancelled' ? 'Cancelled' : 'Failed');
     });
   });
+}
+
+/**
+ * Stops a download that is still running; its file is removed.
+ * @param {number} id The download.
+ * @returns {void}
+ */
+function cancelDownload(id) {
+  const saving = downloads.get(id);
+  if (saving && saving.item.getState() === 'progressing') saving.item.cancel();
+}
+
+/**
+ * Shows the file of a finished download in the system's file manager, or opens it with the program the system chooses.
+ * @param {number} id The download.
+ * @param {boolean} open Whether to open it rather than show it.
+ * @returns {void}
+ */
+function showDownload(id, open) {
+  const saving = downloads.get(id);
+  if (!saving || saving.item.getState() !== 'completed' || !fs.existsSync(saving.target)) return;
+  if (open) {
+    shell.openPath(saving.target).catch(() => {});
+  } else {
+    shell.showItemInFolder(saving.target);
+  }
 }
 
 /**
@@ -346,6 +503,9 @@ function watch(page) {
  */
 function forget(pageId) {
   cancelQuestions(pageId);
+  for (const [id, question] of [...screens]) {
+    if (question.page === pageId) settleScreen(id, null, false);
+  }
 }
 
 /**
@@ -360,4 +520,15 @@ function install(where) {
   guardDownloads();
 }
 
-module.exports = { answerPermission, chooseCertificate, forget, install, reserve, safeName, watch };
+module.exports = {
+  answerPermission,
+  cancelDownload,
+  chooseCertificate,
+  chooseScreen,
+  forget,
+  install,
+  reserve,
+  safeName,
+  showDownload,
+  watch,
+};

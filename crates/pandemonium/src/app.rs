@@ -39,6 +39,7 @@ use rustle::{Key, KeyEvent, Modifiers};
 
 mod asides;
 mod browser;
+mod browser_keys;
 mod capture;
 mod code;
 mod controller;
@@ -1398,9 +1399,12 @@ impl App {
         }
     }
 
-    /// Shows `text` an input method is composing in the field or shell holding
+    /// Shows `text` an input method is composing in the field, shell or web page holding
     /// the keyboard, taking it away from the one that showed it before.
     fn compose(&mut self, text: String) {
+        if self.compose_in_browser(&text) {
+            return;
+        }
         if text.is_empty() && self.composing_in.is_none() {
             return;
         }

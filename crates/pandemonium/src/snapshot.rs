@@ -244,6 +244,12 @@ pub enum Shot {
     BrowserCertificateConfirm,
     /// The workspace with the browser open and the note that a download was saved.
     BrowserDownload,
+    /// The workspace with the browser open, a page's prompt asked over it, a link's address under the pointer and the page playing sound.
+    BrowserDialog,
+    /// The workspace with the browser open and its list of downloads shown: one running, one done and one that failed.
+    BrowserDownloads,
+    /// The workspace with the browser open and the menu of a right click on a link in a page open.
+    BrowserPageMenu,
     /// The overview of a project.
     Overview,
     /// The sidebar with the submodules of a project under it, a session working in one, and work being started in another.
@@ -3514,6 +3520,60 @@ impl Shot {
                 }
                 Screen::Workspace(state)
             }
+            Self::BrowserDialog => {
+                let mut state = workspace_sample();
+                state.open_browser("https://example.com/signup");
+                if let Some(id) = state.browser.as_ref().map(|browser| browser.active_id()) {
+                    state.browser_dialog_opened(
+                        id,
+                        7,
+                        pm_components::browser_chrome::DialogKind::Prompt,
+                        "What should we call your workspace?",
+                        "My workspace",
+                        "example.com",
+                    );
+                    state.browser_hovered(id, "https://example.com/terms-of-service");
+                    state.browser_audio(id, true, false);
+                }
+                Screen::Workspace(state)
+            }
+            Self::BrowserDownloads => {
+                use pm_components::browser_chrome::{DownloadEntry, DownloadStatus};
+                let mut state = workspace_sample();
+                state.open_browser("https://example.com/releases");
+                let tab = state.browser.as_ref().map_or(0, |browser| browser.active_id());
+                for (id, name, received, total, status) in [
+                    (1, "dataset.csv", 512_000, 512_000, DownloadStatus::Failed),
+                    (2, "quarterly-report.pdf", 2_400_000, 2_400_000, DownloadStatus::Finished),
+                    (3, "toolkit-1.4.2.tar.gz", 12_300_000, 48_000_000, DownloadStatus::Running),
+                ] {
+                    state.browser_download(DownloadEntry {
+                        id,
+                        tab,
+                        name: name.to_owned(),
+                        received,
+                        total,
+                        status,
+                    });
+                }
+                Screen::Workspace(state)
+            }
+            Self::BrowserPageMenu => {
+                let mut state = workspace_sample();
+                state.open_browser("https://example.com/docs");
+                let tab = state.browser.as_ref().map_or(0, |browser| browser.active_id());
+                Screen::Workspace(state.with_page_menu(
+                    tab,
+                    pm_components::browser_chrome::PageMenu {
+                        x: 200,
+                        y: 120,
+                        link: "https://example.com/docs/getting-started".to_owned(),
+                        can_back: true,
+                        ..Default::default()
+                    },
+                    (428.0, 116.0),
+                ))
+            }
             Self::TerminalComposing => {
                 let mut state = terminal();
                 state.compose_in_terminal("¨");
@@ -6420,7 +6480,7 @@ pub fn write_browser(path: &Path, url: &str, tools: bool, interact: bool) -> Res
     }
     let picture = |view: &View, texture: rustle::ImageKey| {
         view.frame().and_then(|frame| {
-            ImageData::keyed(texture, frame.width, frame.height, frame.rgba.as_slice())
+            ImageData::keyed(texture, frame.width, frame.height, frame.rgba.clone())
         })
     };
     let title = page.title();

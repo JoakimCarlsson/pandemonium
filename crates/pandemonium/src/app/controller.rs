@@ -198,14 +198,19 @@ impl Operations for Controller {
     }
 
     /// Where the input method's candidates go for the area `id`: at the code editor's
-    /// caret while it has the keyboard, and where the area says otherwise.
+    /// caret while it has the keyboard, by the caret a web page or its tools report while
+    /// they have it, and where the area says otherwise.
     fn caret_area(&self, id: Target) -> Option<rustle::Rect> {
-        if id != Target::Editor(EditorEvent::EditorField) {
-            return None;
-        }
         let app = self.app.upgrade()?;
         let app = app.try_borrow().ok()?;
-        app.editor_caret_area()
+        match id {
+            Target::Editor(EditorEvent::EditorField) => app.editor_caret_area(),
+            Target::Browser(
+                pm_components::areas::BrowserEvent::BrowserBody
+                | pm_components::areas::BrowserEvent::BrowserToolsBody,
+            ) => app.browser_caret_area(id),
+            _ => None,
+        }
     }
 
     /// Makes the panel whose handle `id` is dragged as big as the drag says.

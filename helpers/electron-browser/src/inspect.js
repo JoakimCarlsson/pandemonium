@@ -193,7 +193,7 @@ async function paneSize(page) {
 async function emulateTool(page, args) {
   const cdp = protocol(page);
   if (args.reset === true) {
-    await emulation.applyViewport(cdp, null);
+    await page.emulateViewport(null);
     await emulation.applyUserAgent(cdp, null);
     page.viewport = null;
     page.userAgent = null;
@@ -204,7 +204,7 @@ async function emulateTool(page, args) {
   const needsPane = page.viewport === null && args.device === undefined;
   const wanted = emulation.resolve(args, { viewport: page.viewport, userAgent: page.userAgent }, needsPane ? await paneSize(page) : { width: 0, height: 0 });
   if ('error' in wanted) return failed(wanted.error);
-  await emulation.applyViewport(cdp, wanted.viewport);
+  await page.emulateViewport(wanted.viewport);
   await emulation.applyUserAgent(cdp, wanted.userAgent);
   page.viewport = wanted.viewport;
   page.userAgent = wanted.userAgent;

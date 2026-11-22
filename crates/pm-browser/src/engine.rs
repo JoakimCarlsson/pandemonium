@@ -184,14 +184,21 @@ impl Engine {
         });
     }
 
-    /// Asks the helper to render the document `html`, sealed from the network, at a viewport of `width` by `height` CSS pixels into the PNG file `path`; how it went comes back from [`Engine::take_rendered`] under `ticket`.
-    pub fn render_html(&self, ticket: u64, html: &str, width: u32, height: u32, path: &Path) {
+    /// Asks the helper to render the document `html`, sealed from the network, at a viewport of `width` by `height` CSS pixels and display `scale` into the PNG file `path`; how it went comes back from [`Engine::take_rendered`] under `ticket`.
+    pub fn render_html(
+        &self,
+        ticket: u64,
+        html: &str,
+        (width, height, scale): (u32, u32, f32),
+        path: &Path,
+    ) {
         self.link.send(&Request::RenderHtml {
             ticket,
             html: html.to_owned(),
             width,
             height,
             path: path.display().to_string(),
+            scale,
         });
     }
 

@@ -64,6 +64,11 @@ pub enum ServerMessage {
         /// The projects now, oldest first.
         paths: Vec<String>,
     },
+    /// Another client changed what the browser remembers of sites. Sent to every client but the one that changed it.
+    BrowserSitesChanged {
+        /// What is remembered now.
+        sites: crate::BrowserSites,
+    },
     /// Something a session's agent did, numbered so a client can ask for what it missed.
     Event {
         /// The session.

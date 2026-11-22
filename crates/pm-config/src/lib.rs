@@ -10,7 +10,7 @@ mod terminal;
 
 pub use agents::{AgentSettings, Finish, Notification};
 pub use appearance::{AppearanceSettings, Density, ThemeMode};
-pub use general::{Channel, GeneralSettings, Launch};
+pub use general::{Channel, GeneralSettings, Launch, SearchEngine};
 pub use git::{GitMarks, GitSettings};
 pub use servers::{KnownServer, Reach, ServerList};
 pub use settings::WindowSettings;

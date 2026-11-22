@@ -123,6 +123,10 @@ enum Pending {
     Usage(Host, u32),
     /// The model servers declared on this machine's server, as they stand after a change or as they were asked for.
     ModelServers,
+    /// What the browser remembers of sites, kept by the server on this machine, from the fetch with this number.
+    BrowserSites(u64),
+    /// The change to sites with this number was sent, kept until the server acknowledges it.
+    SiteChange(u64),
     /// The model slots and presets, after a change to them or not.
     ModelSlots,
     /// The models a model server offers, asked for under this ticket.
@@ -338,7 +342,144 @@ impl Pending {
 #[cfg(test)]
 /// Regression checks for visible request progress.
 mod tests {
-    use super::Pending;
+    use super::{Pending, SiteChange, SitesCopy, settle_sites};
+    use pm_protocol::{BrowserSites, Request};
+
+    /// A zoom change to the site of `url`.
+    fn zoom(url: &str, percent: u32) -> SiteChange {
+        SiteChange::Zoom {
+            url: url.to_owned(),
+            percent,
+        }
+    }
+
+    /// An answer to a fetch that a later one superseded is ignored, and the changes made meanwhile are kept for the latest answer.
+    #[test]
+    fn superseded_fetch_answers_are_ignored() {
+        let mut copy = SitesCopy::default();
+        let first = copy.fetch();
+        assert_eq!(copy.change(zoom("https://a.com/", 150)), None);
+        let second = copy.fetch();
+        assert_ne!(first, second);
+        assert_eq!(copy.change(zoom("https://b.com/", 80)), None);
+        assert!(copy.fetched(first, BrowserSites::default()).is_none());
+        assert!(!copy.loaded);
+        assert_eq!(copy.sites.zoom_of("https://a.com/"), Some(150));
+        let requests = copy.fetched(second, BrowserSites::default()).unwrap();
+        assert!(copy.loaded);
+        assert_eq!(requests.len(), 2);
+        assert_eq!(copy.sites.zoom_of("https://a.com/"), Some(150));
+        assert_eq!(copy.sites.zoom_of("https://b.com/"), Some(80));
+    }
+
+    /// A refetch on reconnect without a disconnect first still queues changes made while it is in flight, so its answer cannot erase them.
+    #[test]
+    fn refetch_while_loaded_keeps_newer_changes() {
+        let mut copy = SitesCopy::default();
+        let first = copy.fetch();
+        assert_eq!(
+            copy.fetched(first, BrowserSites::default()),
+            Some(Vec::new())
+        );
+        assert!(copy.change(zoom("https://a.com/", 150)).is_some());
+        let again = copy.fetch();
+        assert!(!copy.loaded);
+        assert_eq!(copy.change(zoom("https://b.com/", 80)), None);
+        let mut stale = BrowserSites::default();
+        stale.set_zoom("https://a.com/", 150);
+        let requests = copy.fetched(again, stale).unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(copy.sites.zoom_of("https://a.com/"), Some(150));
+        assert_eq!(copy.sites.zoom_of("https://b.com/"), Some(80));
+    }
+
+    /// Changes pushed by the server replace the copy only once it is loaded.
+    #[test]
+    fn pushed_sites_wait_for_the_copy_to_load() {
+        let mut copy = SitesCopy::default();
+        let mut pushed = BrowserSites::default();
+        pushed.set_zoom("https://a.com/", 150);
+        copy.pushed(pushed.clone());
+        assert_eq!(copy.sites.zoom_of("https://a.com/"), None);
+        let fetch = copy.fetch();
+        copy.fetched(fetch, BrowserSites::default());
+        copy.pushed(pushed);
+        assert_eq!(copy.sites.zoom_of("https://a.com/"), Some(150));
+        copy.lost();
+        assert!(!copy.loaded);
+    }
+
+    /// Changes made before the server's copy of sites came are made again on top of it and sent, while those it already holds are not sent again.
+    #[test]
+    fn changes_made_while_waiting_survive_the_fetched_sites() {
+        let mut fetched = BrowserSites::default();
+        fetched.visited("https://docs.rs/", "Docs", 1);
+        fetched.set_zoom("https://example.com/", 150);
+        let queued = vec![
+            SiteChange::Visited {
+                url: "https://crates.io/".to_owned(),
+                title: "Crates".to_owned(),
+                at: 2,
+                id: "v1".to_owned(),
+            },
+            SiteChange::Zoom {
+                url: "https://example.com/a".to_owned(),
+                percent: 150,
+            },
+            SiteChange::Zoom {
+                url: "https://docs.rs/x".to_owned(),
+                percent: 80,
+            },
+        ];
+        let (sites, changes) = settle_sites(fetched, queued);
+        let requests: Vec<Request> = changes.iter().map(SiteChange::request).collect();
+        assert_eq!(sites.visits.len(), 2);
+        assert_eq!(sites.zoom_of("https://docs.rs/"), Some(80));
+        assert_eq!(sites.zoom_of("https://example.com/"), Some(150));
+        assert_eq!(requests.len(), 2);
+        assert!(
+            matches!(&requests[0], Request::BrowserVisited { url, id: Some(id), .. } if url == "https://crates.io/" && id == "v1")
+        );
+        assert!(matches!(
+            requests[1],
+            Request::SetSiteZoom { percent: 80, .. }
+        ));
+    }
+
+    /// A change sent but never acknowledged is sent again, with the same visit id, after the next fetch, while an acknowledged one is not.
+    #[test]
+    fn unacknowledged_changes_are_sent_again_after_a_reconnect() {
+        let mut copy = SitesCopy::default();
+        let first = copy.fetch();
+        copy.fetched(first, BrowserSites::default());
+        let (acked, _) = copy
+            .change(SiteChange::Visited {
+                url: "https://a.com/".to_owned(),
+                title: "A".to_owned(),
+                at: 1,
+                id: "a".to_owned(),
+            })
+            .unwrap();
+        copy.acknowledged(acked);
+        copy.change(SiteChange::Visited {
+            url: "https://b.com/".to_owned(),
+            title: "B".to_owned(),
+            at: 2,
+            id: "b".to_owned(),
+        })
+        .unwrap();
+        copy.change(zoom("https://c.com/", 150)).unwrap();
+        copy.lost();
+        let again = copy.fetch();
+        let mut server = BrowserSites::default();
+        server.visited("https://a.com/", "A", 1);
+        server.set_zoom("https://c.com/", 150);
+        let resent = copy.fetched(again, server).unwrap();
+        assert_eq!(resent.len(), 1);
+        assert!(matches!(&resent[0].1, Request::BrowserVisited { id: Some(id), .. } if id == "b"));
+        copy.acknowledged(resent[0].0);
+        assert!(copy.sent.is_empty());
+    }
 
     /// Background reads leave icons steady while operations still advertise their progress.
     #[test]
@@ -373,6 +514,179 @@ enum Held {
     Resize(u16, u16),
     /// The tab was closed.
     Close,
+}
+
+/// A change the reader made to what the browser remembers of sites, kept while the window's copy waits for the server's so that it is made again on top of it and only then sent.
+#[derive(Clone, Debug, PartialEq)]
+enum SiteChange {
+    /// A visit to `url`, called `title`, at `at` seconds since the Unix epoch, named `id` so that the server counts it once however often it is sent.
+    Visited {
+        /// The web address visited.
+        url: String,
+        /// The page's title.
+        title: String,
+        /// When, in seconds since the Unix epoch.
+        at: u64,
+        /// The window's name for this visit, unique to it.
+        id: String,
+    },
+    /// The title `title` a page at `url` reported after it loaded.
+    Titled {
+        /// The web address.
+        url: String,
+        /// The page's title.
+        title: String,
+    },
+    /// The zoom `percent` of the site of `url`.
+    Zoom {
+        /// An address on the site.
+        url: String,
+        /// The zoom, in percent.
+        percent: u32,
+    },
+}
+
+impl SiteChange {
+    /// Makes the change to `sites`, saying whether it changed anything.
+    fn apply(&self, sites: &mut pm_protocol::BrowserSites) -> bool {
+        match self {
+            Self::Visited { url, title, at, .. } => sites.visited(url, title, *at),
+            Self::Titled { url, title } => sites.titled(url, title),
+            Self::Zoom { url, percent } => sites.set_zoom(url, *percent),
+        }
+    }
+
+    /// The request that makes the change on the server.
+    fn request(&self) -> Request {
+        match self {
+            Self::Visited { url, title, id, .. } => Request::BrowserVisited {
+                url: url.clone(),
+                title: title.clone(),
+                id: Some(id.clone()),
+            },
+            Self::Titled { url, title } => Request::BrowserTitled {
+                url: url.clone(),
+                title: title.clone(),
+            },
+            Self::Zoom { url, percent } => Request::SetSiteZoom {
+                url: url.clone(),
+                percent: *percent,
+            },
+        }
+    }
+}
+
+/// A name for a visit unique to it, from this process, the time and a counter, so that the server counts a visit sent again once.
+fn visit_id() -> String {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_nanos());
+    let next = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{}-{nanos}-{next}", std::process::id())
+}
+
+/// Makes the changes `queued` again on top of `fetched`, what the server answered, giving the window's new copy and the changes that still change something, to send.
+fn settle_sites(
+    mut fetched: pm_protocol::BrowserSites,
+    queued: Vec<SiteChange>,
+) -> (pm_protocol::BrowserSites, Vec<SiteChange>) {
+    let changes = queued
+        .into_iter()
+        .filter(|change| change.apply(&mut fetched))
+        .collect();
+    (fetched, changes)
+}
+
+/// The window's copy of what the browser remembers of sites, kept by the server on this machine, with the fetch in flight numbered so that only the latest answer is taken, and each change sent kept until the server acknowledges it.
+#[derive(Debug, Default)]
+struct SitesCopy {
+    /// The copy, which the address bar suggests from as the reader types.
+    sites: pm_protocol::BrowserSites,
+    /// Whether the server was ever asked for its copy.
+    asked: bool,
+    /// Whether the copy holds the answer to the latest fetch.
+    loaded: bool,
+    /// The changes the reader made since the latest fetch was issued, made again on top of its answer and sent once it comes.
+    queued: Vec<SiteChange>,
+    /// The number of the latest fetch; answers to earlier ones are ignored.
+    fetching: u64,
+    /// The changes sent that the server has not acknowledged yet, by their number, made again and sent again after the next fetch.
+    sent: std::collections::BTreeMap<u64, SiteChange>,
+    /// The number of the latest change sent.
+    sending: u64,
+}
+
+impl SitesCopy {
+    /// Starts a new fetch, superseding any in flight, and gives its number; changes are queued until its answer comes, after the changes sent but not acknowledged.
+    fn fetch(&mut self) -> u64 {
+        self.asked = true;
+        self.loaded = false;
+        self.fetching += 1;
+        let unacknowledged = std::mem::take(&mut self.sent).into_values();
+        self.queued = unacknowledged
+            .chain(std::mem::take(&mut self.queued))
+            .collect();
+        self.fetching
+    }
+
+    /// Keeps `change` until the server acknowledges it, giving its number with the request that sends it.
+    fn send(&mut self, change: SiteChange) -> (u64, Request) {
+        self.sending += 1;
+        let request = change.request();
+        self.sent.insert(self.sending, change);
+        (self.sending, request)
+    }
+
+    /// Makes `change` in the copy, giving the number and request to send now when the copy is loaded; otherwise it is queued for the latest fetch's answer.
+    fn change(&mut self, change: SiteChange) -> Option<(u64, Request)> {
+        if !change.apply(&mut self.sites) {
+            return None;
+        }
+        if self.loaded {
+            return Some(self.send(change));
+        }
+        self.queued.push(change);
+        None
+    }
+
+    /// Forgets the change numbered `sent`, which the server acknowledged.
+    fn acknowledged(&mut self, sent: u64) {
+        self.sent.remove(&sent);
+    }
+
+    /// Takes `fetched`, the answer to fetch number `fetch`, giving the numbers and requests that send the queued changes, or nothing when a later fetch superseded it.
+    fn fetched(
+        &mut self,
+        fetch: u64,
+        fetched: pm_protocol::BrowserSites,
+    ) -> Option<Vec<(u64, Request)>> {
+        if fetch != self.fetching {
+            return None;
+        }
+        let queued = std::mem::take(&mut self.queued);
+        let (sites, changes) = settle_sites(fetched, queued);
+        self.sites = sites;
+        self.loaded = true;
+        Some(
+            changes
+                .into_iter()
+                .map(|change| self.send(change))
+                .collect(),
+        )
+    }
+
+    /// Takes `sites`, pushed by the server after another client changed them, when the copy is loaded.
+    fn pushed(&mut self, sites: pm_protocol::BrowserSites) {
+        if self.loaded {
+            self.sites = sites;
+        }
+    }
+
+    /// Marks the copy stale after the server went out of reach.
+    fn lost(&mut self) {
+        self.loaded = false;
+    }
 }
 
 /// A browser tool an agent called, to be run on the tabs of its own session.
@@ -463,6 +777,8 @@ pub struct Work {
     early: HashMap<(Host, u64), Vec<(u64, HarnessEvent)>>,
     /// Whether this window can run the browser's tools, which each server is told as it connects.
     browser_available: bool,
+    /// The window's copy of what the browser remembers of sites, which the server on this machine keeps, so that the address bar suggests as the reader types.
+    browser_sites: SitesCopy,
     /// The browser tool calls agents made that the window has not taken yet, each with the machine, the call and the tool with its arguments.
     browser_calls: Vec<BrowserCall>,
     /// The web pages that programs started in shells serve and the window has not taken yet, each with the machine and the address on it.
@@ -526,6 +842,7 @@ impl Work {
             served: Vec::new(),
             followed: Vec::new(),
             browser_available: false,
+            browser_sites: SitesCopy::default(),
             cancelled: HashSet::new(),
             early: HashMap::new(),
             tabs: HashMap::new(),
@@ -635,6 +952,70 @@ impl Work {
             image,
         };
         self.ask(host, request, Pending::Nothing);
+    }
+
+    /// The window's copy of what the browser remembers of sites, asking the server on this machine for it the first time; empty until it answers.
+    pub fn browser_sites(&mut self) -> &pm_protocol::BrowserSites {
+        if !self.browser_sites.asked {
+            self.fetch_sites();
+        }
+        &self.browser_sites.sites
+    }
+
+    /// Asks the server on this machine for its copy of sites, superseding any fetch in flight.
+    fn fetch_sites(&mut self) {
+        let fetch = self.browser_sites.fetch();
+        self.ask(&None, Request::BrowserSites, Pending::BrowserSites(fetch));
+    }
+
+    /// Records a visit to the web address `url`, called `title`, in the window's copy and on the server on this machine.
+    pub fn browser_visited(&mut self, url: &str, title: &str) {
+        let at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs());
+        self.change_sites(SiteChange::Visited {
+            url: url.to_owned(),
+            title: title.to_owned(),
+            at,
+            id: visit_id(),
+        });
+    }
+
+    /// Gives the visit to `url` the title `title` the page reported after it loaded, in the window's copy and on the server on this machine.
+    pub fn browser_titled(&mut self, url: &str, title: &str) {
+        self.change_sites(SiteChange::Titled {
+            url: url.to_owned(),
+            title: title.to_owned(),
+        });
+    }
+
+    /// Remembers that the reader zoomed the site of `url` to `percent`, in the window's copy and on the server on this machine.
+    pub fn set_site_zoom(&mut self, url: &str, percent: u32) {
+        self.change_sites(SiteChange::Zoom {
+            url: url.to_owned(),
+            percent,
+        });
+    }
+
+    /// Makes `change` in the window's copy of sites and sends it to the server on this machine, or, while the window waits for the server's copy, asks for it if never asked and keeps the change to make again on top of it.
+    fn change_sites(&mut self, change: SiteChange) {
+        if !self.browser_sites.asked {
+            self.fetch_sites();
+        }
+        if let Some((sent, request)) = self.browser_sites.change(change) {
+            self.ask(&None, request, Pending::SiteChange(sent));
+        }
+    }
+
+    /// Takes `fetched`, the server's answer to fetch number `fetch`, as the window's copy of sites with the changes made while waiting, and those sent but not acknowledged, made again on top and sent; an answer to a superseded fetch is ignored.
+    fn sites_fetched(&mut self, fetch: u64, fetched: pm_protocol::BrowserSites) {
+        for (sent, request) in self
+            .browser_sites
+            .fetched(fetch, fetched)
+            .unwrap_or_default()
+        {
+            self.ask(&None, request, Pending::SiteChange(sent));
+        }
     }
 
     /// Tells every server this window is connected to whether it can run the browser's tools for their agents.
@@ -1741,6 +2122,9 @@ impl Work {
                                 Pending::Nothing,
                             );
                         }
+                        if host.is_none() && self.browser_sites.asked {
+                            self.fetch_sites();
+                        }
                         model.change(|state| state.reopen_documents(&host));
                         model.change(|state| state.host_reached(&host));
                     }
@@ -1748,6 +2132,7 @@ impl Work {
                         eprintln!("the server on {host:?} is out of reach: {reason}");
                         if host.is_none() {
                             self.resume = None;
+                            self.browser_sites.lost();
                         }
                         model.update(|screen| {
                             *screen = std::mem::take(screen).with_git_working(false);
@@ -1827,6 +2212,11 @@ impl Work {
                     Incoming::ProjectsChanged(paths) => {
                         if host.is_none() {
                             Self::projects_changed(model, &paths);
+                        }
+                    }
+                    Incoming::BrowserSitesChanged(sites) => {
+                        if host.is_none() {
+                            self.browser_sites.pushed(sites);
                         }
                     }
                     Incoming::Diagnostics {
@@ -2191,6 +2581,16 @@ impl Work {
             Pending::McpServers => {
                 if let Response::McpServers { servers } = response {
                     model.change(|state| state.with_mcp_servers(servers));
+                }
+            }
+            Pending::BrowserSites(fetch) => {
+                if let Response::BrowserSites { sites } = response {
+                    self.sites_fetched(fetch, sites);
+                }
+            }
+            Pending::SiteChange(sent) => {
+                if matches!(response, Response::Done) {
+                    self.browser_sites.acknowledged(sent);
                 }
             }
             Pending::ModelServers => match response {

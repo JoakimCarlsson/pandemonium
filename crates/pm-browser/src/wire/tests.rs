@@ -132,11 +132,12 @@ fn sealed_document_messages_have_the_shape_the_helper_uses() {
         width: 1024,
         height: 640,
         path: "/cache/a.png".to_owned(),
+        scale: 2.0,
     })
     .unwrap_or_default();
     assert_eq!(
         render,
-        serde_json::json!({ "RenderHtml": { "ticket": 7, "html": "<p>hi</p>", "width": 1024, "height": 640, "path": "/cache/a.png" } })
+        serde_json::json!({ "RenderHtml": { "ticket": 7, "html": "<p>hi</p>", "width": 1024, "height": 640, "path": "/cache/a.png", "scale": 2.0 } })
     );
     let rendered: Event =
         serde_json::from_str(r#"{"HtmlRendered":{"ticket":7,"path":"/cache/a.png","error":""}}"#)
@@ -157,4 +158,51 @@ fn features_are_read_as_the_helper_writes_them() {
         serde_json::from_str::<Event>(r#""Ready""#),
         Ok(Event::Ready)
     ));
+}
+
+/// What the pane around a page and the helper say to each other reads as the helper writes it: reports nested in `Chrome` events, and actions in `Chrome` requests, a bare string for an action without fields.
+#[test]
+fn chrome_messages_read_as_the_helper_writes_them() {
+    use super::line;
+    use crate::chrome::{DownloadProgress, PageAction, PageReport};
+    let event: Event = serde_json::from_str(
+        r#"{"Chrome":{"page":3,"report":{"Download":{"id":7,"name":"a.zip","received":10,"total":20,"progress":"Running"}}}}"#,
+    )
+    .unwrap();
+    match event {
+        Event::Chrome {
+            page: 3,
+            report: PageReport::Download(item),
+        } => {
+            assert_eq!(item.id, 7);
+            assert_eq!(item.progress, DownloadProgress::Running);
+        }
+        other => panic!("read as {other:?}"),
+    }
+    let tooltip: Event =
+        serde_json::from_str(r#"{"Chrome":{"page":1,"report":{"Tooltip":{"text":"Hi"}}}}"#)
+            .unwrap();
+    assert!(matches!(
+        tooltip,
+        Event::Chrome {
+            report: PageReport::Tooltip { x: 0, y: 0, .. },
+            ..
+        }
+    ));
+    let print = String::from_utf8(line(&Request::Chrome {
+        page: 2,
+        action: PageAction::Print,
+    }))
+    .unwrap();
+    assert_eq!(print, "{\"Chrome\":{\"page\":2,\"action\":\"Print\"}}\n");
+    let answer = String::from_utf8(line(&Request::Chrome {
+        page: 2,
+        action: PageAction::AnswerDialog {
+            id: 4,
+            accept: true,
+            text: "x".to_owned(),
+        },
+    }))
+    .unwrap();
+    assert!(answer.contains("{\"AnswerDialog\":{\"id\":4,\"accept\":true,\"text\":\"x\"}}"));
 }

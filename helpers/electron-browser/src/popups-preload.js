@@ -414,3 +414,119 @@ window.addEventListener(
   },
   true,
 );
+
+/**
+ * Puts a `window.prompt` of the helper's in the page's own world, in place of Electron's, which cancels every prompt at
+ * once. It sends the question to the helper as a synchronous message, so the page waits as it would on a real prompt,
+ * and returns what the reader or an agent answered, or `null` when the prompt was cancelled.
+ *
+ * In a frame inside the page Electron puts its own prompt back after the preload ran (checked on Electron 45), so the
+ * helper's is put in again on the first change to the document, which comes before any of the page's scripts run, and
+ * once more when the document is parsed; only Electron's, a native function, is ever replaced, never one the page set.
+ * The synchronous message is answered in the frame that sent it.
+ * @returns {void}
+ */
+function bridgePrompt() {
+  const { contextBridge, ipcRenderer } = require('electron');
+  if (!contextBridge || typeof contextBridge.executeInMainWorld !== 'function') return;
+  /**
+   * Asks the helper and waits for the answer.
+   * @param {string} message What the prompt says.
+   * @param {string} value The text it starts with.
+   * @returns {string | null} The answer, or `null` when it was cancelled.
+   */
+  const ask = (message, value) => {
+    const answer = ipcRenderer.sendSync('pandemonium:prompt', String(message), String(value));
+    return typeof answer === 'string' ? answer : null;
+  };
+  try {
+    contextBridge.executeInMainWorld({
+      func: (/** @type {(message: string, value: string) => string | null} */ asker) => {
+        /**
+         * The helper's prompt.
+         * @param {unknown} message What the prompt says.
+         * @param {unknown} value The text it starts with.
+         * @returns {string | null} The answer, or `null` when it was cancelled.
+         */
+        const prompt = function prompt(message, value) {
+          return asker(message === undefined ? '' : String(message), value === undefined ? '' : String(value));
+        };
+        /**
+         * Puts the helper's prompt on the window when the one there is the engine's own.
+         * @returns {void}
+         */
+        const put = () => {
+          const current = window.prompt;
+          if (current === prompt) return;
+          if (typeof current === 'function' && !/\[native code\]\s*\}$/.test(Function.prototype.toString.call(current))) return;
+          Object.defineProperty(window, 'prompt', { configurable: true, writable: true, value: prompt });
+        };
+        put();
+        const watcher = new MutationObserver(put);
+        watcher.observe(document, { childList: true, subtree: true });
+        document.addEventListener(
+          'DOMContentLoaded',
+          () => {
+            watcher.disconnect();
+            put();
+          },
+          { once: true },
+        );
+      },
+      args: [ask],
+    });
+  } catch (_) {
+    /* a page whose world cannot be reached keeps Electron's prompt */
+  }
+}
+
+/** How long the pointer rests on something with a title before its tooltip shows, in milliseconds. */
+const TOOLTIP_DELAY = 600;
+
+/**
+ * Tells the helper the `title` of what the pointer rests on, which the pane shows as a tooltip, since the offscreen
+ * page never draws one; and that it went away when the pointer leaves, a button goes down, a key is pressed or the page scrolls.
+ * @returns {void}
+ */
+function watchTitles() {
+  const { ipcRenderer } = require('electron');
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let timer = null;
+  let current = '';
+  let shown = false;
+  /**
+   * Takes the tooltip away, and tells the helper when one showed.
+   * @returns {void}
+   */
+  const hide = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    current = '';
+    if (shown) ipcRenderer.send('pandemonium:tooltip', '', 0, 0);
+    shown = false;
+  };
+  window.addEventListener(
+    'mouseover',
+    (event) => {
+      const target = event.target instanceof Element ? event.target.closest('[title]') : null;
+      const title = target ? String(target.getAttribute('title') || '').trim() : '';
+      if (title === current) return;
+      hide();
+      if (!title) return;
+      current = title;
+      const x = Math.round(/** @type {MouseEvent} */ (event).clientX);
+      const y = Math.round(/** @type {MouseEvent} */ (event).clientY);
+      timer = setTimeout(() => {
+        timer = null;
+        shown = true;
+        ipcRenderer.send('pandemonium:tooltip', title.slice(0, 1000), x, y);
+      }, TOOLTIP_DELAY);
+    },
+    true,
+  );
+  for (const name of ['mousedown', 'keydown', 'wheel', 'scroll', 'blur']) window.addEventListener(name, hide, true);
+  document.addEventListener('mouseleave', hide, true);
+}
+
+bridgePrompt();
+watchTitles();

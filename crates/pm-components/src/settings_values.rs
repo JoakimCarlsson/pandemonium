@@ -1,7 +1,8 @@
 //! How each setting stands and changes: the control it is shown with, what pressing that control does, the text of a setting written as text, the choices of one picked from a list, and copying it from one set of settings to another, which is how it is reset and told apart from how it comes.
 
 use pm_config::{
-    Channel, Density, Finish, GitMarks, Launch, Notification, TerminalCursor, ThemeMode,
+    Channel, Density, Finish, GitMarks, Launch, Notification, SearchEngine, TerminalCursor,
+    ThemeMode,
 };
 use pm_editor::{
     CursorShape, DiagnosticsShown, FindInSelection, LightbulbShown, Preset, SoftWrap, VimClipboard,
@@ -67,6 +68,15 @@ const PRESETS: &[&str] = &[
     Preset::Sublime.title(),
 ];
 
+/// The search engines, as the choices name them, in the order of [`SearchEngine::ALL`].
+const ENGINES: [&str; 5] = [
+    SearchEngine::DuckDuckGo.title(),
+    SearchEngine::Google.title(),
+    SearchEngine::Bing.title(),
+    SearchEngine::Brave.title(),
+    SearchEngine::Startpage.title(),
+];
+
 /// What the picker of fonts calls the font the window ships with.
 const DEFAULT_FONT: &str = "Default";
 
@@ -128,6 +138,10 @@ impl Setting {
                 place_of(&[Launch::Restore, Launch::Fresh], &window.general.launch),
             ),
             Self::AgentOrigins => Control::List(self.lines(state)),
+            Self::SearchEngine => Control::Choice(
+                &ENGINES,
+                place_of(&SearchEngine::ALL, &window.general.search_engine),
+            ),
             Self::Channel => Control::Choice(
                 &["Stable", "Preview"],
                 place_of(
@@ -439,6 +453,9 @@ impl Setting {
         let machine = &mut state.machine;
         match self {
             Self::Launch => window.general.launch = [Launch::Restore, Launch::Fresh][option.min(1)],
+            Self::SearchEngine => {
+                window.general.search_engine = chosen(&SearchEngine::ALL, option);
+            }
             Self::Channel => {
                 window.general.channel = [Channel::Stable, Channel::Preview][option.min(1)];
             }
@@ -861,6 +878,7 @@ impl Setting {
                 .agent_origins
                 .clone_from(&own.general.agent_origins),
             Self::Channel => window.general.channel = own.general.channel,
+            Self::SearchEngine => window.general.search_engine = own.general.search_engine,
             Self::ThemeMode => window.appearance.theme_mode = own.appearance.theme_mode,
             Self::LightTheme => window
                 .appearance

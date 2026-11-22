@@ -89,10 +89,25 @@ pub fn refusal(html: &str) -> Option<String> {
     (html.len() > CONTENT_LIMIT).then(|| "The document is larger than 256 KiB.".to_owned())
 }
 
-/// The name of the file the picture of `html` at a viewport of `width` by `height` is kept in: the SHA-256 of the viewport and the document, so that a document rendered before is found again and a changed one is not.
-pub fn cache_name(html: &str, width: u32, height: u32) -> String {
+/// The display scale a document is rendered at for a window at `scale`: kept between 1 and 4, as the helper keeps it, and 1 for a scale that is not a number.
+pub fn render_scale(scale: f32) -> f32 {
+    if scale.is_finite() {
+        scale.clamp(1.0, 4.0)
+    } else {
+        1.0
+    }
+}
+
+/// The name of the file the picture of `html` at a viewport of `width` by `height` and display `scale` is kept in: the SHA-256 of the viewport, the scale and the document, so that a document rendered before is found again and a changed one is not. Pictures at scale 1 keep the names they had before the scale was part of them.
+pub fn cache_name(html: &str, width: u32, height: u32, scale: f32) -> String {
+    let hundredths = (render_scale(scale) * 100.0).round() as u32;
+    let viewport = if hundredths == 100 {
+        format!("{width}x{height}")
+    } else {
+        format!("{width}x{height}@{hundredths}")
+    };
     let mut hash = Sha256::new();
-    hash.update(format!("sealed-render-1\n{width}x{height}\n").as_bytes());
+    hash.update(format!("sealed-render-1\n{viewport}\n").as_bytes());
     hash.update(html.as_bytes());
     let digest: String = hash
         .finalize()
@@ -107,9 +122,9 @@ pub fn cache_folder() -> Option<PathBuf> {
     pm_store::cache_directory().map(|cache| cache.join("sealed-renders"))
 }
 
-/// The file the picture of `html` at a viewport of `width` by `height` is kept in, whether or not it is there yet; nothing when this machine has no cache folder.
-pub fn cache_file(html: &str, width: u32, height: u32) -> Option<PathBuf> {
-    cache_folder().map(|folder| folder.join(cache_name(html, width, height)))
+/// The file the picture of `html` at a viewport of `width` by `height` and display `scale` is kept in, whether or not it is there yet; nothing when this machine has no cache folder.
+pub fn cache_file(html: &str, width: u32, height: u32, scale: f32) -> Option<PathBuf> {
+    cache_folder().map(|folder| folder.join(cache_name(html, width, height, scale)))
 }
 
 /// Removes the pictures in `folder` that were written longer ago than they are kept, so the folder does not grow without end; what cannot be read or removed is left.
@@ -139,11 +154,13 @@ mod tests {
     /// The same document at the same viewport has the same file, and a change to either gives another.
     #[test]
     fn the_file_is_named_after_the_document_and_the_viewport() {
-        let name = cache_name("<p>a</p>", 1024, 640);
-        assert_eq!(name, cache_name("<p>a</p>", 1024, 640));
-        assert_ne!(name, cache_name("<p>b</p>", 1024, 640));
-        assert_ne!(name, cache_name("<p>a</p>", 640, 1024));
-        assert_ne!(name, cache_name("<p>a</p>", 1024, 641));
+        let name = cache_name("<p>a</p>", 1024, 640, 1.0);
+        assert_eq!(name, cache_name("<p>a</p>", 1024, 640, 1.0));
+        assert_eq!(name, cache_name("<p>a</p>", 1024, 640, 0.5));
+        assert_ne!(name, cache_name("<p>b</p>", 1024, 640, 1.0));
+        assert_ne!(name, cache_name("<p>a</p>", 640, 1024, 1.0));
+        assert_ne!(name, cache_name("<p>a</p>", 1024, 641, 1.0));
+        assert_ne!(name, cache_name("<p>a</p>", 1024, 640, 2.0));
         assert!(name.ends_with(".png"));
         assert_eq!(name.len(), 64 + 4);
         assert!(name[..64].bytes().all(|byte| byte.is_ascii_hexdigit()));

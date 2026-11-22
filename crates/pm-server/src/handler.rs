@@ -7,6 +7,7 @@ use std::sync::Arc;
 use pm_harness::Agent;
 use pm_protocol::{Attachment, Request, Response, ServerMessage};
 
+use crate::browser_sites;
 use crate::conversation;
 use crate::core::{Connection, Core, Session, Told, now};
 use crate::debugs;
@@ -922,6 +923,24 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             model_servers_answer(pm_harness::remove_model_server(&id))
         }
         Request::ModelSlots { session, change } => model_slots(core, session, change),
+        Request::BrowserSites => Response::BrowserSites {
+            sites: browser_sites::SITES.snapshot(),
+        },
+        Request::BrowserVisited { url, title, id } => browser_sites::answer(
+            core,
+            connection,
+            browser_sites::SITES.visited(&url, &title, id.as_deref()),
+        ),
+        Request::BrowserTitled { url, title } => browser_sites::answer(
+            core,
+            connection,
+            browser_sites::SITES.change(|sites| sites.titled(&url, &title)),
+        ),
+        Request::SetSiteZoom { url, percent } => browser_sites::answer(
+            core,
+            connection,
+            browser_sites::SITES.change(|sites| sites.set_zoom(&url, percent)),
+        ),
         Request::FindModels { server } => match pm_harness::find_models(server) {
             Ok(models) => Response::FoundModels {
                 models,

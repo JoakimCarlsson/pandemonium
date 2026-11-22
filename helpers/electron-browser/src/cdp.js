@@ -11,6 +11,7 @@
  * @callback EventListener
  * @param {string} method The event's name, such as `Runtime.consoleAPICalled`.
  * @param {Json} params What the event carries.
+ * @param {string} [session] The session of the frame target that sent it, or nothing for the page itself.
  * @returns {void}
  */
 
@@ -28,8 +29,8 @@ class Cdp {
     /** @type {EventListener[]} Who hears the events. */
     this.listeners = [];
     this.debugger.attach('1.3');
-    this.debugger.on('message', (_event, method, params) => {
-      for (const listener of this.listeners) listener(method, params);
+    this.debugger.on('message', (_event, method, params, session) => {
+      for (const listener of this.listeners) listener(method, params, session || undefined);
     });
   }
 
@@ -37,10 +38,11 @@ class Cdp {
    * Sends a command to the page.
    * @param {string} method The command, such as `Page.navigate`.
    * @param {Json} [params] What it takes.
+   * @param {string} [session] The session of a frame target to send it to, such as a cross-origin frame; the page itself when not given.
    * @returns {Promise<Json>} The result, or a rejection with the protocol's error.
    */
-  call(method, params = {}) {
-    return this.debugger.sendCommand(method, params);
+  call(method, params = {}, session = undefined) {
+    return session ? this.debugger.sendCommand(method, params, session) : this.debugger.sendCommand(method, params);
   }
 
   /**

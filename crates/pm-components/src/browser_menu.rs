@@ -3,6 +3,7 @@
 use crate::Menu;
 use crate::areas::MenuEvent;
 use crate::browser::{Command, ZoomStep};
+use crate::browser_chrome::{ChromeAction, PageMenu};
 use crate::state::WorkspaceState;
 use crate::target::Target;
 
@@ -49,6 +50,24 @@ pub enum BrowserCommand {
     Area,
     /// Adds the lines of the page's console to the prompt.
     Console,
+    /// Opens the link under the pointer in a new tab.
+    OpenLinkInNewTab,
+    /// Copies the address of the link under the pointer.
+    CopyLink,
+    /// Downloads what the link under the pointer leads to.
+    SaveLink,
+    /// Opens the picture under the pointer in a new tab.
+    OpenImageInNewTab,
+    /// Copies the picture under the pointer.
+    CopyImage,
+    /// Copies the address of the picture under the pointer.
+    CopyImageAddress,
+    /// Downloads the picture under the pointer.
+    SaveImage,
+    /// Prints the page to a PDF in the Downloads folder and opens it.
+    Print,
+    /// Puts the spelling checker's suggestion at this place in place of the misspelt word.
+    Suggestion(u8),
 }
 
 impl BrowserCommand {
@@ -90,6 +109,15 @@ impl BrowserCommand {
             Self::FullPage => "Add Full Page Screenshot",
             Self::Area => "Add Area Screenshot to Chat",
             Self::Console => "Add Console Logs to Chat",
+            Self::OpenLinkInNewTab => "Open Link in New Tab",
+            Self::CopyLink => "Copy Link Address",
+            Self::SaveLink => "Save Link As...",
+            Self::OpenImageInNewTab => "Open Image in New Tab",
+            Self::CopyImage => "Copy Image",
+            Self::CopyImageAddress => "Copy Image Address",
+            Self::SaveImage => "Save Image As...",
+            Self::Print => "Print...",
+            Self::Suggestion(_) => "Suggestion",
         }
     }
 
@@ -102,6 +130,10 @@ impl BrowserCommand {
             Self::ZoomIn => Some("Ctrl+="),
             Self::ZoomOut => Some("Ctrl+-"),
             Self::ZoomReset => Some("Ctrl+0"),
+            Self::Print => Some("Ctrl+P"),
+            Self::Inspect => Some("F12"),
+            Self::Back => Some("Alt+Left"),
+            Self::Forward => Some("Alt+Right"),
             _ => None,
         }
     }
@@ -141,6 +173,15 @@ impl WorkspaceState {
     /// Carries out `command` on the page and closes the menu over it.
     pub fn browser_command(mut self, command: BrowserCommand) -> Self {
         self.browser_menu = None;
+        let context = self
+            .browser
+            .as_mut()
+            .and_then(|browser| browser.chrome.menu.take());
+        if let Some(context) = context.as_ref()
+            && self.browser_context_command(command, context)
+        {
+            return self;
+        }
         let Some(browser) = self.browser.as_mut() else {
             return self;
         };
@@ -169,18 +210,173 @@ impl WorkspaceState {
             BrowserCommand::FullPage => browser.commands.push(Command::FullPage),
             BrowserCommand::Console => browser.commands.push(Command::Console),
             BrowserCommand::Area => browser.start_area(),
+            BrowserCommand::Print => browser.commands.push(Command::Chrome(ChromeAction::Print)),
+            BrowserCommand::OpenLinkInNewTab
+            | BrowserCommand::CopyLink
+            | BrowserCommand::SaveLink
+            | BrowserCommand::OpenImageInNewTab
+            | BrowserCommand::CopyImage
+            | BrowserCommand::CopyImageAddress
+            | BrowserCommand::SaveImage
+            | BrowserCommand::Suggestion(_) => {}
         }
         self
+    }
+
+    /// Carries out `command` of the menu that opened over what `context` says was under the pointer, and says whether it was one that needs it.
+    fn browser_context_command(&mut self, command: BrowserCommand, context: &PageMenu) -> bool {
+        let host = self.current_project_host();
+        let Some(browser) = self.browser.as_mut() else {
+            return false;
+        };
+        match command {
+            BrowserCommand::OpenLinkInNewTab => {
+                browser.open_tab(&context.link, host, false, false);
+            }
+            BrowserCommand::OpenImageInNewTab => {
+                browser.open_tab(&context.source, host, false, false);
+            }
+            BrowserCommand::CopyLink => browser
+                .commands
+                .push(Command::CopyText(context.link.clone())),
+            BrowserCommand::CopyImageAddress => browser
+                .commands
+                .push(Command::CopyText(context.source.clone())),
+            BrowserCommand::SaveLink => browser
+                .commands
+                .push(Command::Chrome(ChromeAction::Save(context.link.clone()))),
+            BrowserCommand::SaveImage => browser
+                .commands
+                .push(Command::Chrome(ChromeAction::Save(context.source.clone()))),
+            BrowserCommand::CopyImage => {
+                browser
+                    .commands
+                    .push(Command::Chrome(ChromeAction::CopyImageAt(
+                        context.x, context.y,
+                    )))
+            }
+            BrowserCommand::Suggestion(at) => {
+                if let Some(word) = context.suggestions.get(usize::from(at)) {
+                    browser
+                        .commands
+                        .push(Command::Chrome(ChromeAction::ReplaceMisspelling(
+                            word.clone(),
+                        )));
+                }
+            }
+            BrowserCommand::Inspect => {
+                if !browser.tools {
+                    browser.tools = true;
+                    browser.commands.push(Command::OpenTools);
+                }
+                browser
+                    .commands
+                    .push(Command::Chrome(ChromeAction::InspectAt(
+                        context.x, context.y,
+                    )));
+            }
+            _ => return false,
+        }
+        true
     }
 }
 
 /// Emits the menu over a page opened at a point, as `open` says, and nothing for one that
 /// hangs from its button, which emits it there ([`capture_dropdown`]).
 #[track_caller]
-pub fn browser_menu(open: BrowserMenu) {
+pub fn browser_menu(open: BrowserMenu, context: Option<&PageMenu>) {
     if let Some((x, y)) = open.at {
-        browser_menu_rows(open, Menu::new(x, y).offset(-8.0, 4.0)).build();
+        let menu = Menu::new(x, y).offset(-8.0, 4.0);
+        match context {
+            Some(context) => page_menu_rows(context, menu),
+            None => browser_menu_rows(open, menu),
+        }
+        .build();
     }
+}
+
+/// `menu` holding the rows of the menu over a page for what `context` says was under the pointer: what can be done with a link, a picture, a misspelt word or what is marked, then moving through the history, printing, inspecting and adding the page to the prompt.
+fn page_menu_rows(context: &PageMenu, menu: Menu) -> Menu {
+    let row = |menu: Menu, command: BrowserCommand, on: bool| {
+        menu.item(command.label(), command.keys(), command.id(), !on)
+    };
+    let operations = crate::events::operations();
+    let mut menu = menu.width(68.0).row_height(6.5).on_pick(move |row| {
+        if let Some(command) = BrowserCommand::of(row) {
+            operations.browser_menu_command(command);
+        }
+    });
+    use BrowserCommand::*;
+    let web = |address: &str| address.starts_with("http://") || address.starts_with("https://");
+    let mut groups: Vec<Vec<(BrowserCommand, bool)>> = Vec::new();
+    if !context.misspelled.is_empty() {
+        let suggestions: Vec<_> = context
+            .suggestions
+            .iter()
+            .take(5)
+            .enumerate()
+            .map(|(at, _)| (Suggestion(at as u8), true))
+            .collect();
+        if !suggestions.is_empty() {
+            groups.push(suggestions);
+        }
+    }
+    if !context.link.is_empty() {
+        groups.push(vec![
+            (OpenLinkInNewTab, web(&context.link)),
+            (CopyLink, true),
+            (SaveLink, true),
+        ]);
+    }
+    if context.image && !context.source.is_empty() {
+        groups.push(vec![
+            (OpenImageInNewTab, web(&context.source)),
+            (CopyImage, true),
+            (CopyImageAddress, true),
+            (SaveImage, true),
+        ]);
+    }
+    if context.editable {
+        groups.push(vec![
+            (Cut, context.can_cut),
+            (Copy, context.can_copy),
+            (Paste, context.can_paste),
+            (SelectAll, true),
+        ]);
+    } else if !context.selection.is_empty() {
+        groups.push(vec![(Copy, true), (SelectAll, true)]);
+    }
+    groups.push(vec![
+        (Back, context.can_back),
+        (Forward, context.can_forward),
+        (Reload, true),
+    ]);
+    groups.push(vec![(Find, true), (Print, true), (OpenExternal, true)]);
+    groups.push(vec![(Inspect, true)]);
+    groups.push(
+        BrowserCommand::CAPTURES
+            .iter()
+            .map(|command| (*command, true))
+            .collect(),
+    );
+    for (at, group) in groups.into_iter().enumerate() {
+        if at > 0 {
+            menu = menu.separator();
+        }
+        for (command, on) in group {
+            menu = match command {
+                Suggestion(index) => {
+                    let word = context
+                        .suggestions
+                        .get(usize::from(index))
+                        .map_or("", String::as_str);
+                    menu.item(word, None, command.id(), false)
+                }
+                _ => row(menu, command, on),
+            };
+        }
+    }
+    menu
 }
 
 /// The menu of what can be put into the prompt from the page, to emit in the box of the
@@ -212,7 +408,7 @@ fn browser_menu_rows(open: BrowserMenu, menu: Menu) -> Menu {
         &[Cut, Copy, Paste, SelectAll],
         &[Find],
         &[ZoomIn, ZoomOut, ZoomReset],
-        &[OpenExternal, ClearData],
+        &[Print, OpenExternal, ClearData],
         &[Inspect],
         &BrowserCommand::CAPTURES,
     ];

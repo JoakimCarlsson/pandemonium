@@ -146,3 +146,52 @@ fn zoom_keys_queue_steps() {
         vec![Command::Zoom(ZoomStep::In), Command::Zoom(ZoomStep::Reset)]
     );
 }
+
+/// The keys of moving through tabs and history, the address bar, printing and the developer tools are the browser's.
+#[test]
+fn navigation_keys_are_the_browsers() {
+    assert_eq!(
+        shortcut_of(&control(Key::Character("l".into()), false)),
+        Some(Shortcut::FocusAddress)
+    );
+    assert_eq!(shortcut_of(&plain(Key::F(6))), Some(Shortcut::FocusAddress));
+    assert_eq!(shortcut_of(&plain(Key::F(12))), Some(Shortcut::DevTools));
+    assert_eq!(
+        shortcut_of(&control(Key::Character("I".into()), true)),
+        Some(Shortcut::DevTools)
+    );
+    assert_eq!(
+        shortcut_of(&control(Key::Character("p".into()), false)),
+        Some(Shortcut::Print)
+    );
+    assert_eq!(
+        shortcut_of(&control(Key::Character("T".into()), true)),
+        Some(Shortcut::ReopenTab)
+    );
+    assert_eq!(
+        shortcut_of(&control(Key::Tab, false)),
+        Some(Shortcut::NextTab)
+    );
+    assert_eq!(
+        shortcut_of(&control(Key::Tab, true)),
+        Some(Shortcut::PreviousTab)
+    );
+    assert_eq!(
+        shortcut_of(&control(Key::PageDown, false)),
+        Some(Shortcut::NextTab)
+    );
+    assert_eq!(
+        shortcut_of(&control(Key::PageUp, false)),
+        Some(Shortcut::PreviousTab)
+    );
+    assert_eq!(
+        shortcut_of(&KeyEvent::press(Key::ArrowLeft, Modifiers::ALT)),
+        Some(Shortcut::Back)
+    );
+    assert_eq!(
+        shortcut_of(&KeyEvent::press(Key::ArrowRight, Modifiers::ALT)),
+        Some(Shortcut::Forward)
+    );
+    assert_eq!(shortcut_of(&plain(Key::Tab)), None);
+    assert_eq!(shortcut_of(&plain(Key::ArrowLeft)), None);
+}

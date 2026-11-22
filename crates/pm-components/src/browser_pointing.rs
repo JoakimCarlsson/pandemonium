@@ -1,7 +1,8 @@
 //! The pointer over the window of a web page or of its tools, handed on to the page: the
-//! moves over it and its leaving, the buttons pressed on it and let go wherever the pointer
-//! is, the wheel turned over it and the mouse's back and forward buttons, each told to the
-//! app as a [`BrowserPointer`], with how the pointer looks as the page asks.
+//! moves over it and its leaving, the primary, secondary and middle buttons pressed on it,
+//! dragged and let go wherever the pointer is, the wheel turned over it and the mouse's back
+//! and forward buttons, each told to the app as a [`BrowserPointer`], with how the pointer
+//! looks as the page asks.
 
 use crate::browser::Pointer;
 use crate::events::{self, OnPointer};
@@ -22,8 +23,20 @@ pub fn cursor_of(pointer: Pointer) -> CursorIcon {
         Pointer::Wait => CursorIcon::Wait,
         Pointer::ResizeHorizontal => CursorIcon::ColResize,
         Pointer::ResizeVertical => CursorIcon::RowResize,
+        Pointer::Grab => CursorIcon::Grab,
+        Pointer::Grabbing => CursorIcon::Grabbing,
+        Pointer::Move => CursorIcon::Move,
+        Pointer::NotAllowed => CursorIcon::NotAllowed,
+        Pointer::ResizeNwse => CursorIcon::NwseResize,
+        Pointer::ResizeNesw => CursorIcon::NeswResize,
     }
 }
+
+/// The bit of [`Held::others`] set while the secondary button is held.
+const SECONDARY: u8 = 1;
+
+/// The bit of [`Held::others`] set while the middle button is held.
+const MIDDLE: u8 = 2;
 
 /// What the window `surface` of a page keeps of the pointer between its events.
 #[derive(Default)]
@@ -32,6 +45,24 @@ struct Held {
     pressed: Cell<bool>,
     /// How many presses in a row the last press on the window made.
     clicks: Cell<u32>,
+    /// The buttons other than the primary one that went down on the window and are still
+    /// held, as [`SECONDARY`] and [`MIDDLE`] bits; while any is, the page follows the pointer
+    /// through their drags wherever it goes, not through its moves over the window.
+    others: Cell<u8>,
+}
+
+impl Held {
+    /// Whether any button that went down on the window is still held.
+    fn any(&self) -> bool {
+        self.pressed.get() || self.others.get() != 0
+    }
+
+    /// Notes that the button `bit` went down, or came up when not `down`.
+    fn hold(&self, bit: u8, down: bool) {
+        let others = self.others.get();
+        self.others
+            .set(if down { others | bit } else { others & !bit });
+    }
 }
 
 /// The pointer over the window `surface` of a page, handed on to the page while `open`,
@@ -76,8 +107,8 @@ impl PagePointer {
     }
 
     /// What the window does with its own presses, for its `on_pointer`: the primary button
-    /// going down and the secondary one going down and up, with how many presses in a row
-    /// the primary one makes.
+    /// going down, with how many presses in a row it makes, and the secondary one going
+    /// down, dragged wherever the pointer goes and coming up.
     pub fn on_pointer(&self) -> OnPointer {
         let operations = events::operations();
         let (surface, open, held) = (self.surface, self.open, Rc::clone(&self.held));
@@ -97,11 +128,18 @@ impl PagePointer {
                     }
                 }
                 (PointerButton::Secondary, PointerPhase::Press | PointerPhase::Release) => {
+                    let down = event.phase == PointerPhase::Press;
+                    held.hold(SECONDARY, down);
                     BrowserPointing::Button {
                         secondary: true,
-                        down: event.phase == PointerPhase::Press,
+                        down,
                         clicks: 1,
                     }
+                }
+                (PointerButton::Secondary, PointerPhase::Drag)
+                    if held.others.get() & SECONDARY != 0 && !held.pressed.get() =>
+                {
+                    BrowserPointing::Moved
                 }
                 _ => return,
             };
@@ -109,10 +147,38 @@ impl PagePointer {
         })
     }
 
-    /// The modifier of the window: the pointer moving over it or leaving it, moving and
-    /// letting go of the primary button pressed on it wherever the pointer is, the wheel
-    /// turned over it, which goes no further, and, for the page's own window, the mouse's
-    /// back and forward buttons.
+    /// What the window does with the middle button: its press, its drag wherever the
+    /// pointer goes while no other button leads, and its release.
+    fn on_middle(
+        operations: Rc<dyn events::Operations>,
+        surface: Target,
+        open: bool,
+        held: Rc<Held>,
+    ) -> impl Fn(&PointerEvent) + 'static {
+        move |event: &PointerEvent| {
+            if !open {
+                return;
+            }
+            let at = (event.position.x, event.position.y);
+            let pointing = match event.phase {
+                PointerPhase::Press | PointerPhase::Release => {
+                    let down = event.phase == PointerPhase::Press;
+                    held.hold(MIDDLE, down);
+                    BrowserPointing::Middle { down }
+                }
+                PointerPhase::Drag if held.others.get() == MIDDLE && !held.pressed.get() => {
+                    BrowserPointing::Moved
+                }
+                _ => return,
+            };
+            Self::tell(&operations, surface, at, pointing);
+        }
+    }
+
+    /// The modifier of the window: the pointer moving over it or leaving it while no button
+    /// pressed on it is held, moving and letting go of the primary button pressed on it
+    /// wherever the pointer is, the middle button, the wheel turned over it, which goes no
+    /// further, and, for the page's own window, the mouse's back and forward buttons.
     pub fn modifier(&self) -> Modifier {
         let operations = events::operations();
         let (surface, open) = (self.surface, self.open);
@@ -125,7 +191,7 @@ impl PagePointer {
         let covered = Rc::clone(&self.covered);
         let modifier = Modifier::new()
             .on_pointer_move(move |local| {
-                if !open || hovering.pressed.get() {
+                if !open || hovering.any() {
                     return;
                 }
                 match local.filter(|_| !covered.get()) {
@@ -158,7 +224,11 @@ impl PagePointer {
                 let wheel = event.phase == PointerInputPhase::Scroll;
                 Self::tell(&input, surface, at, pointing);
                 wheel
-            });
+            })
+            .on_pointer_button(
+                PointerButton::Middle,
+                Self::on_middle(Rc::clone(&operations), surface, open, Rc::clone(&self.held)),
+            );
         if surface != Target::Browser(crate::areas::BrowserEvent::BrowserBody) {
             return modifier;
         }

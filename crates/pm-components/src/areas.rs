@@ -665,6 +665,42 @@ pub enum BrowserEvent {
     BrowserTab(usize),
     /// The button closing a tab of the browser, by its place among the tabs.
     BrowserTabClose(usize),
+    /// Stops the page loading; it stands where the button that loads again is while the page loads.
+    BrowserStop,
+    /// Loads again the address the page could not load, from the view that says why.
+    BrowserRetry,
+    /// Loads again a page whose content process went away or stopped answering, from the note over it.
+    BrowserRevive,
+    /// Takes away the note that the browser was started again.
+    BrowserRestartDismiss,
+    /// Accepts the dialog the page opened: OK.
+    BrowserDialogOk,
+    /// Dismisses the dialog the page opened: Cancel.
+    BrowserDialogCancel,
+    /// The line the answer to a page's `prompt` is typed in.
+    BrowserDialogField,
+    /// The sheet of the dialog the page opened, which takes presses that land on it and are for none of its controls.
+    BrowserDialogSheet,
+    /// Shows or hides the list of downloads.
+    BrowserDownloads,
+    /// The list of downloads, which takes presses that land on it and are for none of its buttons.
+    BrowserDownloadsPanel,
+    /// Takes the downloads that ended off the list.
+    BrowserDownloadsClear,
+    /// Stops a running download, by its number.
+    BrowserDownloadCancel(u64),
+    /// Shows the file of a download in the system's file manager, by its number.
+    BrowserDownloadShow(u64),
+    /// Opens the file of a download, by its number.
+    BrowserDownloadOpen(u64),
+    /// Mutes or unmutes the page of a tab, by its place among the tabs.
+    BrowserTabMute(usize),
+    /// Shares the screen or window a page asked for, by its place in the list offered.
+    BrowserScreenSource(usize),
+    /// Refuses a page's request to share the screen.
+    BrowserScreenCancel,
+    /// A suggestion of the address bar, by its place in the list.
+    BrowserSuggestion(usize),
 }
 
 /// A press of a control of the settings window and the extensions page.

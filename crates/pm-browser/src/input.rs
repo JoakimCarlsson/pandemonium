@@ -67,4 +67,16 @@ pub enum Cursor {
     ResizeHorizontal,
     /// A resize handle running north and south.
     ResizeVertical,
+    /// An open hand over something that can be dragged.
+    Grab,
+    /// A closed hand dragging something.
+    Grabbing,
+    /// Arrows in four directions, over something that moves or scrolls every way.
+    Move,
+    /// What the pointer is over cannot be used or dropped on.
+    NotAllowed,
+    /// A resize handle running from the top left to the bottom right.
+    ResizeNwse,
+    /// A resize handle running from the top right to the bottom left.
+    ResizeNesw,
 }

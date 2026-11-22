@@ -914,9 +914,13 @@ impl App {
     }
 
     /// The window of `aside`, or the main one, took the keyboard (`focused`) or lost it:
-    /// taking it leaves any field of another window.
+    /// taking it leaves any field of another window, and the main window losing it takes it
+    /// from the web pages until it comes back.
     fn window_focused(&mut self, aside: Option<Aside>, focused: bool) {
         self.window_event(None, |app| {
+            if aside.is_none() {
+                app.web.window_blurred = !focused;
+            }
             if !focused {
                 return;
             }

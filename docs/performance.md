@@ -319,3 +319,16 @@ that a server no open file uses stops.
 `journalctl -k | grep 'Killed process'` shows what the kernel stopped. Set
 `PANDEMONIUM_UNCONFINED=1` to start everything without scopes. Machines
 without a user systemd start everything as before.
+
+## Browser frames
+
+A page's paint used to be turned from BGRA to RGBA by a JavaScript loop over
+every pixel, written whole into its shared file, copied out by the window into
+a new buffer and copied again for the renderer. The helper now writes the
+engine's bytes as they are and only the rows that changed, and the window
+swaps red and blue while copying into a reused buffer it hands the renderer
+without a copy (see [browser.md](browser.md)). On one 1080p paint, measured by
+the last test of `helpers/electron-browser/test/surface.test.js` with
+`npm test`, the helper's side went from about 4.2 ms (swizzle and whole
+write) to about 0.7 ms for a whole repaint and under 0.05 ms for a blinking
+caret.

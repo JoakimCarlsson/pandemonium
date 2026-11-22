@@ -113,20 +113,105 @@ function resolve(args, current, pane) {
 }
 
 /**
+ * The zoom each page's contents carry for the pane's display scale, by the contents, as {@link setZoomBase} last set it.
+ * @type {WeakMap<import('electron').WebContents, number>}
+ */
+const ZOOM_BASES = new WeakMap();
+
+/**
+ * Whether a page renders at its pane's display scale by its zoom rather than by an emulated pixel ratio: when its
+ * viewport follows the pane, or an agent set one that is not mobile and has no pixel ratio of its own. The zoom reaches
+ * the page's cross-origin frames, which run in processes of their own and render at the pixel ratio of their zoom; an
+ * emulated pixel ratio reaches the top frame alone and leaves them blurry.
+ * @param {Emulated | null} viewport The viewport an agent set, or nothing.
+ * @returns {boolean} Whether the zoom carries the scale.
+ */
+function scaledByZoom(viewport) {
+  return !viewport || (!viewport.mobile && !viewport.deviceScaleFactor);
+}
+
+/**
+ * Records the zoom a page's contents carry for the pane's display scale, so the reader's own zoom can be told apart.
+ * @param {import('electron').WebContents} contents The page's contents.
+ * @param {number} base The zoom for the scale: the scale, or 1 when an emulated pixel ratio carries it.
+ * @returns {void}
+ */
+function setZoomBase(contents, base) {
+  ZOOM_BASES.set(contents, base);
+}
+
+/**
+ * The zoom the reader chose for a page: its contents' zoom without the part that carries the pane's display scale.
+ * @param {import('electron').WebContents} contents The page's contents.
+ * @returns {number} The reader's zoom factor.
+ */
+function readerZoom(contents) {
+  return contents.getZoomFactor() / (ZOOM_BASES.get(contents) || 1);
+}
+
+/**
  * Sends a viewport to the engine, with touch events when it is mobile; with none, gives the viewport back to the pane.
+ * Every window paints offscreen at a device scale of 1 and is sized in device pixels by its page (`Page#fitWindow`): the
+ * pane's, or the viewport's, size times the pane's display scale. When {@link scaledByZoom} holds, the page's zoom
+ * carries the scale, so the override is cleared, or for a viewport of its own sets only the screen's size. Otherwise
+ * the override keeps following the window's size (width and height 0), carries the viewport's pixel ratio, or the
+ * pane's, and the pane's scale as its `scale`, so the page lays out at the logical size and paints a frame of device
+ * pixels; an override of a fixed size would paint it at 1.
  * @param {import('./cdp').Cdp} cdp The page's protocol.
  * @param {Emulated | null} viewport What to emulate.
+ * @param {number} [paneScale] The pane's display scale, device pixels per logical pixel; 1 when not given or not above 0.
  * @returns {Promise<void>} Resolves when the engine has taken it.
  */
-async function applyViewport(cdp, viewport) {
+async function applyViewport(cdp, viewport, paneScale = 1) {
+  const scale = paneScale > 0 ? paneScale : 1;
   if (!viewport) {
-    await cdp.call('Emulation.clearDeviceMetricsOverride');
     await cdp.call('Emulation.setTouchEmulationEnabled', { enabled: false });
+    await cdp.call('Emulation.clearDeviceMetricsOverride', {});
     return;
   }
-  const { width, height, deviceScaleFactor, mobile } = viewport;
-  await cdp.call('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor, mobile });
-  await cdp.call('Emulation.setTouchEmulationEnabled', mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
+  await cdp.call('Emulation.setDeviceMetricsOverride', scaledByZoom(viewport) ? screenMetrics(viewport) : viewportMetrics(viewport, scale));
+  await cdp.call('Emulation.setTouchEmulationEnabled', viewport.mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
+}
+
+/**
+ * The override for a viewport an agent set whose page renders at the pane's scale by its zoom: the window's size and
+ * pixel ratio stay the engine's, and only the screen takes the viewport's size.
+ * @param {Emulated} viewport The viewport.
+ * @returns {Json} The parameters of `Emulation.setDeviceMetricsOverride`.
+ */
+function screenMetrics(viewport) {
+  return { width: 0, height: 0, deviceScaleFactor: 0, mobile: false, screenWidth: viewport.width, screenHeight: viewport.height };
+}
+
+/**
+ * The override that emulates a viewport an agent set, in a window its page sized to it in device pixels.
+ * @param {Emulated} viewport The viewport.
+ * @param {number} scale The pane's display scale, device pixels per logical pixel.
+ * @returns {Json} The parameters of `Emulation.setDeviceMetricsOverride`.
+ */
+function viewportMetrics(viewport, scale) {
+  const { width, height, mobile } = viewport;
+  return {
+    width: 0,
+    height: 0,
+    deviceScaleFactor: viewport.deviceScaleFactor || scale,
+    mobile,
+    scale,
+    screenWidth: width,
+    screenHeight: height,
+  };
+}
+
+/**
+ * The protocol command that makes a page without a zoom of its own to carry the scale, such as the developer tools or
+ * a sealed page, render at the pane's display scale in a window sized in device pixels: an override at that ratio, or
+ * none at a scale of 1.
+ * @param {number} scale The pane's display scale, device pixels per logical pixel.
+ * @returns {[string, Json]} The command and its parameters.
+ */
+function paneMetrics(scale) {
+  if (scale === 1) return ['Emulation.clearDeviceMetricsOverride', {}];
+  return ['Emulation.setDeviceMetricsOverride', { width: 0, height: 0, deviceScaleFactor: scale, mobile: false, scale }];
 }
 
 /**
@@ -151,4 +236,17 @@ function describe({ viewport, userAgent }) {
   return `${view}; user agent ${userAgent ? `"${userAgent}"` : "is the browser's own"}`;
 }
 
-module.exports = { VIEWPORT_LIMITS, PRESETS, resolve, applyViewport, applyUserAgent, describe };
+module.exports = {
+  VIEWPORT_LIMITS,
+  PRESETS,
+  resolve,
+  scaledByZoom,
+  setZoomBase,
+  readerZoom,
+  applyViewport,
+  paneMetrics,
+  viewportMetrics,
+  screenMetrics,
+  applyUserAgent,
+  describe,
+};

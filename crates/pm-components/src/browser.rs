@@ -18,8 +18,9 @@ use crate::events::Interactive;
 use crate::icons::panel_right;
 use crate::theme::Role;
 
-use crate::browser_address::address_of;
+use crate::browser_address::{address_of, address_with};
 use crate::browser_find::find_bar;
+use crate::browser_life::{life_bars, life_page, progress_line};
 use crate::browser_pointing::{PagePointer, cursor_of};
 use crate::browser_safety::{Answer, certificate_page};
 use crate::browser_tabs::{BrowserTab, SavedTab, tab_strip};
@@ -107,6 +108,14 @@ pub enum Command {
     ClearData,
     /// Show the sealed document the tab holds, in a page of its own that the network is denied to.
     LoadSealed,
+    /// Do something the reader asked of the page from the pane around it.
+    Chrome(crate::browser_chrome::ChromeAction),
+    /// Put the text on the system's clipboard, as copying a link's address does.
+    CopyText(String),
+    /// Stop the page loading.
+    Stop,
+    /// Make the window the helper numbered so, which a page opened with `window.open`, the tab's page.
+    AdoptPopup(u64),
 }
 
 /// How the pointer looks over the page, as the page asks.
@@ -127,6 +136,18 @@ pub enum Pointer {
     ResizeHorizontal,
     /// A resize handle running north and south.
     ResizeVertical,
+    /// An open hand over something that can be dragged.
+    Grab,
+    /// A closed hand dragging something.
+    Grabbing,
+    /// Arrows in four directions, over something that moves or scrolls every way.
+    Move,
+    /// What the pointer is over cannot be used or dropped on.
+    NotAllowed,
+    /// A resize handle running from the top left to the bottom right.
+    ResizeNwse,
+    /// A resize handle running from the top right to the bottom left.
+    ResizeNesw,
 }
 
 /// The browser: its tabs, the developer tools beside the page of the tab being shown, and what is shared by every tab.
@@ -155,6 +176,14 @@ pub struct Browser {
     /// How many times the reader opened the browser or brought it forward: its address
     /// takes the keyboard each time this changes.
     pub asked: u64,
+    /// The downloads of the browser and whether their list is open.
+    pub downloads: crate::browser_chrome::Downloads,
+    /// The addresses and machines of the tabs the reader closed, the newest last, for opening them again.
+    pub closed: Vec<(String, Option<String>)>,
+    /// The visited addresses, with their titles, that match what is typed in the address bar, while it is typed in.
+    pub suggestions: Vec<(String, String)>,
+    /// The hosts without a dot the reader visited, such as `devbox`, which the address bar opens rather than searches for.
+    pub known_hosts: Vec<String>,
 }
 
 impl Deref for Browser {
@@ -192,6 +221,10 @@ impl Browser {
             tools_width: crate::Held::new(TOOLS_WIDTH),
             clearing: false,
             asked: 0,
+            downloads: crate::browser_chrome::Downloads::default(),
+            closed: Vec::new(),
+            suggestions: Vec::new(),
+            known_hosts: Vec::new(),
         }
     }
 
@@ -403,7 +436,7 @@ impl WorkspaceState {
 
     /// Carries out what pressing `id` of the browser does.
     pub(crate) fn browser_pressed(mut self, id: Target) -> Self {
-        if self.browser_tab_pressed(id) {
+        if self.browser_tab_pressed(id) || self.browser_chrome_pressed(id) {
             return self;
         }
         match id {
@@ -423,7 +456,11 @@ impl WorkspaceState {
 
     /// Carries out what pressing `id` of the bar above the page, or of a question or note over it, does.
     fn browser_page_pressed(&mut self, id: Target) {
+        if self.browser_life_pressed(id) {
+            return;
+        }
         let host = self.current_project_host();
+        let search = self.window.general.search_engine.prefix();
         let Some(browser) = self.browser.as_mut() else {
             return;
         };
@@ -438,7 +475,8 @@ impl WorkspaceState {
             }
             Target::Browser(BrowserEvent::BrowserReload) => browser.commands.push(Command::Reload),
             Target::Browser(BrowserEvent::BrowserGo) => {
-                let address = address_of(&browser.address.text());
+                let address = address_with(&browser.address.text(), search, &browser.known_hosts);
+                browser.suggestions.clear();
                 browser.host = host;
                 browser.commands.push(Command::Load(address));
             }
@@ -627,12 +665,30 @@ fn toolbar(browser: &Browser, capture_menu: Option<crate::Menu>) {
         Arrangement::SpacedBy(theme::sp(1)),
         Alignment::Center,
         || {
-            for (icon, id) in [
-                (phosphor::ARROW_LEFT, BrowserEvent::BrowserBack),
-                (phosphor::ARROW_RIGHT, BrowserEvent::BrowserForward),
-                (phosphor::ARROWS_CLOCKWISE, BrowserEvent::BrowserReload),
+            for (icon, id, enabled) in [
+                (
+                    phosphor::ARROW_LEFT,
+                    BrowserEvent::BrowserBack,
+                    browser.life.can_go_back(),
+                ),
+                (
+                    phosphor::ARROW_RIGHT,
+                    BrowserEvent::BrowserForward,
+                    browser.life.can_go_forward(),
+                ),
+                if browser.life.loading {
+                    (phosphor::X, BrowserEvent::BrowserStop, true)
+                } else {
+                    (
+                        phosphor::ARROWS_CLOCKWISE,
+                        BrowserEvent::BrowserReload,
+                        true,
+                    )
+                },
             ] {
-                Button::icon(icon, Target::Browser(id)).build();
+                Button::icon(icon, Target::Browser(id))
+                    .disabled(!enabled)
+                    .build();
             }
             rustle::column_arranged(
                 Modifier::new().weight(1.0),
@@ -690,6 +746,7 @@ fn toolbar(browser: &Browser, capture_menu: Option<crate::Menu>) {
                 "Lock this tab so agents cannot change it"
             })
             .build();
+            crate::browser_chrome::downloads_button(browser);
             let tools = browser.tools;
             Button::icon(
                 phosphor::SIDEBAR_SIMPLE,
@@ -716,6 +773,17 @@ fn surface(
         let certificate = certificate.clone();
         rustle::with_constraints(size, move |room| {
             certificate_page(&certificate, room.max_width, room.max_height);
+        });
+        return;
+    }
+    if id == Target::Browser(BrowserEvent::BrowserBody)
+        && browser.notice.is_none()
+        && browser.life.stands_in()
+    {
+        let life = browser.life.clone();
+        let shown = browser.address.text().to_owned();
+        rustle::with_constraints(size, move |room| {
+            life_page(&life, &shown, room.max_width, room.max_height);
         });
         return;
     }
@@ -803,11 +871,14 @@ fn page_box(browser: &Browser, covered: &Rc<Cell<bool>>) {
             Modifier::new().fill_max_size(),
             covered,
         );
+        progress_line(browser);
         if let Some(search) = browser.search.as_ref() {
             let over = Rc::clone(covered);
             find_bar(search, move |hovered| over.set(hovered));
         }
         browser.safety.question_overlay();
+        let over = Rc::clone(covered);
+        crate::browser_chrome::page_overlays(browser, move |hovered| over.set(hovered));
     });
 }
 
@@ -825,16 +896,20 @@ pub fn browser_view(state: &WorkspaceState, width: f32) {
         Arrangement::Start,
         Alignment::Start,
         || {
-            tab_strip(browser, width);
-            toolbar(browser, crate::browser_menu::capture_dropdown(state));
-            browser.safety.bar_nodes();
+            let fullscreen = browser.fullscreen();
+            if !fullscreen {
+                tab_strip(browser, width);
+                toolbar(browser, crate::browser_menu::capture_dropdown(state));
+                browser.safety.bar_nodes();
+                life_bars(browser);
+            }
             rustle::row_arranged(
                 Modifier::new().fill_max_width().weight(1.0),
                 Arrangement::Start,
                 Alignment::Start,
                 || {
                     page_box(browser, &covered);
-                    if browser.tools {
+                    if browser.tools && !fullscreen {
                         divider();
                         surface(
                             browser,

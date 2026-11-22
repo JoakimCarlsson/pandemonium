@@ -37,6 +37,11 @@ pub(crate) trait Port {
 
     /// Lets the pointer resize the window by its edge or corner `edge`.
     fn drag_resize(&self, edge: ResizeEdge);
+
+    /// Makes the window fill the screen, or gives it back its place when `fullscreen` is false; a window that cannot does nothing.
+    fn set_fullscreen(&self, fullscreen: bool) {
+        let _ = fullscreen;
+    }
 }
 
 /// A window rustle opened, controlled through its handle.
@@ -88,6 +93,11 @@ impl Port for NativePort {
     /// Minimizes or brings back the window.
     fn set_minimized(&self, minimized: bool) {
         self.handle.set_minimized(minimized);
+    }
+
+    /// Makes the window fill the screen, or gives it back its place.
+    fn set_fullscreen(&self, fullscreen: bool) {
+        self.handle.set_fullscreen(fullscreen);
     }
 
     /// Brings the window in front of the others.

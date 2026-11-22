@@ -1407,6 +1407,33 @@ pub enum Request {
         #[serde(default)]
         change: Option<pm_harness::SlotChange>,
     },
+    /// What the browser remembers of sites, kept by this server for the reader's windows; answered with `browser_sites`.
+    BrowserSites,
+    /// Records a visit to the web address `url`, called `title`; answered with `done`. Other clients hear of it with `browser_sites_changed`. A visit sent again with the same `id` is counted once.
+    BrowserVisited {
+        /// The address.
+        url: String,
+        /// The title the page had, or nothing to keep the one remembered.
+        #[serde(default)]
+        title: String,
+        /// The client's name for this visit, unique to it, so that sending it again after a lost connection does not count it twice; nothing counts every request.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+    /// Gives the remembered visit to `url` the title `title`, which the page reported after it loaded; answered with `done`.
+    BrowserTitled {
+        /// The address.
+        url: String,
+        /// The title.
+        title: String,
+    },
+    /// Remembers the zoom the reader gave the origin of the web address `url`, in percent, 100 forgetting it; answered with `done`.
+    SetSiteZoom {
+        /// An address on the site.
+        url: String,
+        /// The zoom, in percent.
+        percent: u32,
+    },
 }
 
 #[cfg(test)]
@@ -1481,6 +1508,52 @@ mod tests {
             Request::ModelSlots {
                 session: None,
                 change: None
+            }
+        );
+    }
+
+    /// Every request about the browser's sites is written under its own name and read back as it was, and a visit without a title reads as one with an empty title.
+    #[test]
+    fn browser_site_requests_round_trip() {
+        for (request, name) in [
+            (Request::BrowserSites, "browser_sites"),
+            (
+                Request::BrowserVisited {
+                    url: "https://docs.rs/".to_owned(),
+                    title: "Docs.rs".to_owned(),
+                    id: Some("v1".to_owned()),
+                },
+                "browser_visited",
+            ),
+            (
+                Request::BrowserTitled {
+                    url: "https://docs.rs/".to_owned(),
+                    title: "Docs.rs".to_owned(),
+                },
+                "browser_titled",
+            ),
+            (
+                Request::SetSiteZoom {
+                    url: "https://docs.rs/".to_owned(),
+                    percent: 125,
+                },
+                "set_site_zoom",
+            ),
+        ] {
+            let text = serde_json::to_string(&request).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(value["request"], name);
+            assert_eq!(serde_json::from_str::<Request>(&text).unwrap(), request);
+        }
+        let bare: Request =
+            serde_json::from_str(r#"{"request":"browser_visited","url":"https://a.example/"}"#)
+                .unwrap();
+        assert_eq!(
+            bare,
+            Request::BrowserVisited {
+                url: "https://a.example/".to_owned(),
+                title: String::new(),
+                id: None,
             }
         );
     }

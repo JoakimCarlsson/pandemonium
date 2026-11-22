@@ -641,6 +641,11 @@ pub enum Response {
         /// Every preset, by name.
         presets: Vec<pm_harness::PresetInfo>,
     },
+    /// What the browser remembers of sites, after a `browser_sites`.
+    BrowserSites {
+        /// The zoom of each origin and the addresses visited.
+        sites: crate::BrowserSites,
+    },
 }
 
 #[cfg(test)]

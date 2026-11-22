@@ -2,11 +2,13 @@
 
 use std::sync::Arc;
 
+use crate::chrome::{PageAction, PageReport};
 use crate::engine::Engine;
 use crate::error::Error;
 use crate::frame::Frame;
 use crate::input::{Button, Cursor, Key, Modifiers};
-use crate::link::{Link, Notice, PageState};
+use crate::life::{Lifecycle, Popup};
+use crate::link::{Copied, Link, Notice, PageState};
 use crate::wire::{
     Capture, CaptureKind, EditAction, PickedElement, Request, ToolResult, ZoomAction,
 };
@@ -158,15 +160,30 @@ impl View {
         });
     }
 
-    /// Scrolls by `dx`, `dy` logical pixels with the pointer at `x`, `y`; positive `dy` scrolls up.
+    /// Scrolls by `dx`, `dy` whole logical pixels with the pointer at `x`, `y`, as the notches of a wheel do; positive `dy` scrolls up.
     pub fn scrolled(&self, x: i32, y: i32, dx: i32, dy: i32, modifiers: Modifiers) {
+        self.scrolled_exactly(x, y, (f64::from(dx), f64::from(dy)), false, modifiers);
+    }
+
+    /// Scrolls by `by`, across and down in logical pixels and parts of one, with the pointer at `x`, `y`; positive down scrolls up. `precise` says the distance came from a trackpad or another device that scrolls by the pixel, not from the notches of a wheel.
+    pub fn scrolled_exactly(
+        &self,
+        x: i32,
+        y: i32,
+        by: (f64, f64),
+        precise: bool,
+        modifiers: Modifiers,
+    ) {
         self.link.send(&Request::Scrolled {
             page: self.page,
             x,
             y,
-            dx,
-            dy,
+            dx: by.0.trunc() as i32,
+            dy: by.1.trunc() as i32,
             modifiers: modifiers.0,
+            exact_dx: Some(by.0),
+            exact_dy: Some(by.1),
+            precise,
         });
     }
 
@@ -184,6 +201,19 @@ impl View {
             page: self.page,
             text: text.to_owned(),
         });
+    }
+
+    /// Shows `text` as what an input method is composing, replacing what it showed before; empty `text` ends the composition without typing.
+    pub fn compose_text(&self, text: &str) {
+        self.link.send(&Request::Compose {
+            page: self.page,
+            text: text.to_owned(),
+        });
+    }
+
+    /// Where the page last said its caret or the text being composed is: logical pixels from its top left, and the width and height.
+    pub fn caret(&self) -> Option<(i32, i32, i32, i32)> {
+        self.state.caret()
     }
 
     /// Turns on or off the mode in which a click on the page picks the element under the pointer.
@@ -257,12 +287,38 @@ impl View {
         self.state.take_notices()
     }
 
-    /// Cuts, copies or pastes in the page, or marks everything in it.
+    /// The text the reader copied or cut in the page since the last call, oldest first, for the window to put on its clipboard.
+    pub fn take_copied(&self) -> Vec<Copied> {
+        self.state.take_copied()
+    }
+
+    /// Puts `text` where the page's selection is, in place of what is marked, as pasting the window's clipboard does.
+    pub fn paste_text(&self, text: &str) {
+        self.link.send(&Request::PasteText {
+            page: self.page,
+            text: text.to_owned(),
+        });
+    }
+
+    /// Cuts, copies, pastes, undoes or redoes in the page, or marks everything in it.
     pub fn edit(&self, action: EditAction) {
         self.link.send(&Request::Edit {
             page: self.page,
             action,
         });
+    }
+
+    /// Does `action` of the reader's on the page from the pane around it.
+    pub fn act(&self, action: PageAction) {
+        self.link.send(&Request::Chrome {
+            page: self.page,
+            action,
+        });
+    }
+
+    /// What the page reported for the pane around it since the last call, oldest first.
+    pub fn take_reports(&self) -> Vec<PageReport> {
+        self.state.take_reports()
     }
 
     /// Looks for `text` in the page; `again` steps to the next match of the text already searched for, forward or, when `forward` is false, back.
@@ -345,6 +401,46 @@ impl View {
     /// How the pointer should look over the page.
     pub fn cursor(&self) -> Cursor {
         self.about().2
+    }
+    /// Stops the page loading.
+    pub fn stop(&self) {
+        self.link.send(&Request::Stop { page: self.page });
+    }
+
+    /// Where the page is in its loading, history and health, as the helper last said.
+    pub fn lifecycle(&self) -> Lifecycle {
+        self.state
+            .life
+            .lock()
+            .map(|life| life.clone())
+            .unwrap_or_default()
+    }
+
+    /// The windows the page opened with `window.open` since the last call; each waits for [`View::adopt_popup`] or [`View::drop_popup`].
+    pub fn take_popups(&self) -> Vec<Popup> {
+        self.state.take_popups()
+    }
+
+    /// Makes the window `popup` this page opened a page of its own, `width` by `height` logical pixels shown at display `scale`, which keeps its `window.opener`.
+    pub fn adopt_popup(&self, popup: u64, width: u32, height: u32, scale: f32) -> Self {
+        let (page, state) = self.link.register();
+        self.link.send(&Request::AdoptPopup {
+            page,
+            popup,
+            width,
+            height,
+            scale,
+        });
+        Self {
+            page,
+            link: self.link.clone(),
+            state,
+        }
+    }
+
+    /// Closes the window `popup` this page opened, which will not be shown.
+    pub fn drop_popup(&self, popup: u64) {
+        self.link.send(&Request::DropPopup { popup });
     }
 }
 

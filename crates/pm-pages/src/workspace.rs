@@ -185,7 +185,13 @@ fn over(state: &WorkspaceState, height: f32, reviewing: bool) {
         pm_components::terminal_menu::terminal_menu(open, &state.editor.keymap());
     }
     if let Some(open) = state.browser_menu {
-        pm_components::browser_menu::browser_menu(open);
+        pm_components::browser_menu::browser_menu(
+            open,
+            state
+                .browser
+                .as_ref()
+                .and_then(|browser| browser.chrome.menu.as_ref()),
+        );
     }
     adder::adder(state);
     if reviewing {

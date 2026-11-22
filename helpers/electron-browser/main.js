@@ -10,12 +10,15 @@
 const { app, dialog } = require('electron');
 const net = require('net');
 const path = require('path');
+const chrome = require('./src/chrome');
 const { holdNativeBoxes } = require('./src/dialogs');
 const origins = require('./src/origins');
 const { Page } = require('./src/page');
 const safety = require('./src/safety');
 const sealed = require('./src/sealed');
 const features = require('./src/features');
+const lifecycle = require('./src/lifecycle');
+const { LineReader } = require('./src/lines');
 
 /** @typedef {import('./src/types').Event} Event */
 /** @typedef {import('./src/types').PageBody} PageBody */
@@ -86,11 +89,44 @@ function bodyOf(request) {
  * @returns {void}
  */
 function renderHtml(body) {
-  sealed.render(body.html, body.width, body.height, body.path).then(
+  sealed.render(body.html, body.width, body.height, body.path, body.scale).then(
     () => send({ HtmlRendered: { ticket: body.ticket, path: body.path, error: '' } }),
     (error) =>
       send({ HtmlRendered: { ticket: body.ticket, path: '', error: String(error instanceof Error ? error.message : error) } }),
   );
+}
+
+/**
+ * Makes a window a page opened with `window.open` a page of its own, which keeps its `window.opener`, and tells the
+ * window what it shows so far, since it may have loaded before it was taken.
+ * @param {import('./src/types').AdoptPopupBody} body The new page's number, the helper's number for the window, and its size.
+ * @returns {void}
+ */
+function adoptPopup(body) {
+  const taken = lifecycle.take(body.popup);
+  if (!taken) {
+    send({ PageClosed: { page: body.page } });
+    return;
+  }
+  const page = new Page({
+    id: body.page,
+    width: body.width,
+    height: body.height,
+    scale: taken.scale,
+    folder: surfacesFolder,
+    send,
+    inspectable: true,
+    window: taken.win,
+  });
+  pages.set(body.page, page);
+  safety.watch(page);
+  page.handle({ Resize: { page: body.page, width: body.width, height: body.height, scale: body.scale } });
+  const url = page.contents.getURL();
+  if (url) send({ Address: { page: body.page, url } });
+  send({ Title: { page: body.page, title: page.contents.getTitle() } });
+  send({ Loading: { page: body.page, loading: page.contents.isLoading(), progress: 0.5 } });
+  lifecycle.reportHistory(page);
+  page.contents.invalidate();
 }
 
 /**
@@ -112,7 +148,7 @@ function handle(request) {
     if (page) safety.chooseCertificate(page, request.CertificateChoice.proceed);
   } else if ('Open' in request) {
     const body = request.Open;
-    const page = new Page({ id: body.page, width: body.width, height: body.height, folder: surfacesFolder, send, inspectable: true });
+    const page = new Page({ id: body.page, width: body.width, height: body.height, scale: body.scale, folder: surfacesFolder, send, inspectable: true });
     pages.set(body.page, page);
     safety.watch(page);
     page.load(body.url);
@@ -122,6 +158,7 @@ function handle(request) {
       id: body.page,
       width: body.width,
       height: body.height,
+      scale: body.scale,
       folder: surfacesFolder,
       send,
       inspectable: false,
@@ -135,10 +172,14 @@ function handle(request) {
     const body = request.OpenTools;
     const inspected = pages.get(body.of);
     if (!inspected || inspected.win.isDestroyed()) return;
-    const tools = new Page({ id: body.page, width: body.width, height: body.height, folder: surfacesFolder, send, inspectable: false });
+    const tools = new Page({ id: body.page, width: body.width, height: body.height, scale: body.scale, folder: surfacesFolder, send, inspectable: false });
     pages.set(body.page, tools);
     inspected.contents.setDevToolsWebContents(tools.contents);
     inspected.contents.openDevTools({ mode: 'detach' });
+  } else if ('AdoptPopup' in request) {
+    adoptPopup(request.AdoptPopup);
+  } else if ('DropPopup' in request) {
+    lifecycle.drop(request.DropPopup.popup);
   } else if ('Close' in request) {
     const page = pages.get(request.Close.page);
     if (page) {
@@ -168,6 +209,7 @@ function pageOf(contents) {
 app.whenReady().then(() => {
   holdNativeBoxes(dialog);
   safety.install({ send, pageOf });
+  chrome.install(pageOf);
   if (process.platform === 'darwin') app.dock?.hide();
   const separator = controlPath.lastIndexOf(':');
   const connection = net.createConnection({
@@ -175,26 +217,20 @@ app.whenReady().then(() => {
     port: Number(controlPath.slice(separator + 1)),
   });
   socket = connection;
-  let pending = '';
+  const lines = new LineReader();
   connection.on('connect', () => {
     connection.write(`${controlToken}\n`);
     send(features.announcement());
     send('Ready');
   });
   connection.on('data', (chunk) => {
-    pending += chunk.toString('utf8');
-    let end = pending.indexOf('\n');
-    while (end >= 0) {
-      const text = pending.slice(0, end);
-      pending = pending.slice(end + 1);
-      if (text.trim()) {
-        try {
-          handle(JSON.parse(text));
-        } catch (error) {
-          console.error('request failed:', error);
-        }
+    for (const text of lines.push(typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk)) {
+      if (!text.trim()) continue;
+      try {
+        handle(JSON.parse(text));
+      } catch (error) {
+        console.error('request failed:', error);
       }
-      end = pending.indexOf('\n');
     }
   });
   connection.on('close', () => app.quit());

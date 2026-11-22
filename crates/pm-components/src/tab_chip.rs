@@ -44,6 +44,8 @@ pub struct TabChip {
     width: f32,
     /// What it says when the pointer rests on it, if anything.
     hint: Option<String>,
+    /// Whether its page plays sound, as a speaker button: whether the sound is muted, and the target that mutes or unmutes it.
+    audio: Option<(bool, Target)>,
 }
 
 impl TabChip {
@@ -59,6 +61,7 @@ impl TabChip {
             locked: false,
             width: 160.0,
             hint: None,
+            audio: None,
         }
     }
 
@@ -92,6 +95,12 @@ impl TabChip {
         self
     }
 
+    /// Shows a speaker button for a page that plays sound or is muted: struck through while `muted`, and pressing `toggle` mutes or unmutes it.
+    pub fn audio(mut self, audio: Option<(bool, Target)>) -> Self {
+        self.audio = audio;
+        self
+    }
+
     /// Emits the tab.
     #[track_caller]
     pub fn build(self) {
@@ -109,8 +118,14 @@ impl TabChip {
             self.select,
         )
         .padding_xy(theme::sp(2), 0.0);
-        let (variant, icon, label, locked, close) =
-            (self.variant, self.icon, self.label, self.locked, self.close);
+        let (variant, icon, label, locked, close, audio) = (
+            self.variant,
+            self.icon,
+            self.label,
+            self.locked,
+            self.close,
+            self.audio,
+        );
         let hint = self.hint;
         let row = move || {
             rustle::row_arranged(
@@ -125,6 +140,23 @@ impl TabChip {
                     clipped(label, 12, tone);
                     if locked {
                         glyph(phosphor::LOCK_SIMPLE, 3.0, Role::Warning);
+                    }
+                    if let Some((muted, toggle)) = audio {
+                        Button::icon(
+                            if muted {
+                                phosphor::SPEAKER_SLASH
+                            } else {
+                                phosphor::SPEAKER_HIGH
+                            },
+                            toggle,
+                        )
+                        .size(Size::Xs)
+                        .tooltip(if muted {
+                            "Unmute this tab"
+                        } else {
+                            "Mute this tab"
+                        })
+                        .build();
                     }
                     Button::icon(phosphor::X, close).size(Size::Xs).build();
                 },

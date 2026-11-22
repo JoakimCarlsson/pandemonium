@@ -11,14 +11,15 @@
  *   message box. Offscreen pages have no parent window for it, so it would open as a free-standing
  *   box that nothing in the pane shows or answers, and the page stays stopped until someone does.
  *   While the renderer is stopped, `Runtime.evaluate` and friends never answer either.
- * - `prompt` is cancelled at once, without a box: `prompt()` returns `null`.
+ * - `prompt` is cancelled at once, without a box: `prompt()` returns `null`. The preload therefore puts its own
+ *   `window.prompt` in the page, which waits on a synchronous message to the helper; {@link Dialogs.askPrompt} answers it.
  * - `beforeunload`: Electron emits `will-prevent-unload` and, when nobody calls `preventDefault`,
  *   cancels the navigation without a word (`did-fail-load` with `ERR_ABORTED`).
  * - The DevTools protocol sees `alert` and `confirm` too: `Page.javascriptDialogOpening` while the
  *   page is stopped, and `Page.handleJavaScriptDialog` answers it.
  *
- * So this file answers through the protocol, keeps the native box from opening, makes every tool
- * return instead of waiting on a stopped page, and gives up on a dialog nobody answers.
+ * So this file answers through the protocol, keeps the native box from opening, asks the reader with a sheet the
+ * pane draws, makes every tool return instead of waiting on a stopped page, and gives up on a dialog nobody answers.
  */
 
 /** @typedef {import('./page').Page} Page */
@@ -31,17 +32,28 @@ const PATIENCE = 60000;
 /** How long past `PATIENCE` the native box is held back before it answers by itself, in milliseconds. */
 const NATIVE_GRACE = 5000;
 
-/**
- * Electron's own `dialog.showMessageBox`, kept before {@link holdNativeBoxes} replaces it, so the reader can be asked.
- * @type {((options: import('electron').MessageBoxOptions) => Promise<import('electron').MessageBoxReturnValue>) | null}
- */
-let nativeBox = null;
-
 /** How many boxes may be shown to the reader within `BOX_WINDOW` before the page's further dialogs are dismissed unseen. */
 const BOX_LIMIT = 3;
 
 /** The span, in milliseconds, in which `BOX_LIMIT` boxes may be shown. */
 const BOX_WINDOW = 30000;
+
+/** The number the next dialog shown to the reader gets. */
+let nextDialog = 1;
+
+/**
+ * The host of a page's address, for the sheet's title.
+ * @param {string} url The address.
+ * @returns {string} Its host, or nothing for an address without a web host.
+ */
+function hostOf(url) {
+  try {
+    const { protocol, host } = new URL(url);
+    return (protocol === 'http:' || protocol === 'https:') && host ? host : '';
+  } catch (_) {
+    return '';
+  }
+}
 
 /** The most dialogs kept in the list of ones that closed since an agent was last told. */
 const KEPT = 20;
@@ -82,6 +94,10 @@ class Dialogs {
     this.withdraw = null;
     /** @type {Array<() => void>} Who wants to know when a dialog opens. */
     this.watchers = [];
+    /** @type {number} The number of the dialog the pane shows a sheet for, or 0 when it shows none. */
+    this.shownId = 0;
+    /** @type {((answer: string | null) => void) | null} Gives the open prompt its answer, while a prompt is open. */
+    this.promptReply = null;
     if (page.cdp) page.cdp.listen((method, params) => this.hear(method, params));
     page.contents.on('will-prevent-unload', (event) => this.unloading(event));
   }
@@ -115,19 +131,18 @@ class Dialogs {
       if (!shown || this.answering) return;
       this.remember(
         shown.type === 'prompt'
-          ? `A prompt "${shown.message}" was cancelled by the browser at once: Electron does not show prompts, so the page got null.`
+          ? `A prompt "${shown.message}" closed without an answer from here.`
           : `A ${shown.type} "${shown.message}" closed without an answer from here.`,
       );
     }
   }
 
   /**
-   * Shows a dialog the reader's own click made a page open, as a native box with no parent window, and gives the page the reader's answer. The box is withdrawn when the dialog closes some other way, such as an agent answering it or the timer giving up. Dialogs opened while an agent's tool runs are the agent's to answer.
+   * Shows a dialog the reader's own click made a page open as a sheet the pane draws over the page, through a `Dialog` report, and gives the page the answer the window sends back with {@link Dialogs.answerFromReader}. The sheet is withdrawn with a `DialogClosed` report when the dialog closes some other way, such as an agent answering it or the timer giving up. Dialogs opened while an agent's tool runs are the agent's to answer.
    * @param {OpenDialog} shown The dialog that opened.
    * @returns {void}
    */
   askReader(shown) {
-    if (!nativeBox || shown.type === 'prompt') return;
     const now = Date.now();
     this.boxes = this.boxes.filter((at) => now - at < BOX_WINDOW);
     if (this.boxes.length >= BOX_LIMIT) {
@@ -138,30 +153,56 @@ class Dialogs {
       return;
     }
     this.boxes.push(now);
-    const ask = new AbortController();
-    this.withdraw = () => ask.abort();
-    let host = 'A page';
-    try {
-      const { protocol, host: name } = new URL(shown.url);
-      if ((protocol === 'http:' || protocol === 'https:') && name) host = name;
-    } catch (_) {
-      /* a page without a normal address keeps the plain title */
-    }
-    nativeBox({
-      type: 'none',
-      title: host,
-      message: shown.message,
-      buttons: shown.type === 'confirm' ? ['OK', 'Cancel'] : ['OK'],
-      defaultId: 0,
-      cancelId: shown.type === 'confirm' ? 1 : 0,
-      noLink: true,
-      signal: ask.signal,
-    }).then(
-      ({ response }) => {
-        if (this.pending === shown) this.answer(response === 0, '').catch(() => {});
+    const id = nextDialog;
+    nextDialog += 1;
+    this.shownId = id;
+    const page = this.page;
+    const kind = shown.type === 'confirm' ? 'Confirm' : shown.type === 'prompt' ? 'Prompt' : 'Alert';
+    page.send({
+      Chrome: {
+        page: page.id,
+        report: { Dialog: { id, kind, message: shown.message, default_text: shown.defaultPrompt, host: hostOf(shown.url) } },
       },
-      () => {},
-    );
+    });
+    this.withdraw = () => {
+      if (this.shownId === id) this.shownId = 0;
+      page.send({ Chrome: { page: page.id, report: { DialogClosed: { id } } } });
+    };
+  }
+
+  /**
+   * Takes the reader's answer from the sheet in the pane: it answers the dialog only when that is still the one the sheet showed.
+   * @param {number} id The number the sheet's dialog had.
+   * @param {boolean} accept Whether OK was pressed.
+   * @param {string} text What was typed into a prompt.
+   * @returns {void}
+   */
+  answerFromReader(id, accept, text) {
+    if (!this.pending || this.shownId !== id) return;
+    this.answer(accept === true, typeof text === 'string' ? text : '').catch(() => {});
+  }
+
+  /**
+   * Opens a `prompt` of the page, which the preload hands over while the page waits on a synchronous message: it is answered as the other dialogs are, by the reader's sheet, by an agent or by the timer, and `reply` gives the page the text, or `null` when it was cancelled.
+   * @param {string} message What it says.
+   * @param {string} defaultPrompt The text it starts with.
+   * @param {(answer: string | null) => void} reply Gives the page its answer; called once.
+   * @param {string} [url] The address of the frame that asked, which may be a frame inside the page; the page's when not given.
+   * @returns {void}
+   */
+  askPrompt(message, defaultPrompt, reply, url) {
+    if (this.pending) {
+      reply(null);
+      return;
+    }
+    /** @type {OpenDialog} */
+    const shown = { type: 'prompt', message: String(message), defaultPrompt: String(defaultPrompt), url: url || this.page.contents.getURL() };
+    this.pending = shown;
+    this.promptReply = reply;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.giveUp(), PATIENCE);
+    if (!this.page.agentBusy()) this.askReader(shown);
+    for (const watcher of this.watchers.splice(0)) watcher();
   }
 
   /**
@@ -208,6 +249,17 @@ class Dialogs {
    * @returns {Promise<void>} Resolves once the page has the answer; rejects when the protocol refuses.
    */
   async answer(accept, text) {
+    const reply = this.promptReply;
+    if (reply) {
+      this.promptReply = null;
+      this.pending = null;
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = null;
+      if (this.withdraw) this.withdraw();
+      this.withdraw = null;
+      reply(accept ? text : null);
+      return;
+    }
     if (!this.page.cdp) throw new Error('the page has no protocol');
     this.answering = true;
     try {
@@ -262,6 +314,8 @@ class Dialogs {
    * @returns {void}
    */
   dispose() {
+    if (this.promptReply) this.promptReply(null);
+    this.promptReply = null;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     if (this.withdraw) this.withdraw();
@@ -271,7 +325,7 @@ class Dialogs {
 
 /**
  * Keeps Electron from opening native message boxes for the dialogs of pages: the answer comes from {@link Dialogs}, or, if nobody gives one, from a timer here, so a page never waits on a box nobody sees.
- * The original is kept for asking the reader about dialogs their own clicks opened. A request this does not recognise as a page's dialog goes to Electron's own implementation.
+ * A request this does not recognise as a page's dialog goes to Electron's own implementation.
  * @param {import('electron').Dialog} dialog Electron's `dialog` module.
  * @returns {boolean} Whether the module could be changed; when it could not, native boxes open as Electron meant, and the protocol can still answer them.
  */
@@ -279,7 +333,6 @@ function holdNativeBoxes(dialog) {
   try {
     const target = /** @type {any} */ (dialog);
     const original = target.showMessageBox.bind(dialog);
-    nativeBox = original;
     target.showMessageBox = (/** @type {any[]} */ ...args) => {
       const options = args.find((held) => held && typeof held === 'object' && 'message' in held && held.signal);
       if (!options) return original(...args);

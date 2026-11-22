@@ -25,6 +25,56 @@ pub enum Channel {
     Preview,
 }
 
+/// Where the embedded browser's address bar searches for what is not an address.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchEngine {
+    /// DuckDuckGo.
+    #[default]
+    DuckDuckGo,
+    /// Google.
+    Google,
+    /// Bing.
+    Bing,
+    /// Brave Search.
+    Brave,
+    /// Startpage.
+    Startpage,
+}
+
+impl SearchEngine {
+    /// Every engine, in the order the setting offers them.
+    pub const ALL: [Self; 5] = [
+        Self::DuckDuckGo,
+        Self::Google,
+        Self::Bing,
+        Self::Brave,
+        Self::Startpage,
+    ];
+
+    /// What the setting calls it.
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::DuckDuckGo => "DuckDuckGo",
+            Self::Google => "Google",
+            Self::Bing => "Bing",
+            Self::Brave => "Brave",
+            Self::Startpage => "Startpage",
+        }
+    }
+
+    /// The address of a search, to which the query is added, escaped.
+    pub const fn prefix(self) -> &'static str {
+        match self {
+            Self::DuckDuckGo => "https://duckduckgo.com/?q=",
+            Self::Google => "https://www.google.com/search?q=",
+            Self::Bing => "https://www.bing.com/search?q=",
+            Self::Brave => "https://search.brave.com/search?q=",
+            Self::Startpage => "https://www.startpage.com/do/search?q=",
+        }
+    }
+}
+
 /// How the window opens, closes and keeps itself up to date.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -51,6 +101,8 @@ pub struct GeneralSettings {
     pub restrict_agent_browsing: bool,
     /// The origins agents may open besides local addresses while `restrict_agent_browsing` is on, such as `https://example.com`.
     pub agent_origins: Vec<String>,
+    /// Where the embedded browser's address bar searches for what is not an address.
+    pub search_engine: SearchEngine,
 }
 
 impl Default for GeneralSettings {
@@ -68,6 +120,7 @@ impl Default for GeneralSettings {
             open_local_links: true,
             restrict_agent_browsing: false,
             agent_origins: Vec::new(),
+            search_engine: SearchEngine::DuckDuckGo,
         }
     }
 }

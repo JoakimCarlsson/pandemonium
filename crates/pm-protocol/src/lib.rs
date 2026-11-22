@@ -12,6 +12,7 @@ mod message;
 mod release;
 mod request;
 mod response;
+mod sites;
 mod task;
 mod usage;
 
@@ -50,6 +51,9 @@ pub use pm_task::Task;
 pub use release::ReleaseAsset;
 pub use request::{Attachment, Login, McpServer, Request, ToolListing};
 pub use response::{Response, SessionInfo, TerminalInfo};
+pub use sites::{
+    BrowserSites, PLAIN_ZOOM, VISITS_KEPT, Visit, origin_of, site_host_of, zoom_percent,
+};
 pub use task::{RunnableTask, ToolchainInfo};
 pub use usage::{UsageDay, UsageModel, UsageReport, UsageSession, UsageTotals};
 

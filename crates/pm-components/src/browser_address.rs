@@ -1,10 +1,15 @@
 //! What the address bar makes of what was typed: an address to load, or, when it is not an address, a web search.
 
-/// Where text that is not an address is searched for; the query is added after it. DuckDuckGo is fixed here, since choosing the engine is not a setting yet.
+/// Where text that is not an address is searched for when no engine is chosen; the query is added after it.
 pub const SEARCH_URL: &str = "https://duckduckgo.com/?q=";
 
-/// The address `typed` names: a web address as it is, a bare host with a scheme in front, a local host over plain HTTP, and for anything that is not an address, a web search for it.
+/// The address `typed` names, searching with DuckDuckGo and knowing no hosts without a dot; see [`address_with`].
 pub fn address_of(typed: &str) -> String {
+    address_with(typed, SEARCH_URL, &[])
+}
+
+/// The address `typed` names: a web address as it is; a host of this machine, of the local network or an IP address over plain HTTP; any other host over HTTPS; a single word as a host when it ends in a slash, has a port or a path, or is among `known_hosts`, the hosts without a dot the reader visited; and for anything else, a search at `search`, to which the query is added.
+pub fn address_with(typed: &str, search: &str, known_hosts: &[String]) -> String {
     let typed = typed.trim();
     if typed.is_empty() {
         return "about:blank".to_owned();
@@ -18,16 +23,60 @@ pub fn address_of(typed: &str) -> String {
         return format!("http://localhost:{port}");
     }
     if typed.contains(char::is_whitespace) {
-        return search_for(typed);
+        return search_for(search, typed);
     }
     let host = authority(typed);
-    if is_local(host) {
+    if is_local(host) || is_network(host) {
         return format!("http://{typed}");
     }
     if is_host(host) {
         return format!("https://{typed}");
     }
-    search_for(typed)
+    if is_word_host(typed, host, known_hosts) {
+        return format!("http://{typed}");
+    }
+    search_for(search, typed)
+}
+
+/// Whether `authority` names a machine of the local network, reached over plain HTTP: an IPv4 address, a name with a port and no dot such as `devbox:8080`, or a name ending in `.local`, `.lan`, `.internal`, `.home.arpa` or `.test`.
+fn is_network(authority: &str) -> bool {
+    let name = name_of(authority).to_ascii_lowercase();
+    if name.is_empty() {
+        return false;
+    }
+    let ipv4 = name.split('.').count() == 4
+        && name.split('.').all(|part| {
+            !part.is_empty() && part.len() <= 3 && part.bytes().all(|byte| byte.is_ascii_digit())
+        });
+    let with_port = authority.rsplit_once(':').is_some_and(|(_, port)| {
+        !port.is_empty() && port.bytes().all(|byte| byte.is_ascii_digit())
+    });
+    let lan = [".local", ".lan", ".internal", ".home.arpa", ".test"]
+        .iter()
+        .any(|suffix| name.ends_with(suffix));
+    ipv4 || lan || (with_port && !name.contains('.') && is_name(&name))
+}
+
+/// Whether `name` is made only of what a host name may hold: letters, digits and hyphens, not starting or ending with a hyphen.
+fn is_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+/// Whether `typed`, a single word with the host `authority`, reads as a host: it ends in a slash or goes on to a path, or it names one of `known_hosts`.
+fn is_word_host(typed: &str, authority: &str, known_hosts: &[String]) -> bool {
+    let name = name_of(authority).to_ascii_lowercase();
+    if !is_name(&name) || name.bytes().all(|byte| byte.is_ascii_digit()) {
+        return false;
+    }
+    typed.len() > authority.len() && typed[authority.len()..].starts_with('/')
+        || known_hosts
+            .iter()
+            .any(|known| known.eq_ignore_ascii_case(&name))
 }
 
 /// The part of `typed` before its path, query or fragment: the host, with a port or credentials when written.
@@ -68,9 +117,9 @@ fn is_host(authority: &str) -> bool {
     name.contains('.') || with_port
 }
 
-/// The address of a web search for `query`.
-fn search_for(query: &str) -> String {
-    let mut address = String::from(SEARCH_URL);
+/// The address of a web search for `query` at `search`.
+fn search_for(search: &str, query: &str) -> String {
+    let mut address = String::from(search);
     for byte in query.bytes() {
         match byte {
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {

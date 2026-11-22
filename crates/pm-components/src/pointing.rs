@@ -89,6 +89,11 @@ pub enum BrowserPointing {
     Wheel(f32, f32),
     /// The mouse's back button went down, or its forward button when not `true`.
     History(bool),
+    /// The middle button, the wheel pressed, went down or came up.
+    Middle {
+        /// Whether it went down.
+        down: bool,
+    },
 }
 
 /// The pointer over the window of a web page or of its tools.

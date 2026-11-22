@@ -14,6 +14,9 @@ const { BrowserWindow, session } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const policy = require('./sealed-policy');
+const { Cdp } = require('./cdp');
+const { paneMetrics } = require('./emulation');
+const { displayScale, deviceSide, ENGINE_SCALE } = require('./surface');
 
 /** The name of the session sealed pages share; without `persist:` in front, the engine keeps it in memory only. */
 const PARTITION = 'sealed-documents';
@@ -55,10 +58,12 @@ function sealedSession() {
 
 /**
  * The options of a window that shows a sealed page.
- * @param {string | null} preload A script to run in the page's isolated world, which the page cannot reach, or nothing.
+ * @param {string | null} preload A script to run in the isolated world of the page and of each frame inside it, which the
+ *   page cannot reach, or nothing; it runs sandboxed, without node integration.
+ * @param {number} scale The device scale the engine paints the window at, `ENGINE_SCALE` of `surface.js`; the page renders at its pane's scale through emulation.
  * @returns {import('electron').WebPreferences} The options.
  */
-function preferences(preload) {
+function preferences(preload, scale) {
   /** @type {import('electron').WebPreferences} */
   const options = {
     session: sealedSession(),
@@ -72,10 +77,13 @@ function preferences(preload) {
     webviewTag: false,
     navigateOnDragDrop: false,
     spellcheck: false,
-    offscreen: true,
+    offscreen: { deviceScaleFactor: displayScale(scale) },
     backgroundThrottling: false,
   };
-  if (preload) options.preload = preload;
+  if (preload) {
+    options.preload = preload;
+    options.nodeIntegrationInSubFrames = true;
+  }
   return options;
 }
 
@@ -110,17 +118,36 @@ function delay(milliseconds) {
  * @param {string} html The document.
  * @param {number} width The viewport's width in CSS pixels.
  * @param {number} height The viewport's height in CSS pixels.
+ * The window is sized in device pixels and the engine renders the document at `scale` through emulation, as every page
+ * is (see `ENGINE_SCALE` in `surface.js`).
+ * @param {number} scale The display scale to paint at; the picture is this many times the viewport's size.
  * @returns {Promise<Buffer>} The picture as a PNG file's contents; rejects when the document does not load or paints nothing.
  */
-async function paintOnce(html, width, height) {
-  const win = new BrowserWindow({ show: false, width, height, useContentSize: true, webPreferences: preferences(null) });
+async function paintOnce(html, width, height, scale) {
+  const shown = displayScale(scale);
+  const win = new BrowserWindow({
+    show: false,
+    width: deviceSide(width, shown),
+    height: deviceSide(height, shown),
+    useContentSize: true,
+    webPreferences: preferences(null, ENGINE_SCALE),
+  });
   const contents = win.webContents;
   /** @type {import('electron').NativeImage | null} */
   let latest = null;
   /** @type {NodeJS.Timeout | null} */
   let timer = null;
+  /** @type {Cdp | null} */
+  let scaler = null;
   try {
     guard(contents);
+    if (shown !== 1) {
+      const attached = new Cdp(contents);
+      scaler = attached;
+      contents.once('did-start-navigation', () => {
+        attached.call(...paneMetrics(shown)).catch(() => {});
+      });
+    }
     contents.setAudioMuted(true);
     contents.setFrameRate(30);
     contents.on('paint', (_event, _dirty, image) => {
@@ -140,9 +167,11 @@ async function paintOnce(html, width, height) {
     await Promise.race([painted, expired]);
     const image = /** @type {import('electron').NativeImage | null} */ (latest);
     if (!image || image.isEmpty()) throw new Error('The document painted nothing.');
-    return image.toPNG();
+    const factor = Math.max(1, ...image.getScaleFactors());
+    return image.toPNG({ scaleFactor: factor });
   } finally {
     if (timer) clearTimeout(timer);
+    if (scaler) scaler.detach();
     if (!win.isDestroyed()) win.destroy();
   }
 }
@@ -196,13 +225,14 @@ function turnOver() {
  * @param {string} html The document.
  * @param {number} width The viewport's width in CSS pixels.
  * @param {number} height The viewport's height in CSS pixels.
+ * @param {number} scale The display scale to paint at.
  * @param {string} file Where the PNG goes.
  * @returns {Promise<void>} Resolves once the file is there.
  */
-async function renderInTurn(html, width, height, file) {
+async function renderInTurn(html, width, height, scale, file) {
   await turn();
   try {
-    const bytes = await paintOnce(html, width, height);
+    const bytes = await paintOnce(html, width, height, scale);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const partial = `${file}.${process.pid}.part`;
     fs.writeFileSync(partial, bytes);
@@ -220,9 +250,10 @@ async function renderInTurn(html, width, height, file) {
  * @param {unknown} width The viewport's width in CSS pixels.
  * @param {unknown} height The viewport's height in CSS pixels.
  * @param {unknown} file Where the PNG goes, an absolute path.
+ * @param {unknown} [scale] The display scale to paint at, device pixels per CSS pixel; 1 when not given.
  * @returns {Promise<void>} Resolves once the file is there; rejects with why it could not be rendered.
  */
-function render(html, width, height, file) {
+function render(html, width, height, file, scale) {
   const refused = policy.refusal(html);
   if (refused) return Promise.reject(new Error(refused));
   if (!policy.usableSide(width) || !policy.usableSide(height)) {
@@ -234,7 +265,7 @@ function render(html, width, height, file) {
   if (fs.existsSync(file)) return Promise.resolve();
   const already = underWay.get(file);
   if (already) return already;
-  const started = renderInTurn(/** @type {string} */ (html), /** @type {number} */ (width), /** @type {number} */ (height), file).finally(() =>
+  const started = renderInTurn(/** @type {string} */ (html), /** @type {number} */ (width), /** @type {number} */ (height), displayScale(scale), file).finally(() =>
     underWay.delete(file),
   );
   underWay.set(file, started);

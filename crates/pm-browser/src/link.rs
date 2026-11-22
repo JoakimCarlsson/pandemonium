@@ -5,13 +5,24 @@ use std::io::{BufRead, Write};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::chrome::PageReport;
 use crate::frame::Frame;
 use crate::input::Cursor;
+use crate::life::{Lifecycle, LoadFailure, Popup};
 use crate::render::Rendered;
 use crate::surface::SurfaceReader;
 use crate::wire::{
     Capture, CertificateInfo, DownloadState, Event, PickedElement, Request, ToolResult, line,
 };
+
+/// What the reader copied or cut in a page, for the window to put on its clipboard.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Copied {
+    /// What was marked, as plain text.
+    pub text: String,
+    /// What was marked, as HTML; empty when the page gave none.
+    pub html: String,
+}
 
 /// Something the helper reported about a page that the reader is to see or answer.
 #[derive(Clone, Debug, PartialEq)]
@@ -56,6 +67,8 @@ pub(crate) struct PageState {
     picked: Mutex<Option<Option<PickedElement>>>,
     /// What the reader asked to add to the prompt that the window has not taken yet.
     captured: Mutex<Vec<Capture>>,
+    /// The text the reader copied or cut in the page that the window has not put on its clipboard yet, oldest first.
+    copied: Mutex<Vec<Copied>>,
     /// The new windows the page asked for that the window has not opened yet: the address, and whether an agent's tool was running.
     opened: Mutex<Vec<(String, bool)>>,
     /// Which file the newest paint is in, and how many paints there have been.
@@ -66,16 +79,47 @@ pub(crate) struct PageState {
     pub(crate) found: Mutex<Option<(u32, u32)>>,
     /// The page's zoom as a factor, when the helper reported it and the window has not taken it yet.
     pub(crate) zoom: Mutex<Option<f32>>,
+    /// Where the page is in its loading, history and health, as the helper last said.
+    pub(crate) life: Mutex<Lifecycle>,
+    /// The windows the page opened with `window.open` that the window has not taken yet.
+    popups: Mutex<Vec<Popup>>,
     /// The two files the page paints into, once it has said where they are.
     surfaces: Mutex<Option<[SurfaceReader; 2]>>,
     /// The size of a picture in those files.
     size: Mutex<(u32, u32)>,
+    /// The pixels of a picture that was replaced, kept to copy the next one into once nothing else holds them.
+    spare: Mutex<Option<Arc<[u8]>>>,
+    /// What the page reported for the pane to show around it that the window has not taken yet, oldest first.
+    reports: Mutex<Vec<PageReport>>,
+    /// Where the page last said its caret or the text being composed is: left, top, width and height in logical pixels.
+    caret: Mutex<Option<(i32, i32, i32, i32)>>,
 }
 
 impl PageState {
+    /// Where the page last said its caret or the text being composed is, if it said.
+    pub(crate) fn caret(&self) -> Option<(i32, i32, i32, i32)> {
+        self.caret.lock().ok().and_then(|held| *held)
+    }
+
     /// The tool calls that ended since the last call.
     pub(crate) fn take_tools(&self) -> Vec<ToolResult> {
         self.tools
+            .lock()
+            .map(|mut held| std::mem::take(&mut *held))
+            .unwrap_or_default()
+    }
+
+    /// The text copied or cut in the page since the last call, oldest first.
+    pub(crate) fn take_copied(&self) -> Vec<Copied> {
+        self.copied
+            .lock()
+            .map(|mut held| std::mem::take(&mut *held))
+            .unwrap_or_default()
+    }
+
+    /// What the page reported for the pane around it since the last call, oldest first.
+    pub(crate) fn take_reports(&self) -> Vec<PageReport> {
+        self.reports
             .lock()
             .map(|mut held| std::mem::take(&mut *held))
             .unwrap_or_default()
@@ -109,6 +153,14 @@ impl PageState {
             .unwrap_or_default()
     }
 
+    /// The windows the page opened with `window.open` since the last call.
+    pub(crate) fn take_popups(&self) -> Vec<Popup> {
+        self.popups
+            .lock()
+            .map(|mut held| std::mem::take(&mut *held))
+            .unwrap_or_default()
+    }
+
     /// The new windows the page asked for since the last call.
     pub(crate) fn take_opened(&self) -> Vec<(String, bool)> {
         self.opened
@@ -123,6 +175,11 @@ impl PageState {
     }
 
     /// The newest picture, copied out of the shared files only when the page has painted since the last copy.
+    ///
+    /// The copy goes into the pixels of the picture before the one shown when nothing else holds them any more,
+    /// so a page painting steadily copies into two buffers in turn instead of allocating one a paint. The files and
+    /// their size are read under one lock, so a picture is never labelled with the size of files it was not copied
+    /// from while the page is resized.
     pub(crate) fn frame(&self) -> Option<Frame> {
         let latest = *self.latest.lock().ok()?;
         let mut held = self.frame.lock().ok()?;
@@ -135,19 +192,31 @@ impl PageState {
         {
             return held.clone();
         }
+        let surfaces = self.surfaces.lock().ok()?;
         let size = self.size.lock().map(|size| *size).unwrap_or_default();
-        let pixels = self
-            .surfaces
-            .lock()
-            .ok()
-            .and_then(|surfaces| surfaces.as_ref()?.get(usize::from(buffer))?.read());
-        if let Some(pixels) = pixels {
-            *held = Some(Frame {
+        let Some(reader) = surfaces
+            .as_ref()
+            .and_then(|surfaces| surfaces.get(usize::from(buffer)))
+        else {
+            return held.clone();
+        };
+        let mut spare = self.spare.lock().ok()?;
+        let mut pixels = spare
+            .take()
+            .filter(|pixels| pixels.len() == reader.len())
+            .and_then(|mut pixels| Arc::get_mut(&mut pixels).is_some().then_some(pixels))
+            .unwrap_or_else(|| std::iter::repeat_n(0, reader.len()).collect());
+        let read = Arc::get_mut(&mut pixels).is_some_and(|out| reader.read_into(out));
+        if read {
+            let replaced = held.replace(Frame {
                 width: size.0,
                 height: size.1,
                 generation,
-                rgba: Arc::new(pixels),
+                rgba: pixels,
             });
+            *spare = replaced.map(|frame| frame.rgba);
+        } else {
+            *spare = Some(pixels);
         }
         held.clone()
     }
@@ -241,14 +310,14 @@ impl Link {
 
     /// Reads what the helper reports from `reader` until it says it is ready, the reader gives out or fails, as when its timeout passes; what it read is taken in as [`Link::listen`] takes it in.
     pub(crate) fn await_ready(&self, reader: &mut dyn BufRead) {
-        let mut text = String::new();
+        let mut text = Vec::new();
         while !self.ready() {
             text.clear();
-            match reader.read_line(&mut text) {
+            match reader.read_until(b'\n', &mut text) {
                 Ok(0) | Err(_) => return,
                 Ok(_) => {}
             }
-            if let Ok(event) = serde_json::from_str::<Event>(&text) {
+            if let Ok(event) = serde_json::from_slice::<Event>(&text) {
                 self.handle(event);
             }
         }
@@ -259,16 +328,26 @@ impl Link {
         self.pages.lock().ok()?.get(&page).cloned()
     }
 
-    /// Takes in what the helper reports until it hangs up.
+    /// Changes what is known of the life of `page` with `change`, if the page is open.
+    fn change_life(&self, page: u32, change: impl FnOnce(&mut Lifecycle)) {
+        if let Some(state) = self.page(page)
+            && let Ok(mut life) = state.life.lock()
+        {
+            change(&mut life);
+        }
+    }
+
+    /// Takes in what the helper reports until it hangs up. A line is read as bytes up to its newline and only then
+    /// decoded, so a line that is not valid text is skipped rather than ending the connection.
     pub(crate) fn listen(&self, mut reader: Box<dyn BufRead + Send>) {
-        let mut text = String::new();
+        let mut text = Vec::new();
         loop {
             text.clear();
-            match reader.read_line(&mut text) {
+            match reader.read_until(b'\n', &mut text) {
                 Ok(0) | Err(_) => break,
                 Ok(_) => {}
             }
-            if let Ok(event) = serde_json::from_str::<Event>(&text) {
+            if let Ok(event) = serde_json::from_slice::<Event>(&text) {
                 self.handle(event);
             }
         }
@@ -310,11 +389,13 @@ impl Link {
                     return;
                 };
                 let open = |path: &String| SurfaceReader::open(path.as_ref(), width, height).ok();
-                if let (Some(first), Some(second)) = (open(&paths[0]), open(&paths[1]))
-                    && let (Ok(mut surfaces), Ok(mut size)) =
-                        (state.surfaces.lock(), state.size.lock())
+                let opened = match (open(&paths[0]), open(&paths[1])) {
+                    (Some(first), Some(second)) => Some([first, second]),
+                    _ => None,
+                };
+                if let (Ok(mut surfaces), Ok(mut size)) = (state.surfaces.lock(), state.size.lock())
                 {
-                    *surfaces = Some([first, second]);
+                    *surfaces = opened;
                     *size = (width, height);
                 }
             }
@@ -369,6 +450,19 @@ impl Link {
                     && let Ok(mut about) = state.about.lock()
                 {
                     about.2 = cursor;
+                }
+            }
+            Event::Caret {
+                page,
+                x,
+                y,
+                width,
+                height,
+            } => {
+                if let Some(state) = self.page(page)
+                    && let Ok(mut caret) = state.caret.lock()
+                {
+                    *caret = Some((x, y, width, height));
                 }
             }
             Event::Found {
@@ -428,6 +522,70 @@ impl Link {
                     && let Ok(mut opened) = state.opened.lock()
                 {
                     opened.push((url, agent));
+                }
+            }
+            Event::Chrome { page, report } => {
+                if let Some(state) = self.page(page)
+                    && let Ok(mut reports) = state.reports.lock()
+                {
+                    reports.push(report);
+                }
+            }
+            Event::Copied { page, text, html } => {
+                if let Some(state) = self.page(page)
+                    && let Ok(mut copied) = state.copied.lock()
+                {
+                    copied.push(Copied { text, html });
+                }
+            }
+            Event::Loading {
+                page,
+                loading,
+                progress,
+            } => self.change_life(page, |life| {
+                if loading && !life.loading {
+                    life.failure = None;
+                    life.crashed = None;
+                    life.unresponsive = false;
+                }
+                life.loading = loading;
+                life.progress = progress;
+            }),
+            Event::LoadFailed {
+                page,
+                url,
+                code,
+                name,
+            } => self.change_life(page, |life| {
+                life.failure = Some(LoadFailure { url, code, name });
+            }),
+            Event::Crashed { page, reason } => self.change_life(page, |life| {
+                life.crashed = Some(reason);
+                life.loading = false;
+            }),
+            Event::Responsive { page, responsive } => {
+                self.change_life(page, |life| life.unresponsive = !responsive);
+            }
+            Event::History {
+                page,
+                back,
+                forward,
+            } => self.change_life(page, |life| {
+                life.history_known = true;
+                life.back = back;
+                life.forward = forward;
+            }),
+            Event::PageClosed { page } => self.change_life(page, |life| life.closed = true),
+            Event::PopupOpened {
+                page,
+                popup,
+                url,
+                agent,
+            } => {
+                if let Some(state) = self.page(page)
+                    && let Ok(mut popups) = state.popups.lock()
+                {
+                    popups.push(Popup { popup, url, agent });
                 }
             }
             Event::HtmlRendered {
@@ -495,5 +653,46 @@ mod tests {
         let silent = link();
         silent.await_ready(&mut std::io::Cursor::new(Vec::new()));
         assert_eq!(silent.supports(SEALED_PAGES), None);
+    }
+
+    /// A failed load stays until the next load starts, and the history is known once the helper reports it.
+    #[test]
+    fn a_failed_load_lasts_until_the_next_load() {
+        let current = link();
+        let (page, state) = current.register();
+        current.handle(Event::Loading {
+            page,
+            loading: true,
+            progress: 0.1,
+        });
+        current.handle(Event::LoadFailed {
+            page,
+            url: "http://nowhere.test/".to_owned(),
+            code: -105,
+            name: "ERR_NAME_NOT_RESOLVED".to_owned(),
+        });
+        current.handle(Event::Loading {
+            page,
+            loading: false,
+            progress: 1.0,
+        });
+        current.handle(Event::History {
+            page,
+            back: true,
+            forward: false,
+        });
+        let life = state
+            .life
+            .lock()
+            .map(|life| life.clone())
+            .unwrap_or_default();
+        assert_eq!(life.failure.map(|failure| failure.code), Some(-105));
+        assert!(life.history_known && life.back && !life.forward && !life.loading);
+        current.handle(Event::Loading {
+            page,
+            loading: true,
+            progress: 0.1,
+        });
+        assert!(state.life.lock().is_ok_and(|life| life.failure.is_none()));
     }
 }

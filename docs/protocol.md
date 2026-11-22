@@ -151,6 +151,10 @@ request with exactly one `response` carrying the same `id`.
 | `remove_model_server` | `id`                                                                                      | `model_servers` |
 | `find_models`  | `server`: as in `save_model_server`                                                              | `found_models`  |
 | `model_slots`  | `session`: number or null, `change`: `SlotChange` or null                                        | `model_slots`   |
+| `browser_sites` | none                                                                                          | `browser_sites` |
+| `browser_visited` | `url`, `title` (optional, empty keeps the title remembered), `id` (optional)                | `done`          |
+| `browser_titled` | `url`, `title`                                                                                | `done`          |
+| `set_site_zoom` | `url`, `percent`                                                                               | `done`          |
 | `library`      | `agent`, `directory`                                                                             | `library`       |
 | `tool_sets`    | `agent`                                                                                          | `tool_sets`     |
 | `save_withheld`| `keys`: `[string]`                                                                               | `done`          |
@@ -576,6 +580,28 @@ everything said of them, its submodules' paths written from `directory`.
   agent then sends a `Slots` event; otherwise only the user's file and the
   environment are seen and a `Project` change answers `failed`. Answers
   `model_slots`, or `failed` with the harness's reason when a change is refused.
+- **`browser_sites`, `browser_visited`, `browser_titled`, `set_site_zoom`:**
+  what the embedded browser remembers of sites, which
+  belongs to the reader rather than a project, so the window sends these only
+  to the server on its own machine. The server keeps the zoom of each origin
+  (scheme, host and port) the reader zoomed, in percent, and the last 500 web
+  addresses visited with their titles, visit counts and last visit times, in
+  `browser-sites` in its data folder. `browser_visited` records a visit to an
+  `http` or `https` address, `browser_titled` gives a remembered visit the title
+  its page reported later, and `set_site_zoom` remembers the zoom of the origin
+  of `url`, 100 forgetting it; each answers `done`, and a change is sent to every
+  other client as `browser_sites_changed`. `browser_sites` answers everything
+  remembered, which a window copies so that its address bar suggests as the
+  reader types, asking again whenever it reaches the server anew; changes the
+  reader makes before the answer comes are made again on top of it and only
+  then sent. A window keeps each change it sent until the server answers
+  `done`, and after reaching the server anew makes the unanswered ones again
+  on top of the new answer and sends them again. A `browser_visited` with an
+  `id`, the client's name for the visit, is counted once however often it is
+  sent, among the last 1024 ids the server saw since it started. When the
+  server first reads the store and `browser-sites` is missing, it takes over
+  the `browser-sites.json` windows kept in the same folder before, with each
+  zoom a factor, and removes it.
 - **`create_customization`:** writes a new skill, instruction file or agent
   definition on the server's machine from a short template, and answers
   `created` with the `path` written. `name` is lowercase letters, digits and
@@ -1135,6 +1161,7 @@ embedded context, and anything else as a link to the stored file.
 | `mcp_servers` | `servers`: `[{name, target, env, description, website, enabled, extension}]`          |
 | `usage_report` | `report`: `{days: [{day, models}], models: [{model, totals}], sessions: [{session, title, project, updated, totals}], total}`, each `totals` and `total` being `{requests, input, output, cache_read, cache_write, cost, missed}` |
 | `model_servers` | `servers`: `[{id, label, base_url, wire, api_key_env, api_key, has_api_key, headers, default_model, models, replay_reasoning}]`, `api_key` always null |
+| `browser_sites` | `sites`: `{zoom: {origin: percent}, visits: [{url, title, count, last}]}`, the visits most recent last, `last` in seconds since the Unix epoch |
 | `found_models` | `models`: `[string]` in the server's order, `error`: why the server could not be asked, or null |
 | `model_slots` | `slots`: `[{name, model, backups, resolved, source, inherited, suggested, providers, description, prompt, category}]`, built-in slots first; `description` and `prompt`, left out when unset, are what the slot is for and what it adds to a subagent's system prompt, and `category` is true for every slot other than the six job slots; `model` and `backups` are the any-provider assignment, `resolved` and `source` are for the conversation's provider, and `source` is `Environment`, `Project`, `User` or `Main`; `providers`: `[{provider, model, backups, suggested}]`, one per signed-in provider and per provider with an assignment of its own; `presets`: `[{name, slots: [{name, model, backups, providers}], effort}]` |
 | `library`    | `product`, `items`, `withheld`, as described under `library` above |
@@ -1197,13 +1224,14 @@ embedded context, and anything else as a link to the stored file.
 
 ## Changes other clients make
 
-Two messages tell a client about changes it did not make itself. Neither is
+These messages tell a client about changes it did not make itself. Neither is
 sent to the client that made the change.
 
 ```json
 { "type": "session_added", "info": { "session": 2, "agent": "codex", … } }
 { "type": "session_closed", "session": 2 }
 { "type": "projects_changed", "paths": ["~/code/app", "~/code/lib"] }
+{ "type": "browser_sites_changed", "sites": { "zoom": {}, "visits": [] } }
 ```
 
 - `session_added`: another client started or branched a session. `info` is a
@@ -1213,6 +1241,9 @@ sent to the client that made the change.
   what is going on.
 - `projects_changed`: another client saved the projects. The client adds the
   ones it does not have. Removing a project is not sent yet.
+- `browser_sites_changed`: another client changed what the browser remembers
+  of sites. `sites` is everything remembered now, as in the `browser_sites`
+  answer, and replaces the client's copy.
 
 A client that was disconnected misses these, so after every connect it asks
 `sessions` and `projects` again.
