@@ -87,14 +87,15 @@ checkout. To release pandemonium with unreleased oh-my-crab work:
 
 `scripts/release.sh` stops when the crates name different tags, when the tag
 is not published on GitHub, or when any `omc-*` entry in `Cargo.lock` does not
-come from that tag, which catches a local override and a stale lock.
+come from that tag, which catches a local override and a stale lock. It checks
+rustle's tag and its `rustle*` entries the same way.
 
 ## Building against a local rustle
 
 `pm-components`, `pm-pages` and the `pandemonium` binary depend on rustle by
-git URL. Rustle is not published yet, so the same git-ignored
-`.cargo/config.toml` points every rustle crate at the checkout beside this
-workspace:
+git tag, as the crates above depend on oh-my-crab. To build against the rustle
+checkout beside this workspace instead, the same git-ignored
+`.cargo/config.toml` points every rustle crate at it:
 
 ```toml
 [patch."https://github.com/JoakimCarlsson/rustle"]
@@ -117,9 +118,12 @@ rustle-wgpu = { path = "../../rustle/crates/rustle-wgpu" }
 rustle-widgets = { path = "../../rustle/crates/rustle-widgets" }
 ```
 
-The rules for `Cargo.lock` are the ones above: never commit its local-path
-lines, and build a release against a pushed rustle commit with the override
-off. When the interface needs something rustle lacks, add it to rustle by its
+The rules for `Cargo.lock` and for releasing are the ones above: never commit
+its local-path lines, and to release pandemonium with unreleased rustle work,
+release rustle with a new tag first, turn the override off, change `tag` in
+`crates/pm-components/Cargo.toml`, `crates/pm-pages/Cargo.toml` and
+`crates/pandemonium/Cargo.toml`, and build once so `Cargo.lock` follows the
+new tag. When the interface needs something rustle lacks, add it to rustle by its
 own rules, never as a framework of our own here. Icons are rustle's
 Phosphor constants (`rustle::phosphor::X`) used directly, never through a
 name enum of our own; only artwork that arrives while the app runs is

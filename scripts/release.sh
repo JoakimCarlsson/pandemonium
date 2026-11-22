@@ -52,47 +52,62 @@ bump_version() {
 }
 
 CRAB_REPO="https://github.com/JoakimCarlsson/oh-my-crab"
+RUSTLE_REPO="https://github.com/JoakimCarlsson/rustle"
 
-# Prints the oh-my-crab tag the crates depend on, and exits unless every crate
-# names the same one.
-crab_tag() {
-    tags="$(grep -h "$CRAB_REPO" crates/*/Cargo.toml | sed -n 's/.*tag = "\([^"]*\)".*/\1/p' | sort -u)"
-    [ -n "$tags" ] || fail "no crate depends on an oh-my-crab tag"
-    [ "$(echo "$tags" | wc -l)" -eq 1 ] || fail "the crates depend on different oh-my-crab tags: $(echo $tags)"
+# Prints the tag of a repository the crates depend on, and exits unless every
+# crate names the same one.
+#   $1  the repository's URL
+#   $2  the repository's name, for messages
+dependency_tag() {
+    tags="$(grep -h "$1\"" crates/*/Cargo.toml | sed -n 's/.*tag = "\([^"]*\)".*/\1/p' | sort -u)"
+    [ -n "$tags" ] || fail "no crate depends on a $2 tag"
+    [ "$(echo "$tags" | wc -l)" -eq 1 ] || fail "the crates depend on different $2 tags: $(echo $tags)"
     echo "$tags"
 }
 
-# Prints the commit an oh-my-crab tag points at on GitHub, and exits when the
-# tag is not published.
-#   $1  the tag
-crab_commit() {
-    refs="$(git ls-remote --tags "$CRAB_REPO" "refs/tags/$1" "refs/tags/$1^{}")" \
-        || fail "could not reach $CRAB_REPO"
-    [ -n "$refs" ] || fail "oh-my-crab $1 is not published; release oh-my-crab first"
+# Prints the commit a tag of a repository points at on GitHub, and exits when
+# the tag is not published.
+#   $1  the repository's URL
+#   $2  the repository's name, for messages
+#   $3  the tag
+dependency_commit() {
+    refs="$(git ls-remote --tags "$1" "refs/tags/$3" "refs/tags/$3^{}")" \
+        || fail "could not reach $1"
+    [ -n "$refs" ] || fail "$2 $3 is not published; release $2 first"
     echo "$refs" | awk '{ commit = $1 } $2 ~ /\^\{\}$/ { peeled = $1 } END { print (peeled != "" ? peeled : commit) }'
 }
 
-# Exits unless every omc-* package in Cargo.lock comes from the published
-# oh-my-crab tag, so a release never builds against a local checkout or a
+# Exits unless every package of a repository in Cargo.lock comes from its
+# published tag, so a release never builds against a local checkout or a
 # stale lock.
-#   $1  the tag
-#   $2  the commit the tag points at
-check_crab_lock() {
-    expected="git+$CRAB_REPO?tag=$1#$2"
-    wrong="$(awk -v expected="$expected" '
-        /^\[\[package\]\]/ { if (name ~ /^omc-/ && source != expected) print name; name = ""; source = "" }
+#   $1  the repository's URL
+#   $2  the repository's name, for messages
+#   $3  the pattern the names of its packages match
+#   $4  the tag
+#   $5  the commit the tag points at
+check_dependency_lock() {
+    expected="git+$1?tag=$4#$5"
+    wrong="$(awk -v expected="$expected" -v named="$3" '
+        /^\[\[package\]\]/ { if (name ~ named && source != expected) print name; name = ""; source = "" }
         /^name = / { name = $3; gsub(/"/, "", name) }
         /^source = / { source = $3; gsub(/"/, "", source) }
-        END { if (name ~ /^omc-/ && source != expected) print name }
+        END { if (name ~ named && source != expected) print name }
     ' Cargo.lock)"
-    [ -z "$wrong" ] || fail "Cargo.lock does not take $(echo $wrong) from oh-my-crab $1; remove the local override in .cargo/config.toml and run cargo update"
+    [ -z "$wrong" ] || fail "Cargo.lock does not take $(echo $wrong) from $2 $4; remove the local override in .cargo/config.toml and run cargo update"
 }
 
 # Exits unless the release builds against a published oh-my-crab tag.
 check_crab() {
-    crab_version="$(crab_tag)"
-    crab_revision="$(crab_commit "$crab_version")"
-    check_crab_lock "$crab_version" "$crab_revision"
+    crab_version="$(dependency_tag "$CRAB_REPO" oh-my-crab)"
+    crab_revision="$(dependency_commit "$CRAB_REPO" oh-my-crab "$crab_version")"
+    check_dependency_lock "$CRAB_REPO" oh-my-crab '^omc-' "$crab_version" "$crab_revision"
+}
+
+# Exits unless the release builds against a published rustle tag.
+check_rustle() {
+    rustle_version="$(dependency_tag "$RUSTLE_REPO" rustle)"
+    rustle_revision="$(dependency_commit "$RUSTLE_REPO" rustle "$rustle_version")"
+    check_dependency_lock "$RUSTLE_REPO" rustle '^rustle(-|$)' "$rustle_version" "$rustle_revision"
 }
 
 # Bumps, verifies, commits, tags and pushes the release.
@@ -109,9 +124,11 @@ main() {
     git rev-parse -q --verify "refs/tags/$tag" >/dev/null && fail "$tag already exists"
 
     check_crab
+    check_rustle
     bump_version "$version"
     check_crab
-    echo "building against oh-my-crab $crab_version"
+    check_rustle
+    echo "building against oh-my-crab $crab_version and rustle $rustle_version"
     cargo clippy --workspace --all-targets --locked -- -D warnings
 
     git commit --quiet -am "Release $tag"
