@@ -142,6 +142,8 @@ pub enum Shot {
     SignInCode,
     /// A session whose agent was at work when the window lost its connection to the agent's server.
     OutOfReach,
+    /// The open session titled with two lines of text, of which the sidebar, the title bar and the header each show the first.
+    TitleLines,
     /// A session whose branch has an open pull request, with checks passed, failed and running and changes asked for, under its header.
     PullRequest,
     /// A session whose repository's remote is on a code host that is not supported, which offers only pushing under its header.
@@ -3190,6 +3192,12 @@ impl Shot {
                 let mut state = workspace();
                 state.sessions[0].base = Some("main".to_owned());
                 state.sessions[0].code_host = Some(pm_git::CodeHost::unsupported("gitlab.com"));
+                Screen::Workspace(state)
+            }
+            Self::TitleLines => {
+                let mut state = workspace();
+                state.sessions[0].title =
+                    "clone the basic structure from here.\n/home/me/code/elsewhere".to_owned();
                 Screen::Workspace(state)
             }
             Self::OutOfReach => {

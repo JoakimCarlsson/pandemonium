@@ -45,7 +45,9 @@ const GUTTER: f32 = 24.0;
 /// between blank lines one text, with a gap where a blank line was.
 #[track_caller]
 fn paragraph(content: &str, tone: Role, width: f32) {
-    let kind = theme::text_style(14, 1.57).color(theme::color(tone));
+    let kind = theme::text_style(14, 1.57)
+        .color(theme::color(tone))
+        .wrap(rustle::TextWrap::Word);
     let room = width.max(32.0);
     let lines = rustle::wrap_at_spaces(content, &kind, room);
     rustle::column_arranged(
@@ -56,7 +58,9 @@ fn paragraph(content: &str, tone: Role, width: f32) {
             for run in lines.split(|part| part.end == part.start) {
                 match (run.first(), run.last()) {
                     (Some(first), Some(last)) => rustle::text_styled(
-                        Modifier::new().width_in(0.0, room),
+                        Modifier::new()
+                            .wrap_content_width(rustle::BoxAlignment::TopStart, true)
+                            .width_in(0.0, room),
                         content[first.start..last.end].trim_end_matches('\n'),
                         kind,
                     ),
@@ -915,6 +919,26 @@ mod tests {
             .text
             .push_str("\n\nA new paragraph.\n\nAnd another one, written as the agent goes on.");
         reply.said.clear();
+    }
+
+    /// A long line the reader sent wraps inside its bubble: the message is as tall as the
+    /// lines it wraps into, and a short one is one line tall.
+    #[test]
+    fn a_long_line_the_reader_sent_wraps_in_its_bubble() {
+        let tall = |text: &str| {
+            let held = long_conversation(1);
+            {
+                let mut state = held.borrow_mut();
+                let message = &mut state.sessions[0].messages[0];
+                message.from_user = true;
+                message.text = text.to_owned();
+            }
+            let shown = Shown::new(&held);
+            shown.message(0).expect("the message is drawn").size.height
+        };
+        let short = tall("no");
+        let long = tall(&"no fuss and no bother ".repeat(40));
+        assert!(long > short + 22.0 * 5.0, "{long} against {short}");
     }
 
     /// A long conversation opens at its end and composes only the messages near it.

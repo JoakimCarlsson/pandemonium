@@ -232,3 +232,13 @@ fn newer_releases_are_looked_for_again_after_a_while() {
     );
     assert!(late.contains("LatestRelease"), "never looked: {late}");
 }
+
+/// The ring beside a working session turns as the frame clock moves on.
+#[test]
+fn the_ring_of_a_working_session_turns() {
+    let mut rig = Rig::shot(Shot::SessionStates(false));
+    let before = rig.dash_angles();
+    assert!(!before.is_empty(), "no ring is drawn");
+    rig.wait(120);
+    assert_ne!(rig.dash_angles(), before, "the ring stood still");
+}

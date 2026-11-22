@@ -2584,6 +2584,24 @@ impl WorkspaceState {
         }
     }
 
+    /// The files sent with the open session's messages that no preview is known for, each once.
+    pub fn unpreviewed_sent_files(&self) -> Vec<String> {
+        let Some(session) = self.open_index().and_then(|index| self.sessions.get(index)) else {
+            return Vec::new();
+        };
+        let mut files: Vec<String> = Vec::new();
+        for path in session
+            .messages
+            .iter()
+            .flat_map(|message| message.attachments.iter())
+        {
+            if !self.previews.contains_key(path) && !files.contains(path) {
+                files.push(path.clone());
+            }
+        }
+        files
+    }
+
     /// The position of the open session, if the page is one.
     pub fn open_index(&self) -> Option<usize> {
         match self.page {
@@ -3564,6 +3582,21 @@ fn toggle_key(list: &mut Vec<(usize, usize, usize)>, key: (usize, usize, usize))
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The files sent with the open session's messages are wanted until their preview is known.
+    #[test]
+    fn sent_files_want_a_preview_until_one_is_known() {
+        let mut state = WorkspaceState::sample();
+        state.page = Page::Session(0);
+        let mut message = Message::user("look");
+        message.attachments = vec!["/a.png".to_owned(), "/b.png".to_owned()];
+        state.sessions[0].messages.push(message.clone());
+        state.sessions[0].messages.push(message);
+        assert_eq!(state.unpreviewed_sent_files(), ["/a.png", "/b.png"]);
+        let picture = rustle::ImageData::from_rgba(1, 1, vec![0, 0, 0, 255]).unwrap();
+        let state = state.with_preview("/a.png", picture);
+        assert_eq!(state.unpreviewed_sent_files(), ["/b.png"]);
+    }
     use crate::areas::ChatEvent;
     use crate::areas::DiffEvent;
     use crate::areas::EditorEvent;

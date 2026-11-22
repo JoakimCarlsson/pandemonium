@@ -80,13 +80,30 @@ fn turning() -> rustle::State<f32> {
     )
 }
 
-/// Emits a spinner `steps` of the spacing scale across in `tone`: rustle's
-/// dashed ring, the loading icon, turning once a second, its angle read when
-/// it is painted, so it turns without composing again.
+/// How much of its circle the arc of a [`spinner`] covers.
+const SPINNER_SWEEP: f32 = 0.7;
+
+/// Emits a spinner `steps` of the spacing scale across in `tone`: one arc open at a gap,
+/// turning once a second, its angle read when it is painted, so it turns without composing
+/// again. The gap is what shows the turning at small sizes.
 #[track_caller]
 pub fn spinner(steps: f32, tone: impl Into<Color>) {
     let turned = turning();
-    rustle::dashed_spinner(sp(steps), theme::color(tone), move || turned.get());
+    let side = sp(steps);
+    let color = theme::color(tone);
+    rustle::canvas(Modifier::new().size(side, side), move |canvas| {
+        let thickness = (side * 0.11).max(1.5);
+        let radius = side * 0.375;
+        canvas.arc(
+            side / 2.0,
+            side / 2.0,
+            radius,
+            thickness,
+            turned.get(),
+            SPINNER_SWEEP,
+            color,
+        );
+    });
 }
 
 /// Emits `icon` turning once a second, `steps` of the spacing scale across,

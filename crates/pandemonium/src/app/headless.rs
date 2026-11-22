@@ -802,6 +802,19 @@ impl Rig {
             .collect()
     }
 
+    /// The angles the dashes of the rings drawn in the main window start at, as bits.
+    pub(super) fn dash_angles(&self) -> Vec<u32> {
+        self.screens
+            .main
+            .commands()
+            .iter()
+            .filter_map(|command| match command {
+                rustle::DrawCommand::Arc { start, .. } => Some(start.to_bits()),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// The pointer shape the main window shows.
     pub(super) fn cursor(&self) -> rustle::CursorIcon {
         self.screens.main.cursor()

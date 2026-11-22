@@ -784,10 +784,30 @@ impl App {
             self.model
                 .update(|screen| *screen = std::mem::take(screen).with_place_recorded());
         }
+        self.preview_sent_files();
         self.tell_field_left();
         self.sync_asides();
         self.browsing = self.browser_tick();
         self.flush();
+    }
+
+    /// Has the pictures among the files sent with the open session's messages decoded, each
+    /// once, when the window does not know what they look like yet: files of messages that
+    /// came from the server, such as queued ones and those of a conversation opened again.
+    fn preview_sent_files(&mut self) {
+        let asked = &self.previews_asked;
+        let wanted: Vec<String> = self.model.read(|screen| match screen {
+            Screen::Workspace(state) => state
+                .unpreviewed_sent_files()
+                .into_iter()
+                .filter(|path| !asked.contains(path))
+                .collect(),
+        });
+        if wanted.is_empty() {
+            return;
+        }
+        self.previews_asked.extend(wanted.iter().cloned());
+        self.work.preview(wanted);
     }
 
     /// Says what the app waits on while it is idle, for the root's effects: what each thing

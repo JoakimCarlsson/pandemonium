@@ -150,6 +150,7 @@ fn main() {
             Some("tool-sign-in") => Shot::ToolSignIn,
             Some("sign-in-code") => Shot::SignInCode,
             Some("out-of-reach") => Shot::OutOfReach,
+            Some("title-lines") => Shot::TitleLines,
             Some("pull-request") => Shot::PullRequest,
             Some("pull-request-unsupported") => Shot::PullRequestUnsupported,
             Some("workspace") => Shot::Workspace,

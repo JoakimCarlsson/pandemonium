@@ -214,6 +214,8 @@ pub struct App {
     opened: bool,
     /// How many physical pixels a logical pixel of the main window is.
     scale: f32,
+    /// The files sent with messages whose pictures were asked to be decoded, so each is asked once.
+    previews_asked: std::collections::HashSet<String>,
     /// Whether the browser's pages are being shown or worked on, so they are pumped.
     browsing: bool,
     /// Whether a key or an input method's text was handed to the interface, which the app
@@ -379,6 +381,7 @@ impl App {
             fit_to_screen: false,
             opened: false,
             scale: 1.0,
+            previews_asked: std::collections::HashSet::new(),
             browsing: false,
             event_pending: false,
             frame_pending: false,
