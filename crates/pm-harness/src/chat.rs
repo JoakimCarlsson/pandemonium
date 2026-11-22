@@ -1,9 +1,10 @@
 //! A conversation with one agent: what the reader says goes in, what the agent does comes out.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -190,10 +191,41 @@ pub struct Chat {
     slot_asks: Sender<SlotAsk>,
     /// The way to end the conversation.
     ending: Arc<Mutex<Ending>>,
-    /// The driver thread.
-    driver: JoinHandle<()>,
+    /// The driver thread, until the chat is stopped or dropped.
+    driver: Option<JoinHandle<()>>,
+    /// The saved conversation the chat holds open, when it is saved.
+    conversation: Option<Saved>,
     /// Whether [`Chat::events`] has told of the agent stopping, so that it is told only once.
     ended: AtomicBool,
+}
+
+/// A saved conversation, as the folder its history is kept in, or the harness's own when there is none, and its id.
+type Saved = (Option<PathBuf>, String);
+
+/// The driver threads of dropped chats that may still be ending, by the saved conversation they held open; a chat that opens the same conversation waits for them first, since the conversation stays locked until its harness has ended.
+static LEAVING: LazyLock<Mutex<HashMap<Saved, Vec<JoinHandle<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Notes that `driver`, the driver thread of a dropped chat that held `conversation` open, may still be ending, forgetting the threads noted before that have ended.
+fn leave(conversation: Saved, driver: JoinHandle<()>) {
+    let mut leaving = LEAVING.lock().unwrap_or_else(|held| held.into_inner());
+    leaving.retain(|_, drivers| {
+        drivers.retain(|driver| !driver.is_finished());
+        !drivers.is_empty()
+    });
+    leaving.entry(conversation).or_default().push(driver);
+}
+
+/// Waits until every driver thread of a dropped chat that held `conversation` open has ended, so the conversation is no longer locked by it.
+fn await_leaving(conversation: &Saved) {
+    let drivers = LEAVING
+        .lock()
+        .unwrap_or_else(|held| held.into_inner())
+        .remove(conversation)
+        .unwrap_or_default();
+    for driver in drivers {
+        let _ = driver.join();
+    }
 }
 
 /// Why a chat whose driver thread ended without saying why, or broke down, failed.
@@ -214,7 +246,15 @@ impl Chat {
         let (slot_asks, asked) = mpsc::channel();
         let ending = Arc::new(Mutex::new(Ending::default()));
         let shared = Arc::clone(&ending);
+        let conversation = given
+            .conversation
+            .clone()
+            .map(|id| (given.history.clone(), id));
+        let previous = conversation.clone();
         let driver = std::thread::spawn(move || {
+            if let Some(previous) = &previous {
+                await_leaving(previous);
+            }
             let report = |event: Event| {
                 let sent = queue.send(event).is_ok();
                 notify();
@@ -251,21 +291,28 @@ impl Chat {
             files,
             slot_asks,
             ending,
-            driver,
+            driver: Some(driver),
+            conversation,
             ended: AtomicBool::new(false),
         }
     }
 
     /// Ends the conversation and waits until it and the driver thread are gone, so nothing the agent runs is left writing into its folder.
-    pub fn stop(self) {
+    pub fn stop(mut self) {
+        self.end();
+        if let Some(driver) = self.driver.take() {
+            let _ = driver.join();
+        }
+    }
+
+    /// Asks the conversation to end, and the driver thread with it, without waiting for either.
+    fn end(&self) {
         if let Ok(mut ending) = self.ending.lock() {
             ending.stopped = true;
             if let Some(stopper) = &ending.stopper {
                 stopper.stop();
             }
         }
-        drop(self.requests);
-        let _ = self.driver.join();
     }
 
     /// Hands the agent `text` and the files at `files` as the next turn, which is saved under the id `turn`; `context` is what the agent is told first and is not saved as the reader's words.
@@ -382,6 +429,16 @@ impl Chat {
                     return found;
                 }
             }
+        }
+    }
+}
+
+impl Drop for Chat {
+    /// Asks the conversation to end without waiting for it, so that dropping a chat never holds its owner up; a saved conversation's driver thread is noted as leaving, so that a chat opening the same conversation next waits for it to end instead of finding the conversation open elsewhere.
+    fn drop(&mut self) {
+        self.end();
+        if let (Some(driver), Some(conversation)) = (self.driver.take(), self.conversation.take()) {
+            leave(conversation, driver);
         }
     }
 }
@@ -710,6 +767,55 @@ mod tests {
             line.trim_end(),
             r#"{"Trust":{"ticket":3,"verdict":"Always"}}"#
         );
+    }
+
+    /// A chat that opens a saved conversation right after a chat holding it was dropped waits for that one to end instead of finding the conversation open elsewhere, here while the ending one holds the lock longer than opening tries for it; and dropping and starting the same conversation back to back never finds it open elsewhere.
+    #[test]
+    fn reopening_waits_for_the_conversation_that_is_ending() {
+        let folder =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../build/tests/pm-harness/reopen");
+        let _ = std::fs::remove_dir_all(&folder);
+        let home = folder.join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let given = || Given {
+            conversation: Some("c".to_owned()),
+            history: Some(folder.clone()),
+            ..Given::default()
+        };
+        let start = || {
+            Chat::start(
+                agents()[0],
+                folder.clone(),
+                Some(home.clone()),
+                given(),
+                Arc::new(|| {}),
+            )
+        };
+        let opened_elsewhere = |chat: &Chat| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            let mut seen = Vec::new();
+            while std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(50));
+                seen.extend(chat.events());
+            }
+            seen.iter()
+                .any(|event| format!("{event:?}").contains("open elsewhere"))
+        };
+        let lock = std::fs::File::create(folder.join("c.jsonl.lock")).unwrap();
+        lock.lock().unwrap();
+        let holder = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(1500));
+            drop(lock);
+        });
+        leave((Some(folder.clone()), "c".to_owned()), holder);
+        assert!(!opened_elsewhere(&start()));
+        for _ in 0..3 {
+            let chat = start();
+            std::thread::sleep(Duration::from_millis(100));
+            drop(chat);
+            assert!(!opened_elsewhere(&start()));
+        }
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     /// A prompt that needs a tool is answered with a question, and the answer lets the turn finish.
