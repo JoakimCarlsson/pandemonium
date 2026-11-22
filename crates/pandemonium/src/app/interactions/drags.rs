@@ -470,6 +470,23 @@ fn a_split_lays_its_panes_out_by_its_share() {
     assert_eq!(pane(&rig, 0).size.width, top.size.width + 30.0);
 }
 
+/// The handle between two panes is taken hold of on its half that lies over the first
+/// pane's edge too, where the pane's scrollbar is: the split is resized and the pane is not
+/// scrolled.
+#[test]
+fn a_split_handle_is_held_over_the_scrollbar_of_its_first_pane() {
+    let mut rig = Rig::shot(Shot::Panes);
+    let pane = |rig: &Rig| {
+        rig.region(Target::Window(WindowEvent::Pane(0)))
+            .expect("the pane is drawn")
+    };
+    let before = pane(&rig).size.width;
+    let seam = rig.center(Target::Window(WindowEvent::SplitSash(0)));
+    let from = (seam.0 - 2.0, pane(&rig).origin.y + 120.0);
+    rig.drag(from, (from.0 + 30.0, from.1), 3);
+    assert_eq!(pane(&rig).size.width, before + 30.0);
+}
+
 /// While a tab is held over the right edge of a pane, the highlight of where it would go
 /// covers the right half of the pane's box, inset a little: a fraction of the box, as
 /// Compose's `fillMaxWidth(0.5f)` takes it, filling the box the other way.

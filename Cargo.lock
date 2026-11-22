@@ -4902,8 +4902,8 @@ dependencies = [
 
 [[package]]
 name = "rustle"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -4935,8 +4935,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-animation"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 dependencies = [
  "rustle-graphics",
  "rustle-runtime",
@@ -4944,8 +4944,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-charts"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 dependencies = [
  "qrcode",
  "rustle-foundation",
@@ -4956,8 +4956,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-foundation"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 dependencies = [
  "rustle-animation",
  "rustle-geometry",
@@ -4970,13 +4970,13 @@ dependencies = [
 
 [[package]]
 name = "rustle-geometry"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 
 [[package]]
 name = "rustle-graphics"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 dependencies = [
  "fontdb 0.24.0",
  "image",
@@ -4986,8 +4986,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-icons"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 dependencies = [
  "rustle-graphics",
  "rustle-icons-macros",
@@ -4995,16 +4995,16 @@ dependencies = [
 
 [[package]]
 name = "rustle-icons-macros"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 dependencies = [
  "svgtypes",
 ]
 
 [[package]]
 name = "rustle-macros"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 dependencies = [
  "quote",
  "syn 3.0.9",
@@ -5012,26 +5012,26 @@ dependencies = [
 
 [[package]]
 name = "rustle-navigation"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 dependencies = [
  "rustle-runtime",
 ]
 
 [[package]]
 name = "rustle-runtime"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 
 [[package]]
 name = "rustle-shaders"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 
 [[package]]
 name = "rustle-text"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 dependencies = [
  "rustle-geometry",
  "rustle-graphics",
@@ -5039,8 +5039,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-ui"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 dependencies = [
  "rustle-geometry",
  "rustle-graphics",
@@ -5051,16 +5051,16 @@ dependencies = [
 
 [[package]]
 name = "rustle-unit"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 dependencies = [
  "rustle-geometry",
 ]
 
 [[package]]
 name = "rustle-wgpu"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 dependencies = [
  "bytemuck",
  "glyphon",
@@ -5075,8 +5075,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-widgets"
-version = "0.1.1"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#8548b840a44d996417d55b36f3db73266e1b5116"
+version = "0.1.0"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
 dependencies = [
  "rustle-animation",
  "rustle-foundation",
