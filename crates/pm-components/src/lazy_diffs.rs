@@ -2,11 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::sample::Change;
+use crate::sample::{Change, Session};
 use crate::state::{Outgoing, Tab, WorkspaceState};
-
-/// How far down from the top of the view, in logical pixels, the files whose diffs are wanted reach; the view and some of what is beyond it.
-const REACH: f32 = 2400.0;
 
 /// How many files one request for the files in view asks the diffs of at most; a small one comes back quickly.
 const BATCH_VIEW: usize = 12;
@@ -14,8 +11,8 @@ const BATCH_VIEW: usize = 12;
 /// How many files one request for the files beyond the view asks the diffs of at most.
 const BATCH_AHEAD: usize = 16;
 
-/// How far down from the top of the view, in logical pixels, the files count as in view.
-const VIEW: f32 = 1400.0;
+/// How many files above the view count as near it, for when the diff is scrolled back up.
+const BEHIND: usize = 4;
 
 /// How many files may have their diffs asked and not yet answered before those beyond the view are left until some have been: scrolling fast must not queue up what it has left behind in front of what it has come to.
 const AHEAD_IN_FLIGHT: usize = 24;
@@ -32,28 +29,23 @@ impl WorkspaceState {
         let Some(session) = self.sessions.get(index) else {
             return;
         };
-        let from = self.diff_scroll - REACH / 4.0;
-        let to = self.diff_scroll + REACH;
-        let (seen_from, seen_to) = (self.diff_scroll, self.diff_scroll + VIEW);
-        let mut top = 0.0;
-        let (mut in_view, mut beyond) = (Vec::new(), Vec::new());
-        for (at, change) in session.changes.iter().enumerate() {
-            if top > to {
-                break;
-            }
-            let height = crate::diff::section_height(self, session, at, self.diff_width);
-            if top + height >= from
-                && (!change.loaded || change.stale)
+        let (first, last) = self.files_in_view(session);
+        let wanted = |at: &usize| {
+            let change = &session.changes[*at];
+            (!change.loaded || change.stale)
                 && !self.asking_diffs.contains(&(index, change.path.clone()))
-            {
-                if top + height >= seen_from && top <= seen_to {
-                    in_view.push(change.path.clone());
-                } else {
-                    beyond.push(change.path.clone());
-                }
-            }
-            top += height;
-        }
+        };
+        let path = |at: usize| session.changes[at].path.clone();
+        let count = session.changes.len();
+        let mut in_view: Vec<String> = (first..(last + 1).min(count))
+            .filter(wanted)
+            .map(path)
+            .collect();
+        let mut beyond: Vec<String> = (last + 1..count)
+            .chain(first.saturating_sub(BEHIND)..first)
+            .filter(wanted)
+            .map(path)
+            .collect();
         in_view.truncate(BATCH_VIEW);
         beyond.truncate(BATCH_AHEAD);
         if self.asking_diffs.len() + in_view.len() >= AHEAD_IN_FLIGHT {
@@ -109,12 +101,26 @@ impl WorkspaceState {
         self
     }
 
-    /// Scrolls the diff to the header of the file it is anchored to, now that the files above it may have changed height; an anchor whose file is no longer in the diff being reviewed is let go.
+    /// The first and the last of the files of `session` with a part in view of the diff's list as it was last laid out; before it was, the files from the top that a request for those in view asks for.
+    fn files_in_view(&self, session: &Session) -> (usize, usize) {
+        let info = self.diff_list.layout_info();
+        let items = crate::diff::item_files(self, session);
+        let file = |item: &rustle::LazyListItemInfo| items.get(item.index).copied();
+        match (
+            info.visible_items_info.first().and_then(file),
+            info.visible_items_info.last().and_then(file),
+        ) {
+            (Some(first), Some(last)) => (first, last),
+            _ => (0, BATCH_VIEW.saturating_sub(1)),
+        }
+    }
+
+    /// Asks the diff's list to bring the header of the file it is anchored to to its top, now that the parts of the files above it may have changed; an anchor whose file is no longer in the diff being reviewed is let go. The list keeps the header there as the files above it are measured, until the reader scrolls.
     pub(crate) fn pin_diff(&mut self) {
         let Some((session, path)) = &self.diff_anchor else {
             return;
         };
-        let offset = self
+        let item = self
             .sessions
             .get(*session)
             .filter(|_| self.review_index() == Some(*session))
@@ -122,10 +128,12 @@ impl WorkspaceState {
                 held.changes
                     .iter()
                     .position(|change| &change.path == path)
-                    .map(|index| crate::diff::offset_of(self, held, index, self.diff_width))
+                    .map(|index| crate::diff::header_item(self, held, index))
             });
-        match offset {
-            Some(offset) => self.diff_scroll = offset,
+        match item {
+            Some(item) => self
+                .diff_list
+                .scroll_to_item(item, rustle::ItemAlign::Start),
             None => self.diff_anchor = None,
         }
     }

@@ -1,8 +1,8 @@
 //! Changing a document's text: the syntax tree reparsed, the version the language server was told of moved on, and the completions open at the caret kept in step.
 
+use crate::Edit;
 use pm_buffer::Lines;
 use pm_protocol::TextChange;
-use pm_text::Edit;
 
 use crate::document::{Completions, Document};
 

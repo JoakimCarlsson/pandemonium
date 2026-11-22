@@ -2,14 +2,9 @@
 
 use std::path::PathBuf;
 
-use pm_input::FocusId;
-
 use crate::Project;
 use crate::sample::Session;
 use crate::state::{Page, WorkspaceState};
-
-/// Shows the page that starts a chat.
-pub const NEW_CHAT: FocusId = FocusId(302);
 
 impl WorkspaceState {
     /// The project `session` belongs to: nothing for a chat, or when the project is gone.
@@ -65,13 +60,6 @@ impl WorkspaceState {
         self.chat_on = machine;
         self.page = Page::Chat;
         self.new_in = None;
-    }
-
-    /// The state open on the page that starts a chat.
-    pub fn with_new_chat(mut self) -> Self {
-        self.start_chat();
-        self.sync_context();
-        self
     }
 
     /// Shows the page for starting work in the first project, or the page that starts a chat when there is no project, as when what the page showed is gone.

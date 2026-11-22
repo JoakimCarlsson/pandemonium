@@ -1,37 +1,10 @@
 //! What the reader does to the project's files from the Files tab: make a file or folder, rename, cut, copy, paste, duplicate, delete, copy a path, drag entries into another folder and bring files in from outside the window.
 
-use pm_input::FocusId;
-
+use crate::areas::TreeEvent;
 use crate::git_controls::Pick;
 use crate::git_prompts::Prompt;
 use crate::state::{Outgoing, WorkspaceState};
-
-/// Asks for a name for a new file at the root of the project.
-pub const TREE_NEW_FILE: FocusId = FocusId(7077);
-
-/// Asks for a name for a new folder at the root of the project.
-pub const TREE_NEW_FOLDER: FocusId = FocusId(7078);
-
-/// Reads the project's files and changes again.
-pub const TREE_REFRESH: FocusId = FocusId(7079);
-
-/// Folds every folder of the project's files.
-pub const TREE_COLLAPSE: FocusId = FocusId(7080);
-
-/// The empty space under the rows, which opens the menu of the tree itself.
-pub const TREE_SPACE: FocusId = FocusId(7081);
-
-/// The box the name of a new or renamed file or folder is typed in.
-pub const ENTRY_FIELD: FocusId = FocusId(7076);
-
-/// Makes the file or folder, or renames the entry, under the name typed in the tree.
-pub const TREE_NAME_SUBMIT: FocusId = FocusId(7082);
-
-/// The first of the rows of the project's files; the rest follow it.
-pub const TREE_FILE_BASE: u64 = 3_000_000;
-
-/// How tall the menu on an entry of the tree is, in logical pixels, to keep it inside the window.
-pub const TREE_MENU_HEIGHT: f32 = 12.0 * 32.0 + 5.0 * 9.0 + 10.0;
+use crate::target::Target;
 
 /// A file or folder of the tree, by its path from the root of the project; the root itself has an empty path.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -206,24 +179,24 @@ fn outermost(targets: Vec<TreeTarget>) -> Vec<TreeTarget> {
 
 impl WorkspaceState {
     /// The file or folder of the tree row `id` is, if it is one, or the root when it is the space under the rows.
-    pub fn tree_row_of(&self, id: FocusId) -> Option<TreeTarget> {
-        if id == TREE_SPACE {
+    pub fn tree_row_of(&self, id: Target) -> Option<TreeTarget> {
+        if id == Target::Tree(TreeEvent::TreeSpace) {
             return Some(TreeTarget::root());
         }
-        if let Some(index) =
-            id.0.checked_sub(TREE_FILE_BASE)
-                .map(|index| index as usize)
-                .filter(|index| *index < self.files.len())
+        if let Target::Tree(TreeEvent::TreeFile(index)) = id
+            && index < self.files.len()
         {
             return Some(TreeTarget {
                 path: self.files[index].clone(),
                 folder: false,
             });
         }
-        let position =
-            id.0.checked_sub(crate::state::TREE_BASE)
-                .map(|index| index as usize)
-                .filter(|index| *index < self.files.len() + self.tree_folders.len())?;
+        let Target::Tree(TreeEvent::Tree(position)) = id else {
+            return None;
+        };
+        if position >= self.files.len() + self.tree_folders.len() {
+            return None;
+        }
         crate::file_tree::folder_paths(&self.files, &self.tree_folders)
             .into_iter()
             .nth(position)
@@ -358,9 +331,9 @@ impl WorkspaceState {
     }
 
     /// Carries out `action` if it is a button or row of the tree, and says whether it was.
-    pub(crate) fn press_tree(&mut self, action: FocusId) -> bool {
+    pub(crate) fn press_tree(&mut self, action: Target) -> bool {
         match action {
-            TREE_NEW_FILE | TREE_NEW_FOLDER => {
+            Target::Tree(TreeEvent::TreeNewFile) | Target::Tree(TreeEvent::TreeNewFolder) => {
                 let directory = self
                     .git
                     .tree_selected
@@ -369,21 +342,21 @@ impl WorkspaceState {
                     .unwrap_or_default();
                 self.ask_name(Naming::New {
                     directory,
-                    folder: action == TREE_NEW_FOLDER,
+                    folder: action == Target::Tree(TreeEvent::TreeNewFolder),
                 });
             }
-            TREE_NAME_SUBMIT => self.confirm_name(),
-            ENTRY_FIELD => {}
-            TREE_REFRESH => {
+            Target::Tree(TreeEvent::TreeNameSubmit) => self.confirm_name(),
+            Target::Tree(TreeEvent::EntryField) => {}
+            Target::Tree(TreeEvent::TreeRefresh) => {
                 self.reread_files();
                 if let Some(session) = self.review_index() {
                     self.outbox.push(Outgoing::Refresh { session });
                 }
             }
-            TREE_COLLAPSE => {
+            Target::Tree(TreeEvent::TreeCollapse) => {
                 self.open_tree.clear();
             }
-            TREE_SPACE => {}
+            Target::Tree(TreeEvent::TreeSpace) => {}
             _ => {
                 let Some(target) = self.tree_row_of(action).filter(|target| !target.folder) else {
                     return false;
@@ -395,18 +368,25 @@ impl WorkspaceState {
         true
     }
 
-    /// Opens a field in the tree for the name `naming` calls for, unfolding the folder a new entry goes in.
+    /// Opens a field in the tree for the name `naming` calls for, unfolding the folder a new entry goes in, and scrolls the field into view.
     fn ask_name(&mut self, naming: Naming) {
         self.git.menu = None;
         self.git.prompt = None;
-        let current = match &naming {
-            Naming::Rename(target) => name_of(&target.path).to_owned(),
+        let (current, shown) = match &naming {
+            Naming::Rename(target) => (name_of(&target.path).to_owned(), target.clone()),
             Naming::New { directory, .. } => {
                 self.open_tree.insert(directory.clone());
-                String::new()
+                (
+                    String::new(),
+                    TreeTarget {
+                        path: directory.clone(),
+                        folder: true,
+                    },
+                )
             }
         };
-        self.git.naming = Some((naming, pm_text::Field::new(current)));
+        self.git.naming = Some((naming, rustle::TextFieldState::new(current)));
+        self.keep_tree_row_in_view(&shown);
     }
 
     /// Whether the tree is asking for a name.
@@ -423,7 +403,8 @@ impl WorkspaceState {
     /// What is wrong with the name typed in the tree, if anything is.
     pub fn naming_problem(&self) -> Option<&'static str> {
         let (naming, field) = self.git.naming.as_ref()?;
-        let typed = field.text().trim();
+        let typed = field.text();
+        let typed = typed.trim();
         if typed.is_empty() || self.naming_unchanged() {
             return None;
         }
@@ -435,12 +416,8 @@ impl WorkspaceState {
             Naming::Rename(target) => parent_of(&target.path).to_owned(),
         };
         let path = joined(&directory, typed);
-        let taken = self.files.iter().any(|file| {
-            file == &path
-                || file
-                    .strip_prefix(&path)
-                    .is_some_and(|rest| rest.starts_with('/'))
-        }) || self.tree_folders.iter().any(|folder| folder == &path);
+        let taken = self.files.iter().any(|file| within(file, &path))
+            || self.tree_folders.iter().any(|folder| folder == &path);
         taken.then_some("A file or folder with this name already exists.")
     }
 
@@ -450,14 +427,9 @@ impl WorkspaceState {
             if field.text().trim() == name_of(&target.path))
     }
 
-    /// The target the menu that is open was opened on.
-    fn tree_target(&self) -> Option<TreeTarget> {
-        self.git.tree_target.clone()
-    }
-
     /// The entries the open menu acts on: the rows picked when it was opened on one of them, the one it was opened on when not.
     pub(crate) fn tree_targets(&self) -> Vec<TreeTarget> {
-        let Some(target) = self.tree_target() else {
+        let Some(target) = self.git.tree_target.clone() else {
             return Vec::new();
         };
         let picked = self.tree_picked();
@@ -471,15 +443,22 @@ impl WorkspaceState {
     /// Asks for the name of a new file, or folder, in the folder the menu was opened on.
     pub(crate) fn tree_new(&mut self, folder: bool) {
         let directory = self
-            .tree_target()
-            .map(|target| target.directory())
+            .git
+            .tree_target
+            .as_ref()
+            .map(TreeTarget::directory)
             .unwrap_or_default();
         self.ask_name(Naming::New { directory, folder });
     }
 
     /// Asks for the new name of the entry the menu was opened on.
     pub(crate) fn tree_rename(&mut self) {
-        if let Some(target) = self.tree_target().filter(|target| !target.is_root()) {
+        if let Some(target) = self
+            .git
+            .tree_target
+            .clone()
+            .filter(|target| !target.is_root())
+        {
             self.ask_name(Naming::Rename(target));
         }
     }
@@ -502,12 +481,7 @@ impl WorkspaceState {
         let several = files.len() > 1;
         for target in files {
             self.open_viewer(target.path, false);
-            if several
-                && let Some(viewer) = self
-                    .git
-                    .shown
-                    .and_then(|shown| self.git.viewers.get_mut(shown))
-            {
+            if several && let Some(viewer) = self.chosen_viewer_mut() {
                 viewer.preview = false;
             }
         }
@@ -527,8 +501,10 @@ impl WorkspaceState {
             return;
         };
         let into = self
-            .tree_target()
-            .map(|target| target.directory())
+            .git
+            .tree_target
+            .as_ref()
+            .map(TreeTarget::directory)
             .unwrap_or_default();
         if held.cut {
             self.git.tree_clipboard = None;
@@ -739,7 +715,7 @@ impl WorkspaceState {
 
     /// Shows the entry the menu was opened on in the file manager of this machine.
     pub(crate) fn tree_reveal(&mut self) {
-        if let (Some(target), Some(session)) = (self.tree_target(), self.review_index()) {
+        if let (Some(target), Some(session)) = (self.git.tree_target.clone(), self.review_index()) {
             self.outbox.push(Outgoing::RevealFile {
                 session,
                 path: target.path,

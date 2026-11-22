@@ -1,11 +1,10 @@
 //! What the reader set up for the work the servers do: read from the server on this machine, sent to every server the window reaches whenever it changes and to each server as it is reached, and the newest release looked up.
 
+use crate::model::Model;
 use pm_components::update::Update;
 use pm_protocol::{MachineSettings, Request, Response};
-use pm_state::State;
 
 use super::{Host, Job, Pending, Work};
-use pm_pages::Screen;
 
 impl Work {
     /// Asks the server on this machine what it keeps for the work the servers do, and which extensions it has.
@@ -80,9 +79,9 @@ impl Work {
     }
 
     /// Hands the workspace what looking for a newer release last found, when anything was.
-    pub fn show_release(&self, model: &State<Screen>) {
+    pub fn show_release(&self, model: &Model) {
         if let Some(update) = self.release.clone() {
-            Self::in_workspace(model, |state| state.with_release(update));
+            model.change(|state| state.with_release(update));
         }
     }
 
@@ -97,12 +96,7 @@ impl Work {
     }
 
     /// Takes in the answer to asking for what the servers work by, or for the newest release.
-    pub(super) fn answered_machine(
-        &mut self,
-        model: &State<Screen>,
-        pending: Pending,
-        response: Response,
-    ) {
+    pub(super) fn answered_machine(&mut self, model: &Model, pending: Pending, response: Response) {
         match (pending, response) {
             (Pending::MachineSettings, Response::MachineSettings { settings }) => {
                 self.machine = Some(settings.clone());
@@ -117,7 +111,7 @@ impl Work {
                         self.ask(&host, request, Pending::Nothing);
                     }
                 }
-                Self::in_workspace(model, |state| state.with_machine_settings(settings));
+                model.change(|state| state.with_machine_settings(settings));
             }
             (
                 Pending::LatestRelease,
@@ -139,11 +133,11 @@ impl Work {
                 self.show_release(model);
             }
             (Pending::Update, Response::UpdateStaged { path }) => {
-                Self::in_workspace(model, |state| state.with_update_installing());
+                model.change(|state| state.with_update_installing());
                 self.install_update(path);
             }
             (Pending::Update, Response::Failed { message }) => {
-                Self::in_workspace(model, |state| state.with_update_failed(message));
+                model.change(|state| state.with_update_failed(message));
             }
             _ => {}
         }

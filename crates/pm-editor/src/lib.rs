@@ -7,7 +7,8 @@
 //! return the edits they call for: the indentation of a new line, a closing
 //! bracket going back a level, pairs of brackets and quotes, more than one caret, whole lines
 //! commented, moved, duplicated and deleted, the selection grown along the
-//! syntax tree, text found and replaced, the completion picked, the edits that format the file. Nothing here sends anything or draws anything; the window does.
+//! syntax tree, text found and replaced, the completion picked, the edits that format the file. A [`Field`] holds the text with its carets, selections, composition and
+//! undo history and changes by one [`Edit`] at a time, the caret moving by a [`Motion`]. Nothing here sends anything or draws anything; the window does.
 
 mod annotations;
 mod bulb;
@@ -41,6 +42,7 @@ mod scope;
 mod settings;
 mod snippet;
 mod sticky;
+mod text;
 mod transform;
 mod wrap;
 
@@ -57,5 +59,6 @@ pub use settings::{
     VimClipboard,
 };
 pub use snippet::{Expansion, UserSnippet};
+pub use text::{Edit, Field, Motion};
 pub use transform::{Case, LineOrder};
 pub use wrap::segments;

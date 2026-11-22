@@ -1,42 +1,26 @@
 //! The servers page of the settings window: the server on this machine and the ones on other machines the window knows, each changed or taken out from its row, the form a server is added or changed with, and which one new projects go to.
 
+use crate::areas::SettingsEvent;
+use crate::button;
+use crate::target::Target;
+use crate::theme;
 use pm_config::{KnownServer, Reach};
-use pm_input::FocusId;
-use pm_style::{
-    Role, flex, flex_1, flex_col, flex_none, gap, items_center, justify_between, justify_end,
-    min_w_px, p,
-};
-use pm_text::{Edit, Field};
-use pm_ui::{Node, node};
+use rustle::Modifier;
+use rustle::TextFieldState;
+use rustle::{Alignment, Arrangement};
 
-use crate::Button;
+use crate::theme::Role;
+
 use crate::button::Variant;
 use crate::input::Input;
-use crate::parts::{clipped, line};
+use crate::parts::line;
 use crate::settings::Section;
-use crate::settings_ids::{MACHINE_EDITS, MACHINE_REACHES, MACHINE_REMOVES, SINGLES};
 use crate::settings_pages::page_rows;
 use crate::settings_row::choices;
+use crate::settings_rows::{MACHINE_EDITS, MACHINE_REACHES, MACHINE_REMOVES};
+use crate::settings_servers::{add_heading, boxed, flat_row, form_buttons, note};
 use crate::size::Size;
 use crate::state::WorkspaceState;
-
-/// Opens the form for adding a server.
-pub const MACHINE_ADD: FocusId = SINGLES.at(70);
-
-/// Keeps what the form holds.
-pub const MACHINE_SAVE: FocusId = SINGLES.at(71);
-
-/// Puts the form away without keeping it.
-pub const MACHINE_CANCEL: FocusId = SINGLES.at(72);
-
-/// The box the form's name is written in.
-pub const MACHINE_NAME: FocusId = SINGLES.at(73);
-
-/// The box the form's address is written in.
-pub const MACHINE_ADDRESS: FocusId = SINGLES.at(74);
-
-/// The box the form's token is written in.
-pub const MACHINE_TOKEN: FocusId = SINGLES.at(75);
 
 /// How the servers can be reached, in the order the form offers them.
 const REACHES: [Reach; 5] = [
@@ -46,6 +30,9 @@ const REACHES: [Reach; 5] = [
     Reach::Container,
     Reach::Tunnel,
 ];
+
+/// What the form and the rows call each way of [`REACHES`], in its order.
+const REACH_NAMES: [&str; 5] = ["Direct", "SSH", "WSL", "Dev container", "Tunnel"];
 
 const _: () = assert!(
     REACHES.len() as u64 <= MACHINE_REACHES.len(),
@@ -58,13 +45,13 @@ pub struct MachineForm {
     /// The place in the list of the server being changed, or nothing for a new one.
     index: Option<usize>,
     /// What it is called.
-    name: Field,
+    name: TextFieldState,
     /// How it is reached.
     reach: Reach,
     /// Where it is.
-    address: Field,
+    address: TextFieldState,
     /// The token a direct one or one behind a tunnel wants.
-    token: Field,
+    token: TextFieldState,
 }
 
 impl MachineForm {
@@ -72,17 +59,19 @@ impl MachineForm {
     fn holding(index: Option<usize>, server: &KnownServer) -> Self {
         Self {
             index,
-            name: Field::new(server.name.clone()),
+            name: TextFieldState::new(server.name.clone()),
             reach: server.reach,
-            address: Field::new(server.address.clone()),
-            token: Field::new(server.token.clone()).masked(true),
+            address: TextFieldState::new(server.address.clone()),
+            token: TextFieldState::new(server.token.clone()),
         }
     }
 
     /// The server the form describes, once it has a name and an address.
     fn server(&self) -> Option<KnownServer> {
-        let name = self.name.text().trim();
-        let address = self.address.text().trim();
+        let name = self.name.text();
+        let name = name.trim();
+        let address = self.address.text();
+        let address = address.trim();
         (!name.is_empty() && !address.is_empty()).then(|| KnownServer {
             name: name.to_owned(),
             reach: self.reach,
@@ -96,21 +85,28 @@ impl MachineForm {
     }
 }
 
+/// The boxes of the form: its name, address and token.
+const FIELDS: [Target; 3] = [
+    Target::Settings(SettingsEvent::MachineName),
+    Target::Settings(SettingsEvent::MachineAddress),
+    Target::Settings(SettingsEvent::MachineToken),
+];
+
 /// Whether `id` names a box of the form.
-pub(crate) fn is_machine_field(id: FocusId) -> bool {
-    [MACHINE_NAME, MACHINE_ADDRESS, MACHINE_TOKEN].contains(&id)
+pub(crate) fn is_machine_field(id: Target) -> bool {
+    FIELDS.contains(&id)
 }
 
 impl WorkspaceState {
     /// Carries out pressing `id` on the servers page, and says whether it was something of it.
-    pub(crate) fn machines_pressed(&mut self, id: FocusId) -> bool {
+    pub(crate) fn machines_pressed(&mut self, id: Target) -> bool {
         match id {
-            MACHINE_ADD => {
+            Target::Settings(SettingsEvent::MachineAdd) => {
                 self.settings_page.server_form =
                     Some(MachineForm::holding(None, &KnownServer::default()));
             }
-            MACHINE_CANCEL => self.settings_page.server_form = None,
-            MACHINE_SAVE => self.save_machine(),
+            Target::Settings(SettingsEvent::MachineCancel) => self.settings_page.server_form = None,
+            Target::Settings(SettingsEvent::MachineSave) => self.save_machine(),
             _ if let Some(option) = MACHINE_REACHES.index_of(id) => {
                 if let (Some(form), Some(reach)) =
                     (self.settings_page.server_form.as_mut(), REACHES.get(option))
@@ -167,46 +163,96 @@ impl WorkspaceState {
         self.settings_page.server_form = None;
     }
 
-    /// Writes `edit` into the box `id` of the form.
-    pub(crate) fn machine_edited(&mut self, id: FocusId, edit: Edit) {
-        let Some(form) = self.settings_page.server_form.as_mut() else {
-            return;
-        };
-        match id {
-            MACHINE_NAME => form.name.apply(edit),
-            MACHINE_ADDRESS => form.address.apply(edit),
-            MACHINE_TOKEN => form.token.apply(edit),
-            _ => {}
-        }
-    }
-
     /// The box `id` of the form, while it is open.
-    pub(crate) fn machine_field(&self, id: FocusId) -> Option<&Field> {
+    pub(crate) fn machine_field(&self, id: Target) -> Option<&TextFieldState> {
         let form = self.settings_page.server_form.as_ref()?;
-        match id {
-            MACHINE_NAME => Some(&form.name),
-            MACHINE_ADDRESS => Some(&form.address),
-            MACHINE_TOKEN => Some(&form.token),
-            _ => None,
-        }
+        let place = FIELDS.iter().position(|held| *held == id)?;
+        Some([&form.name, &form.address, &form.token][place])
     }
 }
 
-/// A box of the form under the words that say what is written in it.
-fn labelled(label: &str, field: &Field, id: FocusId, placeholder: &str) -> Node {
-    node()
-        .styles([flex(), flex_col(), gap(1)])
-        .child(line(label, 12, 1.4, Role::Muted))
-        .child(
-            Input::new(field, id)
-                .size(Size::Sm)
-                .placeholder(placeholder)
-                .build(),
-        )
+/// Emits the box of a form `input` describes, small, under the words `label` that say
+/// what is written in it.
+#[track_caller]
+pub(crate) fn labelled(label: &str, input: Input<'_>) {
+    rustle::key(input.answers_to(), || {
+        labelled_box(label, || input.size(Size::Sm).build());
+    });
 }
 
-/// The form a server is added or changed with.
-fn form_node(form: &MachineForm) -> Node {
+/// Emits what `field` emits under the words `label` that say what it holds,
+/// the two as wide as the form.
+#[track_caller]
+pub(crate) fn labelled_box(label: &str, field: impl FnOnce()) {
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Start,
+        || {
+            note(label);
+            field();
+        },
+    );
+}
+
+/// Emits the choices `names` of a form, the one at `picked` marked and each answering to what `id_of` names it, under the words `label` that say what is chosen.
+#[track_caller]
+pub(crate) fn labelled_choices(
+    label: &str,
+    names: &[&str],
+    picked: usize,
+    id_of: impl Fn(usize) -> Option<Target>,
+) {
+    rustle::column_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Start,
+        || {
+            note(label);
+            rustle::row_arranged(
+                Modifier::new(),
+                Arrangement::Start,
+                Alignment::Start,
+                || choices(names, picked, id_of),
+            );
+        },
+    );
+}
+
+/// Emits a row of a list that can be changed: what `lines` emits, one line under another, then, while `buttons` holds them, the Edit and Remove buttons answering to the names in it, each left out when it has none.
+#[track_caller]
+pub(crate) fn editable_row(
+    lines: impl FnOnce(),
+    buttons: Option<(Option<Target>, Option<Target>)>,
+) {
+    flat_row(3, || {
+        rustle::column_arranged(
+            Modifier::new().weight(1.0),
+            Arrangement::SpacedBy(theme::sp(0.5)),
+            Alignment::Start,
+            lines,
+        );
+        if let Some((edit, remove)) = buttons {
+            rustle::row_arranged(
+                Modifier::new(),
+                Arrangement::SpacedBy(theme::sp(1)),
+                Alignment::Center,
+                || {
+                    if let Some(edit) = edit {
+                        button::action("Edit", edit, Variant::Ghost);
+                    }
+                    if let Some(remove) = remove {
+                        button::action("Remove", remove, Variant::Ghost);
+                    }
+                },
+            );
+        }
+    });
+}
+
+/// Emits the form a server is added or changed with.
+#[track_caller]
+fn form_node(form: &MachineForm) {
     let (address_label, address_hint) = match form.reach {
         Reach::Direct => ("Address", "host:port, e.g. 100.64.0.7:6868"),
         Reach::Ssh => ("SSH destination", "user@host, or a host of ~/.ssh/config"),
@@ -217,143 +263,92 @@ fn form_node(form: &MachineForm) -> Node {
         ),
         Reach::Tunnel => ("Tunnel hostname", "e.g. build.example.com"),
     };
-    let reach = choices(
-        &["Direct", "SSH", "WSL", "Dev container", "Tunnel"],
-        REACHES
-            .iter()
-            .position(|held| *held == form.reach)
-            .unwrap_or(0),
-        |option| MACHINE_REACHES.id(option),
+    rustle::column_arranged(
+        Modifier::new().fill_max_width().padding(theme::sp(3)),
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Start,
+        || {
+            labelled(
+                "Name",
+                Input::new(&form.name, Target::Settings(SettingsEvent::MachineName))
+                    .placeholder("e.g. Build box")
+                    .submits(Target::Settings(SettingsEvent::MachineSave)),
+            );
+            labelled_choices("Reached", &REACH_NAMES, reach_place(form.reach), |option| {
+                MACHINE_REACHES.id(option)
+            });
+            labelled(
+                address_label,
+                Input::new(
+                    &form.address,
+                    Target::Settings(SettingsEvent::MachineAddress),
+                )
+                .placeholder(address_hint)
+                .submits(Target::Settings(SettingsEvent::MachineSave)),
+            );
+            if form.reach.keeps_token() {
+                labelled(
+                    "Token",
+                    Input::new(&form.token, Target::Settings(SettingsEvent::MachineToken))
+                        .placeholder("As in server.json on that machine")
+                        .submits(Target::Settings(SettingsEvent::MachineSave))
+                        .secure(true),
+                );
+            }
+            form_buttons(
+                Modifier::new().fill_max_width(),
+                Target::Settings(SettingsEvent::MachineCancel),
+                Target::Settings(SettingsEvent::MachineSave),
+                form.server().is_some(),
+            );
+        },
     );
-    let mut fields = node()
-        .styles([flex(), flex_col(), gap(3), p(3)])
-        .child(labelled("Name", &form.name, MACHINE_NAME, "e.g. Build box"))
-        .child(
-            node()
-                .styles([flex(), flex_col(), gap(1)])
-                .child(line("Reached", 12, 1.4, Role::Muted))
-                .child(node().styles([flex()]).child(reach)),
-        )
-        .child(labelled(
-            address_label,
-            &form.address,
-            MACHINE_ADDRESS,
-            address_hint,
-        ));
-    if form.reach.keeps_token() {
-        fields = fields.child(labelled(
-            "Token",
-            &form.token,
-            MACHINE_TOKEN,
-            "As in server.json on that machine",
-        ));
-    }
-    fields.child(
-        node()
-            .styles([flex(), items_center(), justify_end(), gap(2)])
-            .child(
-                Button::new("Cancel", MACHINE_CANCEL)
-                    .variant(Variant::Ghost)
-                    .size(Size::Sm)
-                    .build(),
-            )
-            .child(
-                Button::new("Save", MACHINE_SAVE)
-                    .size(Size::Sm)
-                    .disabled(form.server().is_none())
-                    .build(),
-            ),
-    )
 }
 
-/// The row of a server: its name over how it is reached, and its buttons when it can be changed and the page has names for them.
-fn machine_row(name: &str, reach: String, buttons: Option<usize>) -> Node {
-    let words = node()
-        .styles([flex(), flex_col(), gap(0.5), flex_1(), min_w_px(0)])
-        .child(clipped(name, 13, Role::Text))
-        .child(clipped(reach, 12, Role::Muted));
-    let row = node()
-        .styles([
-            flex(),
-            items_center(),
-            justify_between(),
-            gap(3),
-            flex_none(),
-            pm_style::px(3),
-            pm_style::py(3),
-        ])
-        .child(words);
-    match buttons {
-        Some(index) => row.child(
-            node()
-                .styles([flex(), items_center(), gap(1), flex_none()])
-                .children(MACHINE_EDITS.id(index).map(|edit| {
-                    Button::new("Edit", edit)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .build()
-                }))
-                .children(MACHINE_REMOVES.id(index).map(|remove| {
-                    Button::new("Remove", remove)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .build()
-                })),
-        ),
-        None => row,
-    }
+/// The place of `reach` among [`REACHES`].
+fn reach_place(reach: Reach) -> usize {
+    REACHES.iter().position(|held| *held == reach).unwrap_or(0)
 }
 
-/// How `server` is reached, in the words of its row.
-fn reach_of(server: &KnownServer) -> String {
-    match server.reach {
-        Reach::Direct => format!("Direct · {}", server.address),
-        Reach::Ssh => format!("SSH · {}", server.address),
-        Reach::Wsl => format!("WSL · {}", server.address),
-        Reach::Container => format!("Dev container · {}", server.address),
-        Reach::Tunnel => format!("Tunnel · {}", server.address),
-    }
-}
-
-/// The body of the servers page, `room` logical pixels across: where new projects go, then every server with the form while it is open.
-pub(crate) fn body(state: &WorkspaceState, room: f32) -> Vec<Node> {
+/// Emits the body of the servers page, `room` logical pixels across: where new projects go, then every server with the form while it is open.
+#[track_caller]
+pub(crate) fn body(state: &WorkspaceState, room: f32) {
     let form = state.settings_page.server_form.as_ref();
     let adding = form.is_some_and(|form| form.index.is_none());
-    let mut rows = vec![machine_row(
-        "This machine",
-        "Local · started by the window when none is running".to_owned(),
+    page_rows(state, Section::Servers, room);
+    add_heading(
+        "Servers",
+        state.window.servers.known.len() + 1,
         None,
-    )];
-    rows.extend(
-        state
-            .window
-            .servers
-            .known
-            .iter()
-            .enumerate()
-            .map(|(index, server)| match form {
-                Some(form) if form.index == Some(index) => form_node(form),
-                _ => machine_row(&server.name, reach_of(server), Some(index)),
-            }),
+        Target::Settings(SettingsEvent::MachineAdd),
+        adding,
     );
-    if let (Some(form), true) = (form, adding) {
-        rows.push(form_node(form));
-    }
-    vec![
-        page_rows(state, Section::Servers, room),
-        node()
-            .styles([flex(), items_center(), justify_between(), flex_none()])
-            .child(crate::settings_servers::heading_only(
-                "Servers",
-                state.window.servers.known.len() + 1,
-            ))
-            .child(
-                Button::new("Add Server", MACHINE_ADD)
-                    .variant(Variant::Outline)
-                    .size(Size::Sm)
-                    .disabled(adding)
-                    .build(),
-            ),
-        crate::settings_servers::boxed(rows),
-    ]
+    boxed(|| {
+        editable_row(
+            || {
+                line("This machine", 13, 1.4, Role::Text);
+                note("Local · started by the window when none is running");
+            },
+            None,
+        );
+        for (index, server) in state.window.servers.known.iter().enumerate() {
+            rustle::key(index, || match form {
+                Some(form) if form.index == Some(index) => form_node(form),
+                _ => editable_row(
+                    || {
+                        line(&server.name, 13, 1.4, Role::Text);
+                        note(&format!(
+                            "{} · {}",
+                            REACH_NAMES[reach_place(server.reach)],
+                            server.address
+                        ));
+                    },
+                    Some((MACHINE_EDITS.id(index), MACHINE_REMOVES.id(index))),
+                ),
+            });
+        }
+        if let (Some(form), true) = (form, adding) {
+            form_node(form);
+        }
+    });
 }

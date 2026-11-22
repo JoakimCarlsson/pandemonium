@@ -1,65 +1,35 @@
 //! Finding and replacing text in the file shown: the bar over its top right corner, what it looks for, and the matches it steps through.
 
+use crate::areas::EditorEvent;
+use crate::button;
+use crate::events;
+use crate::icons;
+use crate::theme::Frame;
+use crate::theme::Indicated;
+use crate::theme::ShadowLayers;
+use rustle::TextOverflow;
+
+use crate::events::{Event, send};
+use crate::target::Target;
+use crate::theme;
+use rustle::phosphor;
+use rustle::{Alignment, Arrangement, row_arranged};
 use std::ops::Range;
 
+use pm_editor::Edit;
 use pm_editor::{Document, Query};
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, ShadowLayer, absolute, bg, border, border_color, cursor_pointer, flex, flex_col,
-    flex_none, font_mono, gap, h, items_center, justify_center, leading_ratio, p, px, right,
-    rounded, shadow_layers, text_color, text_px, top, w, w_px, z,
-};
-use pm_text::{Edit, Field};
-use pm_ui::{Node, node, text};
+use rustle::TextFieldState;
+use rustle::{BoxAlignment, Modifier};
 
 use crate::button::{Button, Variant};
+use crate::events::Interactive;
 use crate::input::Input;
-use crate::parts::line;
 use crate::size::Size;
 use crate::state::WorkspaceState;
+use crate::theme::{Radius, Role, sp};
 
-/// The field the text looked for is typed in.
-pub const FIND_FIELD: FocusId = FocusId(7_402_100);
-
-/// The field the replacement is typed in.
-pub const REPLACE_FIELD: FocusId = FocusId(7_402_101);
-
-/// Selects the next match.
-pub const FIND_NEXT: FocusId = FocusId(7_402_102);
-
-/// Selects the match before.
-pub const FIND_PREVIOUS: FocusId = FocusId(7_402_103);
-
-/// Closes the bar.
-pub const FIND_CLOSE: FocusId = FocusId(7_402_104);
-
-/// Switches matching case on and off.
-pub const FIND_CASE: FocusId = FocusId(7_402_105);
-
-/// Switches matching whole words on and off.
-pub const FIND_WORD: FocusId = FocusId(7_402_106);
-
-/// Switches reading the text as a regular expression on and off.
-pub const FIND_REGEX: FocusId = FocusId(7_402_107);
-
-/// Replaces the selected match.
-pub const REPLACE_ONE: FocusId = FocusId(7_402_108);
-
-/// Replaces every match.
-pub const REPLACE_ALL: FocusId = FocusId(7_402_109);
-
-/// The bar itself, which keeps a press on it from counting as outside.
-pub const FIND_BAR: FocusId = FocusId(7_402_110);
-
-/// Shows and hides the row for replacing.
-pub const FIND_TOGGLE_REPLACE: FocusId = FocusId(7_402_111);
-
-/// Limits finding to the lines that were selected, and lifts the limit again.
-pub const FIND_IN_SELECTION: FocusId = FocusId(7_402_112);
-
-/// The shadow under the bar.
-pub(crate) const SHADOW: [ShadowLayer; 1] = [ShadowLayer::new(0.0, 8.0, 28.0, 0.0, 0.3, false)];
+/// The shadow under the bar: each layer's `(x, y, blur, spread, alpha)`.
+pub(crate) const SHADOW: [rustle::Shadow; 1] = [crate::theme::box_shadow(0.0, 8.0, 28.0, 0.0, 0.3)];
 
 /// The stretches a query finds, or why it cannot be used.
 type Matches = Result<Vec<Range<usize>>, String>;
@@ -68,9 +38,9 @@ type Matches = Result<Vec<Range<usize>>, String>;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Finding {
     /// What is looked for.
-    pub query: Field,
+    pub query: TextFieldState,
     /// What replaces it.
-    pub replacement: Field,
+    pub replacement: TextFieldState,
     /// Whether the row for replacing shows.
     pub replacing: bool,
     /// Whether upper and lower case must match.
@@ -102,8 +72,23 @@ impl Finding {
 }
 
 /// Whether `id` is one of the fields or buttons of the bar.
-pub fn is_find_part(id: FocusId) -> bool {
-    (FIND_FIELD.0..=FIND_IN_SELECTION.0).contains(&id.0)
+pub fn is_find_part(id: Target) -> bool {
+    matches!(
+        id,
+        Target::Editor(EditorEvent::FindField)
+            | Target::Editor(EditorEvent::ReplaceField)
+            | Target::Editor(EditorEvent::FindNext)
+            | Target::Editor(EditorEvent::FindPrevious)
+            | Target::Editor(EditorEvent::FindClose)
+            | Target::Editor(EditorEvent::FindCase)
+            | Target::Editor(EditorEvent::FindWord)
+            | Target::Editor(EditorEvent::FindRegex)
+            | Target::Editor(EditorEvent::ReplaceOne)
+            | Target::Editor(EditorEvent::ReplaceAll)
+            | Target::Editor(EditorEvent::FindBar)
+            | Target::Editor(EditorEvent::FindToggleReplace)
+            | Target::Editor(EditorEvent::FindInSelection)
+    )
 }
 
 impl WorkspaceState {
@@ -118,16 +103,22 @@ impl WorkspaceState {
         ))
     }
 
-    /// Opens the bar, with the row for replacing when `replacing`, looking for what is selected in the file shown when that is part of one line.
-    pub fn find_opened(mut self, replacing: bool) -> Self {
-        let selected = self
-            .shown_document()
+    /// What is selected in the file shown, when that is part of one line and
+    /// a search is set to start from the selection: what a search opened
+    /// looks for.
+    pub(crate) fn selection_to_seek(&self) -> Option<String> {
+        self.shown_document()
             .map(|document| document.field.selected().to_owned())
             .filter(|selected| !selected.is_empty() && !selected.contains('\n'))
-            .filter(|_| self.editor.seed_search_from_selection);
+            .filter(|_| self.editor.seed_search_from_selection)
+    }
+
+    /// Opens the bar, with the row for replacing when `replacing`, looking for what is selected in the file shown when that is part of one line.
+    pub fn find_opened(mut self, replacing: bool) -> Self {
+        let selected = self.selection_to_seek();
         let mut finding = self.finding.take().unwrap_or(Finding {
-            query: Field::new(""),
-            replacement: Field::new(""),
+            query: TextFieldState::new(""),
+            replacement: TextFieldState::new(""),
             replacing,
             case: false,
             word: false,
@@ -136,9 +127,9 @@ impl WorkspaceState {
         });
         finding.replacing |= replacing;
         if let Some(selected) = selected {
-            finding.query = Field::new(selected);
+            finding.query = TextFieldState::new(selected);
         }
-        finding.query.apply(Edit::SelectAll);
+        finding.query.select_all();
         let mode = self.editor.auto_find_in_selection;
         if let Some(document) = self.shown_text() {
             let selected = document.field.selected().to_owned();
@@ -189,83 +180,78 @@ impl WorkspaceState {
     }
 
     /// Selects the match after the selection of the file shown, or the one before it when `back`.
-    pub fn find_stepped(mut self, back: bool) -> Self {
-        let Some((Ok(matches), _)) = self.found() else {
-            return self;
-        };
-        let edit = self.shown_document().and_then(|document| {
-            document.next_match_edit_with(&matches, back, self.editor.search_wrap)
-        });
-        if let Some(edit) = edit {
-            self.file_edited(edit);
+    pub fn find_stepped(self, back: bool) -> Self {
+        let wrap = self.editor.search_wrap;
+        self.match_selected(|document, matches| document.next_match_edit_with(matches, back, wrap))
+    }
+
+    /// Makes the edit `pick` chooses from the matches of the bar in the file shown, when the query can be used and it chooses one.
+    fn match_selected(
+        mut self,
+        pick: impl FnOnce(&Document, &[Range<usize>]) -> Option<Edit>,
+    ) -> Self {
+        if let Some((Ok(matches), _)) = self.found() {
+            self.edit_shown(|document| pick(document, &matches));
         }
         self
     }
 
-    /// The state after the text looked for was changed by `edit`: the first match from the selection on is selected.
-    pub fn find_typed(mut self, edit: Edit) -> Self {
-        let Some(finding) = self.finding.as_mut() else {
+    /// The state after the reader changed the text looked for: the first match from the selection on is selected.
+    pub fn find_typed(self) -> Self {
+        if self.finding.is_none() {
             return self;
-        };
-        finding.query.apply(edit);
+        }
         self.select_first_match()
     }
 
     /// Selects the first match from where the selection of the file shown starts, going round to the first.
-    fn select_first_match(mut self) -> Self {
-        let Some((Ok(matches), _)) = self.found() else {
-            return self;
-        };
-        let edit = self
-            .shown_document()
-            .and_then(|document| document.first_match_edit(&matches));
-        if let Some(edit) = edit {
-            self.file_edited(edit);
-        }
-        self
-    }
-
-    /// The state after the replacement was changed by `edit`.
-    pub fn replacement_typed(mut self, edit: Edit) -> Self {
-        if let Some(finding) = self.finding.as_mut() {
-            finding.replacement.apply(edit);
-        }
-        self
+    fn select_first_match(self) -> Self {
+        self.match_selected(|document, matches| document.first_match_edit(matches))
     }
 
     /// Switches one of the ways of matching, the one `which` names, on or off, and selects the first match from the selection on.
-    pub fn find_toggled(mut self, which: FocusId) -> Self {
+    pub fn find_toggled(mut self, which: Target) -> Self {
         if let Some(finding) = self.finding.as_mut() {
             match which {
-                FIND_CASE => finding.case = !finding.case,
-                FIND_WORD => finding.word = !finding.word,
-                FIND_REGEX => finding.regex = !finding.regex,
-                FIND_TOGGLE_REPLACE => finding.replacing = !finding.replacing,
-                FIND_IN_SELECTION => return self.find_scope_toggled(),
+                Target::Editor(EditorEvent::FindCase) => finding.case = !finding.case,
+                Target::Editor(EditorEvent::FindWord) => finding.word = !finding.word,
+                Target::Editor(EditorEvent::FindRegex) => finding.regex = !finding.regex,
+                Target::Editor(EditorEvent::FindToggleReplace) => {
+                    finding.replacing = !finding.replacing
+                }
+                Target::Editor(EditorEvent::FindInSelection) => return self.find_scope_toggled(),
                 _ => {}
             }
         }
         self.select_first_match()
     }
 
-    /// Replaces the selected match, or selects the next one when none is selected, and then selects the next.
-    pub fn replaced_one(mut self) -> Self {
+    /// The edit that replaces the selected match, or every match when `all`, by what the bar replaces with; nothing when the file shown is read only or the query cannot be used.
+    fn replacement(&self, all: bool) -> Option<Edit> {
         let Some((Ok(matches), query)) = self.found() else {
-            return self;
+            return None;
         };
         let replacement = self
             .finding
             .as_ref()
             .map(|finding| finding.replacement.text().to_owned())
             .unwrap_or_default();
-        let read_only = self
+        let document = self
             .shown_document()
-            .is_none_or(|document| document.field.is_read_only());
-        let edit = self
-            .shown_document()
-            .and_then(|document| document.replace_edit(&query, &matches, &replacement))
-            .filter(|_| !read_only);
-        if let Some(edit) = edit {
+            .filter(|document| !document.field.is_read_only())?;
+        if all {
+            document.replace_all_edit(&query, &matches, &replacement)
+        } else {
+            document.replace_edit(&query, &matches, &replacement)
+        }
+    }
+
+    /// Replaces the selected match, or selects the next one when none is selected, and then selects the next.
+    pub fn replaced_one(mut self) -> Self {
+        if !matches!(self.found(), Some((Ok(_), _))) {
+            return self;
+        }
+        if let Some(edit) = self.replacement(false) {
             self.file_edited_inside_scope(edit);
         }
         self.find_stepped(false)
@@ -273,22 +259,7 @@ impl WorkspaceState {
 
     /// Replaces every match in one change.
     pub fn replaced_all(mut self) -> Self {
-        let Some((Ok(matches), query)) = self.found() else {
-            return self;
-        };
-        let replacement = self
-            .finding
-            .as_ref()
-            .map(|finding| finding.replacement.text().to_owned())
-            .unwrap_or_default();
-        let read_only = self
-            .shown_document()
-            .is_none_or(|document| document.field.is_read_only());
-        let edit = self
-            .shown_document()
-            .and_then(|document| document.replace_all_edit(&query, &matches, &replacement))
-            .filter(|_| !read_only);
-        if let Some(edit) = edit {
+        if let Some(edit) = self.replacement(true) {
             self.file_edited_inside_scope(edit);
         }
         self
@@ -315,16 +286,18 @@ impl WorkspaceState {
     }
 
     /// Carries out what pressing the part `id` of the bar does.
-    pub(crate) fn find_pressed(self, id: FocusId) -> Self {
+    pub(crate) fn find_pressed(self, id: Target) -> Self {
         match id {
-            FIND_NEXT => self.find_stepped(false),
-            FIND_PREVIOUS => self.find_stepped(true),
-            FIND_CLOSE => self.find_closed(),
-            FIND_CASE | FIND_WORD | FIND_REGEX | FIND_TOGGLE_REPLACE | FIND_IN_SELECTION => {
-                self.find_toggled(id)
-            }
-            REPLACE_ONE => self.replaced_one(),
-            REPLACE_ALL => self.replaced_all(),
+            Target::Editor(EditorEvent::FindNext) => self.find_stepped(false),
+            Target::Editor(EditorEvent::FindPrevious) => self.find_stepped(true),
+            Target::Editor(EditorEvent::FindClose) => self.find_closed(),
+            Target::Editor(EditorEvent::FindCase)
+            | Target::Editor(EditorEvent::FindWord)
+            | Target::Editor(EditorEvent::FindRegex)
+            | Target::Editor(EditorEvent::FindToggleReplace)
+            | Target::Editor(EditorEvent::FindInSelection) => self.find_toggled(id),
+            Target::Editor(EditorEvent::ReplaceOne) => self.replaced_one(),
+            Target::Editor(EditorEvent::ReplaceAll) => self.replaced_all(),
             _ => self,
         }
     }
@@ -341,35 +314,31 @@ impl WorkspaceState {
     }
 }
 
-/// A switch of the bar, `label` in the font for code, lit when `on`.
-pub(crate) fn switch(label: &str, id: FocusId, on: bool) -> Node {
-    let mut held = node()
-        .styles([
-            flex(),
-            items_center(),
-            justify_center(),
-            flex_none(),
-            w(6.5),
-            h(6),
-            rounded(Radius::Sm),
-            cursor_pointer(),
-            bg(Role::SurfaceHover).hover(),
-        ])
-        .focusable(id)
-        .child(text(label).styles([
-            text_px(11),
-            leading_ratio(1.2),
-            font_mono(),
-            text_color(if on { Role::Text } else { Role::Subtle }),
-        ]));
-    if on {
-        held = held.styles([
-            bg(Role::SurfaceActive),
-            border(),
-            border_color(Role::Accent),
-        ]);
+/// Emits a switch of the bar, `label` in the font for code, lit when `on`, answering to `id`.
+#[track_caller]
+pub(crate) fn switch(label: &str, id: Target, on: bool) {
+    let looks = if on {
+        theme::InteractionTones::new().idle(Role::SurfaceActive)
+    } else {
+        theme::InteractionTones::new()
     }
-    held
+    .hover(Role::SurfaceHover)
+    .radius(Radius::Sm);
+    let mut own = Modifier::new()
+        .width(theme::sp(6.5))
+        .height(theme::sp(6))
+        .indicated(looks, theme::Focused::Control(crate::focus::is_focused(id)));
+    if on {
+        own = own
+            .border(1.0, theme::color(Role::Accent), Radius::Sm.px())
+            .padding(1.0);
+    }
+    let own = events::pressed(own, id);
+    let kind =
+        theme::mono_style(11, 1.2).color(theme::color(if on { Role::Text } else { Role::Subtle }));
+    row_arranged(own, Arrangement::Center, Alignment::Center, || {
+        rustle::basic_text(Modifier::new(), label, kind, TextOverflow::Ellipsis);
+    });
 }
 
 /// What the bar says of the matches: which is selected of how many, that there are none, or why the query cannot be used.
@@ -385,8 +354,9 @@ fn tally(found: &Matches, selected: Option<usize>, empty: bool) -> (String, Role
     }
 }
 
-/// The bar for finding and replacing in `document`, over the top right corner of the file.
-pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) -> Node {
+/// Emits the bar for finding and replacing in `document`, over the top right corner of the file.
+#[track_caller]
+pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) {
     let query = finding.query(smartcase);
     let found = document.find_all_within(&query, finding.scope(document));
     let selected = found
@@ -394,81 +364,90 @@ pub fn find_bar(finding: &Finding, document: &Document, smartcase: bool) -> Node
         .ok()
         .and_then(|matches| document.selected_match(matches));
     let (said, tone) = tally(&found, selected, query.text.is_empty());
-    let toggle = if finding.replacing {
-        IconName::ChevronDown
-    } else {
-        IconName::ChevronRight
-    };
-    let find_row = node()
-        .styles([flex(), items_center(), gap(1)])
-        .child(Button::icon(toggle, FIND_TOGGLE_REPLACE).build())
-        .child(
-            node().styles([w_px(194.0), flex_none()]).child(
-                Input::new(&finding.query, FIND_FIELD)
-                    .size(Size::Sm)
-                    .placeholder("Find")
-                    .invalid(found.is_err())
-                    .build(),
-            ),
-        )
-        .child(switch("Aa", FIND_CASE, finding.case))
-        .child(switch("ab", FIND_WORD, finding.word))
-        .child(switch(".*", FIND_REGEX, finding.regex))
-        .child(switch("sel", FIND_IN_SELECTION, finding.scoped))
-        .child(
-            node()
-                .styles([w_px(84.0), flex_none(), px(1)])
-                .child(line(said, 11, 1.4, tone)),
-        )
-        .child(Button::icon(IconName::ArrowUp, FIND_PREVIOUS).build())
-        .child(Button::icon(IconName::ArrowDown, FIND_NEXT).build())
-        .child(Button::icon(IconName::Close, FIND_CLOSE).build());
-    let mut bar = node()
-        .styles([
-            absolute(),
-            top(2),
-            right(6),
-            z(40),
-            flex(),
-            flex_col(),
-            gap(1),
-            p(1),
-            rounded(Radius::Md),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-            shadow_layers(&SHADOW),
-        ])
-        .focusable(FIND_BAR)
-        .child(find_row);
-    if finding.replacing {
-        bar = bar.child(
-            node()
-                .styles([flex(), items_center(), gap(1)])
-                .child(node().styles([w(7), flex_none()]))
-                .child(
-                    node().styles([w_px(194.0), flex_none()]).child(
-                        Input::new(&finding.replacement, REPLACE_FIELD)
-                            .size(Size::Sm)
-                            .placeholder("Replace")
-                            .build(),
-                    ),
-                )
-                .child(
-                    Button::new("Replace", REPLACE_ONE)
-                        .variant(Variant::Ghost)
+    let toggle = icons::chevron(finding.replacing);
+    let read_only = document.field.is_read_only();
+    rustle::column_arranged(
+        Modifier::new()
+            .wrap_content_width(BoxAlignment::TopEnd, true)
+            .align(BoxAlignment::TopEnd)
+            .offset(-sp(6), sp(2))
+            .z_index(40)
+            .shadow_layers(&SHADOW, Radius::Md.px())
+            .panel(Radius::Md)
+            .control(
+                Target::Editor(EditorEvent::FindBar),
+                send(Event::Editor(EditorEvent::FindBar)),
+            )
+            .padding(theme::sp(1)),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Start,
+        || {
+            rustle::row_arranged(
+                Modifier::new(),
+                Arrangement::SpacedBy(theme::sp(1)),
+                Alignment::Center,
+                || {
+                    Button::icon(toggle, Target::Editor(EditorEvent::FindToggleReplace)).build();
+                    Input::new(&finding.query, Target::Editor(EditorEvent::FindField))
                         .size(Size::Sm)
-                        .disabled(document.field.is_read_only())
-                        .build(),
-                )
-                .child(
-                    Button::new("Replace all", REPLACE_ALL)
-                        .variant(Variant::Ghost)
+                        .placeholder("Find")
+                        .invalid(found.is_err())
+                        .modifier(Modifier::new().width(194.0))
+                        .submits(Target::Editor(EditorEvent::FindNext))
+                        .build();
+                    switch("Aa", Target::Editor(EditorEvent::FindCase), finding.case);
+                    switch("ab", Target::Editor(EditorEvent::FindWord), finding.word);
+                    switch(".*", Target::Editor(EditorEvent::FindRegex), finding.regex);
+                    switch(
+                        "sel",
+                        Target::Editor(EditorEvent::FindInSelection),
+                        finding.scoped,
+                    );
+                    rustle::basic_text(
+                        Modifier::new().width(84.0).padding_xy(theme::sp(1), 0.0),
+                        said,
+                        theme::line(11, tone),
+                        TextOverflow::Ellipsis,
+                    );
+                    Button::icon(
+                        phosphor::ARROW_UP,
+                        Target::Editor(EditorEvent::FindPrevious),
+                    )
+                    .build();
+                    Button::icon(phosphor::ARROW_DOWN, Target::Editor(EditorEvent::FindNext))
+                        .build();
+                    Button::icon(phosphor::X, Target::Editor(EditorEvent::FindClose)).build();
+                },
+            );
+            if finding.replacing {
+                rustle::row_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(theme::sp(1)),
+                    Alignment::Center,
+                    || {
+                        rustle::spacer(Modifier::new().width(theme::sp(7)));
+                        Input::new(
+                            &finding.replacement,
+                            Target::Editor(EditorEvent::ReplaceField),
+                        )
                         .size(Size::Sm)
-                        .disabled(document.field.is_read_only())
-                        .build(),
-                ),
-        );
-    }
-    bar
+                        .placeholder("Replace")
+                        .modifier(Modifier::new().width(194.0))
+                        .submits(Target::Editor(EditorEvent::ReplaceOne))
+                        .build();
+                        for (label, event) in [
+                            ("Replace", EditorEvent::ReplaceOne),
+                            ("Replace all", EditorEvent::ReplaceAll),
+                        ] {
+                            rustle::key(label, || {
+                                button::small_button(label, Target::Editor(event), Variant::Ghost)
+                                    .disabled(read_only)
+                                    .build();
+                            });
+                        }
+                    },
+                );
+            }
+        },
+    );
 }

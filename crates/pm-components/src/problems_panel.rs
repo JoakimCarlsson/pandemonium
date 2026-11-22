@@ -1,15 +1,17 @@
 //! The problems tab of the dock: what the language servers say is wrong with the files of the project, each a row that goes to its place.
 
-use pm_input::FocusId;
+use crate::areas::TerminalEvent;
+use crate::events;
+use crate::target::Target;
+use crate::theme;
+use crate::theme::Indicated;
+use crate::theme::{Role, color};
 use pm_protocol::Severity;
-use pm_style::{
-    Role, bg, cursor_pointer, flex, flex_1, flex_col, flex_none, gap, h, items_center, min_h,
-    overflow_hidden, px, rounded, size,
-};
-use pm_ui::{Node, node};
+use rustle::Modifier;
+use rustle::{Alignment, Arrangement};
 
 use crate::parts::line;
-use crate::state::{PROBLEM_ROW_BASE, PROBLEMS_SCROLL, WorkspaceState};
+use crate::state::WorkspaceState;
 use crate::viewer::severity_role;
 
 /// The most rows the list holds.
@@ -30,63 +32,71 @@ pub fn tally(state: &WorkspaceState) -> (usize, usize) {
     (count(Severity::Error), count(Severity::Warning))
 }
 
-/// One row: a dot coloured by how bad it is, the first line of the message, who said it and where.
-fn row(index: usize, problem: &pm_protocol::Problem) -> Node {
+/// Emits one row: a dot coloured by how bad it is, the first line of the message, who said it and where.
+fn problem_row(index: usize, problem: &pm_protocol::Problem) {
     let diagnostic = &problem.diagnostic;
     let message = diagnostic.message.lines().next().unwrap_or_default();
     let name = problem.path.rsplit('/').next().unwrap_or(&problem.path);
-    let mut row = node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(2),
-            h(6),
-            px(3),
-            flex_none(),
-            overflow_hidden(),
-            cursor_pointer(),
-            bg(Role::SurfaceHover).hover(),
-        ])
-        .child(node().styles([
-            size(2),
-            rounded(4.0),
-            flex_none(),
-            bg(severity_role(diagnostic.severity)),
-        ]))
-        .child(line(message.to_owned(), 12, 1.4, Role::Text).styles([flex_none()]));
-    if let Some(source) = &diagnostic.source {
-        row = row.child(line(source.clone(), 11, 1.4, Role::Subtle).styles([flex_none()]));
-    }
-    row.child(
-        line(
-            format!(
-                "{name} [{}, {}]",
-                diagnostic.span.start.line + 1,
-                diagnostic.span.start.character + 1
-            ),
-            11,
-            1.4,
-            Role::Subtle,
-        )
-        .styles([flex_none()]),
-    )
-    .focusable(FocusId(PROBLEM_ROW_BASE + index as u64))
+    let place = format!(
+        "{name} [{}, {}]",
+        diagnostic.span.start.line + 1,
+        diagnostic.span.start.character + 1
+    );
+    let id = Target::Terminal(TerminalEvent::ProblemRow(index));
+    let modifier = Modifier::new()
+        .fill_max_width()
+        .height(theme::sp(6))
+        .clip()
+        .indicated(
+            theme::InteractionTones::new().hover(Role::SurfaceHover),
+            theme::Focused::Control(crate::focus::is_focused(id)),
+        );
+    let modifier = events::pressed(modifier, id).padding_xy(theme::sp(3), 0.0);
+    let dot = color(severity_role(diagnostic.severity));
+    rustle::row_arranged(
+        modifier,
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            rustle::spacer(
+                Modifier::new()
+                    .size(theme::sp(2), theme::sp(2))
+                    .background_rounded(dot, 4.0),
+            );
+            line(message.to_owned(), 12, 1.4, Role::Text);
+            if let Some(source) = &diagnostic.source {
+                line(source.clone(), 11, 1.4, Role::Subtle);
+            }
+            line(place, 11, 1.4, Role::Subtle);
+        },
+    );
 }
 
-/// The tab: the list of problems, scrolled as the state says.
-pub fn problems_tab(state: &WorkspaceState) -> Node {
-    let mut body = node()
-        .styles([flex(), flex_col(), flex_1(), min_h(0), overflow_hidden()])
-        .scroll_from_start(PROBLEMS_SCROLL, state.problems_scroll);
-    if state.current_problems().is_empty() {
-        return body.child(
-            node()
-                .styles([flex(), items_center(), h(7), px(3), flex_none()])
-                .child(line(NOTHING_WRONG, 12, 1.4, Role::Subtle)),
-        );
-    }
-    for (index, problem) in state.current_problems().iter().take(MOST_ROWS).enumerate() {
-        body = body.child(row(index, problem));
-    }
-    body
+/// Emits the tab: the list of problems, scrolled as the state says.
+pub fn problems_tab(state: &WorkspaceState) {
+    rustle::column_arranged(
+        Modifier::new()
+            .weight(1.0)
+            .clip()
+            .vertical_scroll(&state.problems_scroll)
+            .fill_max_width(),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            if state.current_problems().is_empty() {
+                rustle::row_arranged(
+                    Modifier::new()
+                        .height(theme::sp(7))
+                        .padding_xy(theme::sp(3), 0.0),
+                    Arrangement::Start,
+                    Alignment::Center,
+                    || line(NOTHING_WRONG, 12, 1.4, Role::Subtle),
+                );
+                return;
+            }
+            for (index, problem) in state.current_problems().iter().take(MOST_ROWS).enumerate() {
+                problem_row(index, problem);
+            }
+        },
+    );
 }

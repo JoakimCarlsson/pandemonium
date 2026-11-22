@@ -1,38 +1,22 @@
 //! The resolver of a file that a merge, a rebase or a cherry-pick stopped on: each place where the two sides disagree with both sides shown and a choice to take ours, theirs or both, and under them the result, which is the file itself, edited by hand, until the file is marked resolved and staged.
 
+use crate::areas::SearchEvent;
+use crate::target::Target;
+use crate::theme;
+use crate::theme::Frame;
+use rustle::Modifier;
+use rustle::{Alignment, Arrangement, TextOverflow};
 use std::ops::Range;
 
-use pm_input::FocusId;
-use pm_style::{
-    Color, Radius, Role, bg, border, border_b, border_color, code_px, flex, flex_1, flex_col,
-    flex_none, font_medium, font_mono, gap, h_px, items_center, leading_ratio, min_h, min_w_px,
-    overflow_hidden, p, px, rounded, text_color, truncate,
-};
-use pm_text::Edit;
-use pm_ui::{Node, node, text};
+use pm_editor::Edit;
 
 use crate::Button;
 use crate::button::Variant;
-use crate::excerpts::{Block, EXCERPTS_SCROLL, ExcerptFile, Source, plain_block};
+use crate::excerpts::{Block, Drawing, ExcerptFile, Source, block_gap};
 use crate::open_files::Contents;
 use crate::parts::{line, spacer};
-use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
-
-/// Takes everything of the file from our side.
-pub const CONFLICT_OURS_ALL: FocusId = FocusId(7_414_001);
-
-/// Takes everything of the file from their side.
-pub const CONFLICT_THEIRS_ALL: FocusId = FocusId(7_414_002);
-
-/// Writes the result and stages the file.
-pub const CONFLICT_CONCLUDE: FocusId = FocusId(7_414_003);
-
-/// The first of the buttons that settle one conflict, three for each in the order of the file: ours, theirs and both.
-pub const CONFLICT_CHOICE_BASE: u64 = 7_414_100;
-
-/// One past the last of the buttons that settle one conflict.
-const CONFLICT_CHOICE_END: u64 = 7_419_000;
+use crate::theme::{Radius, Role};
 
 /// How tall the strip above the conflicts is, in logical pixels.
 const STRIP: f32 = 44.0;
@@ -52,9 +36,6 @@ const MOST_LINES: usize = 12;
 /// How wide the room must be for the two sides of a conflict to stand beside each other, in logical pixels.
 const BESIDE: f32 = 760.0;
 
-/// How far beyond the view, above and below, rows are still built, in logical pixels.
-const OVERSCAN: f32 = 200.0;
-
 /// The marker that starts the lines of our side.
 const OURS_MARK: &str = "<<<<<<<";
 
@@ -68,7 +49,9 @@ const PART_MARK: &str = "=======";
 const THEIRS_MARK: &str = ">>>>>>>";
 
 /// Which of the sides a conflict is settled with.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(
+    Clone, Copy, Debug, serde::Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Serialize,
+)]
 pub enum Choice {
     /// Our side only.
     Ours,
@@ -93,7 +76,7 @@ impl Choice {
 }
 
 /// A place in a text where the two sides disagree, as the markers git wrote mark it.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Region {
     /// Where its first marker starts and where its last marker's line ends, as byte offsets.
     pub span: Range<usize>,
@@ -146,15 +129,7 @@ pub fn regions_in(text: &str) -> Vec<Region> {
     let mut found = Vec::new();
     let mut part = Part::Outside;
     let mut started = (0, 0);
-    let mut open = Region {
-        span: 0..0,
-        line: 0,
-        ours: String::new(),
-        theirs: String::new(),
-        base: None,
-        ours_name: String::new(),
-        theirs_name: String::new(),
-    };
+    let mut open = Region::default();
     let mut offset = 0;
     for (number, whole) in text.split_inclusive('\n').enumerate() {
         let here = offset;
@@ -166,11 +141,8 @@ pub fn regions_in(text: &str) -> Vec<Region> {
             open = Region {
                 span: here..here,
                 line: number,
-                ours: String::new(),
-                theirs: String::new(),
-                base: None,
                 ours_name: name.to_owned(),
-                theirs_name: String::new(),
+                ..Region::default()
             };
             continue;
         }
@@ -214,8 +186,14 @@ pub struct Resolver {
 }
 
 /// Whether `id` is something of the resolver the state handles when it is pressed.
-pub fn is_conflict_part(id: FocusId) -> bool {
-    (CONFLICT_OURS_ALL.0..CONFLICT_CHOICE_END).contains(&id.0)
+pub fn is_conflict_part(id: Target) -> bool {
+    matches!(
+        id,
+        Target::Search(SearchEvent::ConflictOursAll)
+            | Target::Search(SearchEvent::ConflictTheirsAll)
+            | Target::Search(SearchEvent::ConflictConclude)
+            | Target::Search(SearchEvent::ConflictChoice { .. })
+    )
 }
 
 /// How the two sides of a conflict lie.
@@ -227,20 +205,15 @@ pub enum Layout {
     Stacked,
 }
 
-/// The resolver being described: the room it has, how the sides lie and how big it is.
+/// The resolver being described: the state it is drawn from and how the sides lie.
 ///
-/// Build it with [`Conflict::new`], change it with the methods that follow,
-/// and turn it into a node with [`Conflict::build`].
-#[derive(Clone, Copy)]
+/// Build it with [`Conflict::new`] and emit it with [`Conflict::build`].
+#[derive(Clone)]
 pub struct Conflict<'a> {
     /// The state the file and the sides are drawn from.
     state: &'a WorkspaceState,
-    /// How tall the room for the resolver is, in logical pixels.
-    height: f32,
     /// How the two sides of a conflict lie.
     layout: Layout,
-    /// How big it is.
-    size: Size,
 }
 
 /// The conflict under `region`'s place among those of the text, as its card is drawn.
@@ -254,30 +227,16 @@ struct Card<'a> {
 }
 
 impl<'a> Conflict<'a> {
-    /// The resolver of the file `state` holds the excerpts of, in a room `width` wide and `height` tall, its two sides beside each other when the room allows.
-    pub fn new(state: &'a WorkspaceState, width: f32, height: f32) -> Self {
+    /// The resolver of the file `state` holds the excerpts of, in a room `width` wide, its two sides beside each other when the room allows.
+    pub fn new(state: &'a WorkspaceState, width: f32) -> Self {
         Self {
             state,
-            height,
             layout: if width >= BESIDE {
                 Layout::SideBySide
             } else {
                 Layout::Stacked
             },
-            size: Size::default(),
         }
-    }
-
-    /// The resolver with the sides lying as `layout` says.
-    pub fn layout(mut self, layout: Layout) -> Self {
-        self.layout = layout;
-        self
-    }
-
-    /// The resolver `size` big.
-    pub fn size(mut self, size: Size) -> Self {
-        self.size = size;
-        self
     }
 
     /// How tall the lines of a side are shown, in lines, cut short at the most.
@@ -299,130 +258,144 @@ impl<'a> Conflict<'a> {
         LABEL + sides + BUTTONS + SPACE
     }
 
-    /// One side of a conflict: what it is called, and its lines in the code font on a tint, the first few of them.
-    fn side(&self, name: &str, text_of: &str, tint: Role, row: f32) -> Node {
-        let font = self.state.editor.font_size;
-        let shown = text_of.lines().take(MOST_LINES).map(|content| {
-            node()
-                .styles([flex(), items_center(), h_px(row), flex_none(), px(2)])
-                .child(text(crate::diff_syntax::shown(content)).styles([
-                    code_px(font),
-                    leading_ratio(1.4),
-                    font_mono(),
-                    text_color(Role::Text),
-                    truncate(),
-                ]))
-        });
-        let more = text_of.lines().count().saturating_sub(MOST_LINES);
-        let cut = (more > 0).then(|| {
-            node()
-                .styles([flex(), items_center(), h_px(row), flex_none(), px(2)])
-                .child(line(format!("… {more} more lines"), 11, 1.4, Role::Subtle))
-        });
-        node()
-            .styles([flex(), flex_col(), flex_1(), min_w_px(0), overflow_hidden()])
-            .child(
-                node()
-                    .styles([flex(), items_center(), h_px(LABEL), flex_none(), px(2)])
-                    .child(line(name, 11, 1.4, Role::Muted)),
-            )
-            .child(
-                node()
-                    .styles([
-                        flex(),
-                        flex_col(),
-                        flex_1(),
-                        min_h(0),
-                        bg(Color::from(tint).alpha(0.12)),
-                    ])
-                    .children(shown)
-                    .children(cut),
-            )
+    /// Emits a row `height` pixels tall, padded `pad` steps at each end, holding `content` centred across it.
+    #[track_caller]
+    fn line_row(height: f32, pad: f32, content: impl FnOnce()) {
+        rustle::row_arranged(
+            Modifier::new()
+                .fill_max_width()
+                .height(height)
+                .padding_xy(theme::sp(pad), 0.0),
+            Arrangement::Start,
+            Alignment::Center,
+            content,
+        );
     }
 
-    /// The card of one conflict: where it is, both sides, and the buttons that settle it.
-    fn card(&self, card: &Card, row: f32) -> Node {
+    /// Emits one side of a conflict: what it is called, `name`, and the lines of `text_of` in the code font on a tint of `tint` `row` pixels tall each, the first few of them; beside the other side, sharing the row's width and filling its height, when `beside`, else as wide as the card and as tall as its lines.
+    #[track_caller]
+    fn side(&self, name: &str, text_of: &str, tint: Role, row: f32, beside: bool) {
+        let font = self.state.editor.font_size;
+        let more = text_of.lines().count().saturating_sub(MOST_LINES);
+        let (own, tinted) = if beside {
+            (
+                Modifier::new().weight(1.0).fill_max_height(),
+                Modifier::new().fill_max_width().weight(1.0),
+            )
+        } else {
+            (
+                Modifier::new().fill_max_width(),
+                Modifier::new().fill_max_width(),
+            )
+        };
+        rustle::column_arranged(own.clip(), Arrangement::Start, Alignment::Start, || {
+            Self::line_row(LABEL, 2.0, || line(name, 11, 1.4, Role::Muted));
+            rustle::column_arranged(
+                tinted.background(theme::color(tint.alpha(0.12))),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    for content in text_of.lines().take(MOST_LINES) {
+                        Self::line_row(row, 2.0, || {
+                            rustle::basic_text(
+                                Modifier::new().weight(1.0),
+                                crate::diff_syntax::shown(content),
+                                theme::code_style(font, 1.4)
+                                    .color(theme::color(Role::Text))
+                                    .max_lines(1),
+                                TextOverflow::Ellipsis,
+                            );
+                        });
+                    }
+                    if more > 0 {
+                        Self::line_row(row, 2.0, || {
+                            line(format!("… {more} more lines"), 11, 1.4, Role::Subtle);
+                        });
+                    }
+                },
+            );
+        });
+    }
+
+    /// Emits both sides of the conflict `region`, named `ours` and `theirs`, lying as the resolver's layout says, `row` pixels a line.
+    #[track_caller]
+    fn sides(&self, region: &Region, ours: &str, theirs: &str, row: f32) {
+        let beside = self.layout == Layout::SideBySide;
+        let both = || {
+            self.side(ours, &region.ours, Role::Success, row, beside);
+            self.side(theirs, &region.theirs, Role::Warning, row, beside);
+        };
+        let own = Modifier::new().fill_max_width();
+        match self.layout {
+            Layout::SideBySide => rustle::row_arranged(
+                own.height_intrinsic(rustle::IntrinsicSize::Max)
+                    .padding_xy(theme::sp(3), 0.0),
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Start,
+                both,
+            ),
+            Layout::Stacked => rustle::column_arranged(
+                own.padding_xy(theme::sp(3), 0.0),
+                Arrangement::Start,
+                Alignment::Start,
+                both,
+            ),
+        }
+    }
+
+    /// Emits the card of one conflict, `card`: where it is, both sides, and the buttons that settle it, `row` pixels a line.
+    #[track_caller]
+    fn card(&self, card: &Card, row: f32) {
         let region = card.region;
         let ours = format!("Ours · {}", name_or(&region.ours_name, "HEAD"));
         let theirs = format!("Theirs · {}", name_or(&region.theirs_name, "incoming"));
-        let sides = match self.layout {
-            Layout::SideBySide => node()
-                .styles([flex(), gap(2), px(3)])
-                .child(self.side(&ours, &region.ours, Role::Success, row))
-                .child(self.side(&theirs, &region.theirs, Role::Warning, row)),
-            Layout::Stacked => node()
-                .styles([flex(), flex_col(), px(3)])
-                .child(self.side(&ours, &region.ours, Role::Success, row))
-                .child(self.side(&theirs, &region.theirs, Role::Warning, row)),
-        };
-        let buttons = Choice::ALL.into_iter().enumerate().map(|(step, choice)| {
-            Button::new(
-                choice.label(),
-                FocusId(CONFLICT_CHOICE_BASE + card.place as u64 * 3 + step as u64),
-            )
-            .variant(if choice == Choice::Both {
-                Variant::Ghost
-            } else {
-                Variant::Outline
-            })
-            .size(self.size)
-            .build()
-        });
-        node()
-            .styles([
-                flex(),
-                flex_col(),
-                flex_none(),
-                h_px(self.card_height(region, row) - SPACE),
-                rounded(Radius::Lg),
-                border(),
-                border_color(Role::Border),
-                overflow_hidden(),
-            ])
-            .child(
-                node()
-                    .styles([
-                        flex(),
-                        items_center(),
-                        h_px(LABEL),
-                        flex_none(),
-                        px(3),
-                        bg(Role::Surface),
-                        border_b(),
-                        border_color(Role::Border),
-                    ])
-                    .child(
-                        line(
-                            format!(
-                                "Conflict {} of {} · line {}",
-                                card.place + 1,
-                                card.count,
-                                region.line + 1
-                            ),
-                            12,
-                            1.4,
-                            Role::Text,
-                        )
-                        .styles([font_medium()]),
-                    ),
-            )
-            .child(sides)
-            .child(
-                node()
-                    .styles([
-                        flex(),
-                        items_center(),
-                        gap(2),
-                        h_px(BUTTONS),
-                        flex_none(),
-                        px(3),
-                    ])
-                    .children(buttons),
-            )
+        rustle::column_arranged(
+            Modifier::new()
+                .fill_max_width()
+                .height(self.card_height(region, row) - SPACE)
+                .outlined(Radius::Lg)
+                .clip(),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                Self::label_bar(format!(
+                    "Conflict {} of {} · line {}",
+                    card.place + 1,
+                    card.count,
+                    region.line + 1
+                ));
+                self.sides(region, &ours, &theirs, row);
+                rustle::row_arranged(
+                    Modifier::new()
+                        .height(BUTTONS)
+                        .padding_xy(theme::sp(3), 0.0),
+                    Arrangement::SpacedBy(theme::sp(2)),
+                    Alignment::Center,
+                    || {
+                        for choice in Choice::ALL {
+                            Button::new(
+                                choice.label(),
+                                Target::Search(SearchEvent::ConflictChoice {
+                                    place: card.place,
+                                    choice,
+                                }),
+                            )
+                            .variant(if choice == Choice::Both {
+                                Variant::Ghost
+                            } else {
+                                Variant::Outline
+                            })
+                            .build();
+                        }
+                    },
+                );
+            },
+        );
     }
 
-    /// The strip above the conflicts: the file, how many conflicts are left, and what can be done with all of them at once.
-    fn strip(&self, resolver: &Resolver, left: usize, loaded: bool) -> Node {
+    /// Emits the strip above the conflicts: the file of `resolver`, how many conflicts are `left` once the file is `loaded`, and what can be done with all of them at once.
+    #[track_caller]
+    fn strip(&self, resolver: &Resolver, left: usize, loaded: bool) {
         let name = resolver.path.rsplit('/').next().unwrap_or(&resolver.path);
         let said = match (loaded, left) {
             (false, _) => "Reading the file".to_owned(),
@@ -430,59 +403,71 @@ impl<'a> Conflict<'a> {
             (true, 1) => "1 conflict left".to_owned(),
             (true, left) => format!("{left} conflicts left"),
         };
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                gap(3),
-                h_px(STRIP),
-                px(4),
-                flex_none(),
-                border_b(),
-                border_color(Role::Border),
-            ])
-            .child(line(name, 13, 1.4, Role::Text).styles([font_medium(), flex_none()]))
-            .child(line(
-                said,
-                12,
-                1.4,
-                if left == 0 {
-                    Role::Success
-                } else {
-                    Role::Warning
-                },
-            ))
-            .child(spacer())
-            .child(
-                Button::new("Take all ours", CONFLICT_OURS_ALL)
-                    .variant(Variant::Ghost)
-                    .size(self.size)
-                    .disabled(resolver.ours.is_none())
-                    .build(),
-            )
-            .child(
-                Button::new("Take all theirs", CONFLICT_THEIRS_ALL)
-                    .variant(Variant::Ghost)
-                    .size(self.size)
-                    .disabled(resolver.theirs.is_none())
-                    .build(),
-            )
-            .child(
-                Button::new("Mark as resolved", CONFLICT_CONCLUDE)
-                    .size(self.size)
-                    .disabled(!loaded || left > 0)
-                    .build(),
-            )
+        rustle::row_arranged(
+            Modifier::new()
+                .fill_max_width()
+                .height(STRIP)
+                .border_bottom(1.0, theme::color(Role::Border))
+                .padding_each(0.0, 0.0, 0.0, 1.0)
+                .padding_xy(theme::sp(4), 0.0),
+            Arrangement::SpacedBy(theme::sp(3)),
+            Alignment::Center,
+            || {
+                rustle::basic_text(
+                    Modifier::new(),
+                    name,
+                    theme::strong(13, Role::Text),
+                    TextOverflow::Ellipsis,
+                );
+                line(
+                    said,
+                    12,
+                    1.4,
+                    if left == 0 {
+                        Role::Success
+                    } else {
+                        Role::Warning
+                    },
+                );
+                spacer();
+                for (label, id, variant, disabled) in [
+                    (
+                        "Take all ours",
+                        SearchEvent::ConflictOursAll,
+                        Variant::Ghost,
+                        resolver.ours.is_none(),
+                    ),
+                    (
+                        "Take all theirs",
+                        SearchEvent::ConflictTheirsAll,
+                        Variant::Ghost,
+                        resolver.theirs.is_none(),
+                    ),
+                    (
+                        "Mark as resolved",
+                        SearchEvent::ConflictConclude,
+                        Variant::Default,
+                        !loaded || left > 0,
+                    ),
+                ] {
+                    Button::new(label, Target::Search(id))
+                        .variant(variant)
+                        .disabled(disabled)
+                        .build();
+                }
+            },
+        );
     }
 
-    /// The resolver: its strip, then the conflicts one under another, then the result, which is the file edited in place.
-    pub fn build(self) -> Node {
+    /// Emits the resolver: its strip, then the conflicts one under another, then the result, which is the file edited in place; nothing when no resolver is open.
+    #[track_caller]
+    pub fn build(self) {
         let state = self.state;
         let Some(excerpts) = state.excerpts.as_ref() else {
-            return node();
+            return;
         };
         let Source::Conflict(resolver) = &excerpts.source else {
-            return node();
+            return;
         };
         let index = state.viewer_at(&resolver.path);
         let text_now = index
@@ -493,79 +478,86 @@ impl<'a> Conflict<'a> {
             });
         let regions = text_now.map(regions_in).unwrap_or_default();
         let row = state.editor.row_height();
-        let strip = self.strip(resolver, regions.len(), text_now.is_some());
-        let (low, high) = (
-            excerpts.scroll - OVERSCAN,
-            excerpts.scroll + (self.height - STRIP).max(0.0) + OVERSCAN,
-        );
-        let (mut before, mut after, mut top) = (0.0_f32, 0.0_f32, 0.0_f32);
-        let mut built = Vec::new();
-        for (place, region) in regions.iter().enumerate() {
-            let size = self.card_height(region, row);
-            let (start, end) = (top, top + size);
-            top = end;
-            if end < low {
-                before += size;
-            } else if start > high {
-                after += size;
-            } else {
-                built.push(
-                    node()
-                        .styles([flex(), flex_col(), flex_none(), p(3)])
-                        .child(self.card(
-                            &Card {
-                                region,
-                                place,
-                                count: regions.len(),
-                            },
-                            row,
-                        )),
-                );
-            }
-        }
-        let result = node()
-            .styles([
-                flex(),
-                items_center(),
-                h_px(LABEL),
-                flex_none(),
-                px(3),
-                bg(Role::Surface),
-                border_b(),
-                border_color(Role::Border),
-            ])
-            .child(line("Result", 12, 1.4, Role::Text).styles([font_medium()]));
-        let doc_top = top + LABEL;
         let whole = Block::whole();
-        let rows = match index {
-            Some(index) => plain_block(state, index, &whole, doc_top, (low, high)),
-            None => node(),
-        };
-        node()
-            .styles([flex(), flex_col(), flex_1(), min_w_px(0), min_h(0)])
-            .child(strip)
-            .child(
-                node()
-                    .styles([
-                        flex(),
-                        flex_col(),
-                        flex_1(),
-                        min_w_px(0),
-                        min_h(0),
-                        overflow_hidden(),
-                        bg(Role::Background),
-                    ])
-                    .child(
-                        node()
-                            .styles([flex(), flex_col(), flex_1(), min_h(0), overflow_hidden()])
-                            .scroll_from_start(EXCERPTS_SCROLL, excerpts.scroll)
-                            .child(node().styles([h_px(before), flex_none()]))
-                            .children(built)
-                            .child(node().styles([h_px(after), flex_none()]))
-                            .child(result)
-                            .child(rows),
-                    ),
-            )
+        let drawing = Drawing::new(state, None);
+        let lines = index.map_or(0, |index| drawing.row_count(index, &whole) + 1);
+        let count = regions.len() + 1 + lines;
+        rustle::column_arranged(
+            Modifier::new().weight(1.0),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                self.strip(resolver, regions.len(), text_now.is_some());
+                rustle::column_arranged(
+                    Modifier::new()
+                        .fill_max_width()
+                        .weight(1.0)
+                        .clip()
+                        .background(theme::color(Role::Background)),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        rustle::lazy_list_keyed(
+                            Modifier::new().fill_max_width().weight(1.0),
+                            &excerpts.scroll,
+                            count,
+                            |item| item,
+                            |item| {
+                                let after = item.saturating_sub(regions.len());
+                                match regions.get(item) {
+                                    Some(region) => rustle::column_arranged(
+                                        Modifier::new().fill_max_width().padding(theme::sp(3)),
+                                        Arrangement::Start,
+                                        Alignment::Start,
+                                        || {
+                                            self.card(
+                                                &Card {
+                                                    region,
+                                                    place: item,
+                                                    count: regions.len(),
+                                                },
+                                                row,
+                                            );
+                                        },
+                                    ),
+                                    None if after == 0 => Self::label_bar("Result"),
+                                    None => match index {
+                                        Some(index) if after < lines => {
+                                            drawing.row(index, (usize::MAX, 0), &whole, after - 1);
+                                        }
+                                        _ => block_gap(),
+                                    },
+                                }
+                            },
+                        );
+                    },
+                );
+            },
+        );
+    }
+
+    /// Emits a bar `LABEL` pixels tall on the surface colour, ruled along its bottom, that says `words`: the head of a conflict's card and the label over the result.
+    #[track_caller]
+    fn label_bar(words: impl Into<String>) {
+        rustle::row_arranged(
+            Modifier::new()
+                .fill_max_width()
+                .height(LABEL)
+                .background(theme::color(Role::Surface))
+                .border_bottom(1.0, theme::color(Role::Border))
+                .padding_each(0.0, 0.0, 0.0, 1.0)
+                .padding_xy(theme::sp(3), 0.0),
+            Arrangement::Start,
+            Alignment::Center,
+            || {
+                rustle::basic_text(
+                    Modifier::new().weight(1.0),
+                    words,
+                    theme::strong(12, Role::Text),
+                    TextOverflow::Ellipsis,
+                );
+            },
+        );
     }
 }
 
@@ -695,17 +687,15 @@ impl WorkspaceState {
     }
 
     /// Carries out what pressing `id` of the resolver does.
-    pub(crate) fn conflict_pressed(mut self, id: FocusId) -> Self {
+    pub(crate) fn conflict_pressed(mut self, id: Target) -> Self {
         match id {
-            CONFLICT_OURS_ALL => self.conflict_side_taken(true),
-            CONFLICT_THEIRS_ALL => self.conflict_side_taken(false),
-            CONFLICT_CONCLUDE => return self.conflict_concluded(),
-            id => {
-                if let Some(offset) = id.0.checked_sub(CONFLICT_CHOICE_BASE) {
-                    let choice = Choice::ALL[(offset % 3) as usize];
-                    self.conflict_settled((offset / 3) as usize, choice);
-                }
+            Target::Search(SearchEvent::ConflictOursAll) => self.conflict_side_taken(true),
+            Target::Search(SearchEvent::ConflictTheirsAll) => self.conflict_side_taken(false),
+            Target::Search(SearchEvent::ConflictConclude) => return self.conflict_concluded(),
+            Target::Search(SearchEvent::ConflictChoice { place, choice }) => {
+                self.conflict_settled(place, choice)
             }
+            _ => {}
         }
         self
     }

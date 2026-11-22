@@ -2,7 +2,7 @@
 
 use std::ops::Range;
 
-use pm_text::Edit;
+use crate::Edit;
 use regex::{Regex, RegexBuilder};
 
 use crate::document::Document;

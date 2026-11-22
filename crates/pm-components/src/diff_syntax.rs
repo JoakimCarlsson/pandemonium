@@ -7,9 +7,10 @@ use std::mem::discriminant;
 use std::ops::Range;
 use std::sync::{Arc, LazyLock, Mutex};
 
-use pm_style::{Color, Role};
 use pm_treesitter::{Grammar, Syntax, registry};
-use pm_ui::{Mark, Paint};
+
+use crate::marked::{Mark, Paint};
+use crate::theme::Role;
 
 use crate::sample::{DiffLine, Kind};
 use crate::viewer::highlight_marks;
@@ -20,7 +21,7 @@ const KEPT: usize = 128;
 /// The marks of each line of a diff, by its position in the diff.
 type Lines = Arc<Vec<Vec<Mark>>>;
 
-/// The colours of the diffs coloured lately, by a fingerprint of the language and the lines.
+/// The colours of the diffs coloured lately, by a fingerprint of the language, the lines and the theme their roles were read from.
 static PAINTED: LazyLock<Mutex<HashMap<u64, Lines>>> = LazyLock::new(Default::default);
 
 /// The syntax colours of each line of a diff, by its position in the diff, and the words that changed in some of them; plain when the file's language has no grammar loaded and no words are marked.
@@ -94,10 +95,12 @@ impl DiffColours {
                 .ranges
                 .iter()
                 .filter(|(start, end)| start < end && *end <= line.text.len())
-                .map(|(start, end)| Mark {
-                    range: shown_offset(&line.text, *start)..shown_offset(&line.text, *end),
-                    color: Color::from(role).alpha(0.35),
-                    paint: Paint::Fill,
+                .map(|(start, end)| {
+                    Mark::new(
+                        shown_offset(&line.text, *start)..shown_offset(&line.text, *end),
+                        role.alpha(0.35),
+                        Paint::Fill,
+                    )
                 })
                 .collect();
             self.words.insert(entry.line, marks);
@@ -132,10 +135,11 @@ fn shown_offset(text: &str, offset: usize) -> usize {
             .map_or(0, |before| before.matches('\t').count() * 3)
 }
 
-/// A fingerprint of the language named `language` and the lines of `diff`.
+/// A fingerprint of the language named `language`, the lines of `diff` and the theme being composed with.
 fn fingerprint(language: &str, diff: &[DiffLine]) -> u64 {
     let mut hasher = DefaultHasher::new();
     language.hash(&mut hasher);
+    crate::theme::theme().hash(&mut hasher);
     for line in diff {
         discriminant(&line.kind).hash(&mut hasher);
         line.text.hash(&mut hasher);

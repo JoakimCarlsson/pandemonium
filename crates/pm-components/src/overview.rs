@@ -1,24 +1,26 @@
 //! A project's overview: its sessions grouped by where they stand, and how its own repository is.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Role, bg, border_b, border_color, cursor_pointer, flex, flex_1, flex_col, flex_none,
-    font_medium, font_mono, gap, h, items_center, max_w_px, min_h, min_w_px, mx_auto,
-    overflow_hidden, pb, pt, px, text_px, w_full, w_px,
-};
-use pm_ui::{Node, node};
+use crate::areas::SidebarEvent;
+use crate::button;
+use crate::button::Variant;
+use crate::events::{Event, send};
+use crate::parts;
+use crate::target::Target;
+use crate::theme;
+use crate::theme::Indicated;
+use rustle::TextOverflow;
+use rustle::phosphor;
+use rustle::{Alignment, Arrangement, column_arranged, row_arranged};
+use rustle::{CursorIcon, Modifier};
 
-use crate::extensions::group;
+use crate::Avatar;
+use crate::events::Interactive;
+use crate::extensions::group_of_fixed_rows as group;
 use crate::parts::{clipped, glyph, line, spacer};
 use crate::sample::{Session, Status};
 use crate::sidebar::status_icon;
-use crate::size::Size;
-use crate::state::{NEW_IN_BASE, SESSION_BASE, WorkspaceState};
-use crate::{Avatar, Button};
-
-/// The scrolling body of the overview.
-pub const OVERVIEW_SCROLL: FocusId = FocusId(9_200_000);
+use crate::state::WorkspaceState;
+use crate::theme::Role;
 
 /// How wide the overview's column is at most, in logical pixels.
 const PAGE_WIDTH: f32 = 860.0;
@@ -45,74 +47,91 @@ const GROUPS: [(Status, &str); 6] = [
     (Status::Idle, "Idle"),
 ];
 
-impl WorkspaceState {
-    /// The state after the overview is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_overview(mut self, delta: f32, room: f32) -> Self {
-        self.overview_scroll = (self.overview_scroll + delta).clamp(0.0, room);
-        self
-    }
+/// Emits the overview of the project at `project`.
+#[track_caller]
+pub fn overview(state: &WorkspaceState, project: usize) {
+    let bounded = Modifier::new().fill_max_width().width_in(0.0, PAGE_WIDTH);
+    scrolled_page(
+        || heading(state, project),
+        &state.overview_scroll,
+        bounded,
+        || {
+            sessions(state, project);
+            repository(state);
+            commits(state);
+        },
+    );
 }
 
-/// The overview of the project at `project`.
-pub fn overview(state: &WorkspaceState, project: usize) -> Node {
-    let mut column = node().styles([
-        flex(),
-        flex_col(),
-        gap(6),
-        w_full(),
-        max_w_px(PAGE_WIDTH),
-        mx_auto(),
-        px(5),
-        pt(5),
-        pb(8),
-        flex_none(),
-    ]);
-    column = column.children(sessions(state, project));
-    column = column.children(repository(state));
-    column = column.children(commits(state));
-    node()
-        .styles([flex(), flex_col(), flex_1(), min_w_px(0), min_h(0)])
-        .child(heading(state, project))
-        .child(
-            node()
-                .styles([flex(), flex_col(), flex_1(), min_h(0), overflow_hidden()])
-                .scroll_from_start(OVERVIEW_SCROLL, state.overview_scroll)
-                .child(column),
+/// Emits a page of the main area: the bar `heading` emits across its top, and under it the column `content` emits, sized by `bounded`, padded and centred in a pane scrolled as `scroll` holds.
+#[track_caller]
+pub(crate) fn scrolled_page(
+    heading: impl FnOnce(),
+    scroll: &rustle::ScrollState,
+    bounded: Modifier,
+    content: impl FnOnce(),
+) {
+    rustle::column_arranged(
+        Modifier::new().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            heading();
+            column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .weight(1.0)
+                    .vertical_scroll(scroll)
+                    .fill_max_width(),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    let padded = bounded.padding_each(
+                        theme::sp(5),
+                        theme::sp(5),
+                        theme::sp(5),
+                        theme::sp(8),
+                    );
+                    rustle::column_arranged(
+                        padded,
+                        Arrangement::SpacedBy(theme::sp(6)),
+                        Alignment::Start,
+                        content,
+                    );
+                },
+            );
+        },
+    );
+}
+
+/// Emits the bar across the top: the project, where it lives, and the button that starts a session in it.
+#[track_caller]
+fn heading(state: &WorkspaceState, project: usize) {
+    parts::bar(12, 5, 3, || {
+        if let Some(held) = state.projects.get(project) {
+            Avatar::of(held).build();
+            rustle::basic_text(
+                Modifier::new(),
+                &held.name,
+                theme::strong(14, Role::Text),
+                TextOverflow::Ellipsis,
+            );
+            clipped(&held.path, 12, Role::Subtle);
+        }
+        spacer();
+        button::small_button(
+            "New session",
+            Target::Sidebar(SidebarEvent::NewIn(project)),
+            Variant::Default,
         )
+        .with_icon(phosphor::PLUS)
+        .build();
+    });
 }
 
-/// The bar across the top: the project, where it lives, and the button that starts a session in it.
-fn heading(state: &WorkspaceState, project: usize) -> Node {
-    let mut bar = node().styles([
-        flex(),
-        items_center(),
-        gap(3),
-        h(12),
-        px(5),
-        flex_none(),
-        border_b(),
-        border_color(Role::Border),
-    ]);
-    if let Some(held) = state.projects.get(project) {
-        bar = bar
-            .child(Avatar::of(held).build())
-            .child(line(&held.name, 14, 1.4, Role::Text).styles([
-                font_medium(),
-                text_px(14),
-                flex_none(),
-            ]))
-            .child(clipped(&held.path, 12, Role::Subtle));
-    }
-    bar.child(spacer()).child(
-        Button::new("New session", FocusId(NEW_IN_BASE + project as u64))
-            .with_icon(IconName::Plus)
-            .size(Size::Sm)
-            .build(),
-    )
-}
-
-/// The project's open sessions, a group for each way they stand, or a line saying there are none.
-fn sessions(state: &WorkspaceState, project: usize) -> Vec<Node> {
+/// Emits the project's open sessions, a group for each way they stand, or a line saying there are none.
+#[track_caller]
+fn sessions(state: &WorkspaceState, project: usize) {
     let mut members: Vec<usize> = (0..state.sessions.len())
         .filter(|&index| {
             let session = &state.sessions[index];
@@ -121,87 +140,117 @@ fn sessions(state: &WorkspaceState, project: usize) -> Vec<Node> {
         .collect();
     members.sort_by_key(|&index| std::cmp::Reverse(state.sessions[index].updated_at));
     if members.is_empty() {
-        return vec![line("No sessions yet.", 13, 1.4, Role::Subtle)];
+        line("No sessions yet.", 13, 1.4, Role::Subtle);
+        return;
     }
-    GROUPS
-        .into_iter()
-        .filter_map(|(status, title)| {
-            group(
-                title,
-                members
-                    .iter()
-                    .filter(|&&index| state.sessions[index].shown() == status)
-                    .map(|&index| session_row(state, index))
-                    .collect(),
-            )
-        })
-        .collect()
+    for (status, title) in GROUPS {
+        group(title, || {
+            for &index in members
+                .iter()
+                .filter(|&&index| state.sessions[index].shown() == status)
+            {
+                session_row(state, index);
+            }
+        });
+    }
 }
 
-/// The row of the session at `index`: where it stands, its title, its agent's mark, what it changed, its branch and when it last changed.
-fn session_row(state: &WorkspaceState, index: usize) -> Node {
+/// Emits the row of the session at `index`: where it stands, its title, its agent's mark, what it changed, its branch and when it last changed.
+#[track_caller]
+fn session_row(state: &WorkspaceState, index: usize) {
     let session: &Session = &state.sessions[index];
     let agent = state.agent_look(session.agent);
-    let mut row = row()
-        .styles([cursor_pointer(), bg(Role::SurfaceHover).hover()])
-        .child(status_icon(session.shown()))
-        .child(clipped(&session.title, 14, Role::Text))
-        .child(
-            node()
-                .styles([flex(), flex_none()])
-                .child(glyph(agent.icon, 3.5, Role::Muted))
-                .tooltip(agent.name),
+    let id = Target::Sidebar(SidebarEvent::Session(index));
+    let pressed = send(Event::pressing(id));
+    let operations = crate::events::operations();
+    let own = Modifier::new()
+        .indicated(
+            theme::InteractionTones::new().hover(Role::SurfaceHover),
+            theme::Focused::Control(crate::focus::is_focused(id)),
+        )
+        .cursor(CursorIcon::Pointer)
+        .control_menu(
+            id,
+            move |_| pressed(),
+            move |at| operations.open_session_menu(index, at),
         );
-    if !session.changes.is_empty() {
-        row = row.child(tally(session));
-    }
-    row.child(
-        node()
-            .styles([flex(), flex_none(), w_px(BRANCH_WIDTH), overflow_hidden()])
-            .child(clipped(&session.branch, 12, Role::Muted).styles([font_mono()])),
-    )
-    .child(
-        node()
-            .styles([
-                flex(),
-                flex_none(),
-                w_px(AGE_WIDTH),
-                pm_style::justify_end(),
-            ])
-            .child(line(session.age(), 13, 1.4, Role::Subtle)),
-    )
-    .focusable(FocusId(SESSION_BASE + index as u64))
+    card_row(own, || {
+        status_icon(session.shown());
+        clipped(&session.title, 14, Role::Text);
+        crate::tooltip::with_tooltip(agent.name, || {
+            rustle::row_arranged(
+                Modifier::new(),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    glyph(agent.icon, 3.5, Role::Muted);
+                },
+            );
+        });
+        if !session.changes.is_empty() {
+            tally(session);
+        }
+        let branch = Modifier::new().width(BRANCH_WIDTH).clip();
+        rustle::basic_text(
+            branch,
+            &session.branch,
+            theme::line(12, Role::Muted),
+            TextOverflow::Ellipsis,
+        );
+        row_arranged(
+            Modifier::new().width(AGE_WIDTH),
+            Arrangement::End,
+            Alignment::Start,
+            || line(session.age(), 13, 1.4, Role::Subtle),
+        );
+    });
 }
 
-/// The lines `session` adds and takes away, in their colours.
-fn tally(session: &Session) -> Node {
-    node()
-        .styles([flex(), items_center(), gap(1.5), flex_none()])
-        .child(line(format!("+{}", session.added()), 12, 1.4, Role::Success).styles([font_mono()]))
-        .child(line(format!("−{}", session.removed()), 12, 1.4, Role::Danger).styles([font_mono()]))
+/// Emits the lines `session` adds and takes away, in their colours.
+#[track_caller]
+fn tally(session: &Session) {
+    rustle::row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(1.5)),
+        Alignment::Center,
+        || {
+            let added = format!("+{}", session.added());
+            rustle::basic_text(
+                Modifier::new(),
+                added,
+                theme::code(12, Role::Success),
+                TextOverflow::Ellipsis,
+            );
+            let removed = format!("−{}", session.removed());
+            rustle::basic_text(
+                Modifier::new(),
+                removed,
+                theme::code(12, Role::Danger),
+                TextOverflow::Ellipsis,
+            );
+        },
+    );
 }
 
-/// The project's own folder: the branch it is on and how far it is from what it follows, and what is not committed.
-fn repository(state: &WorkspaceState) -> Option<Node> {
-    let home = state.review_session()?;
+/// Emits the project's own folder: the branch it is on and how far it is from what it follows, and what is not committed.
+#[track_caller]
+fn repository(state: &WorkspaceState) {
+    let Some(home) = state.review_session() else {
+        return;
+    };
     if home.branch.is_empty() {
-        return group(
-            "Repository",
-            vec![
-                row()
-                    .child(glyph(IconName::Folder, 4.0, Role::Muted))
-                    .child(line(
-                        if home.unknown {
-                            "Reading the folder…"
-                        } else {
-                            "Not a Git repository"
-                        },
-                        13,
-                        1.4,
-                        Role::Muted,
-                    )),
-            ],
-        );
+        group("Repository", || {
+            card_row(Modifier::new(), || {
+                glyph(phosphor::FOLDER, 4.0, Role::Muted);
+                let said = if home.unknown {
+                    "Reading the folder…"
+                } else {
+                    "Not a Git repository"
+                };
+                line(said, 13, 1.4, Role::Muted);
+            });
+        });
+        return;
     }
     let tracking = &home.tracking;
     let standing = match &tracking.upstream {
@@ -214,58 +263,69 @@ fn repository(state: &WorkspaceState) -> Option<Node> {
             tracking.ahead, tracking.behind
         ),
     };
-    let branch = row()
-        .child(glyph(IconName::GitFork, 4.0, Role::Muted))
-        .child(clipped(&home.branch, 13, Role::Text).styles([font_mono()]))
-        .child(line(standing, 13, 1.4, Role::Muted).styles([flex_none()]));
-    let mut changes = row().child(glyph(IconName::GitCompare, 4.0, Role::Muted));
-    changes = match home.changes.len() {
-        0 => changes.child(clipped("No uncommitted changes", 13, Role::Muted)),
-        count => changes
-            .child(clipped(
-                format!(
-                    "{count} uncommitted {}",
-                    if count == 1 { "file" } else { "files" }
-                ),
-                13,
-                Role::Text,
-            ))
-            .child(tally(home)),
-    };
-    group("Repository", vec![branch, changes])
+    group("Repository", || {
+        card_row(Modifier::new(), || {
+            glyph(phosphor::GIT_FORK, 4.0, Role::Muted);
+            clipped(&home.branch, 13, Role::Text);
+            line(standing, 13, 1.4, Role::Muted);
+        });
+        card_row(Modifier::new(), || {
+            glyph(phosphor::GIT_DIFF, 4.0, Role::Muted);
+            match home.changes.len() {
+                0 => clipped("No uncommitted changes", 13, Role::Muted),
+                count => {
+                    clipped(
+                        format!(
+                            "{count} uncommitted {}",
+                            if count == 1 { "file" } else { "files" }
+                        ),
+                        13,
+                        Role::Text,
+                    );
+                    tally(home);
+                }
+            }
+        });
+    });
 }
 
-/// The latest commits of the project's own repository, once the server has listed them.
-fn commits(state: &WorkspaceState) -> Option<Node> {
-    state
+/// Emits the latest commits of the project's own repository, once the server has listed them.
+#[track_caller]
+fn commits(state: &WorkspaceState) {
+    let Some(_) = state
         .review_session()
-        .filter(|home| !home.branch.is_empty())?;
-    group(
-        "Recent commits",
-        state
-            .git
-            .history
-            .iter()
-            .take(COMMITS_SHOWN)
-            .map(|commit| {
-                row()
-                    .child(glyph(IconName::GitCommit, 4.0, Role::Subtle))
-                    .child(
-                        line(
-                            commit.id.chars().take(SHORT_ID).collect::<String>(),
-                            12,
-                            1.4,
-                            Role::Subtle,
-                        )
-                        .styles([font_mono(), flex_none()]),
-                    )
-                    .child(clipped(&commit.summary, 13, Role::Text))
-            })
-            .collect(),
-    )
+        .filter(|home| !home.branch.is_empty())
+    else {
+        return;
+    };
+    group("Recent commits", || {
+        for commit in state.git.history.iter().take(COMMITS_SHOWN) {
+            card_row(Modifier::new(), || {
+                glyph(phosphor::GIT_COMMIT, 4.0, Role::Subtle);
+                rustle::basic_text(
+                    Modifier::new(),
+                    commit.id.chars().take(SHORT_ID).collect::<String>(),
+                    theme::code(12, Role::Subtle),
+                    TextOverflow::Ellipsis,
+                );
+                clipped(&commit.summary, 13, Role::Text);
+            });
+        }
+    });
 }
 
-/// A row of one of the overview's cards, its contents in a line.
-fn row() -> Node {
-    node().styles([flex(), items_center(), gap(3), h(11), px(4)])
+/// Emits a row of one of the overview's cards, its contents in a line, with `modifier` around its
+/// box before its padding, holding what `content` emits.
+#[track_caller]
+fn card_row(modifier: Modifier, content: impl FnOnce()) {
+    rustle::row_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .height(theme::sp(11))
+            .chain(modifier)
+            .padding_xy(theme::sp(4), 0.0),
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Center,
+        content,
+    );
 }

@@ -1,52 +1,11 @@
 //! Tasks as the workspace holds them: what the project can be built, tested and run with, the last one run, the toolchains installed on its machine, and what the reader does with them.
 
-use pm_input::FocusId;
 use pm_protocol::{Task, ToolchainInfo};
-use pm_text::Field;
+use rustle::TextFieldState;
 
 use crate::listing::{Items, Listing};
 use crate::quick_choices::Choosing;
 use crate::state::{Outgoing, WorkspaceState};
-
-/// The first of the marks in the gutter that run a place of a file; each file shown has [`RUN_LINES`] after its own base.
-pub const RUN_BASE: u64 = 6_000_000_000_000;
-
-/// The first of the marks of the links at the ends of lines that run a place with one task of its language; each follows the base by its place in the list of links of the file shown.
-pub const RUN_LENS_BASE: u64 = 8_700_000;
-
-/// One past the last mark of those links.
-pub const RUN_LENS_END: u64 = 8_800_000;
-
-/// The mark of the link at `index` of the links of the file shown.
-pub fn run_lens_mark(index: usize) -> FocusId {
-    FocusId(RUN_LENS_BASE + index as u64)
-}
-
-/// The place in the list of links of the file shown that the mark `id` is.
-pub fn run_lens_of(id: FocusId) -> Option<usize> {
-    (RUN_LENS_BASE..RUN_LENS_END)
-        .contains(&id.0)
-        .then(|| (id.0 - RUN_LENS_BASE) as usize)
-}
-
-/// How many lines one file has room for among the run marks of the gutter.
-pub const RUN_LINES: u64 = 1_000_000;
-
-/// How many files have room among the run marks of the gutter.
-const RUN_FILES: u64 = 1000;
-
-/// The mark in the gutter of the line `line` of the open file at `file` that runs the place that starts there.
-pub fn run_mark(file: usize, line: usize) -> FocusId {
-    FocusId(RUN_BASE + file as u64 * RUN_LINES + line as u64)
-}
-
-/// The open file and the line the gutter run mark `id` is on.
-pub fn run_of(id: FocusId) -> Option<(usize, usize)> {
-    let offset =
-        id.0.checked_sub(RUN_BASE)
-            .filter(|offset| *offset < RUN_FILES * RUN_LINES)?;
-    Some(((offset / RUN_LINES) as usize, (offset % RUN_LINES) as usize))
-}
 
 /// What was last run, which running it again does as it was done.
 #[derive(Clone, Debug, PartialEq)]
@@ -100,11 +59,6 @@ pub struct TaskState {
     pub waiting: Option<Rerun>,
     /// The tasks that can run that place, which the reader picks from when there is more than one.
     pub options: Vec<pm_protocol::RunnableTask>,
-}
-
-/// The language `family` as a reader knows it: what its manifest calls it, or the family as it is written.
-fn language_name(family: &str, named: &str) -> String {
-    if named.is_empty() { family } else { named }.to_owned()
 }
 
 impl WorkspaceState {
@@ -213,10 +167,17 @@ impl WorkspaceState {
         let Some(viewer) = self.git.viewers.get(file).filter(|viewer| !viewer.head) else {
             return;
         };
-        let path = viewer.path.clone();
-        let Some(place) = self.shown_runnable(file, line) else {
+        let crate::open_files::Contents::Text(document) = &viewer.contents else {
             return;
         };
+        let runnables = document.runnables();
+        let Some((_, place)) = runnables
+            .iter()
+            .find(|(held, place)| *held == line && !document.is_lens_place(place))
+        else {
+            return;
+        };
+        let (path, place) = (viewer.path.clone(), place.clone());
         let Some(session) = self.review_index() else {
             return;
         };
@@ -277,39 +238,16 @@ impl WorkspaceState {
 
     /// Runs the place whose button was pressed with the task at `index` of those the reader was offered.
     pub(crate) fn runnable_taken(&mut self, index: usize) {
-        let Some(Rerun::Runnable {
-            path,
-            tags,
-            variables,
-            position,
-            ..
-        }) = self.tasks.waiting.take()
-        else {
+        let Some(mut place) = self.tasks.waiting.take() else {
             return;
         };
-        let Some(chosen) = self.tasks.options.get(index) else {
+        let Some(chosen) = self.tasks.options.get(index).map(|held| held.name.clone()) else {
             return;
         };
-        self.run_in_terminal(Rerun::Runnable {
-            path,
-            tags,
-            variables,
-            position,
-            task: Some(chosen.name.clone()),
-        });
-    }
-
-    /// The runnable place that starts on `line` of the open file at `file`.
-    fn shown_runnable(&self, file: usize, line: usize) -> Option<pm_treesitter::Runnable> {
-        let document = match &self.git.viewers.get(file)?.contents {
-            crate::open_files::Contents::Text(document) => document,
-            _ => return None,
-        };
-        document
-            .runnables()
-            .iter()
-            .find(|(held, place)| *held == line && !document.is_lens_place(place))
-            .map(|(_, place)| place.clone())
+        if let Rerun::Runnable { task, .. } = &mut place {
+            *task = Some(chosen);
+            self.run_in_terminal(place);
+        }
     }
 
     /// The lines of the open file at `file` where a place that can be run starts.
@@ -358,7 +296,7 @@ impl WorkspaceState {
             items: Items::Choices {
                 choosing: Choosing::Toolchain,
                 choices: Vec::new(),
-                filter: Field::new(""),
+                filter: TextFieldState::new(""),
                 matched: Vec::new(),
             },
             picked: 0,
@@ -399,8 +337,8 @@ impl WorkspaceState {
         });
     }
 
-    /// The name `language`, by family, is shown under in the list of toolchains.
+    /// The name `language`, by family, is shown under in the list of toolchains: what its manifest calls it, `named`, or the family as it is written.
     pub(crate) fn toolchain_language(language: &str, named: &str) -> String {
-        language_name(language, named)
+        if named.is_empty() { language } else { named }.to_owned()
     }
 }

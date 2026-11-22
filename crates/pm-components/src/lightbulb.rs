@@ -1,12 +1,8 @@
 //! The marker beside the line of the caret that says the language server offers changes there, and the question that finds out.
 
 use pm_editor::LightbulbShown;
-use pm_input::FocusId;
 
 use crate::state::{Outgoing, WorkspaceState};
-
-/// The marker beside the line of the caret, which opens the list of changes when pressed.
-pub const LIGHTBULB: FocusId = FocusId(7_402_200);
 
 impl WorkspaceState {
     /// Asks the language server whether it offers changes at the caret or the selection of the file shown, only to mark the line; nothing when the marker is off, a list of changes is open, or the marker is for problem lines and this line has none.
@@ -15,27 +11,19 @@ impl WorkspaceState {
         if mode == LightbulbShown::Off || self.listing.is_some() {
             return self;
         }
-        let Some((session, path)) = self.coding_file() else {
+        let Some((session, path, document)) = self.asking(|document| document.synced) else {
             return self;
         };
-        let Some(document) = self.shown_document().filter(|document| document.synced) else {
-            return self;
-        };
-        let caret = document.field.caret();
-        let line = document.line_of(caret);
+        let line = document.line_of(document.field.caret());
         if mode == LightbulbShown::Problems && document.diagnostics_on(line).is_empty() {
             return self;
         }
-        let range = document.field.selection().unwrap_or(caret..caret);
         let request = Outgoing::Lightbulb {
             session,
             path,
             version: document.version,
             line,
-            span: pm_protocol::Span::new(
-                document.position_of(range.start),
-                document.position_of(range.end),
-            ),
+            span: crate::navigate::selection_span(document),
         };
         self.outbox.push(request);
         self

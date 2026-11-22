@@ -32,6 +32,14 @@ impl WorkspaceState {
         Some((session, viewer.path.clone()))
     }
 
+    /// The open list of the history of the file at `path` of the session at `session`, when it is the one open.
+    fn history_listing(&mut self, session: usize, path: &str) -> Option<&mut Listing> {
+        self.listing.as_mut().filter(|held| {
+            held.session == session
+                && matches!(&held.items, Items::History { path: wanted, .. } if wanted == path)
+        })
+    }
+
     /// Copies the selection of the file shown with the indentation its lines share taken off.
     pub fn copied_trimmed(mut self) -> Self {
         let Some(selected) = self
@@ -55,16 +63,14 @@ impl WorkspaceState {
         self
     }
 
-    /// Starts a shell in the folder of the file shown and shows the dock.
+    /// Starts a shell in the folder of the file shown and shows the dock, asking the shell
+    /// to take the keyboard (see [`shell_asked`](Self::shell_asked)).
     pub fn terminal_beside_file(mut self) -> Self {
+        self.shell_asked += 1;
         let Some((session, path)) = self.shown_file() else {
             return self;
         };
-        let folder = path
-            .rsplit_once('/')
-            .map(|(folder, _)| folder.to_owned())
-            .unwrap_or_default();
-        self.open_terminal_in(session, folder);
+        self.open_terminal_beside(session, &path);
         self
     }
 
@@ -144,10 +150,8 @@ impl WorkspaceState {
         path: &str,
         commits: Vec<pm_git::FileCommit>,
     ) -> Self {
-        if let Some(listing) = self.listing.as_mut().filter(|held| {
-            held.session == session
-                && matches!(&held.items, Items::History { path: wanted, .. } if wanted == path)
-        }) && let Items::History { commits: held, .. } = &mut listing.items
+        if let Some(listing) = self.history_listing(session, path)
+            && let Items::History { commits: held, .. } = &mut listing.items
         {
             *held = commits;
             listing.answered = true;
@@ -162,10 +166,8 @@ impl WorkspaceState {
         path: &str,
         versions: Vec<pm_protocol::LocalVersion>,
     ) -> Self {
-        if let Some(listing) = self.listing.as_mut().filter(|held| {
-            held.session == session
-                && matches!(&held.items, Items::History { path: wanted, .. } if wanted == path)
-        }) && let Items::History { versions: held, .. } = &mut listing.items
+        if let Some(listing) = self.history_listing(session, path)
+            && let Items::History { versions: held, .. } = &mut listing.items
         {
             *held = versions;
         }

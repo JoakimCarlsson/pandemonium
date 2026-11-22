@@ -38,3 +38,4 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 
 [dev-dependencies]
 pm-client.workspace = true
+pm-store = { workspace = true, features = ["scratch-folders"] }

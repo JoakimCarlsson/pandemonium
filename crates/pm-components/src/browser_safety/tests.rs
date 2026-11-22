@@ -1,11 +1,10 @@
 //! Tests of what the reader's presses do to the questions, the certificate page and the note about a download.
 
+use crate::areas::{BrowserEvent, ComposerEvent};
+use crate::target::Target;
 use std::time::{Duration, Instant};
 
-use super::{
-    ALLOW_DELAY, Answer, BROWSER_CERT_BACK, BROWSER_CERT_PROCEED, BROWSER_DISMISS,
-    BROWSER_QUESTION_BAR, Certificate, Download, Question, Safety, Saving, allow_id, block_id,
-};
+use super::{ALLOW_DELAY, Answer, Certificate, Download, Question, Safety, Saving};
 
 /// A question about the camera of `origin`, numbered `id`.
 fn asked(id: u64, origin: &str) -> Question {
@@ -26,8 +25,11 @@ fn questions_are_answered_in_the_order_they_came() {
     safety.ask_at(asked(2, "https://b.example"), start);
     assert_eq!(safety.questions.len(), 2);
     let later = start + ALLOW_DELAY;
-    assert!(safety.press_at(block_id(1), later));
-    assert!(safety.press_at(allow_id(2), later + ALLOW_DELAY));
+    assert!(safety.press_at(Target::Browser(BrowserEvent::BrowserBlock(1)), later));
+    assert!(safety.press_at(
+        Target::Browser(BrowserEvent::BrowserAllow(2)),
+        later + ALLOW_DELAY
+    ));
     assert!(safety.questions.is_empty());
     assert_eq!(
         safety.answers,
@@ -49,11 +51,17 @@ fn allow_waits_and_block_does_not() {
     safety.ask_at(asked(1, "https://a.example"), start);
     assert!(!safety.allow_ready(start));
     assert!(!safety.allow_ready(start + ALLOW_DELAY - Duration::from_millis(1)));
-    assert!(safety.press_at(allow_id(1), start + Duration::from_millis(100)));
+    assert!(safety.press_at(
+        Target::Browser(BrowserEvent::BrowserAllow(1)),
+        start + Duration::from_millis(100)
+    ));
     assert!(safety.answers.is_empty());
     assert_eq!(safety.questions.len(), 1);
     assert!(safety.allow_ready(start + ALLOW_DELAY));
-    assert!(safety.press_at(allow_id(1), start + ALLOW_DELAY));
+    assert!(safety.press_at(
+        Target::Browser(BrowserEvent::BrowserAllow(1)),
+        start + ALLOW_DELAY
+    ));
     assert_eq!(
         safety.answers,
         vec![Answer::Permission { id: 1, allow: true }]
@@ -61,7 +69,7 @@ fn allow_waits_and_block_does_not() {
 
     let mut safety = Safety::default();
     safety.ask_at(asked(2, "https://a.example"), start);
-    assert!(safety.press_at(block_id(2), start));
+    assert!(safety.press_at(Target::Browser(BrowserEvent::BrowserBlock(2)), start));
     assert_eq!(
         safety.answers,
         vec![Answer::Permission {
@@ -79,7 +87,7 @@ fn the_delay_starts_over_when_the_question_changes() {
     safety.ask_at(asked(1, "https://a.example"), start);
     safety.ask_at(asked(2, "https://b.example"), start);
     let ready = start + Duration::from_secs(5);
-    assert!(safety.press_at(block_id(1), ready));
+    assert!(safety.press_at(Target::Browser(BrowserEvent::BrowserBlock(1)), ready));
     assert!(!safety.allow_ready(ready));
     assert!(!safety.allow_ready(ready + ALLOW_DELAY - Duration::from_millis(1)));
     assert!(safety.allow_ready(ready + ALLOW_DELAY));
@@ -105,20 +113,63 @@ fn a_press_answers_only_the_question_it_was_for() {
     let ready = start + Duration::from_secs(5);
     let mut safety = Safety::default();
     safety.ask_at(asked(1, "https://a.example"), start);
-    let pressing = allow_id(1);
+    let pressing = Target::Browser(BrowserEvent::BrowserAllow(1));
     safety.cancel_at(1, ready);
     safety.ask_at(asked(2, "https://b.example"), ready);
     let much_later = ready + Duration::from_secs(5);
     assert!(safety.press_at(pressing, much_later));
     assert!(safety.answers.is_empty());
     assert_eq!(safety.questions.len(), 1);
-    assert!(safety.press_at(block_id(1), much_later));
+    assert!(safety.press_at(Target::Browser(BrowserEvent::BrowserBlock(1)), much_later));
     assert!(safety.answers.is_empty());
-    assert!(safety.press_at(allow_id(2), much_later));
+    assert!(safety.press_at(Target::Browser(BrowserEvent::BrowserAllow(2)), much_later));
     assert_eq!(
         safety.answers,
         vec![Answer::Permission { id: 2, allow: true }]
     );
+}
+
+/// Whether the question bar of `safety` is drawn over a page 400 logical pixels wide.
+fn overlay_shown(safety: &Safety) -> bool {
+    let safety = safety.clone();
+    let laid = crate::tagged::lay_out(400.0, 300.0, None, move || {
+        rustle::stack_with(rustle::Modifier::new(), || safety.question_overlay());
+    });
+    laid.drawn(Target::Browser(BrowserEvent::BrowserQuestionBar))
+}
+
+/// How far down the bars `safety` draws above the page push the page, laid out in a column over a page 400 logical pixels wide.
+fn bars_height(safety: &Safety) -> f32 {
+    use crate::events::Interactive;
+    let safety = safety.clone();
+    let page = Target::Browser(BrowserEvent::BrowserBody);
+    let laid = crate::tagged::lay_out(400.0, 300.0, None, move || {
+        rustle::column_arranged(
+            rustle::Modifier::new(),
+            rustle::Arrangement::Start,
+            rustle::Alignment::Start,
+            || {
+                safety.bar_nodes();
+                rustle::spacer(
+                    rustle::Modifier::new()
+                        .size(400.0, 10.0)
+                        .control(page, || {}),
+                );
+            },
+        );
+    });
+    laid.node(page)
+        .expect("the page is laid out")
+        .bounds
+        .origin
+        .y
+}
+
+/// Whether `safety` draws any bar above the page: the note about a download has a button that dismisses it.
+fn bars_shown(safety: &Safety) -> bool {
+    let safety = safety.clone();
+    let laid = crate::tagged::lay_out(400.0, 300.0, None, move || safety.bar_nodes());
+    laid.drawn(Target::Browser(BrowserEvent::BrowserDismiss))
 }
 
 /// A press on the bar itself, or with no question asked, answers nothing, and the question does not move the page.
@@ -126,16 +177,22 @@ fn a_press_answers_only_the_question_it_was_for() {
 fn the_bar_takes_presses_and_leaves_the_page_where_it_is() {
     let start = Instant::now();
     let mut safety = Safety::default();
-    assert!(safety.press_at(BROWSER_QUESTION_BAR, start));
-    assert!(safety.question_overlay(400.0, start).is_none());
+    assert!(safety.press_at(Target::Browser(BrowserEvent::BrowserQuestionBar), start));
+    assert!(!overlay_shown(&safety));
     safety.ask_at(asked(3, "https://a.example"), start);
-    assert!(safety.press_at(BROWSER_QUESTION_BAR, start + ALLOW_DELAY));
-    assert!(safety.press_at(allow_id(3), start + ALLOW_DELAY * 4));
+    assert!(safety.press_at(
+        Target::Browser(BrowserEvent::BrowserQuestionBar),
+        start + ALLOW_DELAY
+    ));
+    assert!(safety.press_at(
+        Target::Browser(BrowserEvent::BrowserAllow(3)),
+        start + ALLOW_DELAY * 4
+    ));
     assert!(safety.answers.len() == 1);
     safety.ask_at(asked(4, "https://a.example"), start);
-    assert_eq!(safety.bars(), 0.0);
-    assert!(safety.bar_nodes().is_empty());
-    assert!(safety.question_overlay(400.0, start).is_some());
+    assert_eq!(bars_height(&safety), 0.0);
+    assert!(!bars_shown(&safety));
+    assert!(overlay_shown(&safety));
 }
 
 /// A question the helper cancelled is no longer asked, and no answer is sent for it.
@@ -145,7 +202,7 @@ fn a_cancelled_question_is_not_asked() {
     safety.ask(asked(7, "https://a.example"));
     safety.cancel(7);
     assert!(safety.questions.is_empty());
-    assert!(safety.press(allow_id(7)));
+    assert!(safety.press(Target::Browser(BrowserEvent::BrowserAllow(7))));
     assert!(safety.answers.is_empty());
 }
 
@@ -156,7 +213,7 @@ fn proceeding_past_a_certificate_is_deliberate() {
         certificate: Some(Certificate::default()),
         ..Safety::default()
     };
-    assert!(safety.press(BROWSER_CERT_PROCEED));
+    assert!(safety.press(Target::Browser(BrowserEvent::BrowserCertProceed)));
     assert!(safety.answers.is_empty());
     assert!(
         safety
@@ -164,7 +221,7 @@ fn proceeding_past_a_certificate_is_deliberate() {
             .as_ref()
             .is_some_and(|held| held.confirming)
     );
-    assert!(safety.press(BROWSER_CERT_PROCEED));
+    assert!(safety.press(Target::Browser(BrowserEvent::BrowserCertProceed)));
     assert_eq!(safety.answers, vec![Answer::Certificate { proceed: true }]);
     assert!(safety.certificate.is_none());
 
@@ -172,8 +229,8 @@ fn proceeding_past_a_certificate_is_deliberate() {
         certificate: Some(Certificate::default()),
         ..Safety::default()
     };
-    assert!(safety.press(BROWSER_CERT_PROCEED));
-    assert!(safety.press(BROWSER_CERT_BACK));
+    assert!(safety.press(Target::Browser(BrowserEvent::BrowserCertProceed)));
+    assert!(safety.press(Target::Browser(BrowserEvent::BrowserCertBack)));
     assert_eq!(safety.answers, vec![Answer::Certificate { proceed: false }]);
 }
 
@@ -181,14 +238,14 @@ fn proceeding_past_a_certificate_is_deliberate() {
 #[test]
 fn the_download_note_can_be_dismissed() {
     let mut safety = Safety::default();
-    assert_eq!(safety.bars(), 0.0);
+    assert_eq!(bars_height(&safety), 0.0);
     safety.download = Some(Download {
         name: "a.pdf".to_owned(),
         saving: Saving::Finished,
     });
     safety.ask(asked(1, "https://a.example"));
-    assert_eq!(safety.bars(), super::BAR);
-    assert!(safety.press(BROWSER_DISMISS));
+    assert_eq!(bars_height(&safety), super::BAR);
+    assert!(safety.press(Target::Browser(BrowserEvent::BrowserDismiss)));
     assert!(safety.download.is_none());
-    assert!(!safety.press(pm_input::FocusId(1)));
+    assert!(!safety.press(Target::Composer(ComposerEvent::Prompt)));
 }

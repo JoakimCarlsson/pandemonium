@@ -6,9 +6,9 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::sync::{Arc, Mutex};
 
+use crate::Field;
 use pm_buffer::{Change, Lines, Span};
 use pm_protocol::{Completion, Diagnostic, TextChange};
-use pm_text::Field;
 use pm_treesitter::{Editing, Kind, Syntax};
 
 /// How many lines beyond the ones asked for are highlighted with them, so that scrolling a little needs no highlighting again.
@@ -25,7 +25,8 @@ pub struct Completions {
     pub shown: Vec<usize>,
     /// The one picked, as a position in `shown`.
     pub picked: usize,
-    /// Where the list hangs, below the word, in logical pixels of the window.
+    /// Where the word's line is, in logical pixels of the window: the word's left edge and the
+    /// line's top, which the list hangs under, or over when there is no room under it.
     pub at: (f32, f32),
     /// The version of the text they were asked for at.
     pub asked: i32,
@@ -46,8 +47,6 @@ pub struct HoverCard {
     pub text: Option<String>,
     /// What the language server finds wrong there.
     pub diagnostics: Vec<Diagnostic>,
-    /// How far down the card is scrolled, in logical pixels.
-    pub scroll: f32,
 }
 
 /// The highlights of a window of lines, kept until the text is parsed again.

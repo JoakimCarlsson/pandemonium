@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use pm_config::WindowSettings;
 use pm_editor::EditorSettings;
 use pm_protocol::MachineSettings;
-use pm_text::Field;
+use rustle::TextFieldState;
 
 use crate::settings_catalog::{Keeper, Setting};
 use crate::state::{Outgoing, WorkspaceState};
@@ -14,21 +14,21 @@ use crate::state::{Outgoing, WorkspaceState};
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SettingsPage {
     /// The box every setting is searched with.
-    pub find: Field,
+    pub find: TextFieldState,
     /// How far the list of sections is scrolled, in logical pixels.
-    pub nav_scroll: f32,
+    pub nav_scroll: rustle::ScrollState,
     /// The boxes of the settings written as text, as they are being written.
-    pub fields: HashMap<Setting, Field>,
+    pub fields: HashMap<Setting, TextFieldState>,
     /// The line being written to be added to the list of each setting written as a list.
-    pub list_adds: HashMap<Setting, Field>,
+    pub list_adds: HashMap<Setting, TextFieldState>,
     /// The setting whose list of choices is open under it, when one is.
     pub picker: Option<Setting>,
     /// What the open list of choices is narrowed to.
-    pub filter: Field,
+    pub filter: TextFieldState,
     /// The language whose settings the languages page shows, by id; the first installed one when nothing.
     pub language: Option<String>,
     /// The box the keymap's actions are searched with.
-    pub keymap_find: Field,
+    pub keymap_find: TextFieldState,
     /// The families of the fonts installed on this machine, by name.
     pub fonts: Vec<String>,
     /// The families among them whose letters are all as wide as each other.
@@ -115,7 +115,9 @@ impl WorkspaceState {
         for setting in Setting::ALL.into_iter().filter(|setting| setting.is_text()) {
             if !self.settings_page.fields.contains_key(&setting) {
                 let text = setting.text(self);
-                self.settings_page.fields.insert(setting, Field::new(text));
+                self.settings_page
+                    .fields
+                    .insert(setting, TextFieldState::new(text));
             }
         }
         for listed in crate::settings_catalog::LISTS {
@@ -139,17 +141,11 @@ impl WorkspaceState {
             .fields
             .retain(|setting, _| setting.keeper() != Keeper::Machine);
         self.fill_fields();
-        if let Some(agent) = self
-            .machine
-            .agents
-            .default_agent
-            .as_deref()
-            .and_then(|id| self.agent_position(id))
-            && self.sessions.is_empty()
-        {
-            self.agent = agent;
-        }
         if self.sessions.is_empty() {
+            let default = self.machine.agents.default_agent.as_deref();
+            if let Some(agent) = default.and_then(|id| self.agent_position(id)) {
+                self.agent = agent;
+            }
             self.keep_startable_agent();
         }
         self.apply_indentation();

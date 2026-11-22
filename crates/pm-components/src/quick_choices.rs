@@ -1,11 +1,13 @@
 //! The lists the quick input offers to pick one thing from: a theme, a keymap, a setting of the agent and its values, a message to rewind to or fork from, a branch to check out, or what to type to list something else; and what picking each does.
 
+use crate::areas::ChatEvent;
+use crate::events::Event;
+use crate::target::Target;
 use pm_editor::Preset;
-use pm_input::FocusId;
-use pm_text::Field;
+use rustle::TextFieldState;
 
 use crate::listing::{Items, Listing};
-use crate::state::{FORK_BASE, Outgoing, Page, RESTORE_BASE, REWIND_BASE, WorkspaceState};
+use crate::state::{Outgoing, Page, WorkspaceState};
 
 /// What a list of choices is for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -86,7 +88,7 @@ impl Choosing {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Then {
     /// Presses the control `id`, as a click on it would.
-    Press(FocusId),
+    Press(Target),
     /// Draws the window in the theme family of this name.
     Theme(String),
     /// Starts the keys from this keymap.
@@ -155,6 +157,17 @@ const PREFIXES: [(&str, &str); 7] = [
     ("?", "List what can be typed first"),
 ];
 
+/// A choice for each of `tasks`, by name and command, picking it doing what `then` makes of its place among them.
+fn run<'a>(
+    tasks: impl Iterator<Item = (&'a String, &'a String)>,
+    then: fn(usize) -> Then,
+) -> Vec<Choice> {
+    tasks
+        .enumerate()
+        .map(|(index, (name, command))| Choice::new(name.clone(), command.clone(), then(index)))
+        .collect()
+}
+
 /// The first line of `text`, as a list names a message by it.
 fn first_line(text: &str) -> String {
     text.lines()
@@ -170,7 +183,7 @@ impl WorkspaceState {
         match choosing {
             Choosing::Theme => {
                 let held = &self.window.appearance.dark_theme;
-                pm_theme::families()
+                crate::theme::families()
                     .into_iter()
                     .map(|family| {
                         let current = family.name == *held;
@@ -217,10 +230,10 @@ impl WorkspaceState {
                 let Some(session) = self.open() else {
                     return Vec::new();
                 };
-                let (wanted, base) = match choosing {
-                    Choosing::Rewind => (true, REWIND_BASE),
-                    Choosing::Restore => (true, RESTORE_BASE),
-                    _ => (false, FORK_BASE),
+                let (wanted, target): (bool, fn(usize) -> Target) = match choosing {
+                    Choosing::Rewind => (true, |index| Target::Chat(ChatEvent::Rewind(index))),
+                    Choosing::Restore => (true, |index| Target::Chat(ChatEvent::Restore(index))),
+                    _ => (false, |index| Target::Chat(ChatEvent::Fork(index))),
                 };
                 session
                     .messages
@@ -229,11 +242,7 @@ impl WorkspaceState {
                     .rev()
                     .filter(|(_, message)| message.from_user == wanted)
                     .map(|(index, message)| {
-                        Choice::new(
-                            first_line(&message.text),
-                            "",
-                            Then::Press(FocusId(base + index as u64)),
-                        )
+                        Choice::new(first_line(&message.text), "", Then::Press(target(index)))
                     })
                     .filter(|choice| !choice.label.is_empty())
                     .collect()
@@ -274,32 +283,20 @@ impl WorkspaceState {
                     )
                 })
                 .collect(),
-            Choosing::Task => self
-                .tasks
-                .tasks
-                .iter()
-                .enumerate()
-                .map(|(index, task)| {
-                    Choice::new(
-                        task.name.clone(),
-                        task.command.clone(),
-                        Then::RunTask(index),
-                    )
-                })
-                .collect(),
-            Choosing::RunnableTask => self
-                .tasks
-                .options
-                .iter()
-                .enumerate()
-                .map(|(index, task)| {
-                    Choice::new(
-                        task.name.clone(),
-                        task.command.clone(),
-                        Then::RunPlace(index),
-                    )
-                })
-                .collect(),
+            Choosing::Task => run(
+                self.tasks
+                    .tasks
+                    .iter()
+                    .map(|task| (&task.name, &task.command)),
+                Then::RunTask,
+            ),
+            Choosing::RunnableTask => run(
+                self.tasks
+                    .options
+                    .iter()
+                    .map(|task| (&task.name, &task.command)),
+                Then::RunPlace,
+            ),
             Choosing::Toolchain => self
                 .tasks
                 .toolchains
@@ -339,7 +336,7 @@ impl WorkspaceState {
                 submodule: None,
             });
         }
-        let filter = Field::new(if choosing == Choosing::Help { "?" } else { "" });
+        let filter = TextFieldState::new(if choosing == Choosing::Help { "?" } else { "" });
         let choices = self.choices_of(choosing);
         let matched = crate::listing::matching_choices(&choices, "");
         let picked = matched
@@ -395,8 +392,8 @@ impl WorkspaceState {
             } = &mut listing.items
             && *held == choosing
         {
-            let renewed = Self::with_new_branch(choosing, renewed, filter.text());
-            *matched = crate::listing::matching_choices(&renewed, filter.text());
+            let renewed = Self::with_new_branch(choosing, renewed, &filter.text());
+            *matched = crate::listing::matching_choices(&renewed, &filter.text());
             *choices = renewed;
             listing.problem = choices.is_empty().then(|| choosing.empty().to_owned());
         }
@@ -405,66 +402,46 @@ impl WorkspaceState {
     /// The state after `choice` was picked from the quick input hanging at `at`.
     pub(crate) fn choice_taken(mut self, choice: Choice, at: (f32, f32)) -> Self {
         match choice.then {
-            Then::Press(id) => self.after(id),
+            Then::Press(id) => return self.handle(Event::pressing(id)),
+            Then::Setting(index) => {
+                return self.choices_requested(Choosing::SettingValue(index), at);
+            }
+            Then::Type(prefix) => return self.quick_typed(prefix, at),
             Then::Theme(name) => {
                 self.window.appearance.light_theme = name.clone();
                 self.window.appearance.dark_theme = name;
-                self
             }
-            Then::Keymap(preset) => {
-                self.editor.keymap = preset;
-                self
-            }
-            Then::Setting(index) => self.choices_requested(Choosing::SettingValue(index), at),
-            Then::Value(index, value) => {
-                self.agent_setting_changed(index, &value);
-                self
-            }
+            Then::Keymap(preset) => self.editor.keymap = preset,
+            Then::Value(index, value) => self.agent_setting_changed(index, &value),
             Then::Checkout(branch) => {
-                if let Some(session) = self.review_index() {
-                    self.git.trouble = None;
-                    self.git.busy = Some("Switching branch…");
-                    self.outbox.push(Outgoing::Checkout {
-                        session,
-                        branch,
-                        submodule: None,
-                    });
-                }
-                self
+                self.branch_work("Switching branch…", |session| Outgoing::Checkout {
+                    session,
+                    branch,
+                    submodule: None,
+                })
             }
             Then::CreateBranch(name) => {
-                if let Some(session) = self.review_index() {
-                    self.git.trouble = None;
-                    self.git.busy = Some("Making branch…");
-                    self.outbox.push(Outgoing::CreateBranch {
-                        session,
-                        name,
-                        submodule: None,
-                    });
-                }
-                self
+                self.branch_work("Making branch…", |session| Outgoing::CreateBranch {
+                    session,
+                    name,
+                    submodule: None,
+                })
             }
-            Then::Type(prefix) => self.quick_typed(prefix, at),
-            Then::DebugStart(index) => {
-                self.debug_scenario_taken(index);
-                self
-            }
-            Then::DebugAttach(pid) => {
-                self.debug_process_taken(pid);
-                self
-            }
-            Then::RunTask(index) => {
-                self.task_taken(index);
-                self
-            }
-            Then::RunPlace(index) => {
-                self.runnable_taken(index);
-                self
-            }
-            Then::Toolchain(language, id) => {
-                self.toolchain_taken(language, id);
-                self
-            }
+            Then::DebugStart(index) => self.debug_scenario_taken(index),
+            Then::DebugAttach(pid) => self.debug_process_taken(pid),
+            Then::RunTask(index) => self.task_taken(index),
+            Then::RunPlace(index) => self.runnable_taken(index),
+            Then::Toolchain(language, id) => self.toolchain_taken(language, id),
+        }
+        self
+    }
+
+    /// Sends what `request` makes for the session the review panel is about, when there is one, saying `busy` meanwhile and clearing the trouble last told.
+    fn branch_work(&mut self, busy: &'static str, request: impl FnOnce(usize) -> Outgoing) {
+        if let Some(session) = self.review_index() {
+            self.git.trouble = None;
+            self.git.busy = Some(busy);
+            self.outbox.push(request(session));
         }
     }
 
@@ -481,7 +458,7 @@ impl WorkspaceState {
     }
 
     /// The state with the menu of the session shown pressed on its row `row`, as a click on that row would.
-    pub fn session_command(mut self, row: FocusId) -> Self {
+    pub fn session_command(mut self, row: Target) -> Self {
         let Page::Session(session) = self.page else {
             return self;
         };
@@ -489,17 +466,17 @@ impl WorkspaceState {
             session,
             at: (0.0, 0.0),
         });
-        self.after(row)
+        self.handle(Event::pressing(row))
     }
 
     /// The control answering what the agent of the session shown asks with an answer of `verdict`, when it asks.
-    pub fn answer_of(&self, verdict: pm_harness::Verdict) -> Option<FocusId> {
+    pub fn answer_of(&self, verdict: pm_harness::Verdict) -> Option<Target> {
         let ask = self.open()?.ask.as_ref()?;
         let index = ask
             .choices
             .iter()
             .position(|choice| choice.verdict == verdict)?;
-        Some(FocusId(crate::state::CHOICE_BASE + index as u64))
+        Some(Target::Chat(ChatEvent::Choice(index)))
     }
 
     /// The state with the menu of the tab shown pressed on `command`, as a click on that row would.

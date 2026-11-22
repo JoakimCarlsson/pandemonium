@@ -1,12 +1,14 @@
 //! Where the window was when it was closed, kept on this machine so that the next launch opens on the same page.
 
+use pm_components::areas::SidebarEvent;
+use pm_components::areas::{ComposerEvent, EditorEvent};
+
 use pm_components::browser_tabs::SavedTab;
-use pm_components::open_files::{Contents, EDITOR_FIELD, Left};
+use pm_components::events::Event;
+use pm_components::open_files::{Contents, Left};
 use pm_components::panes::{Layout, Panes};
-use pm_components::state::{
-    PROMPT, Page, ReviewTab, SESSION_BASE, Tab, WorkspaceState, prompt_field,
-};
-use pm_input::FocusId;
+use pm_components::state::{Page, ReviewTab, Tab, WorkspaceState, prompt_field};
+use pm_components::target::Target;
 use serde::{Deserialize, Serialize};
 
 mod writer;
@@ -119,6 +121,9 @@ pub struct View {
     /// How far down the review panel's list was scrolled, in logical pixels.
     #[serde(default)]
     tree_scroll: f32,
+    /// The row of the project's files at the top of their list.
+    #[serde(default)]
+    files_first_row: usize,
     /// How far down the diff was scrolled, in logical pixels.
     #[serde(default)]
     diff_scroll: f32,
@@ -286,8 +291,10 @@ struct SavedBrowserTab {
 /// The panes of the main area as they were left.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 struct SavedPanes {
-    /// How the area was cut.
-    layout: Layout,
+    /// How the area was cut, as it is written: a layout's shares are held as observable
+    /// state the window owns, so the view keeps their values only, which can go to the
+    /// thread that writes it.
+    layout: serde_json::Value,
     /// The pane last worked in, by position.
     focused: usize,
 }
@@ -298,6 +305,12 @@ fn open() -> bool {
 }
 
 impl View {
+    /// A number that differs between two views that would be written differently, made from
+    /// what would be written without keeping it, for an effect keyed on the view.
+    pub fn fingerprint(&self) -> u64 {
+        crate::fingerprint::of(self)
+    }
+
     /// The browsers of the sessions other than the one that was open, by machine and server number.
     pub(crate) fn session_browsers(&self) -> &[SavedSessionBrowser] {
         &self.session_browsers
@@ -323,7 +336,7 @@ impl View {
     /// What `state` shows now, with `focused` the field that has the keyboard and `server_number` telling each session's machine and number on its server.
     pub fn capture(
         state: &WorkspaceState,
-        focused: Option<FocusId>,
+        focused: Option<Target>,
         server_number: impl Fn(usize) -> Option<(Option<String>, u64)>,
     ) -> Self {
         let path = |project: usize| {
@@ -372,7 +385,8 @@ impl View {
                         path: viewer.path.clone(),
                         head: viewer.head,
                         preview: viewer.preview,
-                        scroll: viewer.scroll,
+                        scroll: viewer.top_row(state.wrap_columns(), state.editor.row_height())
+                            * state.editor.row_height(),
                         caret: document.map_or(0, |document| document.field.caret()),
                         unsaved: document
                             .filter(|document| document.is_dirty())
@@ -384,8 +398,8 @@ impl View {
             Vec::new()
         };
         let typing = match focused {
-            Some(PROMPT) => Some(Typing::Prompt),
-            Some(EDITOR_FIELD) if with_files => Some(Typing::Editor),
+            Some(Target::Composer(ComposerEvent::Prompt)) => Some(Typing::Prompt),
+            Some(Target::Editor(EditorEvent::EditorField)) if with_files => Some(Typing::Editor),
             _ => None,
         };
         Self {
@@ -412,24 +426,25 @@ impl View {
             files_tab: state.review_tab == ReviewTab::Files,
             open_tree: sorted(&state.open_tree),
             closed_folders: sorted(&state.closed_folders),
-            tree_scroll: state.tree_scroll,
-            diff_scroll: state.diff_scroll,
+            tree_scroll: state.tree_scroll.offset(),
+            files_first_row: state.files_list.first_visible_item().unwrap_or(0),
+            diff_scroll: state.diff_list.scroll().offset(),
             changes_open: state.git.changes_open,
             graph_open: state.git.graph_open,
             graph_all: state.git.graph_all,
-            graph_height: state.git.graph_height,
-            terminal_maximized: state.terminal_maximized,
-            terminal_height: state.terminal_height,
-            sidebar_width: state.sidebar_width,
+            graph_height: state.git.graph_height.get(),
+            terminal_maximized: state.sizes.terminal_maximized.get(),
+            terminal_height: state.sizes.terminal_height.get(),
+            sidebar_width: state.sizes.sidebar_width.get(),
             recent_commands: state
                 .recent_commands
                 .iter()
                 .map(|action| action.key().to_owned())
                 .collect(),
-            review_width: state.review_width,
-            plan_width: state.plan_width,
+            review_width: state.sizes.review_width.get(),
+            plan_width: state.sizes.plan_width.get(),
             terminal: state.terminal,
-            scroll: state.sidebar_scroll,
+            scroll: state.sidebar_scroll.offset(),
             agent: state.agent,
             prompt: state.prompt.text().to_owned(),
             typing,
@@ -452,7 +467,7 @@ impl View {
                 })
                 .collect(),
             panes: Some(SavedPanes {
-                layout: state.panes.layout.clone(),
+                layout: serde_json::to_value(&state.panes.layout).unwrap_or_default(),
                 focused: state.panes.focused,
             }),
         }
@@ -468,10 +483,10 @@ impl View {
     }
 
     /// The field the reader was typing in, to give the keyboard back to once the view is finished.
-    pub fn typing(&self) -> Option<FocusId> {
+    pub fn typing(&self) -> Option<Target> {
         match self.typing? {
-            Typing::Prompt => Some(PROMPT),
-            Typing::Editor => Some(EDITOR_FIELD),
+            Typing::Prompt => Some(Target::Composer(ComposerEvent::Prompt)),
+            Typing::Editor => Some(Target::Editor(EditorEvent::EditorField)),
         }
     }
 
@@ -512,12 +527,12 @@ impl View {
         state.open_tree = self.open_tree.iter().cloned().collect();
         state.closed_folders = self.closed_folders.iter().cloned().collect();
         state.terminal = self.terminal;
-        state.terminal_maximized = self.terminal_maximized;
+        state.sizes.terminal_maximized.set(self.terminal_maximized);
         if self.terminal_height > 0.0 {
-            state.terminal_height = self.terminal_height;
+            state.sizes.terminal_height.set(self.terminal_height);
         }
         if self.sidebar_width > 0.0 {
-            state.sidebar_width = self.sidebar_width;
+            state.sizes.sidebar_width.set(self.sidebar_width);
         }
         state.recent_commands = self
             .recent_commands
@@ -525,9 +540,9 @@ impl View {
             .filter_map(|key| pm_editor::Action::of_key(key))
             .collect();
         if self.review_width > 0.0 {
-            state.review_width = self.review_width;
+            state.sizes.review_width.set(self.review_width);
         }
-        state.plan_width = self.plan_width;
+        state.sizes.plan_width.set(self.plan_width);
         state.agent = self.agent.min(state.agent_slots().saturating_sub(1));
         state.prompt = prompt_field(&self.prompt);
         state
@@ -539,7 +554,7 @@ impl View {
         let mut state = match (open, state.page) {
             (Some(position), _) => {
                 state.browser_adopted_by(position);
-                let mut opened = state.after(FocusId(SESSION_BASE + position as u64));
+                let mut opened = state.handle(Event::Sidebar(SidebarEvent::Session(position)));
                 opened.tab = if self.diff { Tab::Diff } else { Tab::Chat };
                 opened.sync_context();
                 self.reopen_files(opened)
@@ -557,16 +572,21 @@ impl View {
         state.git.graph_open = self.graph_open;
         state.git.graph_all = self.graph_all;
         if self.graph_height > 0.0 {
-            state.git.graph_height = self.graph_height;
+            state.git.graph_height.set(self.graph_height);
         }
         state.review_tab = self.review_tab();
-        state.sidebar_scroll = self.scroll;
-        state.tree_scroll = self.tree_scroll;
-        state.diff_scroll = self.diff_scroll;
+        state.sidebar_scroll.jump_to(self.scroll);
+        state.tree_scroll.jump_to(self.tree_scroll);
+        state
+            .files_list
+            .scroll_to_item_offset(self.files_first_row, 0.0);
+        state.scroll_diff_to(self.diff_scroll);
         state.refresh_files();
-        if let Some(saved) = &self.panes {
+        if let Some(saved) = &self.panes
+            && let Ok(layout) = serde_json::from_value::<Layout>(saved.layout.clone())
+        {
             state.panes = Panes {
-                layout: saved.layout.clone(),
+                layout,
                 focused: saved.focused,
                 parked: None,
             };
@@ -592,6 +612,7 @@ impl View {
                 viewer.preview = false;
             }
         }
+        let (columns, row) = (opened.wrap_columns(), opened.editor.row_height());
         for file in &self.files {
             if let Some(viewer) = opened
                 .git
@@ -600,7 +621,7 @@ impl View {
                 .find(|viewer| viewer.path == file.path && viewer.head == file.head)
             {
                 viewer.preview = file.preview;
-                viewer.scroll = file.scroll;
+                viewer.scroll_to_row(file.scroll / row.max(1.0), columns, row);
                 viewer.left = Some(Left {
                     unsaved: file.unsaved.clone(),
                     caret: file.caret,
@@ -657,11 +678,11 @@ mod tests {
     /// Each session's browser is saved with its session, and a view saved with one browser for the window restores into the session that was open.
     #[test]
     fn browsers_are_saved_per_session() {
-        let mut state = WorkspaceState::sample().after(FocusId(SESSION_BASE));
+        let mut state = WorkspaceState::sample().handle(Event::Sidebar(SidebarEvent::Session(0)));
         state.open_browser("http://localhost:3000");
-        state = state.after(FocusId(SESSION_BASE + 1));
+        state = state.handle(Event::Sidebar(SidebarEvent::Session(1)));
         state.open_browser("http://localhost:4000");
-        state = state.after(FocusId(SESSION_BASE));
+        state = state.handle(Event::Sidebar(SidebarEvent::Session(0)));
         let view = View::capture(&state, None, |index| Some((None, index as u64 + 1)));
         assert_eq!(view.session_browsers().len(), 1);
         assert_eq!(view.session_browsers()[0].number, 2);
@@ -682,5 +703,19 @@ mod tests {
             "http://localhost:3000"
         );
         assert_eq!(reopened.page, Page::Session(0));
+    }
+
+    /// The sidebar's list is saved as the offset of its scroll state, under the same `scroll`
+    /// field, and a reopened session starts scrolled to that offset.
+    #[test]
+    fn the_sidebar_keeps_its_place() {
+        let state = WorkspaceState::sample();
+        state.sidebar_scroll.jump_to(84.0);
+        let view = View::capture(&state, None, |index| Some((None, index as u64 + 1)));
+        let text = serde_json::to_value(&view).unwrap();
+        assert_eq!(text["scroll"], serde_json::json!(84.0));
+        let restored: View = serde_json::from_value(text).unwrap();
+        let reopened = restored.reopen(restored.apply(WorkspaceState::sample()), Some(0));
+        assert_eq!(reopened.sidebar_scroll.offset(), 84.0);
     }
 }

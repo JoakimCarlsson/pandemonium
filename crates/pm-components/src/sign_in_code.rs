@@ -1,29 +1,17 @@
 //! The code a sign-in waits for the reader to enter on a web page: the dialog that shows it while the sign-in runs, and what its buttons do.
 
-use pm_input::FocusId;
-use pm_style::{Role, flex, flex_col, font_medium, font_mono, gap, items_center, p, pb, px};
-use pm_ui::{Node, node};
+use crate::areas::DialogEvent;
+use crate::button;
+use crate::target::Target;
+use crate::theme;
+use crate::theme::Role;
+use rustle::Modifier;
+use rustle::{Alignment, Arrangement, TextOverflow};
 
+use crate::Modal;
 use crate::button::Variant;
-use crate::parts::{line, spacer, wrap};
-use crate::size::Size;
+use crate::parts::{spacer, wrapping};
 use crate::state::{Outgoing, WorkspaceState};
-use crate::{Button, Modal};
-
-/// The dimmed window behind the dialog.
-pub const SIGN_IN_CODE_OUTSIDE: FocusId = FocusId(7_442_000);
-
-/// The panel of the dialog.
-pub const SIGN_IN_CODE_INSIDE: FocusId = FocusId(7_442_001);
-
-/// Puts the code on the clipboard.
-pub const SIGN_IN_CODE_COPY: FocusId = FocusId(7_442_002);
-
-/// Opens the page the code is entered on.
-pub const SIGN_IN_CODE_OPEN: FocusId = FocusId(7_442_003);
-
-/// Hides the dialog, leaving the sign-in running.
-pub const SIGN_IN_CODE_HIDE: FocusId = FocusId(7_442_004);
 
 /// How wide the dialog is, in logical pixels.
 const WIDTH: f32 = 420.0;
@@ -43,10 +31,7 @@ impl WorkspaceState {
     /// The state showing that the sign-in of the agent kept under `agent` waits for `code` to be entered on the page `url`.
     pub fn with_sign_in_code(mut self, agent: &str, url: String, code: String) -> Self {
         let name = self
-            .settings_servers
-            .agents
-            .iter()
-            .chain(&self.settings_servers.retired)
+            .all_agents()
             .find(|entry| entry.id == agent)
             .map_or_else(|| agent.to_owned(), |entry| entry.name.clone());
         self.sign_in_code = Some(SignInCode {
@@ -64,76 +49,108 @@ impl WorkspaceState {
     }
 
     /// Carries out `action` if it presses a part of the code dialog, and says whether it did.
-    pub(crate) fn press_sign_in_code(&mut self, action: FocusId) -> bool {
+    pub(crate) fn press_sign_in_code(&mut self, action: Target) -> bool {
         let Some(shown) = self.sign_in_code.as_ref() else {
             return false;
         };
         match action {
-            SIGN_IN_CODE_COPY => self.outbox.push(Outgoing::Copy {
+            Target::Dialog(DialogEvent::SignInCodeCopy) => self.outbox.push(Outgoing::Copy {
                 text: shown.code.clone(),
             }),
-            SIGN_IN_CODE_OPEN => self.outbox.push(Outgoing::Open {
+            Target::Dialog(DialogEvent::SignInCodeOpen) => self.outbox.push(Outgoing::Open {
                 address: shown.url.clone(),
             }),
-            SIGN_IN_CODE_HIDE | SIGN_IN_CODE_OUTSIDE => self.sign_in_code = None,
-            SIGN_IN_CODE_INSIDE => {}
+            Target::Dialog(DialogEvent::SignInCodeHide | DialogEvent::SignInCodeOutside) => {
+                self.sign_in_code = None
+            }
+            Target::Dialog(DialogEvent::SignInCodeInside) => {}
             _ => return false,
         }
         true
     }
 }
 
-/// A button of the dialog.
-fn button(label: &str, id: FocusId, variant: Variant) -> Node {
-    Button::new(label, id)
-        .variant(variant)
-        .size(Size::Sm)
-        .build()
-}
-
-/// The dialog showing the code a sign-in waits for, while there is one.
-pub fn code_dialog(state: &WorkspaceState) -> Option<Node> {
-    let shown = state.sign_in_code.as_ref()?;
+/// Emits the dialog showing the code a sign-in waits for, while there is one; nothing otherwise.
+#[track_caller]
+pub fn code_dialog(state: &WorkspaceState) {
+    let Some(shown) = state.sign_in_code.as_ref() else {
+        return;
+    };
     let title = format!("Sign in to {}", shown.agent);
     let words = format!(
         "Enter this code on {} to finish signing in. This closes by itself once you have.",
         shown.url
     );
-    Some(
-        Modal::new(SIGN_IN_CODE_OUTSIDE, SIGN_IN_CODE_INSIDE)
-            .width(WIDTH)
-            .child(
-                node()
-                    .styles([flex(), flex_col(), gap(2), p(5)])
-                    .child(line(title, 15, 1.4, Role::Text).styles([font_medium()]))
-                    .children(
-                        wrap(&words, 13, WIDTH - 40.0)
-                            .iter()
-                            .map(|words| line(words, 13, 1.5, Role::Muted)),
-                    )
-                    .child(
-                        node().styles([flex(), items_center(), px(0), pb(0)]).child(
-                            line(shown.code.as_str(), 24, 1.6, Role::Text)
-                                .styles([font_mono(), font_medium()]),
-                        ),
-                    ),
-            )
-            .child(
-                node()
-                    .styles([flex(), items_center(), gap(2), px(5), pb(5)])
-                    .child(button("Hide", SIGN_IN_CODE_HIDE, Variant::Ghost))
-                    .child(spacer())
-                    .child(button("Copy code", SIGN_IN_CODE_COPY, Variant::Ghost))
-                    .child(button("Open page", SIGN_IN_CODE_OPEN, Variant::Default)),
-            )
-            .build(),
+    let code = shown.code.clone();
+    Modal::new(
+        Target::Dialog(DialogEvent::SignInCodeOutside),
+        Target::Dialog(DialogEvent::SignInCodeInside),
     )
+    .width(WIDTH)
+    .build_with(move || {
+        rustle::column_arranged(
+            Modifier::new().padding(theme::sp(5)),
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Start,
+            || {
+                rustle::basic_text(
+                    Modifier::new(),
+                    title,
+                    theme::strong(15, Role::Text),
+                    TextOverflow::Ellipsis,
+                );
+                wrapping(Modifier::new(), words, 13, 1.5, Role::Muted);
+                crate::parts::title(code, 24, 1.6);
+            },
+        );
+        rustle::row_arranged(
+            Modifier::new().fill_max_width().padding_each(
+                theme::sp(5),
+                0.0,
+                theme::sp(5),
+                theme::sp(5),
+            ),
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Center,
+            || {
+                button::action(
+                    "Hide",
+                    Target::Dialog(DialogEvent::SignInCodeHide),
+                    Variant::Ghost,
+                );
+                spacer();
+                let copy = Target::Dialog(DialogEvent::SignInCodeCopy);
+                button::action("Copy code", copy, Variant::Ghost);
+                let open = Target::Dialog(DialogEvent::SignInCodeOpen);
+                button::action("Open page", open, Variant::Default);
+            },
+        );
+    });
+}
+
+/// The targets of the dialog buttons `state` lays out in a window 800 by 600 pixels: none when it shows no dialog.
+#[cfg(test)]
+fn laid_out_buttons(state: &WorkspaceState) -> Vec<Target> {
+    let state = state.clone();
+    let laid = crate::tagged::lay_out(800.0, 600.0, None, move || code_dialog(&state));
+    laid.ids()
+        .into_iter()
+        .filter(|id| {
+            [
+                Target::Dialog(DialogEvent::SignInCodeCopy),
+                Target::Dialog(DialogEvent::SignInCodeOpen),
+                Target::Dialog(DialogEvent::SignInCodeHide),
+            ]
+            .contains(id)
+        })
+        .collect()
 }
 
 #[cfg(test)]
 /// Tests for the code dialog.
 mod tests {
     use super::*;
+    use crate::areas::ComposerEvent;
 
     /// A shown code names its agent, its buttons copy the code and open the page, and hiding or the end of the sign-in takes it away.
     #[test]
@@ -143,10 +160,10 @@ mod tests {
             "https://github.com/login/device".to_owned(),
             "ABCD-1234".to_owned(),
         );
-        assert!(code_dialog(&state).is_some());
+        assert!(!laid_out_buttons(&state).is_empty());
         let mut state = state;
-        assert!(state.press_sign_in_code(SIGN_IN_CODE_COPY));
-        assert!(state.press_sign_in_code(SIGN_IN_CODE_OPEN));
+        assert!(state.press_sign_in_code(Target::Dialog(DialogEvent::SignInCodeCopy)));
+        assert!(state.press_sign_in_code(Target::Dialog(DialogEvent::SignInCodeOpen)));
         let sent = state.take_outbox();
         assert!(
             sent.iter()
@@ -155,9 +172,9 @@ mod tests {
         assert!(sent.iter().any(
             |outgoing| matches!(outgoing, Outgoing::Open { address } if address.contains("login/device"))
         ));
-        assert!(!state.press_sign_in_code(FocusId(1)));
-        assert!(state.press_sign_in_code(SIGN_IN_CODE_HIDE));
-        assert!(code_dialog(&state).is_none());
+        assert!(!state.press_sign_in_code(Target::Composer(ComposerEvent::Prompt)));
+        assert!(state.press_sign_in_code(Target::Dialog(DialogEvent::SignInCodeHide)));
+        assert!(laid_out_buttons(&state).is_empty());
         let ended = WorkspaceState::new(&[])
             .with_sign_in_code("copilot", "u".to_owned(), "c".to_owned())
             .sign_in_code_ended();

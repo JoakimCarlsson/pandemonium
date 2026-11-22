@@ -154,20 +154,13 @@ pub fn build_stopping(paths: &[&str], layout: Layout, stops: &[&str]) -> Vec<Ent
     if layout.sorted {
         root = root.sorted();
     }
-    let children = root
-        .children
-        .into_iter()
-        .map(|child| {
-            if layout.compact {
-                child.compacted(stops)
-            } else {
-                child
-            }
-        })
-        .collect::<Vec<_>>();
     let mut counter = 0;
-    children
+    root.children
         .into_iter()
+        .map(|child| match layout.compact {
+            true => child.compacted(stops),
+            false => child,
+        })
         .map(|child| child.finish(&mut counter))
         .collect()
 }

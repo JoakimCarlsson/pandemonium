@@ -1,8 +1,10 @@
 //! The small notice in a conversation that its turn moved to a backup model, because the model of a slot kept failing.
 
-use pm_icon::IconName;
-use pm_style::{Role, flex, flex_none, gap, items_center, min_w_px, px, py};
-use pm_ui::{Node, node};
+use crate::theme;
+use crate::theme::Role;
+use rustle::Modifier;
+use rustle::phosphor;
+use rustle::{Alignment, Arrangement};
 
 use crate::parts::{clipped, glyph};
 
@@ -29,19 +31,19 @@ pub fn fallback_words(from: &str, to: &str, reason: &str) -> String {
     format!("Switched to {to}: {from} {}", cause(reason))
 }
 
-/// The notice that the rest of the turn asks `to` because `from` failed for `reason`: one muted line with a bolt before it.
-pub fn fallback_notice(from: &str, to: &str, reason: &str) -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(1.5),
-            px(1),
-            py(0.5),
-            min_w_px(0),
-        ])
-        .child(glyph(IconName::Zap, 3.5, Role::Warning).styles([flex_none()]))
-        .child(clipped(fallback_words(from, to, reason), 12, Role::Muted))
+/// Emits the notice that the rest of the turn asks `to` because `from` failed for `reason`: one muted line with a bolt before it.
+pub fn fallback_notice(from: &str, to: &str, reason: &str) {
+    let words = fallback_words(from, to, reason);
+    let padded = Modifier::new().padding_xy(theme::sp(1), theme::sp(0.5));
+    rustle::row_arranged(
+        padded,
+        Arrangement::SpacedBy(theme::sp(1.5)),
+        Alignment::Center,
+        move || {
+            glyph(phosphor::LIGHTNING, 3.5, Role::Warning);
+            clipped(words, 12, Role::Muted);
+        },
+    );
 }
 
 #[cfg(test)]

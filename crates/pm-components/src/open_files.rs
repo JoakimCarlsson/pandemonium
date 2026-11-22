@@ -1,26 +1,14 @@
 //! The files open in the window beside the conversation: one tab each, a file looked at in a tab that the next one replaces, and kept once it is changed.
 
-use pm_input::FocusId;
-
-use pm_text::Edit;
+use crate::areas::EditorEvent;
+use crate::target::Target;
+use pm_editor::Edit;
 
 use crate::git_prompts::Prompt;
 use crate::panes::Item;
-use crate::preview::{PREVIEW_LINK_BASE, PREVIEW_LINKS, PREVIEW_SHOW, Rendering, SOURCE_SHOW};
+use crate::preview::Rendering;
 use crate::state::{Outgoing, Page, Tab, WorkspaceState};
 use pm_editor::Document;
-
-/// The text of the file being edited.
-pub const EDITOR_FIELD: FocusId = FocusId(7083);
-
-/// Writes the file being edited to the folder.
-pub const EDITOR_SAVE: FocusId = FocusId(7084);
-
-/// The first of the tabs of the open files; the rest follow it.
-pub const FILE_TAB_BASE: u64 = 4_000_000;
-
-/// The first of the buttons that close a file's tab; the rest follow it.
-pub const FILE_CLOSE_BASE: u64 = 4_100_000;
 
 /// How tall the strip above the lines is, in logical pixels.
 pub const STRIP: f32 = 40.0;
@@ -33,7 +21,7 @@ pub enum Contents {
     /// The text of the file.
     Text(Box<Document>),
     /// The pixels of a picture file, decoded.
-    Picture(pm_ui::Picture),
+    Picture(rustle::ImageData),
     /// Why there is nothing to show.
     Message(String),
 }
@@ -47,8 +35,10 @@ pub struct Viewer {
     pub head: bool,
     /// What it holds.
     pub contents: Contents,
-    /// How far down it is scrolled, in logical pixels.
-    pub scroll: f32,
+    /// The list of its lines, which says how far down it is scrolled; a file shown rendered scrolls by the list's scroll state.
+    pub scroll: rustle::LazyListState,
+    /// How far down the card about a place in it is scrolled, in logical pixels.
+    pub hover_scroll: rustle::ScrollState,
     /// Whether it is only being looked at: its tab is given up to the next file looked at, until the file is changed.
     pub preview: bool,
     /// Where the file was left when the window last closed, put back once its text arrives.
@@ -60,7 +50,7 @@ pub struct Viewer {
     /// Whether a file that can be rendered shows its source instead.
     pub source: bool,
     /// The text of a vector picture drawn, or why it could not be, once it has been tried.
-    pub drawn: Option<Result<pm_ui::Picture, String>>,
+    pub drawn: Option<Result<rustle::ImageData, String>>,
     /// Whether it is open only for the excerpts, which leaves its tab out of the strip.
     pub hidden: bool,
 }
@@ -92,21 +82,57 @@ impl Left {
     }
 }
 
-/// Puts the caret of `document` at `position` and returns how far down to scroll for its line to show a little below the top, rows `row` logical pixels tall holding `columns` characters when lines wrap.
+/// Puts the caret of `document` at `position` and scrolls its list of lines `scroll` for its line to show a little below the top, rows `row` logical pixels tall holding `columns` characters when lines wrap.
 pub(crate) fn jump(
     document: &mut Document,
     position: pm_protocol::Position,
+    scroll: &rustle::LazyListState,
     row: f32,
     columns: Option<usize>,
-) -> f32 {
+) {
     let line = document.jump(position);
-    (document.wrapped_row_of_line(line, columns) as f32 * row - row * 6.0).max(0.0)
+    let target = document.wrapped_row_of_line(line, columns) as f32 - 6.0;
+    crate::viewer::scroll_document_to_row(scroll, document, target, columns, row);
 }
 
 impl Viewer {
+    /// A file looked at in a tab the next one replaces, at `path`, read from the last commit when `head`, holding `contents`.
+    pub(crate) fn new(path: String, head: bool, contents: Contents) -> Self {
+        Self {
+            path,
+            head,
+            contents,
+            scroll: rustle::LazyListState::default(),
+            hover_scroll: rustle::ScrollState::default(),
+            preview: true,
+            left: None,
+            jump: None,
+            pinned: false,
+            source: false,
+            drawn: None,
+            hidden: false,
+        }
+    }
+
+    /// The text the file holds, when it holds text.
+    pub fn document(&self) -> Option<&Document> {
+        match &self.contents {
+            Contents::Text(document) => Some(document),
+            _ => None,
+        }
+    }
+
+    /// The text the file holds, to change, when it holds text.
+    pub(crate) fn document_mut(&mut self) -> Option<&mut Document> {
+        match &mut self.contents {
+            Contents::Text(document) => Some(document),
+            _ => None,
+        }
+    }
+
     /// Whether the file has changes that were not written to the folder.
     pub fn is_dirty(&self) -> bool {
-        matches!(&self.contents, Contents::Text(document) if document.is_dirty())
+        self.document().is_some_and(|document| document.is_dirty())
     }
 
     /// How the file is shown rendered, or nothing when it is shown as its source.
@@ -116,9 +142,7 @@ impl Viewer {
 
     /// What asks for the text of the file to be drawn as a vector picture, when it is one and is shown rendered.
     fn draw_request(&self, session: usize) -> Option<Outgoing> {
-        let Contents::Text(document) = &self.contents else {
-            return None;
-        };
+        let document = self.document()?;
         (self.rendering() == Some(Rendering::Vector)).then(|| Outgoing::DrawVector {
             session,
             path: self.path.clone(),
@@ -131,8 +155,9 @@ impl Viewer {
 impl WorkspaceState {
     /// How many characters a row of the file shown holds when long lines wrap, as soft wrap and the view's width say, or nothing when they do not.
     pub fn wrap_columns(&self) -> Option<usize> {
-        let fitting = self.code_view.map(|(width, cell)| {
-            let scale = pm_style::step_scale();
+        let fitting = self.code_size.get().map(|size| {
+            let cell = crate::theme::code_cell(self.editor.font_size as f32);
+            let scale = crate::theme::step_scale();
             let numbers = if self.editor.line_numbers { 13.0 } else { 2.0 };
             let runs = match self.git.shown {
                 Some(file) if !self.run_lines_of(file).is_empty() => crate::viewer::RUN_CELL,
@@ -140,7 +165,7 @@ impl WorkspaceState {
             };
             let gutter =
                 3.0 + (numbers + 4.0) * 4.0 * scale + 12.0 + crate::viewer::BREAKPOINT_CELL + runs;
-            (((width - gutter) / cell.max(1.0)).floor() as usize).max(10)
+            (((size.width - gutter) / cell.max(1.0)).floor() as usize).max(10)
         });
         match self.editor.soft_wrap {
             pm_editor::SoftWrap::Off => None,
@@ -153,12 +178,6 @@ impl WorkspaceState {
         }
     }
 
-    /// The state knowing the view of the file shown is `width` logical pixels wide, with a character of code `cell` wide.
-    pub fn with_code_view(mut self, width: f32, cell: f32) -> Self {
-        self.code_view = Some((width, cell));
-        self
-    }
-
     /// The file whose tab is showing, if one is.
     pub fn shown_viewer(&self) -> Option<&Viewer> {
         self.git
@@ -167,12 +186,29 @@ impl WorkspaceState {
             .filter(|_| matches!(self.tab, Tab::File | Tab::Excerpts))
     }
 
+    /// The file of the tab chosen, to change, whichever view shows.
+    pub(crate) fn chosen_viewer_mut(&mut self) -> Option<&mut Viewer> {
+        self.git.viewers.get_mut(self.git.shown?)
+    }
+
     /// The text of the file whose tab is showing, if it holds text.
     pub fn shown_document(&self) -> Option<&Document> {
-        match &self.shown_viewer()?.contents {
-            Contents::Text(document) => Some(document),
-            _ => None,
-        }
+        self.shown_viewer()?.document()
+    }
+
+    /// Puts `viewer` in the tab of the file only looked at, which it closes and returns, or in a new tab when there is none, and gives its position.
+    pub(crate) fn take_preview_tab(
+        &mut self,
+        session: usize,
+        viewer: Viewer,
+    ) -> (usize, Option<Viewer>) {
+        let Some(index) = self.git.viewers.iter().position(|held| held.preview) else {
+            self.git.viewers.push(viewer);
+            return (self.git.viewers.len() - 1, None);
+        };
+        let replaced = std::mem::replace(&mut self.git.viewers[index], viewer);
+        self.close_document(session, &replaced);
+        (index, Some(replaced))
     }
 
     /// Looks at the file at `path` in the window, as it is in the last commit when `head`, and asks the server for it; a file already open is shown, and any other takes the tab of the file looked at before.
@@ -195,19 +231,7 @@ impl WorkspaceState {
                 index
             }
             None => {
-                let viewer = Viewer {
-                    path: path.clone(),
-                    head,
-                    contents: Contents::Loading,
-                    scroll: 0.0,
-                    preview: true,
-                    left: None,
-                    jump: None,
-                    pinned: false,
-                    source: false,
-                    drawn: None,
-                    hidden: false,
-                };
+                let viewer = Viewer::new(path.clone(), head, Contents::Loading);
                 self.outbox.push(match Rendering::of(&path) {
                     Some(Rendering::Picture) => Outgoing::ReadPicture {
                         session,
@@ -220,27 +244,20 @@ impl WorkspaceState {
                         head,
                     },
                 });
-                match self.git.viewers.iter().position(|held| held.preview) {
-                    Some(index) => {
-                        let replaced = std::mem::replace(&mut self.git.viewers[index], viewer);
-                        self.close_document(session, &replaced);
-                        self.replace_pane_item(
-                            Item::File {
-                                path: replaced.path.clone(),
-                                head: replaced.head,
-                            },
-                            Item::File {
-                                path: self.git.viewers[index].path.clone(),
-                                head,
-                            },
-                        );
-                        index
-                    }
-                    None => {
-                        self.git.viewers.push(viewer);
-                        self.git.viewers.len() - 1
-                    }
+                let (index, replaced) = self.take_preview_tab(session, viewer);
+                if let Some(replaced) = replaced {
+                    self.replace_pane_item(
+                        Item::File {
+                            path: replaced.path,
+                            head: replaced.head,
+                        },
+                        Item::File {
+                            path: self.git.viewers[index].path.clone(),
+                            head,
+                        },
+                    );
                 }
+                index
             }
         };
         self.git.shown = Some(shown);
@@ -263,17 +280,9 @@ impl WorkspaceState {
             head: false,
         });
         self.git.viewers.push(Viewer {
-            path: path.to_owned(),
-            head: false,
-            contents: Contents::Loading,
-            scroll: 0.0,
             preview: false,
-            left: None,
-            jump: None,
-            pinned: false,
-            source: false,
-            drawn: None,
             hidden: true,
+            ..Viewer::new(path.to_owned(), false, Contents::Loading)
         });
         self.git.viewers.len() - 1
     }
@@ -361,11 +370,13 @@ impl WorkspaceState {
     }
 
     /// The state after the file shown is kept open because the reader pressed its tab or its row twice in quick succession, which is how a file looked at is kept without changing it.
-    pub fn with_file_kept(mut self, id: FocusId) -> Self {
-        let tab =
-            id.0.checked_sub(FILE_TAB_BASE)
-                .filter(|index| *index < self.git.viewers.len() as u64)
-                .map(|index| index as usize);
+    pub fn with_file_kept(mut self, id: Target) -> Self {
+        let tab = match id {
+            Target::Editor(EditorEvent::FileTab(index)) if index < self.git.viewers.len() => {
+                Some(index)
+            }
+            _ => None,
+        };
         let row = (self.tree_row_of(id).is_some_and(|target| !target.folder))
             .then_some(self.git.shown)
             .flatten();
@@ -387,13 +398,10 @@ impl WorkspaceState {
         read: Result<(Option<String>, bool, Option<String>), String>,
     ) -> Self {
         let current = self.viewer_of(session, path, head).is_some_and(|viewer| {
-            match &viewer.contents {
-                Contents::Text(document) => {
-                    document.is_dirty()
-                        || matches!(&read, Ok((Some(text), _, _)) if text == document.field.text())
-                }
-                _ => false,
-            }
+            viewer.document().is_some_and(|document| {
+                document.is_dirty()
+                    || matches!(&read, Ok((Some(text), _, _)) if text == document.field.text())
+            })
         });
         if current {
             return self;
@@ -406,10 +414,11 @@ impl WorkspaceState {
             .and_then(|(text, _, language)| text.as_ref().and(language.clone()));
         let mut draw = None;
         if let Some(viewer) = self.viewer_of(session, path, head) {
-            if let Contents::Text(shown) = &viewer.contents {
+            if let Some(shown) = viewer.document() {
+                let caret = shown.field.caret();
                 viewer.left.get_or_insert(Left {
                     unsaved: None,
-                    caret: shown.field.caret(),
+                    caret,
                 });
             }
             viewer.contents = match read {
@@ -419,7 +428,7 @@ impl WorkspaceState {
                         left.put_back(&mut document);
                     }
                     if let Some(position) = viewer.jump.take() {
-                        viewer.scroll = jump(&mut document, position, row, columns);
+                        jump(&mut document, position, &viewer.scroll, row, columns);
                     }
                     Contents::Text(Box::new(document))
                 }
@@ -431,13 +440,9 @@ impl WorkspaceState {
         self.outbox.extend(draw);
         self.ask_shown_figures();
         let opened = !head
-            && self.viewers_of(session).is_some_and(|viewers| {
-                viewers.iter().any(|viewer| {
-                    viewer.path == path
-                        && !viewer.head
-                        && matches!(viewer.contents, Contents::Text(_))
-                })
-            });
+            && self
+                .viewer_of(session, path, false)
+                .is_some_and(|viewer| viewer.document().is_some());
         if opened {
             self.outbox.push(Outgoing::ReadBase {
                 session,
@@ -454,7 +459,7 @@ impl WorkspaceState {
         session: usize,
         path: &str,
         head: bool,
-        read: Result<pm_ui::Picture, String>,
+        read: Result<rustle::ImageData, String>,
     ) -> Self {
         if let Some(viewer) = self.viewer_of(session, path, head) {
             viewer.contents = match read {
@@ -471,7 +476,7 @@ impl WorkspaceState {
         session: usize,
         path: &str,
         head: bool,
-        drawn: Result<pm_ui::Picture, String>,
+        drawn: Result<rustle::ImageData, String>,
     ) -> Self {
         if let Some(viewer) = self.viewer_of(session, path, head) {
             viewer.drawn = Some(drawn);
@@ -484,15 +489,11 @@ impl WorkspaceState {
         let Some(session) = self.review_index() else {
             return;
         };
-        let Some(viewer) = self
-            .git
-            .shown
-            .and_then(|index| self.git.viewers.get_mut(index))
-        else {
+        let Some(viewer) = self.chosen_viewer_mut() else {
             return;
         };
         viewer.source = source;
-        viewer.scroll = 0.0;
+        viewer.scroll.scroll().jump_to(0.0);
         let draw = viewer.draw_request(session);
         self.outbox.extend(draw);
         self.ask_shown_figures();
@@ -509,7 +510,7 @@ impl WorkspaceState {
         else {
             return;
         };
-        let Contents::Text(document) = &viewer.contents else {
+        let Some(document) = viewer.document() else {
             return;
         };
         let wanted = crate::figures::figures_of(document.field.text(), Some(&viewer.path));
@@ -521,7 +522,7 @@ impl WorkspaceState {
         let Some(viewer) = self.shown_viewer() else {
             return;
         };
-        let Contents::Text(document) = &viewer.contents else {
+        let Some(document) = viewer.document() else {
             return;
         };
         let Some(address) = pm_markdown::links(document.field.text())
@@ -538,38 +539,26 @@ impl WorkspaceState {
         }
     }
 
-    /// The state after the file shown is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_viewer(mut self, delta: f32, room: f32) -> Self {
-        if let Some(index) = self.git.shown
-            && let Some(viewer) = self.git.viewers.get_mut(index)
-        {
-            viewer.scroll = (viewer.scroll + delta).clamp(0.0, room);
-        }
-        self
-    }
-
     /// The state with the file shown scrolled just far enough to show the caret, in a view `height` logical pixels tall.
     pub fn with_caret_shown(mut self, height: f32) -> Self {
         let row = self.editor.row_height();
         let columns = self.wrap_columns();
-        let Some(index) = self.git.shown else {
+        let wanted_margin = self.editor.vertical_scroll_margin;
+        let Some(viewer) = self.chosen_viewer_mut() else {
             return self;
         };
-        let Some(viewer) = self.git.viewers.get_mut(index) else {
+        let Some(document) = viewer.document() else {
             return self;
         };
-        let Contents::Text(document) = &viewer.contents else {
-            return self;
-        };
-        let line = document.caret_row(columns);
-        let (top, bottom) = (line as f32 * row, (line + 1) as f32 * row);
-        let view = (height - STRIP).max(row);
-        let room = (view / row / 2.0).floor().max(0.0) as usize;
-        let margin = self.editor.vertical_scroll_margin.min(room) as f32 * row;
-        if top - margin < viewer.scroll {
-            viewer.scroll = (top - margin).max(0.0);
-        } else if bottom + margin > viewer.scroll + view {
-            viewer.scroll = bottom + margin - view;
+        let caret = document.caret_row(columns) as f32;
+        let view = (height - STRIP).max(row) / row;
+        let room = (view / 2.0).floor().max(0.0) as usize;
+        let margin = wanted_margin.min(room) as f32;
+        let top = viewer.top_row(columns, row);
+        if caret - margin < top {
+            viewer.scroll_to_row(caret - margin, columns, row);
+        } else if caret + 1.0 + margin > top + view {
+            viewer.scroll_to_row(caret + 1.0 + margin - view, columns, row);
         }
         self
     }
@@ -583,20 +572,15 @@ impl WorkspaceState {
             self.editor.remove_trailing_whitespace_on_save,
             self.editor.ensure_final_newline_on_save,
         );
-        let tidy = self
-            .shown_document()
-            .filter(|document| !document.field.is_read_only())
-            .and_then(|document| document.tidy_edit(trim, final_newline));
-        if let Some(edit) = tidy {
-            self.file_edited(edit);
-        }
-        let Some(index) = self.git.shown else {
+        self.edit_shown(|document| {
+            (!document.field.is_read_only())
+                .then(|| document.tidy_edit(trim, final_newline))
+                .flatten()
+        });
+        let Some(viewer) = self.chosen_viewer_mut() else {
             return;
         };
-        let Some(viewer) = self.git.viewers.get_mut(index) else {
-            return;
-        };
-        let Contents::Text(document) = &mut viewer.contents else {
+        let Some(document) = viewer.document_mut() else {
             return;
         };
         if document.field.is_read_only() || !document.is_dirty() {
@@ -620,7 +604,7 @@ impl WorkspaceState {
                 .iter_mut()
                 .filter(|viewer| viewer.path == path && !viewer.head)
             {
-                if let Contents::Text(document) = &mut viewer.contents {
+                if let Some(document) = viewer.document_mut() {
                     document.mark_unsaved();
                 }
             }
@@ -683,44 +667,26 @@ impl WorkspaceState {
     }
 
     /// Carries out `action` if it is a tab of an open file, a button of one or the file's own keys, and says whether it was.
-    pub(crate) fn press_files(&mut self, action: FocusId) -> bool {
-        let count = self.git.viewers.len() as u64;
-        if let Some(index) = action
-            .0
-            .checked_sub(FILE_TAB_BASE)
-            .filter(|index| *index < count)
-        {
-            self.git.shown = Some(index as usize);
-            self.tab = Tab::File;
-            self.ask_shown_figures();
-            return true;
-        }
-        if let Some(index) = action
-            .0
-            .checked_sub(FILE_CLOSE_BASE)
-            .filter(|index| *index < count)
-        {
-            let index = index as usize;
-            if self.git.viewers[index].pinned {
-                self.git.viewers[index].pinned = false;
-            } else {
-                self.close_file(index);
-            }
-            return true;
-        }
-        if let Some(place) = action
-            .0
-            .checked_sub(PREVIEW_LINK_BASE)
-            .filter(|place| *place < PREVIEW_LINKS)
-        {
-            self.follow_preview_link(place as usize);
-            return true;
-        }
+    pub(crate) fn press_files(&mut self, action: Target) -> bool {
+        let count = self.git.viewers.len();
         match action {
-            PREVIEW_SHOW => self.show_source(false),
-            SOURCE_SHOW => self.show_source(true),
-            EDITOR_SAVE => self.format_then_save(true, None),
-            EDITOR_FIELD => {}
+            Target::Editor(EditorEvent::FileTab(index)) if index < count => {
+                self.git.shown = Some(index);
+                self.tab = Tab::File;
+                self.ask_shown_figures();
+            }
+            Target::Editor(EditorEvent::FileClose(index)) if index < count => {
+                if self.git.viewers[index].pinned {
+                    self.git.viewers[index].pinned = false;
+                } else {
+                    self.close_file(index);
+                }
+            }
+            Target::Editor(EditorEvent::PreviewLink(place)) => self.follow_preview_link(place),
+            Target::Editor(EditorEvent::PreviewShow) => self.show_source(false),
+            Target::Editor(EditorEvent::SourceShow) => self.show_source(true),
+            Target::Editor(EditorEvent::EditorSave) => self.format_then_save(true, None),
+            Target::Editor(EditorEvent::EditorField) => {}
             _ if self.offer_pressed(action) => {}
             _ => return false,
         }

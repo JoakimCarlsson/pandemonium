@@ -12,6 +12,21 @@ impl WorkspaceState {
                 .is_some_and(|document| document.drag_started(byte))
     }
 
+    /// Whether a press at the byte `byte` of the file shown would pick up its selection to
+    /// drag it: dragging text is on and the press is inside the one selection.
+    pub fn editor_picks_up(&self, byte: usize) -> bool {
+        self.editor.drag_and_drop
+            && self
+                .shown_document()
+                .is_some_and(|document| document.picks_up_at(byte))
+    }
+
+    /// Whether selected text of the file shown is being dragged.
+    pub fn editor_dragging(&self) -> bool {
+        self.shown_document()
+            .is_some_and(|document| document.is_dragging())
+    }
+
     /// Notes that the text being dragged is over the byte `byte` of the file shown.
     pub fn editor_drag_over(&mut self, byte: usize) {
         if let Some(document) = self.shown_text() {

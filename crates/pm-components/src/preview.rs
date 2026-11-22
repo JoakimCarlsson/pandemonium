@@ -1,12 +1,13 @@
 //! A file shown rendered rather than as its source: markdown laid out as a page, and pictures drawn whole.
 
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, bg, border, border_color, flex, flex_1, flex_none, gap, h_px, items_center,
-    justify_center, min_h, px, py, rounded, w_px,
-};
-use pm_text::Shaper;
-use pm_ui::{Node, Picture, node};
+use crate::areas::EditorEvent;
+use crate::parts;
+use crate::target::Target;
+use crate::theme;
+use crate::theme::Frame;
+use crate::theme::{Radius, Role};
+use rustle::Modifier;
+use rustle::{Alignment, Arrangement, row_arranged};
 
 use crate::Button;
 use crate::button::Variant;
@@ -15,18 +16,6 @@ use crate::markdown::Markdown;
 use crate::open_files::{Contents, STRIP, Viewer};
 use crate::parts::line;
 use crate::size::Size;
-
-/// Shows the file shown rendered.
-pub const PREVIEW_SHOW: FocusId = FocusId(7094);
-
-/// Shows the source of the file shown.
-pub const SOURCE_SHOW: FocusId = FocusId(7095);
-
-/// The first link of a markdown file shown rendered; the rest follow it.
-pub const PREVIEW_LINK_BASE: u64 = 4_200_000;
-
-/// How many links of a markdown file shown rendered can be pressed.
-pub const PREVIEW_LINKS: u64 = 100_000;
 
 /// How many pixels of a drawn vector picture fall on one logical pixel, so it stays sharp on a dense screen.
 pub const VECTOR_DENSITY: f32 = 2.0;
@@ -93,118 +82,127 @@ pub fn linked_path(from: &str, address: &str) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
-/// The switch between the rendering of the file and its source, when the file has both and its text has arrived.
-pub fn switch(viewer: &Viewer) -> Option<Node> {
-    let rendering = Rendering::of(&viewer.path).filter(|rendering| rendering.has_source())?;
-    if !matches!(viewer.contents, Contents::Text(_)) {
-        return None;
+/// Emits the switch between the rendering of the file and its source, when the file has both and its text has arrived.
+#[track_caller]
+pub fn switch(viewer: &Viewer) {
+    let Some(rendering) = Rendering::of(&viewer.path).filter(|rendering| rendering.has_source())
+    else {
+        return;
+    };
+    if viewer.document().is_none() {
+        return;
     }
     let shown = viewer.rendering() == Some(rendering);
-    Some(
-        node()
-            .styles([flex(), items_center(), gap(1), flex_none()])
-            .child(
-                Button::new("Preview", PREVIEW_SHOW)
-                    .variant(Variant::Ghost)
-                    .size(Size::Xs)
-                    .selected(shown)
-                    .build(),
-            )
-            .child(
-                Button::new("Source", SOURCE_SHOW)
-                    .variant(Variant::Ghost)
-                    .size(Size::Xs)
-                    .selected(!shown)
-                    .build(),
-            ),
-    )
+    rustle::row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
+        || {
+            for (label, event, selected) in [
+                ("Preview", EditorEvent::PreviewShow, shown),
+                ("Source", EditorEvent::SourceShow, !shown),
+            ] {
+                rustle::key(label, || {
+                    Button::new(label, Target::Editor(event))
+                        .variant(Variant::Ghost)
+                        .size(Size::Xs)
+                        .selected(selected)
+                        .build();
+                });
+            }
+        },
+    );
 }
 
-/// What the strip says about the picture of the file shown: how many pixels it has across and down.
-pub fn dimensions(viewer: &Viewer) -> Option<Node> {
+/// Emits what the strip says about the picture of the file shown: how many pixels it has across and down.
+pub fn dimensions(viewer: &Viewer) {
     let Contents::Picture(picture) = &viewer.contents else {
-        return None;
+        return;
     };
-    Some(line(
-        format!("{} × {}", picture.width, picture.height),
-        11,
-        1.4,
-        Role::Muted,
-    ))
+    let said = format!("{} × {}", picture.width(), picture.height());
+    line(said, 11, 1.4, Role::Muted);
 }
 
-/// The file shown rendered, its diagrams and images drawn as `figures` holds them, in a view `width` by `height` logical pixels, strip included, or nothing when it is shown as its source.
-pub fn rendered(
-    viewer: &Viewer,
-    figures: &Figures,
-    (width, height): (f32, f32),
-    shaper: &mut Shaper,
-) -> Option<Node> {
+/// Emits the file shown rendered, its diagrams and images drawn as `figures` holds them, in a view `width` by `height` logical pixels, strip included; emits nothing when it is shown as its source.
+///
+/// Returns whether it emitted the rendering.
+#[track_caller]
+pub fn rendered(viewer: &Viewer, figures: &Figures, (width, height): (f32, f32)) -> bool {
     let room = (width, (height - STRIP).max(0.0));
-    match (viewer.rendering()?, &viewer.contents) {
-        (Rendering::Markdown, Contents::Text(document)) => Some(page(
-            &viewer.path,
-            document.field.text(),
-            figures,
-            width,
-            shaper,
-        )),
-        (Rendering::Vector, Contents::Text(_)) => Some(match &viewer.drawn {
+    let Some(rendering) = viewer.rendering() else {
+        return false;
+    };
+    match (rendering, &viewer.contents) {
+        (Rendering::Markdown, Contents::Text(document)) => {
+            page(&viewer.path, document.field.text(), figures, width);
+        }
+        (Rendering::Vector, Contents::Text(_)) => match &viewer.drawn {
             Some(Ok(picture)) => framed(picture, VECTOR_DENSITY, room),
             Some(Err(reason)) => note(reason),
             None => note("Drawing the picture."),
-        }),
-        (Rendering::Picture, Contents::Picture(picture)) => Some(framed(picture, 1.0, room)),
-        _ => None,
+        },
+        (Rendering::Picture, Contents::Picture(picture)) => framed(picture, 1.0, room),
+        _ => return false,
     }
+    true
 }
 
-/// A line saying `message` where the rendering would be.
-fn note(message: &str) -> Node {
-    node()
-        .styles([px(4), py(4)])
-        .child(line(message, 13, 1.4, Role::Subtle))
+/// Emits a line saying `message` where the rendering would be.
+#[track_caller]
+pub(crate) fn note(message: &str) {
+    parts::note(4, 4, message, 13, Role::Subtle);
 }
 
-/// The markdown `source` of the file at `path` laid out as a page in the middle of a view `width` logical pixels wide, its links pressable and its diagrams and images drawn as `figures` holds them.
-fn page(path: &str, source: &str, figures: &Figures, width: f32, shaper: &mut Shaper) -> Node {
+/// Emits the markdown `source` of the file at `path` laid out as a page in the middle of a view `width` logical pixels wide, its links pressable and its diagrams and images drawn as `figures` holds them.
+#[track_caller]
+fn page(path: &str, source: &str, figures: &Figures, width: f32) {
     let column = (width - 2.0 * MARGIN).clamp(120.0, PAGE_WIDTH);
-    node()
-        .styles([flex(), justify_center(), flex_none(), py(8)])
-        .child(
-            node().styles([w_px(column), flex_none()]).child(
-                Markdown::new(source, column)
-                    .links(PREVIEW_LINK_BASE)
-                    .figures(figures, Some(path))
-                    .build(shaper),
-            ),
-        )
+    row_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .padding_xy(0.0, theme::sp(8)),
+        Arrangement::Center,
+        Alignment::Start,
+        || {
+            rustle::column_arranged(
+                Modifier::new().width(column),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    Markdown::new(source, column)
+                        .links(Target::Editor(EditorEvent::PreviewLink(0)))
+                        .figures(figures, Some(path))
+                        .build();
+                },
+            );
+        },
+    );
 }
 
-/// `picture`, `density` of its pixels to a logical pixel, shrunk to fit a view `room` logical pixels across and down and set in its middle on a plain backing.
-fn framed(picture: &Picture, density: f32, room: (f32, f32)) -> Node {
+/// Emits `picture`, `density` of its pixels to a logical pixel, shrunk to fit a view `room` logical pixels across and down and set in its middle on a plain backing.
+#[track_caller]
+fn framed(picture: &rustle::ImageData, density: f32, room: (f32, f32)) {
     let (across, down) = (
-        picture.width as f32 / density,
-        picture.height as f32 / density,
+        picture.width() as f32 / density,
+        picture.height() as f32 / density,
     );
     let (wide, tall) = (
         (room.0 - 2.0 * MARGIN).max(16.0),
         (room.1 - 2.0 * MARGIN).max(16.0),
     );
     let fit = (wide / across.max(1.0)).min(tall / down.max(1.0)).min(1.0);
-    node()
-        .styles([flex(), flex_1(), min_h(0), items_center(), justify_center()])
-        .child(
-            node()
-                .styles([
-                    w_px(across * fit),
-                    h_px(down * fit),
-                    flex_none(),
-                    bg(Role::Surface),
-                    border(),
-                    border_color(Role::Border),
-                    rounded(Radius::Sm),
-                ])
-                .picture(picture.clone()),
-        )
+    row_arranged(
+        Modifier::new().weight(1.0).fill_max_width(),
+        Arrangement::Center,
+        Alignment::Center,
+        || {
+            rustle::image(
+                Modifier::new()
+                    .size(across * fit, down * fit)
+                    .panel(Radius::Sm),
+                picture,
+                rustle::ContentScale::Crop,
+            );
+        },
+    );
 }

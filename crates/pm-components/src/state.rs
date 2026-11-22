@@ -1,350 +1,47 @@
 //! What the workspace remembers: the page on screen, the panels that are open and what was typed.
 
-use pm_harness::{Event, Setting, Slash};
-use pm_input::FocusId;
-use pm_text::{Edit, Field};
+use crate::areas::SidebarEvent;
+use crate::areas::{
+    BrowserEvent, ChatEvent, ComposerEvent, DebugEvent, DialogEvent, DiffEvent, EditorEvent,
+    GitEvent, SearchEvent, SettingsEvent, TerminalEvent, TreeEvent, WindowEvent,
+};
 
-use crate::adder::{ADDER_FIELD, ADDER_ROW_BASE, ADDER_SUBMIT, Adder, is_adder};
-use crate::arrange::{
-    PROJECT_MENU_NEW, PROJECT_MENU_REMOVE, ProjectDrag, ProjectMenu, SessionMenu,
-    is_session_menu_item,
-};
+use crate::events::{Event, FieldEvent};
+use crate::target::Target;
+use pm_editor::Edit;
+use pm_harness::{Event as HarnessEvent, Setting, Slash};
+use rustle::TextFieldState;
+
+use crate::adder::{Adder, is_adder};
+use crate::arrange::{ProjectDrag, ProjectMenu, SessionMenu, is_session_menu_item};
 use crate::context_menu::ContextMenu;
-use crate::draft::{NEXT, OTHER};
-use crate::folder_picker::{FolderPicker, PICKER_FIELD, PICKER_SUBMIT, is_picker};
-use crate::git_controls::{BRANCH_FILTER, BRANCH_SUBMIT, GitControls, OPEN_ARROW_BASE};
-use crate::git_prompts::{PROMPT_CONFIRM, RENAME_FIELD, STASH_FIELD};
-use crate::message_menu::{
-    MESSAGE_MENU_COPY, MESSAGE_MENU_COPY_MARKDOWN, MESSAGE_MENU_COPY_REPLY,
-    MESSAGE_MENU_SELECT_ALL, MessageMenu,
-};
-use crate::open_files::EDITOR_FIELD;
+
+use crate::folder_picker::{FolderPicker, is_picker};
+use crate::git_controls::GitControls;
+
+use crate::message_menu::MessageMenu;
 use crate::project::Project;
 use crate::sample::{Change, Comment, Message, Range, Session, Status, projects, sessions};
-use crate::tree_actions::{ENTRY_FIELD, TreeTarget};
+use crate::tree_actions::TreeTarget;
 
 /// A prompt holding `text`, which may run to several lines.
-pub fn prompt_field(text: &str) -> Field {
-    Field::new(text).multiline(true)
+pub fn prompt_field(text: &str) -> TextFieldState {
+    TextFieldState::new(text)
 }
 
 /// A box for a commit message, which runs to several lines.
-pub fn commit_field() -> Field {
-    Field::new("").multiline(true)
+pub fn commit_field() -> TextFieldState {
+    TextFieldState::new("")
 }
-
-/// Lists every session.
-pub const HISTORY: FocusId = FocusId(301);
-
-/// Adds a project.
-pub const ADD_PROJECT: FocusId = FocusId(303);
-
-/// Opens the settings.
-pub const SETTINGS: FocusId = FocusId(304);
-
-/// Shows the conversation of the open session.
-pub const TAB_CHAT: FocusId = FocusId(310);
-
-/// Shows the diff of the open session.
-pub const TAB_DIFF: FocusId = FocusId(311);
-
-/// Shows or hides the terminal.
-pub const TERMINAL: FocusId = FocusId(312);
-
-/// Shows or hides the review panel.
-pub const REVIEW: FocusId = FocusId(313);
-
-/// Opens the plan the agent proposed in the panel beside the conversation.
-pub const OPEN_PLAN: FocusId = FocusId(328);
-
-/// Closes the panel showing the plan.
-pub const CLOSE_PLAN: FocusId = FocusId(329);
-
-/// Turns the proposed plan down and gives the prompt the keyboard, to say what to change.
-pub const REVISE: FocusId = FocusId(330);
-
-/// The scrolling body of the plan panel.
-pub const PLAN_SCROLL: FocusId = FocusId(352);
-
-/// The independently scrolling rows above the composer.
-pub const SUBAGENTS_SCROLL: FocusId = FocusId(353);
-
-/// Shows the changed files in the review panel.
-pub const REVIEW_CHANGES: FocusId = FocusId(7001);
-
-/// Shows every file of the project in the review panel.
-pub const REVIEW_FILES: FocusId = FocusId(7002);
-
-/// The box the comment on a file or on lines is written in.
-pub const COMMENT_FIELD: FocusId = FocusId(7003);
-
-/// Keeps the comment that was written.
-pub const COMMENT_ADD: FocusId = FocusId(7006);
-
-/// Drops the comment that was being written.
-pub const COMMENT_CANCEL: FocusId = FocusId(7007);
-
-/// Hands the comments to the agent as the next message.
-pub const SEND_COMMENTS: FocusId = FocusId(7008);
-
-/// The first of the buttons that start a comment on a whole file; the rest follow it.
-pub const COMMENT_FILE_BASE: u64 = 7900;
-
-/// The first of the buttons that take a comment back; the rest follow it.
-pub const COMMENT_REMOVE_BASE: u64 = 8100;
-
-/// The scrolling body of the diff.
-pub const DIFF_SCROLL: FocusId = FocusId(7004);
-
-/// The scrolling list of the review panel.
-pub const TREE_SCROLL: FocusId = FocusId(7005);
-
-/// The first of the rows folding a folder of the changed files; the rest follow it.
-pub const FOLDER_BASE: u64 = 150_000;
-
-/// The first of the check boxes staging a folder of the changed files; the rest follow it.
-pub const FOLDER_STAGE_BASE: u64 = 170_000;
-
-/// The first of the headers folding a file of the diff; the rest follow it.
-pub const DIFF_FOLD_BASE: u64 = 7500;
-
-/// The first of the rows folding a folder of the project's files; the rest follow it.
-pub const TREE_BASE: u64 = 2_000_000;
-
-/// Opens the diff from the summary of changes.
-pub const OPEN_DIFF: FocusId = FocusId(314);
-
-/// Hands the prompt to the agent.
-pub const SEND: FocusId = FocusId(315);
-
-/// Stages every change, or none when all are staged.
-pub const STAGE_ALL: FocusId = FocusId(316);
-
-/// Commits the staged changes.
-pub const COMMIT: FocusId = FocusId(317);
-
-/// Stops the turn the agent is on.
-pub const STOP: FocusId = FocusId(322);
-
-/// Stops the turn the agent is on and hands it the prompt in its place.
-pub const SEND_NOW: FocusId = FocusId(327);
-
-/// Signs in again as the open session's account.
-pub const SESSION_SIGN_IN: FocusId = FocusId(331);
-
-/// The first of the buttons handing a queued prompt to the agent at once; the rest follow it.
-pub const HURRY_BASE: u64 = 4_902_000_000_000;
-
-/// The first of the buttons removing a waiting prompt; the rest follow it.
-pub const REMOVE_QUEUED_BASE: u64 = 4_900_000_000_000;
-
-/// The conversation's scrolling area.
-pub const CHAT_SCROLL: FocusId = FocusId(350);
-
-/// The text of the conversation's messages, which the pointer selects as
-/// one: each message is a selectable box of it, in the order of the messages.
-pub const CHAT_TEXT: FocusId = FocusId(353);
-
-/// The prompt field.
-pub const PROMPT: FocusId = FocusId(320);
-
-/// The commit message field.
-pub const COMMIT_MESSAGE: FocusId = FocusId(321);
-
-/// The field on the history page that narrows the sessions it lists.
-pub const HISTORY_SEARCH: FocusId = FocusId(326);
-
-/// The first of the chips choosing an agent; the rest follow it.
-pub const AGENT_BASE: u64 = 4000;
-
-/// The first of the rows folding a project; the rest follow it.
-pub const PROJECT_BASE: u64 = 1000;
-
-/// The first of the rows starting work in a project; the rest follow it.
-pub const NEW_IN_BASE: u64 = 1100;
-
-/// The first of the rows starting work in a submodule of a project, numbered across the projects as [`crate::sidebar::submodule_rows`] lists them; the rest follow it.
-pub const NEW_IN_SUBMODULE_BASE: u64 = 1300;
-
-/// The first of the rows opening a session; the rest follow it.
-pub const SESSION_BASE: u64 = 2000;
-
-/// The first of the rows picking a changed file; the rest follow it.
-pub const FILE_BASE: u64 = 3000;
-
-/// The first of the check boxes staging a file; the rest follow it.
-pub const STAGE_BASE: u64 = 3200;
-
-/// The first of the check boxes marking a file viewed; the rest follow it.
-pub const VIEWED_BASE: u64 = 3400;
-
-/// The first of the buttons opening a setting's menu; the rest follow it.
-pub const SETTING_BASE: u64 = 4200;
-
-/// The first of the rows of the open setting's menu; the rest follow it.
-pub const PICK_BASE: u64 = 4300;
-
-/// The first of the rows of the commands offered behind a slash; the rest follow it.
-pub const SLASH_BASE: u64 = 4400;
-
-/// The first of the buttons choosing the effort; the rest follow it.
-pub const EFFORT_BASE: u64 = 4500;
-
-/// Opens the menu of where new work is done.
-pub const LOCATION: FocusId = FocusId(4250);
-
-/// The first of the rows choosing where new work is done; the rest follow it.
-pub const PLACE_BASE: u64 = 4260;
-
-/// The first of the rows choosing the branch new work is made from; the rest follow it.
-pub const BRANCH_BASE: u64 = 4600;
-
-/// Opens the agent's plan above the prompt box.
-pub const PLAN_CHIP: FocusId = FocusId(4270);
-
-/// Opens the questions waiting for an answer above the prompt box.
-pub const APPROVALS_CHIP: FocusId = FocusId(4271);
-
-/// Opens the subagents the agent started above the prompt box.
-pub const SUBAGENTS_CHIP: FocusId = FocusId(4272);
-
-/// Opens the commands the agent left running above the prompt box.
-pub const SHELLS_CHIP: FocusId = FocusId(4273);
-
-/// The body of the terminal dock, which takes the keyboard while it has focus.
-pub const TERMINAL_BODY: FocusId = FocusId(323);
-
-/// Starts another shell in the terminal dock.
-pub const NEW_TERMINAL: FocusId = FocusId(324);
-
-/// Makes the terminal dock taller, or gives it its height back.
-pub const MAXIMIZE_TERMINAL: FocusId = FocusId(325);
-
-/// The dock's tab listing what is wrong with the files of the project.
-pub const BOTTOM_PROBLEMS: FocusId = FocusId(20_200_000);
-
-/// The count of errors and warnings above a file, which shows the dock's tab of problems.
-pub const BOTTOM_PROBLEMS_COUNT: FocusId = FocusId(20_200_003);
-
-/// The button in the title bar that shows and hides the sidebar of projects and sessions.
-pub const SIDEBAR_TOGGLE: FocusId = FocusId(20_200_004);
-
-/// The dock's tab showing the shells.
-pub const BOTTOM_TERMINAL: FocusId = FocusId(20_200_001);
 
 /// A folder of a machine, which the problems of the dock are about: the machine the folder is on, when it is not this one, and the folder.
 pub type ProblemsKey = (Option<String>, String);
 
-/// The list of problems in the dock, which scrolls.
-pub const PROBLEMS_SCROLL: FocusId = FocusId(20_200_002);
-
-/// The first of the rows of the dock's list of problems; the rest follow it.
-pub const PROBLEM_ROW_BASE: u64 = 20_201_000;
-
-/// The first of the tabs showing one of the dock's shells; the rest follow it.
-pub const TERMINAL_TAB_BASE: u64 = 5000;
-
-/// The first of the buttons ending one of the dock's shells; the rest follow it.
-pub const TERMINAL_CLOSE_BASE: u64 = 5100;
-
-/// The first of the buttons copying a reply; the rest follow it.
-pub const COPY_BASE: u64 = 300_000;
-
-/// The first of the buttons taking the conversation back to before one of the reader's messages to write it again; the rest follow it.
-pub const REWIND_BASE: u64 = 1_000_000_000_000;
-
-/// The first of the buttons offering to put the files back as they were before one of the reader's messages; the rest follow it.
-pub const RESTORE_BASE: u64 = 2_000_000_000_000;
-
-/// The first of the buttons starting a session that branches off the conversation after one of the agent's replies; the rest follow it.
-pub const FORK_BASE: u64 = 3_000_000_000_000;
-
-/// The first of the buttons showing what the agent changed during the turn one of the reader's messages started; the rest follow it.
-pub const TURN_CHANGES_BASE: u64 = 8_000_000_000_000;
-
-/// The first of the links in the agent's replies; each reply has [`LINKS_PER_REPLY`] after its own base and each piece of it [`LINKS_PER_PIECE`].
-pub const LINK_BASE: u64 = 4_000_000_000_000;
-
-/// How many links one reply has room for, its pieces following one another.
-pub const LINKS_PER_REPLY: u64 = 100_000;
-
-/// How many links one piece of a reply has room for.
-pub const LINKS_PER_PIECE: u64 = 1000;
-
-/// Puts the files back as they were before the message whose offer is open.
-pub const RESTORE_FILES: FocusId = FocusId(4273);
-
-/// Closes the offer to put the files back, leaving them as they are.
-pub const KEEP_FILES: FocusId = FocusId(4274);
-
-/// The scrolling list of values in the open menu.
-pub const MENU_SCROLL: FocusId = FocusId(351);
-
-/// The box the values of the open menu are narrowed with, when it has many.
-pub const MENU_FILTER: FocusId = FocusId(33_000_000);
-
-/// Chooses the first value the box of the open menu leaves, as Enter in the box does.
-pub const MENU_FILTER_PICK: FocusId = FocusId(33_000_001);
-
-/// The first of the values of the open menu, by their place among all its values; the rest follow it, with room for [`MENU_PICK_ROOM`].
-pub const MENU_PICK_BASE: u64 = 33_000_100;
-
 /// How many values of the open menu can be chosen.
 pub const MENU_PICK_ROOM: usize = 100_000;
 
-/// Switches the agent persona on or off.
-pub const AGENT_TOGGLE: FocusId = FocusId(4290);
-
-/// The button that attaches files to the prompt.
-pub const ATTACH: FocusId = FocusId(318);
-
-/// The first of the buttons that remove an attached file; the rest follow it.
-pub const ATTACHED_BASE: u64 = 4800;
-
-/// The button that starts mentioning a file in the prompt.
-pub const MENTION: FocusId = FocusId(4281);
-
-/// Puts a slash in the prompt, which lists the commands the agent offers.
-/// The body of an open menu, which is not a button but keeps a click on it from counting as outside.
-pub const MENU_BODY: FocusId = FocusId(4299);
-
-/// The chip naming the account the agent is signed in as.
-pub const ACCOUNT: FocusId = FocusId(4291);
-
-/// The first of the rows choosing the account; the rest follow it.
-pub const ACCOUNT_BASE: u64 = 4700;
-
-/// The chip showing the goal the agent works toward, which opens what can be done with it.
-pub const GOAL_CHIP: FocusId = FocusId(4292);
-
-/// The row of the model menu that switches the conversation in and out of orchestrator mode, in which the agent leads and hands work to subagents by category.
-pub const ORCHESTRATE: FocusId = FocusId(4293);
-
-/// The first of the rows of the goal's menu, pausing, resuming and clearing it, in that order.
-pub const GOAL_BASE: u64 = 4760;
-
-/// What the rows of the goal's menu send to the agent, in the order they follow [`GOAL_BASE`].
+/// What the rows of the goal's menu send to the agent, in the order of [`ComposerEvent::GoalRow`].
 pub const GOAL_COMMANDS: [&str; 3] = ["/goal pause", "/goal resume", "/goal clear"];
-
-pub const SLASH_BUTTON: FocusId = FocusId(4280);
-
-/// The first of the lines folding the steps of a reply; the rest follow it.
-pub const TURN_BASE: u64 = 100_000;
-
-/// The first of the lines opening a step's detail; the rest follow it, a thousand to a reply.
-pub const STEP_BASE: u64 = 200_000;
-
-/// The first of the buttons stopping one subagent; the rest follow it, a thousand to a reply, each numbered as the line of its subagent is from [`STEP_BASE`].
-pub const SUBAGENT_STOP_BASE: u64 = 7_000_000_000_000;
-
-/// How many buttons stopping a subagent there is room for after [`SUBAGENT_STOP_BASE`].
-pub const SUBAGENT_STOP_ROOM: u64 = 1_000_000_000;
-
-/// The first of the summaries folding a part of a reply; the rest follow it, a thousand to a reply.
-pub const DETAILS_BASE: u64 = 400_000;
-
-/// The first of the buttons answering the agent's question; the rest follow it.
-pub const CHOICE_BASE: u64 = 3600;
 
 /// Something the window has to do or tell an agent, taken off the state by whoever runs the agents.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1691,7 +1388,7 @@ pub enum Outgoing {
 
 /// A prompt put aside while another session is worked in: what was typed, the files attached, the elements picked and the captures held.
 pub type StashedPrompt = (
-    Field,
+    TextFieldState,
     Vec<String>,
     Vec<crate::elements::Element>,
     Vec<crate::captures::Capture>,
@@ -1717,11 +1414,12 @@ pub enum Picker {
 }
 
 /// Where new work is done.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Location {
     /// In a worktree of its own, on a new branch.
     Worktree,
     /// In the project's own folder.
+    #[default]
     Local,
 }
 
@@ -1739,13 +1437,14 @@ pub enum Activity {
 }
 
 /// What the main area shows.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Page {
     /// One session, by position.
     Session(usize),
     /// A prompt to start work in one project, by position.
     New(usize),
     /// A prompt to start a chat, which belongs to no project.
+    #[default]
     Chat,
     /// The overview of one project, by position: its sessions and its repository.
     Project(usize),
@@ -1756,9 +1455,10 @@ pub enum Page {
 }
 
 /// Which view of a session is showing.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Tab {
     /// The conversation with the agent.
+    #[default]
     Chat,
     /// The files the agent changed.
     Diff,
@@ -1772,13 +1472,11 @@ pub enum Tab {
     Update,
 }
 
-/// How wide the diff is taken to be, in logical pixels, until it has been drawn and its width measured.
-pub(crate) const DIFF_WIDTH: f32 = 900.0;
-
 /// What the review panel lists.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ReviewTab {
     /// The files the agent changed, to stage and commit.
+    #[default]
     Changes,
     /// Every file of the project.
     Files,
@@ -1803,7 +1501,7 @@ pub struct CommentTarget {
 pub type Discovered = (Vec<Vec<Setting>>, Vec<Vec<Slash>>);
 
 /// Everything the workspace window shows and lets the reader change.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct WorkspaceState {
     /// The projects, in the order the sidebar lists them.
     pub projects: Vec<Project>,
@@ -1840,31 +1538,34 @@ pub struct WorkspaceState {
     /// The lines or file the comment being written or the lines being dragged over are about.
     pub comment_target: Option<CommentTarget>,
     /// The comment being written.
-    pub comment_text: Field,
-    /// How far down the diff is scrolled, in logical pixels.
-    pub diff_scroll: f32,
-    /// How wide the diff was last drawn, in logical pixels, which decides how its lines wrap and so how tall each file is.
-    pub diff_width: f32,
-    /// The file, by session and path, whose header the diff is kept scrolled to while the heights of the files above it settle, until the diff is scrolled by hand.
+    pub comment_text: TextFieldState,
+    /// The diff's lazy list of the parts of each changed file, which holds how far down it is scrolled.
+    pub diff_list: rustle::LazyListState,
+    /// How far down the diff was scrolled when the state last moved it or looked at it,
+    /// so a scroll by the reader, which leaves the two apart, can be told from its own.
+    pub diff_seen: f32,
+    /// Where the diff's scrolling area is drawn, while it is shown.
+    pub diff_bounds: crate::bounds::Bounds,
+    /// The file, by session and path, whose header the diff's list is asked to bring to its top, until the list has done so or the diff is scrolled by hand.
     pub(crate) diff_anchor: Option<(usize, String)>,
     /// The files, by session and path, whose diffs were asked of the server and have not come.
     pub(crate) asking_diffs: std::collections::HashSet<(usize, String)>,
-    /// How far down the review panel's list is scrolled, in logical pixels.
-    pub tree_scroll: f32,
+    /// How far down the review panel's list of changes or search results is scrolled, in logical pixels.
+    pub tree_scroll: rustle::ScrollState,
+    /// The lazy list of the project's files in the review panel: how far down it is scrolled and how tall its rows turned out.
+    pub files_list: rustle::LazyListState,
     /// The project whose folder the review panel was last asked to read while no session was open.
     pub homed: Option<usize>,
     /// Whether the plan the agent proposed is open in a panel in place of the review.
     pub plan_open: bool,
     /// How far down the plan panel is scrolled, in logical pixels.
-    pub plan_scroll: f32,
+    pub plan_scroll: rustle::ScrollState,
     /// How far down the subagent panel rows are scrolled, in logical pixels.
-    pub subagents_scroll: f32,
+    pub subagents_scroll: rustle::ScrollState,
     /// How far down a project's overview is scrolled, in logical pixels.
-    pub overview_scroll: f32,
+    pub overview_scroll: rustle::ScrollState,
     /// Whether the terminal is open.
     pub terminal: bool,
-    /// Whether the terminal is taller than usual.
-    pub terminal_maximized: bool,
     /// Whether the sidebar of projects and sessions is showing.
     pub sidebar_open: bool,
     /// Which tab of the dock is showing.
@@ -1876,11 +1577,9 @@ pub struct WorkspaceState {
     /// The folder, and the machine it is on, the server was asked about and has not answered.
     pub problems_asked: Option<ProblemsKey>,
     /// How far down the list of problems is scrolled, in logical pixels.
-    pub problems_scroll: f32,
+    pub problems_scroll: rustle::ScrollState,
     /// The problem of the list the reader pressed, whose place is to be shown.
     pub problem_picked: Option<usize>,
-    /// How tall the terminal dock is while it is not maximized, in logical pixels.
-    pub terminal_height: f32,
     /// How many columns and lines the dock's window last held.
     pub terminal_size: (u16, u16),
     /// The name the next shell gets in this window.
@@ -1890,7 +1589,9 @@ pub struct WorkspaceState {
     /// The changed file the reader picked, by position, if one was.
     pub file: Option<usize>,
     /// The prompt being written.
-    pub prompt: Field,
+    pub prompt: TextFieldState,
+    /// How far the lines of the prompt box are scrolled down.
+    pub prompt_scroll: rustle::ScrollState,
     /// The files attached to the prompt, by path.
     pub attachments: Vec<String>,
     /// The elements of web pages picked for the prompt.
@@ -1902,7 +1603,7 @@ pub struct WorkspaceState {
     /// What other machines said about the agents, by destination, while the settings of one machine are showing.
     pub discovered_elsewhere: std::collections::HashMap<Option<String>, Discovered>,
     /// What the attached pictures look like, by path, once they are decoded.
-    pub previews: std::collections::HashMap<String, pm_ui::Picture>,
+    pub previews: std::collections::HashMap<String, rustle::ImageData>,
     /// The diagrams and images of markdown drawn or fetched so far.
     pub figures: crate::figures::Figures,
     /// The figures asked for, by their key, so none is asked for twice.
@@ -1910,21 +1611,17 @@ pub struct WorkspaceState {
     /// What the window still has to do for the exhibits agents show and the mockups of their questions.
     pub exhibits: crate::exhibit::Exhibits,
     /// The commit message being written.
-    pub message: Field,
+    pub message: TextFieldState,
     /// What the history page is narrowed to.
-    pub history_search: Field,
+    pub history_search: TextFieldState,
     /// How far the history session groups have scrolled, in logical pixels.
-    pub history_scroll: f32,
+    pub history_scroll: rustle::ScrollState,
     /// How far the sidebar's list is scrolled, in logical pixels.
-    pub sidebar_scroll: f32,
+    pub sidebar_scroll: rustle::ScrollState,
     /// The submodule of the project the new session page starts work in, or nothing for the project itself.
     pub new_in: Option<String>,
-    /// How wide the sidebar is, in logical pixels.
-    pub sidebar_width: f32,
-    /// How wide the review panel is, in logical pixels.
-    pub review_width: f32,
-    /// How wide the plan panel was dragged to be, in logical pixels, or zero while it takes the width it would by itself.
-    pub plan_width: f32,
+    /// How big the panels around the main area are, as observable state.
+    pub sizes: crate::panel_sizes::PanelSizes,
     /// The panel for adding a project, if it is open.
     pub adder: Option<Adder>,
     /// The window for choosing a folder, if it is open.
@@ -1949,6 +1646,9 @@ pub struct WorkspaceState {
     pub project_drag: Option<ProjectDrag>,
     /// What the agents have yet to be told.
     pub outbox: Vec<Outgoing>,
+    /// How many presses asked for a shell to take the keyboard, such as a shell's tab or
+    /// a new shell: the shell's view gives itself the keyboard each time this changes.
+    pub shell_asked: u64,
     /// The session, by position, whose files are the ones open now.
     pub files_owner: Option<usize>,
     /// The files open for each session other than the one whose tabs are showing, by its position, kept so that switching away does not lose them or what was typed in them.
@@ -1966,10 +1666,24 @@ pub struct WorkspaceState {
     pub search_stash: std::collections::HashMap<usize, crate::project_search::ProjectSearch>,
     /// The tab being dragged to another pane, if one is.
     pub pane_drag: Option<crate::panes::PaneDrag>,
-    /// Where the menu of panes opened, while it is open.
-    pub pane_menu: Option<(f32, f32)>,
-    /// How far the conversation is scrolled back from its end, in logical pixels.
-    pub chat_back: f32,
+    /// Whether the menu of panes is open, hanging from its button.
+    pub pane_menu: bool,
+    /// The list of the conversation's messages, laid out from its end, so the offset of its
+    /// scroll is how far the conversation is scrolled back from its end, in logical pixels.
+    pub chat_list: rustle::LazyListState,
+    /// Where the conversation's scrolling area is drawn, while it is shown.
+    pub chat_bounds: crate::bounds::Bounds,
+    /// Where the scrolling area of the file shown is drawn, while it is shown.
+    pub code_bounds: crate::bounds::Bounds,
+    /// Where the lines of code text were drawn in the latest frame.
+    pub code_lines: crate::text_lines::TextLines,
+    /// The selection of the conversation's text, held by its selection container.
+    pub chat_selection: rustle::SelectionState,
+    /// The selection of the text of the card about a place in the file shown, held by its
+    /// selection container.
+    pub hover_selection: rustle::SelectionState,
+    /// Where the areas the app asks about by name were drawn in the latest frame.
+    pub places: crate::bounds::Places,
     /// The menu open over the prompt box, if one is.
     pub picker: Option<Picker>,
     /// The reader's message of the open session, by position, whose offer to put the files back as they were before it is open, if one is.
@@ -2020,9 +1734,9 @@ pub struct WorkspaceState {
     /// The login in use for each agent, as the agent's id and the folder name; an agent not named uses its own.
     pub in_use: Vec<(String, String)>,
     /// How far the list of values in the open menu is scrolled, in logical pixels.
-    pub menu_scroll: f32,
+    pub menu_scroll: rustle::ScrollState,
     /// What the values of the open menu are narrowed to, when it has many.
-    pub menu_filter: Field,
+    pub menu_filter: TextFieldState,
     /// The command highlighted in the list offered behind a slash, by position.
     pub slash: usize,
     /// The steps whose detail is open, by session, reply and position.
@@ -2053,7 +1767,9 @@ pub struct WorkspaceState {
     pub going_to: Option<crate::line_edits::GoingTo>,
     /// The waiting prompt whose text is being edited in place, when one is.
     pub editing_queued: Option<crate::queued::EditingQueued>,
-    /// Where the signature of the call the caret is in hangs, in logical pixels of the window.
+    /// Where the line of the caret is while the signature of the call the caret is in shows,
+    /// in logical pixels of the window: the caret's left edge and the line's top, which the
+    /// signature hangs over.
     pub signature_at: (f32, f32),
     /// The bar for finding and replacing in the file shown, when open.
     pub finding: Option<crate::find::Finding>,
@@ -2065,14 +1781,12 @@ pub struct WorkspaceState {
     pub recorded: Vec<String>,
     /// Whether the editor's settings kept between runs were put in, so that what is shown is not mistaken for them before.
     pub editor_loaded: bool,
-    /// How wide the view of the file shown was last drawn and how wide a character of code is in it, in logical pixels, which soft wrap breaks lines by; nothing until it was drawn.
-    pub code_view: Option<(f32, f32)>,
-    /// How tall the view of the file shown was last drawn, in logical pixels, which tells the lines in view; nothing until it was drawn.
-    pub code_height: Option<f32>,
+    /// The size the view of the file shown was last laid out at, told by the view, which soft wrap breaks lines by and which tells the lines in view.
+    pub code_size: crate::code_view::CodeViewSize,
     /// Whether the reader asked to close the window and nothing is left to ask first.
     pub quitting: bool,
     /// How far down the notes in the window of an update are scrolled, in logical pixels.
-    pub update_scroll: f32,
+    pub update_scroll: rustle::ScrollState,
     /// Whether the release notes of the newer release are open as a tab.
     pub update_open: bool,
     /// How far the update the reader asked for has got.
@@ -2127,152 +1841,20 @@ impl WorkspaceState {
             projects,
             sessions,
             page,
-            tab: Tab::Chat,
             review: true,
-            git: GitControls::default(),
-            review_tab: ReviewTab::Changes,
-            project_search: crate::project_search::ProjectSearch::default(),
-            excerpts: None,
-            browser: None,
-            browser_scope: crate::browser_scope::NO_SCOPE,
-            browsers: crate::browser_scope::no_browsers(),
-            open_tree: std::collections::HashSet::new(),
-            closed_folders: std::collections::HashSet::new(),
-            closed_diffs: std::collections::HashSet::new(),
-            comment_target: None,
-            comment_text: Field::default(),
-            diff_scroll: 0.0,
-            diff_width: DIFF_WIDTH,
-            diff_anchor: None,
-            asking_diffs: std::collections::HashSet::new(),
-            tree_scroll: 0.0,
-            homed: None,
-            plan_open: false,
-            plan_scroll: 0.0,
-            subagents_scroll: 0.0,
-            overview_scroll: 0.0,
-            terminal: false,
-            terminal_maximized: false,
-            sidebar_open: true,
-            bottom: crate::dock::BottomTab::default(),
-            problems: Vec::new(),
-            problems_of: None,
-            problems_asked: None,
-            problems_scroll: 0.0,
-            problem_picked: None,
-            terminal_height: crate::terminal::HEIGHT,
             terminal_size: crate::dock::FIRST_SIZE,
             next_terminal: 1,
-            agent: 0,
-            file: None,
-            prompt: prompt_field(""),
-            message: commit_field(),
-            history_search: Field::default(),
-            history_scroll: 0.0,
-            sidebar_scroll: 0.0,
-            new_in: None,
-            sidebar_width: crate::sidebar::WIDTH,
-            review_width: crate::review::WIDTH,
-            plan_width: 0.0,
-            adder: None,
-            folder_picker: None,
-            settings: None,
+            sidebar_open: true,
+            sizes: crate::panel_sizes::PanelSizes::opening(),
             settings_servers: crate::settings_servers::ServerSettings {
                 agents: builtin.clone(),
                 ..Default::default()
             },
-            menu: None,
-            restoring: None,
-            project_menu: None,
-            session_menu: None,
-            message_menu: None,
-            terminal_menu: None,
-            browser_menu: None,
-            project_drag: None,
-            outbox: Vec::new(),
-            files_owner: None,
-            file_stash: std::collections::HashMap::new(),
-            tab_stash: std::collections::HashMap::new(),
-            panes: crate::panes::Panes::default(),
-            pane_stash: std::collections::HashMap::new(),
-            search_stash: std::collections::HashMap::new(),
-            prompt_stash: std::collections::HashMap::new(),
-            pane_drag: None,
-            pane_menu: None,
-            chat_back: 0.0,
-            picker: None,
             agent_settings: vec![Vec::new(); builtin.len()],
-            touched: Vec::new(),
-            choices: Vec::new(),
-            location: Location::Local,
-            container: false,
-            base: None,
-            branches: Vec::new(),
-            branches_of: None,
-            continuing: crate::continue_chat::Choice::default(),
-            activity: None,
             agent_commands: vec![Vec::new(); builtin.len()],
-            attachments: Vec::new(),
-            elements: Vec::new(),
-            captures: Vec::new(),
-            previews: std::collections::HashMap::new(),
-            figures: crate::figures::Figures::new(),
-            figures_asked: std::collections::HashSet::new(),
-            exhibits: crate::exhibit::Exhibits::default(),
-            discovery_host: None,
-            discovered_elsewhere: std::collections::HashMap::new(),
-            files: Vec::new(),
-            tree_folders: Vec::new(),
-            tree_ignored: std::collections::HashSet::new(),
-            files_of: None,
-            file_listings: Default::default(),
             identities: vec![None; builtin.len()],
             defaults: vec![None; builtin.len()],
-            allowances: Default::default(),
-            allowance_asked: Default::default(),
-            logins: Vec::new(),
-            in_use: Vec::new(),
-            menu_scroll: 0.0,
-            menu_filter: Field::default(),
-            slash: 0,
-            opened: Vec::new(),
-            unfolded: Vec::new(),
-            extensions: Vec::new(),
-            extensions_page: crate::extensions::ExtensionsPage::default(),
-            extension_assets: std::collections::BTreeMap::new(),
-            listing: None,
-            recent_commands: Vec::new(),
-            recent_files: Vec::new(),
-            closed_tabs: Vec::new(),
-            renaming: None,
-            color_picking: None,
-            vim: pm_vim::Vim::default(),
-            going_to: None,
-            editing_queued: None,
-            signature_at: (0.0, 0.0),
-            finding: None,
-            blame: None,
-            tab_menu: None,
-            editor: pm_editor::EditorSettings::default(),
-            editor_loaded: false,
-            code_view: None,
-            code_height: None,
-            quitting: false,
-            update_scroll: 0.0,
-            update_open: false,
-            update_run: crate::update_dialog::UpdateRun::Idle,
-            sign_in_code: None,
-            debug: crate::debug::DebugState::default(),
-            tasks: crate::tasks::TaskState::default(),
-            window: pm_config::WindowSettings::default(),
-            window_loaded: false,
-            machine: pm_protocol::MachineSettings::default(),
-            machine_loaded: false,
-            chat_on: None,
-            settings_page: crate::settings_state::SettingsPage::default(),
-            recording: None,
-            recorded: Vec::new(),
-            trail: crate::trail::Trail::default(),
+            ..Self::default()
         };
         state.sync_context();
         state
@@ -2311,23 +1893,6 @@ impl WorkspaceState {
         self
     }
 
-    /// The state after the sidebar's list is scrolled by `delta` logical
-    /// pixels, in a window `height` logical pixels tall, kept within the list.
-    pub fn scrolled(mut self, delta: f32, height: f32) -> Self {
-        let room = (self.list_height() - crate::sidebar::list_viewport(height)).max(0.0);
-        self.sidebar_scroll = (self.sidebar_scroll + delta).clamp(0.0, room);
-        self
-    }
-
-    /// How tall the sidebar's list of chats and projects is, in logical pixels.
-    fn list_height(&self) -> f32 {
-        crate::sidebar::chats_height(self)
-            + crate::sidebar::HEADING_HEIGHT
-            + (0..self.projects.len())
-                .map(|index| crate::sidebar::project_height(self, index))
-                .sum::<f32>()
-    }
-
     /// Whether a page for starting work is showing: the one of a project, or the one that starts a chat.
     pub fn starting(&self) -> bool {
         match self.page {
@@ -2340,7 +1905,7 @@ impl WorkspaceState {
     /// How much room the sidebar takes from the left of the window, in logical pixels: its width while it shows and nothing while it is hidden.
     pub fn sidebar_room(&self) -> f32 {
         if self.sidebar_open {
-            self.sidebar_width
+            self.sizes.sidebar_width.get()
         } else {
             0.0
         }
@@ -2362,80 +1927,105 @@ impl WorkspaceState {
         }
     }
 
-    /// The state after `action` was pressed.
-    pub fn after(mut self, action: FocusId) -> Self {
-        if !Self::keeps_picker(action) {
-            self.picker = None;
+    /// The state after `event`, the reducer of what the reader did: a press of a control,
+    /// or typing in, editing or leaving a field.
+    pub fn handle(self, event: Event) -> Self {
+        match event {
+            Event::Sidebar(event) => self.pressed(Target::Sidebar(event)),
+            Event::Chat(event) => self.pressed(Target::Chat(event)),
+            Event::Composer(event) => self.pressed(Target::Composer(event)),
+            Event::Diff(event) => self.pressed(Target::Diff(event)),
+            Event::Tree(event) => self.pressed(Target::Tree(event)),
+            Event::Editor(event) => self.pressed(Target::Editor(event)),
+            Event::Search(event) => self.pressed(Target::Search(event)),
+            Event::Git(event) => self.pressed(Target::Git(event)),
+            Event::Terminal(event) => self.pressed(Target::Terminal(event)),
+            Event::Debug(event) => self.pressed(Target::Debug(event)),
+            Event::Browser(event) => self.pressed(Target::Browser(event)),
+            Event::Settings(event) => self.pressed(Target::Settings(event)),
+            Event::Menu(event) => self.pressed(Target::Menu(event)),
+            Event::Dialog(event) => self.pressed(Target::Dialog(event)),
+            Event::Window(event) => self.pressed(Target::Window(event)),
+            Event::Field(FieldEvent::Changed(field)) => self.field_typed(field),
+            Event::Field(FieldEvent::Typed { field, text }) => self.typed(field, &text),
+            Event::Field(FieldEvent::Left(field)) => self.field_left(field),
+            Event::Field(FieldEvent::Edited { field, edit }) => self.edited(field, edit),
         }
-        if !Self::keeps_activity(action) {
-            self.activity = None;
+    }
+
+    /// The state after `action` was pressed: a press that shows a shell asks it to take the
+    /// keyboard (see [`shell_asked`](Self::shell_asked)), and a press on the find bar or a
+    /// row of the list over the file scrolls the file shown to its caret.
+    pub(crate) fn pressed(self, action: Target) -> Self {
+        let mut state = self.after_press(action);
+        if Self::takes_keyboard(action) {
+            state.shell_asked += 1;
         }
-        if !Self::keeps_branches(action) {
-            self.git.branch_menu = false;
-        }
-        if !self.is_menu_row(action) {
-            self.git.menu = None;
-        }
-        if !self.settings_menu_row(action) {
-            self.settings_servers.menu = None;
-        }
-        if let Some(place) = action
-            .0
-            .checked_sub(crate::assist::COMPLETION_ROW_BASE)
-            .filter(|_| action.0 < crate::assist::COMPLETION_ROW_END)
+        if crate::find::is_find_part(action)
+            || matches!(action, Target::Editor(EditorEvent::ListingRow(_)))
         {
-            return self.completion_taken(Some(place as usize));
+            state = state.with_caret_in_view();
         }
-        if action == crate::assist::COMPLETION_BODY || action == crate::assist::HOVER_CARD {
-            return self;
+        state
+    }
+
+    /// The state with the file shown scrolled to bring its caret into view, in the room
+    /// its lines were last drawn in, when they were drawn.
+    fn with_caret_in_view(self) -> Self {
+        match self.code_bounds.get() {
+            Some(area) => self.with_caret_shown(area.size.height + crate::open_files::STRIP),
+            None => self,
         }
-        if let Some((file, line)) = crate::debug::breakpoint_of(action) {
-            self.toggle_breakpoint(file, line);
-            return self;
+    }
+
+    /// Opens the browser, or shows it when it is open, asking its address to take the keyboard.
+    pub fn browser_summoned(&mut self) {
+        self.open_browser(crate::browser::HOME);
+        if let Some(browser) = self.browser.as_mut() {
+            browser.asked += 1;
         }
-        if let Some(index) = crate::tasks::run_lens_of(action) {
-            self.run_lens_pressed(index);
-            return self;
-        }
-        if let Some((file, line)) = crate::tasks::run_of(action) {
-            self.runnable_run(file, line);
-            return self;
-        }
-        if action == crate::lightbulb::LIGHTBULB {
-            return self;
-        }
-        if let Some(line) = crate::viewer::fold_of(action) {
-            if let Some(document) = self.shown_text() {
-                document.unfold_line(line);
+    }
+
+    /// The state after `action` was pressed, before the shell and the caret follow the press.
+    fn after_press(mut self, action: Target) -> Self {
+        if let Target::Editor(event) = action {
+            match event {
+                EditorEvent::CompletionRow(place) => return self.completion_taken(Some(place)),
+                EditorEvent::CompletionBody
+                | EditorEvent::HoverCard
+                | EditorEvent::Lightbulb
+                | EditorEvent::ListingFilter
+                | EditorEvent::ListingBody
+                | EditorEvent::RenameBox
+                | EditorEvent::RenameSymbol
+                | EditorEvent::ColorBox
+                | EditorEvent::ColorHex => return self,
+                EditorEvent::Breakpoint { file, line } => {
+                    self.toggle_breakpoint(file, line);
+                    return self;
+                }
+                EditorEvent::RunLens(index) => {
+                    self.run_lens_pressed(index);
+                    return self;
+                }
+                EditorEvent::Run { file, line } => {
+                    self.runnable_run(file, line);
+                    return self;
+                }
+                EditorEvent::CodeFold(line) => {
+                    if let Some(document) = self.shown_text() {
+                        document.unfold_line(line);
+                    }
+                    return self;
+                }
+                EditorEvent::ListingRow(row) => return self.listing_taken(Some(row)),
+                EditorEvent::ListingPrompt => return self.listing_prompted(),
+                EditorEvent::ListingTake => return self.listing_taken(None),
+                EditorEvent::ColorHexSubmit => return self.color_format_taken(None),
+                EditorEvent::ColorFormat(row) => return self.color_format_taken(Some(row)),
+                EditorEvent::RenameSymbolSubmit => return self.rename_submitted(),
+                _ => {}
             }
-            return self;
-        }
-        if let Some(row) = crate::listing::listing_row_of(action) {
-            return self.listing_taken(Some(row));
-        }
-        if action == crate::quick_sessions::LISTING_PROMPT {
-            return self.listing_prompted();
-        }
-        if action == crate::listing::LISTING_TAKE {
-            return self.listing_taken(None);
-        }
-        if action == crate::listing::LISTING_FILTER
-            || action == crate::listing::LISTING_BODY
-            || action == crate::navigate::RENAME_BOX
-            || action == crate::navigate::RENAME_SYMBOL
-            || action == crate::color_picker::COLOR_BOX
-            || action == crate::color_picker::COLOR_HEX
-        {
-            return self;
-        }
-        if action == crate::color_picker::COLOR_HEX_SUBMIT {
-            return self.color_format_taken(None);
-        }
-        if let Some(row) = crate::color_picker::color_format_of(action) {
-            return self.color_format_taken(Some(row));
-        }
-        if action == crate::navigate::RENAME_SYMBOL_SUBMIT {
-            return self.rename_submitted();
         }
         if let Some(command) =
             crate::tab_menu::TabCommand::of(action).filter(|_| self.tab_menu.is_some())
@@ -2458,10 +2048,12 @@ impl WorkspaceState {
         if crate::project_search::is_search_part(action) {
             return self.project_search_pressed(action);
         }
-        if action == crate::line_edits::GO_TO_LINE_SUBMIT {
+        if action == Target::Editor(EditorEvent::GoToLineSubmit) {
             return self.go_to_line_submitted();
         }
-        if action == crate::line_edits::GO_TO_LINE || action == crate::line_edits::GO_TO_LINE_BOX {
+        if action == Target::Editor(EditorEvent::GoToLine)
+            || action == Target::Editor(EditorEvent::GoToLineBox)
+        {
             return self;
         }
         if let Some(address) = self
@@ -2479,7 +2071,7 @@ impl WorkspaceState {
             self.panes.parked = None;
         }
         self.settle_panes();
-        self.pane_menu = None;
+        self.pane_menu = false;
         if self.press_empty_pane(action) {
             return self;
         }
@@ -2487,68 +2079,74 @@ impl WorkspaceState {
             self.split_focused(side);
             return self;
         }
-        if let Some(pane) = crate::panes::pane_of(action) {
+        if let Target::Window(WindowEvent::Pane(pane)) = action {
             self.focus_pane(pane);
             return self;
         }
         let restoring = self.restoring.take();
         match action {
-            RESTORE_FILES => self.restore(restoring),
+            Target::Chat(ChatEvent::RestoreFiles) => self.restore(restoring),
             row if is_session_menu_item(row) => return self.session_menu_pressed(row),
-            MESSAGE_MENU_COPY
-            | MESSAGE_MENU_COPY_REPLY
-            | MESSAGE_MENU_COPY_MARKDOWN
-            | MESSAGE_MENU_SELECT_ALL => return self.message_menu_pressed(action),
-            PROJECT_MENU_NEW | PROJECT_MENU_REMOVE => return self.project_menu_pressed(action),
-            ADD_PROJECT => return self.with_adder(),
-            SETTINGS => return self.with_settings(),
-            crate::title_bar::UPDATE => self.open_release(),
-            crate::title_bar::LANGUAGE_UPDATE => return self.with_extensions_page(),
+            row if crate::message_menu::is_message_menu_item(row) => {
+                return self.message_menu_pressed(row);
+            }
+            row if crate::arrange::is_project_menu_item(row) => {
+                return self.project_menu_pressed(row);
+            }
+            Target::Sidebar(SidebarEvent::AddProject) => return self.with_adder(),
+            Target::Sidebar(SidebarEvent::Settings) => return self.with_settings(),
+            Target::Window(WindowEvent::Update) => self.open_release(),
+            Target::Window(WindowEvent::LanguageUpdate) => return self.with_extensions_page(),
             update if self.press_update(update) => {}
             trust if self.trust_pressed(trust) => {}
             action if crate::settings::is_settings(action) => {
                 return self.settings_pressed(action);
             }
-            action if is_adder(action) && action.0 < ADDER_ROW_BASE => {
+            action
+                if is_adder(action)
+                    && !matches!(action, Target::Dialog(DialogEvent::AdderRow(_))) =>
+            {
                 return self.adder_pressed(action);
             }
             action if is_picker(action) => return self.folder_picker_pressed(action),
-            HISTORY => self.page = Page::History,
-            crate::chats::NEW_CHAT => self.start_chat(),
-            crate::extensions::EXTENSIONS => return self.with_extensions_page(),
+            Target::Sidebar(SidebarEvent::History) => self.page = Page::History,
+            Target::Sidebar(SidebarEvent::NewChat) => self.start_chat(),
+            Target::Settings(SettingsEvent::Extensions) => return self.with_extensions_page(),
             action if crate::extensions::is_extensions(action) => {
                 return self.extensions_pressed(action);
             }
-            TAB_CHAT => self.tab = Tab::Chat,
-            TAB_DIFF => self.tab = Tab::Diff,
-            TERMINAL | NEW_TERMINAL | MAXIMIZE_TERMINAL => {
+            Target::Chat(ChatEvent::TabChat) => self.tab = Tab::Chat,
+            Target::Diff(DiffEvent::TabDiff) => self.tab = Tab::Diff,
+            Target::Terminal(TerminalEvent::Terminal)
+            | Target::Terminal(TerminalEvent::NewTerminal)
+            | Target::Terminal(TerminalEvent::MaximizeTerminal) => {
                 self.press_terminal(action);
             }
-            REVIEW => self.review = !self.review,
-            SIDEBAR_TOGGLE => self.sidebar_open = !self.sidebar_open,
-            REVIEW_CHANGES => self.show_review_tab(ReviewTab::Changes),
-            REVIEW_FILES => self.show_review_tab(ReviewTab::Files),
-            COMMENT_ADD => self.add_comment(),
-            COMMENT_CANCEL => self.comment_target = None,
-            SEND_COMMENTS => self.send_comments(),
-            OPEN_PLAN => self.plan_open = true,
-            CLOSE_PLAN => self.plan_open = false,
-            REVISE => self.reject(),
-            OPEN_DIFF => self.tab = Tab::Diff,
-            SESSION_SIGN_IN => {
+            Target::Diff(DiffEvent::Review) => self.review = !self.review,
+            Target::Sidebar(SidebarEvent::SidebarToggle) => self.sidebar_open = !self.sidebar_open,
+            Target::Diff(DiffEvent::ReviewChanges) => self.show_review_tab(ReviewTab::Changes),
+            Target::Diff(DiffEvent::ReviewFiles) => self.show_review_tab(ReviewTab::Files),
+            Target::Diff(DiffEvent::CommentAdd) => self.add_comment(),
+            Target::Diff(DiffEvent::CommentCancel) => self.comment_target = None,
+            Target::Diff(DiffEvent::SendComments) => self.send_comments(),
+            Target::Chat(ChatEvent::OpenPlan) => self.plan_open = true,
+            Target::Chat(ChatEvent::ClosePlan) => self.plan_open = false,
+            Target::Chat(ChatEvent::Revise) => self.reject(),
+            Target::Diff(DiffEvent::OpenDiff) => self.tab = Tab::Diff,
+            Target::Chat(ChatEvent::SessionSignIn) => {
                 if let Page::Session(session) = self.page {
                     self.outbox.push(Outgoing::SignInSession { session });
                 }
             }
-            crate::queued::QUEUED_CANCEL => self.cancel_queued_edit(),
-            SEND => self.send(false),
-            SEND_NOW => self.send(true),
-            STOP => self.stop(),
-            STAGE_ALL => self.stage_all(),
-            COMMIT => self.primary_pressed(),
-            FocusId(id) => {
+            Target::Chat(ChatEvent::QueuedCancel) => self.cancel_queued_edit(),
+            Target::Composer(ComposerEvent::Send) => self.send(false),
+            Target::Composer(ComposerEvent::SendNow) => self.send(true),
+            Target::Composer(ComposerEvent::Stop) => self.stop(),
+            Target::Git(GitEvent::StageAll) => self.stage_all(),
+            Target::Git(GitEvent::Commit) => self.primary_pressed(),
+            _ => {
                 if !self.press_git(action) {
-                    self.after_numbered(id);
+                    self.after_listed(action);
                 }
             }
         }
@@ -2559,103 +2157,51 @@ impl WorkspaceState {
     }
 
     /// Whether the field `id` saves what was written in it when the reader leaves it: the boxes of a category on the models page.
-    pub fn saves_on_leaving(id: FocusId) -> bool {
+    pub fn saves_on_leaving(id: Target) -> bool {
         crate::settings_slots::saves_on_leaving(id)
     }
 
     /// The state after the reader left the field named `id`, with what was written in it saved when it is one that saves on leaving.
-    pub fn field_left(mut self, id: FocusId) -> Self {
+    pub(crate) fn field_left(mut self, id: Target) -> Self {
         self.slot_field_left(id);
         self
     }
 
-    /// The state after `edit` is made to the field named `id`.
-    pub fn edited(mut self, id: FocusId, edit: Edit) -> Self {
+    /// The state after `edit` is made to the code editor's field, which `id` names.
+    pub(crate) fn edited(mut self, id: Target, edit: Edit) -> Self {
+        if id == Target::Editor(EditorEvent::EditorField) {
+            self.file_edited(edit);
+            self.refresh_files();
+        }
+        self
+    }
+
+    /// The state after the reader changed the text of the field named `id`
+    /// through its text field: what follows from what it now holds.
+    pub(crate) fn field_typed(mut self, id: Target) -> Self {
         match id {
-            PROMPT => {
-                let before = self.prompt.revision();
-                self.prompt.apply(edit);
-                if self.prompt.revision() != before {
-                    self.reset_slash();
-                }
-            }
-            COMMIT_MESSAGE => self.message.apply(edit),
-            COMMENT_FIELD => self.comment_text.apply(edit),
-            BRANCH_FILTER => self.git.filter.apply(edit),
-            STASH_FIELD => self.git.stash_message.apply(edit),
-            crate::branch_tasks::BRANCH_TASK_FIELD => {
-                if let Some(open) = self.git.branching.as_mut() {
-                    open.field.apply(edit);
-                }
-            }
-            RENAME_FIELD => self.git.rename.apply(edit),
-            EDITOR_FIELD => self.file_edited(edit),
-            crate::navigate::RENAME_SYMBOL => {
+            Target::Composer(ComposerEvent::Prompt) => self.reset_slash(),
+            Target::Editor(EditorEvent::RenameSymbol) => {
                 if let Some(renaming) = self.renaming.as_mut() {
-                    renaming.field.apply(edit);
                     renaming.problem = None;
                 }
             }
-            crate::color_picker::COLOR_HEX => self.color_hex_edited(edit),
-            crate::line_edits::GO_TO_LINE => {
-                if let Some(going) = self.going_to.as_mut() {
-                    going.field.apply(edit);
-                }
-            }
-            crate::find::FIND_FIELD => return self.find_typed(edit),
-            crate::project_search::PROJECT_SEARCH_FIELD => {
-                return self.project_search_typed(edit);
-            }
-            crate::listing::LISTING_FILTER => return self.listing_filtered(edit),
-            crate::debug::DEBUG_CONSOLE_FIELD | crate::debug::DEBUG_WATCH_FIELD => {
-                self.debug_field_edited(id, edit)
-            }
-            crate::browser::BROWSER_ADDRESS => {
-                if let Some(browser) = self.browser.as_mut() {
-                    browser.address.apply(edit);
-                }
-            }
-            crate::browser::BROWSER_FIND_FIELD => self.browser_find_edited(edit),
-            crate::find::REPLACE_FIELD => return self.replacement_typed(edit),
-            ENTRY_FIELD => {
-                if let Some((_, field)) = self.git.naming.as_mut() {
-                    field.apply(edit);
-                }
-            }
-            ADDER_FIELD => self.adder_edited(edit),
-            PICKER_FIELD => self.folder_picker_edited(edit),
-            HISTORY_SEARCH => {
-                let before = self.history_search.text().to_owned();
-                self.history_search.apply(edit);
-                if self.history_search.text() != before {
-                    self.history_scroll = 0.0;
-                }
-            }
-            crate::extensions::EXTENSIONS_SEARCH => self.extensions_searched(edit),
-            MENU_FILTER => {
-                self.menu_filter.apply(edit);
-                self.menu_scroll = 0.0;
-            }
-            id if crate::settings_servers::is_form_field(id) => self.server_form_edited(id, edit),
-            id if crate::settings_drafts::is_draft_field(id) => self.draft_edited(id, edit),
-            id if crate::settings_agents::is_key_field(id) => self.key_edited(id, edit),
-            id if crate::settings_pages::is_setting_field(id) => self.setting_edited(id, edit),
-            id if crate::settings_machines::is_machine_field(id) => self.machine_edited(id, edit),
-            id if crate::settings_models::is_model_field(id) => self.model_edited(id, edit),
-            id if crate::settings_slots::is_slot_field(id) => self.slot_edited(id, edit),
-            crate::settings::SETTINGS_FIND => {
-                self.settings_page.find.apply(edit);
-                self.settings_servers.scroll = 0.0;
+            Target::Editor(EditorEvent::ColorHex) => self.color_hex_typed(),
+            Target::Editor(EditorEvent::FindField) => return self.find_typed(),
+            Target::Search(SearchEvent::ProjectSearchField) => return self.project_search_typed(),
+            Target::Editor(EditorEvent::ListingFilter) => return self.listing_filtered(),
+            Target::Browser(BrowserEvent::BrowserFindField) => self.browser_find_typed(),
+            Target::Dialog(DialogEvent::AdderField) => self.adder_typed(),
+            Target::Dialog(DialogEvent::PickerField) => self.folder_picker_typed(),
+            Target::Sidebar(SidebarEvent::HistorySearch) => self.history_scroll.jump_to(0.0),
+            Target::Settings(SettingsEvent::ExtensionsSearch) => self.extensions_typed(),
+            Target::Composer(ComposerEvent::MenuFilter) => self.menu_scroll.jump_to(0.0),
+            id if crate::settings_drafts::is_draft_field(id) => self.draft_typed(),
+            id if crate::settings_pages::is_setting_field(id) => self.setting_typed(id),
+            id if crate::settings_slots::is_slot_field(id) => self.slot_typed(id),
+            Target::Settings(SettingsEvent::SettingsFind) => {
+                self.settings_servers.scroll.jump_to(0.0);
                 self.settings_page.picker = None;
-            }
-            crate::settings::SETTINGS_KEYMAP_FIND => self.settings_page.keymap_find.apply(edit),
-            OTHER => {
-                if let Page::Session(open) = self.page
-                    && let Some(draft) =
-                        self.sessions.get_mut(open).and_then(|s| s.inquiry.as_mut())
-                {
-                    draft.others[draft.step].apply(edit);
-                }
             }
             _ => {}
         }
@@ -2663,46 +2209,74 @@ impl WorkspaceState {
         self
     }
 
-    /// The text field `id` names, if it names one.
-    pub fn field(&self, id: FocusId) -> Option<&Field> {
+    /// The state after the reader typed `text` into the text field `id` over its
+    /// selection, as its text field takes typing, and what follows from that.
+    pub(crate) fn typed(self, id: Target, text: &str) -> Self {
+        let Some(field) = self.text_field(id) else {
+            return self;
+        };
+        field.edit(|buffer| {
+            let selection = buffer.selection();
+            buffer.replace(selection.min(), selection.max(), text);
+            buffer.place_cursor_before_char_at(selection.min() + text.chars().count());
+        });
+        self.field_typed(id)
+    }
+
+    /// The code editor's field, which `id` names, while a text file is shown.
+    pub fn field(&self, id: Target) -> Option<&pm_editor::Field> {
+        (id == Target::Editor(EditorEvent::EditorField))
+            .then(|| self.shown_document().map(|document| &document.field))
+            .flatten()
+    }
+
+    /// The state of the text field `id` names, if it names one other than the code editor's.
+    pub fn text_field(&self, id: Target) -> Option<&TextFieldState> {
         match id {
-            PROMPT => Some(&self.prompt),
-            COMMIT_MESSAGE => Some(&self.message),
-            COMMENT_FIELD => Some(&self.comment_text),
-            BRANCH_FILTER => Some(&self.git.filter),
-            STASH_FIELD => Some(&self.git.stash_message),
-            crate::branch_tasks::BRANCH_TASK_FIELD => {
+            Target::Composer(ComposerEvent::Prompt) => Some(&self.prompt),
+            Target::Git(GitEvent::CommitMessage) => Some(&self.message),
+            Target::Diff(DiffEvent::CommentField) => Some(&self.comment_text),
+            Target::Git(GitEvent::BranchFilter) => Some(&self.git.filter),
+            Target::Git(GitEvent::StashField) => Some(&self.git.stash_message),
+            Target::Git(GitEvent::BranchTaskField) => {
                 self.git.branching.as_ref().map(|open| &open.field)
             }
-            RENAME_FIELD => Some(&self.git.rename),
-            ENTRY_FIELD => self.git.naming.as_ref().map(|(_, field)| field),
-            EDITOR_FIELD => self.shown_document().map(|document| &document.field),
-            crate::navigate::RENAME_SYMBOL => {
+            Target::Git(GitEvent::RenameField) => Some(&self.git.rename),
+            Target::Tree(TreeEvent::EntryField) => self.git.naming.as_ref().map(|(_, field)| field),
+            Target::Editor(EditorEvent::RenameSymbol) => {
                 self.renaming.as_ref().map(|renaming| &renaming.field)
             }
-            crate::color_picker::COLOR_HEX => {
+            Target::Editor(EditorEvent::ColorHex) => {
                 self.color_picking.as_ref().map(|picking| &picking.hex)
             }
-            crate::line_edits::GO_TO_LINE => self.going_to.as_ref().map(|going| &going.field),
-            crate::browser::BROWSER_ADDRESS => {
+            Target::Editor(EditorEvent::GoToLine) => {
+                self.going_to.as_ref().map(|going| &going.field)
+            }
+            Target::Browser(BrowserEvent::BrowserAddress) => {
                 self.browser.as_ref().map(|browser| &browser.address)
             }
-            crate::browser::BROWSER_FIND_FIELD => self
+            Target::Browser(BrowserEvent::BrowserFindField) => self
                 .browser
                 .as_ref()
                 .and_then(|browser| browser.search.as_ref())
                 .map(|search| &search.query),
-            crate::find::FIND_FIELD => self.finding.as_ref().map(|finding| &finding.query),
-            crate::project_search::PROJECT_SEARCH_FIELD => Some(&self.project_search.query),
-            crate::listing::LISTING_FILTER => self.listing_filter(),
-            crate::debug::DEBUG_CONSOLE_FIELD => Some(&self.debug.console),
-            crate::debug::DEBUG_WATCH_FIELD => Some(&self.debug.watch),
-            crate::find::REPLACE_FIELD => self.finding.as_ref().map(|finding| &finding.replacement),
-            HISTORY_SEARCH => Some(&self.history_search),
-            crate::extensions::EXTENSIONS_SEARCH => Some(&self.extensions_page.search),
-            MENU_FILTER => Some(&self.menu_filter),
-            ADDER_FIELD => self.adder.as_ref().map(|open| &open.field),
-            PICKER_FIELD => self.folder_picker.as_ref().map(|open| &open.field),
+            Target::Editor(EditorEvent::FindField) => {
+                self.finding.as_ref().map(|finding| &finding.query)
+            }
+            Target::Search(SearchEvent::ProjectSearchField) => Some(&self.project_search.query),
+            Target::Editor(EditorEvent::ListingFilter) => self.listing_filter(),
+            Target::Debug(DebugEvent::DebugConsoleField) => Some(&self.debug.console),
+            Target::Debug(DebugEvent::DebugWatchField) => Some(&self.debug.watch),
+            Target::Editor(EditorEvent::ReplaceField) => {
+                self.finding.as_ref().map(|finding| &finding.replacement)
+            }
+            Target::Sidebar(SidebarEvent::HistorySearch) => Some(&self.history_search),
+            Target::Settings(SettingsEvent::ExtensionsSearch) => Some(&self.extensions_page.search),
+            Target::Composer(ComposerEvent::MenuFilter) => Some(&self.menu_filter),
+            Target::Dialog(DialogEvent::AdderField) => self.adder.as_ref().map(|open| &open.field),
+            Target::Dialog(DialogEvent::PickerField) => {
+                self.folder_picker.as_ref().map(|open| &open.field)
+            }
             id if crate::settings_servers::is_form_field(id) => self.server_form_field(id),
             id if crate::settings_drafts::is_draft_field(id) => self.draft_field(id),
             id if crate::settings_agents::is_key_field(id) => self.key_field(id),
@@ -2710,115 +2284,17 @@ impl WorkspaceState {
             id if crate::settings_machines::is_machine_field(id) => self.machine_field(id),
             id if crate::settings_models::is_model_field(id) => self.model_field(id),
             id if crate::settings_slots::is_slot_field(id) => self.slot_field(id),
-            crate::settings::SETTINGS_FIND => Some(&self.settings_page.find),
-            crate::settings::SETTINGS_KEYMAP_FIND => Some(&self.settings_page.keymap_find),
-            OTHER => self.other_field(),
-            _ => None,
-        }
-    }
-
-    /// Whether `id` names a text field.
-    pub fn is_field(id: FocusId) -> bool {
-        id == PROMPT
-            || id == COMMIT_MESSAGE
-            || id == COMMENT_FIELD
-            || id == BRANCH_FILTER
-            || id == STASH_FIELD
-            || id == crate::branch_tasks::BRANCH_TASK_FIELD
-            || id == RENAME_FIELD
-            || id == ENTRY_FIELD
-            || id == EDITOR_FIELD
-            || id == crate::navigate::RENAME_SYMBOL
-            || id == crate::color_picker::COLOR_HEX
-            || id == crate::line_edits::GO_TO_LINE
-            || id == crate::browser::BROWSER_ADDRESS
-            || id == crate::browser::BROWSER_FIND_FIELD
-            || id == crate::find::FIND_FIELD
-            || id == crate::project_search::PROJECT_SEARCH_FIELD
-            || id == crate::listing::LISTING_FILTER
-            || id == crate::debug::DEBUG_CONSOLE_FIELD
-            || id == crate::debug::DEBUG_WATCH_FIELD
-            || id == crate::find::REPLACE_FIELD
-            || id == HISTORY_SEARCH
-            || id == crate::extensions::EXTENSIONS_SEARCH
-            || id == MENU_FILTER
-            || id == OTHER
-            || id == ADDER_FIELD
-            || id == PICKER_FIELD
-            || crate::settings_servers::is_form_field(id)
-            || crate::settings_drafts::is_draft_field(id)
-            || crate::settings_agents::is_key_field(id)
-            || crate::settings_pages::is_setting_field(id)
-            || crate::settings_machines::is_machine_field(id)
-            || crate::settings_models::is_model_field(id)
-            || crate::settings_slots::is_slot_field(id)
-            || id == crate::settings::SETTINGS_FIND
-            || id == crate::settings::SETTINGS_KEYMAP_FIND
-    }
-
-    /// What pressing the field `id` hands in when Enter is pressed in it.
-    pub fn submit_of(id: FocusId) -> FocusId {
-        match id {
-            COMMIT_MESSAGE => COMMIT,
-            COMMENT_FIELD => COMMENT_ADD,
-            BRANCH_FILTER => BRANCH_SUBMIT,
-            STASH_FIELD | RENAME_FIELD | crate::branch_tasks::BRANCH_TASK_FIELD => PROMPT_CONFIRM,
-            ENTRY_FIELD => crate::tree_actions::TREE_NAME_SUBMIT,
-            EDITOR_FIELD => crate::open_files::EDITOR_SAVE,
-            crate::navigate::RENAME_SYMBOL => crate::navigate::RENAME_SYMBOL_SUBMIT,
-            crate::color_picker::COLOR_HEX => crate::color_picker::COLOR_HEX_SUBMIT,
-            crate::line_edits::GO_TO_LINE => crate::line_edits::GO_TO_LINE_SUBMIT,
-            crate::browser::BROWSER_ADDRESS => crate::browser::BROWSER_GO,
-            crate::browser::BROWSER_FIND_FIELD => crate::browser::BROWSER_FIND_NEXT,
-            crate::find::FIND_FIELD => crate::find::FIND_NEXT,
-            crate::project_search::PROJECT_SEARCH_FIELD => crate::project_search::PROJECT_SEARCH_GO,
-            crate::listing::LISTING_FILTER => crate::listing::LISTING_TAKE,
-            crate::debug::DEBUG_CONSOLE_FIELD => crate::debug::DEBUG_CONSOLE_SUBMIT,
-            crate::debug::DEBUG_WATCH_FIELD => crate::debug::DEBUG_WATCH_ADD,
-            crate::find::REPLACE_FIELD => crate::find::REPLACE_ONE,
-            HISTORY_SEARCH => HISTORY,
-            MENU_FILTER => MENU_FILTER_PICK,
-            ADDER_FIELD => ADDER_SUBMIT,
-            PICKER_FIELD => PICKER_SUBMIT,
-            crate::settings::SETTINGS_SEARCH => crate::settings::SETTINGS_SEARCH_GO,
-            id if crate::settings_servers::is_form_field(id) => crate::settings::SETTINGS_SAVE,
-            id if crate::settings_drafts::is_draft_field(id) => {
-                crate::settings_drafts::DRAFT_CREATE
+            Target::Settings(SettingsEvent::SettingsFind) => Some(&self.settings_page.find),
+            Target::Settings(SettingsEvent::SettingsKeymapFind) => {
+                Some(&self.settings_page.keymap_find)
             }
-            id if crate::settings_agents::is_key_field(id) => {
-                crate::settings_agents::key_submit(id)
-            }
-            id if crate::settings_machines::is_machine_field(id) => {
-                crate::settings_machines::MACHINE_SAVE
-            }
-            id if crate::settings_models::is_model_field(id) => crate::settings_models::MODEL_SAVE,
-            id if crate::settings_slots::is_slot_field(id) => {
-                crate::settings_slots::slot_submit(id)
-            }
-            id if let Some(submit) = crate::settings_pages::list_submit_of(id) => submit,
-            id if crate::settings_pages::is_setting_field(id)
-                || id == crate::settings::SETTINGS_FIND
-                || id == crate::settings::SETTINGS_KEYMAP_FIND =>
-            {
-                id
-            }
-            OTHER => NEXT,
-            _ => SEND,
-        }
-    }
-
-    /// What pressing Control or Command with Enter in the field `id` hands in, when it hands in something of its own.
-    pub fn hurried_submit_of(id: FocusId) -> Option<FocusId> {
-        match id {
-            PROMPT => Some(SEND_NOW),
-            COMMIT_MESSAGE => Some(COMMIT),
-            crate::listing::LISTING_FILTER => Some(crate::quick_sessions::LISTING_PROMPT),
+            Target::Chat(ChatEvent::Other) => self.other_field(),
             _ => None,
         }
     }
 
     /// The state with a menu open over the field `field` at `at`.
-    pub fn with_menu(mut self, field: FocusId, at: (f32, f32)) -> Self {
+    pub fn with_menu(mut self, field: Target, at: (f32, f32)) -> Self {
         self.menu = Some(ContextMenu { field, at });
         self
     }
@@ -2834,24 +2310,26 @@ impl WorkspaceState {
         self.git.menu = None;
         self.settings_servers.menu = None;
         self.tab_menu = None;
-        self.pane_menu = None;
+        self.pane_menu = false;
         self
     }
 
-    /// The state after the list of values in the open menu is scrolled by
-    /// `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_menu(mut self, delta: f32, room: f32) -> Self {
-        self.menu_scroll = (self.menu_scroll + delta).clamp(0.0, room);
+    /// The state with no popover of a chip above the prompt open: what pressing outside the
+    /// popover, or Escape, leaves.
+    pub fn without_open_picker(mut self) -> Self {
+        self.picker = None;
         self
     }
 
-    /// The state after the conversation is scrolled by `delta` logical
-    /// pixels, downwards when positive, with `room` pixels to scroll back.
-    pub fn scrolled_chat(mut self, delta: f32, room: f32) -> Self {
-        self.chat_back = (self.chat_back - delta).clamp(0.0, room);
-        if let Some(index) = self.open_index() {
-            self.sessions[index].chat_back = self.chat_back;
-        }
+    /// The state with the panel over the conversation's chips closed.
+    pub fn without_activity(mut self) -> Self {
+        self.activity = None;
+        self
+    }
+
+    /// The state with the list of branches of the changes panel closed.
+    pub fn without_branch_menu(mut self) -> Self {
+        self.git.branch_menu = false;
         self
     }
 
@@ -2863,19 +2341,19 @@ impl WorkspaceState {
     }
 
     /// The state after the agent of the session at `session` did `event`.
-    pub fn heard(mut self, session: usize, event: Event) -> Self {
+    pub fn heard(mut self, session: usize, event: HarnessEvent) -> Self {
         self.hear_in_place(session, event);
         self
     }
 
     /// Takes in what the agent of the session at `session` did, as `event`, without building the state anew.
-    pub fn hear_in_place(&mut self, session: usize, event: Event) {
-        if matches!(&event, Event::Ask(ask) if ask.plan.is_some()) {
+    pub fn hear_in_place(&mut self, session: usize, event: HarnessEvent) {
+        if matches!(&event, HarnessEvent::Ask(ask) if ask.plan.is_some()) {
             self.plan_open = true;
-            self.plan_scroll = 0.0;
+            self.plan_scroll.jump_to(0.0);
         }
-        let finishing = matches!(&event, Event::Finished(_) | Event::Failed(_));
-        let pictured = matches!(&event, Event::Show(_) | Event::Inquire(_));
+        let finishing = matches!(&event, HarnessEvent::Finished(_) | HarnessEvent::Failed(_));
+        let pictured = matches!(&event, HarnessEvent::Show(_) | HarnessEvent::Inquire(_));
         if let Some(held) = self.sessions.get_mut(session) {
             held.hear(event);
             let gone = self.editing_queued.as_ref().is_some_and(|editing| {
@@ -2904,7 +2382,7 @@ impl WorkspaceState {
         match self.window.agents.on_finish {
             pm_config::Finish::Nothing => {}
             pm_config::Finish::OpenReview if changed > 0 => {
-                self = self.after(FocusId(SESSION_BASE + position as u64));
+                self = self.handle(Event::Sidebar(SidebarEvent::Session(position)));
                 self.tab = Tab::Diff;
             }
             pm_config::Finish::Notify | pm_config::Finish::OpenReview => {
@@ -2928,18 +2406,6 @@ impl WorkspaceState {
             .and_then(|session| session.ask.as_ref())
             .and_then(|ask| ask.plan.as_deref())
             .filter(|_| self.plan_open)
-    }
-
-    /// The state after the plan panel is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_plan(mut self, delta: f32, room: f32) -> Self {
-        self.plan_scroll = (self.plan_scroll + delta).clamp(0.0, room);
-        self
-    }
-
-    /// Scrolls the subagent rows by `delta` logical pixels within `room`.
-    pub fn scrolled_subagents(mut self, delta: f32, room: f32) -> Self {
-        self.subagents_scroll = (self.subagents_scroll + delta).clamp(0.0, room);
-        self
     }
 
     /// Answers the question with its first refusal, if it offers one.
@@ -2970,136 +2436,151 @@ impl WorkspaceState {
         self.new_in = submodule;
     }
 
-    /// The state after one of the rows or chips numbered from a base was pressed.
-    fn after_numbered(&mut self, id: u64) {
-        if crate::diff::gutter_of(FocusId(id)).is_some() {
-            return;
-        }
-        if self.press_exhibit(FocusId(id)) {
-            return;
-        }
-        if self.press_inquiry(FocusId(id)) {
-            return;
-        }
-        if self.press_terminal(FocusId(id)) {
-            return;
-        }
-        if self.press_debug(FocusId(id)) {
-            return;
-        }
-        if self.press_continue(FocusId(id)) {
-            return;
-        }
-        if self.press_subagent_stop(id) {
-            return;
-        }
-        if self.press_choice(id) {
-            return;
-        }
-        let position = |base: u64, count: usize| {
-            id.checked_sub(base)
-                .map(|offset| offset as usize)
-                .filter(|offset| *offset < count)
-        };
-        let rows = self.adder.as_ref().map_or(0, |open| open.count());
-        if let Some(index) = position(ADDER_ROW_BASE, rows) {
-            self.adder_chosen(index);
-        } else if let Some(index) = position(PROJECT_BASE, self.projects.len()) {
-            self.page = Page::Project(index);
-            self.overview_scroll = 0.0;
-            self.rescope_browser();
-        } else if let Some(index) = position(NEW_IN_BASE, self.projects.len()) {
-            self.start_in(index, None);
-        } else if let Some((project, submodule)) = (NEW_IN_SUBMODULE_BASE..SESSION_BASE)
-            .contains(&id)
-            .then(|| crate::sidebar::submodule_rows(self))
-            .and_then(|rows| rows.into_iter().nth((id - NEW_IN_SUBMODULE_BASE) as usize))
+    /// The state after one of the rows or chips of a list, or a button of the parts that handle their own, was pressed.
+    fn after_listed(&mut self, id: Target) {
+        if matches!(id, Target::Diff(DiffEvent::Gutter { .. }))
+            || self.press_exhibit(id)
+            || self.press_inquiry(id)
+            || self.press_terminal(id)
+            || self.press_debug(id)
+            || self.press_continue(id)
+            || self.press_subagent_stop(id)
+            || self.press_choice(id)
         {
-            self.start_in(project, Some(submodule));
-        } else if let Some(index) = position(SESSION_BASE, self.sessions.len()) {
-            self.sessions[index].closed = false;
-            if let Page::Session(before) = self.page
-                && before != index
+            return;
+        }
+        match id {
+            Target::Dialog(DialogEvent::AdderRow(index))
+                if index < self.adder.as_ref().map_or(0, |open| open.count()) =>
             {
-                self.tab_stash.insert(before, self.tab);
+                self.adder_chosen(index);
             }
-            self.page = Page::Session(index);
-            self.tab = Tab::Chat;
-            self.file = None;
-            self.comment_target = None;
-            self.fresh_git();
-            self.chat_back = self.sessions[index].chat_back;
-            self.rescope_browser();
-        } else if let Some(index) = position(AGENT_BASE, self.agent_slots()) {
-            self.agent = index;
-            self.ask_allowance(index, true);
-        } else if let Some(index) = position(CHOICE_BASE, self.choices()) {
-            self.choose(index);
-        } else if let Some(index) = position(HURRY_BASE, self.queued_open()) {
-            self.act_on_queued(index, false);
-        } else if let Some(index) = position(REMOVE_QUEUED_BASE, self.queued_open()) {
-            self.act_on_queued(index, true);
-        } else if let Some(index) = position(crate::queued::EDIT_QUEUED_BASE, self.queued_open()) {
-            self.open_queued_edit(index);
-        } else if let Some(index) = id
-            .checked_sub(COPY_BASE)
-            .map(|offset| offset as usize)
-            .filter(|offset| *offset < self.messages_open())
-        {
-            self.copy(index);
-        } else if let Some(index) = position(REWIND_BASE, self.messages_open()) {
-            self.rewind(index);
-        } else if let Some(index) = position(FORK_BASE, self.messages_open()) {
-            self.fork(index);
-        } else if let Some(index) = position(RESTORE_BASE, self.messages_open()) {
-            self.restoring = Some(index);
-        } else if let Some(index) = position(TURN_CHANGES_BASE, self.messages_open()) {
-            self.turn_changes(index);
-        } else if let Some(index) = position(TURN_BASE, self.messages_open()) {
-            self.toggle_turn(index);
-        } else if let Some(index) = position(TREE_BASE, self.files.len() + self.tree_folders.len())
-        {
-            self.fold_tree_folder(index);
-        } else if id >= LINK_BASE {
-            self.open_link(id - LINK_BASE);
-        } else if id >= DETAILS_BASE {
-            let offset = (id - DETAILS_BASE) as usize;
-            self.toggle_details(offset / 1000, offset % 1000);
-        } else if id >= STEP_BASE {
-            let offset = (id - STEP_BASE) as usize;
-            self.toggle_step(offset / 1000, offset % 1000);
-        } else if let Some(index) = position(
-            FILE_BASE,
-            self.review_session()
-                .map_or(0, |session| session.changes.len()),
-        )
-        .filter(|index| {
-            self.review_session()
-                .is_some_and(|held| held.changes[*index].conflicted)
-        }) {
-            if self.open().is_some() {
+            Target::Sidebar(SidebarEvent::Project(index)) if index < self.projects.len() => {
+                self.page = Page::Project(index);
+                self.overview_scroll.jump_to(0.0);
+                self.rescope_browser();
+            }
+            Target::Sidebar(SidebarEvent::NewIn(index)) if index < self.projects.len() => {
+                self.start_in(index, None);
+            }
+            Target::Sidebar(SidebarEvent::NewInSubmodule(row)) => {
+                if let Some((project, submodule)) =
+                    crate::sidebar::submodule_rows(self).into_iter().nth(row)
+                {
+                    self.start_in(project, Some(submodule));
+                }
+            }
+            Target::Sidebar(SidebarEvent::Session(index)) if index < self.sessions.len() => {
+                self.sessions[index].closed = false;
+                if let Page::Session(before) = self.page
+                    && before != index
+                {
+                    self.tab_stash.insert(before, self.tab);
+                }
+                self.page = Page::Session(index);
+                self.tab = Tab::Chat;
+                self.file = None;
+                self.comment_target = None;
+                self.fresh_git();
+                self.chat_list
+                    .scroll()
+                    .jump_to(self.sessions[index].chat_back);
+                self.rescope_browser();
+            }
+            Target::Sidebar(SidebarEvent::Agent(index)) if index < self.agent_slots() => {
+                self.agent = index;
+                self.ask_allowance(index, true);
+            }
+            Target::Chat(ChatEvent::Choice(index)) if index < self.choices() => self.choose(index),
+            Target::Chat(ChatEvent::Hurry(index)) if index < self.queued_open() => {
+                self.act_on_queued(index, false);
+            }
+            Target::Chat(ChatEvent::RemoveQueued(index)) if index < self.queued_open() => {
+                self.act_on_queued(index, true);
+            }
+            Target::Chat(ChatEvent::EditQueued(index)) if index < self.queued_open() => {
+                self.open_queued_edit(index);
+            }
+            Target::Chat(ChatEvent::Copy(index)) if index < self.messages_open() => {
+                self.copy(index)
+            }
+            Target::Chat(ChatEvent::Rewind(index)) if index < self.messages_open() => {
+                self.rewind(index);
+            }
+            Target::Chat(ChatEvent::Fork(index)) if index < self.messages_open() => {
+                self.fork(index)
+            }
+            Target::Chat(ChatEvent::Restore(index)) if index < self.messages_open() => {
+                self.restoring = Some(index);
+            }
+            Target::Chat(ChatEvent::TurnChanges(index)) if index < self.messages_open() => {
+                self.turn_changes(index);
+            }
+            Target::Chat(ChatEvent::Turn(index)) if index < self.messages_open() => {
+                self.toggle_turn(index);
+            }
+            Target::Tree(TreeEvent::Tree(index))
+                if index < self.files.len() + self.tree_folders.len() =>
+            {
+                self.fold_tree_folder(index);
+            }
+            Target::Chat(ChatEvent::Link {
+                message,
+                piece,
+                link,
+            }) => self.open_link(message, piece, link),
+            Target::Chat(ChatEvent::Details { message, place }) => {
+                if let Some(open) = self.open_index() {
+                    toggle_key(&mut self.unfolded, (open, message, place));
+                }
+            }
+            Target::Chat(ChatEvent::Step { message, position }) => {
+                if let Some(open) = self.open_index() {
+                    toggle_key(&mut self.opened, (open, message, position));
+                }
+            }
+            Target::Diff(DiffEvent::ChangedFile(index))
+                if self
+                    .review_session()
+                    .and_then(|session| session.changes.get(index))
+                    .is_some_and(|change| change.conflicted) =>
+            {
+                if self.open().is_some() {
+                    self.open_change(index);
+                } else {
+                    self.request_resolver(index);
+                }
+            }
+            Target::Diff(DiffEvent::ChangedFile(index)) if index < self.change_count() => {
                 self.open_change(index);
-            } else {
-                self.request_resolver(index);
             }
-        } else if let Some(index) = position(FILE_BASE, self.change_count()) {
-            self.open_change(index);
-        } else if let Some(index) = position(STAGE_BASE, self.change_count()) {
-            self.stage_changes(&[index]);
-        } else if let Some(index) = position(FOLDER_BASE, self.change_folder_count()) {
-            self.fold_change_folder(index);
-        } else if let Some(index) = position(FOLDER_STAGE_BASE, self.change_folder_count()) {
-            self.stage_change_folder(index);
-        } else if let Some(index) = position(OPEN_ARROW_BASE, self.change_count()) {
-            self.open_changed_file(index);
-        } else if let Some(index) = position(DIFF_FOLD_BASE, self.change_count()) {
-            self.fold_diff(index);
-        } else if let Some(index) = position(COMMENT_FILE_BASE, self.change_count()) {
-            self.start_comment(index, None, false);
-        } else if let Some(index) = position(COMMENT_REMOVE_BASE, self.comment_count()) {
-            self.remove_comment(index);
-        } else if let Some(index) = position(VIEWED_BASE, self.change_count()) {
-            self.change_at(index, |change| change.viewed = !change.viewed);
+            Target::Diff(DiffEvent::Stage(index)) if index < self.change_count() => {
+                self.stage_changes(&[index]);
+            }
+            Target::Diff(DiffEvent::ChangeFolder(index)) if index < self.change_folder_count() => {
+                self.fold_change_folder(index);
+            }
+            Target::Diff(DiffEvent::ChangeFolderStage(index))
+                if index < self.change_folder_count() =>
+            {
+                self.stage_change_folder(index);
+            }
+            Target::Diff(DiffEvent::OpenArrow(index)) if index < self.change_count() => {
+                self.open_changed_file(index);
+            }
+            Target::Diff(DiffEvent::DiffFold(index)) if index < self.change_count() => {
+                self.fold_diff(index);
+            }
+            Target::Diff(DiffEvent::CommentFile(index)) if index < self.change_count() => {
+                self.start_comment(index, None, false);
+            }
+            Target::Diff(DiffEvent::CommentRemove(index)) if index < self.comment_count() => {
+                self.remove_comment(index);
+            }
+            Target::Diff(DiffEvent::Viewed(index)) if index < self.change_count() => {
+                self.change_at(index, |change| change.viewed = !change.viewed);
+            }
+            _ => {}
         }
     }
 
@@ -3125,16 +2606,14 @@ impl WorkspaceState {
         self.outbox.push(Outgoing::Copy { text });
     }
 
-    /// Opens in the browser the web address of the link that sits `offset` past [`LINK_BASE`] in the open session's replies.
-    fn open_link(&mut self, offset: u64) {
-        let (message, rest) = (offset / LINKS_PER_REPLY, offset % LINKS_PER_REPLY);
-        let (piece, link) = (rest / LINKS_PER_PIECE, rest % LINKS_PER_PIECE);
+    /// Opens in the browser the web address of the link at `link` of the piece `piece` of the reply at `message` of the open session.
+    fn open_link(&mut self, message: usize, piece: usize, link: usize) {
         let address = self
             .open()
-            .and_then(|session| session.messages.get(message as usize))
+            .and_then(|session| session.messages.get(message))
             .and_then(|message| {
-                let (_, piece) = *message.chunks().get(piece as usize)?;
-                pm_markdown::links(piece).into_iter().nth(link as usize)
+                let (_, piece) = *message.chunks().get(piece)?;
+                pm_markdown::links(piece).into_iter().nth(link)
             })
             .filter(|address| pm_harness::is_web_address(address));
         if let Some(address) = address {
@@ -3227,27 +2706,15 @@ impl WorkspaceState {
         }
     }
 
-    /// Opens or closes the detail of step `step` of the reply at `message` of the open session.
-    fn toggle_step(&mut self, message: usize, step: usize) {
-        let Page::Session(open) = self.page else {
-            return;
-        };
-        let key = (open, message, step);
-        match self.opened.iter().position(|held| *held == key) {
-            Some(at) => {
-                self.opened.remove(at);
-            }
-            None => self.opened.push(key),
-        }
-    }
-
     /// Stops the subagent whose stop button `id` is, one of the open session's that is still at work: asks its server to, and takes the button away until the server says how the subagent stands. Returns whether `id` is such a button.
-    fn press_subagent_stop(&mut self, id: u64) -> bool {
-        if !(SUBAGENT_STOP_BASE..SUBAGENT_STOP_BASE + SUBAGENT_STOP_ROOM).contains(&id) {
+    fn press_subagent_stop(&mut self, id: Target) -> bool {
+        let Target::Chat(ChatEvent::SubagentStop {
+            message,
+            position: step,
+        }) = id
+        else {
             return false;
-        }
-        let offset = (id - SUBAGENT_STOP_BASE) as usize;
-        let (message, step) = (offset / 1000, offset % 1000);
+        };
         let Page::Session(open) = self.page else {
             return true;
         };
@@ -3268,20 +2735,6 @@ impl WorkspaceState {
             });
         }
         true
-    }
-
-    /// Opens or closes fold-out `place` of the reply at `message` of the open session.
-    fn toggle_details(&mut self, message: usize, place: usize) {
-        let Page::Session(open) = self.page else {
-            return;
-        };
-        let key = (open, message, place);
-        match self.unfolded.iter().position(|held| *held == key) {
-            Some(at) => {
-                self.unfolded.remove(at);
-            }
-            None => self.unfolded.push(key),
-        }
     }
 
     /// The fold-outs open in the reply at `message` of the open session, by place.
@@ -3436,46 +2889,45 @@ impl WorkspaceState {
                 index
             }
             Page::New(project) if project >= self.projects.len() => return,
-            Page::New(project) => {
+            Page::New(_) | Page::Chat => {
                 let title: String = text.chars().take(40).collect();
-                let mut session = Session::started(&title, project, &text);
-                session.agent = self.agent;
-                session.login = self.login_for_new_work(self.agent).map(str::to_owned);
-                session.directory = self.projects[project]
-                    .directory()
-                    .to_string_lossy()
-                    .into_owned();
-                session.base = self.base_for_new_work();
-                session.in_container = self.container_for_new_work();
-                session.submodule = self.new_in.take();
-                session.directory = session.folder_in(&session.directory);
-                session.branch = if session.base.is_some() {
-                    String::new()
-                } else {
-                    self.branches.first().cloned().unwrap_or_default()
+                let project = match self.page {
+                    Page::New(project) => Some(project),
+                    _ => None,
                 };
-                session.messages[0].attachments = sent_files;
-                self.sessions.push(session);
-                self.pane_stash
-                    .insert(self.sessions.len() - 1, self.panes.clone());
-                self.hand_over_new_page(project, self.sessions.len() - 1);
-                self.page = Page::Session(self.sessions.len() - 1);
-                self.tab = Tab::Chat;
-                self.sessions.len() - 1
-            }
-            Page::Chat => {
-                let title: String = text.chars().take(40).collect();
-                let mut session = Session::started_chat(&title, self.chat_on.clone(), &text);
+                let mut session = match project {
+                    Some(project) => {
+                        let mut session = Session::started(&title, project, &text);
+                        session.directory = self.projects[project]
+                            .directory()
+                            .to_string_lossy()
+                            .into_owned();
+                        session.base = self.base_for_new_work();
+                        session.in_container = self.container_for_new_work();
+                        session.submodule = self.new_in.take();
+                        session.directory = session.folder_in(&session.directory);
+                        session.branch = if session.base.is_some() {
+                            String::new()
+                        } else {
+                            self.branches.first().cloned().unwrap_or_default()
+                        };
+                        session
+                    }
+                    None => Session::started_chat(&title, self.chat_on.clone(), &text),
+                };
                 session.agent = self.agent;
                 session.login = self.login_for_new_work(self.agent).map(str::to_owned);
                 session.messages[0].attachments = sent_files;
                 self.sessions.push(session);
-                self.pane_stash
-                    .insert(self.sessions.len() - 1, self.panes.clone());
-                self.hand_over_new_chat(self.sessions.len() - 1);
-                self.page = Page::Session(self.sessions.len() - 1);
+                let index = self.sessions.len() - 1;
+                self.pane_stash.insert(index, self.panes.clone());
+                match project {
+                    Some(project) => self.hand_over_new_page(project, index),
+                    None => self.hand_over_new_chat(index),
+                }
+                self.page = Page::Session(index);
                 self.tab = Tab::Chat;
-                self.sessions.len() - 1
+                index
             }
             Page::Project(_) | Page::History | Page::Extensions => return,
         };
@@ -3521,7 +2973,7 @@ impl WorkspaceState {
     fn take_prompt(&mut self) -> Vec<String> {
         let files = self.prompt_files();
         self.prompt = prompt_field("");
-        self.chat_back = 0.0;
+        self.chat_list.scroll().jump_to(0.0);
         if let Some(index) = self.open_index() {
             self.sessions[index].chat_back = 0.0;
         }
@@ -3614,7 +3066,7 @@ impl WorkspaceState {
 
     /// Opens the box for a comment on the change at `change`, on `range` or on the whole file.
     fn start_comment(&mut self, change: usize, range: Option<Range>, dragging: bool) {
-        self.comment_text = Field::default();
+        self.comment_text = TextFieldState::default();
         self.comment_target = Some(CommentTarget {
             change,
             range,
@@ -3624,8 +3076,8 @@ impl WorkspaceState {
     }
 
     /// The state after the pointer went down on the line number `id` of the diff, which starts a selection of lines.
-    pub fn comment_drag_begun(mut self, id: FocusId) -> Self {
-        if let Some((change, new, line)) = crate::diff::gutter_of(id) {
+    pub fn comment_drag_begun(mut self, id: Target) -> Self {
+        if let Target::Diff(DiffEvent::Gutter { change, new, line }) = id {
             let range = Range {
                 new,
                 start: line,
@@ -3637,8 +3089,8 @@ impl WorkspaceState {
     }
 
     /// The state after the pointer, held down, moved over the line number `id`, which stretches the selection to it when it is on the same side of the same file.
-    pub fn comment_drag_extended(mut self, id: FocusId) -> Self {
-        let Some((change, new, line)) = crate::diff::gutter_of(id) else {
+    pub fn comment_drag_extended(mut self, id: Target) -> Self {
+        let Target::Diff(DiffEvent::Gutter { change, new, line }) = id else {
             return self;
         };
         if let Some(target) = self.comment_target.as_mut()
@@ -3695,7 +3147,7 @@ impl WorkspaceState {
             text,
         });
         self.comment_target = None;
-        self.comment_text = Field::default();
+        self.comment_text = TextFieldState::default();
     }
 
     /// Takes back the comment at `index` of the open session.
@@ -3748,7 +3200,8 @@ impl WorkspaceState {
     /// Shows `tab` in the review panel from its top.
     pub(crate) fn show_review_tab(&mut self, tab: ReviewTab) {
         self.review_tab = tab;
-        self.tree_scroll = 0.0;
+        self.tree_scroll.jump_to(0.0);
+        self.files_list.scroll().jump_to(0.0);
     }
 
     /// Opens the diff scrolled to the change at `index`, unfolded, and keeps it scrolled there while the files above it settle.
@@ -3757,56 +3210,50 @@ impl WorkspaceState {
         self.select_change(index);
         self.request_resolver(index);
         self.tab = Tab::Diff;
-        if let Some(path) = self
-            .review_session()
-            .and_then(|session| session.changes.get(index))
-            .map(|change| change.path.clone())
-        {
+        if let Some(path) = self.change_path(index) {
             self.closed_diffs.remove(&path);
         }
-        self.diff_anchor = self
-            .review_index()
-            .zip(
-                self.review_session()
-                    .and_then(|session| session.changes.get(index)),
-            )
-            .map(|(session, change)| (session, change.path.clone()));
-        self.diff_scroll = 0.0;
+        self.diff_anchor = self.review_index().zip(self.change_path(index));
+        self.scroll_diff_to(0.0);
         self.pin_diff();
     }
 
     /// Folds the folder at `position` of the open session's changes, or unfolds it.
     fn fold_change_folder(&mut self, position: usize) {
-        let key = self.review_session().and_then(|session| {
-            crate::change_list::folder_table(&session.changes, self.git.repository.as_deref())
-                .get(position)
-                .map(|folder| crate::change_list::fold_key(folder.group, &folder.path))
-        });
-        if let Some(key) = key {
-            toggle(&mut self.closed_folders, key);
+        if let Some(folder) = self.change_folder(position) {
+            toggle(
+                &mut self.closed_folders,
+                crate::change_list::fold_key(folder.group, &folder.path),
+            );
         }
     }
 
     /// Stages everything under the folder at `position` of the open session's changes, or unstages it when all of it is staged.
     fn stage_change_folder(&mut self, position: usize) {
-        let files = self.review_session().and_then(|session| {
+        if let Some(folder) = self.change_folder(position) {
+            self.stage_changes(&folder.files);
+        }
+    }
+
+    /// The folder at `position` of the trees of the changed files the review panel lists.
+    fn change_folder(&self, position: usize) -> Option<crate::change_list::GroupFolder> {
+        self.review_session().and_then(|session| {
             crate::change_list::folder_table(&session.changes, self.git.repository.as_deref())
                 .into_iter()
                 .nth(position)
-                .map(|folder| folder.files)
-        });
-        if let Some(files) = files {
-            self.stage_changes(&files);
-        }
+        })
+    }
+
+    /// The path of the change at `index` of the session the review panel is about.
+    fn change_path(&self, index: usize) -> Option<String> {
+        self.review_session()
+            .and_then(|session| session.changes.get(index))
+            .map(|change| change.path.clone())
     }
 
     /// Folds the file at `index` of the diff, or unfolds it.
     fn fold_diff(&mut self, index: usize) {
-        if let Some(path) = self
-            .review_session()
-            .and_then(|session| session.changes.get(index))
-            .map(|change| change.path.clone())
-        {
+        if let Some(path) = self.change_path(index) {
             toggle(&mut self.closed_diffs, path);
         }
         self.pin_diff();
@@ -3828,24 +3275,47 @@ impl WorkspaceState {
         }
     }
 
-    /// The state after the diff is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_diff(mut self, delta: f32, room: f32) -> Self {
+    /// Scrolls the diff `offset` logical pixels down from its top, as the state's
+    /// own move rather than the reader's.
+    pub fn scroll_diff_to(&mut self, offset: f32) {
+        self.diff_list.scroll().jump_to(offset);
+        self.diff_seen = self.diff_list.scroll().offset();
+    }
+
+    /// Whether the reader scrolled the diff or the conversation since the state
+    /// last looked, so [`follow_scrolls`](Self::follow_scrolls) has something to catch up with.
+    pub fn scrolls_moved(&self) -> bool {
+        self.diff_list.scroll().offset() != self.diff_seen
+            || self.open_index().is_some_and(|index| {
+                self.sessions[index].chat_back != self.chat_list.scroll().offset()
+            })
+    }
+
+    /// Whether the conversation is shown at its end, give or take a pixel.
+    pub fn conversation_at_end(&self) -> bool {
+        self.chat_list
+            .scroll()
+            .offset()
+            .min(self.chat_list.scroll().max_offset())
+            <= 1.0
+    }
+
+    /// Catches up with what the reader scrolled since the state last looked:
+    /// a diff scrolled by hand is no longer kept at the file it was opened at,
+    /// and the open session keeps how far its conversation is scrolled back
+    /// for when it is shown again. Says whether the diff moved, so the diffs
+    /// that came into view can be asked for.
+    pub fn follow_scrolls(&mut self) -> bool {
+        if let Some(index) = self.open_index() {
+            self.sessions[index].chat_back = self.chat_list.scroll().offset();
+        }
+        let offset = self.diff_list.scroll().offset();
+        if offset == self.diff_seen {
+            return false;
+        }
+        self.diff_seen = offset;
         self.diff_anchor = None;
-        self.diff_scroll = (self.diff_scroll + delta).clamp(0.0, room);
-        self
-    }
-
-    /// The state after the diff was drawn `width` logical pixels wide, kept scrolled to the file it is anchored to now that its lines wrap at that width.
-    pub fn measured_diff(mut self, width: f32) -> Self {
-        self.diff_width = width;
-        self.pin_diff();
-        self
-    }
-
-    /// The state after the review panel's list is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_tree(mut self, delta: f32, room: f32) -> Self {
-        self.tree_scroll = (self.tree_scroll + delta).clamp(0.0, room);
-        self
+        true
     }
 
     /// Commits the staged changes of the review folder under the message typed, or, with none staged, the changes of its tracked files, and pushes afterwards when `push` is set.
@@ -4080,22 +3550,49 @@ fn toggle(set: &mut std::collections::HashSet<String>, path: String) {
     }
 }
 
+/// Takes `key` out of `list` when it is in it and puts it at the end when it is not.
+fn toggle_key(list: &mut Vec<(usize, usize, usize)>, key: (usize, usize, usize)) {
+    match list.iter().position(|held| *held == key) {
+        Some(at) => {
+            list.remove(at);
+        }
+        None => list.push(key),
+    }
+}
+
 /// Regression coverage for source control in project folders and session worktrees.
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::areas::ChatEvent;
+    use crate::areas::DiffEvent;
+    use crate::areas::EditorEvent;
+    use crate::areas::GitEvent;
+    use crate::areas::SearchEvent;
+    use crate::areas::TerminalEvent;
     use crate::git_controls::Pick;
     use crate::panes::{Item, Side};
+
+    /// A press that shows a shell asks it to take the keyboard, and other presses do not.
+    #[test]
+    fn a_press_notes_what_it_asks_of_the_app() {
+        let state = WorkspaceState::sample().handle(Event::Terminal(TerminalEvent::Terminal));
+        assert_eq!(state.shell_asked, 1);
+        let state = state.handle(Event::Editor(EditorEvent::FindBar));
+        assert_eq!(state.shell_asked, 1);
+        let state = state.handle(Event::Diff(DiffEvent::TabDiff));
+        assert_eq!(state.shell_asked, 1);
+    }
 
     /// Taking in an agent's events in place leaves the workspace as taking them in by value does.
     #[test]
     fn hearing_in_place_matches_hearing_by_value() {
         let events = || {
             vec![
-                Event::Said("Hello, ".into()),
-                Event::Thought("hm".into()),
-                Event::Said("world.".into()),
-                Event::Failed("it broke".into()),
+                HarnessEvent::Said("Hello, ".into()),
+                HarnessEvent::Thought("hm".into()),
+                HarnessEvent::Said("world.".into()),
+                HarnessEvent::Failed("it broke".into()),
             ]
         };
         let mut by_value = WorkspaceState::sample();
@@ -4163,18 +3660,18 @@ mod tests {
             state = state
                 .pane_dragged(Item::Diff, Some((0, Side::Right)), (0.0, 0.0))
                 .pane_dropped()
-                .after(TAB_CHAT);
+                .handle(Event::Chat(ChatEvent::TabChat));
             for row in [0, 1] {
                 let path = state.sessions[index].changes[row].path.clone();
                 state.closed_diffs.insert(path.clone());
-                state = state.after(FocusId(FILE_BASE + row as u64));
+                state = state.handle(Event::Diff(DiffEvent::ChangedFile(row)));
                 assert_eq!(state.file, Some(row));
                 assert_eq!(state.current_item(), Item::Diff);
                 let panes = state.panes();
                 let group = panes.layout.groups()[panes.focused];
                 assert_eq!(group.items[group.active], Item::Diff);
                 assert!(!state.closed_diffs.contains(&path));
-                state = state.after(FocusId(DIFF_FOLD_BASE + row as u64));
+                state = state.handle(Event::Diff(DiffEvent::DiffFold(row)));
                 assert!(state.closed_diffs.contains(&path));
             }
             state.tab = Tab::Chat;
@@ -4185,8 +3682,8 @@ mod tests {
             assert!(state.git.marked.contains(&1));
             state.set_staged(&[0, 1], true);
             state.take_outbox();
-            state.message = Field::new("Review folder changes");
-            state = state.after(COMMIT);
+            state.message = TextFieldState::new("Review folder changes");
+            state = state.handle(Event::Git(GitEvent::Commit));
             assert!(state.take_outbox().iter().any(|outgoing| matches!(
                 outgoing,
                 Outgoing::Commit { session, message, .. }
@@ -4208,11 +3705,11 @@ mod tests {
             .collect();
         let key =
             crate::change_list::fold_key(crate::change_list::Group::Tracked, "crates/pyre_ik/src");
-        state = state.after(FocusId(FOLDER_BASE));
+        state = state.handle(Event::Diff(DiffEvent::ChangeFolder(0)));
         assert!(state.closed_folders.contains(&key));
         state = state.with_folder_change_menu(0, (0.0, 0.0));
         assert_eq!(state.marked_changes().len(), 4);
-        state = state.after(FocusId(FOLDER_BASE));
+        state = state.handle(Event::Diff(DiffEvent::ChangeFolder(0)));
         assert!(!state.closed_folders.contains(&key));
     }
 
@@ -4232,13 +3729,13 @@ mod tests {
             crate::change_list::Group::Untracked,
             "pandemonium/crates/pm-harness/src",
         );
-        state = state.after(FocusId(FOLDER_BASE + 1));
+        state = state.handle(Event::Diff(DiffEvent::ChangeFolder(1)));
         assert!(state.closed_folders.contains(&key));
         assert_eq!(
-            state.change_folder_row_of(FocusId(FOLDER_BASE + 1)),
+            state.change_folder_row_of(Target::Diff(DiffEvent::ChangeFolder(1))),
             Some(1)
         );
-        state = state.after(FocusId(FOLDER_BASE + 1));
+        state = state.handle(Event::Diff(DiffEvent::ChangeFolder(1)));
         assert!(!state.closed_folders.contains(&key));
     }
 
@@ -4277,8 +3774,11 @@ mod tests {
         state.activity = Some(Activity::Subagents);
         state.take_outbox();
 
-        let button = FocusId(SUBAGENT_STOP_BASE + (reply * 1000 + position) as u64);
-        let mut state = state.after(button);
+        let button = Target::Chat(ChatEvent::SubagentStop {
+            message: reply,
+            position,
+        });
+        let mut state = state.handle(Event::pressing(button));
 
         assert_eq!(state.activity, Some(Activity::Subagents));
         assert!(state.take_outbox().iter().any(|outgoing| matches!(
@@ -4287,7 +3787,7 @@ mod tests {
         )));
         let (_, _, tool) = state.sessions[open].subagents()[0];
         assert_eq!(tool.stoppable(), None);
-        let mut state = state.after(button);
+        let mut state = state.handle(Event::pressing(button));
         assert!(
             !state
                 .take_outbox()
@@ -4305,7 +3805,7 @@ mod tests {
         let open = state.sessions.len() - 1;
         state.page = Page::Session(open);
         state.take_outbox();
-        let mut state = state.after(FocusId(TURN_CHANGES_BASE));
+        let mut state = state.handle(Event::Chat(ChatEvent::TurnChanges(0)));
         assert!(
             !state
                 .take_outbox()
@@ -4314,7 +3814,7 @@ mod tests {
             "no files were kept"
         );
         state.sessions[open].messages[0].checkpoint = true;
-        let mut state = state.after(FocusId(TURN_CHANGES_BASE));
+        let mut state = state.handle(Event::Chat(ChatEvent::TurnChanges(0)));
         assert!(state.take_outbox().iter().any(|outgoing| matches!(
             outgoing,
             Outgoing::TurnChanges { session, turn: 0 } if *session == open
@@ -4345,13 +3845,13 @@ mod tests {
                 vec![change("a.rs"), change("b.rs")],
             )
         };
-        let mut state = shown(state).after(FocusId(crate::excerpts::EXCERPT_UNDO_BASE + 1));
+        let mut state = shown(state).handle(Event::Search(SearchEvent::ExcerptUndo(1)));
         assert!(state.excerpts.is_none());
         assert!(state.take_outbox().iter().any(|outgoing| matches!(
             outgoing,
             Outgoing::UndoTurn { session, turn: 0, paths } if *session == open && paths == &["b.rs".to_owned()]
         )));
-        let mut state = shown(state).after(crate::excerpts::EXCERPTS_UNDO_ALL);
+        let mut state = shown(state).handle(Event::Search(SearchEvent::ExcerptsUndoAll));
         assert!(state.take_outbox().iter().any(|outgoing| matches!(
             outgoing,
             Outgoing::UndoTurn { turn: 0, paths, .. } if paths.is_empty()

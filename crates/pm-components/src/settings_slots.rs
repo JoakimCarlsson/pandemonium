@@ -1,52 +1,28 @@
 //! The model slots of the settings window: the models page, with the job slots the harness asks a model for, such as `fast` for summaries and `plan` for plan mode, each with its model, effort and backups, the file a change is saved to, and the presets that set every slot at once; and what the orchestration page shares with it, the work categories the agent hands work to in orchestrator mode, each also with its description and prompt addition.
 
+use crate::areas::SettingsEvent;
+use crate::button;
+use crate::target::Target;
+use crate::theme;
+use crate::theme::FocusOutline;
+use crate::theme::Frame;
+use crate::theme::{Radius, Role};
 use pm_harness::{PresetInfo, SlotChange, SlotInfo, SlotScope, SlotSource};
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, bg, border, border_color, flex, flex_1, flex_col, flex_none, flex_wrap, gap,
-    items_center, justify_between, min_w_px, pl, px, py, rounded, w_full,
-};
-use pm_text::{Edit, Field, Shaper};
-use pm_ui::{Node, node};
+use rustle::Modifier;
+use rustle::TextFieldState;
+use rustle::{Alignment, Arrangement, TextOverflow};
+use rustle::{Icon, phosphor};
 
 use crate::button::Variant;
 use crate::input::{self, Input};
-use crate::parts::{clipped, line};
-use crate::settings::SETTINGS_PICK_FILTER;
-use crate::settings_ids::{BACKUP_CONTROLS, PICKS, PRESET_CONTROLS, SINGLES, SLOT_CONTROLS};
+use crate::parts::line;
+use crate::settings_machines::labelled_box;
 use crate::settings_row::{PICKER_WIDTH, choices, picker, picker_list, picker_shown};
+use crate::settings_rows::{BACKUP_CONTROLS, PICKS, PRESET_CONTROLS, SLOT_CONTROLS};
 use crate::settings_servers::{boxed, heading_only, note, paragraph, wrapped_note};
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
 use crate::{Badge, Button};
-
-/// Saves changes to the user's file.
-pub const SLOTS_SCOPE_USER: FocusId = SINGLES.at(21);
-
-/// Saves changes to the project's file.
-pub const SLOTS_SCOPE_PROJECT: FocusId = SINGLES.at(22);
-
-/// The box a slot of the reader's own is named in.
-pub const SLOT_NEW_NAME: FocusId = SINGLES.at(23);
-
-/// Adds the slot named in [`SLOT_NEW_NAME`].
-pub const SLOT_ADD: FocusId = SINGLES.at(24);
-
-/// The box a preset is named in before it is saved.
-pub const PRESET_NAME: FocusId = SINGLES.at(25);
-
-/// Saves the slots as they stand as the preset named in [`PRESET_NAME`].
-pub const PRESET_SAVE: FocusId = SINGLES.at(26);
-
-/// Opens the list of providers whose assignments the page shows.
-pub const SLOTS_PROVIDER: FocusId = SINGLES.at(27);
-
-/// The box a category of the reader's own is named in, on the orchestration page.
-pub const CATEGORY_NEW_NAME: FocusId = SINGLES.at(98);
-
-/// Adds the category named in [`CATEGORY_NEW_NAME`].
-pub const CATEGORY_ADD: FocusId = SINGLES.at(99);
 
 /// What the provider list calls the any-provider assignments.
 const ALL_PROVIDERS: &str = "All providers";
@@ -158,9 +134,9 @@ pub struct SlotNotes {
     /// The category's name.
     pub name: String,
     /// The box for what kind of work the category is for, on one line.
-    pub description: Field,
+    pub description: TextFieldState,
     /// The box for the text added to the system prompt of a subagent started in the category, on several lines.
-    pub prompt: Field,
+    pub prompt: TextFieldState,
     /// Whether either box was changed since it was last saved.
     pub edited: bool,
 }
@@ -170,8 +146,8 @@ impl SlotNotes {
     fn told(name: &str, description: Option<&str>, prompt: Option<&str>) -> Self {
         Self {
             name: name.to_owned(),
-            description: Field::new(description.unwrap_or_default()),
-            prompt: Field::new(prompt.unwrap_or_default()).multiline(true),
+            description: TextFieldState::new(description.unwrap_or_default()),
+            prompt: TextFieldState::new(prompt.unwrap_or_default()),
             edited: false,
         }
     }
@@ -184,7 +160,7 @@ impl SlotNotes {
 }
 
 /// What is written in `field` with the space around it taken off, or nothing when that is empty.
-fn written(field: &Field) -> Option<String> {
+fn written(field: &TextFieldState) -> Option<String> {
     Some(field.text().trim().to_owned()).filter(|text| !text.is_empty())
 }
 
@@ -210,11 +186,11 @@ pub struct ModelSlots {
     /// The list of models open, while one is.
     pub picking: Option<SlotPicking>,
     /// The box a new slot is named in, on the models page.
-    pub new_slot: Field,
+    pub new_slot: TextFieldState,
     /// The box a new category is named in, on the orchestration page.
-    pub new_category: Field,
+    pub new_category: TextFieldState,
     /// The box a new preset is named in.
-    pub preset_name: Field,
+    pub preset_name: TextFieldState,
     /// Why the slots could not be read or changed, when the last attempt failed.
     pub error: Option<String>,
 }
@@ -278,22 +254,12 @@ impl ModelSlots {
             .collect();
     }
 
-    /// Writes `edit` into the box in `column` of the category at `row`, and marks its boxes as changed when the words did.
-    fn edit_notes(&mut self, row: usize, column: usize, edit: Edit) {
+    /// Marks the boxes of the category at `row` as changed, after the reader wrote in one.
+    fn notes_typed(&mut self, row: usize) {
         let Some(name) = self.name_at(row).map(str::to_owned) else {
             return;
         };
-        let Some(notes) = self.notes.iter_mut().find(|notes| notes.name == name) else {
-            return;
-        };
-        let field = if column == DESCRIPTION_COLUMN {
-            &mut notes.description
-        } else {
-            &mut notes.prompt
-        };
-        let before = field.text().to_owned();
-        field.apply(edit);
-        if field.text() != before {
+        if let Some(notes) = self.notes.iter_mut().find(|notes| notes.name == name) {
             notes.edited = true;
         }
     }
@@ -375,39 +341,27 @@ fn valid_name(name: &str) -> bool {
 }
 
 /// The row and the column `id` names, when it names the description or the prompt box of a category.
-fn notes_cell(id: FocusId) -> Option<(usize, usize)> {
+fn notes_cell(id: Target) -> Option<(usize, usize)> {
     SLOT_CONTROLS
         .cell_of(id, SLOT_COLUMNS)
         .filter(|(_, column)| matches!(*column, DESCRIPTION_COLUMN | PROMPT_COLUMN))
 }
 
 /// Whether the box `id` saves what was written in it when the reader leaves it: the description and the prompt box of a category.
-pub(crate) fn saves_on_leaving(id: FocusId) -> bool {
+pub(crate) fn saves_on_leaving(id: Target) -> bool {
     notes_cell(id).is_some()
 }
 
 /// Whether `id` names a box of the models or the orchestration page.
-pub(crate) fn is_slot_field(id: FocusId) -> bool {
-    id == SLOT_NEW_NAME || id == CATEGORY_NEW_NAME || id == PRESET_NAME || notes_cell(id).is_some()
-}
-
-/// What Enter in the box `id` of the models or the orchestration page presses.
-pub(crate) fn slot_submit(id: FocusId) -> FocusId {
-    if let Some((row, _)) = notes_cell(id) {
-        SLOT_CONTROLS
-            .cell(row, DESCRIBE_COLUMN, SLOT_COLUMNS)
-            .unwrap_or(id)
-    } else if id == PRESET_NAME {
-        PRESET_SAVE
-    } else if id == CATEGORY_NEW_NAME {
-        CATEGORY_ADD
-    } else {
-        SLOT_ADD
-    }
+pub(crate) fn is_slot_field(id: Target) -> bool {
+    id == Target::Settings(SettingsEvent::SlotNewName)
+        || id == Target::Settings(SettingsEvent::CategoryNewName)
+        || id == Target::Settings(SettingsEvent::PresetName)
+        || notes_cell(id).is_some()
 }
 
 /// The name of the card of the category at `row` of the slots, which opens and closes its editor.
-pub fn card_id(row: usize) -> Option<FocusId> {
+pub fn card_id(row: usize) -> Option<Target> {
     SLOT_CONTROLS.cell(row, CARD_COLUMN, SLOT_COLUMNS)
 }
 
@@ -478,7 +432,7 @@ impl WorkspaceState {
     }
 
     /// Saves what was written in the box `id` of the page when the reader leaves it, when it is a box of a category.
-    pub(crate) fn slot_field_left(&mut self, id: FocusId) {
+    pub(crate) fn slot_field_left(&mut self, id: Target) {
         if saves_on_leaving(id) {
             self.send_descriptions();
         }
@@ -605,13 +559,13 @@ impl WorkspaceState {
     }
 
     /// Carries out pressing `id` on the models page, and says whether it was something of it; pressing anything but a box of a category first saves the boxes the reader changed.
-    pub(crate) fn slots_pressed(&mut self, id: FocusId) -> bool {
+    pub(crate) fn slots_pressed(&mut self, id: Target) -> bool {
         if notes_cell(id).is_some() {
             return true;
         }
         self.send_descriptions();
         if let Some(picking) = self.settings_page.slots.picking {
-            let row = if id == crate::settings::SETTINGS_PICK_FIRST {
+            let row = if id == Target::Settings(SettingsEvent::SettingsPickFirst) {
                 Some(0)
             } else {
                 PICKS.index_of(id)
@@ -626,17 +580,18 @@ impl WorkspaceState {
             }
         }
         match id {
-            SLOTS_SCOPE_USER => self.settings_page.slots.scope = SlotScope::User,
-            SLOTS_SCOPE_PROJECT => self.settings_page.slots.scope = SlotScope::Project,
-            SLOTS_PROVIDER => {
-                let page = &mut self.settings_page.slots;
-                page.picking =
-                    (page.picking != Some(SlotPicking::Provider)).then_some(SlotPicking::Provider);
-                self.settings_page.filter = Field::default();
+            Target::Settings(SettingsEvent::SlotsScopeUser) => {
+                self.settings_page.slots.scope = SlotScope::User
             }
-            SLOT_ADD => self.add_slot(),
-            CATEGORY_ADD => self.add_category(),
-            PRESET_SAVE => self.save_preset(),
+            Target::Settings(SettingsEvent::SlotsScopeProject) => {
+                self.settings_page.slots.scope = SlotScope::Project
+            }
+            Target::Settings(SettingsEvent::SlotsProvider) => {
+                self.toggle_list(SlotPicking::Provider)
+            }
+            Target::Settings(SettingsEvent::SlotAdd) => self.add_slot(),
+            Target::Settings(SettingsEvent::CategoryAdd) => self.add_category(),
+            Target::Settings(SettingsEvent::PresetSave) => self.save_preset(),
             _ if let Some((row, column)) = SLOT_CONTROLS.cell_of(id, SLOT_COLUMNS) => {
                 self.slot_control(row, column);
             }
@@ -658,16 +613,8 @@ impl WorkspaceState {
         };
         let scope = self.settings_page.slots.scope;
         match column {
-            MODEL_COLUMN | BACKUP_COLUMN => {
-                let wanted = if column == MODEL_COLUMN {
-                    SlotPicking::Model(row)
-                } else {
-                    SlotPicking::Backup(row)
-                };
-                let page = &mut self.settings_page.slots;
-                page.picking = (page.picking != Some(wanted)).then_some(wanted);
-                self.settings_page.filter = Field::default();
-            }
+            MODEL_COLUMN => self.toggle_list(SlotPicking::Model(row)),
+            BACKUP_COLUMN => self.toggle_list(SlotPicking::Backup(row)),
             SUGGEST_COLUMN => {
                 if let Some(suggested) = slot.suggested.clone() {
                     self.set_slot(&slot, Some(suggested), slot.backups.clone());
@@ -694,7 +641,7 @@ impl WorkspaceState {
                 page.expanded =
                     (page.expanded.as_deref() != Some(slot.name.as_str())).then_some(slot.name);
                 page.picking = None;
-                self.settings_page.filter = Field::default();
+                self.settings_page.filter = TextFieldState::default();
             }
             effort if (EFFORT_COLUMN..DESCRIPTION_COLUMN).contains(&effort) => {
                 let Some(model) = slot.model.as_deref() else {
@@ -757,14 +704,8 @@ impl WorkspaceState {
     /// Takes the model at `row` of the open list, as narrowed, for what `picking` is: the slot's model, keeping its effort, or a backup added after the others.
     fn pick_slot_model(&mut self, picking: SlotPicking, row: usize) {
         let options = self.slot_model_choices();
-        let shown = picker_shown(&options, &self.settings_page.filter);
-        self.settings_page.slots.picking = None;
-        self.settings_page.filter = Field::default();
-        let Some(chosen) = shown
-            .get(row)
-            .and_then(|place| options.get(*place))
-            .cloned()
-        else {
+        let place = self.close_list(&options, row);
+        let Some(chosen) = place.and_then(|place| options.get(place)).cloned() else {
             return;
         };
         let (SlotPicking::Model(index) | SlotPicking::Backup(index)) = picking else {
@@ -799,10 +740,7 @@ impl WorkspaceState {
     /// Shows the assignments of the provider at `row` of the provider list, as narrowed: all providers first, then each provider offered.
     fn pick_slot_provider(&mut self, row: usize) {
         let options = self.provider_choices();
-        let shown = picker_shown(&options, &self.settings_page.filter);
-        self.settings_page.slots.picking = None;
-        self.settings_page.filter = Field::default();
-        let Some(place) = shown.get(row).copied() else {
+        let Some(place) = self.close_list(&options, row) else {
             return;
         };
         self.settings_page.slots.view = match place.checked_sub(1) {
@@ -812,6 +750,21 @@ impl WorkspaceState {
                 None => return,
             },
         };
+    }
+
+    /// Opens the list `wanted` is, emptying the box that narrows lists, or closes it when it is the one open.
+    fn toggle_list(&mut self, wanted: SlotPicking) {
+        let page = &mut self.settings_page.slots;
+        page.picking = (page.picking != Some(wanted)).then_some(wanted);
+        self.settings_page.filter = TextFieldState::default();
+    }
+
+    /// Closes the open list of `options`, emptying the box that narrows it, and gives the place among them of the one at `row` of the list as it was narrowed.
+    fn close_list(&mut self, options: &[String], row: usize) -> Option<usize> {
+        let shown = picker_shown(options, &self.settings_page.filter);
+        self.settings_page.slots.picking = None;
+        self.settings_page.filter = TextFieldState::default();
+        shown.get(row).copied()
     }
 
     /// Has the assignment of `slot` for the provider viewed set to `model` and `backups` in the file changes go to.
@@ -828,7 +781,7 @@ impl WorkspaceState {
     }
 
     /// The name written in `field` with the space around it taken off, when it can name a slot and no slot the pages show has it.
-    fn new_name(&self, field: &Field) -> Option<String> {
+    fn new_name(&self, field: &TextFieldState) -> Option<String> {
         let name = field.text().trim().to_owned();
         (valid_name(&name) && !self.slot_rows().iter().any(|slot| slot.name == name))
             .then_some(name)
@@ -841,7 +794,7 @@ impl WorkspaceState {
         };
         let page = &mut self.settings_page.slots;
         page.plain.push(name);
-        page.new_slot = Field::default();
+        page.new_slot = TextFieldState::default();
     }
 
     /// Adds the category named in the box of the orchestration page with its editor open, to describe and give a model, when the name is valid and not taken, and empties the box.
@@ -851,7 +804,7 @@ impl WorkspaceState {
         };
         let page = &mut self.settings_page.slots;
         page.added.push(name.clone());
-        page.new_category = Field::default();
+        page.new_category = TextFieldState::default();
         page.expanded = Some(name);
         page.picking = None;
         page.sync_notes();
@@ -869,32 +822,24 @@ impl WorkspaceState {
         if !valid_name(&name) {
             return;
         }
-        self.settings_page.slots.preset_name = Field::default();
+        self.settings_page.slots.preset_name = TextFieldState::default();
         self.change_slots(SlotChange::SavePreset { name, effort: None });
     }
 
-    /// Writes `edit` into the box `id` of the page.
-    pub(crate) fn slot_edited(&mut self, id: FocusId, edit: Edit) {
-        let page = &mut self.settings_page.slots;
-        match id {
-            SLOT_NEW_NAME => page.new_slot.apply(edit),
-            CATEGORY_NEW_NAME => page.new_category.apply(edit),
-            PRESET_NAME => page.preset_name.apply(edit),
-            _ => {
-                if let Some((row, column)) = notes_cell(id) {
-                    page.edit_notes(row, column, edit);
-                }
-            }
+    /// Takes in what the reader wrote in the box `id` of the page: a category's boxes are marked as changed.
+    pub(crate) fn slot_typed(&mut self, id: Target) {
+        if let Some((row, _)) = notes_cell(id) {
+            self.settings_page.slots.notes_typed(row);
         }
     }
 
     /// The box `id` of the page.
-    pub(crate) fn slot_field(&self, id: FocusId) -> Option<&Field> {
+    pub(crate) fn slot_field(&self, id: Target) -> Option<&TextFieldState> {
         let page = &self.settings_page.slots;
         match id {
-            SLOT_NEW_NAME => Some(&page.new_slot),
-            CATEGORY_NEW_NAME => Some(&page.new_category),
-            PRESET_NAME => Some(&page.preset_name),
+            Target::Settings(SettingsEvent::SlotNewName) => Some(&page.new_slot),
+            Target::Settings(SettingsEvent::CategoryNewName) => Some(&page.new_category),
+            Target::Settings(SettingsEvent::PresetName) => Some(&page.preset_name),
             _ => {
                 let (row, column) = notes_cell(id)?;
                 let notes = page.notes_of(page.name_at(row)?)?;
@@ -926,250 +871,278 @@ fn model_shown(slot: &SlotRow) -> String {
     }
 }
 
-/// The list of models open under the slot at `row`, when the one open is for it as `kind` says.
-fn open_list(state: &WorkspaceState, row: usize, kind: SlotPicking) -> Option<Node> {
-    (state.settings_page.slots.picking == Some(kind)).then(|| {
-        let options = state.slot_model_choices();
-        let picked = match kind {
-            SlotPicking::Model(_) => state.slot_rows().get(row).and_then(|slot| {
-                let model = split_effort(slot.model.as_deref()?).0;
-                options.iter().position(|option| option == model)
-            }),
-            SlotPicking::Backup(_) | SlotPicking::Provider => None,
-        };
-        if options.is_empty() {
-            return note(
-                "No signed-in agent or declared server of this provider has listed its models yet.",
-            );
-        }
-        picker_list(
-            &options,
-            picked,
-            (&state.settings_page.filter, SETTINGS_PICK_FILTER),
-        )
-    })
+/// Emits the list of models open under the slot at `row`, when the one open is for it as `kind` says.
+#[track_caller]
+fn open_list(state: &WorkspaceState, row: usize, kind: SlotPicking) {
+    if state.settings_page.slots.picking != Some(kind) {
+        return;
+    }
+    let options = state.slot_model_choices();
+    let picked = match kind {
+        SlotPicking::Model(_) => state.slot_rows().get(row).and_then(|slot| {
+            let model = split_effort(slot.model.as_deref()?).0;
+            options.iter().position(|option| option == model)
+        }),
+        SlotPicking::Backup(_) | SlotPicking::Provider => None,
+    };
+    if options.is_empty() {
+        note("No signed-in agent or declared server of this provider has listed its models yet.");
+        return;
+    }
+    open_picks(state, &options, picked);
+}
+
+/// Emits the open list of `options` under a row, `picked` marked, narrowed by the box of the settings window that narrows lists.
+#[track_caller]
+fn open_picks(state: &WorkspaceState, options: &[String], picked: Option<usize>) {
+    let filter = Target::Settings(SettingsEvent::SettingsPickFilter);
+    picker_list(options, picked, (&state.settings_page.filter, filter));
 }
 
 /// How wide the button that opens the list of backups to add is, in logical pixels.
 const BACKUP_PICKER_WIDTH: f32 = 132.0;
 
-/// The backups of the slot at `row`, in order, side by side, each with buttons that move it up and down and remove it, then the picker that adds one.
-fn backups_node(state: &WorkspaceState, row: usize, slot: &SlotRow) -> Node {
+/// Emits a small muted icon button showing `name` that answers to `id`, greyed out while `disabled`, when there is an `id`.
+#[track_caller]
+fn backup_button(name: Icon, id: Option<Target>, disabled: bool) {
+    if let Some(id) = id {
+        Button::icon(name, id)
+            .tone(Role::Muted)
+            .disabled(disabled)
+            .build();
+    }
+}
+
+/// Emits one backup of a slot as a chip: its place counted from one, `backup` itself, and the buttons `ids` names to move it up, move it down and remove it, the first greyed out when `first` and the second when `last`.
+fn backup_chip(place: usize, backup: &str, ids: [Option<Target>; 3], first: bool, last: bool) {
+    rustle::row_arranged(
+        Modifier::new()
+            .outlined(Radius::Md)
+            .padding_each(theme::sp(2), 0.0, 0.0, 0.0),
+        Arrangement::SpacedBy(theme::sp(0.5)),
+        Alignment::Center,
+        || {
+            line(format!("{}", place + 1), 11, 1.4, Role::Subtle);
+            rustle::basic_text(
+                Modifier::new(),
+                backup,
+                theme::code(12, Role::Text),
+                TextOverflow::Ellipsis,
+            );
+            backup_button(phosphor::ARROW_UP, ids[0], first);
+            backup_button(phosphor::ARROW_DOWN, ids[1], last);
+            backup_button(phosphor::X, ids[2], false);
+        },
+    );
+}
+
+/// Emits the backups of the slot at `row`, in order, side by side, each with buttons that move it up and down and remove it, then the picker that adds one.
+fn backups_node(state: &WorkspaceState, row: usize, slot: &SlotRow) {
     let cell = |place: usize, column: usize| {
         let index = row.checked_mul(MOST_BACKUPS)?.checked_add(place)?;
         (place < MOST_BACKUPS)
             .then(|| BACKUP_CONTROLS.cell(index, column, BACKUP_COLUMNS))
             .flatten()
     };
-    let icon = |icon: IconName, id: Option<FocusId>, disabled: bool| {
-        id.map(|id| {
-            Button::icon(icon, id)
-                .size(Size::Sm)
-                .tone(Role::Muted)
-                .disabled(disabled)
-                .build()
-        })
-    };
     let last = slot.backups.len().saturating_sub(1);
-    let chips = slot.backups.iter().enumerate().map(|(place, backup)| {
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                gap(0.5),
-                flex_none(),
-                pl(2),
-                rounded(Radius::Md),
-                border(),
-                border_color(Role::Border),
-            ])
-            .child(line(format!("{}", place + 1), 11, 1.4, Role::Subtle))
-            .child(line(backup.clone(), 12, 1.4, Role::Text).styles([pm_style::font_mono()]))
-            .children(icon(IconName::ArrowUp, cell(place, 0), place == 0))
-            .children(icon(IconName::ArrowDown, cell(place, 1), place == last))
-            .children(icon(IconName::Close, cell(place, 2), false))
-    });
     let open = state.settings_page.slots.picking == Some(SlotPicking::Backup(row));
-    node()
-        .styles([flex(), flex_col(), gap(1)])
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(2), flex_wrap()])
-                .child(line("Backups", 12, 1.4, Role::Muted))
-                .children(chips)
-                .children(
-                    SLOT_CONTROLS
-                        .cell(row, BACKUP_COLUMN, SLOT_COLUMNS)
-                        .map(|id| picker("Add backup", BACKUP_PICKER_WIDTH, id, open)),
-                ),
-        )
-        .children(open_list(state, row, SlotPicking::Backup(row)))
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Start,
+        || {
+            rustle::flow_row_with(
+                Modifier::new(),
+                rustle::FlowOptions::new(theme::sp(2), theme::sp(2))
+                    .item_alignment(Alignment::Center),
+                || {
+                    line("Backups", 12, 1.4, Role::Muted);
+                    for (place, backup) in slot.backups.iter().enumerate() {
+                        backup_chip(
+                            place,
+                            backup,
+                            [cell(place, 0), cell(place, 1), cell(place, 2)],
+                            place == 0,
+                            place == last,
+                        );
+                    }
+                    if let Some(id) = SLOT_CONTROLS.cell(row, BACKUP_COLUMN, SLOT_COLUMNS) {
+                        picker("Add backup", BACKUP_PICKER_WIDTH, id, open);
+                    }
+                },
+            );
+            open_list(state, row, SlotPicking::Backup(row));
+        },
+    );
 }
 
-/// A box of a category under what it is called, the two as wide as the row.
-fn labelled(label: &str, field: Node) -> Node {
-    node()
-        .styles([flex(), flex_col(), gap(1), w_full(), min_w_px(0)])
-        .child(line(label, 12, 1.4, Role::Muted))
-        .child(field)
-}
-
-/// The boxes of the category at `row`, each `room` logical pixels across: what it is for on one line, then what it adds to a subagent's system prompt on several.
-fn notes_node(row: usize, notes: &SlotNotes, room: f32, shaper: &mut Shaper) -> Node {
+/// Emits the boxes of the category at `row`: what it is for on one line, then what it adds to a subagent's system prompt on several.
+fn notes_node(row: usize, notes: &SlotNotes) {
     let id = |column: usize| SLOT_CONTROLS.cell(row, column, SLOT_COLUMNS);
-    let description = id(DESCRIPTION_COLUMN).map(|id| {
-        labelled(
-            "Description",
-            Input::new(&notes.description, id)
-                .variant(input::Variant::Bordered)
-                .size(Size::Sm)
-                .placeholder("What kind of work this category is for")
-                .build(),
-        )
-    });
-    let prompt = id(PROMPT_COLUMN).map(|id| {
-        labelled(
-            "Prompt addition",
-            node()
-                .styles([
-                    flex(),
-                    flex_col(),
-                    w_full(),
-                    min_w_px(0),
-                    rounded(Radius::Md),
-                    border(),
-                    border_color(Role::Border),
-                    border_color(Role::Accent).focus(),
-                    bg(Role::Background),
-                ])
-                .focused_with(id)
-                .child(
-                    Input::new(&notes.prompt, id)
-                        .variant(input::Variant::Multiline)
-                        .placeholder("Added to a subagent's system prompt")
-                        .rows(PROMPT_ROWS)
-                        .wrap(input::inner_width(room), shaper)
-                        .build(),
-                ),
-        )
-    });
-    node()
-        .styles([flex(), flex_col(), gap(2), w_full(), min_w_px(0)])
-        .children(description)
-        .children(prompt)
+    let describe = move |field: Target| id(DESCRIBE_COLUMN).unwrap_or(field);
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
+        || {
+            if let Some(id) = id(DESCRIPTION_COLUMN) {
+                labelled_box("Description", || {
+                    Input::new(&notes.description, id)
+                        .variant(input::Variant::Bordered)
+                        .size(Size::Sm)
+                        .placeholder("What kind of work this category is for")
+                        .submits(describe(id))
+                        .build();
+                });
+            }
+            if let Some(id) = id(PROMPT_COLUMN) {
+                labelled_box("Prompt addition", || {
+                    rustle::column_arranged(
+                        Modifier::new()
+                            .fill_max_width()
+                            .background_rounded(theme::color(Role::Background), Radius::Md.px())
+                            .focus_outline(
+                                crate::focus::is_focused(id),
+                                theme::color(Role::Border),
+                                theme::color(Role::Accent),
+                                Radius::Md,
+                            )
+                            .padding(1.0),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            Input::new(&notes.prompt, id)
+                                .variant(input::Variant::Multiline)
+                                .placeholder("Added to a subagent's system prompt")
+                                .rows(PROMPT_ROWS)
+                                .submits(describe(id))
+                                .build();
+                        },
+                    );
+                });
+            }
+        },
+    );
 }
 
-/// The badge saying which file or variable the model of `slot` comes from, when it is not the conversation's own.
-pub(crate) fn source_badge(slot: &SlotRow) -> Option<Node> {
-    slot.source
-        .filter(|source| *source != SlotSource::Main)
-        .map(|source| Badge::new(source_name(source)).build())
-}
-
-/// The buttons of the slot at `row`, side by side, each only when it applies: one that takes its suggested model and one that clears it.
-pub(crate) fn slot_actions(state: &WorkspaceState, row: usize, slot: &SlotRow) -> Node {
+/// Emits the buttons of the slot at `row`, side by side, each only when it applies: one that takes its suggested model and one that clears it.
+pub(crate) fn slot_actions(state: &WorkspaceState, row: usize, slot: &SlotRow) {
     let id = |column: usize| SLOT_CONTROLS.cell(row, column, SLOT_COLUMNS);
     let suggest = slot
         .suggested
         .as_ref()
         .filter(|_| slot.model.is_none())
-        .and_then(|suggested| {
-            id(SUGGEST_COLUMN).map(|button| {
-                Button::new(format!("Use suggested: {suggested}"), button)
-                    .variant(Variant::Outline)
-                    .size(Size::Sm)
-                    .build()
-            })
-        });
+        .and_then(|suggested| id(SUGGEST_COLUMN).map(|button| (suggested.clone(), button)));
     let page = &state.settings_page.slots;
     let clear = (slot.model.is_some()
         || !slot.backups.is_empty()
         || page.added.contains(&slot.name)
         || page.plain.contains(&slot.name))
     .then(|| id(CLEAR_COLUMN))
-    .flatten()
-    .map(|button| {
-        Button::new("Clear", button)
-            .variant(Variant::Ghost)
-            .size(Size::Sm)
-            .build()
-    });
-    node()
-        .styles([flex(), items_center(), gap(1), flex_none()])
-        .children(suggest)
-        .children(clear)
+    .flatten();
+    rustle::row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(1)),
+        Alignment::Center,
+        || {
+            if let Some((suggested, button)) = suggest {
+                button::action(
+                    format!("Use suggested: {suggested}"),
+                    button,
+                    Variant::Outline,
+                );
+            }
+            if let Some(button) = clear {
+                button::action("Clear", button, Variant::Ghost);
+            }
+        },
+    );
 }
 
-/// The controls of the slot at `row`, with `room` logical pixels across for its boxes: its model with its effort, the list of models while it is open, its backups, and for a category its boxes.
-pub(crate) fn slot_controls(
-    state: &WorkspaceState,
-    row: usize,
-    slot: &SlotRow,
-    room: f32,
-    shaper: &mut Shaper,
-) -> Node {
+/// Emits the controls of the slot at `row`, with `room` logical pixels across for its boxes: its model with its effort, the list of models while it is open, its backups, and for a category its boxes.
+pub(crate) fn slot_controls(state: &WorkspaceState, row: usize, slot: &SlotRow, room: f32) {
     let id = |column: usize| SLOT_CONTROLS.cell(row, column, SLOT_COLUMNS);
     let notes = state
         .settings_page
         .slots
         .notes_of(&slot.name)
-        .filter(|_| slot.category)
-        .map(|notes| notes_node(row, notes, room, shaper));
+        .filter(|_| slot.category);
     let open = state.settings_page.slots.picking == Some(SlotPicking::Model(row));
     let effort = slot.model.as_deref().map(|model| {
-        let picked = split_effort(model)
+        split_effort(model)
             .1
             .and_then(|effort| EFFORTS.iter().position(|held| *held == effort))
-            .map_or(0, |place| place + 1);
-        choices(&EFFORT_NAMES, picked, |option| id(EFFORT_COLUMN + option))
+            .map_or(0, |place| place + 1)
     });
     let width = (PICKER_WIDTH * 1.4).min(room);
-    let model = node()
-        .styles([flex(), items_center(), gap(2), flex_wrap()])
-        .children(id(MODEL_COLUMN).map(|button| picker(&model_shown(slot), width, button, open)))
-        .children(effort);
-    node()
-        .styles([flex(), flex_col(), gap(2), w_full(), min_w_px(0)])
-        .child(model)
-        .children(open_list(state, row, SlotPicking::Model(row)))
-        .child(backups_node(state, row, slot))
-        .children(notes)
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
+        || {
+            rustle::flow_row_with(
+                Modifier::new(),
+                rustle::FlowOptions::new(theme::sp(2), theme::sp(2))
+                    .item_alignment(Alignment::Center),
+                || {
+                    if let Some(button) = id(MODEL_COLUMN) {
+                        picker(&model_shown(slot), width, button, open);
+                    }
+                    if let Some(picked) = effort {
+                        choices(&EFFORT_NAMES, picked, |option| id(EFFORT_COLUMN + option));
+                    }
+                },
+            );
+            open_list(state, row, SlotPicking::Model(row));
+            backups_node(state, row, slot);
+            if let Some(notes) = notes {
+                notes_node(row, notes);
+            }
+        },
+    );
 }
 
-/// The row of the slot at `row` on the models and orchestration pages, `room` logical pixels across: its name, where its model comes from and, for a job slot, what it is for, its suggestion and clear buttons, then its controls.
-pub(crate) fn slot_row(
-    state: &WorkspaceState,
-    row: usize,
-    slot: &SlotRow,
-    room: f32,
-    shaper: &mut Shaper,
-) -> Node {
-    let heading = node()
-        .styles([
-            flex(),
-            items_center(),
-            justify_between(),
-            gap(2),
-            flex_wrap(),
-        ])
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(2), min_w_px(0)])
-                .child(
-                    line(format!("@{}", slot.name), 13, 1.4, Role::Text)
-                        .styles([pm_style::font_mono(), pm_style::font_medium()]),
-                )
-                .children(source_badge(slot)),
-        )
-        .child(slot_actions(state, row, slot));
-    node()
-        .styles([flex(), flex_col(), gap(2), px(3), py(3)])
-        .child(heading)
-        .children(
-            (!slot.category)
-                .then(|| clipped(pm_harness::slot_purpose(&slot.name), 12, Role::Muted)),
-        )
-        .child(slot_controls(state, row, slot, room - ROW_INSET, shaper))
+/// Emits the row of the slot at `row` on the models and orchestration pages, `room` logical pixels across: its name, where its model comes from and, for a job slot, what it is for, its suggestion and clear buttons, then its controls.
+#[track_caller]
+pub(crate) fn slot_row(state: &WorkspaceState, row: usize, slot: &SlotRow, room: f32) {
+    rustle::column_arranged(
+        Modifier::new().padding(theme::sp(3)),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
+        || {
+            rustle::flow_row_with(
+                Modifier::new().fill_max_width(),
+                rustle::FlowOptions::new(theme::sp(2), theme::sp(2))
+                    .item_alignment(Alignment::Center)
+                    .arrangement(Arrangement::SpaceBetween),
+                || {
+                    rustle::row_arranged(
+                        Modifier::new(),
+                        Arrangement::SpacedBy(theme::sp(2)),
+                        Alignment::Center,
+                        || {
+                            rustle::basic_text(
+                                Modifier::new(),
+                                format!("@{}", slot.name),
+                                theme::strong(13, Role::Text),
+                                TextOverflow::Ellipsis,
+                            );
+                            if let Some(source) =
+                                slot.source.filter(|source| *source != SlotSource::Main)
+                            {
+                                Badge::new(source_name(source)).build();
+                            }
+                        },
+                    );
+                    slot_actions(state, row, slot);
+                },
+            );
+            if !slot.category {
+                line(pm_harness::slot_purpose(&slot.name), 12, 1.4, Role::Muted);
+            }
+            slot_controls(state, row, slot, room - ROW_INSET);
+        },
+    );
 }
 
 /// What `preset` sets, in a line: each slot's model, and the effort.
@@ -1200,72 +1173,69 @@ fn preset_summary(preset: &PresetInfo) -> String {
     }
 }
 
-/// The row of the preset at `row`: its name and what it sets, with its apply and delete buttons.
-fn preset_row(row: usize, preset: &PresetInfo) -> Node {
+/// Emits the row of the preset at `row`: its name and what it sets, with its apply and delete buttons.
+fn preset_row(row: usize, preset: &PresetInfo) {
     let id = |column: usize| PRESET_CONTROLS.cell(row, column, PRESET_COLUMNS);
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            justify_between(),
-            gap(3),
-            px(3),
-            py(3),
-        ])
-        .child(
-            node()
-                .styles([flex(), flex_col(), gap(0.5), flex_1(), min_w_px(0)])
-                .child(
-                    line(preset.name.clone(), 13, 1.4, Role::Text)
-                        .styles([pm_style::font_medium()]),
-                )
-                .child(
-                    clipped(preset_summary(preset), 12, Role::Muted)
-                        .styles([pm_style::font_mono()]),
-                ),
-        )
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(1), flex_none()])
-                .children(id(0).map(|button| {
-                    Button::new("Apply", button)
-                        .variant(Variant::Outline)
-                        .size(Size::Sm)
-                        .build()
-                }))
-                .children(id(1).map(|button| {
-                    Button::new("Delete", button)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .build()
-                })),
-        )
+    rustle::row_arranged(
+        Modifier::new().padding(theme::sp(3)),
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Center,
+        || {
+            rustle::column_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::SpacedBy(theme::sp(0.5)),
+                Alignment::Start,
+                || {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        preset.name.clone(),
+                        theme::strong(13, Role::Text),
+                        TextOverflow::Ellipsis,
+                    );
+                    rustle::basic_text(
+                        Modifier::new(),
+                        preset_summary(preset),
+                        theme::line(12, Role::Muted),
+                        TextOverflow::Ellipsis,
+                    );
+                },
+            );
+            rustle::row_arranged(
+                Modifier::new(),
+                Arrangement::SpacedBy(theme::sp(1)),
+                Alignment::Center,
+                || {
+                    if let Some(button) = id(0) {
+                        button::action("Apply", button, Variant::Outline);
+                    }
+                    if let Some(button) = id(1) {
+                        button::action("Delete", button, Variant::Ghost);
+                    }
+                },
+            );
+        },
+    );
 }
 
-/// A box and the button beside it that hands in what is written in it.
-pub(crate) fn entry(
-    field: &Field,
-    id: FocusId,
-    placeholder: &str,
-    button: (&str, FocusId),
-) -> Node {
-    node()
-        .styles([flex(), items_center(), gap(2)])
-        .child(
-            node().styles([flex_1(), min_w_px(0)]).child(
-                Input::new(field, id)
-                    .size(Size::Sm)
-                    .placeholder(placeholder)
-                    .build(),
-            ),
-        )
-        .child(
-            Button::new(button.0, button.1)
-                .variant(Variant::Outline)
+/// Emits a box and the button beside it that hands in what is written in it.
+#[track_caller]
+pub(crate) fn entry(field: &TextFieldState, id: Target, placeholder: &str, button: (&str, Target)) {
+    rustle::row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            Input::new(field, id)
                 .size(Size::Sm)
+                .placeholder(placeholder)
+                .submits(button.1)
+                .modifier(Modifier::new().weight(1.0))
+                .build();
+            button::small_button(button.0, button.1, Variant::Outline)
                 .disabled(!valid_name(field.text().trim()))
-                .build(),
-        )
+                .build();
+        },
+    );
 }
 
 /// What the page says about itself under its heading.
@@ -1274,33 +1244,42 @@ pub(crate) const SUMMARY: &str = "The models agents ask for each kind of work, f
 /// What the models page says under the box that adds a slot.
 const OWN_SLOT_NOTE: &str = "A slot of your own is also a work category: once it has a model it is listed under Orchestration.";
 
-/// The choice of the file changes are saved to, after what it chooses.
-pub(crate) fn scope_choice(state: &WorkspaceState) -> Node {
-    let scope = choices(
-        &["User", "Project"],
-        usize::from(state.settings_page.slots.scope == SlotScope::Project),
-        |option| [SLOTS_SCOPE_USER, SLOTS_SCOPE_PROJECT].get(option).copied(),
+/// Emits the choice of the file changes are saved to, after what it chooses.
+#[track_caller]
+pub(crate) fn scope_choice(state: &WorkspaceState) {
+    let picked = usize::from(state.settings_page.slots.scope == SlotScope::Project);
+    rustle::row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            line("Save changes to", 12, 1.4, Role::Muted);
+            choices(&["User", "Project"], picked, |option| {
+                [
+                    Target::Settings(SettingsEvent::SlotsScopeUser),
+                    Target::Settings(SettingsEvent::SlotsScopeProject),
+                ]
+                .get(option)
+                .copied()
+            });
+        },
     );
-    node()
-        .styles([flex(), items_center(), gap(2), flex_none()])
-        .child(line("Save changes to", 12, 1.4, Role::Muted))
-        .child(scope)
 }
 
-/// The picker of the provider whose assignments are shown, after what it picks, and the list of providers while it is open.
-pub(crate) fn provider_choice(state: &WorkspaceState) -> (Node, Option<Node>) {
+/// Emits the picker of the provider whose assignments are shown, after what it picks, then the list of providers while it is open.
+#[track_caller]
+pub(crate) fn provider_choice(state: &WorkspaceState) {
     let open = state.settings_page.slots.picking == Some(SlotPicking::Provider);
-    let chosen = node()
-        .styles([flex(), items_center(), gap(2), flex_wrap(), flex_none()])
-        .child(line("Provider", 12, 1.4, Role::Muted))
-        .child(picker(
-            &state.provider_shown(),
-            PROVIDER_PICKER_WIDTH,
-            SLOTS_PROVIDER,
-            open,
-        ));
-    let list = open.then(|| {
-        let options = state.provider_choices();
+    rustle::flow_row_with(
+        Modifier::new(),
+        rustle::FlowOptions::new(theme::sp(2), theme::sp(2)).item_alignment(Alignment::Center),
+        || {
+            line("Provider", 12, 1.4, Role::Muted);
+            let id = Target::Settings(SettingsEvent::SlotsProvider);
+            picker(&state.provider_shown(), PROVIDER_PICKER_WIDTH, id, open);
+        },
+    );
+    if open {
         let picked = match state.slot_provider() {
             None => Some(0),
             Some(viewed) => state
@@ -1309,83 +1288,69 @@ pub(crate) fn provider_choice(state: &WorkspaceState) -> (Node, Option<Node>) {
                 .position(|(held, _)| *held == viewed)
                 .map(|place| place + 1),
         };
-        picker_list(
-            &options,
-            picked,
-            (&state.settings_page.filter, SETTINGS_PICK_FILTER),
-        )
-    });
-    (chosen, list)
+        open_picks(state, &state.provider_choices(), picked);
+    }
 }
 
-/// The line saying why the slots could not be read or changed, in no more than `room` logical pixels across, when the last attempt failed.
-pub(crate) fn error_note(state: &WorkspaceState, room: f32) -> Option<Node> {
-    state
-        .settings_page
-        .slots
-        .error
-        .as_deref()
-        .map(|reason| wrapped_note(&format!("Could not change the slots: {reason}"), room))
+/// Emits the line saying why the slots could not be read or changed, in no more than `room` logical pixels across, when the last attempt failed.
+#[track_caller]
+pub(crate) fn error_note(state: &WorkspaceState, room: f32) {
+    if let Some(reason) = state.settings_page.slots.error.as_deref() {
+        wrapped_note(&format!("Could not change the slots: {reason}"), room);
+    }
 }
 
-/// The body of the models page, `room` logical pixels across: what it is for, where changes go, the job slots and the slots added here, a box to add one, and the presets; the work categories are on the orchestration page.
-pub(crate) fn body(state: &WorkspaceState, page: Node, room: f32, shaper: &mut Shaper) -> Node {
+/// Emits the body of the models page, `room` logical pixels across, after what `page` emits, into the box the caller holds it in: what it is for, where changes go, the job slots and the slots added here, a box to add one, and the presets; the work categories are on the orchestration page.
+#[track_caller]
+pub(crate) fn body(state: &WorkspaceState, page: impl FnOnce(), room: f32) {
     let slots = &state.settings_page.slots;
-    let (provider, provider_list) = provider_choice(state);
-    let rows: Vec<Node> = state
-        .model_rows()
-        .iter()
-        .map(|(row, slot)| slot_row(state, *row, slot, room, shaper))
-        .collect();
-    let mut page = page
-        .child(paragraph(SUMMARY, room))
-        .child(provider)
-        .children(provider_list)
-        .children(error_note(state, room))
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    items_center(),
-                    justify_between(),
-                    gap(2),
-                    flex_wrap(),
-                    flex_none(),
-                ])
-                .child(heading_only("Slots", rows.len()))
-                .child(scope_choice(state)),
-        );
-    page = if rows.is_empty() {
-        page.child(note("The agent has not told its slots yet."))
+    let rows = state.model_rows();
+    page();
+    paragraph(SUMMARY, room);
+    provider_choice(state);
+    error_note(state, room);
+    rustle::flow_row_with(
+        Modifier::new().fill_max_width(),
+        rustle::FlowOptions::new(theme::sp(2), theme::sp(2))
+            .item_alignment(Alignment::Center)
+            .arrangement(Arrangement::SpaceBetween),
+        || {
+            heading_only("Slots", rows.len());
+            scope_choice(state);
+        },
+    );
+    if rows.is_empty() {
+        note("The agent has not told its slots yet.");
     } else {
-        page.child(boxed(rows))
-    };
-    let presets: Vec<Node> = slots
-        .presets
-        .iter()
-        .enumerate()
-        .map(|(row, preset)| preset_row(row, preset))
-        .collect();
-    page = page
-        .child(entry(
-            &slots.new_slot,
-            SLOT_NEW_NAME,
-            "Add a slot of your own, e.g. docs",
-            ("Add Slot", SLOT_ADD),
-        ))
-        .child(wrapped_note(OWN_SLOT_NOTE, room))
-        .child(heading_only("Presets", presets.len()));
-    page = if presets.is_empty() {
-        page.child(note("No presets are saved."))
+        boxed(|| {
+            for (row, slot) in rows.iter() {
+                rustle::key(*row, || slot_row(state, *row, slot, room));
+            }
+        });
+    }
+    entry(
+        &slots.new_slot,
+        Target::Settings(SettingsEvent::SlotNewName),
+        "Add a slot of your own, e.g. docs",
+        ("Add Slot", Target::Settings(SettingsEvent::SlotAdd)),
+    );
+    wrapped_note(OWN_SLOT_NOTE, room);
+    heading_only("Presets", slots.presets.len());
+    if slots.presets.is_empty() {
+        note("No presets are saved.");
     } else {
-        page.child(boxed(presets))
-    };
-    page.child(entry(
+        boxed(|| {
+            for (row, preset) in slots.presets.iter().enumerate() {
+                preset_row(row, preset);
+            }
+        });
+    }
+    entry(
         &slots.preset_name,
-        PRESET_NAME,
+        Target::Settings(SettingsEvent::PresetName),
         "Name the slots as they stand, e.g. cheap",
-        ("Save Preset", PRESET_SAVE),
-    ))
+        ("Save Preset", Target::Settings(SettingsEvent::PresetSave)),
+    );
 }
 
 /// How many job slots set a model of their own, in words, for the page's card on the Agents overview.
@@ -1486,7 +1451,7 @@ mod tests {
     #[test]
     fn an_effort_is_set_on_the_model() {
         let mut state = open()
-            .settings_pressed(SLOTS_SCOPE_PROJECT)
+            .settings_pressed(Target::Settings(SettingsEvent::SlotsScopeProject))
             .settings_pressed(
                 SLOT_CONTROLS
                     .cell(1, EFFORT_COLUMN + 3, SLOT_COLUMNS)
@@ -1610,8 +1575,8 @@ mod tests {
     }
 
     /// `state` with the provider at `place` of the provider list picked: 0 for all providers, then each provider offered.
-    fn viewing(state: WorkspaceState, place: u64) -> WorkspaceState {
-        let state = state.settings_pressed(SLOTS_PROVIDER);
+    fn viewing(state: WorkspaceState, place: usize) -> WorkspaceState {
+        let state = state.settings_pressed(Target::Settings(SettingsEvent::SlotsProvider));
         assert_eq!(
             state.settings_page.slots.picking,
             Some(SlotPicking::Provider)
@@ -1644,15 +1609,15 @@ mod tests {
     /// A slot of the reader's own shows until it is set, and a name that is not valid or taken is refused.
     #[test]
     fn a_slot_of_ones_own_is_added() {
-        let state = open().edited(SLOT_NEW_NAME, Edit::Paste("docs".to_owned()));
-        let state = state.settings_pressed(SLOT_ADD);
+        let state = open().typed(Target::Settings(SettingsEvent::SlotNewName), "docs");
+        let state = state.settings_pressed(Target::Settings(SettingsEvent::SlotAdd));
         let added = state.model_rows().pop().unwrap().1;
         assert_eq!(added.name, "docs");
         assert!(!added.category);
         assert!(state.category_cards().is_empty());
         let state = state
-            .edited(SLOT_NEW_NAME, Edit::Paste("fast".to_owned()))
-            .settings_pressed(SLOT_ADD);
+            .typed(Target::Settings(SettingsEvent::SlotNewName), "fast")
+            .settings_pressed(Target::Settings(SettingsEvent::SlotAdd));
         assert_eq!(state.slot_rows().len(), 4);
         let mut book = pm_harness::SlotBook {
             slots: state.settings_page.slots.slots.clone(),
@@ -1668,8 +1633,8 @@ mod tests {
     #[test]
     fn presets_are_saved_applied_and_deleted() {
         let mut state = open()
-            .edited(PRESET_NAME, Edit::Paste("night".to_owned()))
-            .settings_pressed(PRESET_SAVE);
+            .typed(Target::Settings(SettingsEvent::PresetName), "night")
+            .settings_pressed(Target::Settings(SettingsEvent::PresetSave));
         assert_eq!(
             sent(&mut state),
             SlotChange::SavePreset {
@@ -1678,7 +1643,7 @@ mod tests {
             }
         );
         let mut state = state
-            .settings_pressed(SLOTS_SCOPE_PROJECT)
+            .settings_pressed(Target::Settings(SettingsEvent::SlotsScopeProject))
             .settings_pressed(PRESET_CONTROLS.cell(0, 0, PRESET_COLUMNS).unwrap());
         assert_eq!(
             sent(&mut state),
@@ -1726,7 +1691,7 @@ mod tests {
     }
 
     /// The name of the box in `column` of the slot at `row`.
-    fn cell(row: usize, column: usize) -> FocusId {
+    fn cell(row: usize, column: usize) -> Target {
         SLOT_CONTROLS.cell(row, column, SLOT_COLUMNS).unwrap()
     }
 
@@ -1754,11 +1719,14 @@ mod tests {
             "Read every caller first."
         );
         assert_eq!(
-            state.field(cell(3, DESCRIPTION_COLUMN)).unwrap().text(),
+            state
+                .text_field(cell(3, DESCRIPTION_COLUMN))
+                .unwrap()
+                .text(),
             "Small changes."
         );
-        assert!(state.field(cell(4, PROMPT_COLUMN)).unwrap().is_multiline());
-        assert!(state.field(cell(1, DESCRIPTION_COLUMN)).is_none());
+        assert!(state.text_field(cell(4, PROMPT_COLUMN)).is_some());
+        assert!(state.text_field(cell(1, DESCRIPTION_COLUMN)).is_none());
         let listed: Vec<String> = state
             .model_rows()
             .into_iter()
@@ -1777,14 +1745,15 @@ mod tests {
     #[test]
     fn editing_the_description_sends_both_fields() {
         let description = cell(4, DESCRIPTION_COLUMN);
-        assert!(WorkspaceState::is_field(description));
+        let describe = cell(4, DESCRIBE_COLUMN);
         let state = with_categories()
-            .settings_pressed(SLOTS_SCOPE_PROJECT)
-            .edited(description, Edit::Paste(" Slowly.".to_owned()));
+            .settings_pressed(Target::Settings(SettingsEvent::SlotsScopeProject))
+            .typed(description, " Slowly.");
+        assert!(state.text_field(description).is_some());
         assert!(state.settings_page.slots.notes_of("deep").unwrap().edited);
         let mut state = state.settings_pressed(description);
         assert!(state.take_outbox().is_empty());
-        let mut state = state.settings_pressed(WorkspaceState::submit_of(description));
+        let mut state = state.settings_pressed(describe);
         assert_eq!(
             sent(&mut state),
             SlotChange::Describe {
@@ -1794,7 +1763,7 @@ mod tests {
                 prompt: Some("Read every caller first.".to_owned()),
             }
         );
-        let mut state = state.settings_pressed(WorkspaceState::submit_of(description));
+        let mut state = state.settings_pressed(describe);
         assert!(state.take_outbox().is_empty());
     }
 
@@ -1803,13 +1772,15 @@ mod tests {
     fn clearing_an_input_sends_nothing_for_it() {
         let prompt = cell(4, PROMPT_COLUMN);
         assert!(WorkspaceState::saves_on_leaving(prompt));
-        assert!(!WorkspaceState::saves_on_leaving(SLOT_NEW_NAME));
+        assert!(!WorkspaceState::saves_on_leaving(Target::Settings(
+            SettingsEvent::SlotNewName
+        )));
         let mut state = with_categories().field_left(prompt);
         assert!(state.take_outbox().is_empty());
-        let mut state = state
-            .edited(prompt, Edit::SelectAll)
-            .edited(prompt, Edit::Backspace)
-            .field_left(prompt);
+        if let Some(field) = state.text_field(prompt) {
+            field.select_all();
+        }
+        let mut state = state.typed(prompt, "").field_left(prompt);
         assert_eq!(
             sent(&mut state),
             SlotChange::Describe {
@@ -1825,17 +1796,17 @@ mod tests {
     #[test]
     fn changed_boxes_outlast_the_slots_being_told() {
         let description = cell(3, DESCRIPTION_COLUMN);
-        let state = with_categories().edited(description, Edit::Paste(" Fast.".to_owned()));
+        let state = with_categories().typed(description, " Fast.");
         let book = pm_harness::SlotBook {
             slots: state.settings_page.slots.slots.clone(),
             presets: Vec::new(),
         };
         let state = state.with_model_slots(book);
         assert_eq!(
-            state.field(description).unwrap().text(),
+            state.text_field(description).unwrap().text(),
             "Small changes. Fast."
         );
-        let mut state = state.settings_pressed(SLOTS_SCOPE_PROJECT);
+        let mut state = state.settings_pressed(Target::Settings(SettingsEvent::SlotsScopeProject));
         assert_eq!(
             sent(&mut state),
             SlotChange::Describe {
@@ -1851,8 +1822,8 @@ mod tests {
     #[test]
     fn an_added_category_is_described() {
         let state = with_categories()
-            .edited(CATEGORY_NEW_NAME, Edit::Paste("docs".to_owned()))
-            .settings_pressed(WorkspaceState::submit_of(CATEGORY_NEW_NAME));
+            .typed(Target::Settings(SettingsEvent::CategoryNewName), "docs")
+            .settings_pressed(Target::Settings(SettingsEvent::CategoryAdd));
         let rows = state.slot_rows();
         let added = rows.last().unwrap();
         assert_eq!(added.name, "docs");
@@ -1860,12 +1831,9 @@ mod tests {
         assert_eq!(state.settings_page.slots.expanded.as_deref(), Some("docs"));
         assert_eq!(state.settings_page.slots.new_category.text(), "");
         let description = cell(rows.len() - 1, DESCRIPTION_COLUMN);
-        assert_eq!(state.field(description).unwrap().text(), "");
+        assert_eq!(state.text_field(description).unwrap().text(), "");
         let mut state = state
-            .edited(
-                description,
-                Edit::Paste("Writing documentation.".to_owned()),
-            )
+            .typed(description, "Writing documentation.")
             .field_left(description);
         assert_eq!(
             sent(&mut state),

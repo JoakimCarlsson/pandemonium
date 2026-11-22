@@ -1,6 +1,6 @@
 //! Indentation as the language says: a new line one level deeper inside a block opened on the line, the closing of that block on a line of its own, and a closing bracket typed on an empty line going back a level.
 
-use pm_text::Edit;
+use crate::Edit;
 
 use crate::document::Document;
 

@@ -1,32 +1,26 @@
 //! The questions and lists for publishing a branch, choosing what it follows, renaming, deleting, merging and rebasing it.
 
-use pm_input::FocusId;
-use pm_style::{Role, flex, flex_col, gap, items_center, p, pb, px};
-use pm_text::Field;
-use pm_ui::{Node, node};
+use crate::areas::GitEvent;
+use crate::events;
+use rustle::{Alignment, Arrangement, TextOverflow};
+
+use crate::target::Target;
+use crate::theme;
+use rustle::Modifier;
+use rustle::TextFieldState;
+
+use crate::theme::Role;
 
 use crate::button::Variant;
-use crate::git_prompts::{PROMPT_CANCEL, PROMPT_CONFIRM, PROMPT_INSIDE, PROMPT_OUTSIDE, Prompt};
-use crate::parts::{line, spacer, wrap};
+use crate::git_prompts::Prompt;
+use crate::parts::{line, wrapping};
 use crate::popover::row;
 use crate::size::Size;
 use crate::state::{Outgoing, WorkspaceState};
-use crate::{Button, Checkbox, Input, Modal};
-
-/// The box a branch is named in, or the list of branches is searched in.
-pub const BRANCH_TASK_FIELD: FocusId = FocusId(7110);
-
-/// The check box that carries a rename or a deletion over to the branch on the remote.
-pub const BRANCH_TASK_REMOTE: FocusId = FocusId(7111);
-
-/// The first of the rows of the list that is open; the rest follow it.
-pub const BRANCH_TASK_ROW_BASE: u64 = 8850;
+use crate::{Checkbox, Input};
 
 /// How many rows a list shows at once.
 const ROWS: usize = 12;
-
-/// How wide a question is, in logical pixels.
-const WIDTH: f32 = 400.0;
 
 /// What is being done to a branch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,7 +53,7 @@ pub struct Branching {
     /// Whether to carry the rename or deletion over to the branch on the remote.
     pub with_remote: bool,
     /// The name typed, or what the list is searched for.
-    pub field: Field,
+    pub field: TextFieldState,
 }
 
 impl BranchTask {
@@ -85,9 +79,9 @@ impl WorkspaceState {
         let current = self.current_branch_name();
         let field = match task {
             BranchTask::Publish | BranchTask::Rename => {
-                Field::new(current.as_deref().unwrap_or(""))
+                TextFieldState::new(current.as_deref().unwrap_or(""))
             }
-            _ => Field::default(),
+            _ => TextFieldState::default(),
         };
         self.git.branching = Some(Branching {
             task,
@@ -192,26 +186,24 @@ impl WorkspaceState {
     }
 
     /// Carries out `action` if it presses something in the question or list about a branch, and says whether it did.
-    pub(crate) fn press_branch_task(&mut self, action: FocusId) -> bool {
+    pub(crate) fn press_branch_task(&mut self, action: Target) -> bool {
         if self.git.branching.is_none() || !matches!(self.git.prompt, Some(Prompt::Branch(_))) {
             return false;
         }
         match action {
-            BRANCH_TASK_FIELD => {}
-            BRANCH_TASK_REMOTE => {
+            Target::Git(GitEvent::BranchTaskField) => {}
+            Target::Git(GitEvent::BranchTaskRemote) => {
                 if let Some(open) = self.git.branching.as_mut() {
                     open.with_remote = !open.with_remote;
                 }
             }
             _ => {
-                let Some(row) = action
-                    .0
-                    .checked_sub(BRANCH_TASK_ROW_BASE)
-                    .map(|row| row as usize)
-                    .filter(|row| *row < ROWS)
-                else {
+                let Target::Git(GitEvent::BranchTaskRow(row)) = action else {
                     return false;
                 };
+                if row >= ROWS {
+                    return false;
+                }
                 self.choose_branch(row);
             }
         }
@@ -278,8 +270,7 @@ impl WorkspaceState {
         };
         self.git.prompt = None;
         self.git.branching = None;
-        self.git.busy = Some(doing);
-        self.git.trouble = None;
+        self.await_git(doing);
         self.outbox.push(Outgoing::BranchOperation {
             session,
             action,
@@ -343,14 +334,6 @@ impl WorkspaceState {
     }
 }
 
-/// A button of a question, saying `label`.
-fn button(label: &str, id: FocusId, variant: Variant) -> Node {
-    Button::new(label, id)
-        .variant(variant)
-        .size(Size::Sm)
-        .build()
-}
-
 /// `count` commits, worded for one or many.
 fn commits(count: usize) -> String {
     if count == 1 {
@@ -360,159 +343,169 @@ fn commits(count: usize) -> String {
     }
 }
 
-/// A row with a check box that says `label`, ticked while `checked`.
-fn tick(label: &str, checked: bool) -> Node {
-    node()
-        .styles([flex(), items_center(), gap(2), px(2)])
-        .child(Checkbox::new(checked, BRANCH_TASK_REMOTE).build())
-        .child(line(label, 13, 1.4, Role::Text))
-        .focusable(BRANCH_TASK_REMOTE)
+/// Emits a row with a check box that says `label`, ticked while `checked`.
+#[track_caller]
+fn tick(label: &str, checked: bool) {
+    rustle::row_arranged(
+        events::pressed(Modifier::new(), Target::Git(GitEvent::BranchTaskRemote))
+            .padding_xy(theme::sp(2), 0.0),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            Checkbox::new(checked, Target::Git(GitEvent::BranchTaskRemote)).build();
+            line(label, 13, 1.4, Role::Text);
+        },
+    );
 }
 
-/// The question or list about a branch that is open, as a node.
-pub fn branch_prompt(state: &WorkspaceState, task: BranchTask) -> Node {
+/// Emits `words` wrapped to the width of a question, one muted line after another.
+#[track_caller]
+fn say(words: &str) {
+    wrapping(Modifier::new(), words, 13, 1.5, Role::Muted);
+}
+
+/// Emits the rows of `choices`, each a branch or remote ticked while chosen, answering to the row ids in order.
+#[track_caller]
+fn choice_rows(choices: &[(String, String, bool)]) {
+    for (position, (name, description, chosen)) in choices.iter().enumerate() {
+        row(
+            name,
+            description,
+            *chosen,
+            Target::Git(GitEvent::BranchTaskRow(position)),
+        );
+    }
+}
+
+/// Emits a line of `words` set as a title, `pixels` tall, in the text colour and medium weight.
+#[track_caller]
+fn title_line(words: impl Into<String>, pixels: u32) {
+    rustle::basic_text(
+        Modifier::new(),
+        words,
+        theme::strong(pixels, Role::Text),
+        TextOverflow::Ellipsis,
+    );
+}
+
+/// Emits the box the name of a branch is typed in, or a list is searched in, showing `placeholder` while it is empty.
+#[track_caller]
+fn field(open: &Branching, placeholder: &str) {
+    Input::new(&open.field, Target::Git(GitEvent::BranchTaskField))
+        .modifier(Modifier::new().fill_max_width())
+        .placeholder(placeholder)
+        .size(Size::Md)
+        .submits(Target::Git(GitEvent::PromptConfirm))
+        .build();
+}
+
+/// Emits the question or list about a branch that is open, in a modal; nothing when none is open.
+pub fn branch_prompt(state: &WorkspaceState, task: BranchTask) {
     let Some(open) = state.git.branching.as_ref() else {
-        return Node::default();
+        return;
     };
-    let mut body = node()
-        .styles([flex(), flex_col(), gap(3), p(5)])
-        .child(line(task.title(), 15, 1.4, Role::Text).styles([pm_style::font_medium()]));
-    let mut confirm: Option<(&str, Variant)> = None;
     let choices = state.branch_choices();
     let loading = open.info.is_none();
     let current = state.current_branch_name().unwrap_or_default();
     let upstream = state
         .review_session()
         .and_then(|session| session.tracking.upstream.clone());
-    let say = |words: &str| -> Vec<Node> {
-        wrap(words, 13, WIDTH - 40.0)
-            .iter()
-            .map(|words| line(words, 13, 1.5, Role::Muted))
-            .collect()
-    };
-    if loading {
-        body = body.child(line("Reading the remotes…", 13, 1.4, Role::Subtle));
-    } else if let Some(info) = open.info.as_ref() {
-        match task {
-            BranchTask::Publish if info.remotes.is_empty() => {
-                body = body.children(say("This repository has no remote to publish to."));
-            }
-            BranchTask::Publish => {
-                if info.remotes.len() > 1 {
-                    body = body.child(line("Remote", 12, 1.4, Role::Subtle));
-                    body = body.children(choices.iter().enumerate().map(
-                        |(position, (name, description, chosen))| {
-                            row(
-                                name,
-                                description,
-                                *chosen,
-                                FocusId(BRANCH_TASK_ROW_BASE + position as u64),
-                            )
-                        },
-                    ));
-                }
-                body = body.child(line("Branch name on the remote", 12, 1.4, Role::Subtle));
-                body = body.child(
-                    Input::new(&open.field, BRANCH_TASK_FIELD)
-                        .placeholder(&current)
-                        .size(Size::Md)
-                        .build(),
-                );
-                confirm = Some(("Publish", Variant::Default));
-            }
-            BranchTask::Rename => {
-                body = body.child(
-                    Input::new(&open.field, BRANCH_TASK_FIELD)
-                        .placeholder("New name")
-                        .size(Size::Md)
-                        .build(),
-                );
-                if let Some(upstream) = &upstream {
-                    body = body.child(tick(
-                        &format!("Also rename {upstream} on the remote"),
-                        open.with_remote,
-                    ));
-                }
-                confirm = Some(("Rename", Variant::Default));
-            }
-            BranchTask::Delete if open.chosen.is_some() => {
-                let name = open.chosen.clone().unwrap_or_default();
-                body = body.child(
-                    line(format!("Delete {name}?"), 13, 1.4, Role::Text)
-                        .styles([pm_style::font_medium()]),
-                );
-                if let Some(path) = &info.elsewhere {
-                    body = body.children(say(&format!(
-                        "{name} is checked out in {path}, so it cannot be deleted from here."
-                    )));
-                } else {
-                    let mut warnings = Vec::new();
-                    if info.unmerged > 0 {
-                        warnings.push(format!(
-                            "{} not merged into {current}",
-                            commits(info.unmerged)
-                        ));
+    crate::git_prompts::git_modal(|| {
+        let mut confirm: Option<(&str, Variant)> = None;
+        rustle::column_arranged(
+            Modifier::new().padding(theme::sp(5)),
+            Arrangement::SpacedBy(theme::sp(3)),
+            Alignment::Start,
+            || {
+                title_line(task.title(), 15);
+                if loading {
+                    line("Reading the remotes…", 13, 1.4, Role::Subtle);
+                } else if let Some(info) = open.info.as_ref() {
+                    match task {
+                        BranchTask::Publish if info.remotes.is_empty() => {
+                            say("This repository has no remote to publish to.");
+                        }
+                        BranchTask::Publish => {
+                            if info.remotes.len() > 1 {
+                                line("Remote", 12, 1.4, Role::Subtle);
+                                choice_rows(&choices);
+                            }
+                            line("Branch name on the remote", 12, 1.4, Role::Subtle);
+                            field(open, &current);
+                            confirm = Some(("Publish", Variant::Default));
+                        }
+                        BranchTask::Rename => {
+                            field(open, "New name");
+                            if let Some(upstream) = &upstream {
+                                tick(
+                                    &format!("Also rename {upstream} on the remote"),
+                                    open.with_remote,
+                                );
+                            }
+                            confirm = Some(("Rename", Variant::Default));
+                        }
+                        BranchTask::Delete if open.chosen.is_some() => {
+                            let name = open.chosen.clone().unwrap_or_default();
+                            title_line(format!("Delete {name}?"), 13);
+                            if let Some(path) = &info.elsewhere {
+                                say(&format!(
+                                    "{name} is checked out in {path}, so it cannot be deleted from here."
+                                ));
+                            } else {
+                                let mut warnings = Vec::new();
+                                if info.unmerged > 0 {
+                                    warnings.push(format!(
+                                        "{} not merged into {current}",
+                                        commits(info.unmerged)
+                                    ));
+                                }
+                                if info.unpushed > 0 {
+                                    warnings.push(format!("{} not pushed", commits(info.unpushed)));
+                                }
+                                let words = if warnings.is_empty() {
+                                    "The branch is removed. Its commits are all in other branches."
+                                        .to_owned()
+                                } else {
+                                    format!(
+                                        "{}. They are lost when it is deleted.",
+                                        warnings.join(", ")
+                                    )
+                                };
+                                say(&words);
+                                if let Some(follows) = &info.follows {
+                                    tick(
+                                        &format!("Also delete {follows} on the remote"),
+                                        open.with_remote,
+                                    );
+                                }
+                                confirm = Some(("Delete", Variant::Destructive));
+                            }
+                        }
+                        _ => {
+                            field(open, "Search branches");
+                            if choices.is_empty() {
+                                line(
+                                    if task == BranchTask::Upstream && info.remotes.is_empty() {
+                                        "This repository has no remote."
+                                    } else {
+                                        "No branches."
+                                    },
+                                    13,
+                                    1.4,
+                                    Role::Subtle,
+                                );
+                            }
+                            choice_rows(&choices);
+                        }
                     }
-                    if info.unpushed > 0 {
-                        warnings.push(format!("{} not pushed", commits(info.unpushed)));
-                    }
-                    let words = if warnings.is_empty() {
-                        "The branch is removed. Its commits are all in other branches.".to_owned()
-                    } else {
-                        format!("{}. They are lost when it is deleted.", warnings.join(", "))
-                    };
-                    body = body.children(say(&words));
-                    if let Some(follows) = &info.follows {
-                        body = body.child(tick(
-                            &format!("Also delete {follows} on the remote"),
-                            open.with_remote,
-                        ));
-                    }
-                    confirm = Some(("Delete", Variant::Destructive));
                 }
-            }
-            _ => {
-                body = body.child(
-                    Input::new(&open.field, BRANCH_TASK_FIELD)
-                        .placeholder("Search branches")
-                        .size(Size::Md)
-                        .build(),
-                );
-                if choices.is_empty() {
-                    body = body.child(line(
-                        if task == BranchTask::Upstream && info.remotes.is_empty() {
-                            "This repository has no remote."
-                        } else {
-                            "No branches."
-                        },
-                        13,
-                        1.4,
-                        Role::Subtle,
-                    ));
-                }
-                body = body.children(choices.iter().enumerate().map(
-                    |(position, (name, description, chosen))| {
-                        row(
-                            name,
-                            description,
-                            *chosen,
-                            FocusId(BRANCH_TASK_ROW_BASE + position as u64),
-                        )
-                    },
-                ));
-            }
-        }
-    }
-    let mut buttons = node()
-        .styles([flex(), items_center(), gap(2), px(5), pb(5)])
-        .child(spacer())
-        .child(button("Cancel", PROMPT_CANCEL, Variant::Ghost));
-    if let Some((label, variant)) = confirm.filter(|_| !loading) {
-        buttons = buttons.child(button(label, PROMPT_CONFIRM, variant));
-    }
-    Modal::new(PROMPT_OUTSIDE, PROMPT_INSIDE)
-        .width(WIDTH)
-        .child(body)
-        .child(buttons)
-        .build()
+            },
+        );
+        crate::git_prompts::buttons(
+            Target::Git(GitEvent::PromptCancel),
+            confirm
+                .filter(|_| !loading)
+                .map(|(label, variant)| (label, Target::Git(GitEvent::PromptConfirm), variant)),
+        );
+    });
 }

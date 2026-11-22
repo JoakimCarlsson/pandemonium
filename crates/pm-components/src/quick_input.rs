@@ -1,23 +1,26 @@
 //! The quick input as it is drawn: a field over the command center it opens from, and under it the rows of what the field lists, the letters typed marked in their names and the keys of each command on caps.
 
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, ShadowLayer, absolute, bg, border, border_color, border_t, cursor_pointer, flex,
-    flex_1, flex_col, flex_none, font_semibold, gap, h_px, items_center, leading_ratio, left_px,
-    min_w_px, overflow_hidden, pb, pt, px, rounded, shadow_layers, text_color, text_px, top_px,
-    w_px, z,
-};
-use pm_ui::{Node, node, text};
+use crate::areas::EditorEvent;
+use crate::theme::Frame;
+use crate::theme::Indicated;
+use crate::theme::ShadowLayers;
+use rustle::{Alignment, Arrangement, TextOverflow};
+
+use crate::events::{Event, send};
+use crate::target::Target;
+use crate::theme;
+use rustle::phosphor;
+use rustle::{CursorIcon, Modifier};
 
 use crate::assist::listing_cells;
+use crate::events::Interactive;
 use crate::input::Input;
 use crate::listing::{
-    Destination, Items, LISTING_BODY, LISTING_FILTER, LISTING_ROW_BASE, LISTING_WIDTH, Listing,
-    Quick, line_named, matched_characters, task_title,
+    Destination, Items, LISTING_WIDTH, Listing, Quick, line_named, matched_characters, task_title,
 };
 use crate::parts::{glyph, line};
 use crate::size::Size;
-use pm_icon::IconName;
+use crate::theme::{Radius, Role};
 
 /// How many rows the quick input shows at once.
 pub const QUICK_SHOWN: usize = 16;
@@ -31,20 +34,23 @@ const PREVIEWED_TITLE: f32 = 170.0;
 /// How tall the field is, in logical pixels: as tall as the command center it lies over.
 pub const FIELD_HEIGHT: f32 = 28.0;
 
-/// The shadow the quick input casts over the window.
-const SHADOW: [ShadowLayer; 1] = [ShadowLayer::new(0.0, 10.0, 32.0, 0.0, 0.36, false)];
+/// The lambda that takes the row picked of the list over the file, as Enter in the field
+/// narrowing it does: the command it holds when the list holds commands, and otherwise
+/// the row as the workspace takes it.
+pub(crate) fn take_picked() -> impl Fn() + 'static {
+    let operations = crate::events::operations();
+    move || operations.take_listing(None)
+}
 
-/// The quick input for `listing`: its field, then the rows around the one picked, or what keeps it empty.
-pub fn quick_input(listing: &Listing) -> Node {
-    let field = listing.items.filter().map(|filter| {
-        node().styles([px(1.5), pt(1.5), pb(1)]).child(
-            Input::new(filter, LISTING_FILTER)
-                .size(Size::Sm)
-                .placeholder(listing.items.placeholder())
-                .build()
-                .styles([h_px(FIELD_HEIGHT)]),
-        )
-    });
+/// The shadow the quick input casts over the window, as `(x, y, blur, spread, alpha)`.
+const SHADOW: [rustle::Shadow; 1] = [crate::theme::box_shadow(0.0, 10.0, 32.0, 0.0, 0.36)];
+
+/// What a row of the quick input holds, emitted when the row is drawn.
+type Cells<'a> = Box<dyn FnOnce() + 'a>;
+
+/// Emits the quick input for `listing` as a popup at its place in the box it is declared in: its field, then the rows around the one picked, or what keeps it empty.
+#[track_caller]
+pub fn quick_input(listing: &Listing) {
     let shown = listing.items.rows();
     let count = shown.len();
     let status = match (&listing.problem, listing.answered, count) {
@@ -53,40 +59,91 @@ pub fn quick_input(listing: &Listing) -> Node {
         (None, true, 0) => Some(empty_words(&listing.items)),
         _ => None,
     };
-    let first = listing
-        .picked
-        .saturating_sub(QUICK_SHOWN - 1)
-        .min(count.saturating_sub(QUICK_SHOWN));
-    let rows = (first..count.min(first + QUICK_SHOWN))
-        .map(|place| row(listing, place, shown[place], place == listing.picked));
-    node()
-        .styles([
-            absolute(),
-            left_px(listing.at.0),
-            top_px(listing.at.1),
-            z(60),
-            flex(),
-            flex_col(),
-            w_px(LISTING_WIDTH),
-            rounded(Radius::Lg),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-            shadow_layers(&SHADOW),
-            overflow_hidden(),
-        ])
-        .focusable(LISTING_BODY)
-        .children(field)
-        .child(
-            node()
-                .styles([flex(), flex_col(), px(1.5), pb(1.75)])
-                .children(status.map(|said| {
-                    node()
-                        .styles([flex(), items_center(), h_px(ROW), px(1.5)])
-                        .child(line(said, 13, 1.4, Role::Muted))
-                }))
-                .children(rows),
-        )
+    let list = rustle::remember_lazy_list_state();
+    list.scroll().set_scrollbar(rustle::ScrollbarStyle {
+        visibility: rustle::ScrollbarVisibility::Hidden,
+        ..theme::scrollbar()
+    });
+    let picked = listing.picked;
+    let shown_list = list.clone();
+    rustle::launched_effect((picked, count), move |_| async move {
+        crate::rows_in_view::keep_in_view(&shown_list, picked);
+    });
+    crate::popups::in_box_at(listing.at, crate::popups::Dismissal::Never, || {
+        rustle::column_arranged(
+            Modifier::new()
+                .width(LISTING_WIDTH)
+                .shadow_layers(&SHADOW, Radius::Lg.px())
+                .panel(Radius::Lg)
+                .clip()
+                .control(
+                    Target::Editor(EditorEvent::ListingBody),
+                    send(Event::Editor(EditorEvent::ListingBody)),
+                ),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                if let Some(filter) = listing.items.filter() {
+                    rustle::column_arranged(
+                        Modifier::new().fill_max_width().padding_each(
+                            theme::sp(1.5),
+                            theme::sp(1.5),
+                            theme::sp(1.5),
+                            theme::sp(1),
+                        ),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            crate::focus::request_focus_on(
+                                Target::Editor(EditorEvent::ListingFilter),
+                                filter,
+                            );
+                            Input::new(filter, Target::Editor(EditorEvent::ListingFilter))
+                                .size(Size::Sm)
+                                .placeholder(listing.items.placeholder())
+                                .modifier(Modifier::new().fill_max_width().height(FIELD_HEIGHT))
+                                .on_submit(crate::quick_input::take_picked())
+                                .hurries(Target::Editor(EditorEvent::ListingPrompt))
+                                .build();
+                        },
+                    );
+                }
+                rustle::column_arranged(
+                    Modifier::new().fill_max_width().padding_each(
+                        theme::sp(1.5),
+                        0.0,
+                        theme::sp(1.5),
+                        theme::sp(1.75),
+                    ),
+                    Arrangement::Start,
+                    Alignment::Start,
+                    || {
+                        if let Some(said) = status {
+                            rustle::row_arranged(
+                                Modifier::new()
+                                    .fill_max_width()
+                                    .height(ROW)
+                                    .padding_xy(theme::sp(1.5), 0.0),
+                                Arrangement::Start,
+                                Alignment::Center,
+                                || line(said, 13, 1.4, Role::Muted),
+                            );
+                        }
+                        rustle::lazy_list_with(
+                            Modifier::new()
+                                .fill_max_width()
+                                .height_in(0.0, QUICK_SHOWN as f32 * ROW),
+                            &list,
+                            rustle::LazyContent::new(),
+                            count,
+                            |place| place,
+                            |place| quick_row(listing, place, shown[place], place == picked),
+                        );
+                    },
+                );
+            },
+        );
+    });
 }
 
 /// What the quick input says when nothing of `items` is left to pick.
@@ -108,10 +165,21 @@ fn empty_words(items: &Items) -> String {
     }
 }
 
-/// The row at `place` among those shown, of the item at `index`, filled under the pointer and when `picked`.
-fn row(listing: &Listing, place: usize, index: usize, picked: bool) -> Node {
-    let query = listing.items.query();
-    let (cells, group) = match &listing.items {
+/// Emits `content` in a line of `pixels` tall type in `tone`, in a box `modifier` shapes that cuts it short at its edge.
+#[track_caller]
+fn cut(modifier: Modifier, content: impl Into<String>, pixels: u32, tone: Role) {
+    rustle::row_arranged(
+        modifier.clip(),
+        Arrangement::Start,
+        Alignment::Start,
+        || line(content, pixels, 1.4, tone),
+    );
+}
+
+/// Emits the row at `place` among those shown, of the item at `index`, filled under the pointer and when `picked`.
+fn quick_row(listing: &Listing, place: usize, index: usize, picked: bool) {
+    let query = &listing.items.query();
+    let (cells, group): (Cells<'_>, Option<(&str, bool)>) = match &listing.items {
         Items::Commands {
             commands,
             tasks,
@@ -120,59 +188,44 @@ fn row(listing: &Listing, place: usize, index: usize, picked: bool) -> Node {
             ..
         } => {
             let shown = listing.items.rows();
-            let is_task = |place: usize| {
-                shown.get(place).is_some_and(|held| {
-                    (commands.len()..commands.len() + tasks.len()).contains(held)
+            let kind = |place: usize| {
+                shown.get(place).map(|held| {
+                    u8::from(*held >= commands.len())
+                        + u8::from(*held >= commands.len() + tasks.len())
                 })
             };
-            let is_extra = |place: usize| {
-                shown
-                    .get(place)
-                    .is_some_and(|held| *held >= commands.len() + tasks.len())
-            };
-            let group = match (*recent, place) {
-                (_, place) if is_task(place) && (place == 0 || !is_task(place - 1)) => {
-                    Some(("tasks", place > 0))
-                }
-                (_, place) if is_extra(place) && (place == 0 || !is_extra(place - 1)) => {
-                    Some(("extensions", place > 0))
-                }
-                (0, _) => None,
-                (_, 0) => Some(("recently used", false)),
-                (recent, place) if place == recent && !is_task(place) && !is_extra(place) => {
-                    Some(("other commands", true))
-                }
+            let starts = place == 0 || kind(place - 1) != kind(place);
+            let group = match kind(place) {
+                Some(1) if starts => Some(("tasks", place > 0)),
+                Some(2) if starts => Some(("extensions", place > 0)),
+                Some(0) if *recent > 0 && place == 0 => Some(("recently used", false)),
+                Some(0) if *recent > 0 && place == *recent => Some(("other commands", true)),
                 _ => None,
             };
-            let cells = match commands.get(index) {
-                Some((action, keys)) => {
-                    let mut cells = vec![marked(&action.palette_title(), query)];
-                    cells.extend(group.map(|(said, _)| separator(said)));
-                    cells.extend(keys.as_deref().map(keycaps));
-                    cells
-                }
-                None => match tasks.get(index - commands.len()) {
-                    Some(task) => {
-                        let mut cells = vec![marked(&task_title(task), query)];
-                        cells.extend(group.map(|(said, _)| separator(said)));
-                        cells.push(node().styles([flex_none(), overflow_hidden()]).child(line(
-                            task.command.clone(),
-                            12,
-                            1.4,
-                            Role::Subtle,
-                        )));
-                        cells
+            let cells: Cells<'_> = Box::new(move || {
+                let task = index.checked_sub(commands.len());
+                if let Some((action, keys)) = commands.get(index) {
+                    marked(Modifier::new().weight(1.0), &action.palette_title(), query);
+                    group_name(group);
+                    if let Some(keys) = keys.as_deref() {
+                        keycaps(keys);
                     }
-                    None => extras
-                        .get(index - commands.len() - tasks.len())
-                        .map_or_else(Vec::new, |(_, command)| {
-                            let mut cells = vec![marked(&command.title, query)];
-                            cells.extend(group.map(|(said, _)| separator(said)));
-                            cells.push(separator(&format!("extension {}", command.extension)));
-                            cells
-                        }),
-                },
-            };
+                } else if let Some(task) = task.and_then(|task| tasks.get(task)) {
+                    marked(Modifier::new().weight(1.0), &task_title(task), query);
+                    group_name(group);
+                    cut(Modifier::new(), task.command.clone(), 12, Role::Subtle);
+                } else if let Some((_, command)) = extras.get(index - commands.len() - tasks.len())
+                {
+                    marked(Modifier::new().weight(1.0), &command.title, query);
+                    group_name(group);
+                    line(
+                        format!("extension {}", command.extension),
+                        11,
+                        1.4,
+                        Role::Subtle,
+                    );
+                }
+            });
             (cells, group)
         }
         Items::Files { paths, recent, .. } => {
@@ -182,19 +235,14 @@ fn row(listing: &Listing, place: usize, index: usize, picked: bool) -> Node {
                 (recent, place) if place == recent => Some(("files", true)),
                 _ => None,
             };
-            let cells = paths.get(index).map_or_else(Vec::new, |path| {
-                let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
-                let mut cells = vec![
-                    crate::file_icon::file_icon(path, 4.0),
-                    node()
-                        .styles([flex_none(), overflow_hidden()])
-                        .child(marked(name, query)),
-                    node()
-                        .styles([flex_1(), min_w_px(0), overflow_hidden()])
-                        .child(line(folder, 12, 1.4, Role::Subtle)),
-                ];
-                cells.extend(group.map(|(said, _)| separator(said)));
-                cells
+            let cells: Cells<'_> = Box::new(move || {
+                if let Some(path) = paths.get(index) {
+                    let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
+                    crate::file_icon::file_icon(path, 4.0);
+                    marked(Modifier::new().clip(), name, query);
+                    cut(Modifier::new().weight(1.0), folder, 12, Role::Subtle);
+                    group_name(group);
+                }
             });
             (cells, group)
         }
@@ -211,99 +259,110 @@ fn row(listing: &Listing, place: usize, index: usize, picked: bool) -> Node {
                 .and_then(|earlier| listing.items.rows().get(earlier).copied());
             let group = (project(index) && !before.is_some_and(project))
                 .then_some(("new session in", place > 0));
-            let cells = sessions
-                .get(index)
-                .map_or_else(Vec::new, |(_, title, beside)| {
-                    let preview = found
-                        .iter()
-                        .find(|(place, _)| *place == index)
-                        .map(|(_, preview)| preview);
-                    let mut cells = match preview {
-                        Some(preview) => vec![
-                            node()
-                                .styles([flex_none(), overflow_hidden(), w_px(PREVIEWED_TITLE)])
-                                .child(marked(title, query)),
-                            node()
-                                .styles([flex_1(), min_w_px(0), overflow_hidden()])
-                                .child(line(preview.clone(), 12, 1.4, Role::Muted)),
-                        ],
-                        None => vec![marked(title, query)],
-                    };
-                    cells.extend(group.map(|(said, _)| separator(said)));
-                    let beside = match preview {
-                        Some(_) => beside.rsplit(" · ").next().unwrap_or_default(),
-                        None => beside.as_str(),
-                    };
-                    if !beside.is_empty() {
-                        cells.push(node().styles([flex_none()]).child(line(
-                            beside.to_owned(),
+            let cells: Cells<'_> = Box::new(move || {
+                let Some((_, title, beside)) = sessions.get(index) else {
+                    return;
+                };
+                let preview = found
+                    .iter()
+                    .find(|(place, _)| *place == index)
+                    .map(|(_, preview)| preview);
+                match preview {
+                    Some(preview) => {
+                        marked(Modifier::new().width(PREVIEWED_TITLE).clip(), title, query);
+                        cut(
+                            Modifier::new().weight(1.0),
+                            preview.clone(),
                             12,
-                            1.4,
-                            Role::Subtle,
-                        )));
+                            Role::Muted,
+                        );
                     }
-                    cells
-                });
+                    None => marked(Modifier::new().weight(1.0), title, query),
+                }
+                group_name(group);
+                let beside = match preview {
+                    Some(_) => beside.rsplit(" · ").next().unwrap_or_default(),
+                    None => beside.as_str(),
+                };
+                if !beside.is_empty() {
+                    line(beside.to_owned(), 12, 1.4, Role::Subtle);
+                }
+            });
             (cells, group)
         }
         Items::Line { lines, .. } => {
-            let cells = line_named(query, *lines).map_or_else(Vec::new, |number| {
-                vec![
-                    marked(&format!("Go to line {number}"), ""),
-                    node().styles([flex_none()]).child(line(
-                        format!("of {lines}"),
-                        12,
-                        1.4,
-                        Role::Subtle,
-                    )),
-                ]
+            let cells: Cells<'_> = Box::new(move || {
+                if let Some(number) = line_named(query, *lines) {
+                    marked(
+                        Modifier::new().weight(1.0),
+                        &format!("Go to line {number}"),
+                        "",
+                    );
+                    line(format!("of {lines}"), 12, 1.4, Role::Subtle);
+                }
             });
             (cells, None)
         }
         Items::Choices { choices, .. } => {
-            let cells = choices.get(index).map_or_else(Vec::new, |choice| {
-                let mut cells = vec![marked(&choice.label, query.trim_start_matches('?'))];
-                if !choice.detail.is_empty() {
-                    cells.push(node().styles([flex_none(), overflow_hidden()]).child(line(
-                        choice.detail.clone(),
-                        12,
-                        1.4,
-                        Role::Subtle,
-                    )));
+            let cells: Cells<'_> = Box::new(move || {
+                if let Some(choice) = choices.get(index) {
+                    marked(
+                        Modifier::new().weight(1.0),
+                        &choice.label,
+                        query.trim_start_matches('?'),
+                    );
+                    if !choice.detail.is_empty() {
+                        cut(Modifier::new(), choice.detail.clone(), 12, Role::Subtle);
+                    }
+                    if choice.current {
+                        glyph(phosphor::CHECK, 3.5, Role::Muted);
+                    }
                 }
-                if choice.current {
-                    cells.push(glyph(IconName::Check, 3.5, Role::Muted));
-                }
-                cells
             });
             (cells, None)
         }
-        items => (listing_cells(items, index), None),
+        items => {
+            let cells: Cells<'_> = Box::new(move || listing_cells(items, index));
+            (cells, None)
+        }
     };
-    let mut built = node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(1.5),
-            h_px(ROW),
-            px(1.5),
-            rounded(Radius::Sm),
-            cursor_pointer(),
-            bg(Role::SurfaceHover).hover(),
-        ])
-        .focusable(FocusId(LISTING_ROW_BASE + place as u64))
-        .children(cells);
-    if group.is_some_and(|(_, ruled)| ruled) {
-        built = built.styles([border_t(), border_color(Role::Border)]);
-    }
-    if picked {
-        built = built.styles([bg(Role::SurfaceSelected)]);
-    }
-    built
+    let id = Target::Editor(EditorEvent::ListingRow(place));
+    let looks = if picked {
+        theme::InteractionTones::new()
+            .idle(Role::SurfaceSelected)
+            .hover(Role::SurfaceSelected)
+    } else {
+        theme::InteractionTones::new().hover(Role::SurfaceHover)
+    };
+    let own = Modifier::new().fill_max_width().height(ROW).indicated(
+        looks.radius(Radius::Sm),
+        theme::Focused::Control(crate::focus::is_focused(id)),
+    );
+    let ruled = group.is_some_and(|(_, ruled)| ruled);
+    rustle::column_arranged(own, Arrangement::Start, Alignment::Start, || {
+        if ruled {
+            rustle::horizontal_divider(Modifier::new(), 1.0, theme::color(Role::Border));
+        }
+        rustle::row_arranged(
+            Modifier::new()
+                .fill_max_width()
+                .weight(1.0)
+                .cursor(CursorIcon::Pointer)
+                .control(id, {
+                    let operations = crate::events::operations();
+                    move || operations.take_listing(Some(place))
+                })
+                .padding_xy(theme::sp(1.5), 0.0),
+            Arrangement::SpacedBy(theme::sp(1.5)),
+            Alignment::Center,
+            cells,
+        );
+    });
 }
 
-/// `name` in a line of its own width, the characters `query` matches set heavier and in the accent.
-fn marked(name: &str, query: &str) -> Node {
+/// Emits `name` in a line of its own width, in a box `modifier` shapes that cuts it short at its edge, the characters `query` matches set heavier and in the accent.
+#[track_caller]
+fn marked(modifier: Modifier, name: &str, query: &str) {
     let places = matched_characters(name, query);
     let mut runs: Vec<(String, bool)> = Vec::new();
     for (place, character) in name.chars().enumerate() {
@@ -313,59 +372,78 @@ fn marked(name: &str, query: &str) -> Node {
             _ => runs.push((character.to_string(), lit)),
         }
     }
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            flex_1(),
-            min_w_px(0),
-            overflow_hidden(),
-        ])
-        .children(runs.into_iter().map(|(run, lit)| {
-            let piece = text(run).styles([text_px(13), leading_ratio(1.4), flex_none()]);
-            if lit {
-                piece.styles([font_semibold(), text_color(Role::Accent)])
-            } else {
-                piece.styles([text_color(Role::Text)])
-            }
-        }))
-}
-
-/// The name of a group of rows, at the end of its first row.
-fn separator(said: &str) -> Node {
-    node()
-        .styles([flex_none()])
-        .child(line(said, 11, 1.4, Role::Subtle))
-}
-
-/// The keys `binding` is pressed with, such as `Ctrl+K Ctrl+I`, each on a cap of its own, joined by `+` within a chord and set apart between chords.
-fn keycaps(binding: &str) -> Node {
-    node()
-        .styles([flex(), items_center(), gap(1.5), flex_none()])
-        .children(binding.split(' ').map(|chord| {
-            let mut keys = node().styles([flex(), items_center(), gap(0.5)]);
-            for (place, key) in chord.split('+').enumerate() {
-                if place > 0 {
-                    keys = keys.child(line("+", 11, 1.0, Role::Subtle));
+    rustle::row_arranged(
+        modifier.clip(),
+        Arrangement::Start,
+        Alignment::Center,
+        move || {
+            let kind = theme::text_style(13, 1.4);
+            for (run, lit) in runs {
+                if lit {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        run,
+                        kind.font_weight(rustle::FontWeight::SEMI_BOLD)
+                            .color(theme::color(Role::Accent)),
+                        TextOverflow::Ellipsis,
+                    );
+                } else {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        run,
+                        kind.color(theme::color(Role::Text)),
+                        TextOverflow::Ellipsis,
+                    );
                 }
-                keys = keys.child(keycap(key));
             }
-            keys
-        }))
+        },
+    );
 }
 
-/// One key, on a cap.
-fn keycap(key: &str) -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            h_px(17.0),
-            px(1.25),
-            rounded(Radius::Sm),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Background),
-        ])
-        .child(line(key, 11, 1.0, Role::Muted))
+/// Emits the name of the group `group` begins, at the end of its first row, when the row begins one.
+#[track_caller]
+fn group_name(group: Option<(&str, bool)>) {
+    if let Some((said, _)) = group {
+        line(said, 11, 1.4, Role::Subtle);
+    }
+}
+
+/// Emits the keys `binding` is pressed with, such as `Ctrl+K Ctrl+I`, each on a cap of its own, joined by `+` within a chord and set apart between chords.
+fn keycaps(binding: &str) {
+    rustle::row_arranged(
+        Modifier::new(),
+        Arrangement::SpacedBy(theme::sp(1.5)),
+        Alignment::Center,
+        || {
+            for chord in binding.split(' ') {
+                rustle::row_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(theme::sp(0.5)),
+                    Alignment::Center,
+                    || {
+                        for (place, key) in chord.split('+').enumerate() {
+                            if place > 0 {
+                                line("+", 11, 1.0, Role::Subtle);
+                            }
+                            keycap(key);
+                        }
+                    },
+                );
+            }
+        },
+    );
+}
+
+/// Emits one key, on a cap.
+fn keycap(key: &str) {
+    rustle::row_arranged(
+        Modifier::new()
+            .height(17.0)
+            .background_rounded(theme::color(Role::Background), Radius::Sm.px())
+            .outlined(Radius::Sm)
+            .padding_xy(theme::sp(1.25), 0.0),
+        Arrangement::Start,
+        Alignment::Center,
+        || line(key, 11, 1.0, Role::Muted),
+    );
 }

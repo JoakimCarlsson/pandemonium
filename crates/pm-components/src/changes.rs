@@ -1,23 +1,23 @@
 //! The changes of a commit or of a branch, and a file set against one of the states it was saved in, as one scrollable view of every file: each folded away from its header, and, in the folder, edited in place.
 
-use pm_icon::IconName;
-use pm_style::{
-    Role, border_b, border_color, flex, flex_1, flex_col, flex_none, gap, h_px, items_center,
-    min_h, min_w_px, px,
-};
-use pm_text::Edit;
-use pm_ui::{Node, node};
+use crate::areas::SearchEvent;
+use crate::button;
+use crate::target::Target;
+use crate::theme;
+use pm_editor::Edit;
+use rustle::Modifier;
+use rustle::phosphor;
+use rustle::{Alignment, Arrangement};
 
+use crate::Tally;
 use crate::button::Variant;
-use crate::excerpts::{
-    Block, EXCERPTS_FOLD_ALL, EXCERPTS_UNDO_ALL, ExcerptFile, Source, file_list, restore_button,
-};
+use crate::excerpts::{Block, ExcerptFile, Source, file_list, restore_button};
 use crate::open_files::Contents;
 use crate::parts::{glyph, line, spacer};
 use crate::sample::{Change, DiffLine, Kind};
 use crate::size::Size;
 use crate::state::{Tab, WorkspaceState};
-use crate::{Button, Tally};
+use crate::theme::Role;
 
 /// How tall the strip above the files is, in logical pixels.
 const STRIP: f32 = 40.0;
@@ -25,63 +25,26 @@ const STRIP: f32 = 40.0;
 /// How many lines of the file are kept around a change when a file is set against an older state.
 const CONTEXT: usize = 3;
 
-/// What the view is of, which says what the strip above the files offers.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Mode {
-    /// One file against a state it was saved in, with the button that restores that state.
-    Timeline,
-    /// The files a commit or a branch changed, as their diffs say.
-    #[default]
-    Revision,
-}
-
-/// The view of the changes being shown, being described: what it is of, how big it is and how tall the room for it is.
+/// The view of the changes being shown, being described: the state it is drawn from.
 ///
-/// Build it with [`Changes::new`], change it with the methods that follow, and
-/// turn it into a node with [`Changes::build`].
-#[derive(Clone, Copy)]
+/// Build it with [`Changes::new`] and emit it with [`Changes::build`].
+#[derive(Clone)]
 pub struct Changes<'a> {
     /// The state the files are drawn from.
     state: &'a WorkspaceState,
-    /// How tall the room for the view is, in logical pixels.
-    height: f32,
-    /// What it is of.
-    mode: Mode,
-    /// How big it is.
-    size: Size,
 }
 
 impl<'a> Changes<'a> {
-    /// The view of the excerpts `state` holds, in `height` logical pixels of room, of what they are of.
-    pub fn new(state: &'a WorkspaceState, height: f32) -> Self {
-        let mode = match state.excerpts.as_ref().map(|excerpts| &excerpts.source) {
-            Some(Source::Timeline { .. }) => Mode::Timeline,
-            _ => Mode::Revision,
-        };
-        Self {
-            state,
-            height,
-            mode,
-            size: Size::default(),
-        }
+    /// The view of the excerpts `state` holds, of what they are of.
+    pub fn new(state: &'a WorkspaceState) -> Self {
+        Self { state }
     }
 
-    /// The view as `mode` says.
-    pub fn mode(mut self, mode: Mode) -> Self {
-        self.mode = mode;
-        self
-    }
-
-    /// The view `size` big.
-    pub fn size(mut self, size: Size) -> Self {
-        self.size = size;
-        self
-    }
-
-    /// The strip above the files: how many there are and how far the changes went, then what the mode offers.
-    fn strip(&self) -> Node {
+    /// Emits the strip above the files: how many there are and how far the changes went, then the button that restores the state a timeline sets the file against, or those that fold the files and take back the turn that made them.
+    #[track_caller]
+    fn strip(&self) {
         let Some(excerpts) = self.state.excerpts.as_ref() else {
-            return node();
+            return;
         };
         let count = excerpts.files.len();
         let (added, removed) = excerpts
@@ -90,19 +53,9 @@ impl<'a> Changes<'a> {
             .fold((0, 0), |(added, removed), file| {
                 (added + file.tally.0, removed + file.tally.1)
             });
-        let mut strip = node().styles([
-            flex(),
-            items_center(),
-            gap(3),
-            h_px(STRIP),
-            px(4),
-            flex_none(),
-            border_b(),
-            border_color(Role::Border),
-        ]);
         let when = match &excerpts.source {
-            Source::Timeline { when, .. } => when.as_str(),
-            _ => "",
+            Source::Timeline { when, .. } => Some(when.as_str()),
+            _ => None,
         };
         let what = match &excerpts.source {
             Source::Revision { label, .. } => label.clone(),
@@ -110,50 +63,64 @@ impl<'a> Changes<'a> {
         };
         let undoes =
             matches!(&excerpts.source, Source::Revision { turn: Some(_), .. }) && count > 0;
-        strip = match self.mode {
-            Mode::Timeline => strip
-                .child(glyph(IconName::History, 3.5, Role::Muted))
-                .child(line(
-                    format!("Saved {when}, against the file as it is now"),
-                    12,
-                    1.4,
-                    Role::Muted,
-                ))
-                .child(Tally::new(added, removed).size(12).build())
-                .child(spacer())
-                .child(restore_button()),
-            Mode::Revision => strip
-                .child(line(what, 12, 1.4, Role::Muted))
-                .child(Tally::new(added, removed).size(12).build())
-                .child(spacer())
-                .children(undoes.then(|| {
-                    Button::new("Undo turn", EXCERPTS_UNDO_ALL)
-                        .with_icon(IconName::Undo)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .build()
-                        .tooltip("Take everything this turn changed back out of the files")
-                }))
-                .child(
-                    Button::new("Fold all", EXCERPTS_FOLD_ALL)
-                        .variant(Variant::Ghost)
-                        .size(Size::Sm)
-                        .build(),
-                ),
-        };
-        strip
+        rustle::row_arranged(
+            Modifier::new()
+                .fill_max_width()
+                .height(STRIP)
+                .border_bottom(1.0, theme::color(Role::Border))
+                .padding_each(0.0, 0.0, 0.0, 1.0)
+                .padding_xy(theme::sp(4), 0.0),
+            Arrangement::SpacedBy(theme::sp(3)),
+            Alignment::Center,
+            move || {
+                if let Some(when) = when {
+                    glyph(phosphor::CLOCK_COUNTER_CLOCKWISE, 3.5, Role::Muted);
+                    line(
+                        format!("Saved {when}, against the file as it is now"),
+                        12,
+                        1.4,
+                        Role::Muted,
+                    );
+                } else {
+                    line(what, 12, 1.4, Role::Muted);
+                }
+                Tally::new(added, removed).size(12).build();
+                spacer();
+                if when.is_some() {
+                    restore_button();
+                    return;
+                }
+                if undoes {
+                    button::small_button(
+                        "Undo turn",
+                        Target::Search(SearchEvent::ExcerptsUndoAll),
+                        Variant::Ghost,
+                    )
+                    .with_icon(phosphor::ARROW_COUNTER_CLOCKWISE)
+                    .tooltip("Take everything this turn changed back out of the files")
+                    .build();
+                }
+                button::action(
+                    "Fold all",
+                    Target::Search(SearchEvent::ExcerptsFoldAll),
+                    Variant::Ghost,
+                );
+            },
+        );
     }
 
-    /// The view: the strip, then every file with its lines.
-    pub fn build(self) -> Node {
-        node()
-            .styles([flex(), flex_col(), flex_1(), min_w_px(0), min_h(0)])
-            .child(self.strip())
-            .child(file_list(
-                self.state,
-                (self.height - STRIP).max(0.0),
-                self.size,
-            ))
+    /// Emits the view: the strip, then every file with its lines.
+    #[track_caller]
+    pub fn build(self) {
+        rustle::column_arranged(
+            Modifier::new().weight(1.0),
+            Arrangement::Start,
+            Alignment::Start,
+            || {
+                self.strip();
+                file_list(self.state, Size::default());
+            },
+        );
     }
 }
 
@@ -201,17 +168,12 @@ pub(crate) fn blocks_of_diff(diff: &[DiffLine]) -> Vec<Block> {
                     removed: Vec::new(),
                 });
             }
-            Kind::Context => {
+            Kind::Context | Kind::Add => {
                 flush(&mut current, &mut taken, next);
                 if let Some(block) = current.as_mut() {
-                    block.last = next;
-                }
-                next += 1;
-            }
-            Kind::Add => {
-                flush(&mut current, &mut taken, next);
-                if let Some(block) = current.as_mut() {
-                    block.hits.push(next);
+                    if entry.kind == Kind::Add {
+                        block.hits.push(next);
+                    }
                     block.last = next;
                 }
                 next += 1;
@@ -237,35 +199,40 @@ fn revision_file(change: &Change) -> ExcerptFile {
     }
 }
 
+/// The `@@` line that heads the hunk `group`, counting its lines from one in
+/// the old text and the new; none for an empty group.
+pub(crate) fn hunk_header(group: &[similar::DiffOp]) -> Option<DiffLine> {
+    let (first, last) = (group.first()?, group.last()?);
+    let old = first.old_range().start..last.old_range().end;
+    let new = first.new_range().start..last.new_range().end;
+    let start = |range: &std::ops::Range<usize>| {
+        if range.is_empty() {
+            range.start
+        } else {
+            range.start + 1
+        }
+    };
+    Some(DiffLine {
+        kind: Kind::Hunk,
+        text: format!(
+            "@@ -{},{} +{},{} @@",
+            start(&old),
+            old.len(),
+            start(&new),
+            new.len()
+        ),
+    })
+}
+
 /// The lines of the diff that turns `old` into `new`, with `CONTEXT` lines kept around each change, each hunk under its header.
 pub(crate) fn lines_between(old: &str, new: &str) -> Vec<DiffLine> {
     let diff = similar::TextDiff::from_lines(old, new);
     let mut lines = Vec::new();
     for group in diff.grouped_ops(CONTEXT) {
-        let (Some(first), Some(last)) = (group.first(), group.last()) else {
+        let Some(header) = hunk_header(&group) else {
             continue;
         };
-        let (old_range, new_range) = (
-            first.old_range().start..last.old_range().end,
-            first.new_range().start..last.new_range().end,
-        );
-        let start = |range: &std::ops::Range<usize>| {
-            if range.is_empty() {
-                range.start
-            } else {
-                range.start + 1
-            }
-        };
-        lines.push(DiffLine {
-            kind: Kind::Hunk,
-            text: format!(
-                "@@ -{},{} +{},{} @@",
-                start(&old_range),
-                old_range.len(),
-                start(&new_range),
-                new_range.len()
-            ),
-        });
+        lines.push(header);
         for operation in &group {
             for change in diff.iter_changes(operation) {
                 let kind = match change.tag() {

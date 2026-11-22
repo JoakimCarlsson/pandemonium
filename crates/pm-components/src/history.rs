@@ -1,32 +1,26 @@
 //! The history page: every session of every project, newest first, grouped by when it last changed and narrowed by a search.
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, bg, border, border_b, border_color, flex, flex_1, flex_col, flex_none,
-    font_medium, gap, h, items_center, min_h, min_w_px, overflow_hidden, pb, pt, px, rounded,
-    text_px, truncate, w_px,
-};
-use pm_ui::{Node, node};
+use crate::areas::SidebarEvent;
+use crate::parts;
+use crate::target::Target;
+use crate::theme;
+use crate::theme::Frame;
+use rustle::Modifier;
+use rustle::TextOverflow;
+use rustle::phosphor;
+use rustle::{Alignment, Arrangement, row_arranged};
+
+use crate::theme::{Radius, Role};
 
 use crate::age::{self, Span};
+use crate::agent_list::AgentLook;
 use crate::input::{self, Input};
-use crate::parts::{clipped, glyph, line};
+use crate::parts::{clipped, glyph};
 use crate::sample::Session;
 use crate::size::Size;
-use crate::state::{HISTORY_SEARCH, SESSION_BASE, WorkspaceState};
+use crate::state::WorkspaceState;
 use crate::tile::Tile;
-
-/// The scrolling list of session groups on the history page.
-pub const HISTORY_SCROLL: FocusId = FocusId(9_300_000);
-
-impl WorkspaceState {
-    /// The state after the history list is scrolled by `delta` logical pixels, kept within `room` pixels of overflow.
-    pub fn scrolled_history(mut self, delta: f32, room: f32) -> Self {
-        self.history_scroll = (self.history_scroll + delta).clamp(0.0, room);
-        self
-    }
-}
+use rustle::TextFieldState;
 
 /// How wide the search box is.
 const SEARCH_WIDTH: f32 = 500.0;
@@ -46,73 +40,143 @@ const AGE_WIDTH: f32 = 80.0;
 /// What the machine column says for a project on this machine.
 const LOCAL_MACHINE: &str = "local";
 
-/// The history page for `state`.
-pub fn history(state: &WorkspaceState) -> Node {
-    let now = age::now();
-    let rows = matching(state);
-    node()
-        .styles([flex(), flex_col(), flex_1(), min_w_px(0), min_h(0)])
-        .child(heading())
-        .child(search(state))
-        .child(
-            node()
-                .styles([
-                    flex(),
-                    flex_col(),
-                    flex_1(),
-                    min_h(0),
-                    overflow_hidden(),
-                    px(5),
-                ])
-                .scroll_from_start(HISTORY_SCROLL, state.history_scroll)
-                .children(
-                    Span::ALL
-                        .into_iter()
-                        .filter_map(|span| group(state, span, &rows, now)),
-                ),
-        )
+/// The row of one session as the history page shows it.
+#[derive(Clone, Debug, PartialEq)]
+struct HistoryRow {
+    /// The session's position among every session.
+    index: usize,
+    /// When it last changed, as the group it falls in.
+    span: Span,
+    /// Its title.
+    title: String,
+    /// The agent that works in it.
+    agent: AgentLook,
+    /// The name of its project, or nothing.
+    project: String,
+    /// The machine it ran on.
+    machine: String,
+    /// Its branch.
+    branch: String,
+    /// How long ago it changed, in words.
+    age: String,
 }
 
-/// The bar across the top naming the page.
-fn heading() -> Node {
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            h(12),
-            px(5),
-            flex_none(),
-            border_b(),
-            border_color(Role::Border),
-        ])
-        .child(line("History", 14, 1.4, Role::Text).styles([font_medium(), text_px(14)]))
+/// What the history page shows, and nothing else, compared by value, so the page is
+/// composed again only when it changed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct HistoryState {
+    /// The sessions that match the search, the one changed last first.
+    rows: Vec<HistoryRow>,
+    /// The search box.
+    search: TextFieldState,
+    /// How far the groups are scrolled.
+    scroll: rustle::ScrollState,
 }
 
-/// The box the reader types into to narrow the list.
-fn search(state: &WorkspaceState) -> Node {
-    node().styles([px(5), pt(5), pb(2), flex_none()]).child(
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                gap(2),
-                w_px(SEARCH_WIDTH),
-                h(10),
-                px(3),
-                rounded(Radius::Lg),
-                bg(Role::Surface),
-                border(),
-                border_color(Role::Border),
-            ])
-            .child(glyph(IconName::Search, 4.0, Role::Muted))
-            .child(
-                Input::new(&state.history_search, HISTORY_SEARCH)
-                    .variant(input::Variant::Ghost)
-                    .size(Size::Sm)
-                    .placeholder("Search history")
-                    .build(),
-            ),
-    )
+impl HistoryState {
+    /// What the history page of `state` shows.
+    pub fn of(state: &WorkspaceState) -> Self {
+        let now = age::now();
+        let rows = matching(state)
+            .into_iter()
+            .map(|index| {
+                let session: &Session = &state.sessions[index];
+                HistoryRow {
+                    index,
+                    span: Span::of(session.updated_at, now),
+                    title: session.title.clone(),
+                    agent: state.agent_look(session.agent),
+                    project: state
+                        .project_of(session)
+                        .map_or(String::new(), |project| project.name.clone()),
+                    machine: state
+                        .machine_of(session)
+                        .flatten()
+                        .unwrap_or_else(|| LOCAL_MACHINE.to_owned()),
+                    branch: session.branch.clone(),
+                    age: session.age(),
+                }
+            })
+            .collect();
+        Self {
+            rows,
+            search: state.history_search.clone(),
+            scroll: state.history_scroll.clone(),
+        }
+    }
+}
+
+/// Emits the history page `view` describes.
+#[track_caller]
+pub fn history(view: &HistoryState) {
+    rustle::column_arranged(
+        Modifier::new().weight(1.0),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            heading();
+            search(&view.search);
+            rustle::column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .weight(1.0)
+                    .vertical_scroll(&view.scroll)
+                    .fill_max_width()
+                    .padding_xy(theme::sp(5), 0.0),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    for span in Span::ALL {
+                        group(span, &view.rows);
+                    }
+                },
+            );
+        },
+    );
+}
+
+/// Emits the bar across the top naming the page.
+#[track_caller]
+fn heading() {
+    parts::bar(12, 5, 0, || {
+        rustle::basic_text(
+            Modifier::new(),
+            "History",
+            theme::strong(14, Role::Text),
+            TextOverflow::Ellipsis,
+        );
+    });
+}
+
+/// Emits the box the reader types into to narrow the list, `field`.
+#[track_caller]
+fn search(field: &TextFieldState) {
+    rustle::column_arranged(
+        Modifier::new().padding_each(theme::sp(5), theme::sp(5), theme::sp(5), theme::sp(2)),
+        Arrangement::Start,
+        Alignment::Start,
+        || {
+            rustle::row_arranged(
+                Modifier::new()
+                    .width(SEARCH_WIDTH)
+                    .height(theme::sp(10))
+                    .panel(Radius::Lg)
+                    .padding_xy(theme::sp(3), 0.0),
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Center,
+                || {
+                    glyph(phosphor::MAGNIFYING_GLASS, 4.0, Role::Muted);
+                    Input::new(field, Target::Sidebar(SidebarEvent::HistorySearch))
+                        .variant(input::Variant::Ghost)
+                        .size(Size::Sm)
+                        .placeholder("Search history")
+                        .modifier(Modifier::new().weight(1.0))
+                        .submits(Target::Sidebar(SidebarEvent::History))
+                        .build();
+                },
+            );
+        },
+    );
 }
 
 /// The sessions that match the search, by position, the one changed last first.
@@ -142,64 +206,93 @@ fn searchable(state: &WorkspaceState, index: usize) -> String {
     .to_lowercase()
 }
 
-/// The heading and rows of `span`, when a session in `rows` falls in it.
-fn group(state: &WorkspaceState, span: Span, rows: &[usize], now: u64) -> Option<Node> {
-    let members: Vec<usize> = rows
-        .iter()
-        .copied()
-        .filter(|&index| Span::of(state.sessions[index].updated_at, now) == span)
-        .collect();
+/// Emits the heading and rows of `span`, when one of `rows` falls in it.
+#[track_caller]
+fn group(span: Span, rows: &[HistoryRow]) {
+    let members: Vec<&HistoryRow> = rows.iter().filter(|row| row.span == span).collect();
     if members.is_empty() {
-        return None;
+        return;
     }
-    Some(
-        node()
-            .styles([flex(), flex_col(), gap(0.5), flex_none(), pt(5)])
-            .child(
-                node()
-                    .styles([flex(), items_center(), h(8), px(3)])
-                    .child(line(span.title(), 14, 1.4, Role::Text).styles([font_medium()])),
-            )
-            .children(members.into_iter().map(|index| row(state, index))),
-    )
+    rustle::column_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .padding_each(0.0, theme::sp(5), 0.0, 0.0),
+        Arrangement::SpacedBy(theme::sp(0.5)),
+        Alignment::Start,
+        || {
+            rustle::row_arranged(
+                Modifier::new()
+                    .height(theme::sp(8))
+                    .padding_xy(theme::sp(3), 0.0),
+                Arrangement::Start,
+                Alignment::Center,
+                || {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        span.title(),
+                        theme::strong(14, Role::Text),
+                        TextOverflow::Ellipsis,
+                    );
+                },
+            );
+            for row in members {
+                rustle::key(row.index, || row_of(row));
+            }
+        },
+    );
 }
 
-/// The row of the session at `index`: its title and agent, then where it ran and when.
-fn row(state: &WorkspaceState, index: usize) -> Node {
-    let session: &Session = &state.sessions[index];
-    let project = state
-        .project_of(session)
-        .map_or("", |project| project.name.as_str());
-    let machine = state
-        .machine_of(session)
-        .flatten()
-        .unwrap_or_else(|| LOCAL_MACHINE.to_owned());
-    let agent = state.agent_look(session.agent);
-    Tile::new(FocusId(SESSION_BASE + index as u64))
+/// Emits the row `row` of a session: its title and agent, then where it ran and when.
+#[track_caller]
+fn row_of(row: &HistoryRow) {
+    let index = row.index;
+    let operations = crate::events::operations();
+    Tile::new(Target::Sidebar(SidebarEvent::Session(index)))
+        .on_context(move |at| operations.open_session_menu(index, at))
         .height(12.0)
-        .build()
-        .styles([px(3)])
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(2), flex_1(), min_w_px(0)])
-                .child(
-                    node()
-                        .styles([flex_none(), overflow_hidden(), pm_style::max_w_px(560.0)])
-                        .child(line(&session.title, 14, 1.4, Role::Text).styles([truncate()])),
-                )
-                .child(glyph(IconName::ChevronRight, 4.0, Role::Subtle))
-                .child(glyph(agent.icon, 4.0, Role::Muted))
-                .child(line(agent.name, 14, 1.4, Role::Muted).styles([flex_none()])),
-        )
-        .child(column(project, PROJECT_WIDTH))
-        .child(column(&machine, MACHINE_WIDTH))
-        .child(column(&session.branch, BRANCH_WIDTH))
-        .child(column(&session.age(), AGE_WIDTH).styles([pm_style::justify_end()]))
+        .modifier(Modifier::new().fill_max_width())
+        .inner(Modifier::new().padding_xy(theme::sp(3), 0.0))
+        .build_with(|| {
+            rustle::row_arranged(
+                Modifier::new().weight(1.0),
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Center,
+                || {
+                    rustle::basic_text(
+                        Modifier::new().width_in(0.0, 560.0),
+                        &row.title,
+                        theme::line(14, Role::Text),
+                        TextOverflow::Ellipsis,
+                    );
+                    glyph(phosphor::CARET_RIGHT, 4.0, Role::Subtle);
+                    glyph(row.agent.icon.clone(), 4.0, Role::Muted);
+                    rustle::basic_text(
+                        Modifier::new(),
+                        &row.agent.name,
+                        theme::line(14, Role::Muted),
+                        TextOverflow::Ellipsis,
+                    );
+                },
+            );
+            cell(&row.project, PROJECT_WIDTH, false);
+            cell(&row.machine, MACHINE_WIDTH, false);
+            cell(&row.branch, BRANCH_WIDTH, false);
+            cell(&row.age, AGE_WIDTH, true);
+        });
 }
 
-/// A cell `width` pixels wide holding `content`, cut short at its edge.
-fn column(content: &str, width: f32) -> Node {
-    node()
-        .styles([flex(), flex_none(), w_px(width), overflow_hidden()])
-        .child(clipped(content, 14, Role::Muted))
+/// Emits a cell `width` pixels wide holding `content`, cut short at its edge, against its end when `end`.
+#[track_caller]
+fn cell(content: &str, width: f32, end: bool) {
+    let arrangement = if end {
+        Arrangement::End
+    } else {
+        Arrangement::Start
+    };
+    row_arranged(
+        Modifier::new().width(width).clip(),
+        arrangement,
+        Alignment::Start,
+        || clipped(content, 14, Role::Muted),
+    );
 }

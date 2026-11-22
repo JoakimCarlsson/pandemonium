@@ -1,89 +1,110 @@
-//! Long inputs retain navigation and composition while building only visible lines.
+//! Long inputs keep keyboard navigation and composition, and show at most their
+//! most lines however long their text, at any font scale.
 
-use pm_renderer::DrawList;
-use pm_text::{Edit, Motion};
-use pm_ui::{Input as FrameInput, Output, draw};
+use crate::areas::ChatEvent;
+use crate::target::Target;
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use rustle::{Embedded, Key, KeyEvent, Modifiers, PixelRounding};
 
 use super::*;
+use crate::focus::{self, FocusRequesters};
 
-/// Draws a multiline input in a small viewport with keyboard focus.
-fn paint(field: &Field, shaper: &mut Shaper) -> Output {
-    let id = FocusId(999);
-    let root = Input::new(field, id)
-        .variant(Variant::Multiline)
-        .wrap(300.0, shaper)
-        .build();
-    draw(
-        &root,
-        340.0,
-        240.0,
-        &FrameInput {
-            focused: Some(id),
-            ..FrameInput::default()
+/// The heights a multiline input editing `field` was laid out at, in a
+/// window 640 by 240 logical pixels, with the keyboard on it.
+struct Shown {
+    /// The interface.
+    ui: Embedded,
+    /// The heights, latest last.
+    heights: Rc<RefCell<Vec<f32>>>,
+}
+
+/// Lays out a multiline input editing `field` in a small window with keyboard focus.
+fn show(field: &TextFieldState) -> Shown {
+    let id = Target::Chat(ChatEvent::Choice(999));
+    let heights: Rc<RefCell<Vec<f32>>> = Rc::default();
+    let (field, told) = (field.clone(), Rc::clone(&heights));
+    let requesters = FocusRequesters::new();
+    requesters.request_focus(id);
+    let mut ui = Embedded::without_renderer(
+        move || {
+            let told = Rc::clone(&told);
+            focus::provide(requesters.clone(), || {
+                Input::new(&field, id)
+                    .variant(Variant::Multiline)
+                    .modifier(
+                        Modifier::new()
+                            .width(600.0)
+                            .on_size_changed(move |size| told.borrow_mut().push(size.height)),
+                    )
+                    .build();
+            });
         },
-        &pm_theme::default_family().dark,
-        shaper,
-        &mut DrawList::new(),
-    )
-}
-
-/// Scrolling thousands of lines does not create thousands of shaped field boxes.
-#[test]
-fn virtual_lines_keep_keyboard_navigation_and_composition() {
-    let mut shaper = Shaper::new();
-    let mut field =
-        Field::new("Unicode café 🦀 in an editable paragraph.\n".repeat(1500)).multiline(true);
-    for scroll in [0.0, 700.0, 1_000_000.0] {
-        field.apply(Edit::ScrollTo(scroll));
-        let output = paint(&field, &mut shaper);
-        assert!(output.fields.len() <= MAX_LINES + 3);
-        let layout = &output.field_layouts[0];
-        assert!(layout.lines.len() > 1500);
-        assert_eq!(&*layout.content, field.text());
-        let line = layout.lines[50];
-        assert_eq!(
-            output.line_edge(FocusId(999), line.start, false),
-            Some(line.start)
-        );
-        assert_eq!(
-            output.line_edge(FocusId(999), line.start, true),
-            Some(line.end)
-        );
-        assert_eq!(
-            output.vertical(FocusId(999), line.start, 1, &mut shaper),
-            Some(layout.lines[51].start)
-        );
-    }
-    field.apply(Edit::Move(Motion::End, false));
-    field.apply(Edit::Compose("字".to_owned()));
-    let output = paint(&field, &mut shaper);
-    let caret = field.to_shown(field.caret());
-    assert!(output.field_layouts[0].content.ends_with('字'));
-    assert!(
-        output
-            .fields
-            .iter()
-            .any(|line| line.start <= caret && caret <= line.start + line.length)
+        || {},
     );
-    field.apply(Edit::Compose(String::new()));
-    field.apply(Edit::SelectAll);
-    assert_eq!(field.selected(), field.text());
+    ui.set_pixel_rounding(PixelRounding::Logical);
+    ui.resize((640, 240), 1.0);
+    ui.update();
+    ui.update();
+    Shown { ui, heights }
 }
 
-/// Density and text scaling preserve the caret and keep the viewport proportional to its actual font.
+impl Shown {
+    /// The height the input was last laid out at.
+    fn height(&self) -> f32 {
+        self.heights.borrow().last().copied().unwrap_or_default()
+    }
+
+    /// Presses `key` with `modifiers` held.
+    fn press(&mut self, key: Key, modifiers: Modifiers) {
+        self.ui.key_event(KeyEvent::press(key, modifiers));
+        self.ui.update();
+    }
+}
+
+/// Thousands of lines show as at most the input's most lines, and the caret
+/// still moves through them by line, to line ends, and composes in place.
 #[test]
-fn virtual_lines_follow_font_scale() {
-    let mut shaper = Shaper::new();
-    let field = Field::new("large text with Unicode 🦀\n".repeat(100)).multiline(true);
+fn long_text_keeps_keyboard_navigation_and_composition() {
+    let text = "Unicode café 🦀 in an editable paragraph.\n".repeat(1500);
+    let field = TextFieldState::with_selection(&text, rustle::TextRange::collapsed_at(0));
+    let mut shown = show(&field);
+    assert!(shown.ui.has_focus());
+    let line = typography().line_height;
+    assert!(shown.height() <= line * MAX_LINES as f32 + PADDING + 1.0);
+    shown.press(Key::ArrowDown, Modifiers::NONE);
+    let second = "Unicode café 🦀 in an editable paragraph.\n"
+        .chars()
+        .count();
+    assert_eq!(field.selection(), rustle::TextRange::collapsed_at(second));
+    shown.press(Key::End, Modifiers::NONE);
+    assert_eq!(
+        field.selection(),
+        rustle::TextRange::collapsed_at(second * 2 - 1)
+    );
+    shown.ui.preedit("字", None);
+    shown.ui.update();
+    assert_eq!(field.text(), text);
+    shown.ui.commit("字");
+    shown.ui.update();
+    assert!(field.text().contains('字'));
+    shown.press(Key::Character("a".into()), Modifiers::CTRL);
+    assert_eq!(field.selected_text(), field.text());
+}
+
+/// Density and text scaling keep the input as tall as its most lines at its own font.
+#[test]
+fn long_text_follows_font_scale() {
+    let field = TextFieldState::new("large text with Unicode 🦀\n".repeat(100));
     for density in [0.8, 1.0] {
         for text_scale in [1.0, 1.5] {
-            pm_style::set_scales(density, text_scale);
-            let output = paint(&field, &mut shaper);
-            assert!(output.fields.len() <= MAX_LINES + 3);
-            assert!(output.fields.iter().any(
-                |line| line.start <= field.caret() && field.caret() <= line.start + line.length
-            ));
+            crate::theme::set_scales(density, text_scale);
+            let shown = show(&field);
+            let line = typography().line_height;
+            assert!(shown.height() <= line * MAX_LINES as f32 + PADDING + 1.0);
+            assert!(shown.height() >= line);
         }
     }
-    pm_style::set_scales(1.0, 1.0);
+    crate::theme::set_scales(1.0, 1.0);
 }

@@ -1,53 +1,28 @@
 //! What keeps the reader safe in the browser pane: the questions a page asks about the reader's machine, a site whose certificate is not trusted, and the files a page downloaded.
 
+use crate::areas::BrowserEvent;
+use crate::button;
+use crate::theme::Frame;
+use rustle::TextOverflow;
+
+use crate::events::{Event, send};
+use crate::target::Target;
+use crate::theme;
+use rustle::phosphor;
+use rustle::{Alignment, Arrangement, row_arranged};
+
 use std::time::{Duration, Instant};
 
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, absolute, bg, border, border_b, border_color, flex, flex_1, flex_col, flex_none,
-    font_mono, font_semibold, gap, h_px, items_center, justify_center, left, min_w_px, p, px, py,
-    rounded, top, w_full, w_px, z,
-};
-use pm_ui::{Node, node};
+use crate::events::Interactive;
+use crate::theme::{Radius, Role};
+use rustle::Modifier;
 
 use crate::Button;
 use crate::button::Variant;
-use crate::parts::{clipped, line, wrap};
-use crate::size::Size;
-
-/// The first of the names of the button that allows what a question asks; the question's number, modulo [`QUESTION_SLOTS`], is added to it, so a press that began on one question cannot end on another.
-const ALLOW_BASE: u64 = 7_440_600;
-
-/// The first of the names of the button that refuses what a question asks; numbered like the allow buttons.
-const BLOCK_BASE: u64 = 7_440_600 + QUESTION_SLOTS;
-
-/// How many questions the names of the allow and block buttons tell apart.
-const QUESTION_SLOTS: u64 = 64;
-
-/// The bar with the first question, which takes presses that land on it and are for neither button, so they never reach the page under it.
-pub const BROWSER_QUESTION_BAR: FocusId = FocusId(7_440_805);
+use crate::parts::{clipped, wrapping};
 
 /// How long after a question first shows, or the question shown changes, pressing Allow does nothing, in case the reader was about to press something the page moved under the pointer.
 pub const ALLOW_DELAY: Duration = Duration::from_millis(500);
-
-/// The name of the button that allows what the question `id` asks.
-pub fn allow_id(id: u64) -> FocusId {
-    FocusId(ALLOW_BASE + id % QUESTION_SLOTS)
-}
-
-/// The name of the button that refuses what the question `id` asks.
-pub fn block_id(id: u64) -> FocusId {
-    FocusId(BLOCK_BASE + id % QUESTION_SLOTS)
-}
-
-/// Takes away the note about a download.
-pub const BROWSER_DISMISS: FocusId = FocusId(7_440_802);
-
-/// Takes the page back from a site whose certificate is not trusted.
-pub const BROWSER_CERT_BACK: FocusId = FocusId(7_440_803);
-
-/// Loads a site whose certificate is not trusted anyway; the first press asks again, the second does it.
-pub const BROWSER_CERT_PROCEED: FocusId = FocusId(7_440_804);
 
 /// How tall the bar with a question or a note is, in logical pixels.
 pub const BAR: f32 = 40.0;
@@ -180,19 +155,19 @@ impl Safety {
     }
 
     /// Carries out pressing `id`, and says whether it was something of this part.
-    pub fn press(&mut self, id: FocusId) -> bool {
+    pub fn press(&mut self, id: Target) -> bool {
         self.press_at(id, Instant::now())
     }
 
     /// Carries out pressing `id` at the time `now`, and says whether it was something of this part. A press of Allow or Block answers only the question it was named for, which is the one that was showing when the press began, and Allow only once [`ALLOW_DELAY`] has passed.
-    pub fn press_at(&mut self, id: FocusId, now: Instant) -> bool {
+    pub fn press_at(&mut self, id: Target, now: Instant) -> bool {
         match id {
-            BROWSER_QUESTION_BAR => {}
-            FocusId(number) if (ALLOW_BASE..BLOCK_BASE + QUESTION_SLOTS).contains(&number) => {
-                let allow = number < BLOCK_BASE;
-                let slot = (number - if allow { ALLOW_BASE } else { BLOCK_BASE }) % QUESTION_SLOTS;
-                let showing = self.questions.first().map(|asked| asked.id);
-                let named = showing.filter(|shown| shown % QUESTION_SLOTS == slot);
+            Target::Browser(BrowserEvent::BrowserQuestionBar) => {}
+            Target::Browser(BrowserEvent::BrowserAllow(asked))
+            | Target::Browser(BrowserEvent::BrowserBlock(asked)) => {
+                let allow = matches!(id, Target::Browser(BrowserEvent::BrowserAllow(_)));
+                let showing = self.questions.first().map(|question| question.id);
+                let named = showing.filter(|shown| *shown == asked);
                 if let Some(question) = named
                     && (!allow || self.allow_ready(now))
                 {
@@ -204,13 +179,13 @@ impl Safety {
                     self.track(now);
                 }
             }
-            BROWSER_DISMISS => self.download = None,
-            BROWSER_CERT_BACK => {
+            Target::Browser(BrowserEvent::BrowserDismiss) => self.download = None,
+            Target::Browser(BrowserEvent::BrowserCertBack) => {
                 if self.certificate.take().is_some() {
                     self.answers.push(Answer::Certificate { proceed: false });
                 }
             }
-            BROWSER_CERT_PROCEED => match self.certificate.as_mut() {
+            Target::Browser(BrowserEvent::BrowserCertProceed) => match self.certificate.as_mut() {
                 Some(certificate) if !certificate.confirming => certificate.confirming = true,
                 Some(_) => {
                     self.certificate = None;
@@ -223,28 +198,47 @@ impl Safety {
         true
     }
 
-    /// How tall the bars above the page are together, in logical pixels.
-    pub fn bars(&self) -> f32 {
-        usize::from(self.download.is_some()) as f32 * BAR
+    /// Emits the bars to show above the page: the note about the last download. The question is not among them; it is laid over the page by [`Safety::question_overlay`], so that it appearing does not move the page.
+    #[track_caller]
+    pub fn bar_nodes(&self) {
+        if let Some(download) = self.download.as_ref() {
+            download_bar(download);
+        }
     }
 
-    /// The bars to show above the page: the note about the last download. The question is not among them; it is laid over the page by [`Safety::question_overlay`], so that it appearing does not move the page.
-    pub fn bar_nodes(&self) -> Vec<Node> {
-        self.download
-            .as_ref()
-            .map(download_bar)
-            .into_iter()
-            .collect()
+    /// How long the first question still waits at the time `now` before pressing Allow does anything, when there is a question.
+    pub fn allow_wait(&self, now: Instant) -> Option<Duration> {
+        let (_, since) = self.shown?;
+        Some(ALLOW_DELAY.saturating_sub(now.saturating_duration_since(since)))
     }
 
-    /// The bar with the first question, laid over the top of the page, which is `width` logical pixels wide, at the time `now`; Allow is drawn faint and cannot be pressed until [`ALLOW_DELAY`] has passed.
-    pub fn question_overlay(&self, width: f32, now: Instant) -> Option<Node> {
-        let asked = self.questions.first()?;
-        let bar = question_bar(asked, self.questions.len() - 1, self.allow_ready(now));
-        Some(
-            bar.styles([absolute(), top(0), left(0), w_px(width), z(40)])
-                .focusable(BROWSER_QUESTION_BAR),
-        )
+    /// Emits the bar with the first question, when there is one, laid over the top of the page across the width of the page's box, at its top start, in the layer of the bar for finding in the page; Allow is drawn faint and cannot be pressed until [`ALLOW_DELAY`] has passed, which an effect waits for on the frame clock.
+    #[track_caller]
+    pub fn question_overlay(&self) {
+        let ready = rustle::remember(|| None::<u64>);
+        let Some(asked) = self.questions.first() else {
+            return;
+        };
+        let id = asked.id;
+        let wait = self.allow_wait(Instant::now()).unwrap_or_default();
+        let readied = ready.clone();
+        rustle::launched_effect(id, move |scope| async move {
+            scope.delay(wait).await;
+            readied.set(Some(id));
+        });
+        question_bar(
+            Modifier::new()
+                .align(rustle::BoxAlignment::TopStart)
+                .fill_max_width()
+                .z_index(40)
+                .control(
+                    Target::Browser(BrowserEvent::BrowserQuestionBar),
+                    send(Event::Browser(BrowserEvent::BrowserQuestionBar)),
+                ),
+            asked,
+            self.questions.len() - 1,
+            ready.get() == Some(id),
+        );
     }
 }
 
@@ -253,30 +247,25 @@ fn host_of(origin: &str) -> &str {
     origin.split_once("://").map_or(origin, |(_, host)| host)
 }
 
-/// A bar that has `body` before and `buttons` after, as tall as [`BAR`].
-fn bar(body: Node, buttons: Vec<Node>) -> Node {
-    let mut row = node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(2),
-            px(3),
-            h_px(BAR),
-            flex_none(),
-            w_full(),
-            bg(Role::Surface),
-            border_b(),
-            border_color(Role::Border),
-        ])
-        .child(body);
-    for button in buttons {
-        row = row.child(button);
-    }
-    row
+/// Emits a bar as tall as [`BAR`] and as wide as its parent, with `modifier` around it, holding what `content` emits side by side: its words, then its buttons.
+#[track_caller]
+fn bar(modifier: Modifier, content: impl FnOnce()) {
+    rustle::row_arranged(
+        modifier
+            .height(BAR)
+            .fill_max_width()
+            .background(theme::color(Role::Surface))
+            .border_bottom(1.0, theme::color(Role::Border))
+            .padding_each(0.0, 0.0, 0.0, 1.0)
+            .padding_xy(theme::sp(3), 0.0),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        content,
+    );
 }
 
-/// The bar that says which page asks for what, and has the buttons that allow or refuse it; `waiting` more questions come after it, and Allow is faint and inert until `ready`.
-fn question_bar(asked: &Question, waiting: usize, ready: bool) -> Node {
+/// Emits the bar that says which page asks for what, and has the buttons that allow or refuse it, with `modifier` around it; `waiting` more questions come after it, and Allow is faint and inert until `ready`.
+fn question_bar(modifier: Modifier, asked: &Question, waiting: usize, ready: bool) {
     let mut words = format!(
         "{} wants to use your {}",
         host_of(&asked.origin),
@@ -285,28 +274,29 @@ fn question_bar(asked: &Question, waiting: usize, ready: bool) -> Node {
     if waiting > 0 {
         words.push_str(&format!(" (+{waiting} more)"));
     }
-    bar(
-        clipped(words, 13, Role::Text),
-        vec![
-            Button::new("Block", block_id(asked.id))
-                .variant(Variant::Outline)
-                .size(Size::Sm)
-                .build(),
-            Button::new("Allow", allow_id(asked.id))
-                .variant(if ready {
-                    Variant::Default
-                } else {
-                    Variant::Secondary
-                })
-                .size(Size::Sm)
-                .disabled(!ready)
-                .build(),
-        ],
-    )
+    bar(modifier, || {
+        clipped(words, 13, Role::Text);
+        button::action(
+            "Block",
+            Target::Browser(BrowserEvent::BrowserBlock(asked.id)),
+            Variant::Outline,
+        );
+        button::small_button(
+            "Allow",
+            Target::Browser(BrowserEvent::BrowserAllow(asked.id)),
+            if ready {
+                Variant::Default
+            } else {
+                Variant::Secondary
+            },
+        )
+        .disabled(!ready)
+        .build();
+    });
 }
 
-/// The bar that says where the last download was saved, or that it could not be.
-fn download_bar(download: &Download) -> Node {
+/// Emits the bar that says where the last download was saved, or that it could not be.
+fn download_bar(download: &Download) {
     let words = match download.saving {
         Saving::Started => format!("Downloading {} to your Downloads folder", download.name),
         Saving::Finished => format!("Saved {} in your Downloads folder", download.name),
@@ -317,10 +307,10 @@ fn download_bar(download: &Download) -> Node {
     } else {
         Role::Text
     };
-    bar(
-        clipped(words, 13, tone),
-        vec![Button::icon(pm_icon::IconName::Close, BROWSER_DISMISS).build()],
-    )
+    bar(Modifier::new(), || {
+        clipped(words, 13, tone);
+        Button::icon(phosphor::X, Target::Browser(BrowserEvent::BrowserDismiss)).build();
+    });
 }
 
 /// What the engine's name for a certificate problem means.
@@ -339,39 +329,48 @@ fn reason(error: &str) -> &'static str {
     }
 }
 
-/// `content` broken into lines no more than `room` logical pixels across, one under another, in `tone` at `pixels` tall type.
-fn paragraph(content: &str, pixels: u32, tone: Role, room: f32) -> Node {
-    node().styles([flex(), flex_col()]).children(
-        wrap(content, pixels, room)
-            .into_iter()
-            .map(|words| line(words, pixels, 1.45, tone)),
-    )
+/// Emits `content` broken into lines no more than `room` logical pixels across, one under another, in `tone` at `pixels` tall type.
+#[track_caller]
+fn paragraph(content: &str, pixels: u32, tone: Role, room: f32) {
+    wrapping(
+        Modifier::new().width_in(0.0, room),
+        content,
+        pixels,
+        1.45,
+        tone,
+    );
 }
 
-/// A row of the certificate's details: `label`, and what it says in `value`.
-fn detail(label: &str, value: &str, mono: bool) -> Node {
+/// Emits a row of the certificate's details: `name`, and what it says in `value`, set in the code face when `mono`.
+#[track_caller]
+fn detail(name: &str, value: &str, mono: bool) {
     let value = if value.is_empty() { "unknown" } else { value };
-    let shown = line(value, 12, 1.4, Role::Text);
-    node()
-        .styles([flex(), gap(3), w_full(), min_w_px(0)])
-        .child(
-            node()
-                .styles([w_px(108.0), flex_none()])
-                .child(line(label, 12, 1.4, Role::Muted)),
-        )
-        .child(node().styles([flex_1(), min_w_px(0)]).child(if mono {
-            shown.styles([font_mono()])
-        } else {
-            shown
-        }))
+    let kind = theme::line(12, Role::Text);
+    let kind = if mono { theme::in_mono(kind) } else { kind };
+    rustle::row_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Start,
+        || {
+            rustle::basic_text(
+                Modifier::new().width(108.0),
+                name,
+                theme::line(12, Role::Muted),
+                TextOverflow::Ellipsis,
+            );
+            rustle::basic_text(
+                Modifier::new().weight(1.0),
+                value,
+                kind,
+                TextOverflow::Ellipsis,
+            );
+        },
+    );
 }
 
-/// The page that stands in for a site whose certificate is not trusted, `width` by `height` logical pixels: what is wrong with the certificate and the buttons that go back or, deliberately, go on.
-pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) -> Node {
-    let host = certificate
-        .url
-        .split_once("://")
-        .map_or(certificate.url.as_str(), |(_, rest)| rest)
+/// Emits the page that stands in for a site whose certificate is not trusted, `width` by `height` logical pixels: what is wrong with the certificate and the buttons that go back or, deliberately, go on.
+pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) {
+    let host = host_of(&certificate.url)
         .split(['/', '?', '#'])
         .next()
         .unwrap_or_default();
@@ -382,83 +381,93 @@ pub fn certificate_page(certificate: &Certificate, width: f32, height: f32) -> N
     };
     let across = (width - 48.0).clamp(0.0, 560.0);
     let room = (across - 40.0).max(0.0);
-    let card = node()
-        .styles([
-            flex(),
-            flex_col(),
-            gap(3),
-            p(5),
-            w_px(across),
-            flex_none(),
-            rounded(Radius::Xl),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-        ])
-        .child(
-            line("Not secure: certificate not trusted", 18, 1.3, Role::Danger)
-                .styles([font_semibold()]),
-        )
-        .child(paragraph(
-            &format!(
-                "Pandemonium could not verify that {host} is who it says it is. Anything you send to it could be read or changed on the way."
-            ),
-            13,
-            Role::Text,
-            room,
-        ))
-        .child(paragraph(
-            &format!("{} ({})", reason(&certificate.error), certificate.error),
-            12,
-            Role::Muted,
-            room,
-        ))
-        .child(
-            node()
-                .styles([flex(), flex_col(), gap(1), py(2)])
-                .child(detail("Site", &certificate.url, false))
-                .child(detail("Issued to", &certificate.subject, false))
-                .child(detail("Issued by", &certificate.issuer, false))
-                .child(detail("Expires", &certificate.expires, false))
-                .child(detail("SHA-256", &certificate.fingerprint, true)),
-        )
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(2)])
-                .child(Button::new("Go back", BROWSER_CERT_BACK).build())
-                .child(if certificate.confirming {
-                    Button::new(proceed, BROWSER_CERT_PROCEED)
-                        .variant(Variant::Destructive)
-                        .build()
-                } else {
-                    Button::new(proceed, BROWSER_CERT_PROCEED)
-                        .variant(Variant::Outline)
-                        .tone(Role::Danger)
-                        .build()
-                }),
-        )
-        .child(paragraph(
-            if certificate.confirming {
-                "Press again to load the site. This is remembered for this site until the browser closes."
-            } else {
-                "Going on is not recommended."
-            },
-            12,
-            Role::Muted,
-            room,
-        ));
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            justify_center(),
-            w_px(width),
-            h_px(height),
-            flex_none(),
-            p(6),
-            bg(Role::Background),
-        ])
-        .child(card)
+    row_arranged(
+        Modifier::new()
+            .width(width)
+            .height(height)
+            .background(theme::color(Role::Background))
+            .padding(theme::sp(6)),
+        Arrangement::Center,
+        Alignment::Center,
+        || {
+            rustle::column_arranged(
+                Modifier::new()
+                    .width(across)
+                    .panel(Radius::Xl)
+                    .padding(theme::sp(5)),
+                Arrangement::SpacedBy(theme::sp(3)),
+                Alignment::Start,
+                || {
+                    rustle::basic_text(
+                        Modifier::new(),
+                        "Not secure: certificate not trusted",
+                        theme::text_style(18, 1.3)
+                            .font_weight(rustle::FontWeight::SEMI_BOLD)
+                            .color(theme::color(Role::Danger))
+                            .max_lines(1),
+                        TextOverflow::Ellipsis,
+                    );
+                    paragraph(
+                        &format!(
+                            "Pandemonium could not verify that {host} is who it says it is. Anything you send to it could be read or changed on the way."
+                        ),
+                        13,
+                        Role::Text,
+                        room,
+                    );
+                    paragraph(
+                        &format!("{} ({})", reason(&certificate.error), certificate.error),
+                        12,
+                        Role::Muted,
+                        room,
+                    );
+                    rustle::column_arranged(
+                        Modifier::new()
+                            .fill_max_width()
+                            .padding_xy(0.0, theme::sp(2)),
+                        Arrangement::SpacedBy(theme::sp(1)),
+                        Alignment::Start,
+                        || {
+                            detail("Site", &certificate.url, false);
+                            detail("Issued to", &certificate.subject, false);
+                            detail("Issued by", &certificate.issuer, false);
+                            detail("Expires", &certificate.expires, false);
+                            detail("SHA-256", &certificate.fingerprint, true);
+                        },
+                    );
+                    rustle::row_arranged(
+                        Modifier::new(),
+                        Arrangement::SpacedBy(theme::sp(2)),
+                        Alignment::Center,
+                        || {
+                            Button::new("Go back", Target::Browser(BrowserEvent::BrowserCertBack))
+                                .build();
+                            let button = Button::new(
+                                proceed,
+                                Target::Browser(BrowserEvent::BrowserCertProceed),
+                            );
+                            if certificate.confirming {
+                                button.variant(Variant::Destructive)
+                            } else {
+                                button.variant(Variant::Outline).tone(Role::Danger)
+                            }
+                            .build();
+                        },
+                    );
+                    paragraph(
+                        if certificate.confirming {
+                            "Press again to load the site. This is remembered for this site until the browser closes."
+                        } else {
+                            "Going on is not recommended."
+                        },
+                        12,
+                        Role::Muted,
+                        room,
+                    );
+                },
+            );
+        },
+    );
 }
 
 #[cfg(test)]

@@ -14,13 +14,14 @@ use crate::project::Project;
 pub const SCRIPT_AGENT: &str = "script";
 
 /// The activity or attention indicator shown beside a session.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Status {
     /// The agent is still at it.
     Working,
     /// A response has not been read.
     Unread,
     /// The agent is waiting for another prompt.
+    #[default]
     Idle,
     /// The latest unread update is an error.
     Error,
@@ -50,17 +51,6 @@ pub struct DiffLine {
     pub kind: Kind,
     /// The line itself, without its marker.
     pub text: String,
-}
-
-/// How a changed file came to differ from the last commit.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Fate {
-    /// The file is new.
-    Added,
-    /// The file is gone.
-    Deleted,
-    /// The file has other contents.
-    Modified,
 }
 
 /// Lines of one side of a diff that a comment is about.
@@ -276,31 +266,6 @@ impl Change {
             .map_or_else(|| self.count(Kind::Remove), |(_, removed)| removed)
     }
 
-    /// Whether the file is new, gone or has other contents, as its first hunk says.
-    pub fn fate(&self) -> Fate {
-        if !self.loaded {
-            return if self.is_created() {
-                Fate::Added
-            } else if self.mark() == "D" {
-                Fate::Deleted
-            } else {
-                Fate::Modified
-            };
-        }
-        let header = self
-            .diff
-            .first()
-            .filter(|line| line.kind == Kind::Hunk)
-            .map_or("", |line| line.text.as_str());
-        if header.starts_with("@@ -0,0 ") {
-            Fate::Added
-        } else if header.contains(" +0,0 @@") {
-            Fate::Deleted
-        } else {
-            Fate::Modified
-        }
-    }
-
     /// The directory the file is in, or nothing when it is at the root.
     pub fn directory(&self) -> &str {
         self.path
@@ -320,7 +285,7 @@ impl Change {
 }
 
 /// One turn of a conversation.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Message {
     /// Whether the reader wrote it, rather than the agent.
     pub from_user: bool,
@@ -534,15 +499,7 @@ impl Message {
             text: text.to_owned(),
             bullets,
             duration,
-            steps: Vec::new(),
-            open: None,
-            said_after: 0,
-            answers: Vec::new(),
-            exhibits: Vec::new(),
-            said: Vec::new(),
-            attachments: Vec::new(),
-            checkpoint: false,
-            side: None,
+            ..Self::default()
         }
     }
 
@@ -581,7 +538,7 @@ pub struct Queued {
 }
 
 /// One agent's work on one task: its conversation and what it changed.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Session {
     /// Names the session's browser for as long as the window runs, however the sessions are renumbered.
     pub scope: u64,
@@ -705,60 +662,17 @@ impl Session {
             scope: crate::browser_scope::next_scope(),
             title: title.to_owned(),
             project: Some(project),
-            machine: None,
             branch: branch.to_owned(),
             on_branch: !branch.is_empty(),
-            tracking: pm_git::Tracking::default(),
-            standings: Vec::new(),
-            directory: String::new(),
-            submodule: None,
-            base: None,
-            in_container: false,
-            agent: 0,
             status: if status == Status::Unread {
                 Status::Idle
             } else {
                 status
             },
             updates: u64::from(status == Status::Unread),
-            read_through: 0,
-            marked_unread: false,
-            hold_unread: false,
-            latest_error: false,
-            chat_back: 0.0,
             updated_at: crate::age::now().saturating_sub(minutes_ago * 60_000),
             messages,
-            changes: Vec::new(),
-            comments: Vec::new(),
-            commits: Vec::new(),
-            settings: Vec::new(),
-            slots: Vec::new(),
-            context: None,
-            limits: None,
-            goal: None,
-            spent: None,
-            commands: Vec::new(),
-            login: None,
-            signed_out: None,
-            container: None,
-            ask: None,
-            inquiry: None,
-            trust: None,
-            turn_started: None,
-            echoes: 0,
-            queued: Vec::new(),
-            closed: false,
-            home: false,
-            unknown: false,
-            terminals: Vec::new(),
-            terminal_active: 0,
-            shells: Vec::new(),
-            out_of_reach: false,
-            handing_over: false,
-            pull_request: None,
-            pull_busy: None,
-            code_host: None,
-            tree: None,
+            ..Self::default()
         }
     }
 
@@ -1014,22 +928,15 @@ pub fn sessions() -> Vec<Session> {
         ),
     ];
 
-    let mut titles = Session::new(
+    let mut titles = exchange(
         "Add automatic session titles",
         0,
         "task/231-titles",
         Status::Unread,
         12,
-        vec![
-            Message::user(
-                "New sessions are all called \"Untitled\". Name them from the first prompt.",
-            ),
-            Message::agent(
-                "Sessions now take their title from the first prompt, trimmed to a short phrase. Ready for review.",
-                &[],
-                "Worked for 2m 40s",
-            ),
-        ],
+        "New sessions are all called \"Untitled\". Name them from the first prompt.",
+        "Sessions now take their title from the first prompt, trimmed to a short phrase. Ready for review.",
+        "Worked for 2m 40s",
     );
     titles.changes = vec![Change::new(
         "crates/pandemonium/src/title.rs",
@@ -1039,97 +946,87 @@ pub fn sessions() -> Vec<Session> {
     vec![
         checkpoints,
         titles,
-        Session::new(
+        exchange(
             "Fix worktree cleanup on exit",
             0,
             "task/233-worktrees",
             Status::Working,
             4,
-            vec![
-                Message::user(
-                    "Worktrees pile up in .pandemonium after sessions end. Clean them up when a session is closed.",
-                ),
-                Message::agent(
-                    "Adding cleanup to the shutdown path. I need your approval to remove the leftover worktrees before the test can run.",
-                    &[],
-                    "Working for 3m 20s",
-                ),
-            ],
+            "Worktrees pile up in .pandemonium after sessions end. Clean them up when a session is closed.",
+            "Adding cleanup to the shutdown path. I need your approval to remove the leftover worktrees before the test can run.",
+            "Working for 3m 20s",
         ),
-        Session::new(
+        exchange(
             "Improve editor typing latency",
             0,
             "main",
             Status::Working,
             18,
-            vec![
-                Message::user("Typing in large files feels laggy. Find out why and fix it."),
-                Message::agent(
-                    "Profiling a 20k line file now. The first hot spot is re-highlighting the whole buffer on each keystroke.",
-                    &[],
-                    "Working for 6m 02s",
-                ),
-            ],
+            "Typing in large files feels laggy. Find out why and fix it.",
+            "Profiling a 20k line file now. The first hot spot is re-highlighting the whole buffer on each keystroke.",
+            "Working for 6m 02s",
         ),
-        Session::new(
+        exchange(
             "Release v0.7.0-beta.2",
             0,
             "main",
             Status::Idle,
             120,
-            vec![
-                Message::user("Cut the beta release."),
-                Message::agent(
-                    "Tagged v0.7.0-beta.2, built the installers and published the release notes.",
-                    &[],
-                    "Worked for 8m 30s",
-                ),
-            ],
+            "Cut the beta release.",
+            "Tagged v0.7.0-beta.2, built the installers and published the release notes.",
+            "Worked for 8m 30s",
         ),
-        Session::new(
+        exchange(
             "Greet user and await task",
             1,
             "main",
             Status::Idle,
             6,
-            vec![
-                Message::user("Hi"),
-                Message::agent(
-                    "Hello. What would you like to work on in wasa-cli?",
-                    &[],
-                    "Worked for 2s",
-                ),
-            ],
+            "Hi",
+            "Hello. What would you like to work on in wasa-cli?",
+            "Worked for 2s",
         ),
-        Session::new(
+        exchange(
             "Add a --json output flag",
             1,
             "task/12-json-flag",
             Status::Unread,
             60,
-            vec![
-                Message::user("Every command should be able to print machine-readable output."),
-                Message::agent(
-                    "Added a global --json flag. Commands now print one JSON object instead of formatted text. Ready for review.",
-                    &[],
-                    "Worked for 3m 10s",
-                ),
-            ],
+            "Every command should be able to print machine-readable output.",
+            "Added a global --json flag. Commands now print one JSON object instead of formatted text. Ready for review.",
+            "Worked for 3m 10s",
         ),
-        Session::new(
+        exchange(
             "Mesh chunks off the main thread",
             2,
             "task/41-chunk-meshing",
             Status::Working,
             9,
-            vec![
-                Message::user("Chunk meshing stalls the frame. Move it to a worker pool."),
-                Message::agent(
-                    "Sketching a job queue for chunk meshing and measuring the current stall.",
-                    &[],
-                    "Working for 2m 15s",
-                ),
-            ],
+            "Chunk meshing stalls the frame. Move it to a worker pool.",
+            "Sketching a job queue for chunk meshing and measuring the current stall.",
+            "Working for 2m 15s",
         ),
     ]
+}
+
+/// A sample session of one exchange: the reader asked `prompt` and the agent answered `reply` after `duration`.
+#[allow(clippy::too_many_arguments)]
+fn exchange(
+    title: &str,
+    project: usize,
+    branch: &str,
+    status: Status,
+    minutes_ago: u64,
+    prompt: &str,
+    reply: &str,
+    duration: &str,
+) -> Session {
+    Session::new(
+        title,
+        project,
+        branch,
+        status,
+        minutes_ago,
+        vec![Message::user(prompt), Message::agent(reply, &[], duration)],
+    )
 }

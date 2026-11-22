@@ -18,7 +18,41 @@ pub fn app_name() -> &'static str {
 
 /// The folder the app keeps its data in, under the desktop's data directory.
 fn directory() -> Option<PathBuf> {
-    dirs::data_dir().map(|data| data.join(app_name()))
+    data_root().map(|data| data.join(app_name()))
+}
+
+/// The desktop's data directory, which the app's data folder is made in.
+#[cfg(not(any(test, feature = "scratch-folders")))]
+fn data_root() -> Option<PathBuf> {
+    dirs::data_dir()
+}
+
+/// The desktop's cache directory, which the app's cache folder is made in.
+#[cfg(not(any(test, feature = "scratch-folders")))]
+fn cache_root() -> Option<PathBuf> {
+    dirs::cache_dir()
+}
+
+/// The stand-in for the desktop's data directory in tests, so that they never read or write the reader's own data.
+#[cfg(any(test, feature = "scratch-folders"))]
+fn data_root() -> Option<PathBuf> {
+    Some(scratch_root().join("data"))
+}
+
+/// The stand-in for the desktop's cache directory in tests, so that they never read or write the reader's own cache.
+#[cfg(any(test, feature = "scratch-folders"))]
+fn cache_root() -> Option<PathBuf> {
+    Some(scratch_root().join("cache"))
+}
+
+/// The folder of this test process under the workspace's git-ignored `build/` directory, in which it keeps the folders it uses in place of the desktop's, apart from those of every other process.
+#[cfg(any(test, feature = "scratch-folders"))]
+fn scratch_root() -> PathBuf {
+    PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../build/test-folders"
+    ))
+    .join(std::process::id().to_string())
 }
 
 /// The file the project list is kept in.
@@ -150,7 +184,7 @@ pub fn data_directory() -> Option<PathBuf> {
 
 /// The folder the app keeps what can be fetched again in, under the desktop's cache directory.
 pub fn cache_directory() -> Option<PathBuf> {
-    dirs::cache_dir().map(|cache| cache.join(app_name()))
+    cache_root().map(|cache| cache.join(app_name()))
 }
 
 /// A named login of an agent kept apart from the others: the agent, the folder name it is kept under and what it is called.

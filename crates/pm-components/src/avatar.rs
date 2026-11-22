@@ -1,10 +1,11 @@
 //! The avatar: a project's colour with its first letter, at a measure per size.
 
-use pm_style::{
-    Color, Radius, bg, flex, font_semibold, items_center, justify_center, leading_ratio, rounded,
-    size, text_color, text_px,
-};
-use pm_ui::{Node, node, text};
+use crate::theme;
+use rustle::Modifier;
+use rustle::TextOverflow;
+use rustle::{Alignment, Arrangement, Color, row_arranged};
+
+use crate::theme::Radius;
 
 use crate::Project;
 use crate::size::Size;
@@ -12,7 +13,7 @@ use crate::size::Size;
 /// An avatar being described: the letter it shows, its colour and its size.
 ///
 /// Build it with [`Avatar::new`] or [`Avatar::of`], change it with
-/// [`Avatar::size`], and turn it into a node with [`Avatar::build`].
+/// [`Avatar::size`], and emit it with [`Avatar::build`].
 #[derive(Clone, Debug)]
 pub struct Avatar {
     /// The first letter of the name, in capitals.
@@ -48,35 +49,35 @@ impl Avatar {
         self
     }
 
-    /// The node that draws the avatar.
-    pub fn build(self) -> Node {
+    /// Emits the avatar: its letter centred on its colour.
+    #[track_caller]
+    pub fn build(self) {
         let (side, font) = match self.size {
             Size::Xs => (4.0, 11),
             Size::Sm => (5.0, 13),
             Size::Md => (6.0, 15),
             Size::Lg => (8.0, 18),
         };
-        node()
-            .styles([
-                flex(),
-                items_center(),
-                justify_center(),
-                size(side),
-                rounded(Radius::Md),
-                bg(self.color),
-            ])
-            .child(text(self.initial).styles([
-                text_px(font),
-                leading_ratio(1.2),
-                font_semibold(),
-                text_color(Color::White),
-            ]))
+        let own = Modifier::new()
+            .size(theme::sp(side), theme::sp(side))
+            .background_rounded(theme::color(self.color), Radius::Md.px());
+        let initial = self.initial;
+        row_arranged(own, Arrangement::Center, Alignment::Center, move || {
+            rustle::basic_text(
+                Modifier::new(),
+                initial,
+                theme::text_style(font, 1.2)
+                    .font_weight(rustle::FontWeight::SEMI_BOLD)
+                    .color(theme::color(Color::WHITE)),
+                TextOverflow::Ellipsis,
+            );
+        });
     }
 }
 
-impl From<Avatar> for Node {
-    /// The node that draws the avatar.
+impl From<Avatar> for rustle::Node {
+    /// The drawn avatar, held as a value.
     fn from(avatar: Avatar) -> Self {
-        avatar.build()
+        rustle::compose(move || avatar.build())
     }
 }

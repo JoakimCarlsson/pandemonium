@@ -1,97 +1,109 @@
 //! The card that puts the agent's questions to the reader one at a time, each with the answers it offers and a box for an answer of the reader's own.
 
+use crate::areas::ChatEvent;
+use crate::button;
+use crate::events;
+use crate::icons;
+use crate::target::Target;
+use crate::theme;
+use crate::theme::Frame;
+use crate::theme::Indicated;
+use crate::theme::sp;
 use pm_harness::Alternative;
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, bg, border, border_color, cursor_pointer, flex, flex_1, flex_col, flex_none,
-    flex_wrap, gap, items_center, items_start, justify_center, justify_end, leading_ratio,
-    min_w_px, px, py, rounded, rounded_full, self_start, size, text_color, text_px, w_full,
-};
-use pm_text::Shaper;
-use pm_ui::{Node, node, text};
+use rustle::TextOverflow;
+use rustle::{Alignment, Arrangement, row_arranged};
+use rustle::{BoxAlignment, Modifier};
+use rustle::{Icon, phosphor};
 
 use crate::Button;
 use crate::button::Variant;
-use crate::draft::{CLOSE, Draft, FOLD, MOCKUP_OPEN_BASE, NEXT, OTHER, PICK_BASE, SKIP};
-use crate::exhibit::{MOCKUP_OFFER_BASE, MOCKUP_VIEWPORT, Offer, Preview, wanted_document};
-use crate::figures::Figures;
+use crate::draft::Draft;
+use crate::exhibit::{MOCKUP_VIEWPORT, Offer, Preview, wanted_document};
+use crate::figures::{Drawing, Figures};
 use crate::input::{self, Input};
 use crate::parts::line;
-use crate::size::Size;
+use crate::theme::{Radius, Role};
 
-/// Draws every measured line of agent text within the available width.
-fn wrapped(content: &str, pixels: u32, tone: Role, width: f32, shaper: &mut Shaper) -> Node {
-    let styles = [pm_style::text_px(pixels), pm_style::leading_ratio(1.4)];
-    node().styles([flex(), flex_col(), min_w_px(0)]).children(
-        pm_ui::wrap(shaper, content, styles, width.max(32.0))
-            .into_iter()
-            .map(|part| {
-                text(&content[part.start..part.end]).styles([
-                    text_px(pixels),
-                    leading_ratio(1.4),
-                    text_color(tone),
-                    min_w_px(0),
-                ])
-            }),
+/// Emits agent text set in `pixels` tall type in `tone`, broken at spaces by the text layout to the width its parent gives it.
+#[track_caller]
+fn wrapped(content: &str, pixels: u32, tone: Role) {
+    rustle::basic_text(
+        Modifier::new(),
+        content,
+        theme::text_style(pixels, 1.4)
+            .color(theme::color(tone))
+            .wrap(rustle::TextWrap::Word),
+        TextOverflow::Clip,
+    );
+}
+
+/// Emits the small box holding the number of the key that picks a row.
+#[track_caller]
+fn key(number: usize) {
+    row_arranged(
+        Modifier::new()
+            .size(theme::sp(7), theme::sp(7))
+            .background_rounded(theme::color(Role::Background), Radius::Lg.px())
+            .outlined(Radius::Lg),
+        Arrangement::Center,
+        Alignment::Center,
+        || line(number.to_string(), 13, 1.4, Role::Muted),
+    );
+}
+
+/// `modifier` as an offer that picks `id`: filled `idle` and the active fill
+/// under the pointer, outlined in `edge` with large corners and pressable.
+#[track_caller]
+fn offered(modifier: Modifier, id: Target, idle: Role, edge: Role) -> Modifier {
+    events::pressed(
+        modifier
+            .indicated(
+                theme::InteractionTones::new()
+                    .idle(idle)
+                    .hover(Role::SurfaceActive)
+                    .radius(Radius::Lg),
+                theme::Focused::Control(crate::focus::is_focused(id)),
+            )
+            .border(1.0, theme::color(edge), Radius::Lg.px())
+            .padding(1.0),
+        id,
     )
 }
 
-/// The small box holding the number of the key that picks a row.
-fn key(number: usize) -> Node {
-    node()
-        .styles([
-            flex(),
-            flex_none(),
-            items_center(),
-            justify_center(),
-            size(7),
-            rounded(Radius::Lg),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Background),
-        ])
-        .child(line(number.to_string(), 13, 1.4, Role::Muted))
+/// Emits the row offering `alternative`, the one at `index`, which the key after it picks, drawn as taken when `picked`, its words wrapped to the room the key leaves.
+#[track_caller]
+fn choice(alternative: &Alternative, index: usize, picked: bool) {
+    let id = Target::Chat(ChatEvent::InquiryPick(index));
+    rustle::row_arranged(
+        offered(
+            Modifier::new().fill_max_width(),
+            id,
+            Role::SurfaceHover,
+            if picked { Role::Accent } else { Role::Surface },
+        )
+        .padding_xy(theme::sp(3), theme::sp(2)),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Center,
+        || {
+            said(
+                Modifier::new().weight(1.0),
+                &alternative.label,
+                &alternative.description,
+            );
+            key(index + 1);
+        },
+    );
 }
 
-/// The row offering `alternative`, which the key `number` picks, drawn as taken when `picked`, answering to `id`.
-fn row(
-    alternative: &Alternative,
-    number: usize,
-    picked: bool,
-    id: FocusId,
-    width: f32,
-    shaper: &mut Shaper,
-) -> Node {
-    let mut words = node()
-        .styles([flex(), flex_col(), flex_1(), min_w_px(0)])
-        .child(wrapped(&alternative.label, 14, Role::Text, width, shaper));
-    if !alternative.description.is_empty() {
-        words = words.child(wrapped(
-            &alternative.description,
-            13,
-            Role::Muted,
-            width,
-            shaper,
-        ));
-    }
-    node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(2),
-            px(3),
-            py(2),
-            rounded(Radius::Lg),
-            border(),
-            border_color(if picked { Role::Accent } else { Role::Surface }),
-            bg(Role::SurfaceHover),
-            cursor_pointer(),
-            bg(Role::SurfaceActive).hover(),
-        ])
-        .child(words)
-        .child(key(number))
-        .focusable(id)
+/// Emits the words of an answer, wrapped to the column's width, in a column with `modifier`: its `label`, over its `description`, when it has one.
+#[track_caller]
+fn said(modifier: Modifier, label: &str, description: &str) {
+    rustle::column_arranged(modifier, Arrangement::Start, Alignment::Start, || {
+        wrapped(label, 14, Role::Text);
+        if !description.is_empty() {
+            wrapped(description, 13, Role::Muted);
+        }
+    });
 }
 
 /// The narrowest a question card's answers may be, in logical pixels, for their tiles to sit two to a row; narrower, each tile takes a row.
@@ -99,9 +111,6 @@ const TWO_TILES: f32 = 480.0;
 
 /// The gap between two tiles, in logical pixels: two steps of the spacing scale.
 const TILE_GAP: f32 = 8.0;
-
-/// What the padding and border of a tile take from its width, in logical pixels.
-const TILE_INSET: f32 = 18.0;
 
 /// How the label of an answer marks it as the one the agent recommends.
 const RECOMMENDED: &str = "(recommended)";
@@ -116,14 +125,6 @@ pub(crate) fn compares(alternatives: &[Alternative]) -> bool {
 /// How many tiles sit on a row when `count` answers share `width` logical pixels: two at the width of a conversation, one when the card is narrow or there is a single answer.
 pub(crate) fn tiles_per_row(width: f32, count: usize) -> usize {
     if count < 2 || width < TWO_TILES { 1 } else { 2 }
-}
-
-/// How wide each tile is, in logical pixels, when `per_row` of them share `width` with a gap between.
-pub(crate) fn tile_width(width: f32, per_row: usize) -> f32 {
-    let per_row = per_row.max(1) as f32;
-    ((width - TILE_GAP * (per_row - 1.0)) / per_row)
-        .floor()
-        .max(1.0)
 }
 
 /// The label of an answer without the mark that says the agent recommends it, and whether it had the mark.
@@ -166,341 +167,372 @@ pub(crate) fn marks_in(room: f32) -> Marks {
     }
 }
 
-/// A small mark on a tile in `tone`: `icon`, then `words` when the heading has room to spell marks out as `form` says, and nothing at all when marks are hidden.
-fn mark(icon: IconName, words: &str, tone: Role, form: Marks) -> Option<Node> {
-    (form != Marks::Hidden).then(|| mark_node(icon, (form == Marks::Words).then_some(words), tone))
+/// Emits a small mark on a tile in `tone`, saying `tip` when hovered: `icon`, then `words` when the heading has room to spell marks out as `form` says, and nothing at all when marks are hidden.
+#[track_caller]
+fn mark(icon: Icon, words: &str, tone: Role, form: Marks, tip: &str) {
+    if form == Marks::Hidden {
+        return;
+    }
+    crate::tooltip::with_tooltip(tip, || {
+        rustle::row_arranged(
+            Modifier::new()
+                .border(1.0, theme::color(tone), Radius::Full.px())
+                .padding(1.0)
+                .padding_xy(theme::sp(1.5), 0.0),
+            Arrangement::SpacedBy(theme::sp(1)),
+            Alignment::Center,
+            || {
+                crate::parts::glyph(icon, 3.0, tone);
+                if form == Marks::Words {
+                    line(words, 11, 1.5, tone);
+                }
+            },
+        );
+    });
 }
 
-/// A small mark on a tile that shows `icon` in `tone`, followed by `words` when it has any.
-fn mark_node(icon: IconName, words: Option<&str>, tone: Role) -> Node {
-    node()
-        .styles([
-            flex(),
-            flex_none(),
-            items_center(),
-            gap(1),
-            px(1.5),
-            rounded_full(),
-            border(),
-            border_color(tone),
-        ])
-        .child(crate::parts::glyph(icon, 3.0, tone))
-        .children(words.map(|words| line(words, 11, 1.5, tone)))
-}
-
-/// The tile offering `alternative` among answers that are compared: the picture of its mockup when it has one, as `figures` holds it, over its label and description, `width` logical pixels wide. The key `number` picks it, as a press on it does; it is drawn as taken when `picked` and marked when the agent recommends it, and a tile with a mockup has a button that opens the mockup larger. The marks shrink to icons and then go, and the button goes with them, as the tile gets too narrow to hold them, and the tile cuts off whatever would still reach past its edge. A mockup whose picture waits for the embedded browser offers `offer` in its place, shrinking as the marks do.
+/// Emits the tile offering `alternative` among answers that are compared, sharing its line of tiles with the others by weight: the picture `figure` of its mockup when it has one, over its label and description. The key `number` picks it, as a press on it does; it is drawn as taken when `picked` and marked when the agent recommends it, and a tile with a mockup has a button that opens the mockup larger. What is inside the tile is chosen from the width it is given, as Compose's `BoxWithConstraints` chooses: the marks shrink to icons and then go, and the button goes with them, as the tile gets too narrow to hold them, and the tile cuts off whatever would still reach past its edge. A mockup whose picture waits for the embedded browser offers `offer` in its place, shrinking as the marks do.
+#[track_caller]
 fn tile(
     alternative: &Alternative,
-    (figures, offer): (&Figures, &Offer),
+    (figure, offer): (Option<Result<Drawing, String>>, &Offer),
     (index, picked): (usize, bool),
-    width: f32,
-    shaper: &mut Shaper,
-) -> Node {
-    let inner = width - TILE_INSET;
-    let (label, suggested) = recommended(&alternative.label);
-    let outdated = matches!(offer, Offer::Update(_));
-    let enlarge = alternative.mockup.as_ref().map(|_| {
-        Button::icon(IconName::Maximize, FocusId(MOCKUP_OPEN_BASE + index as u64))
-            .disabled(outdated)
-            .build()
-            .tooltip(if outdated {
-                "Update the browser to open mockups · it cannot open pages sealed from the network"
-            } else {
-                "Open larger in the browser pane · sealed from the network"
-            })
-    });
-    let form = marks_in(inner);
-    let suggestion = suggested
-        .then(|| mark(IconName::Sparkles, "Recommended", Role::Accent, form))
-        .flatten();
-    let selection = picked
-        .then(|| mark(IconName::Check, "Selected", Role::Accent, form))
-        .flatten();
-    let marks = node()
-        .styles([
-            flex(),
-            items_center(),
-            gap(1.5),
-            w_full(),
-            min_w_px(0),
-            pm_style::overflow_hidden(),
-        ])
-        .child(key(index + 1))
-        .children(suggestion.map(|mark| mark.tooltip("Recommended")))
-        .children(selection.map(|mark| mark.tooltip("Selected")))
-        .child(node().styles([flex_1(), min_w_px(0)]))
-        .children(enlarge.filter(|_| form != Marks::Hidden));
-    let picture = alternative.mockup.as_deref().map(|html| {
-        let (key, _) = wanted_document(html, MOCKUP_VIEWPORT);
-        Preview::new(figures.get(&key), MOCKUP_VIEWPORT, inner)
-            .offer(offer, FocusId(MOCKUP_OFFER_BASE + index as u64))
-            .build()
-    });
-    let mut words = node()
-        .styles([flex(), flex_col(), min_w_px(0)])
-        .child(wrapped(label, 14, Role::Text, inner, shaper));
-    if !alternative.description.is_empty() {
-        words = words.child(wrapped(
-            &alternative.description,
-            13,
-            Role::Muted,
-            inner,
-            shaper,
-        ));
-    }
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            flex_none(),
-            gap(2),
-            px(2),
-            py(2),
-            pm_style::w_px(width),
-            pm_style::overflow_hidden(),
-            rounded(Radius::Lg),
-            border(),
-            border_color(if picked { Role::Accent } else { Role::Border }),
-            bg(if picked {
+) {
+    let id = Target::Chat(ChatEvent::InquiryPick(index));
+    let alternative = alternative.clone();
+    let offer = offer.clone();
+    rustle::with_constraints(
+        offered(
+            Modifier::new().weight(1.0),
+            id,
+            if picked {
                 Role::SurfaceActive
             } else {
                 Role::SurfaceHover
-            }),
-            cursor_pointer(),
-            bg(Role::SurfaceActive).hover(),
-        ])
-        .child(marks)
-        .children(picture)
-        .child(words)
-        .focusable(FocusId(PICK_BASE + index as u64))
-}
-
-/// The answers of a question side by side for comparing, as tiles that wrap onto rows within `width` logical pixels, those of `picked` drawn as taken, with the pictures and the offer of `pictures` as [`tile`] takes them.
-fn tiles(
-    alternatives: &[Alternative],
-    pictures: (&Figures, &Offer),
-    picked: &[usize],
-    width: f32,
-    shaper: &mut Shaper,
-) -> Node {
-    let each = tile_width(width, tiles_per_row(width, alternatives.len()));
-    node()
-        .styles([
-            flex(),
-            flex_wrap(),
-            items_start(),
-            gap(TILE_GAP / 4.0),
-            w_full(),
-        ])
-        .children(
-            alternatives
-                .iter()
-                .enumerate()
-                .map(|(index, alternative)| {
-                    tile(
-                        alternative,
-                        pictures,
-                        (index, picked.contains(&index)),
-                        each,
-                        shaper,
-                    )
-                })
-                .collect::<Vec<_>>(),
+            },
+            if picked { Role::Accent } else { Role::Border },
         )
+        .clip()
+        .padding_xy(theme::sp(2), theme::sp(2)),
+        move |constraints| {
+            tile_content(
+                &alternative,
+                (figure.as_ref(), &offer),
+                (index, picked),
+                constraints.max_width,
+            );
+        },
+    );
 }
 
-/// The row for an answer of the reader's own, with the box to type it in.
-fn other(draft: &Draft, number: usize) -> Node {
+/// Emits what a tile offering `alternative` holds in `inner` logical pixels across: its heading with the key, the marks and the button that opens the mockup, the mockup's picture `figure` or the offer `offer` in its place, and its label and description; as [`tile`] describes.
+#[track_caller]
+fn tile_content(
+    alternative: &Alternative,
+    (figure, offer): (Option<&Result<Drawing, String>>, &Offer),
+    (index, picked): (usize, bool),
+    inner: f32,
+) {
+    let (label, suggested) = recommended(&alternative.label);
+    let outdated = matches!(offer, Offer::Update(_));
+    let form = marks_in(inner);
+    rustle::column_arranged(
+        Modifier::new().fill_max_width(),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
+        || {
+            rustle::row_arranged(
+                Modifier::new().fill_max_width().clip(),
+                Arrangement::SpacedBy(theme::sp(1.5)),
+                Alignment::Center,
+                || {
+                    key(index + 1);
+                    if suggested {
+                        mark(
+                            phosphor::SPARKLE,
+                            "Recommended",
+                            Role::Accent,
+                            form,
+                            "Recommended",
+                        );
+                    }
+                    if picked {
+                        mark(phosphor::CHECK, "Selected", Role::Accent, form, "Selected");
+                    }
+                    rustle::spacer(rustle::Modifier::new().weight(1.0));
+                    if alternative.mockup.is_some() && form != Marks::Hidden {
+                        Button::icon(phosphor::ARROWS_OUT_SIMPLE, Target::Chat(ChatEvent::MockupOpen(index)))
+                            .disabled(outdated)
+                            .tooltip(if outdated {
+                                "Update the browser to open mockups · it cannot open pages sealed from the network"
+                            } else {
+                                "Open larger in the browser pane · sealed from the network"
+                            })
+                            .build();
+                    }
+                },
+            );
+            if alternative.mockup.is_some() {
+                Preview::new(figure, MOCKUP_VIEWPORT, inner)
+                    .offer(offer, Target::Chat(ChatEvent::MockupOffer(index)))
+                    .build();
+            }
+            said(Modifier::new(), label, &alternative.description);
+        },
+    );
+}
+
+/// Emits the answers of a question side by side for comparing, as tiles in a flow row across the card, as many to a line as [`tiles_per_row`] says for the width the card gives them, as Compose's `BoxWithConstraints` chooses, each line shared by weight as Compose's `FlowRow` with `maxItemsInEachRow` shares it, and a short last line kept to the same share with weighted spacers; those of `picked` are drawn as taken, with the pictures `figures` holds of their mockups and the offer `offer` as [`tile`] takes them.
+fn tiles(alternatives: &[Alternative], (figures, offer): (&Figures, &Offer), picked: &[usize]) {
+    let alternatives = alternatives.to_vec();
+    let pictures: Vec<Option<Result<Drawing, String>>> = alternatives
+        .iter()
+        .map(|alternative| {
+            let html = alternative.mockup.as_deref()?;
+            let (key, _) = wanted_document(html, MOCKUP_VIEWPORT);
+            figures.get(&key).cloned()
+        })
+        .collect();
+    let offer = offer.clone();
+    let picked = picked.to_vec();
+    rustle::with_constraints(Modifier::new().fill_max_width(), move |constraints| {
+        let per_row = tiles_per_row(constraints.max_width, alternatives.len());
+        let gap = sp(TILE_GAP / 4.0);
+        rustle::flow_row_with(
+            Modifier::new().fill_max_width(),
+            rustle::FlowOptions::new(gap, gap).max_items_per_line(per_row),
+            || {
+                for index in 0..alternatives.len() {
+                    rustle::key(index, || {
+                        tile(
+                            &alternatives[index],
+                            (pictures[index].clone(), &offer),
+                            (index, picked.contains(&index)),
+                        );
+                    });
+                }
+                for _ in alternatives.len()..alternatives.len().next_multiple_of(per_row) {
+                    rustle::spacer(Modifier::new().weight(1.0));
+                }
+            },
+        );
+    });
+}
+
+/// Emits the row for an answer of the reader's own, with the box to type it in, which the key `number` picks.
+#[track_caller]
+fn other(draft: &Draft, number: usize) {
     let field = &draft.others[draft.step];
-    let typed = Input::new(field, OTHER)
-        .variant(input::Variant::Ghost)
-        .placeholder("Type your own answer here");
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            gap(2),
-            px(3),
-            py(2),
-            rounded(Radius::Lg),
-            border(),
-            border_color(if field.text().trim().is_empty() {
-                Role::Surface
-            } else {
-                Role::Accent
-            }),
-            bg(Role::SurfaceHover),
-        ])
-        .child(
-            node()
-                .styles([flex(), items_center(), gap(3)])
-                .child(
-                    node()
-                        .styles([flex_1()])
-                        .child(line("Other", 15, 1.4, Role::Text)),
-                )
-                .child(key(number)),
-        )
-        .child(
-            node()
-                .styles([w_full(), rounded(Radius::Lg), bg(Role::Background)])
-                .child(typed.build()),
-        )
+    rustle::column_arranged(
+        Modifier::new()
+            .fill_max_width()
+            .background_rounded(theme::color(Role::SurfaceHover), Radius::Lg.px())
+            .border(
+                1.0,
+                theme::color(if field.text().trim().is_empty() {
+                    Role::Surface
+                } else {
+                    Role::Accent
+                }),
+                Radius::Lg.px(),
+            )
+            .padding(1.0)
+            .padding_xy(theme::sp(3), theme::sp(2)),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
+        || {
+            rustle::row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(theme::sp(3)),
+                Alignment::Center,
+                || {
+                    rustle::row_arranged(
+                        Modifier::new().weight(1.0),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            line("Other", 15, 1.4, Role::Text);
+                        },
+                    );
+                    key(number);
+                },
+            );
+            rustle::column_arranged(
+                Modifier::new()
+                    .fill_max_width()
+                    .background_rounded(theme::color(Role::Background), Radius::Lg.px()),
+                Arrangement::Start,
+                Alignment::Start,
+                || {
+                    Input::new(field, Target::Chat(ChatEvent::Other))
+                        .variant(input::Variant::Ghost)
+                        .placeholder("Type your own answer here")
+                        .submits(Target::Chat(ChatEvent::Next))
+                        .build();
+                },
+            );
+        },
+    );
 }
 
-/// The card for `draft`: the question, the answers to pick from, and the buttons that skip it or move on, or only its title when folded. When an answer of the question has a mockup, the answers are tiles side by side, each with the picture `figures` holds of its mockup, for the reader to compare, and a mockup whose picture waits for the embedded browser offers `offer` in its place.
-pub fn inquiry(
-    draft: &Draft,
-    figures: &Figures,
-    offer: &Offer,
-    width: f32,
-    shaper: &mut Shaper,
-) -> Node {
+/// Emits the card for `draft`: the question, the answers to pick from, and the buttons that skip it or move on, or only its title when folded. When an answer of the question has a mockup, the answers are tiles side by side, each with the picture `figures` holds of its mockup, for the reader to compare, and a mockup whose picture waits for the embedded browser offers `offer` in its place.
+#[track_caller]
+pub fn inquiry(draft: &Draft, figures: &Figures, offer: &Offer) {
     let question = draft.question();
     let count = draft.inquiry.questions.len();
-    let mut title = node().styles([flex(), items_start(), gap(2)]);
-    if count > 1 {
-        title = title.child(
-            node()
-                .styles([
-                    flex(),
-                    flex_none(),
-                    items_center(),
-                    px(3),
-                    py(1),
-                    rounded_full(),
-                    bg(Role::SurfaceHover),
-                ])
-                .child(line(
-                    format!("{}/{count}", draft.step + 1),
-                    13,
-                    1.4,
-                    Role::Muted,
-                )),
-        );
-    }
-    let title = title
-        .child(node().styles([flex_1(), min_w_px(0)]).child(wrapped(
-            &question.text,
-            14,
-            Role::Text,
-            width - if count > 1 { 145.0 } else { 105.0 },
-            shaper,
-        )))
-        .child(
-            Button::icon(
-                if draft.folded {
-                    IconName::ChevronRight
-                } else {
-                    IconName::ChevronDown
+    rustle::column_arranged(
+        Modifier::new()
+            .panel(Radius::Xl)
+            .padding_xy(theme::sp(3), theme::sp(2.5)),
+        Arrangement::SpacedBy(theme::sp(2)),
+        Alignment::Start,
+        || {
+            rustle::row_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(theme::sp(2)),
+                Alignment::Start,
+                || {
+                    if count > 1 {
+                        rustle::row_arranged(
+                            Modifier::new()
+                                .background_rounded(
+                                    theme::color(Role::SurfaceHover),
+                                    Radius::Full.px(),
+                                )
+                                .padding_xy(theme::sp(3), theme::sp(1)),
+                            Arrangement::Start,
+                            Alignment::Center,
+                            || {
+                                line(format!("{}/{count}", draft.step + 1), 13, 1.4, Role::Muted);
+                            },
+                        );
+                    }
+                    rustle::row_arranged(
+                        Modifier::new().weight(1.0),
+                        Arrangement::Start,
+                        Alignment::Start,
+                        || {
+                            wrapped(&question.text, 14, Role::Text);
+                        },
+                    );
+                    Button::icon(icons::chevron(!draft.folded), Target::Chat(ChatEvent::Fold))
+                        .build();
+                    Button::icon(phosphor::X, Target::Chat(ChatEvent::Close)).build();
                 },
-                FOLD,
-            )
-            .build(),
-        )
-        .child(Button::icon(IconName::Close, CLOSE).build());
-    let mut card = node()
-        .styles([
-            flex(),
-            flex_col(),
-            gap(2),
-            px(3),
-            py(2.5),
-            rounded(Radius::Xl),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Surface),
-        ])
-        .child(title);
-    if draft.folded {
-        return card;
-    }
-    let picked = &draft.picks[draft.step];
-    let rows = node().styles([flex(), flex_col(), gap(1)]);
-    let rows = if compares(&question.alternatives) {
-        rows.child(tiles(
-            &question.alternatives,
-            (figures, offer),
-            picked,
-            width - CARD_INSET,
-            shaper,
-        ))
-    } else {
-        rows.children(
-            question
-                .alternatives
-                .iter()
-                .enumerate()
-                .map(|(index, alternative)| {
-                    row(
-                        alternative,
-                        index + 1,
-                        picked.contains(&index),
-                        FocusId(PICK_BASE + index as u64),
-                        width - 92.0,
-                        shaper,
+            );
+            if draft.folded {
+                return;
+            }
+            let picked = &draft.picks[draft.step];
+            rustle::column_arranged(
+                Modifier::new().fill_max_width(),
+                Arrangement::SpacedBy(theme::sp(1)),
+                Alignment::Start,
+                || {
+                    if compares(&question.alternatives) {
+                        tiles(&question.alternatives, (figures, offer), picked);
+                    } else {
+                        for (index, alternative) in question.alternatives.iter().enumerate() {
+                            choice(alternative, index, picked.contains(&index));
+                        }
+                    }
+                    other(draft, question.alternatives.len() + 1);
+                },
+            );
+            rustle::flow_row_with(
+                Modifier::new().fill_max_width(),
+                rustle::FlowOptions::new(theme::sp(2), theme::sp(2))
+                    .arrangement(Arrangement::End)
+                    .item_alignment(Alignment::Center),
+                || {
+                    button::action("Skip", Target::Chat(ChatEvent::Skip), Variant::Outline);
+                    button::small_button(
+                        if draft.last() { "Submit" } else { "Next" },
+                        Target::Chat(ChatEvent::Next),
+                        Variant::Default,
                     )
-                }),
-        )
-    }
-    .child(other(draft, question.alternatives.len() + 1));
-    let next = Button::new(if draft.last() { "Submit" } else { "Next" }, NEXT)
-        .size(Size::Sm)
-        .disabled(!draft.answered())
-        .build();
-    let buttons = node()
-        .styles([flex(), flex_wrap(), items_center(), justify_end(), gap(2)])
-        .child(
-            Button::new("Skip", SKIP)
-                .variant(Variant::Outline)
-                .size(Size::Sm)
-                .build(),
-        )
-        .child(next);
-    card = card.child(rows).child(buttons);
-    card
+                    .disabled(!draft.answered())
+                    .build();
+                },
+            );
+        },
+    );
 }
 
-/// What the padding and border of the question card take from its width, in logical pixels.
-const CARD_INSET: f32 = 26.0;
-
-/// What the padding and border of the card that records answers take from its width, in logical pixels.
-const ANSWERED_INSET: f32 = 34.0;
-
-/// The card that records a form of questions the reader answered, at most `width` logical pixels wide: each question with its answer, or `[No preference]` when it was skipped, both wrapped to fit.
-pub fn answered(answers: &[(String, Option<String>)], width: f32, shaper: &mut Shaper) -> Node {
-    let room = width - ANSWERED_INSET;
-    node()
-        .styles([
-            flex(),
-            flex_col(),
-            gap(3),
-            px(4),
-            py(3.5),
-            self_start(),
-            rounded(Radius::Xl),
-            border(),
-            border_color(Role::Border),
-            bg(Role::Background),
-        ])
-        .children(answers.iter().map(|(question, answer)| {
-            node()
-                .styles([flex(), flex_col(), gap(0.5)])
-                .child(wrapped(question, 15, Role::Muted, room, shaper))
-                .child(wrapped(
-                    answer.as_deref().unwrap_or("[No preference]"),
-                    15,
-                    Role::Text,
-                    room,
-                    shaper,
-                ))
-        }))
+/// Emits the card that records a form of questions the reader answered, at most as wide as its parent: each question with its answer, or `[No preference]` when it was skipped, both wrapped to fit.
+#[track_caller]
+pub fn answered(answers: &[(String, Option<String>)]) {
+    rustle::column_arranged(
+        Modifier::new()
+            .align(BoxAlignment::TopStart)
+            .background_rounded(theme::color(Role::Background), Radius::Xl.px())
+            .outlined(Radius::Xl)
+            .padding_xy(theme::sp(4), theme::sp(3.5)),
+        Arrangement::SpacedBy(theme::sp(3)),
+        Alignment::Start,
+        || {
+            for (question, answer) in answers {
+                rustle::column_arranged(
+                    Modifier::new(),
+                    Arrangement::SpacedBy(theme::sp(0.5)),
+                    Alignment::Start,
+                    || {
+                        wrapped(question, 15, Role::Muted);
+                        wrapped(
+                            answer.as_deref().unwrap_or("[No preference]"),
+                            15,
+                            Role::Text,
+                        );
+                    },
+                );
+            }
+        },
+    );
 }
 
 #[cfg(test)]
 /// Tests for how the answers of a question are laid out for comparing.
 mod tests {
     use super::*;
+
+    /// What the padding and border of a tile take from its width, in logical pixels.
+    const TILE_INSET: f32 = 18.0;
+
+    /// How thick a tile's border is, in logical pixels: the press area a tile is tagged with lies inside it.
+    const TILE_BORDER: f32 = 1.0;
+
+    /// The question with three answers that each have a mockup.
+    fn three_mockups() -> Draft {
+        Draft::new(pm_harness::Inquiry {
+            ticket: 1,
+            questions: vec![pm_harness::Question {
+                header: "Layout".to_owned(),
+                text: "Which layout?".to_owned(),
+                multiple: false,
+                alternatives: vec![
+                    alternative("Sidebar (Recommended)", true),
+                    alternative("Tabs", true),
+                    alternative("Neither", true),
+                ],
+            }],
+        })
+    }
+
+    /// Where the three tiles of [`three_mockups`] are laid out when the card is `width` logical pixels wide, in the order of their answers.
+    fn tiles_laid(width: f32) -> Vec<rustle::Rect> {
+        let draft = three_mockups();
+        let figures = Figures::new();
+        let laid = crate::tagged::lay_out(width, 2000.0, None, move || {
+            inquiry(&draft, &figures, &Offer::Nothing)
+        });
+        (0..3)
+            .map(|index| {
+                laid.node(Target::Chat(ChatEvent::InquiryPick(index)))
+                    .expect("every tile is laid out")
+                    .bounds
+            })
+            .collect()
+    }
 
     /// An answer saying `label`, with a mockup when `pictured`.
     fn alternative(label: &str, pictured: bool) -> Alternative {
@@ -522,27 +554,50 @@ mod tests {
         assert!(!compares(&[]));
     }
 
-    /// Tiles sit two to a row at the width of a conversation and one to a row when the card is narrow or holds one answer.
+    /// Tiles sit two to a row, sharing it evenly with a gap between, at the width of a conversation, the third under the first at the same width, and one to a row when the card is narrow or holds one answer.
     #[test]
     fn tiles_wrap_two_to_a_row_and_one_when_narrow() {
         assert_eq!(tiles_per_row(686.0, 3), 2);
         assert_eq!(tiles_per_row(TWO_TILES, 2), 2);
         assert_eq!(tiles_per_row(TWO_TILES - 1.0, 3), 1);
         assert_eq!(tiles_per_row(686.0, 1), 1);
-        assert_eq!(tile_width(686.0, 2), 339.0);
-        assert_eq!(tile_width(400.0, 1), 400.0);
-        assert!(tile_width(686.0, 2) * 2.0 + TILE_GAP <= 686.0);
+        let wide = tiles_laid(712.0);
+        let line = wide[1].origin.x + wide[1].size.width - wide[0].origin.x;
+        assert!(line > TWO_TILES);
+        assert_eq!(wide[0].size.width, wide[1].size.width);
+        assert_eq!(wide[0].origin.y, wide[1].origin.y);
+        assert_eq!(
+            wide[1].origin.x - wide[0].origin.x - wide[0].size.width,
+            TILE_GAP + 2.0 * TILE_BORDER
+        );
+        assert!(wide[2].origin.y > wide[0].origin.y);
+        assert_eq!(wide[2].origin.x, wide[0].origin.x);
+        assert_eq!(wide[2].size.width, wide[0].size.width);
+        let narrow = tiles_laid(426.0);
+        assert!(narrow[0].size.width < TWO_TILES);
+        assert!(
+            narrow
+                .iter()
+                .all(|tile| tile.size.width == narrow[0].size.width)
+        );
+        assert!(
+            narrow
+                .iter()
+                .all(|tile| tile.origin.x == narrow[0].origin.x)
+        );
+        assert!(narrow[1].origin.y > narrow[0].origin.y);
+        assert!(narrow[2].origin.y > narrow[1].origin.y);
     }
 
     /// The marks of a tile are spelled out only in a heading with room for them, shrink to icons in a narrower one and go in one too narrow for those, so they never reach outside the tile.
     #[test]
     fn marks_shrink_with_the_tile() {
-        assert_eq!(marks_in(tile_width(686.0, 2) - TILE_INSET), Marks::Words);
+        assert_eq!(marks_in(339.0 - TILE_INSET), Marks::Words);
         assert_eq!(marks_in(MARKS_IN_WORDS), Marks::Words);
         assert_eq!(marks_in(MARKS_IN_WORDS - 1.0), Marks::Icons);
         assert_eq!(marks_in(MARKS_AS_ICONS), Marks::Icons);
         assert_eq!(marks_in(MARKS_AS_ICONS - 1.0), Marks::Hidden);
-        assert_eq!(marks_in(tile_width(100.0, 1) - TILE_INSET), Marks::Hidden);
+        assert_eq!(marks_in(100.0 - TILE_INSET), Marks::Hidden);
     }
 
     /// The mark of a recommended answer is read off the end of its label, whatever its case, and taken out of what the tile says.
@@ -574,22 +629,21 @@ mod tests {
                 ],
             }],
         });
-        let mut shaper = Shaper::new();
-        let card = inquiry(&draft, &Figures::new(), &Offer::Nothing, 700.0, &mut shaper);
-        let output = pm_ui::draw(
-            &card,
-            700.0,
-            2000.0,
-            &pm_ui::Input::default(),
-            &pm_theme::default_family().dark,
-            &mut shaper,
-            &mut pm_renderer::DrawList::new(),
-        );
-        let ids: Vec<u64> = output.regions.iter().map(|region| region.id.0).collect();
+        let figures = Figures::new();
+        let laid = crate::tagged::lay_out(700.0, 2000.0, None, move || {
+            inquiry(&draft, &figures, &Offer::Nothing)
+        });
+        let ids = laid.ids();
         for index in 0..3 {
-            assert!(ids.contains(&(PICK_BASE + index)), "pick {index}");
+            assert!(
+                ids.contains(&Target::Chat(ChatEvent::InquiryPick(index))),
+                "pick {index}"
+            );
         }
-        assert!(ids.contains(&MOCKUP_OPEN_BASE) && ids.contains(&(MOCKUP_OPEN_BASE + 1)));
-        assert!(!ids.contains(&(MOCKUP_OPEN_BASE + 2)));
+        assert!(
+            ids.contains(&Target::Chat(ChatEvent::MockupOpen(0)))
+                && ids.contains(&Target::Chat(ChatEvent::MockupOpen(1)))
+        );
+        assert!(!ids.contains(&Target::Chat(ChatEvent::MockupOpen(2))));
     }
 }

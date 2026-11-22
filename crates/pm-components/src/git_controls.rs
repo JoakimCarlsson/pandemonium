@@ -1,97 +1,20 @@
 //! What the reader does to the changes with git: picking several files, the menu on them, discarding, ignoring, reading a file and changing branch.
 
-use pm_input::FocusId;
-use pm_text::Field;
+use crate::areas::{DiffEvent, GitEvent};
+use crate::target::Target;
+use rustle::TextFieldState;
 
 use crate::change_list::Group;
-use crate::git_menus::{MENU_ROW_BASE, MenuKind, OpenMenu};
+use crate::git_menus::{MenuKind, OpenMenu};
 use crate::git_prompts::Prompt;
 use crate::sample::{Change, Session};
 use crate::state::{Outgoing, Page, WorkspaceState};
 
-/// The button that opens the list of branches.
-pub const BRANCH_BUTTON: FocusId = FocusId(7020);
-
-/// The panel listing the branches.
-pub const BRANCH_BODY: FocusId = FocusId(7021);
-
-/// The box branches are searched in and a new one is named in.
-pub const BRANCH_FILTER: FocusId = FocusId(7022);
-
-/// The row that makes a branch of the name typed.
-pub const BRANCH_CREATE: FocusId = FocusId(7023);
-
-/// What Enter does in the box branches are searched in.
-pub const BRANCH_SUBMIT: FocusId = FocusId(7024);
-
-/// The first of the rows that check a branch out; the rest follow it.
-pub const BRANCH_PICK_BASE: u64 = 8300;
-
 /// How many branches the list shows at once.
 pub const BRANCH_ROWS: usize = 12;
 
-/// The first of the rows of the list of repositories that pick the one the panel works on, numbered as [`WorkspaceState::repositories`] lists them; the rest follow it.
-pub const REPOSITORY_BASE: u64 = 8320;
-
-/// The first of the buttons on the rows of the list of repositories that open each one's branches; the rest follow it.
-pub const REPOSITORY_BRANCH_BASE: u64 = 8400;
-
 /// How many repositories the list of repositories shows at most: the folder's own and its submodules.
 pub const REPOSITORY_ROWS: usize = 40;
-
-/// The scrolling body of the file being read.
-pub const VIEWER_SCROLL: FocusId = FocusId(7032);
-
-/// Dismisses the banner saying what git refused to do.
-pub const TROUBLE_DISMISS: FocusId = FocusId(7069);
-
-/// Closes whatever of these is open.
-pub const REVIEW_DISMISS: FocusId = FocusId(7040);
-
-/// Stages or unstages every tracked file that is not staged.
-pub const GROUP_TRACKED: FocusId = FocusId(7051);
-
-/// Stages or unstages every file git does not track yet.
-pub const GROUP_UNTRACKED: FocusId = FocusId(7052);
-
-/// Folds or unfolds the changes section.
-pub const CHANGES_TOGGLE: FocusId = FocusId(7053);
-
-/// Folds or unfolds the graph.
-pub const GRAPH_TOGGLE: FocusId = FocusId(7054);
-
-/// Switches the graph between the checked out branch and every reference.
-pub const GRAPH_REFS: FocusId = FocusId(7055);
-
-/// Scrolls the graph back to the commit the checked out branch is at.
-pub const GRAPH_TARGET: FocusId = FocusId(7056);
-
-/// Fetches from every remote.
-pub const GRAPH_FETCH: FocusId = FocusId(7057);
-
-/// Pulls the checked out branch.
-pub const GRAPH_PULL: FocusId = FocusId(7058);
-
-/// Pushes the checked out branch.
-pub const GRAPH_PUSH: FocusId = FocusId(7059);
-
-/// Reads the changes and the graph again.
-pub const CHANGES_REFRESH: FocusId = FocusId(7060);
-
-/// Opens the menu of what else the button under the commit message can do.
-pub const COMMIT_CHEVRON: FocusId = FocusId(7062);
-
-/// Opens the menu over the panel's actions.
-pub const CHANGES_MORE: FocusId = FocusId(7070);
-
-/// The handle between the changes and the graph, which is dragged to change how tall the graph is.
-pub const GRAPH_SASH: FocusId = FocusId(7071);
-
-/// The scrolling body of the graph.
-pub const GRAPH_SCROLL: FocusId = FocusId(7065);
-
-/// The first of the arrows that open a changed file; the rest follow it.
-pub const OPEN_ARROW_BASE: u64 = 8500;
 
 /// How many commits the graph lists.
 pub const GRAPH_LIMIT: usize = 200;
@@ -145,11 +68,11 @@ pub struct GitControls {
     /// The question or list that is open, if one is.
     pub prompt: Option<Prompt>,
     /// The box a stash is named in.
-    pub stash_message: Field,
+    pub stash_message: TextFieldState,
     /// The box a session is given a new title in.
-    pub rename: Field,
+    pub rename: TextFieldState,
     /// The box a new or renamed file or folder is named in, and what it is for, while the tree is asking.
-    pub naming: Option<(crate::tree_actions::Naming, Field)>,
+    pub naming: Option<(crate::tree_actions::Naming, TextFieldState)>,
     /// The row of the tree last picked, where new files and folders go.
     pub tree_selected: Option<crate::tree_actions::TreeTarget>,
     /// The rows of the tree picked together, in the order they were picked.
@@ -171,8 +94,8 @@ pub struct GitControls {
     pub stashes: Vec<pm_git::Stash>,
     /// The merge, rebase or cherry-pick the open session's folder is stopped in, if it is in one.
     pub operation: Option<pm_git::Operation>,
-    /// How tall the graph is when it is open, in logical pixels.
-    pub graph_height: f32,
+    /// How tall the graph is when it is open, in logical pixels, held as observable state.
+    pub graph_height: crate::Held<f32>,
     /// Whether the list of branches is open.
     pub branch_menu: bool,
     /// The branches of the repository the list shows, the one checked out first.
@@ -182,7 +105,7 @@ pub struct GitControls {
     /// What each checked out submodule of the open session's folder has checked out: its path and its branch, or `@` and the commit.
     pub submodule_heads: Vec<(String, String)>,
     /// What branches are searched for and a new one is named by.
-    pub filter: Field,
+    pub filter: TextFieldState,
     /// The files open in the window, one tab each, in the order the tabs are in.
     pub viewers: Vec<crate::open_files::Viewer>,
     /// The tab of the file shown when a file is what the main area shows.
@@ -196,7 +119,7 @@ pub struct GitControls {
     /// The commits of the graph, newest first.
     pub history: Vec<pm_git::Commit>,
     /// How far down the graph is scrolled, in logical pixels.
-    pub graph_scroll: f32,
+    pub graph_scroll: rustle::ScrollState,
     /// What is being waited on from the remote, as the button words it.
     pub busy: Option<&'static str>,
     /// The session the graph was asked for, so that it is asked for once.
@@ -216,8 +139,8 @@ impl Default for GitControls {
             gesture: None,
             menu: None,
             prompt: None,
-            stash_message: Field::default(),
-            rename: Field::default(),
+            stash_message: TextFieldState::default(),
+            rename: TextFieldState::default(),
             naming: None,
             tree_selected: None,
             tree_marked: Vec::new(),
@@ -228,19 +151,19 @@ impl Default for GitControls {
             branching: None,
             stashes: Vec::new(),
             operation: None,
-            graph_height: crate::graph::HEIGHT,
+            graph_height: crate::Held::new(crate::graph::HEIGHT),
             branch_menu: false,
             branches: Vec::new(),
             repository: None,
             submodule_heads: Vec::new(),
-            filter: Field::default(),
+            filter: TextFieldState::default(),
             viewers: Vec::new(),
             shown: None,
             changes_open: true,
             graph_open: false,
             graph_all: false,
             history: Vec::new(),
-            graph_scroll: 0.0,
+            graph_scroll: rustle::ScrollState::default(),
             busy: None,
             logged: None,
             working: false,
@@ -262,24 +185,30 @@ impl GitControls {
 
     /// Whether a branch is called exactly what was typed.
     pub fn exists(&self) -> bool {
-        let wanted = self.filter.text().trim();
-        self.branches.iter().any(|name| name == wanted)
+        let wanted = self.filter.text();
+        self.branches.iter().any(|name| name == wanted.trim())
     }
 }
 
 impl WorkspaceState {
     /// Which changed file's row `id` is, if it is one.
-    pub fn change_row_of(&self, id: FocusId) -> Option<usize> {
-        id.0.checked_sub(crate::state::FILE_BASE)
-            .map(|index| index as usize)
-            .filter(|index| *index < self.change_count())
+    pub fn change_row_of(&self, id: Target) -> Option<usize> {
+        match id {
+            Target::Diff(DiffEvent::ChangedFile(index)) if index < self.change_count() => {
+                Some(index)
+            }
+            _ => None,
+        }
     }
 
     /// Which folder of the changed files' tree row `id` is, by its place among the folders, if it is one.
-    pub fn change_folder_row_of(&self, id: FocusId) -> Option<usize> {
-        id.0.checked_sub(crate::state::FOLDER_BASE)
-            .map(|index| index as usize)
-            .filter(|index| *index < self.change_folder_count())
+    pub fn change_folder_row_of(&self, id: Target) -> Option<usize> {
+        match id {
+            Target::Diff(DiffEvent::ChangeFolder(index)) if index < self.change_folder_count() => {
+                Some(index)
+            }
+            _ => None,
+        }
     }
 
     /// The state with the menu on changed files open at `at` over the folder at `position` of the tree, acting on every file in it.
@@ -299,28 +228,9 @@ impl WorkspaceState {
         self.with_git_menu(MenuKind::Change, at)
     }
 
-    /// Whether pressing `id` leaves the list of branches open.
-    pub fn keeps_branches(id: FocusId) -> bool {
-        id == BRANCH_BUTTON
-            || id == BRANCH_BODY
-            || id == BRANCH_FILTER
-            || id == BRANCH_CREATE
-            || (BRANCH_PICK_BASE..BRANCH_PICK_BASE + BRANCH_ROWS as u64).contains(&id.0)
-            || (REPOSITORY_BRANCH_BASE..REPOSITORY_BRANCH_BASE + REPOSITORY_ROWS as u64)
-                .contains(&id.0)
-    }
-
     /// Whether a menu of the panel, a question or the list of branches is open.
     pub fn review_overlay_open(&self) -> bool {
         self.git.menu.is_some() || self.git.prompt.is_some() || self.git.branch_menu
-    }
-
-    /// The state with the menus of the panel, the question and the list of branches closed.
-    pub fn review_overlay_closed(mut self) -> Self {
-        self.git.menu = None;
-        self.git.prompt = None;
-        self.git.branch_menu = false;
-        self
     }
 
     /// The position of the session the review panel is about: the open one, or, on the page for starting work or a project's overview, the stand-in for the project's own folder.
@@ -367,10 +277,15 @@ impl WorkspaceState {
 
     /// The files in the order the list shows them, group by group.
     fn listed(&self) -> Vec<usize> {
+        self.ordered(&self.closed_folders)
+    }
+
+    /// The files in the order the list shows them, group by group, leaving out those in the folders `closed` folds away.
+    fn ordered(&self, closed: &std::collections::HashSet<String>) -> Vec<usize> {
         self.review_session().map_or_else(Vec::new, |session| {
             crate::change_list::order_shown(
                 &session.changes,
-                &self.closed_folders,
+                closed,
                 self.git.repository.as_deref(),
             )
         })
@@ -391,14 +306,7 @@ impl WorkspaceState {
         if !real {
             return self.git.selected.into_iter().collect();
         }
-        self.review_session()
-            .map_or_else(Vec::new, |session| {
-                crate::change_list::order_shown(
-                    &session.changes,
-                    &std::collections::HashSet::new(),
-                    self.git.repository.as_deref(),
-                )
-            })
+        self.ordered(&std::collections::HashSet::new())
             .into_iter()
             .filter(|row| self.git.marked.contains(row))
             .collect()
@@ -493,7 +401,7 @@ impl WorkspaceState {
     }
 
     /// Closes the menus that cannot be open together with the menu on changed files.
-    fn close_other_menus(&mut self) {
+    pub(crate) fn close_other_menus(&mut self) {
         self.menu = None;
         self.project_menu = None;
         self.session_menu = None;
@@ -540,13 +448,7 @@ impl WorkspaceState {
             .filter(|change| change.unstaged && !change.untracked && !change.conflicted)
             .count();
         let operation = self.git.operation.as_ref();
-        let title = match operation {
-            Some(pm_git::Operation::Merge { .. }) => "Commit Merge",
-            Some(pm_git::Operation::Rebase { .. }) => "Continue Rebase",
-            Some(pm_git::Operation::CherryPick { .. }) => "Continue Cherry-Pick",
-            None if staged == 0 => "Commit Tracked",
-            None => "Commit",
-        };
+        let title = self.commit_title(staged == 0);
         let unsaid = self.message.text().trim().is_empty();
         let stopped = if session.changes.iter().any(|change| change.conflicted) {
             Some(
@@ -615,6 +517,12 @@ impl WorkspaceState {
         self.step_with("continue", "Continuing…", message);
     }
 
+    /// Shows `doing` on the button while the server works, forgetting what git refused before.
+    pub(crate) fn await_git(&mut self, doing: &'static str) {
+        self.git.busy = Some(doing);
+        self.git.trouble = None;
+    }
+
     /// Takes the next step of what is stopped, `doing` being what the button says meanwhile.
     pub(crate) fn step(&mut self, action: &'static str, doing: &'static str) {
         self.step_with(action, doing, None);
@@ -623,8 +531,7 @@ impl WorkspaceState {
     /// Takes the next step of what is stopped, finishing it under `message` when there is one.
     fn step_with(&mut self, action: &'static str, doing: &'static str, message: Option<String>) {
         if let Some(session) = self.review_index() {
-            self.git.busy = Some(doing);
-            self.git.trouble = None;
+            self.await_git(doing);
             self.outbox.push(Outgoing::Step {
                 session,
                 action,
@@ -638,8 +545,7 @@ impl WorkspaceState {
         if let Some(session) = self.review_index()
             && self.git.busy.is_none()
         {
-            self.git.busy = Some(doing);
-            self.git.trouble = None;
+            self.await_git(doing);
             self.outbox.push(Outgoing::Sync { session, operation });
         }
     }
@@ -711,12 +617,6 @@ impl WorkspaceState {
         self
     }
 
-    /// The state after the graph is scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_graph(mut self, delta: f32, room: f32) -> Self {
-        self.git.graph_scroll = (self.git.graph_scroll + delta).clamp(0.0, room);
-        self
-    }
-
     /// Opens the file at `index` of the changes as it is in the folder.
     pub(crate) fn open_changed_file(&mut self, index: usize) {
         if let Some(path) = self
@@ -729,13 +629,12 @@ impl WorkspaceState {
     }
 
     /// Carries out `action` if it is one of this module's, and says whether it was.
-    pub(crate) fn press_git(&mut self, action: FocusId) -> bool {
-        if let Some(row) = action
-            .0
-            .checked_sub(MENU_ROW_BASE)
-            .filter(|row| *row < 40 && self.git.menu.is_some())
+    pub(crate) fn press_git(&mut self, action: Target) -> bool {
+        if let Target::Git(GitEvent::GitMenuRow(row)) = action
+            && row < 40
+            && self.git.menu.is_some()
         {
-            self.press_menu_row(row as usize);
+            self.press_menu_row(row);
             return true;
         }
         if self.press_prompt(action)
@@ -746,15 +645,15 @@ impl WorkspaceState {
             return true;
         }
         match action {
-            REVIEW_DISMISS => {
+            Target::Git(GitEvent::ReviewDismiss) => {
                 self.git.menu = None;
                 self.git.prompt = None;
                 self.git.branch_menu = false;
             }
-            BRANCH_BODY | BRANCH_FILTER => {}
-            GROUP_TRACKED | GROUP_UNTRACKED => {
+            Target::Git(GitEvent::BranchBody) | Target::Git(GitEvent::BranchFilter) => {}
+            Target::Git(GitEvent::GroupTracked) | Target::Git(GitEvent::GroupUntracked) => {
                 let group = match action {
-                    GROUP_TRACKED => Group::Tracked,
+                    Target::Git(GitEvent::GroupTracked) => Group::Tracked,
                     _ => Group::Untracked,
                 };
                 let members = self.review_session().map_or_else(Vec::new, |session| {
@@ -766,24 +665,26 @@ impl WorkspaceState {
                 });
                 self.stage_changes(&members);
             }
-            TROUBLE_DISMISS => self.git.trouble = None,
-            CHANGES_TOGGLE => self.git.changes_open = !self.git.changes_open,
-            GRAPH_TOGGLE => self.git.graph_open = !self.git.graph_open,
-            GRAPH_TARGET => {
+            Target::Git(GitEvent::TroubleDismiss) => self.git.trouble = None,
+            Target::Git(GitEvent::ChangesToggle) => self.git.changes_open = !self.git.changes_open,
+            Target::Git(GitEvent::GraphToggle) => self.git.graph_open = !self.git.graph_open,
+            Target::Git(GitEvent::GraphTarget) => {
                 self.git.graph_all = false;
-                self.git.graph_scroll = 0.0;
+                self.git.graph_scroll.jump_to(0.0);
                 self.ask_log();
             }
-            GRAPH_FETCH => self.remote("fetch", "Fetching…"),
-            GRAPH_PULL => self.remote("pull", "Pulling…"),
-            GRAPH_PUSH => self.remote("push", "Pushing…"),
-            CHANGES_REFRESH => {
+            Target::Git(GitEvent::GraphFetch) => self.remote("fetch", "Fetching…"),
+            Target::Git(GitEvent::GraphPull) => self.remote("pull", "Pulling…"),
+            Target::Git(GitEvent::GraphPush) => self.remote("push", "Pushing…"),
+            Target::Git(GitEvent::ChangesRefresh) => {
                 if let Some(session) = self.review_index() {
                     self.outbox.push(Outgoing::Refresh { session });
                 }
             }
-            BRANCH_BUTTON => self.toggle_branch_menu(),
-            BRANCH_CREATE | BRANCH_SUBMIT => self.submit_branch(action == BRANCH_CREATE),
+            Target::Git(GitEvent::BranchButton) => self.toggle_branch_menu(),
+            Target::Git(GitEvent::BranchCreate) | Target::Git(GitEvent::BranchSubmit) => {
+                self.submit_branch(action == Target::Git(GitEvent::BranchCreate))
+            }
             _ => return self.press_branch_row(action),
         }
         true
@@ -803,7 +704,7 @@ impl WorkspaceState {
         };
         self.close_other_menus();
         self.git.branch_menu = true;
-        self.git.filter = Field::default();
+        self.git.filter = TextFieldState::default();
         self.git.branches = Vec::new();
         self.outbox.push(Outgoing::SessionBranches {
             session: open,
@@ -878,6 +779,17 @@ impl WorkspaceState {
         self
     }
 
+    /// Closes the list of branches and checks out `branch` of the repository the panel works on, in the folder of the session at `open`.
+    fn checkout(&mut self, open: usize, branch: String) {
+        self.git.branch_menu = false;
+        self.await_git("Switching branch…");
+        self.outbox.push(Outgoing::Checkout {
+            session: open,
+            branch,
+            submodule: self.git.repository.clone(),
+        });
+    }
+
     /// Checks out the branch typed, or makes it when `create` is set or none is called that.
     fn submit_branch(&mut self, create: bool) {
         let Some(open) = self.review_index() else {
@@ -892,21 +804,13 @@ impl WorkspaceState {
                 .or_else(|| (matching.len() == 1).then(|| &matching[0]))
                 .map(|name| (*name).clone());
             if let Some(branch) = picked {
-                self.git.branch_menu = false;
-                self.git.trouble = None;
-                self.git.busy = Some("Switching branch…");
-                self.outbox.push(Outgoing::Checkout {
-                    session: open,
-                    branch,
-                    submodule: self.git.repository.clone(),
-                });
+                self.checkout(open, branch);
                 return;
             }
         }
         if !typed.is_empty() && !self.git.exists() {
             self.git.branch_menu = false;
-            self.git.trouble = None;
-            self.git.busy = Some("Making branch…");
+            self.await_git("Making branch…");
             self.outbox.push(Outgoing::CreateBranch {
                 session: open,
                 name: typed,
@@ -916,39 +820,28 @@ impl WorkspaceState {
     }
 
     /// Checks out the branch of the row `action` if it is one, or picks the repository of a row of the list of repositories, opening its branches when `action` is the button on it, and says whether it was any.
-    fn press_branch_row(&mut self, action: FocusId) -> bool {
-        for (base, branches) in [(REPOSITORY_BASE, false), (REPOSITORY_BRANCH_BASE, true)] {
-            if let Some(row) = action
-                .0
-                .checked_sub(base)
-                .map(|row| row as usize)
-                .filter(|row| *row < REPOSITORY_ROWS)
-            {
-                self.pick_repository(row, branches);
-                return true;
-            }
+    fn press_branch_row(&mut self, action: Target) -> bool {
+        let picked = match action {
+            Target::Git(GitEvent::Repository(row)) => Some((row, false)),
+            Target::Git(GitEvent::RepositoryBranch(row)) => Some((row, true)),
+            _ => None,
+        };
+        if let Some((row, branches)) = picked.filter(|(row, _)| *row < REPOSITORY_ROWS) {
+            self.pick_repository(row, branches);
+            return true;
         }
-        let Some(row) = action
-            .0
-            .checked_sub(BRANCH_PICK_BASE)
-            .map(|row| row as usize)
-            .filter(|row| *row < BRANCH_ROWS)
-        else {
+        let Target::Git(GitEvent::BranchPick(row)) = action else {
             return false;
         };
+        if row >= BRANCH_ROWS {
+            return false;
+        }
         let Some(open) = self.review_index() else {
             return true;
         };
         let name = self.git.matching().get(row).map(|name| (*name).clone());
         if let Some(branch) = name {
-            self.git.branch_menu = false;
-            self.git.trouble = None;
-            self.git.busy = Some("Switching branch…");
-            self.outbox.push(Outgoing::Checkout {
-                session: open,
-                branch,
-                submodule: self.git.repository.clone(),
-            });
+            self.checkout(open, branch);
         }
         true
     }

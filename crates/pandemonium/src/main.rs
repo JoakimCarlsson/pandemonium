@@ -1,9 +1,11 @@
-//! Application entry point: opens the window and runs the event loop.
+//! Application entry point: opens the window and runs rustle's event loop.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod fingerprint;
 mod keys;
+mod model;
 mod notify;
 mod scene;
 mod snapshot;
@@ -13,15 +15,14 @@ mod work;
 
 use std::path::Path;
 
-use winit::event_loop::{ControlFlow, EventLoop};
-
 use app::App;
 use snapshot::{Shot, Trigger};
 
-/// Opens the window and runs the event loop until it is closed, or, given `--version`, prints the version
+/// Opens the window and runs rustle's event loop until it is closed, or, given `--version`, prints the version
 /// and leaves, or, given `--server`, runs the server
 /// on this machine with the options that follow, or, given
-/// `--snapshot <path> [elapsed_ms [x y [focus [light [screen]]]]]`, writes one frame to a PNG and leaves.
+/// `--snapshot <path> [elapsed_ms [x y [focus [light [screen [scale]]]]]]`, writes one frame to a PNG,
+/// at `scale` physical pixels a logical one, and leaves.
 fn main() {
     startup::begin();
     let arguments: Vec<String> = std::env::args().skip(1).collect();
@@ -65,11 +66,10 @@ fn main() {
             .and_then(|(x, y)| Some((x.parse().ok()?, y.parse().ok()?)));
         let focused = arguments
             .get(5)
-            .and_then(|value| value.parse().ok())
-            .map(pm_input::FocusId);
+            .and_then(|value| snapshot::focus_named(value));
         let appearance = match arguments.get(6).map(String::as_str) {
-            Some("light") => pm_theme::Appearance::Light,
-            _ => pm_theme::Appearance::Dark,
+            Some("light") => pm_components::theme::Appearance::Light,
+            _ => pm_components::theme::Appearance::Dark,
         };
         let shot = match arguments.get(7).map(String::as_str) {
             Some("code") => Shot::Code,
@@ -317,6 +317,11 @@ fn main() {
             }
             _ => Shot::Empty,
         };
+        let scale = arguments
+            .get(8)
+            .and_then(|value| value.parse().ok())
+            .filter(|scale: &f32| *scale > 0.0)
+            .unwrap_or(1.0);
         if let Err(error) = snapshot::write(
             Path::new(path),
             elapsed_ms,
@@ -324,6 +329,7 @@ fn main() {
             focused,
             appearance,
             shot,
+            scale,
         ) {
             eprintln!("pandemonium: {error}");
             std::process::exit(1);
@@ -332,22 +338,6 @@ fn main() {
     }
 
     startup::mark("arguments-read");
-    let opening = pm_renderer::Opening::start();
-    let event_loop = match EventLoop::new() {
-        Ok(event_loop) => event_loop,
-        Err(error) => {
-            eprintln!("pandemonium: could not start the event loop: {error}");
-            std::process::exit(1);
-        }
-    };
-    startup::mark("event-loop-created");
-    event_loop.set_control_flow(ControlFlow::Wait);
-    let proxy = event_loop.create_proxy();
-    let wake: pm_client::Wake = std::sync::Arc::new(move || {
-        let _ = proxy.send_event(());
-    });
-    if let Err(error) = event_loop.run_app(&mut App::new(wake, opening)) {
-        eprintln!("pandemonium: the event loop failed: {error}");
-        std::process::exit(1);
-    }
+    let app = App::new(rustle::external_waker());
+    app::run(app);
 }

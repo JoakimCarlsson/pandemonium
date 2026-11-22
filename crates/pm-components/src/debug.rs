@@ -1,99 +1,21 @@
 //! Debugging as the workspace holds it: the breakpoints set in the gutter, the program being debugged, and what the reader does to it.
 
+use crate::areas::DebugEvent as DebugControl;
+use crate::target::Target;
 use std::collections::{BTreeMap, BTreeSet};
 
-use pm_input::FocusId;
 use pm_protocol::{
     Breakpoint, DebugAction, DebugAdapter, DebugEvent, DebugFile, DebugProcess, DebugScenario,
     DebugView, Location, Position, Span, Standing,
 };
-use pm_text::{Edit, Field};
+use rustle::TextFieldState;
 
 use crate::listing::{Items, Listing};
 use crate::quick_choices::Choosing;
 use crate::state::{Outgoing, WorkspaceState};
 
-/// Shows the debug tab of the dock.
-pub const DEBUG_TAB: FocusId = FocusId(20_100_000);
-
-/// Runs the paused program on.
-pub const DEBUG_CONTINUE: FocusId = FocusId(20_100_001);
-
-/// Pauses the running program.
-pub const DEBUG_PAUSE: FocusId = FocusId(20_100_002);
-
-/// Runs to the next line.
-pub const DEBUG_STEP_OVER: FocusId = FocusId(20_100_003);
-
-/// Runs into the call on the line.
-pub const DEBUG_STEP_IN: FocusId = FocusId(20_100_004);
-
-/// Runs out of the frame.
-pub const DEBUG_STEP_OUT: FocusId = FocusId(20_100_005);
-
-/// Ends the debugging session.
-pub const DEBUG_STOP: FocusId = FocusId(20_100_006);
-
-/// Starts debugging, listing what the folder can be debugged as.
-pub const DEBUG_START: FocusId = FocusId(20_100_007);
-
-/// The field an expression is typed in to be evaluated in the console.
-pub const DEBUG_CONSOLE_FIELD: FocusId = FocusId(20_100_008);
-
-/// The field an expression is typed in to be watched.
-pub const DEBUG_WATCH_FIELD: FocusId = FocusId(20_100_009);
-
-/// Keeps the expression typed in the watch field.
-pub const DEBUG_WATCH_ADD: FocusId = FocusId(20_100_010);
-
-/// Evaluates the expression typed in the console field.
-pub const DEBUG_CONSOLE_SUBMIT: FocusId = FocusId(20_100_011);
-
-/// The scrolling list of the stack.
-pub const DEBUG_STACK_SCROLL: FocusId = FocusId(20_100_012);
-
-/// The scrolling list of the variables.
-pub const DEBUG_VARIABLES_SCROLL: FocusId = FocusId(20_100_013);
-
-/// The scrolling console.
-pub const DEBUG_CONSOLE_SCROLL: FocusId = FocusId(20_100_014);
-
-/// The first of the rows of the stack; the rest follow it.
-pub const DEBUG_FRAME_BASE: u64 = 20_101_000;
-
-/// The first of the rows of the variables; the rest follow it.
-pub const DEBUG_VARIABLE_BASE: u64 = 20_102_000;
-
-/// The first of the buttons taking a watch away; the rest follow it.
-pub const DEBUG_WATCH_REMOVE_BASE: u64 = 20_103_000;
-
-/// How many rows each list of the debug tab has room for in ids.
-pub const DEBUG_ROWS: u64 = 1000;
-
-/// The first of the marks in the gutter that set or clear a breakpoint; each file shown has [`BREAKPOINT_LINES`] after its own base.
-pub const BREAKPOINT_BASE: u64 = 5_000_000_000_000;
-
-/// How many lines one file has room for among the marks of the gutter.
-pub const BREAKPOINT_LINES: u64 = 1_000_000;
-
-/// How many files have room among the marks of the gutter.
-const BREAKPOINT_FILES: u64 = 1000;
-
-/// The mark in the gutter of the line `line` of the open file at `file`.
-pub fn breakpoint_mark(file: usize, line: usize) -> FocusId {
-    FocusId(BREAKPOINT_BASE + file as u64 * BREAKPOINT_LINES + line as u64)
-}
-
-/// The open file and the line the gutter mark `id` is on.
-pub fn breakpoint_of(id: FocusId) -> Option<(usize, usize)> {
-    let offset =
-        id.0.checked_sub(BREAKPOINT_BASE)
-            .filter(|offset| *offset < BREAKPOINT_FILES * BREAKPOINT_LINES)?;
-    Some((
-        (offset / BREAKPOINT_LINES) as usize,
-        (offset % BREAKPOINT_LINES) as usize,
-    ))
-}
+/// How many rows each list of the debug tab shows at most.
+pub const DEBUG_ROWS: usize = 1000;
 
 /// How a breakpoint is marked in the gutter.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -158,15 +80,15 @@ pub struct DebugState {
     /// The expressions watched.
     pub watches: Vec<String>,
     /// The expression being typed to be evaluated.
-    pub console: Field,
+    pub console: TextFieldState,
     /// The expression being typed to be watched.
-    pub watch: Field,
+    pub watch: TextFieldState,
     /// How far the stack is scrolled down.
-    pub stack_scroll: f32,
+    pub stack_scroll: rustle::ScrollState,
     /// How far the variables are scrolled down.
-    pub variables_scroll: f32,
+    pub variables_scroll: rustle::ScrollState,
     /// How far the console is scrolled back from its end.
-    pub console_back: f32,
+    pub console_back: rustle::ScrollState,
     /// Why the last start failed.
     pub trouble: Option<String>,
     /// The frame the reader chose in the stack, whose line is to be shown.
@@ -430,13 +352,8 @@ impl WorkspaceState {
 
     /// Starts debugging: lists what the folder of the session being worked in can be debugged as at `at`, to pick one, or runs the program on when one is paused.
     pub fn debug_started(mut self, at: (f32, f32)) -> Self {
-        if let Some(run) = self.debug.live() {
-            let (session, debug) = (run.session, run.debug);
-            self.outbox.push(Outgoing::DebugDo {
-                session,
-                debug,
-                action: DebugAction::Continue,
-            });
+        if self.debug.live().is_some() {
+            self.send_debug(DebugAction::Continue);
             return self;
         }
         let Some(session) = self.review_index() else {
@@ -449,20 +366,7 @@ impl WorkspaceState {
         });
         self.debug.scenarios_for = file;
         self.debug.trouble = None;
-        self.listing = Some(Listing {
-            session,
-            items: Items::Choices {
-                choosing: Choosing::DebugScenario,
-                choices: Vec::new(),
-                filter: Field::new(""),
-                matched: Vec::new(),
-            },
-            picked: 0,
-            answered: false,
-            problem: None,
-            at,
-            quick: true,
-        });
+        self.await_choices(session, Choosing::DebugScenario, at);
         self
     }
 
@@ -472,32 +376,38 @@ impl WorkspaceState {
             return self;
         };
         self.outbox.push(Outgoing::DebugProcesses { session });
-        self.listing = Some(Listing {
-            session,
-            items: Items::Choices {
-                choosing: Choosing::DebugProcess,
-                choices: Vec::new(),
-                filter: Field::new(""),
-                matched: Vec::new(),
-            },
-            picked: 0,
-            answered: false,
-            problem: None,
-            at,
-            quick: true,
-        });
+        self.await_choices(session, Choosing::DebugProcess, at);
         self
     }
 
-    /// The state after the server listed what the folder of the session at `session` can be debugged as.
-    pub fn with_debug_scenarios(mut self, session: usize, scenarios: Vec<DebugScenario>) -> Self {
-        self.debug.scenarios = scenarios;
-        self.choices_renewed(Choosing::DebugScenario);
+    /// Opens the quick list of `choosing` for the session at `session` at `at`, empty until the server answers.
+    fn await_choices(&mut self, session: usize, choosing: Choosing, at: (f32, f32)) {
+        let items = Items::Choices {
+            choosing,
+            choices: Vec::new(),
+            filter: TextFieldState::new(""),
+            matched: Vec::new(),
+        };
+        self.listing = Some(Listing {
+            quick: true,
+            ..Listing::waiting(session, items, at)
+        });
+    }
+
+    /// Fills the quick list of `choosing` anew now that the server answered for the session at `session`.
+    fn choices_answered(&mut self, session: usize, choosing: Choosing) {
+        self.choices_renewed(choosing);
         if let Some(listing) = self.listing.as_mut()
             && listing.session == session
         {
             listing.answered = true;
         }
+    }
+
+    /// The state after the server listed what the folder of the session at `session` can be debugged as.
+    pub fn with_debug_scenarios(mut self, session: usize, scenarios: Vec<DebugScenario>) -> Self {
+        self.debug.scenarios = scenarios;
+        self.choices_answered(session, Choosing::DebugScenario);
         self
     }
 
@@ -509,12 +419,7 @@ impl WorkspaceState {
         processes: Vec<DebugProcess>,
     ) -> Self {
         self.debug.processes = (adapters, processes);
-        self.choices_renewed(Choosing::DebugProcess);
-        if let Some(listing) = self.listing.as_mut()
-            && listing.session == session
-        {
-            listing.answered = true;
-        }
+        self.choices_answered(session, Choosing::DebugProcess);
         self
     }
 
@@ -583,7 +488,7 @@ impl WorkspaceState {
         match started {
             Ok((debug, view)) => {
                 self.debug.unfolded.clear();
-                self.debug.console_back = 0.0;
+                self.debug.console_back.jump_to(0.0);
                 self.debug.run = Some(Run {
                     session,
                     debug,
@@ -638,18 +543,12 @@ impl WorkspaceState {
         else {
             return self;
         };
-        let place = Position {
-            line: frame.line as u32,
-            character: 0,
-        };
+        let place = Position::new(frame.line as u32, 0);
         self.go_to_location(
             session,
             Location {
                 path: relative,
-                span: Span {
-                    start: place,
-                    end: place,
-                },
+                span: Span::new(place, place),
                 inside: true,
                 ..Location::default()
             },
@@ -691,72 +590,62 @@ impl WorkspaceState {
     }
 
     /// Carries out a press on one of the debug tab's controls, and says whether `id` was one.
-    pub(crate) fn press_debug(&mut self, id: FocusId) -> bool {
-        let action = match id {
-            DEBUG_CONTINUE => Some(DebugAction::Continue),
-            DEBUG_PAUSE => Some(DebugAction::Pause),
-            DEBUG_STEP_OVER => Some(DebugAction::StepOver),
-            DEBUG_STEP_IN => Some(DebugAction::StepIn),
-            DEBUG_STEP_OUT => Some(DebugAction::StepOut),
-            DEBUG_STOP => Some(DebugAction::Stop),
-            _ => None,
+    pub(crate) fn press_debug(&mut self, id: Target) -> bool {
+        let Target::Debug(control) = id else {
+            return false;
         };
-        if let Some(action) = action {
-            self.send_debug(action);
-            return true;
-        }
-        match id {
-            DEBUG_TAB => {
+        let action = match control {
+            DebugControl::DebugContinue => DebugAction::Continue,
+            DebugControl::DebugPause => DebugAction::Pause,
+            DebugControl::DebugStepOver => DebugAction::StepOver,
+            DebugControl::DebugStepIn => DebugAction::StepIn,
+            DebugControl::DebugStepOut => DebugAction::StepOut,
+            DebugControl::DebugStop => DebugAction::Stop,
+            DebugControl::DebugTab => {
                 self.bottom = crate::dock::BottomTab::Debug;
-                true
+                return true;
             }
-            DEBUG_CONSOLE_SUBMIT => {
+            DebugControl::DebugConsoleSubmit => {
                 self.evaluate_typed();
-                true
+                return true;
             }
-            DEBUG_WATCH_ADD => {
+            DebugControl::DebugWatchAdd => {
                 self.watch_typed();
-                true
+                return true;
             }
-            DEBUG_CONSOLE_FIELD | DEBUG_WATCH_FIELD => true,
-            FocusId(number) => self.press_debug_row(number),
-        }
+            DebugControl::DebugConsoleField | DebugControl::DebugWatchField => return true,
+            _ => return self.press_debug_row(control),
+        };
+        self.send_debug(action);
+        true
     }
 
-    /// Carries out a press on a row of the stack, the variables or the watches, and says whether `number` was one.
-    fn press_debug_row(&mut self, number: u64) -> bool {
-        let row = |base: u64| {
-            number
-                .checked_sub(base)
-                .filter(|offset| *offset < DEBUG_ROWS)
-                .map(|offset| offset as usize)
-        };
-        if let Some(index) = row(DEBUG_FRAME_BASE) {
-            let frame = self
-                .debug
-                .live()
-                .and_then(|run| run.view.frames.get(index).map(|frame| frame.id));
-            if let Some(frame) = frame {
-                self.debug.reveal = self.debug.run.as_mut().map(|run| {
-                    run.view.frame = Some(frame);
-                    (run.session, run.view.frames[index].clone())
-                });
-                self.send_debug(DebugAction::SelectFrame { frame });
+    /// Carries out a press on a row of the stack, the variables or the watches, and says whether `control` was one.
+    fn press_debug_row(&mut self, control: DebugControl) -> bool {
+        match control {
+            DebugControl::DebugFrame(index) if index < DEBUG_ROWS => {
+                let frame = self
+                    .debug
+                    .live()
+                    .and_then(|run| run.view.frames.get(index).map(|frame| frame.id));
+                if let Some(frame) = frame {
+                    self.debug.reveal = self.debug.run.as_mut().map(|run| {
+                        run.view.frame = Some(frame);
+                        (run.session, run.view.frames[index].clone())
+                    });
+                    self.send_debug(DebugAction::SelectFrame { frame });
+                }
             }
-            return true;
-        }
-        if let Some(index) = row(DEBUG_VARIABLE_BASE) {
-            self.toggle_variable(index);
-            return true;
-        }
-        if let Some(index) = row(DEBUG_WATCH_REMOVE_BASE) {
-            if index < self.debug.watches.len() {
-                self.debug.watches.remove(index);
-                self.send_watches();
+            DebugControl::DebugVariable(index) if index < DEBUG_ROWS => self.toggle_variable(index),
+            DebugControl::DebugWatchRemove(index) if index < DEBUG_ROWS => {
+                if index < self.debug.watches.len() {
+                    self.debug.watches.remove(index);
+                    self.send_watches();
+                }
             }
-            return true;
+            _ => return false,
         }
-        false
+        true
     }
 
     /// Unfolds the variable at row `index`, asking for its members, or folds it.
@@ -784,8 +673,8 @@ impl WorkspaceState {
         if expression.is_empty() {
             return;
         }
-        self.debug.console = Field::new("");
-        self.debug.console_back = 0.0;
+        self.debug.console = TextFieldState::new("");
+        self.debug.console_back.jump_to(0.0);
         self.send_debug(DebugAction::Evaluate { expression });
     }
 
@@ -795,7 +684,7 @@ impl WorkspaceState {
         if expression.is_empty() {
             return;
         }
-        self.debug.watch = Field::new("");
+        self.debug.watch = TextFieldState::new("");
         if !self.debug.watches.contains(&expression) {
             self.debug.watches.push(expression);
         }
@@ -806,30 +695,6 @@ impl WorkspaceState {
     fn send_watches(&mut self) {
         let watches = self.debug.watches.clone();
         self.send_debug(DebugAction::SetWatches { watches });
-    }
-
-    /// The state after `edit` is made to one of the debug tab's fields, when `id` names one.
-    pub(crate) fn debug_field_edited(&mut self, id: FocusId, edit: Edit) {
-        match id {
-            DEBUG_CONSOLE_FIELD => self.debug.console.apply(edit),
-            DEBUG_WATCH_FIELD => self.debug.watch.apply(edit),
-            _ => {}
-        }
-    }
-
-    /// The state after one of the debug tab's lists was scrolled by `delta` logical pixels, downwards when positive, with `room` pixels to scroll.
-    pub fn scrolled_debug(mut self, list: FocusId, delta: f32, room: f32) -> Self {
-        match list {
-            DEBUG_STACK_SCROLL => {
-                self.debug.stack_scroll = (self.debug.stack_scroll + delta).clamp(0.0, room);
-            }
-            DEBUG_VARIABLES_SCROLL => {
-                self.debug.variables_scroll =
-                    (self.debug.variables_scroll + delta).clamp(0.0, room);
-            }
-            _ => self.debug.console_back = (self.debug.console_back - delta).clamp(0.0, room),
-        }
-        self
     }
 
     /// Brings the breakpoints and the program being debugged up to date after the sessions moved: `moved` says, for each old position, the new one, or nothing for a session that is gone.

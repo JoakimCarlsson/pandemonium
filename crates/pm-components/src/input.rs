@@ -1,20 +1,40 @@
 //! The input: a box holding editable text, one line or several, with a look per variant and a measure per size.
+//!
+//! The text is a rustle text field editing a [`TextFieldState`] the model holds,
+//! drawn in the input's type with its placeholder in the decoration. The field
+//! holds the rustle focus of its control from the registry the views are
+//! composed with (see [`crate::focus`]), so the app reads whether it has the
+//! keyboard through that focus. The field edits, selects, copies, cuts,
+//! pastes, undoes and redoes by itself, as rustle's text field does; what it
+//! hands in on Enter, and on Control or Command with Enter, whether Enter
+//! breaks its lines, whether it hides what it holds and what takes a paste
+//! before it are declared where the input is built, as a Compose text field
+//! declares its `KeyboardOptions`, `onKeyboardAction` and line limits.
 
-use std::sync::Arc;
+use crate::events::{Event, OnClick, send};
+use crate::target::Target;
+use crate::theme;
+use crate::theme::{FocusOutline, Indicated};
+use rustle::{Alignment, Arrangement};
+use rustle::{Color, Icon, phosphor};
+use std::cell::RefCell;
+use std::rc::Rc;
 
-use pm_icon::IconName;
-use pm_input::FocusId;
-use pm_style::{
-    Radius, Role, Utility, bg, border, border_color, cursor_not_allowed, cursor_text, flex, flex_1,
-    flex_col, flex_none, font_mono, gap, h, h_full, items_center, leading_ratio, min_h, min_w_px,
-    opacity, overflow_hidden, pb, pt, px, ring, ring_color, rounded, text_color, text_px, truncate,
-    w_full,
+use rustle::{
+    BasicTextFieldOptions, Modifier, ScrollState, TextFieldDecorator, TextFieldLineLimits,
+    TextFieldState, TextObfuscationMode, TextSelectionColors,
 };
-use pm_text::{Field, Shaper};
-use pm_ui::{FieldLayout, Line, Node, node, text, wrap};
+use rustle::{
+    CursorIcon, Key, KeyEvent, KeyboardActionHandler, LOCAL_TEXT_SELECTION_COLORS, PointerButton,
+    PointerPhase,
+};
 
+use crate::events;
+use crate::events::Interactive;
+use crate::marked;
 use crate::parts::glyph;
 use crate::size::Size;
+use crate::theme::{Radius, Role};
 
 /// How tall a line of a multiline input is as a share of its type size.
 const LINE_RATIO: f32 = 1.57;
@@ -29,13 +49,8 @@ const PADDING: f32 = 18.0;
 const MAX_LINES: usize = 8;
 
 /// The size and leading every line of a multiline input is set in.
-fn typography() -> [Utility; 2] {
-    [text_px(14), leading_ratio(LINE_RATIO)]
-}
-
-/// How wide the lines of a multiline input `outer` logical pixels wide are, inside its border and padding.
-pub fn inner_width(outer: f32) -> f32 {
-    (outer - 2.0 - 32.0).max(40.0)
+fn typography() -> rustle::TextStyle {
+    theme::text_style(14, LINE_RATIO)
 }
 
 /// How an input looks.
@@ -52,38 +67,67 @@ pub enum Variant {
     Multiline,
 }
 
-/// An input being described: the line it edits, what it says while empty,
+/// What takes a paste in an input before the field does, and says whether it took it.
+#[derive(Clone)]
+pub struct OnPaste(Rc<dyn Fn() -> bool>);
+
+impl std::fmt::Debug for OnPaste {
+    /// Writes that there is a lambda, which has nothing else to show.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("OnPaste")
+    }
+}
+
+/// What an input does with Enter: what it hands in, what it hands in with Control or
+/// Command held, and whether Enter breaks a line of a multiline input instead.
+#[derive(Clone, Debug, Default)]
+struct Submits {
+    /// What Enter hands in.
+    plain: Option<OnClick>,
+    /// What Control or Command with Enter hands in, when it is something of its own.
+    hurried: Option<OnClick>,
+    /// Whether Enter breaks a line of a multiline input, Control or Command with it handing in.
+    breaks: bool,
+}
+
+/// An input being described: the text it edits, what it says while empty,
 /// how it looks and whether it is switched off.
 ///
 /// Build it with [`Input::new`], change it with the methods that follow, and
-/// turn it into a node with [`Input::build`].
+/// emit it with [`Input::build`].
 #[derive(Clone, Debug)]
 pub struct Input<'a> {
-    /// The line being edited.
-    field: &'a Field,
+    /// The text being edited.
+    field: &'a TextFieldState,
     /// What shows while the line is empty.
     placeholder: &'a str,
     /// The name it answers to.
-    id: FocusId,
+    id: Target,
     /// How it looks.
     variant: Variant,
     /// How big it is.
     size: Size,
     /// The glyph before the line, if any.
-    leading: Option<IconName>,
-    /// Whether it is switched off.
-    disabled: bool,
+    leading: Option<Icon>,
     /// Whether what it holds is not acceptable.
     invalid: bool,
     /// How many lines tall a multiline box is at least.
     rows: u32,
-    /// The text cut into the lines a multiline box shows.
-    lines: Arc<[Line]>,
+    /// Whether what it holds is shown as dots and kept off the clipboard, as a key is.
+    secure: bool,
+    /// The scroll state of a multiline box's lines, when its owner holds it.
+    scroll: Option<&'a ScrollState>,
+    /// What Enter does in it.
+    submits: Submits,
+    /// What takes a paste before the field does, if anything.
+    on_paste: Option<OnPaste>,
+    /// What the caller puts around its box: sizes, growth, margins, placement.
+    modifier: Modifier,
 }
 
 impl<'a> Input<'a> {
     /// An input editing `field`, answering to `id`.
-    pub fn new(field: &'a Field, id: FocusId) -> Self {
+    pub fn new(field: &'a TextFieldState, id: Target) -> Self {
         Self {
             field,
             placeholder: "",
@@ -91,22 +135,30 @@ impl<'a> Input<'a> {
             variant: Variant::Default,
             size: Size::Md,
             leading: None,
-            disabled: false,
             invalid: false,
             rows: 1,
-            lines: Arc::from([]),
+            secure: false,
+            scroll: None,
+            submits: Submits::default(),
+            on_paste: None,
+            modifier: Modifier::new(),
         }
     }
 
     /// A bordered input editing `field` with a magnifying glass before the line, for what is looked for.
-    pub fn search(field: &'a Field, id: FocusId) -> Self {
+    pub fn search(field: &'a TextFieldState, id: Target) -> Self {
         Self::new(field, id)
             .variant(Variant::Bordered)
-            .leading_icon(IconName::Search)
+            .leading_icon(phosphor::MAGNIFYING_GLASS)
+    }
+
+    /// The name the input answers to.
+    pub fn answers_to(&self) -> Target {
+        self.id
     }
 
     /// The input with `icon` before its line.
-    pub fn leading_icon(mut self, icon: IconName) -> Self {
+    pub fn leading_icon(mut self, icon: Icon) -> Self {
         self.leading = Some(icon);
         self
     }
@@ -117,9 +169,56 @@ impl<'a> Input<'a> {
         self
     }
 
-    /// The multiline input with its text wrapped to `width` logical pixels.
-    pub fn wrap(mut self, width: f32, shaper: &mut Shaper) -> Self {
-        self.lines = wrap(shaper, &self.field.shown(), typography(), width).into();
+    /// The input showing a dot for each character of what it holds, which can
+    /// be neither copied nor cut, while `secure` is true: for keys and tokens.
+    pub fn secure(mut self, secure: bool) -> Self {
+        self.secure = secure;
+        self
+    }
+
+    /// The input running `on_submit` when Enter is pressed in it: its keyboard action,
+    /// Compose's `onKeyboardAction`. In a multiline input Shift with Enter breaks a line.
+    pub fn on_submit(mut self, on_submit: impl Fn() + 'static) -> Self {
+        self.submits.plain = Some(OnClick::new(on_submit));
+        self
+    }
+
+    /// The input handing the press of `id` to the workspace when Enter is pressed in it,
+    /// as [`on_submit`](Self::on_submit) runs it.
+    pub fn submits(self, id: Target) -> Self {
+        self.on_submit(send(Event::pressing(id)))
+    }
+
+    /// The input running `on_hurried_submit` when Control or Command with Enter is
+    /// pressed in it, instead of what Enter hands in.
+    pub fn on_hurried_submit(mut self, on_hurried_submit: impl Fn() + 'static) -> Self {
+        self.submits.hurried = Some(OnClick::new(on_hurried_submit));
+        self
+    }
+
+    /// The input handing the press of `id` to the workspace when Control or Command with
+    /// Enter is pressed in it, as [`on_hurried_submit`](Self::on_hurried_submit) runs it.
+    pub fn hurries(self, id: Target) -> Self {
+        self.on_hurried_submit(send(Event::pressing(id)))
+    }
+
+    /// The multiline input breaking a line on Enter, and handing in with Control or
+    /// Command held with it, as a message is written.
+    pub fn breaks_lines_on_enter(mut self) -> Self {
+        self.submits.breaks = true;
+        self
+    }
+
+    /// The input offering a paste to `on_paste` before its field pastes the clipboard's
+    /// text: when `on_paste` says it took the paste, the field pastes nothing.
+    pub fn on_paste(mut self, on_paste: impl Fn() -> bool + 'static) -> Self {
+        self.on_paste = Some(OnPaste(Rc::new(on_paste)));
+        self
+    }
+
+    /// The multiline input with its lines scrolled by `scroll`, which its owner holds.
+    pub fn scroll(mut self, scroll: &'a ScrollState) -> Self {
+        self.scroll = Some(scroll);
         self
     }
 
@@ -141,232 +240,364 @@ impl<'a> Input<'a> {
         self
     }
 
-    /// The input switched off while `disabled` is true: drawn faint, and
-    /// neither taking focus nor answering a press.
-    pub fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
-        self
-    }
-
     /// The input outlined as holding something that is not acceptable.
     pub fn invalid(mut self, invalid: bool) -> Self {
         self.invalid = invalid;
         self
     }
 
-    /// The node that draws the input: a ring and a blinking caret while it
-    /// holds keyboard focus, and the selection highlighted.
-    pub fn build(self) -> Node {
+    /// The input with `modifier` put around its box, outside its own look:
+    /// sizes, growth, margins, placement, tooltips. Calls accumulate.
+    pub fn modifier(mut self, modifier: Modifier) -> Self {
+        self.modifier = self.modifier.chain(modifier);
+        self
+    }
+
+    /// Emits the input: a ring and a blinking caret while it holds keyboard
+    /// focus, and the selection highlighted. It takes the keyboard back as it
+    /// appears when it is the field the reader was typing in when the window
+    /// last closed.
+    #[track_caller]
+    pub fn build(self) {
+        crate::focus::restores_focus(self.id);
         if self.variant == Variant::Multiline {
             return self.build_multiline();
         }
-        let shown = self.field.shown();
-        let (content, tone, caret) = if shown.is_empty() {
-            (self.placeholder, Role::Subtle, 0)
-        } else {
-            (&*shown, Role::Text, self.field.to_shown(self.field.caret()))
-        };
         let (height, font) = match (self.variant, self.size) {
-            (Variant::Bordered, Size::Xs) => (7, 12),
-            (Variant::Bordered, Size::Sm) => (8, 12),
-            (Variant::Bordered, Size::Md) => (9, 12),
-            (Variant::Bordered, Size::Lg) => (10, 12),
-            (_, Size::Xs) => (7, 12),
-            (_, Size::Sm) => (8, 12),
-            (_, Size::Md) => (10, 13),
-            (_, Size::Lg) => (12, 14),
+            (Variant::Bordered, Size::Md) => (9.0, 12),
+            (Variant::Bordered, Size::Lg) => (10.0, 12),
+            (_, Size::Xs) => (7.0, 12),
+            (_, Size::Sm) => (8.0, 12),
+            (_, Size::Md) => (10.0, 13),
+            (_, Size::Lg) => (12.0, 14),
         };
-        let mut line = text(content)
-            .styles([text_px(font), leading_ratio(1.4), text_color(tone)])
-            .caret(caret, self.id);
-        if shown.is_empty() {
-            line = line.styles([truncate(), min_w_px(0)]);
+        let id = self.id;
+        let invalid = self.invalid;
+        let boxed = matches!(self.variant, Variant::Default | Variant::Bordered);
+        let mut own = Modifier::new().fill_max_width().height(theme::sp(height));
+        if boxed {
+            own = own.background_rounded(theme::color(Role::Surface), Radius::Lg.px());
         }
-        if self.variant == Variant::Default {
-            line = line.styles([font_mono()]);
+        let held = theme::Focused::Control(crate::focus::is_focused(id));
+        if boxed || invalid {
+            let (idle, focused) = if invalid {
+                (theme::role(Role::Danger), theme::role(Role::Danger))
+            } else {
+                (theme::role(Role::Border), theme::role(Role::Focused))
+            };
+            let radius = Radius::Lg;
+            own = own.focus_outline(crate::focus::is_focused(id), idle, focused, radius);
+        }
+        own = own.indicated(
+            theme::FocusRing {
+                width: 2.0,
+                radius: Radius::Lg,
+            },
+            held,
+        );
+        if boxed || invalid {
+            own = own.padding(1.0);
+        }
+        own = editing(own, id).padding_xy(theme::sp(3), 0.0);
+        let mut kind = theme::text_style(font, 1.4).color(theme::color(Role::Text));
+        kind = if self.variant == Variant::Default {
+            theme::in_mono(kind)
         } else {
-            line = line.styles([leading_ratio(1.57)]);
-        }
-        if let Some(range) = self.field.selection() {
-            line = line.selection(
-                self.field.to_shown(range.start)..self.field.to_shown(range.end),
-                self.id,
-            );
-        }
-        if let Some(range) = self.field.marked() {
-            line = line.marked(range, self.id);
-        }
-        let mut styles = vec![
-            flex(),
-            items_center(),
-            w_full(),
-            min_w_px(0),
-            h(height),
-            gap(2),
-            px(3),
-            rounded(Radius::Lg),
-            ring(2).focus(),
-            ring_color(Role::Focused).focus(),
-        ];
-        if matches!(self.variant, Variant::Default | Variant::Bordered) {
-            styles.extend([
-                bg(Role::Surface),
-                border(),
-                border_color(Role::Border),
-                border_color(Role::Focused).focus(),
-            ]);
-        }
-        if self.invalid {
-            styles.extend([
-                border(),
-                border_color(Role::Danger),
-                ring_color(Role::Danger).focus(),
-            ]);
-        }
-        if self.disabled {
-            styles.extend([opacity(40), cursor_not_allowed()]);
-        } else {
-            styles.push(cursor_text());
-        }
-        let view = node()
-            .styles([
-                flex(),
-                flex_1(),
-                h_full(),
-                items_center(),
-                overflow_hidden(),
-            ])
-            .scroll_x(self.field.scroll())
-            .child(line);
-        let mut input = node().styles(styles);
-        if let Some(icon) = self.leading {
-            input = input.child(glyph(icon, 4.0, Role::Muted));
-        }
-        let input = input.child(view);
-        if self.disabled {
-            input
-        } else {
-            input.focusable(self.id)
-        }
+            kind.line_height(kind.font_size * 1.57)
+        };
+        let (field, placeholder, leading) = (self.field, self.placeholder, self.leading);
+        let secure = self.secure;
+        let (submits, on_paste) = (self.submits, self.on_paste);
+        rustle::row_arranged(
+            self.modifier.chain(own),
+            Arrangement::SpacedBy(theme::sp(2)),
+            Alignment::Center,
+            move || {
+                if let Some(icon) = leading {
+                    glyph(icon, 4.0, Role::Muted);
+                }
+                FieldText {
+                    field,
+                    id,
+                    kind,
+                    placeholder,
+                    lines: None,
+                    secure,
+                    scroll: None,
+                    submits,
+                    on_paste,
+                }
+                .build(Modifier::new().weight(1.0));
+            },
+        );
     }
 
-    /// The node that draws a multiline input: its wrapped lines in a column, the caret and selection placed in them.
-    fn build_multiline(self) -> Node {
-        let content = self.field.shown();
-        let caret = self.field.to_shown(self.field.caret());
-        let caret_line = self
-            .lines
-            .iter()
-            .position(|line| caret < line.next)
-            .unwrap_or(self.lines.len().saturating_sub(1));
-        let measured = pm_style::Style::new(typography()).base().typography;
-        let height = measured.line_height_px();
-        let offset = self
-            .field
-            .scroll_for_lines(caret_line, self.lines.len(), MAX_LINES, height);
-        let selection = self
-            .field
-            .selection()
-            .map(|range| self.field.to_shown(range.start)..self.field.to_shown(range.end));
-        let marked = self.field.marked();
-        let column = node()
-            .styles([
-                flex(),
-                flex_col(),
-                w_full(),
-                min_w_px(0),
-                px(4),
-                pt(3.5),
-                pb(1),
-                min_h((self.rows as f32 * LINE + PADDING) / 4.0),
-                cursor_text(),
-            ])
-            .focusable(self.id)
-            .field_layout(FieldLayout {
-                id: self.id,
-                content: Arc::from(content.as_ref()),
-                lines: self.lines.clone(),
-                typography: measured,
-            });
-        if content.is_empty() {
-            return column.child(
-                text(self.placeholder)
-                    .styles(typography())
-                    .styles([text_color(Role::Subtle), truncate(), min_w_px(0)])
-                    .caret(0, self.id)
-                    .field_line(self.id, 0),
-            );
-        }
-        let first = if self.lines.len() > MAX_LINES {
-            (offset / height).floor() as usize
-        } else {
-            0
-        }
-        .saturating_sub(1);
-        let last = if self.lines.len() > MAX_LINES {
-            (first + MAX_LINES + 3).min(self.lines.len())
-        } else {
-            self.lines.len()
+    /// Emits a multiline input: its wrapped lines in a column at least
+    /// [`Input::rows`] lines tall, showing [`MAX_LINES`] at most and scrolled
+    /// to keep the caret in view, the caret and selection placed in them.
+    fn build_multiline(self) {
+        let minimum = self.rows as f32 * LINE + PADDING;
+        let text = FieldText {
+            field: self.field,
+            id: self.id,
+            kind: typography().color(theme::color(Role::Text)),
+            placeholder: self.placeholder,
+            lines: Some(MAX_LINES),
+            secure: false,
+            scroll: self.scroll,
+            submits: self.submits,
+            on_paste: self.on_paste,
         };
-        let rows = self.lines[first..last]
-            .iter()
-            .enumerate()
-            .map(|(index, line)| {
-                let index = first + index;
-                let mut row = text(&content[line.start..line.end])
-                    .styles(typography())
-                    .styles([text_color(Role::Text), flex_none(), pm_style::h_px(height)])
-                    .field_line(self.id, line.start);
-                if index == caret_line {
-                    row = row.caret(caret - line.start, self.id);
-                }
-                if let Some(range) = clipped(&selection, line) {
-                    row = row.selection(range, self.id);
-                }
-                if let Some(range) = clipped(&marked, line) {
-                    row = row.marked(range, self.id);
-                }
-                row
-            });
-        if self.lines.len() > MAX_LINES {
-            column.styles([px(0)]).child(
-                node()
-                    .styles([
-                        flex(),
-                        flex_col(),
-                        w_full(),
-                        min_w_px(0),
-                        px(4),
-                        pm_style::max_h_px(MAX_LINES as f32 * height),
-                        overflow_hidden(),
-                    ])
-                    .scroll_from_start(self.id, offset)
-                    .child(node().styles([pm_style::h_px(first as f32 * height), flex_none()]))
-                    .children(rows)
-                    .child(node().styles([
-                        pm_style::h_px((self.lines.len() - last) as f32 * height),
-                        flex_none(),
-                    ])),
-            )
-        } else {
-            column.children(rows)
-        }
+        let mut own = Modifier::new()
+            .fill_max_width()
+            .height_in(theme::sp(minimum / 4.0), f32::INFINITY);
+        own = editing(own, self.id).padding_each(
+            theme::sp(4),
+            theme::sp(3.5),
+            theme::sp(4),
+            theme::sp(1),
+        );
+        rustle::column_arranged(
+            self.modifier.chain(own),
+            Arrangement::Start,
+            Alignment::Start,
+            move || text.build(Modifier::new().fill_max_width()),
+        );
     }
 }
 
-/// The part of `range` that falls on `line`, as offsets into the line, or
-/// nothing when none of it does.
-fn clipped(range: &Option<std::ops::Range<usize>>, line: &Line) -> Option<std::ops::Range<usize>> {
-    let range = range.as_ref()?;
-    let (low, high) = (range.start.max(line.start), range.end.min(line.end));
-    (low < high).then(|| low - line.start..high - line.start)
+/// The text of an input: a rustle text field editing the model's state in the
+/// input's type, with the placeholder behind it while it is empty.
+struct FieldText<'a> {
+    /// The state edited.
+    field: &'a TextFieldState,
+    /// The name the input answers to, whose focus the field follows.
+    id: Target,
+    /// The type the text is set in.
+    kind: rustle::TextStyle,
+    /// What shows while the text is empty.
+    placeholder: &'a str,
+    /// How many lines it shows at most before it scrolls, when it holds several.
+    lines: Option<usize>,
+    /// Whether its text is shown as dots and kept off the clipboard.
+    secure: bool,
+    /// The scroll state of its lines, when its owner holds it.
+    scroll: Option<&'a ScrollState>,
+    /// What Enter does in it.
+    submits: Submits,
+    /// What takes a paste before the field does, if anything.
+    on_paste: Option<OnPaste>,
 }
 
-impl From<Input<'_>> for Node {
-    /// The node that draws the input.
-    fn from(input: Input<'_>) -> Self {
-        input.build()
+impl FieldText<'_> {
+    /// Emits the field with `modifier` around it: holding the registry's focus of
+    /// the input, handing in on Enter as declared, offering pastes to what takes
+    /// them first, its selection in the theme's selection colour.
+    #[track_caller]
+    fn build(self, modifier: Modifier) {
+        let id = self.id;
+        let multiline = self.lines.is_some();
+        let kind = self.kind;
+        let style = match self.lines {
+            Some(_) => {
+                let style = kind.wrap(rustle::TextWrap::Word);
+                rustle::TextStyle {
+                    line_height: style.line_height.round(),
+                    ..style
+                }
+            }
+            None => kind,
+        };
+        let placeholder_style = rustle::TextStyle {
+            wrap: rustle::TextWrap::None,
+            max_lines: None,
+            ..kind.color(theme::color(Color::from(Role::Subtle)))
+        };
+        let focus = crate::focus::focus_of(id);
+        let composing = focus
+            .preedit()
+            .is_some_and(|preedit| !preedit.text.is_empty());
+        let empty = self.field.with_text(str::is_empty) && !composing;
+        let placeholder = self.placeholder.to_owned();
+        let shaped: Rc<RefCell<Option<Rc<rustle::TextLayout>>>> =
+            rustle::remember(Rc::default).get();
+        let remembered = rustle::remember_scroll_state();
+        let scroll = self.scroll.cloned().unwrap_or(remembered);
+        scroll.set_scrollbar(match self.lines {
+            Some(_) => theme::scrollbar(),
+            None => rustle::ScrollbarStyle {
+                visibility: rustle::ScrollbarVisibility::Hidden,
+                ..theme::scrollbar()
+            },
+        });
+        let context = context_press(id, self.field, &shaped, &scroll);
+        let decorator: TextFieldDecorator = Rc::new(move |inner: &dyn Fn()| {
+            rustle::stack_with(
+                Modifier::new().fill_max_width().chain(context.clone()),
+                || {
+                    if empty && !placeholder.is_empty() {
+                        rustle::text_ellipsized(
+                            Modifier::new().fill_max_width(),
+                            placeholder.clone(),
+                            placeholder_style,
+                        );
+                    }
+                    inner();
+                },
+            );
+        });
+        let options = BasicTextFieldOptions {
+            text_style: Some(style),
+            cursor_color: Some(style.color),
+            line_limits: match self.lines {
+                Some(most) => TextFieldLineLimits::MultiLine {
+                    min_height_in_lines: 1,
+                    max_height_in_lines: most,
+                },
+                None => TextFieldLineLimits::SingleLine,
+            },
+            decorator: Some(decorator),
+            scroll_state: Some(scroll),
+            on_text_layout: Some(Rc::new(move |layout| *shaped.borrow_mut() = Some(layout))),
+            on_keyboard_action: self.submits.plain.clone().map(|submit| {
+                let submit = submit.lambda();
+                let action: KeyboardActionHandler = Rc::new(move |_| submit());
+                action
+            }),
+            focus: Some(focus.clone()),
+            ..BasicTextFieldOptions::default()
+        };
+        let modifier = modifier.chain(entering(&focus, self.submits, self.on_paste, multiline));
+        let colors = TextSelectionColors {
+            background_color: marked::selection_color(&theme::theme()),
+            ..LOCAL_TEXT_SELECTION_COLORS.current()
+        };
+        let field = self.field;
+        let secure = self.secure;
+        let menu = crate::context_menu::offered(self.id);
+        LOCAL_TEXT_SELECTION_COLORS.provide(colors, || {
+            rustle::LOCAL_TEXT_CONTEXT_MENU.provide(menu, || {
+                if secure {
+                    rustle::basic_secure_text_field(
+                        modifier,
+                        field,
+                        TextObfuscationMode::Hidden,
+                        rustle::DEFAULT_OBFUSCATION_CHARACTER,
+                        options,
+                    );
+                } else {
+                    rustle::basic_text_field_with(modifier, field, options);
+                }
+            });
+        });
     }
+}
+
+/// Whether `event` is the paste shortcut, Control or Command with V going down.
+fn is_paste(event: &KeyEvent) -> bool {
+    event.pressed
+        && event.modifiers.command()
+        && !event.modifiers.alt
+        && matches!(&event.key, Key::Character(letter) if letter.eq_ignore_ascii_case("v"))
+}
+
+/// The modifier that sees the keys of the field holding `focus` before the field does:
+/// Enter hands in what `submits` says, unless it breaks a line of a `multiline` field
+/// (Shift held, or Enter breaking lines without Control or Command), and the paste
+/// shortcut goes to `on_paste` first, the field pasting only what it leaves. Enter in a
+/// single line without Control or Command is left to the field's keyboard action.
+fn entering(
+    focus: &rustle::Focus,
+    submits: Submits,
+    on_paste: Option<OnPaste>,
+    multiline: bool,
+) -> Modifier {
+    let focus = focus.clone();
+    Modifier::new().on_preview_key_event(move |event| {
+        if !event.pressed || !focus.is_focused() {
+            return false;
+        }
+        if is_paste(event) {
+            return on_paste.as_ref().is_some_and(|on_paste| (on_paste.0)());
+        }
+        if event.key != Key::Enter {
+            return false;
+        }
+        let hurried = event.modifiers.command();
+        let breaks = event.modifiers.shift || (submits.breaks && !hurried);
+        let handing = match (&submits.hurried, &submits.plain) {
+            _ if multiline && breaks => None,
+            (Some(hurried_submit), _) if hurried => Some(hurried_submit),
+            (_, Some(submit)) if multiline => Some(submit),
+            _ => None,
+        };
+        match handing {
+            Some(submit) => {
+                submit.run();
+                true
+            }
+            None => false,
+        }
+    })
+}
+
+/// The modifier that takes a secondary press on the text of the input `id`:
+/// the caret of `field` goes to the character under the pointer, found in the
+/// `shaped` text scrolled by `scroll`, unless the press is inside the
+/// selection, and the app opens the input's menu.
+fn context_press(
+    id: Target,
+    field: &TextFieldState,
+    shaped: &Rc<RefCell<Option<Rc<rustle::TextLayout>>>>,
+    scroll: &ScrollState,
+) -> Modifier {
+    let operations = events::operations();
+    let focus = crate::focus::focus_of(id);
+    let (field, shaped, scroll) = (field.clone(), Rc::clone(shaped), scroll.clone());
+    Modifier::new().on_pointer_button(PointerButton::Secondary, move |event| {
+        if event.phase != PointerPhase::Press {
+            return;
+        }
+        if let Some(layout) = shaped.borrow().clone() {
+            let at = rustle::Offset::new(event.position.x, event.position.y);
+            let along = if layout.line_count() > 1 {
+                rustle::Offset::new(at.x, at.y + scroll.offset())
+            } else {
+                rustle::Offset::new(at.x + scroll.offset(), at.y)
+            };
+            let byte = layout.hit_test(along);
+            let index = layout.text()[..byte.min(layout.text().len())]
+                .chars()
+                .count();
+            let selection = field.selection();
+            if index < selection.min() || index > selection.max() || selection.collapsed() {
+                field.edit(|buffer| buffer.place_cursor_before_char_at(index));
+            }
+        }
+        focus.request_focus();
+        operations.open_text_field_menu(id, crate::events::window_at(event));
+    })
+}
+
+/// `own` taking the presses of the input `id` with the text cursor: a click gives its
+/// field the keyboard, as a press on a Compose text field's decoration does, and a
+/// secondary press gives it the keyboard and opens its menu.
+fn editing(own: Modifier, id: Target) -> Modifier {
+    let operations = crate::events::operations();
+    let focus = crate::focus::focus_of(id);
+    let held = focus.clone();
+    let pressed = send(Event::pressing(id));
+    own.cursor(CursorIcon::Text).pressable_menu(
+        id,
+        move || {
+            pressed();
+            held.request_focus();
+        },
+        move |at| {
+            focus.request_focus();
+            operations.open_text_field_menu(id, at);
+        },
+    )
 }
 
 #[cfg(test)]
