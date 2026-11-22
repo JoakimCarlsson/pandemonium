@@ -99,9 +99,9 @@ pub fn choices(names: &[&str], picked: usize, id_of: impl Fn(usize) -> Option<Ta
                 rustle::key(option, || {
                     rustle::segmented_button(
                         on,
-                        || {},
+                        events::link_pressed(id),
                         rustle::SegmentedButtonDefaults::item_shape(index, count, base),
-                        events::pressed(Modifier::new(), id),
+                        events::named(Modifier::new(), id),
                         true,
                         colors,
                         rustle::SegmentedButtonDefaults::border_stroke(

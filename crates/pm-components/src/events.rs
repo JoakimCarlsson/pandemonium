@@ -1047,6 +1047,15 @@ pub fn pressed(modifier: Modifier, id: Target) -> Modifier {
         .control(id, send(Event::pressing(id)))
 }
 
+/// `modifier` with the pointing hand over it, named `id` for tests, for a stock control that
+/// runs [`link_pressed`] of `id` as its own click: the control's own clickable takes the
+/// press, so the name carries no handler of its own.
+pub fn named(modifier: Modifier, id: Target) -> Modifier {
+    modifier
+        .cursor(rustle::CursorIcon::Pointer)
+        .test_tag(id.tag())
+}
+
 /// What pressing the link `id` of a text does, told to the app as a press and a click of a
 /// control named `id` are: the app hears of the press, and when it lets the click count,
 /// `id` is pressed.

@@ -2,10 +2,12 @@
 //! the frame, the buttons that minimize, maximize and close, and the
 //! settings window and the folder picker's opening, taking input and closing.
 
-use pm_components::areas::{DialogEvent, GitEvent, SidebarEvent, WindowEvent};
+use pm_components::areas::{DialogEvent, GitEvent, SettingsEvent, SidebarEvent, WindowEvent};
 use pm_components::git_prompts::Prompt;
+use pm_components::settings_catalog::Setting;
 use pm_components::target::Target;
 use pm_components::title_bar::FRAMELESS;
+use pm_config::Density;
 use rustle::PointerButton;
 use rustle::ResizeEdge;
 use rustle::{Key, Modifiers};
@@ -352,4 +354,27 @@ fn typing_leaves_the_sidebar_alone() {
     let before = view(&rig);
     rig.type_text("hello");
     assert_eq!(view(&rig), before, "typing changed the sidebar's state");
+}
+
+/// A click on a choice of a row of choices in settings picks it: with the settings searched
+/// for the density, the compact one is taken when its segment is clicked.
+#[test]
+fn a_clicked_choice_in_settings_is_picked() {
+    let mut rig = Rig::shot(Shot::Workspace);
+    rig.click_on(Target::Sidebar(SidebarEvent::Settings));
+    let find = rig.aside_center(
+        Aside::Settings,
+        Target::Settings(SettingsEvent::SettingsFind),
+    );
+    rig.click_in(Some(Aside::Settings), find);
+    rig.type_in(Some(Aside::Settings), "density");
+    let compact = Setting::Density.id(1).expect("density has a second choice");
+    let at = rig.aside_center(Aside::Settings, compact);
+    rig.click_in(Some(Aside::Settings), at);
+    assert_eq!(
+        rig.read(|screen| match screen {
+            pm_pages::Screen::Workspace(held) => held.window.appearance.density,
+        }),
+        Density::Compact
+    );
 }
