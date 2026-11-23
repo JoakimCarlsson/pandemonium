@@ -306,8 +306,8 @@ pub(crate) fn prompt_node(state: &WorkspaceState, room: f32) {
             boxed(|| {
                 prompt_row(
                     PromptFile::Replace,
-                    "Replace crab's instructions",
-                    "SYSTEM.md takes the place of crab's built-in instructions; its tools, skills and the project's details are still added.",
+                    "Change crab's instructions",
+                    "SYSTEM.md starts as a copy of crab's built-in instructions for you to edit; its tools, skills and the project's details are always added.",
                     Target::Settings(SettingsEvent::PromptReplace),
                 );
                 prompt_row(

@@ -32,8 +32,8 @@ pub fn discover_own() -> Vec<Item> {
         .collect()
 }
 
-/// What a row says the file that replaces the harness's built-in instructions applies to.
-pub const REPLACES_PROMPT: &str = "replaces crab's built-in instructions";
+/// What a row says the file holding the reader's changed copy of the harness's built-in instructions applies to.
+pub const REPLACES_PROMPT: &str = "changes crab's built-in instructions";
 
 /// What a row says the file added to the end of every prompt applies to.
 pub const APPENDS_PROMPT: &str = "added to the end of every prompt";

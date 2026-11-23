@@ -23,13 +23,13 @@ pub struct Draft {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PromptFile {
-    /// `SYSTEM.md`, whose text takes the place of the harness's built-in instructions.
+    /// `SYSTEM.md`, a changed copy of the harness's built-in instructions, which it renders in their place while still adding its tools, skills and the project.
     Replace,
     /// `APPEND_SYSTEM.md`, whose text is added to the end of every prompt.
     Append,
 }
 
-/// The file `file` of `scope` for an agent working in `project`, empty when no project is open, made empty when it is not there yet, so that it can be opened and written; a file that is there is left as it is. An empty file changes nothing until something is written in it.
+/// The file `file` of `scope` for an agent working in `project`, empty when no project is open, made when it is not there yet, so that it can be opened and written; a file that is there is left as it is. `SYSTEM.md` is made as a copy of the harness's built-in instructions, to be changed; `APPEND_SYSTEM.md` is made empty, which changes nothing until something is written in it.
 ///
 /// # Errors
 ///
@@ -50,14 +50,19 @@ pub fn create_prompt_file(
         PromptFile::Append => files.append,
     }
     .ok_or_else(|| "the harness's config folder is not known".to_owned())?;
-    if path.exists() {
+    let blank = std::fs::read_to_string(&path).is_ok_and(|text| text.trim().is_empty());
+    if path.exists() && !(blank && file == PromptFile::Replace) {
         return Ok(path);
     }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("could not make {}: {error}", parent.display()))?;
     }
-    std::fs::write(&path, "")
+    let content = match file {
+        PromptFile::Replace => omc_context::SYSTEM_TEMPLATE,
+        PromptFile::Append => "",
+    };
+    std::fs::write(&path, content)
         .map_err(|error| format!("could not write {}: {error}", path.display()))?;
     Ok(path)
 }
@@ -234,7 +239,7 @@ mod tests {
     }
 
     /// Hooks and built-in scope cannot be drafted.
-    /// A prompt file is made empty in the project's own folder, and one already there is left as it is.
+    /// A prompt file is made in the project's own folder, `SYSTEM.md` as a copy of the built-in instructions, and one already there is left as it is.
     #[test]
     fn prompt_files_are_made_once() {
         let project = scratch("prompt");
@@ -247,6 +252,12 @@ mod tests {
             create_prompt_file(PromptFile::Append, Scope::Workspace, &project).expect("again");
         assert_eq!(again, made);
         assert_eq!(std::fs::read_to_string(&made).expect("read"), "Say done.");
+        let changed =
+            create_prompt_file(PromptFile::Replace, Scope::Workspace, &project).expect("changed");
+        assert_eq!(
+            std::fs::read_to_string(&changed).expect("read"),
+            omc_context::SYSTEM_TEMPLATE
+        );
         assert!(create_prompt_file(PromptFile::Replace, Scope::Workspace, Path::new("")).is_err());
     }
 
