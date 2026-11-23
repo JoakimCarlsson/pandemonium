@@ -805,13 +805,17 @@ impl Session {
 
     /// Whether something the agent started is still running, although its turn may be over.
     pub fn background_running(&self) -> bool {
-        !self.shells.is_empty()
-            || self.messages.iter().any(|message| {
-                message
-                    .steps
-                    .iter()
-                    .any(|step| matches!(step, Step::Tool(tool) if tool.is_working_agent()))
-            })
+        !self.shells.is_empty() || self.subagents_at_work()
+    }
+
+    /// Whether a subagent the agent started is still at work, although its turn may be over.
+    fn subagents_at_work(&self) -> bool {
+        self.messages.iter().any(|message| {
+            message
+                .steps
+                .iter()
+                .any(|step| matches!(step, Step::Tool(tool) if tool.is_working_agent()))
+        })
     }
 
     /// Whether a response or an explicit reminder has yet to be read.
@@ -826,7 +830,7 @@ impl Session {
         self.hold_unread = false;
     }
 
-    /// The activity or attention that matters most in the workspace list.
+    /// The activity or attention that matters most in the workspace list. Commands the agent left running, such as a dev server, do not count as work: the chat shows them, and the reader stops them there.
     pub fn shown(&self) -> Status {
         if self.ask.is_some()
             || self.inquiry.is_some()
@@ -834,7 +838,7 @@ impl Session {
             || self.signed_out.is_some()
         {
             Status::NeedsInput
-        } else if self.status == Status::Working || self.background_running() {
+        } else if self.status == Status::Working || self.subagents_at_work() {
             if self.out_of_reach {
                 Status::Unreachable
             } else {

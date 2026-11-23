@@ -114,6 +114,8 @@ pub enum ChatEvent {
     Step { message: usize, position: usize },
     /// The button stopping the helper agent a step of a reply started, by the message's place and the step's place in it.
     SubagentStop { message: usize, position: usize },
+    /// The button stopping a command the agent left running, by its place among them.
+    ShellStop(usize),
     /// The summary of a fold-out of a reply, by the message's place and the fold-out's place among the reply's.
     Details { message: usize, place: usize },
     /// A link of a reply, by the message's place, the piece of the reply and the link's place among the piece's links.

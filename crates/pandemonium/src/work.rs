@@ -1530,6 +1530,17 @@ impl Work {
                     },
                     Pending::Nothing,
                 ),
+                Outgoing::StopBackground {
+                    session,
+                    background,
+                } => self.ask_session(
+                    session,
+                    |number| Request::StopBackground {
+                        session: number,
+                        background,
+                    },
+                    Pending::Nothing,
+                ),
                 Outgoing::SessionAccount { session, login } => self.ask_session(
                     session,
                     |number| Request::SetSessionAccount {

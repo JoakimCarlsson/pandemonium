@@ -1179,6 +1179,16 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                 None => Err(format!("the agent of {} is not running", held.meta.title)),
             })
         }
+        Request::StopBackground {
+            session,
+            background,
+        } => trying(core, session, |held| match &held.chat {
+            Some(chat) => {
+                chat.stop_background(&background);
+                Ok(Told::new())
+            }
+            None => Err(format!("the agent of {} is not running", held.meta.title)),
+        }),
         Request::Set {
             session,
             setting,

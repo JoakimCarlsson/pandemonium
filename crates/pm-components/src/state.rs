@@ -1087,6 +1087,13 @@ pub enum Outgoing {
         /// The subagent, by the id it is stopped by.
         subagent: String,
     },
+    /// Stops one command the agent of a session left running in the background.
+    StopBackground {
+        /// The session, by position.
+        session: usize,
+        /// The command, by the id it is stopped by.
+        background: String,
+    },
     /// Gives a setting of the agent of a session a value.
     Set {
         /// The session, by position.
@@ -2448,6 +2455,7 @@ impl WorkspaceState {
             || self.press_debug(id)
             || self.press_continue(id)
             || self.press_subagent_stop(id)
+            || self.press_shell_stop(id)
             || self.press_choice(id)
         {
             return;
@@ -2753,6 +2761,27 @@ impl WorkspaceState {
             self.outbox.push(Outgoing::StopSubagent {
                 session: open,
                 subagent,
+            });
+        }
+        true
+    }
+
+    /// Stops the command whose stop button `id` is, one the agent of the open session left running: asks its server to. The command leaves the list once the server says it has ended. Returns whether `id` is such a button.
+    fn press_shell_stop(&mut self, id: Target) -> bool {
+        let Target::Chat(ChatEvent::ShellStop(place)) = id else {
+            return false;
+        };
+        let Page::Session(open) = self.page else {
+            return true;
+        };
+        if let Some(shell) = self
+            .sessions
+            .get(open)
+            .and_then(|session| session.shells.get(place))
+        {
+            self.outbox.push(Outgoing::StopBackground {
+                session: open,
+                background: shell.id.clone(),
             });
         }
         true
@@ -3831,6 +3860,32 @@ mod tests {
                 .any(|outgoing| matches!(outgoing, Outgoing::StopSubagent { .. })),
             "a second press asks nothing"
         );
+    }
+
+    /// A command the agent left running leaves its session idle in the list, and its stop button asks the server to stop it.
+    #[test]
+    fn a_command_left_running_is_not_work_and_can_be_stopped() {
+        let mut state = WorkspaceState::new(&[]).with_project("/work/app");
+        state.sessions.push(Session::started("Test", 0, "Hello"));
+        let open = state.sessions.len() - 1;
+        state.page = Page::Session(open);
+        let session = &mut state.sessions[open];
+        session.hear(pm_harness::Event::Background(pm_harness::Background {
+            id: "bg-1".to_owned(),
+            label: "bun run dev".to_owned(),
+            running: true,
+            call: None,
+        }));
+        session.hear(pm_harness::Event::Finished(None));
+        assert_ne!(state.sessions[open].shown(), Status::Working);
+        state.take_outbox();
+
+        let mut state = state.handle(Event::pressing(Target::Chat(ChatEvent::ShellStop(0))));
+
+        assert!(state.take_outbox().iter().any(|outgoing| matches!(
+            outgoing,
+            Outgoing::StopBackground { session, background } if *session == open && background == "bg-1"
+        )));
     }
 
     /// The button under a message whose files were kept asks for what its turn changed, and the view that shows it asks for one file's change, or all of them, to be taken back out, closing itself.

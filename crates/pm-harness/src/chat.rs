@@ -72,6 +72,11 @@ enum Request {
         /// The id a `Subagent` event gave it.
         id: String,
     },
+    /// Stops one command or task the agent left running in the background.
+    StopBackground {
+        /// The id a `Background` event gave it.
+        id: String,
+    },
     /// Gives the setting `setting` the value `value`.
     Set {
         /// The setting.
@@ -124,6 +129,7 @@ impl Request {
             Self::Cancel => Command::Cancel,
             Self::Btw { question } => Command::Btw { question },
             Self::StopSubagent { id } => Command::StopSubagent { id },
+            Self::StopBackground { id } => Command::StopBackground { id },
             Self::Set { setting, value } => Command::Set { setting, value },
             Self::Changes { turn } => Command::Changes { turn },
             Self::Restore { turn } => Command::Restore { turn },
@@ -364,6 +370,13 @@ impl Chat {
         let _ = self
             .requests
             .send(Request::StopSubagent { id: id.to_owned() });
+    }
+
+    /// Stops the command or task a `Background` event named `id`: a command is killed with the processes it started. The turn, if one runs, goes on, and a `Background` event says when it has ended.
+    pub fn stop_background(&self, id: &str) {
+        let _ = self
+            .requests
+            .send(Request::StopBackground { id: id.to_owned() });
     }
 
     /// Gives the setting `setting` the value `value`.

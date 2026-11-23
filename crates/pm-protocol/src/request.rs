@@ -326,6 +326,13 @@ pub enum Request {
         /// The subagent, by the id its `Subagent` event gave it.
         subagent: String,
     },
+    /// Stops one command or task a session's agent left running in the background, while any turn goes on.
+    StopBackground {
+        /// The session.
+        session: u64,
+        /// The command or task, by the id its `Background` event gave it.
+        background: String,
+    },
     /// Gives a setting of a session's agent a value.
     Set {
         /// The session.

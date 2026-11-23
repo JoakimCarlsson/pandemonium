@@ -360,6 +360,8 @@ pub enum Shot {
     Floating,
     /// The same conversation with the subagents above the prompt box open.
     Agents,
+    /// The same conversation with the commands left running above the prompt box open, each with the button that stops it.
+    Shells,
     /// The open panel of subagents with those at work announced by their agent, each with the button that stops it.
     AgentsStoppable,
     /// The open panel with dozens of expanded tool runs.
@@ -3980,6 +3982,9 @@ impl Shot {
             Self::Background | Self::Floating => Screen::Workspace(live(Turn::Background)),
             Self::Agents => {
                 Screen::Workspace(live(Turn::Background).handle(Event::Chat(ChatEvent::SubagentsChip)))
+            }
+            Self::Shells => {
+                Screen::Workspace(live(Turn::Background).handle(Event::Chat(ChatEvent::ShellsChip)))
             }
             Self::AgentsStoppable => {
                 let mut state = live(Turn::Background);

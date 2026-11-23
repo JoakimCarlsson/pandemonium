@@ -64,7 +64,7 @@ fn shells(session: &Session) {
                 1.4,
                 Role::Muted,
             );
-            for shell in &session.shells {
+            for (place, shell) in session.shells.iter().enumerate() {
                 rustle::row_arranged(
                     Modifier::new(),
                     Arrangement::SpacedBy(theme::sp(2.5)),
@@ -78,6 +78,10 @@ fn shells(session: &Session) {
                             1.4,
                             Role::Subtle,
                         );
+                        Button::icon(phosphor::STOP, Target::Chat(ChatEvent::ShellStop(place)))
+                            .size(Size::Xs)
+                            .tooltip("Stop this command")
+                            .build();
                     },
                 );
             }

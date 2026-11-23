@@ -133,6 +133,7 @@ request with exactly one `response` carrying the same `id`.
 | `trust`        | `session`, `ticket`, `verdict`                                                                   | `done`          |
 | `cancel`       | `session`                                                                                        | `done`          |
 | `stop_subagent`| `session`, `subagent`                                                                            | `done`          |
+| `stop_background`| `session`, `background`                                                                        | `done`          |
 | `close_session`| `session`, `discard`?                                                                           | `done`, or `uncommitted` |
 | `rename_session`| `session`, `title`                                                                              | `done`          |
 | `set`          | `session`, `setting`, `value`                                                                    | `done`          |
@@ -494,6 +495,11 @@ everything said of them, its submodules' paths written from `directory`.
   it. A `Subagent` event in the `Stopped` state follows for each one stopped.
   Fails when the session's agent is not running. Stopping a subagent that has
   just ended is answered `done` and changes nothing.
+- **`stop_background`:** stops one command or task the session's agent left
+  running in the background, named by the `id` its `Background` event gave it;
+  a command is killed with the processes it started. Any turn goes on, and a
+  `Background` event with `running` false follows once it has ended. Fails when
+  the session's agent is not running.
 - **`choose`:** answers an `ask` event. `ticket` is the ticket of the question
   and `option` is the `id` of one of its choices.
 - **`answer`:** answers an `Inquire` event. `ticket` is the ticket of the form
