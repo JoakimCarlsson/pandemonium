@@ -3212,8 +3212,8 @@ dependencies = [
 
 [[package]]
 name = "omc-agent"
-version = "0.1.6"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.6#c778c4691a42e450e07581cdd99f0a224b48f765"
+version = "0.1.7"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3231,8 +3231,8 @@ dependencies = [
 
 [[package]]
 name = "omc-auth"
-version = "0.1.6"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.6#c778c4691a42e450e07581cdd99f0a224b48f765"
+version = "0.1.7"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
 dependencies = [
  "base64 0.23.1",
  "dirs",
@@ -3248,8 +3248,8 @@ dependencies = [
 
 [[package]]
 name = "omc-context"
-version = "0.1.6"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.6#c778c4691a42e450e07581cdd99f0a224b48f765"
+version = "0.1.7"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
 dependencies = [
  "dirs",
  "ignore",
@@ -3258,8 +3258,8 @@ dependencies = [
 
 [[package]]
 name = "omc-dap"
-version = "0.1.6"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.6#c778c4691a42e450e07581cdd99f0a224b48f765"
+version = "0.1.7"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
 dependencies = [
  "async-trait",
  "dirs",
@@ -3271,8 +3271,8 @@ dependencies = [
 
 [[package]]
 name = "omc-extensions"
-version = "0.1.6"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.6#c778c4691a42e450e07581cdd99f0a224b48f765"
+version = "0.1.7"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
 dependencies = [
  "async-trait",
  "dirs",
@@ -3287,8 +3287,8 @@ dependencies = [
 
 [[package]]
 name = "omc-hooks"
-version = "0.1.6"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.6#c778c4691a42e450e07581cdd99f0a224b48f765"
+version = "0.1.7"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
 dependencies = [
  "async-trait",
  "dirs",
@@ -3310,8 +3310,8 @@ dependencies = [
 
 [[package]]
 name = "omc-mcp"
-version = "0.1.6"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.6#c778c4691a42e450e07581cdd99f0a224b48f765"
+version = "0.1.7"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
 dependencies = [
  "async-trait",
  "dirs",
@@ -3329,8 +3329,8 @@ dependencies = [
 
 [[package]]
 name = "omc-memory"
-version = "0.1.6"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.6#c778c4691a42e450e07581cdd99f0a224b48f765"
+version = "0.1.7"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
 dependencies = [
  "dirs",
  "omc-context",
@@ -3341,8 +3341,8 @@ dependencies = [
 
 [[package]]
 name = "omc-providers"
-version = "0.1.6"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.6#c778c4691a42e450e07581cdd99f0a224b48f765"
+version = "0.1.7"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3363,8 +3363,8 @@ dependencies = [
 
 [[package]]
 name = "omc-script"
-version = "0.1.6"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.6#c778c4691a42e450e07581cdd99f0a224b48f765"
+version = "0.1.7"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -3378,8 +3378,8 @@ dependencies = [
 
 [[package]]
 name = "omc-session"
-version = "0.1.6"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.6#c778c4691a42e450e07581cdd99f0a224b48f765"
+version = "0.1.7"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
 dependencies = [
  "async-trait",
  "dirs",
@@ -3404,8 +3404,8 @@ dependencies = [
 
 [[package]]
 name = "omc-tools"
-version = "0.1.6"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.6#c778c4691a42e450e07581cdd99f0a224b48f765"
+version = "0.1.7"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
 dependencies = [
  "ast-grep-core",
  "ast-grep-language",
@@ -3443,8 +3443,8 @@ dependencies = [
 
 [[package]]
 name = "omc-wire"
-version = "0.1.6"
-source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.6#c778c4691a42e450e07581cdd99f0a224b48f765"
+version = "0.1.7"
+source = "git+https://github.com/JoakimCarlsson/oh-my-crab?tag=0.1.7#a6620c1443e9126f2d94655df10ef388817cf102"
 dependencies = [
  "serde",
  "serde_json",
@@ -4902,8 +4902,8 @@ dependencies = [
 
 [[package]]
 name = "rustle"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -4935,8 +4935,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-animation"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 dependencies = [
  "rustle-graphics",
  "rustle-runtime",
@@ -4944,8 +4944,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-charts"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 dependencies = [
  "qrcode",
  "rustle-foundation",
@@ -4956,8 +4956,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-foundation"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 dependencies = [
  "rustle-animation",
  "rustle-geometry",
@@ -4970,13 +4970,13 @@ dependencies = [
 
 [[package]]
 name = "rustle-geometry"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 
 [[package]]
 name = "rustle-graphics"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 dependencies = [
  "fontdb 0.24.0",
  "image",
@@ -4986,8 +4986,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-icons"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 dependencies = [
  "rustle-graphics",
  "rustle-icons-macros",
@@ -4995,16 +4995,16 @@ dependencies = [
 
 [[package]]
 name = "rustle-icons-macros"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 dependencies = [
  "svgtypes",
 ]
 
 [[package]]
 name = "rustle-macros"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 dependencies = [
  "quote",
  "syn 3.0.9",
@@ -5012,26 +5012,26 @@ dependencies = [
 
 [[package]]
 name = "rustle-navigation"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 dependencies = [
  "rustle-runtime",
 ]
 
 [[package]]
 name = "rustle-runtime"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 
 [[package]]
 name = "rustle-shaders"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 
 [[package]]
 name = "rustle-text"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 dependencies = [
  "rustle-geometry",
  "rustle-graphics",
@@ -5039,8 +5039,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-ui"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 dependencies = [
  "rustle-geometry",
  "rustle-graphics",
@@ -5051,16 +5051,16 @@ dependencies = [
 
 [[package]]
 name = "rustle-unit"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 dependencies = [
  "rustle-geometry",
 ]
 
 [[package]]
 name = "rustle-wgpu"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 dependencies = [
  "bytemuck",
  "glyphon",
@@ -5075,8 +5075,8 @@ dependencies = [
 
 [[package]]
 name = "rustle-widgets"
-version = "0.1.0"
-source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.0#b48353e71c9c4abdcbcd29e853c4232f860c0c0d"
+version = "0.1.1"
+source = "git+https://github.com/JoakimCarlsson/rustle?tag=0.1.1#dfa291957181789cf54fc4fafe9be713fc43f177"
 dependencies = [
  "rustle-animation",
  "rustle-foundation",
