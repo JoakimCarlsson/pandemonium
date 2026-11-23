@@ -2540,6 +2540,7 @@ impl Work {
         }
         if (files_moved && live) || (history_ends && self.moved_in_history.remove(&key)) {
             self.refresh(model, session);
+            model.change(|state| state.with_tree_stale().open_files_wanted(session));
         }
         if finished {
             model.change(|state| state.agent_finished(session));

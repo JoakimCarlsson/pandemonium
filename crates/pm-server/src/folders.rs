@@ -43,6 +43,8 @@ const IGNORED_IN_GIT: [&str; 2] = ["objects", "logs"];
 struct Folder {
     /// Where the files are.
     root: PathBuf,
+    /// Where the files are with every link resolved, as some systems, macOS among them, report changes.
+    real: PathBuf,
     /// The folders inside it that are watched, itself first, each watched without what is inside it.
     walked: Vec<PathBuf>,
     /// The folders git keeps the state of its worktree in, when they are outside it, each with how deep it is watched.
@@ -70,14 +72,27 @@ impl Folder {
                 git.push((common, RecursiveMode::NonRecursive));
             }
         }
+        let real = std::fs::canonicalize(&root).unwrap_or_else(|_| root.clone());
         let mut walked = Vec::new();
-        walk(&root, &mut walked);
-        Self { root, walked, git }
+        walk(&real, &mut walked);
+        Self {
+            root,
+            real,
+            walked,
+            git,
+        }
+    }
+
+    /// Where `path` is inside this folder, whether it is named through the folder as clients name it or through its resolved path.
+    fn inside<'a>(&self, path: &'a Path) -> Option<&'a Path> {
+        path.strip_prefix(&self.root)
+            .or_else(|_| path.strip_prefix(&self.real))
+            .ok()
     }
 
     /// Watches the folder `created`, and the folders inside it, when it was made inside this one where it matters.
     fn grown(&mut self, created: &Path) -> bool {
-        if !created.is_dir() || !created.starts_with(&self.root) || !self.concerns(created) {
+        if !created.is_dir() || self.inside(created).is_none() || !self.concerns(created) {
             return false;
         }
         if self.walked.iter().any(|held| held == created) {
@@ -106,7 +121,7 @@ impl Folder {
         {
             return false;
         }
-        if let Ok(inside) = path.strip_prefix(&self.root) {
+        if let Some(inside) = self.inside(path) {
             return !IGNORED.iter().any(|ignored| inside.starts_with(ignored));
         }
         self.git.iter().any(|(folder, _)| {
@@ -257,7 +272,7 @@ impl Watching {
         for folder in self.folders.values_mut() {
             let before = folder.walked.len();
             folder.walked.retain(|held| {
-                held == &folder.root
+                held == &folder.real
                     || !paths
                         .iter()
                         .any(|path| held.starts_with(path) && !path.is_dir())
