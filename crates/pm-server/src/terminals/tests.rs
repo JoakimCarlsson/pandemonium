@@ -25,7 +25,7 @@ fn announces_a_page_a_shell_serves() {
     std::fs::create_dir_all(&directory).expect("folder");
     std::fs::write(directory.join("index.html"), "<!doctype html><html></html>").expect("page");
     let number = core
-        .open_shell(&directory, "here", 80, 24, &BTreeMap::new(), None)
+        .open_shell(&directory, "here", None, (80, 24), &BTreeMap::new(), None)
         .expect("shell");
     let (outbox, inbox) = channel();
     let connection = Arc::new(Connection {

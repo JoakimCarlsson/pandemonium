@@ -730,6 +730,9 @@ pub enum Request {
         columns: u16,
         /// How many lines tall the window of the shell is.
         rows: u16,
+        /// The session the shell belongs to, whose closing ends it; nothing for a shell of no session.
+        #[serde(default)]
+        session: Option<u64>,
     },
     /// Types into a shell.
     TerminalInput {
@@ -780,6 +783,9 @@ pub enum Request {
         columns: u16,
         /// How many lines tall the window of the shell is.
         rows: u16,
+        /// The session the shell belongs to, as for `open_terminal`.
+        #[serde(default)]
+        session: Option<u64>,
     },
     /// Runs the thing a language marks as runnable in a file, such as a test function, in a shell as `run_task` does.
     RunRunnable {
@@ -812,6 +818,9 @@ pub enum Request {
         columns: u16,
         /// How many lines tall the window of the shell is.
         rows: u16,
+        /// The session the shell belongs to, as for `open_terminal`.
+        #[serde(default)]
+        session: Option<u64>,
     },
     /// The tasks that can run a place of a file that a language marks as runnable, the one `run_runnable` runs by default first.
     RunnableTasks {

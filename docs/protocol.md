@@ -195,16 +195,16 @@ request with exactly one `response` carrying the same `id`.
 | `read_file`    | `directory`, `path`, `head`, `revision` (optional)                                               | `file`          |
 | `read_bytes`   | `directory`, `path`, `head`                                                                      | `bytes`         |
 | `fetch_bytes`  | `url`: an `http` or `https` address                                                              | `bytes`         |
-| `open_terminal`| `directory`, `columns`, `rows`                                                                   | `terminal`      |
+| `open_terminal`| `directory`, `columns`, `rows`, `session` (optional)                                             | `terminal`      |
 | `terminal_input`| `terminal`, `data` (base64)                                                                     | `done`          |
 | `resize_terminal`| `terminal`, `columns`, `rows`                                                                  | `done`          |
 | `close_terminal`| `terminal`                                                                                      | `done`          |
 | `attach_terminal`| `terminal`, `after`                                                                            | `done`          |
 | `terminals`    | none                                                                                             | `terminals`     |
 | `tasks`        | `directory`                                                                                      | `tasks`         |
-| `run_task`     | `directory`, `project` (optional), `task`: a [task](#tasks), `columns`, `rows`                   | `terminal`      |
+| `run_task`     | `directory`, `project` (optional), `task`: a [task](#tasks), `columns`, `rows`, `session` (optional) | `terminal`      |
 | `runnable_tasks` | `directory`, `project` (optional), `path`, `tags`, `variables`, `position` (optional)       | `runnable_tasks` |
-| `run_runnable` | `directory`, `project` (optional), `path`, `kind` and `name` (optional, for clients that predate tags), `tags`, `variables`, `position` (optional), `task` (optional), `columns`, `rows` | `terminal`      |
+| `run_runnable` | `directory`, `project` (optional), `path`, `kind` and `name` (optional, for clients that predate tags), `tags`, `variables`, `position` (optional), `task` (optional), `columns`, `rows`, `session` (optional) | `terminal`      |
 | `toolchains`   | `directory`, `project` (optional)                                                                | `toolchains`    |
 | `select_toolchain`| `project`, `language`, `toolchain` (optional)                                                 | `done`          |
 | `debug_scenarios`| `directory`, `file` (optional)                                                                 | `debug_scenarios` |
@@ -754,7 +754,9 @@ everything said of them, its submodules' paths written from `directory`.
 - **`open_terminal`:** starts the user's shell (`$SHELL`, with `TERM=xterm-256color`)
   in a pseudo-terminal in `directory`, with a window of `columns` by `rows`. The
   connection is attached to the shell already. The shell keeps running when no
-  client is connected, until it exits or is closed. See [Terminals](#terminals).
+  client is connected, until it exits or is closed. With `session`, the shell
+  belongs to that session and `close_session` ends it, as it does the shells of
+  `run_task` and `run_runnable` given one. See [Terminals](#terminals).
 - **`owners`:** the GitHub account `gh` is signed in to on the server's
   machine, then the organizations it belongs to, as `{login, organization}`.
   Fails with what `gh` complained of when it is not installed or signed in.

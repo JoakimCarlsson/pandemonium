@@ -64,13 +64,13 @@ fn session_in(repository: &Path, worktree: &Path) -> Session {
     )
 }
 
-/// Opens a shell in `folder` that the server knows by the same name.
-fn shell_in(core: &Arc<Core>, folder: &Path) -> u64 {
+/// Opens a shell in `folder` that the server knows by the same name, belonging to `session`.
+fn shell_in(core: &Arc<Core>, folder: &Path, session: Option<u64>) -> u64 {
     core.open_shell(
         folder,
         &folder.to_string_lossy(),
-        80,
-        24,
+        session,
+        (80, 24),
         &BTreeMap::new(),
         None,
     )
@@ -99,7 +99,7 @@ fn forget(number: u64) {
     }
 }
 
-/// Closing a session ends the shells in its worktree and no others, and leaves them all running when the close is refused or another open session shares the worktree.
+/// Closing a session ends the shells that belong to it and those in its worktree and no others, and leaves the worktree's running when the close is refused or another open session shares the worktree.
 #[test]
 fn closing_a_session_ends_only_the_shells_in_its_worktree() {
     let (repository, worktree) = repository_with_worktree("close-session-test");
@@ -110,11 +110,13 @@ fn closing_a_session_ends_only_the_shells_in_its_worktree() {
         sessions.insert(first, session_in(&repository, &worktree));
         sessions.insert(second, session_in(&repository, &worktree));
     }
-    let inside = shell_in(&core, &worktree);
-    let project = shell_in(&core, &repository);
+    let inside = shell_in(&core, &worktree, None);
+    let project = shell_in(&core, &repository, None);
+    let owned = shell_in(&core, &repository, Some(first));
 
     assert!(matches!(close_session(&core, first, false), Response::Done));
     assert!(alive(&core, inside), "a shared worktree keeps its shells");
+    assert!(gone(&core, owned), "the session's own shell is ended");
 
     std::fs::write(worktree.join("file"), "changed").expect("file");
     assert!(matches!(

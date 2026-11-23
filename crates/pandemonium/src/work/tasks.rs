@@ -90,6 +90,7 @@ impl Work {
                             task: Box::new(task),
                             columns,
                             rows,
+                            session: self.server_number(session).map(|(_, number)| number),
                         },
                         Pending::OpenTerminal(tab),
                     );
@@ -122,6 +123,7 @@ impl Work {
                             task,
                             columns,
                             rows,
+                            session: self.server_number(session).map(|(_, number)| number),
                         },
                         Pending::OpenTerminal(tab),
                     );

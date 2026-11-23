@@ -66,6 +66,8 @@ struct Output {
 pub(crate) struct Terminal {
     /// The folder it was started in.
     directory: String,
+    /// The session it belongs to, whose closing ends it.
+    session: Option<u64>,
     /// The size of its window, as columns and rows.
     size: Mutex<(u16, u16)>,
     /// The master side of the pseudo-terminal, which resizes it.
@@ -122,10 +124,11 @@ fn container_shell(
 }
 
 impl Terminal {
-    /// Starts the reader's shell in `directory`, or in the dev container `enclosed` when there is one, called `label` to clients, `columns` wide and `rows` tall, with `env` added to its environment.
+    /// Starts the reader's shell in `directory`, or in the dev container `enclosed` when there is one, called `label` to clients, belonging to `session`, `columns` wide and `rows` tall, with `env` added to its environment.
     fn start(
         directory: &Path,
         label: &str,
+        session: Option<u64>,
         columns: u16,
         rows: u16,
         env: &BTreeMap<String, String>,
@@ -157,6 +160,7 @@ impl Terminal {
             .map_err(|error| error.to_string())?;
         Ok(Self {
             directory: label.to_owned(),
+            session,
             size: Mutex::new((columns, rows)),
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),
@@ -365,24 +369,32 @@ impl Core {
         })
     }
 
-    /// Starts a shell in `directory`, which clients know by `label`, and returns its number.
+    /// Starts a shell in `directory`, which clients know by `label`, belonging to `session`, and returns its number.
     pub(crate) fn open_terminal(
         self: &Arc<Self>,
         directory: &Path,
         label: &str,
+        session: Option<u64>,
         columns: u16,
         rows: u16,
     ) -> Result<u64, String> {
-        self.open_shell(directory, label, columns, rows, &BTreeMap::new(), None)
+        self.open_shell(
+            directory,
+            label,
+            session,
+            (columns, rows),
+            &BTreeMap::new(),
+            None,
+        )
     }
 
-    /// Starts a shell in `directory`, which clients know by `label`, with `env` added to its environment and `command`, when there is one, typed into it as the reader would type it; returns its number.
+    /// Starts a shell in `directory`, which clients know by `label`, belonging to `session`, `size` columns by rows, with `env` added to its environment and `command`, when there is one, typed into it as the reader would type it; returns its number.
     pub(crate) fn open_shell(
         self: &Arc<Self>,
         directory: &Path,
         label: &str,
-        columns: u16,
-        rows: u16,
+        session: Option<u64>,
+        size: (u16, u16),
         env: &BTreeMap<String, String>,
         command: Option<&str>,
     ) -> Result<u64, String> {
@@ -390,8 +402,9 @@ impl Core {
         let terminal = Arc::new(Terminal::start(
             directory,
             label,
-            columns,
-            rows,
+            session,
+            size.0,
+            size.1,
             env,
             enclosed.as_ref(),
         )?);
@@ -484,6 +497,23 @@ impl Core {
             |held| {
                 held.iter()
                     .filter(|(_, terminal)| terminal.directory == directory)
+                    .map(|(number, _)| *number)
+                    .collect()
+            },
+        );
+        numbers
+            .into_iter()
+            .filter(|number| self.close_terminal(*number))
+            .count()
+    }
+
+    /// Ends, with [`Core::close_terminal`], every shell that belongs to session `session`, and returns how many it ended.
+    pub(crate) fn close_terminals_of(&self, session: u64) -> usize {
+        let numbers: Vec<u64> = self.terminals.lock().map_or_else(
+            |_| Vec::new(),
+            |held| {
+                held.iter()
+                    .filter(|(_, terminal)| terminal.session == Some(session))
                     .map(|(number, _)| *number)
                     .collect()
             },

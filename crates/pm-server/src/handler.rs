@@ -452,7 +452,7 @@ pub(crate) fn start_seated(
     }
 }
 
-/// Stops the agent of session `number` and waits for it to exit, notes the end of the commands it left running, ends the shells that work in its worktree, removes the worktree it made when no other open session works in it, deletes the branch it made there when nothing would be lost, and marks it closed.
+/// Stops the agent of session `number` and waits for it to exit, notes the end of the commands it left running, ends the shells that belong to it and those that work in its worktree, removes the worktree it made when no other open session works in it, deletes the branch it made there when nothing would be lost, and marks it closed.
 ///
 /// A worktree with changes that are not committed is kept and the request answered with `Uncommitted`, unless `discard` is set. The scratch folder of a chat is kept, so that the chat can be opened again, unless `discard` is set: then the shells in it are ended and it is removed with everything in it, when no other open session works in it.
 pub(crate) fn close_session(core: &Core, number: u64, discard: bool) -> Response {
@@ -503,6 +503,7 @@ pub(crate) fn close_session(core: &Core, number: u64, discard: bool) -> Response
         chat.stop();
     }
     core.tell_all(ended);
+    core.close_terminals_of(number);
     if let Some(folder) = enclosed
         && let Err(reason) = pm_transport::remove_session_container(&folder)
     {
@@ -1952,12 +1953,13 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             directory,
             columns,
             rows,
+            session,
         } => {
             let folder = place(&directory);
             if !folder.is_dir() {
                 return failed(format!("{directory} is not a folder on this machine"));
             }
-            match core.open_terminal(&folder, &directory, columns, rows) {
+            match core.open_terminal(&folder, &directory, session, columns, rows) {
                 Ok(terminal) => {
                     core.attach_terminal(connection, terminal, 0);
                     Response::Terminal { terminal }
@@ -1989,10 +1991,12 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             task,
             columns,
             rows,
+            session,
         } => run_started(
             core.run_task(
                 &place(&directory),
                 &directory,
+                session,
                 project.as_deref(),
                 &task,
                 (columns, rows),
@@ -2012,6 +2016,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
             task,
             columns,
             rows,
+            session,
         } => {
             let root = place(&directory);
             let found = tasks::Place {
@@ -2028,6 +2033,7 @@ pub(crate) fn handle(core: &Arc<Core>, connection: &Arc<Connection>, request: Re
                     core.run_task(
                         &root,
                         &directory,
+                        session,
                         project.as_deref(),
                         &task,
                         (columns, rows),

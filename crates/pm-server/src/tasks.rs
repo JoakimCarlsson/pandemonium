@@ -203,11 +203,12 @@ pub(crate) fn runnable(
 }
 
 impl Core {
-    /// Runs `task` of the project at `root`, which clients know by `directory`, in a shell started for `connection`, and returns the shell's number.
+    /// Runs `task` of the project at `root`, which clients know by `directory`, in a shell belonging to `session` started for `connection`, and returns the shell's number.
     pub(crate) fn run_task(
         self: &Arc<Self>,
         root: &Path,
         directory: &str,
+        session: Option<u64>,
         project: Option<&str>,
         task: &Task,
         size: (u16, u16),
@@ -217,8 +218,8 @@ impl Core {
         self.open_shell(
             &launch.directory,
             directory,
-            size.0,
-            size.1,
+            session,
+            size,
             &launch.env,
             Some(&launch.command),
         )
